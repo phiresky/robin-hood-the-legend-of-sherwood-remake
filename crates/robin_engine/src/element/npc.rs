@@ -56,32 +56,19 @@ pub enum AiBrain {
     Friendly(Box<FriendlyAi>),
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub(crate) enum PersistedAiBrain {
-    None,
-    Enemy(Box<EnemyAi>),
-    Friendly(Box<FriendlyAi>),
-}
-
-impl PersistedAiBrain {
-    pub(crate) fn capture(value: &AiBrain) -> Self {
-        use crate::ai::persisted::PersistedProjection;
-        match value {
-            AiBrain::None => Self::None,
-            AiBrain::Enemy(value) => Self::Enemy(Box::new(value.persisted_clone())),
-            AiBrain::Friendly(value) => Self::Friendly(Box::new(value.persisted_clone())),
-        }
-    }
-    pub(crate) fn into_runtime(self) -> AiBrain {
-        match self {
-            Self::None => AiBrain::None,
-            Self::Enemy(value) => AiBrain::Enemy(value),
-            Self::Friendly(value) => AiBrain::Friendly(value),
-        }
-    }
-}
-
 impl AiBrain {
+    /// In-memory save projection: persisted AI fields only, with callback
+    /// provenance, scratch state and clone-only continuations rebuilt fresh,
+    /// exactly as the serde path (`ai::persisted`) does.
+    pub(crate) fn persisted_projection(&self) -> Self {
+        use crate::ai::persisted::PersistedProjection;
+        match self {
+            Self::None => Self::None,
+            Self::Enemy(value) => Self::Enemy(Box::new(value.persisted_clone())),
+            Self::Friendly(value) => Self::Friendly(Box::new(value.persisted_clone())),
+        }
+    }
+
     /// Access the base `AiController` (common to both enemy and friendly).
     pub fn base(&self) -> Option<&AiController> {
         match self {

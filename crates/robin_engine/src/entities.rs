@@ -47,33 +47,6 @@ pub struct Entities {
     generations: Vec<u64>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(transparent)]
-pub(crate) struct PersistedEntities(Vec<Option<crate::element::PersistedEntity>>);
-
-impl PersistedEntities {
-    pub(crate) fn capture(value: &Entities) -> Self {
-        let Entities { slots, .. } = value;
-        Self(
-            slots
-                .iter()
-                .map(|slot| slot.as_ref().map(crate::element::PersistedEntity::capture))
-                .collect(),
-        )
-    }
-
-    pub(crate) fn into_runtime(self) -> Entities {
-        Entities {
-            slots: self
-                .0
-                .into_iter()
-                .map(|slot| slot.map(crate::element::PersistedEntity::into_runtime))
-                .collect(),
-            generations: Vec::new(),
-        }
-    }
-}
-
 impl Entities {
     pub fn new() -> Self {
         Self::default()
@@ -87,6 +60,36 @@ impl Entities {
     pub fn from_legacy_slots(slots: Vec<Option<Entity>>) -> Self {
         let generations = vec![0; slots.len()];
         Self { slots, generations }
+    }
+
+    /// In-memory equivalent of a save/load round trip, used by
+    /// `PersistedWorldState::capture` (which also runs without serialization
+    /// for replay/rollback save markers). Sprites and NPC AI brains drop their
+    /// runtime-only state; generations restart empty.
+    ///
+    /// TODO: PC-owned `PcData::ai` brains are cloned raw, matching the removed
+    /// `Persisted*` mirrors, although serde projects them; decide whether the
+    /// in-memory projection should project them too.
+    pub(crate) fn persisted_projection(&self) -> Self {
+        let slots = self
+            .slots
+            .iter()
+            .map(|slot| {
+                slot.as_ref().map(|entity| {
+                    let mut entity = entity.clone();
+                    let element = entity.element_data_mut();
+                    element.sprite = element.sprite.persisted_projection();
+                    if let Some(npc) = entity.npc_data_mut() {
+                        npc.ai.ai_brain = npc.ai.ai_brain.persisted_projection();
+                    }
+                    entity
+                })
+            })
+            .collect();
+        Self {
+            slots,
+            generations: Vec::new(),
+        }
     }
 
     /// Exact sparse slots used by the current native engine snapshot codec.
@@ -775,9 +778,11 @@ mod generation_tests {
 
     #[test]
     fn append_after_persisted_restore_keeps_generations_aligned() {
-        let entities =
+        let mut entities =
             Entities::from_legacy_slots(vec![Some(Entity::Scroll(ElementScroll::default())), None]);
-        let restored = PersistedEntities::capture(&entities).into_runtime();
+        let _slot = &mut entities[ScrollId(0)];
+        assert_eq!(entities.generation(ScrollId(0)), 1);
+        let restored = entities.persisted_projection();
         assert_restored_append_generations(restored);
     }
 }

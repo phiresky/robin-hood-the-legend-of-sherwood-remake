@@ -55,17 +55,7 @@ pub(super) fn prepare(
             command,
         },
         NetOutbound::ReadyToSim { frame } => NetMsg::ReadyToSim { frame },
-        NetOutbound::ModalProposal {
-            instance,
-            kind,
-            result,
-            requested_frame,
-        } => NetMsg::ModalProposal {
-            instance,
-            kind,
-            result,
-            requested_frame,
-        },
+        NetOutbound::ModalProposal(proposal) => NetMsg::ModalProposal(proposal),
         NetOutbound::SnapshotTransitionReady { id } => NetMsg::SnapshotTransitionReady { id },
         NetOutbound::ReconnectForSnapshot { reason, .. }
         | NetOutbound::ReconnectAllForSnapshot { reason } => {

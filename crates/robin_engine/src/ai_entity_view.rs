@@ -366,7 +366,33 @@ pub enum EntityKind {
     Net,
 }
 
+/// Value stored in [`AiEntityView::action_state`] for views of non-actor
+/// entities (pickups, scrolls, projectiles, nets, scenery), which have no
+/// action state.
+///
+/// It equals `ActionState::default()` (`Waiting`), the value serialized
+/// views and fixtures already carry for those kinds, so the wire field stays
+/// unchanged. It is indistinguishable from a real waiting actor: read
+/// [`AiEntityView::actor_action_state`] when the distinction matters.
+pub const NON_ACTOR_ACTION_STATE: crate::element::ActionState =
+    crate::element::ActionState::Waiting;
+
 impl AiEntityView {
+    /// The actor action state, or `None` for non-actor views whose
+    /// `action_state` field only holds [`NON_ACTOR_ACTION_STATE`].
+    ///
+    /// Exactly PCs, soldiers and civilians carry `ActorData`.
+    pub fn actor_action_state(&self) -> Option<crate::element::ActionState> {
+        match self.kind {
+            EntityKind::Pc | EntityKind::Soldier | EntityKind::Civilian => Some(self.action_state),
+            EntityKind::Bonus
+            | EntityKind::Scroll
+            | EntityKind::Projectile
+            | EntityKind::Net
+            | EntityKind::Other => None,
+        }
+    }
+
     /// Reconstruct the typed entity ID for the raw legacy-table `handle`
     /// used as this view's map key.
     ///
@@ -525,11 +551,9 @@ pub fn entity_view_from_entity(
     campaign: Option<&crate::campaign::Campaign>,
     current_animation: OrderType,
 ) -> AiEntityView {
+    // Every value below is a pure read of `entity`/`campaign`; the only
+    // possible panic (PC campaign identity) lives in `identity_view_fields`.
     let elem = entity.element_data();
-    let actor = entity.actor_data();
-    let npc = entity.npc_data();
-    let human = entity.human_data();
-    let brain = npc.and_then(|npc| npc.ai_brain.base());
     let position = Position {
         x: elem.position_map().x,
         y: elem.position_map().y,
@@ -538,172 +562,65 @@ pub fn entity_view_from_entity(
     };
     let direction = elem.direction() as u16;
     let posture = elem.posture();
-    // Swordfighting is based on the opponent list, not the current
-    // action state. During enter/approach transitions an engaged actor
-    // can still be Moving/MovingFast.
-    let is_swordfighting = entity
-        .human_data()
-        .map(|h| !h.opponents.is_empty())
-        .unwrap_or(false);
-    let is_tower_guard = match entity {
-        Entity::Soldier(s) => s
-            .npc
-            .ai_brain
-            .enemy()
-            .map(|e| e.tower_guard)
-            .unwrap_or(false),
-        _ => false,
-    };
 
-    let (kind, camp, is_pc, is_robin, is_vip, is_beggar, is_child) = match entity {
-        Entity::Pc(pc) => (
-            EntityKind::Pc,
-            pc.pc.cached_camp,
-            true,
-            pc.pc.robin,
-            // Conservatively flag only Robin as VIP, matching the
-            // `antagonist_info_from_entity` path in `engine::ai`.
-            pc.pc.robin,
-            false,
-            false,
-        ),
-        Entity::Soldier(s) => {
-            let enemy_vip = s.npc.ai_brain.enemy().map(|e| e.is_vip).unwrap_or(false);
-            (
-                EntityKind::Soldier,
-                s.soldier.cached_camp,
-                false,
-                false,
-                enemy_vip,
-                false,
-                false,
-            )
-        }
-        Entity::Civilian(c) => {
-            use crate::profiles::CivilianType;
-            let ctype = c.civilian.cached_civilian_type;
-            (
-                EntityKind::Civilian,
-                c.civilian.cached_camp,
-                false,
-                false,
-                ctype == CivilianType::Vip,
-                ctype == CivilianType::Beggar,
-                ctype == CivilianType::Child,
-            )
-        }
-        Entity::Bonus(_) => (
-            EntityKind::Bonus,
-            Camp::default(),
-            false,
-            false,
-            false,
-            false,
-            false,
-        ),
-        Entity::Scroll(_) => (
-            EntityKind::Scroll,
-            Camp::default(),
-            false,
-            false,
-            false,
-            false,
-            false,
-        ),
-        Entity::Projectile(_) => (
-            EntityKind::Projectile,
-            Camp::default(),
-            false,
-            false,
-            false,
-            false,
-            false,
-        ),
-        Entity::Net(_) => (
-            EntityKind::Net,
-            Camp::default(),
-            false,
-            false,
-            false,
-            false,
-            false,
-        ),
-        _ => (
-            EntityKind::Other,
-            Camp::default(),
-            false,
-            false,
-            false,
-            false,
-            false,
-        ),
-    };
+    let IdentityViewFields {
+        kind,
+        camp,
+        is_pc,
+        is_robin,
+        is_vip,
+        is_beggar,
+        is_child,
+        in_coma,
+        guard,
+    } = identity_view_fields(entity, campaign);
+    let CombatViewFields {
+        is_swordfighting,
+        is_able_to_fight,
+        is_unconscious,
+        is_dead,
+        is_carried,
+        is_archer,
+        is_rider,
+        stuck_under_net,
+        number_of_arrows,
+    } = combat_view_fields(entity);
+    let AiViewFields {
+        is_tower_guard,
+        ai_state,
+        ai_substate,
+        script_locked,
+        has_patrol_path,
+        initial_position,
+        rank,
+        reported_to_officer,
+        looted_after_money_fight,
+        current_money,
+        interesting_object,
+        report_type,
+        report_seek_position,
+        report_seen_bodies,
+        report_charly,
+        macro_in_progress,
+        path_current_waypoint_index,
+        path_last_waypoint_index,
+        path_forward_movement,
+        patrol_hiking_path_index,
+    } = ai_view_fields(entity, position);
 
-    // Combat eligibility varies by actor kind in the original game. The base
-    // human implementation is always false, so civilians (which do not
-    // override it) can never fight. Soldiers layer tied/carried checks
-    // and a state-machine switch on top of their body state. PCs reject
-    // the two disguised postures in addition to the common live/active
-    // gates. Non-human entities are false.
-    let is_able_to_fight = match entity {
-        Entity::Soldier(s) => {
-            let human_ok = !s.human.unconscious
-                && s.element.active
-                && s.npc.life_points > 0
-                && s.element.posture() != Posture::Tied
-                && s.human.carrier.is_none();
-            if !human_ok {
-                false
-            } else {
-                match s.npc.ai_state() {
-                    AiState::Sleeping | AiState::Menacing | AiState::Fleeing => false,
-                    AiState::Default | AiState::Wondering | AiState::Seeking => true,
-                    AiState::Attacking => !matches!(
-                        s.npc.ai_substate(),
-                        Substate::AttackingGotHit
-                            | Substate::AttackingGotHitStandingUp
-                            | Substate::AttackingHitting,
-                    ),
-                }
-            }
-        }
-        Entity::Civilian(_) => false,
-        Entity::Pc(pc) => {
-            !pc.human.unconscious
-                && pc.element.active
-                && pc.pc.life_points > 0
-                && !matches!(pc.element.posture(), Posture::Tree | Posture::Spy)
-        }
-        _ => false,
-    };
-
-    let is_unconscious = human.is_some_and(|human| human.unconscious);
     let active = elem.active;
-    // This mixed-kind projection deliberately includes pickups and scenery.
-    // They have no actor state; `kind` remains authoritative for interpreting
-    // the existing wire-compatible null sentinel below.
+    let actor = entity.actor_data();
+    // This mixed-kind projection deliberately includes pickups and scenery,
+    // which have no actor state. The view keeps its non-optional wire field
+    // and stores `NON_ACTOR_ACTION_STATE` for them; `kind` stays authoritative
+    // (see `AiEntityView::actor_action_state`).
     // TODO: make actor-only view fields optional together in a versioned view
     // schema, rather than changing just one field and its many fixture users.
-    let action_state = actor.map(|a| a.action_state).unwrap_or_default();
+    let actor_action_state: Option<crate::element::ActionState> = actor.map(|a| a.action_state);
+    let action_state = actor_action_state.unwrap_or(NON_ACTOR_ACTION_STATE);
     let passing_door = actor.is_some_and(|a| a.active_door_pass.is_some());
     let obstacle_idx = elem.obstacle_index();
-
-    let (ai_state, ai_substate) = match entity {
-        Entity::Soldier(s) => (s.npc.ai_state(), s.npc.ai_substate()),
-        Entity::Civilian(c) => (c.npc.ai_state(), c.npc.ai_substate()),
-        // Non-NPC entities (PCs, bonus pickups) have no AI brain —
-        // use `AiState::Default` as the null sentinel.
-        _ => (AiState::Default, Substate::StartSleepingSubstates),
-    };
-
-    // Read off the AI controller's `script_locked` flag (set by
-    // `ScriptLockAI`, cleared by `ScriptUnlockAI`).  Non-NPC entities
-    // have no AI brain, return false.
-    let script_locked = brain.is_some_and(|brain| brain.ai_is_script_locked());
-
     let elevation = elem.position().z;
-
-    let stuck_under_net = human.is_some_and(|human| human.stuck_under_nets_counter > 0);
 
     // Only meaningful for Bonus entities; human/None defaults make
     // sense for everything else.
@@ -711,145 +628,6 @@ pub fn entity_view_from_entity(
         .object_data()
         .map(|o| o.object_type)
         .unwrap_or(crate::element_kinds::ObjectType::None);
-
-    // `life_points <= 0` on humans (no concept of "dead" for
-    // non-humans).
-    let is_dead = match entity {
-        Entity::Soldier(s) => s.npc.life_points <= 0,
-        Entity::Civilian(c) => c.npc.life_points <= 0,
-        Entity::Pc(pc) => pc.pc.life_points <= 0,
-        _ => false,
-    };
-
-    let is_carried = human.is_some_and(|human| human.carrier.is_some());
-
-    // Read off the enemy AI brain's `is_archer_unit` flag.  Defaults
-    // to false for soldiers without a brain or for non-soldier kinds.
-    let is_archer = match entity {
-        Entity::Soldier(s) => s
-            .npc
-            .ai_brain
-            .enemy()
-            .map(|e| e.is_archer_unit)
-            .unwrap_or(false),
-        _ => false,
-    };
-
-    // Only mounted soldiers; `false` for everyone else.  Mirrors the
-    // in-Entity logic at `element.rs:2926` / `compute_eyes_point`.
-    let is_rider = matches!(entity, Entity::Soldier(s) if s.soldier.rider);
-
-    // `in_coma` + `guard` on PCs — look up through the exact campaign
-    // description because `PcStatus` isn't embedded in `PcData`.
-    // `list_index` is only the actor/UI list byte; it is not the identity of
-    // the original game's description reference and can point at an unrelated campaign PC.
-    let (in_coma, guard) = match entity {
-        Entity::Pc(pc) => {
-            let coma = campaign.is_some_and(|c| {
-                let description_index = pc.pc.campaign_description_index.unwrap_or_else(|| {
-                    panic!("live PC is missing its required campaign-description identity")
-                });
-                c.characters
-                    .get(description_index as usize)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "live PC campaign-description index {description_index} is outside the campaign character table"
-                        )
-                    })
-                    .status
-                    .in_coma
-            });
-            let guard_handle = pc.pc.guard.map(|eid| eid.index());
-            (coma, guard_handle)
-        }
-        _ => (false, None),
-    };
-
-    // True when a patrol path is registered on the AI controller
-    // (see `AiController::has_patrol_path`).
-    let has_patrol_path = brain.is_some_and(|brain| brain.has_patrol_path);
-
-    // The original game's initial position is mutated when assigning a new post and the
-    // no-path patrol-assignment branches. The controller owns that live
-    // value; the NPC fields retain their level-load/save snapshot and can be
-    // stale after a script changes the post.
-    let initial_position = npc.map_or(position, |npc| {
-        authoritative_initial_position(
-            brain,
-            Position {
-                x: npc.initial_position_x,
-                y: npc.initial_position_y,
-                sector: npc.initial_position_sector,
-                level: npc.initial_position_level,
-            },
-        )
-    });
-
-    // Arrow count on soldier NPCs; other kinds always return 0.
-    let number_of_arrows = match entity {
-        Entity::Soldier(s) => s.npc.number_of_arrows,
-        _ => 0,
-    };
-
-    // Soldier rank + report/looting flags — sourced from the enemy/base
-    // AI brain when present, defaulting to None / false for
-    // non-soldiers (civilians, PCs, props).
-    let (rank, reported_to_officer, looted_after_money_fight) = match entity {
-        Entity::Soldier(s) => s
-            .npc
-            .ai_brain
-            .enemy()
-            .map(|e| {
-                (
-                    e.soldier_profile_rank,
-                    e.reported_to_officer,
-                    e.base.looted_after_money_fight,
-                )
-            })
-            .unwrap_or((crate::profiles::ProfileRank::None, false, false)),
-        _ => (crate::profiles::ProfileRank::None, false, false),
-    };
-
-    let current_money = npc.map_or(0, |npc| npc.money);
-
-    // Read `interesting_object` off `AiController::base` for NPCs.
-    let interesting_object = brain.and_then(|brain| brain.interesting_object);
-
-    // Read `my_reconnaissance_report` off `AiController` for any NPC
-    // (soldier or civilian).  Civilians need this exposed so an
-    // officer's civilian-report processing can merge bodies/charly
-    // without a second borrow on the civilian's AI brain mid-think.
-    let (report_type, report_seek_position, report_seen_bodies, report_charly) = brain
-        .map(|brain| {
-            let report = &brain.my_reconnaissance_report;
-            (
-                report.report_type,
-                report.seek_position,
-                report.seen_bodies.clone(),
-                report.charly,
-            )
-        })
-        .unwrap_or((
-            crate::ai::ReportType::Nothing,
-            Position::default(),
-            Vec::new(),
-            None,
-        ));
-
-    // `macro_in_progress` + patrol-path waypoint indices — read off
-    // `AiController::base` for NPCs.
-    let (
-        macro_in_progress,
-        path_current_waypoint_index,
-        path_last_waypoint_index,
-        path_forward_movement,
-        patrol_hiking_path_index,
-    ) = brain
-        .map(|brain| {
-            let (cur, last, fwd, idx) = patrol_path_view_fields(brain);
-            (brain.macro_in_progress, cur, last, fwd, idx)
-        })
-        .unwrap_or((false, 0, 0, true, None));
 
     AiEntityView {
         original_creation_order,
@@ -917,6 +695,364 @@ pub fn entity_view_from_entity(
     }
 }
 
+/// Kind / allegiance / role flags of an [`AiEntityView`], plus the PC-only
+/// coma and guard lookups. Transient; never stored.
+struct IdentityViewFields {
+    kind: EntityKind,
+    camp: Camp,
+    is_pc: bool,
+    is_robin: bool,
+    is_vip: bool,
+    is_beggar: bool,
+    is_child: bool,
+    in_coma: bool,
+    guard: Option<u32>,
+}
+
+fn identity_view_fields(
+    entity: &Entity,
+    campaign: Option<&crate::campaign::Campaign>,
+) -> IdentityViewFields {
+    // Non-human views carry no allegiance or role.
+    let non_human = |kind| (kind, Camp::default(), false, false, false, false, false);
+    let (kind, camp, is_pc, is_robin, is_vip, is_beggar, is_child) = match entity {
+        Entity::Pc(pc) => (
+            EntityKind::Pc,
+            pc.pc.cached_camp,
+            true,
+            pc.pc.robin,
+            // Conservatively flag only Robin as VIP, matching the
+            // `antagonist_info_from_entity` path in `engine::ai`.
+            pc.pc.robin,
+            false,
+            false,
+        ),
+        Entity::Soldier(s) => (
+            EntityKind::Soldier,
+            s.soldier.cached_camp,
+            false,
+            false,
+            entity.is_vip(),
+            false,
+            false,
+        ),
+        Entity::Civilian(c) => {
+            use crate::profiles::CivilianType;
+            let ctype = c.civilian.cached_civilian_type;
+            (
+                EntityKind::Civilian,
+                c.civilian.cached_camp,
+                false,
+                false,
+                ctype == CivilianType::Vip,
+                ctype == CivilianType::Beggar,
+                ctype == CivilianType::Child,
+            )
+        }
+        Entity::Bonus(_) => non_human(EntityKind::Bonus),
+        Entity::Scroll(_) => non_human(EntityKind::Scroll),
+        Entity::Projectile(_) => non_human(EntityKind::Projectile),
+        Entity::Net(_) => non_human(EntityKind::Net),
+        _ => non_human(EntityKind::Other),
+    };
+
+    // `in_coma` + `guard` on PCs — look up through the exact campaign
+    // description because `PcStatus` isn't embedded in `PcData`.
+    // `list_index` is only the actor/UI list byte; it is not the identity of
+    // the original game's description reference and can point at an unrelated campaign PC.
+    let (in_coma, guard) = match entity {
+        Entity::Pc(pc) => {
+            let coma = campaign.is_some_and(|c| {
+                let description_index = pc.pc.campaign_description_index.unwrap_or_else(|| {
+                    panic!("live PC is missing its required campaign-description identity")
+                });
+                c.characters
+                    .get(description_index as usize)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "live PC campaign-description index {description_index} is outside the campaign character table"
+                        )
+                    })
+                    .status
+                    .in_coma
+            });
+            let guard_handle = pc.pc.guard.map(|eid| eid.index());
+            (coma, guard_handle)
+        }
+        _ => (false, None),
+    };
+
+    IdentityViewFields {
+        kind,
+        camp,
+        is_pc,
+        is_robin,
+        is_vip,
+        is_beggar,
+        is_child,
+        in_coma,
+        guard,
+    }
+}
+
+/// Body / combat-readiness state of an [`AiEntityView`]. Transient.
+struct CombatViewFields {
+    is_swordfighting: bool,
+    is_able_to_fight: bool,
+    is_unconscious: bool,
+    is_dead: bool,
+    is_carried: bool,
+    is_archer: bool,
+    is_rider: bool,
+    stuck_under_net: bool,
+    number_of_arrows: u16,
+}
+
+fn combat_view_fields(entity: &Entity) -> CombatViewFields {
+    let human = entity.human_data();
+
+    // Swordfighting is based on the opponent list, not the current
+    // action state. During enter/approach transitions an engaged actor
+    // can still be Moving/MovingFast. Non-humans have no opponents.
+    let is_swordfighting = human.is_some_and(|h| !h.opponents.is_empty());
+
+    // Combat eligibility varies by actor kind in the original game. The base
+    // human implementation is always false, so civilians (which do not
+    // override it) can never fight. Soldiers layer tied/carried checks
+    // and a state-machine switch on top of their body state. PCs reject
+    // the two disguised postures in addition to the common live/active
+    // gates. Non-human entities are false.
+    let is_able_to_fight = match entity {
+        Entity::Soldier(s) => {
+            let human_ok = !s.human.unconscious
+                && s.element.active
+                && s.npc.life_points > 0
+                && s.element.posture() != Posture::Tied
+                && s.human.carrier.is_none();
+            if !human_ok {
+                false
+            } else {
+                match s.npc.ai_state() {
+                    AiState::Sleeping | AiState::Menacing | AiState::Fleeing => false,
+                    AiState::Default | AiState::Wondering | AiState::Seeking => true,
+                    AiState::Attacking => !matches!(
+                        s.npc.ai_substate(),
+                        Substate::AttackingGotHit
+                            | Substate::AttackingGotHitStandingUp
+                            | Substate::AttackingHitting,
+                    ),
+                }
+            }
+        }
+        Entity::Civilian(_) => false,
+        Entity::Pc(pc) => {
+            !pc.human.unconscious
+                && pc.element.active
+                && pc.pc.life_points > 0
+                && !matches!(pc.element.posture(), Posture::Tree | Posture::Spy)
+        }
+        _ => false,
+    };
+
+    let is_unconscious = entity.is_unconscious();
+    let stuck_under_net = human.is_some_and(|human| human.stuck_under_nets_counter > 0);
+
+    // `life_points <= 0` on humans (no concept of "dead" for non-humans;
+    // deliberately not `Entity::is_dead`, which is `true` for non-humans).
+    let is_dead = match entity {
+        Entity::Soldier(s) => s.npc.life_points <= 0,
+        Entity::Civilian(c) => c.npc.life_points <= 0,
+        Entity::Pc(pc) => pc.pc.life_points <= 0,
+        _ => false,
+    };
+
+    let is_carried = human.is_some_and(|human| human.carrier.is_some());
+
+    // Read off the enemy AI brain's `is_archer_unit` flag. A soldier without
+    // an enemy brain is not an archer unit; non-soldier kinds never are.
+    let is_archer = match entity {
+        Entity::Soldier(s) => s.npc.ai_brain.enemy().is_some_and(|e| e.is_archer_unit),
+        _ => false,
+    };
+
+    // Only mounted soldiers; `false` for everyone else.  Mirrors the
+    // rider flag in `Entity::compute_eyes_point`.
+    let is_rider = matches!(entity, Entity::Soldier(s) if s.soldier.rider);
+
+    // Arrow count on soldier NPCs; other kinds always return 0.
+    let number_of_arrows = match entity {
+        Entity::Soldier(s) => s.npc.number_of_arrows,
+        _ => 0,
+    };
+
+    CombatViewFields {
+        is_swordfighting,
+        is_able_to_fight,
+        is_unconscious,
+        is_dead,
+        is_carried,
+        is_archer,
+        is_rider,
+        stuck_under_net,
+        number_of_arrows,
+    }
+}
+
+/// AI-brain state of an [`AiEntityView`]: state machine, post, patrol path,
+/// report and soldier bookkeeping. Transient.
+struct AiViewFields {
+    is_tower_guard: bool,
+    ai_state: AiState,
+    ai_substate: Substate,
+    script_locked: bool,
+    has_patrol_path: bool,
+    initial_position: Position,
+    rank: crate::profiles::ProfileRank,
+    reported_to_officer: bool,
+    looted_after_money_fight: bool,
+    current_money: u32,
+    interesting_object: Option<crate::ai::AiEntityHandle>,
+    report_type: crate::ai::ReportType,
+    report_seek_position: Position,
+    report_seen_bodies: Vec<crate::ai::HumanHandle>,
+    report_charly: Option<crate::ai::AiEntityHandle>,
+    macro_in_progress: bool,
+    path_current_waypoint_index: u8,
+    path_last_waypoint_index: u8,
+    path_forward_movement: bool,
+    patrol_hiking_path_index: Option<crate::ai::PathId>,
+}
+
+/// `position` is the view's own map position, used as the post for entities
+/// without NPC data.
+fn ai_view_fields(entity: &Entity, position: Position) -> AiViewFields {
+    let npc = entity.npc_data();
+    let brain = npc.and_then(|npc| npc.ai_brain.base());
+
+    // A soldier without an enemy brain is not a tower guard; non-soldier
+    // kinds never are.
+    let is_tower_guard = match entity {
+        Entity::Soldier(s) => s.npc.ai_brain.enemy().is_some_and(|e| e.tower_guard),
+        _ => false,
+    };
+
+    let (ai_state, ai_substate) = match entity {
+        Entity::Soldier(s) => (s.npc.ai_state(), s.npc.ai_substate()),
+        Entity::Civilian(c) => (c.npc.ai_state(), c.npc.ai_substate()),
+        // Non-NPC entities (PCs, bonus pickups) have no AI brain —
+        // use `AiState::Default` as the null sentinel.
+        _ => (AiState::Default, Substate::StartSleepingSubstates),
+    };
+
+    // Read off the AI controller's `script_locked` flag (set by
+    // `ScriptLockAI`, cleared by `ScriptUnlockAI`).  Non-NPC entities
+    // have no AI brain, return false.
+    let script_locked = brain.is_some_and(|brain| brain.ai_is_script_locked());
+
+    // True when a patrol path is registered on the AI controller
+    // (see `AiController::has_patrol_path`).
+    let has_patrol_path = brain.is_some_and(|brain| brain.has_patrol_path);
+
+    // The original game's initial position is mutated when assigning a new post and the
+    // no-path patrol-assignment branches. The controller owns that live
+    // value; the NPC fields retain their level-load/save snapshot and can be
+    // stale after a script changes the post.
+    let initial_position = npc.map_or(position, |npc| {
+        authoritative_initial_position(
+            brain,
+            Position {
+                x: npc.initial_position_x,
+                y: npc.initial_position_y,
+                sector: npc.initial_position_sector,
+                level: npc.initial_position_level,
+            },
+        )
+    });
+
+    // Soldier rank + report/looting flags — sourced from the enemy/base
+    // AI brain when present, defaulting to None / false for
+    // non-soldiers (civilians, PCs, props).
+    let (rank, reported_to_officer, looted_after_money_fight) = match entity {
+        Entity::Soldier(s) => s
+            .npc
+            .ai_brain
+            .enemy()
+            .map(|e| {
+                (
+                    e.soldier_profile_rank,
+                    e.reported_to_officer,
+                    e.base.looted_after_money_fight,
+                )
+            })
+            .unwrap_or((crate::profiles::ProfileRank::None, false, false)),
+        _ => (crate::profiles::ProfileRank::None, false, false),
+    };
+
+    let current_money = npc.map_or(0, |npc| npc.money);
+
+    // Read `interesting_object` off `AiController::base` for NPCs.
+    let interesting_object = brain.and_then(|brain| brain.interesting_object);
+
+    // Read `my_reconnaissance_report` off `AiController` for any NPC
+    // (soldier or civilian).  Civilians need this exposed so an
+    // officer's civilian-report processing can merge bodies/charly
+    // without a second borrow on the civilian's AI brain mid-think.
+    let (report_type, report_seek_position, report_seen_bodies, report_charly) = brain
+        .map(|brain| {
+            let report = &brain.my_reconnaissance_report;
+            (
+                report.report_type,
+                report.seek_position,
+                report.seen_bodies.clone(),
+                report.charly,
+            )
+        })
+        .unwrap_or((
+            crate::ai::ReportType::Nothing,
+            Position::default(),
+            Vec::new(),
+            None,
+        ));
+
+    // `macro_in_progress` + patrol-path waypoint indices — read off
+    // `AiController::base` for NPCs.
+    let (
+        macro_in_progress,
+        path_current_waypoint_index,
+        path_last_waypoint_index,
+        path_forward_movement,
+        patrol_hiking_path_index,
+    ) = brain
+        .map(|brain| {
+            let (cur, last, fwd, idx) = patrol_path_view_fields(brain);
+            (brain.macro_in_progress, cur, last, fwd, idx)
+        })
+        .unwrap_or((false, 0, 0, true, None));
+
+    AiViewFields {
+        is_tower_guard,
+        ai_state,
+        ai_substate,
+        script_locked,
+        has_patrol_path,
+        initial_position,
+        rank,
+        reported_to_officer,
+        looted_after_money_fight,
+        current_money,
+        interesting_object,
+        report_type,
+        report_seek_position,
+        report_seen_bodies,
+        report_charly,
+        macro_in_progress,
+        path_current_waypoint_index,
+        path_last_waypoint_index,
+        path_forward_movement,
+        patrol_hiking_path_index,
+    }
+}
+
 fn authoritative_initial_position(
     controller: Option<&crate::ai::AiController>,
     serialized_npc_fallback: Position,
@@ -957,6 +1093,28 @@ mod tests {
         );
 
         assert_eq!(view.camp, Camp::Custom(7));
+        assert_eq!(view.actor_action_state(), Some(view.action_state));
+    }
+
+    #[test]
+    fn non_actor_view_keeps_the_legacy_action_state_wire_sentinel() {
+        // Serialized views and fixtures pin `ActionState::default()` here.
+        assert_eq!(
+            NON_ACTOR_ACTION_STATE,
+            crate::element::ActionState::default()
+        );
+        let entity = Entity::Scroll(crate::element::ElementScroll::default());
+        let view = entity_view_from_entity(
+            &entity,
+            1,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        );
+        assert_eq!(view.kind, EntityKind::Scroll);
+        assert_eq!(view.action_state, NON_ACTOR_ACTION_STATE);
+        assert_eq!(view.actor_action_state(), None);
     }
 
     #[test]

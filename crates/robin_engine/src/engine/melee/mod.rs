@@ -1265,7 +1265,7 @@ fn get_life_points(entity: &Entity) -> i16 {
 /// Get the entity's max life points.
 fn get_max_life_points(entity: &Entity) -> i16 {
     match entity {
-        Entity::Pc(_) => combat::LIFEPOINTS_PC,
+        Entity::Pc(_) => crate::pc_status::LIFEPOINTS_PC,
         Entity::Soldier(s) => s.soldier.cached_max_life_points,
         Entity::Civilian(_) => 100, // civilians initialise at 100 HP
         _ => 100,

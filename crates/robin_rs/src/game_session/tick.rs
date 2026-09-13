@@ -2002,7 +2002,7 @@ mod tests {
         assert_eq!(host.effects.dialogue_count(), 1);
         assert!(matches!(
             outgoing.try_recv().expect("advisory proposal"),
-            NetOutbound::ModalProposal { kind, result, .. }
+            NetOutbound::ModalProposal(robin_engine::multiplayer::ModalProposal { kind, result, .. })
                 if kind == expected.kind && result == expected.result
         ));
     }
@@ -2031,7 +2031,7 @@ mod tests {
         assert_eq!(host.effects.popup_text_count(), 0);
         assert!(matches!(
             outgoing.try_recv().expect("authoritative decision"),
-            NetOutbound::ModalDecision { kind, result, .. }
+            NetOutbound::ModalDecision(robin_engine::multiplayer::ModalDecision { kind, result, .. })
                 if kind == expected.kind && result == expected.result
         ));
     }

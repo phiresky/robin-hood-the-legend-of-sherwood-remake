@@ -375,6 +375,14 @@ pub struct Vm {
     /// contract, but snapshots and read-only callbacks no longer copy 4 KiB.
     /// TODO: remove these per-instance wire bytes in a versioned state-schema
     /// migration; they are not the authoritative shared script memory.
+    /// Blocked on compatibility, not effort: the bytes are folded into
+    /// `replay::state_hash`, which recorded replays store as per-frame
+    /// checkpoints (`hashes`, `ReplaySaveMarker::state_hash`) and ranked
+    /// resimulation verifies (`RankedResimulationError::StateHashMismatch`);
+    /// saves reject any `SAVE_FORMAT_VERSION` other than the current one
+    /// (no legacy-load branch), and `CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1`
+    /// pins the save schema. A skip needs a coordinated save/replay/ranked
+    /// schema bump that invalidates existing recordings.
     pub static_area: std::sync::Arc<Vec<u8>>,
     /// Class instance heap.
     pub heap: Vec<u8>,
@@ -420,18 +428,25 @@ pub struct VmActivationState {
     pub ip: u32,
 }
 
+/// Process-wide all-zero 4 KiB static area shared by fresh VMs and script
+/// managers. The `OnceLock` always retains one reference, so every
+/// `Arc::make_mut` write forks a private copy and this page is never mutated.
+pub(crate) fn shared_zero_static_area() -> std::sync::Arc<Vec<u8>> {
+    static EMPTY_STATIC_AREA: std::sync::OnceLock<std::sync::Arc<Vec<u8>>> =
+        std::sync::OnceLock::new();
+    EMPTY_STATIC_AREA
+        .get_or_init(|| std::sync::Arc::new(vec![0; 4096]))
+        .clone()
+}
+
 impl Vm {
     pub fn new() -> Self {
         Self::with_heap_size(4096)
     }
 
     pub(crate) fn with_heap_size(heap_size: usize) -> Self {
-        static EMPTY_STATIC_AREA: std::sync::OnceLock<std::sync::Arc<Vec<u8>>> =
-            std::sync::OnceLock::new();
         Self {
-            static_area: EMPTY_STATIC_AREA
-                .get_or_init(|| std::sync::Arc::new(vec![0; 4096]))
-                .clone(),
+            static_area: shared_zero_static_area(),
             heap: vec![0; heap_size],
             frames: vec![Frame::default()],
             outgoing_params: Vec::new(),

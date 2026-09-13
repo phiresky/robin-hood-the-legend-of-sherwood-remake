@@ -7,6 +7,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+// Sound-bank parsers return `String` errors; truncation converts via `?`.
+use crate::le_bytes::{read_u16 as read_u16_le, read_u32 as read_u32_le};
+
 /// Loader function type: given a filename, returns `(pcm_data, size_bytes, duration_ms)`.
 pub type SampleLoader = dyn Fn(&str) -> Option<(Vec<u8>, u32, u32)>;
 
@@ -820,24 +823,6 @@ fn checked_record_count(
         ));
     }
     Ok(count)
-}
-
-fn read_u32_le(data: &[u8], pos: &mut usize) -> Result<u32, String> {
-    if *pos + 4 > data.len() {
-        return Err("Unexpected end of data reading u32".into());
-    }
-    let val = u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
-    *pos += 4;
-    Ok(val)
-}
-
-fn read_u16_le(data: &[u8], pos: &mut usize) -> Result<u16, String> {
-    if *pos + 2 > data.len() {
-        return Err("Unexpected end of data reading u16".into());
-    }
-    let val = u16::from_le_bytes([data[*pos], data[*pos + 1]]);
-    *pos += 2;
-    Ok(val)
 }
 
 fn read_fx_filename(data: &[u8], pos: &mut usize) -> Result<String, String> {

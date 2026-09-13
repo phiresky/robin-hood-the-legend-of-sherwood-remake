@@ -488,22 +488,17 @@ pub(super) async fn complete_content_admission(
             .await?;
             Ok(ContentAdmissionCompletion::Prepared)
         }
-        NetOutbound::ContentReject {
-            full_mod_sha256,
-            reason,
-        } if full_mod_sha256 == offer.full_mod_sha256 => {
+        NetOutbound::ContentReject(reject) if reject.full_mod_sha256 == offer.full_mod_sha256 => {
             write_frame_with_timeout(
                 &mut session.send,
-                &NetMsg::ContentReject {
-                    full_mod_sha256,
-                    reason: reason.clone(),
-                },
+                &NetMsg::ContentReject(reject.clone()),
                 CONTENT_TRANSFER_IDLE_TIMEOUT,
                 "content rejection",
             )
             .await?;
             Err(format!(
-                "downloaded host content failed local admission: {reason}"
+                "downloaded host content failed local admission: {}",
+                reject.reason
             ))
         }
         other => Err(format!(
@@ -529,10 +524,10 @@ pub(super) async fn resolve_reconnect_prelude(
         HandshakePrelude::Content { mut session, offer } => {
             write_frame_with_timeout(
                 &mut session.send,
-                &NetMsg::ContentRequest {
+                &NetMsg::ContentRequest(robin_engine::multiplayer::ContentRequest {
                     full_mod_sha256: offer.full_mod_sha256,
                     resume_offset: offer.encoded_bytes,
-                },
+                }),
                 CONTENT_TRANSFER_IDLE_TIMEOUT,
                 "reconnect content request",
             )

@@ -445,7 +445,7 @@ fn add_campaign_value_negative_ransom_skips_jingle_but_credits_money() {
     engine.mission_domain.campaign.values[CampaignValue::Ransom] = 500;
     engine.mission_domain.mission_stat.collected_money = 200;
 
-    // A purse throw (`combat.rs:2433`) issues a negative delta.
+    // A purse throw (`engine/archery.rs`, `ThrowPurseDone`) issues a negative delta.
     engine.add_campaign_value(CampaignValue::Ransom, -100);
 
     assert_eq!(

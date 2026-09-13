@@ -1015,7 +1015,7 @@ impl EngineInner {
                 .map(|p| p.life_points)
                 .or_else(|| victim.npc_data().map(|n| n.life_points))
                 .unwrap_or(0);
-            if life <= 0 || life >= crate::abilities::LIFEPOINTS_PC {
+            if life <= 0 || life >= crate::pc_status::LIFEPOINTS_PC {
                 return false;
             }
             if !check_position {
@@ -1881,7 +1881,7 @@ fn read_target_point_2d(
 
 /// Read a target point preserving Z.  `GeoPoint2D`-shaped fields are
 /// lifted with `z = 0.0` (matches the spawn-side behaviour at
-/// engine/combat.rs ThrowPurseDone, which lifts the stored target the
+/// engine/archery.rs ThrowPurseDone, which lifts the stored target the
 /// same way).
 fn read_target_point_3d(
     element: &SequenceElement,
@@ -2349,7 +2349,7 @@ mod tests {
                         .unwrap()
                         .pc_data_mut()
                         .unwrap()
-                        .life_points = crate::abilities::LIFEPOINTS_PC;
+                        .life_points = crate::pc_status::LIFEPOINTS_PC;
                     target
                 }
                 TargetKind::Fx(distance) => {

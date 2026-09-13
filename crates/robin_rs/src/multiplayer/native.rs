@@ -571,7 +571,7 @@ mod tests {
                 ),
                 (
                     "modal proposal",
-                    NetMsg::ModalProposal {
+                    NetMsg::ModalProposal(robin_engine::multiplayer::ModalProposal {
                         instance: ModalInstanceId {
                             session_id: context.session_id,
                             opened_frame: 10,
@@ -580,7 +580,7 @@ mod tests {
                         kind: ModalKind::Dialog { dialog_id: 44 },
                         result: DialogResult::Completed,
                         requested_frame: 10,
-                    },
+                    }),
                 ),
             ];
             for (label, message) in messages {
@@ -1288,12 +1288,14 @@ mod tests {
         let offer_bytes = super::encode_msg(&super::NetMsg::ContentOffer { offer });
         assert!(offer_bytes.len() <= MAX_SERVER_CONTROL_FRAME_BYTES);
 
-        let chunk_bytes = super::encode_msg(&super::NetMsg::ContentChunk {
-            full_mod_sha256: [1; 32],
-            offset: 0,
-            total_bytes: robin_engine::multiplayer::DISTRIBUTED_MOD_CHUNK_LIMIT as u64,
-            bytes: vec![0; robin_engine::multiplayer::DISTRIBUTED_MOD_CHUNK_LIMIT],
-        });
+        let chunk_bytes = super::encode_msg(&super::NetMsg::ContentChunk(
+            robin_engine::multiplayer::ContentChunk {
+                full_mod_sha256: [1; 32],
+                offset: 0,
+                total_bytes: robin_engine::multiplayer::DISTRIBUTED_MOD_CHUNK_LIMIT as u64,
+                bytes: vec![0; robin_engine::multiplayer::DISTRIBUTED_MOD_CHUNK_LIMIT],
+            },
+        ));
         assert!(chunk_bytes.len() <= MAX_CONTENT_FRAME_BYTES);
         assert!(chunk_bytes.len() > MAX_SERVER_CONTROL_FRAME_BYTES);
     }
@@ -1329,12 +1331,12 @@ mod tests {
                 &incoming_tx,
                 &cosign_state,
                 None,
-                super::NetMsg::ContentChunk {
+                super::NetMsg::ContentChunk(robin_engine::multiplayer::ContentChunk {
                     full_mod_sha256: [1; 32],
                     offset: 0,
                     total_bytes: 1,
                     bytes: vec![0],
-                },
+                }),
             )
             .is_err()
         );
@@ -1386,12 +1388,14 @@ mod tests {
     #[test]
     fn native_gameplay_rejects_host_only_and_late_content_outbound() {
         assert!(
-            client_gameplay_wire_msg(super::NetOutbound::StateHash {
-                frame: 1,
-                hash: Some(2),
-                clock_frame: Some(3),
-                ms_until_next_frame: Some(4),
-            })
+            client_gameplay_wire_msg(super::NetOutbound::StateHash(
+                robin_engine::multiplayer::StateHashReport {
+                    frame: 1,
+                    hash: Some(2),
+                    clock_frame: Some(3),
+                    ms_until_next_frame: Some(4),
+                }
+            ))
             .unwrap_err()
             .contains("host-only")
         );
@@ -1412,20 +1416,24 @@ mod tests {
     fn native_server_gameplay_rejects_wrong_direction_messages() {
         assert!(validate_server_gameplay_wire_msg(&super::NetMsg::Note("legal".into())).is_ok());
         assert!(
-            validate_server_gameplay_wire_msg(&super::NetMsg::ContentRequest {
-                full_mod_sha256: [1; 32],
-                resume_offset: 0,
-            })
+            validate_server_gameplay_wire_msg(&super::NetMsg::ContentRequest(
+                robin_engine::multiplayer::ContentRequest {
+                    full_mod_sha256: [1; 32],
+                    resume_offset: 0,
+                }
+            ))
             .unwrap_err()
             .contains("ordinary peer session")
         );
         assert!(
-            validate_server_gameplay_wire_msg(&super::NetMsg::StateHash {
-                frame: 1,
-                hash: Some(2),
-                clock_frame: Some(3),
-                ms_until_next_frame: Some(4),
-            })
+            validate_server_gameplay_wire_msg(&super::NetMsg::StateHash(
+                robin_engine::multiplayer::StateHashReport {
+                    frame: 1,
+                    hash: Some(2),
+                    clock_frame: Some(3),
+                    ms_until_next_frame: Some(4),
+                }
+            ))
             .unwrap_err()
             .contains("invalid server-session message")
         );
@@ -1441,12 +1449,14 @@ mod tests {
         );
 
         assert!(
-            validate_server_gameplay_outbound(&super::NetOutbound::StateHash {
-                frame: 1,
-                hash: Some(2),
-                clock_frame: Some(3),
-                ms_until_next_frame: Some(4),
-            })
+            validate_server_gameplay_outbound(&super::NetOutbound::StateHash(
+                robin_engine::multiplayer::StateHashReport {
+                    frame: 1,
+                    hash: Some(2),
+                    clock_frame: Some(3),
+                    ms_until_next_frame: Some(4),
+                }
+            ))
             .is_ok()
         );
         assert!(

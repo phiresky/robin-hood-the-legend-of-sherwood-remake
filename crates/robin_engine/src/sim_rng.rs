@@ -40,6 +40,17 @@ use std::cell::RefCell;
 /// synchronous call boundaries. It cannot be detached from the owning
 /// `SimulationRng`; engine snapshot cloning and serialization operate on that
 /// owner, never on the capability.
+///
+/// Why `Arc<Mutex<_>>` rather than a plain owned `fastrand::Rng`: the context
+/// is an *alias* of the engine-owned stream (`SimulationRng::context` hands
+/// out an `Arc` clone), so every draw through it must advance the engine's
+/// state while engine methods hold `&mut` borrows of other fields. An owned
+/// `Rng` would fork the stream instead. `Rc<RefCell<_>>` is ruled out because
+/// `Engine` must stay `Send`: native game factories run on a dedicated thread
+/// and `robin_rs::rollback_checker` moves a cloned `Engine` into a worker
+/// thread. The lock is uncontended.
+// TODO: a borrowed `&RefCell<fastrand::Rng>` context (lifetime-parameterized)
+// would drop the lock, but touches every `&SimulationContext` signature.
 pub struct SimulationContext {
     rng: Arc<Mutex<fastrand::Rng>>,
     original_replay: Option<Arc<Mutex<OriginalRngReplay>>>,
@@ -416,6 +427,22 @@ pub(crate) fn with_draw_trace<R>(f: impl FnOnce() -> R) -> (R, Vec<RngSite>) {
     }
 }
 
+/// Test-only observer for [`with_draw_trace`]; compiles to nothing in
+/// production so `with_rng` has no test branch.
+#[cfg(test)]
+#[inline]
+fn trace_test_draw(site: RngSite) {
+    DRAW_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push(site);
+        }
+    });
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn trace_test_draw(_site: RngSite) {}
+
 /// Run one reviewed authoritative auxiliary generator from a deterministic
 /// seed without installing or advancing the serialized simulation stream.
 pub fn with_auxiliary_seed<R>(
@@ -432,14 +459,7 @@ fn with_rng<R>(
     site: RngSite,
     f: impl FnOnce(&mut fastrand::Rng) -> R,
 ) -> R {
-    #[cfg(test)]
-    DRAW_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push(site);
-        }
-    });
-    #[cfg(not(test))]
-    let _ = site;
+    trace_test_draw(site);
     f(&mut context.rng.lock().expect("simulation RNG mutex poisoned"))
 }
 

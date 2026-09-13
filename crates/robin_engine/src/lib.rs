@@ -49,6 +49,7 @@ pub mod human_control;
 pub mod interp;
 pub mod inventory;
 pub mod jump_line;
+pub mod le_bytes;
 pub use robin_data_io::legacy_io;
 pub mod engine;
 pub mod legacy_save;

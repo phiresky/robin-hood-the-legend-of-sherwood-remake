@@ -577,6 +577,75 @@ pub fn browser_seat_proof_message(
     message
 }
 
+// ── Shared payloads ──────────────────────────────────────────────────
+//
+// Payload structs shared by `NetMsg`, `NetEvent` and `NetOutbound`. A
+// newtype variant wrapping one of these structs has exactly the same bitcode
+// bytes and serde representation as the former inline struct variant with
+// the same fields in the same order (pinned by
+// `shared_payload_variants_keep_golden_wire_bytes`). Field order is wire
+// format: never reorder.
+
+/// Client → server: explicit acceptance of this immutable hash and the
+/// durable byte prefix already present locally. Reconnect repeats this
+/// request with the new exact prefix, making the transfer resumable.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct ContentRequest {
+    pub full_mod_sha256: [u8; 32],
+    pub resume_offset: u64,
+}
+
+/// Client → server: explicit refusal. There is no unsafe vanilla/SCB
+/// fallback; the server closes this peer's admission path.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct ContentReject {
+    pub full_mod_sha256: [u8; 32],
+    pub reason: String,
+}
+
+/// Server → client: one bounded sequential segment of canonical package
+/// bytes. QUIC provides reliability; offsets provide durable resumption.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct ContentChunk {
+    pub full_mod_sha256: [u8; 32],
+    pub offset: u64,
+    pub total_bytes: u64,
+    pub bytes: Vec<u8>,
+}
+
+/// Deterministic engine state hash and/or host clock sample at the start of
+/// `frame` (pre-tick), broadcast every [`STATE_HASH_INTERVAL`] frames.
+#[derive(
+    Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
+pub struct StateHashReport {
+    pub frame: u32,
+    pub hash: Option<u64>,
+    pub clock_frame: Option<u32>,
+    pub ms_until_next_frame: Option<u32>,
+}
+
+/// Client → server: a visible request for the host to choose this result.
+/// A proposal is never a vote and never changes local modal state.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct ModalProposal {
+    pub instance: ModalInstanceId,
+    pub kind: ModalKind,
+    pub result: DialogResult,
+    pub requested_frame: u32,
+}
+
+/// Server → clients: the sole authoritative result for one exact modal
+/// occurrence. `decision_frame` is the host timeline frame on which the
+/// decision was made and recorded.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct ModalDecision {
+    pub instance: ModalInstanceId,
+    pub kind: ModalKind,
+    pub result: DialogResult,
+    pub decision_frame: u32,
+}
+
 /// One on-the-wire message.  Encoded as a bitcode binary blob inside
 /// each WebSocket frame.
 #[derive(Clone, Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -608,27 +677,12 @@ pub enum NetMsg {
     /// required by this session. The server sends no snapshot or simulation
     /// traffic until the client validates/mounts it and returns ContentReady.
     ContentOffer { offer: DistributedModOffer },
-    /// Client → server: explicit acceptance of this immutable hash and the
-    /// durable byte prefix already present locally. Reconnect repeats this
-    /// request with the new exact prefix, making the transfer resumable.
-    ContentRequest {
-        full_mod_sha256: [u8; 32],
-        resume_offset: u64,
-    },
-    /// Client → server: explicit refusal. There is no unsafe vanilla/SCB
-    /// fallback; the server closes this peer's admission path.
-    ContentReject {
-        full_mod_sha256: [u8; 32],
-        reason: String,
-    },
-    /// Server → client: one bounded sequential segment of canonical package
-    /// bytes. QUIC provides reliability; offsets provide durable resumption.
-    ContentChunk {
-        full_mod_sha256: [u8; 32],
-        offset: u64,
-        total_bytes: u64,
-        bytes: Vec<u8>,
-    },
+    /// Client → server, see [`ContentRequest`].
+    ContentRequest(ContentRequest),
+    /// Client → server, see [`ContentReject`].
+    ContentReject(ContentReject),
+    /// Server → client, see [`ContentChunk`].
+    ContentChunk(ContentChunk),
     /// Client → server: full content was hash-verified, admitted, and mounted.
     ContentReady { full_mod_sha256: [u8; 32] },
     /// Client → server: full content was hash-verified and cached by the
@@ -658,15 +712,8 @@ pub enum NetMsg {
     },
     /// Either direction, advisory.
     Note(String),
-    /// Server → all peers: deterministic engine state hash at the
-    /// start of `frame` (pre-tick), broadcast every
-    /// [`STATE_HASH_INTERVAL`] frames.
-    StateHash {
-        frame: u32,
-        hash: Option<u64>,
-        clock_frame: Option<u32>,
-        ms_until_next_frame: Option<u32>,
-    },
+    /// Server → all peers, see [`StateHashReport`].
+    StateHash(StateHashReport),
     /// Server → newly-handshaking peer: an authoritative engine
     /// snapshot for mid-mission joins. `engine_bytes` uses native bitcode.
     InitialSnapshot { frame: u32, engine_bytes: Vec<u8> },
@@ -676,23 +723,10 @@ pub enum NetMsg {
     /// Server → all peers: every expected player is loaded and ready;
     /// begin simulating `frame` at this wall-clock timestamp.
     BeginSim { frame: u32, start_epoch_ms: u64 },
-    /// Client → server: a visible request for the host to choose this result.
-    /// A proposal is never a vote and never changes local modal state.
-    ModalProposal {
-        instance: ModalInstanceId,
-        kind: ModalKind,
-        result: DialogResult,
-        requested_frame: u32,
-    },
-    /// Server → clients: the sole authoritative result for one exact modal
-    /// occurrence. `decision_frame` is the host timeline frame on which the
-    /// decision was made and recorded.
-    ModalDecision {
-        instance: ModalInstanceId,
-        kind: ModalKind,
-        result: DialogResult,
-        decision_frame: u32,
-    },
+    /// Client → server, see [`ModalProposal`].
+    ModalProposal(ModalProposal),
+    /// Server → clients, see [`ModalDecision`].
+    ModalDecision(ModalDecision),
     /// Server → peer: abandon the current prediction future and perform a
     /// complete transport handshake. The next session starts from the host's
     /// latest authoritative full snapshot.
@@ -776,12 +810,7 @@ pub enum NetEvent {
     /// drop.  Followed by a fresh `AssignedLocalSeat`.
     Reconnected,
     /// Authoritative state hash and/or clock sample from the host at `frame`.
-    PeerStateHash {
-        frame: u32,
-        hash: Option<u64>,
-        clock_frame: Option<u32>,
-        ms_until_next_frame: Option<u32>,
-    },
+    PeerStateHash(StateHashReport),
     /// Mission construction state announced by the server in `Welcome`.
     /// Only the wasm path emits this; native captures it synchronously.
     MissionConfig {
@@ -794,12 +823,7 @@ pub enum NetEvent {
     /// the transport is allowed to receive an engine snapshot.
     ContentOffer(DistributedModOffer),
     /// A bounded sequential content segment ready for durable staging.
-    ContentChunk {
-        full_mod_sha256: [u8; 32],
-        offset: u64,
-        total_bytes: u64,
-        bytes: Vec<u8>,
-    },
+    ContentChunk(ContentChunk),
     /// Unrecoverable transport/session compatibility failure.
     Fatal(String),
     /// Authoritative initial-state snapshot from the host.
@@ -816,18 +840,10 @@ pub enum NetEvent {
     /// this request, but only a host decision can close the modal.
     ModalProposal {
         from: PlayerId,
-        instance: ModalInstanceId,
-        kind: ModalKind,
-        result: DialogResult,
-        requested_frame: u32,
+        proposal: ModalProposal,
     },
     /// The host chose the result for one exact modal occurrence.
-    ModalDecision {
-        instance: ModalInstanceId,
-        kind: ModalKind,
-        result: DialogResult,
-        decision_frame: u32,
-    },
+    ModalDecision(ModalDecision),
     PrepareSnapshotTransition {
         id: SnapshotTransitionId,
         payload: SnapshotTransitionPayload,
@@ -891,12 +907,7 @@ pub enum NetOutbound {
         origin_frame: u32,
         command: PlayerCommand,
     },
-    StateHash {
-        frame: u32,
-        hash: Option<u64>,
-        clock_frame: Option<u32>,
-        ms_until_next_frame: Option<u32>,
-    },
+    StateHash(StateHashReport),
     InitialSnapshot {
         frame: u32,
         engine_bytes: Vec<u8>,
@@ -904,32 +915,16 @@ pub enum NetOutbound {
     ReadyToSim {
         frame: u32,
     },
-    ContentRequest {
-        full_mod_sha256: [u8; 32],
-        resume_offset: u64,
-    },
-    ContentReject {
-        full_mod_sha256: [u8; 32],
-        reason: String,
-    },
+    ContentRequest(ContentRequest),
+    ContentReject(ContentReject),
     ContentReady {
         full_mod_sha256: [u8; 32],
     },
     ContentPrepared {
         full_mod_sha256: [u8; 32],
     },
-    ModalProposal {
-        instance: ModalInstanceId,
-        kind: ModalKind,
-        result: DialogResult,
-        requested_frame: u32,
-    },
-    ModalDecision {
-        instance: ModalInstanceId,
-        kind: ModalKind,
-        result: DialogResult,
-        decision_frame: u32,
-    },
+    ModalProposal(ModalProposal),
+    ModalDecision(ModalDecision),
     /// The retained rollback horizon cannot incorporate an input from this
     /// seat. A client drops its whole live QUIC session and re-handshakes; the
     /// host drops the named peer so that peer follows the same reconnect path.
@@ -1113,19 +1108,19 @@ impl NetChannels {
         full_mod_sha256: [u8; 32],
         resume_offset: u64,
     ) -> Result<(), String> {
-        self.send_required(NetOutbound::ContentRequest {
+        self.send_required(NetOutbound::ContentRequest(ContentRequest {
             full_mod_sha256,
             resume_offset,
-        })
+        }))
     }
 
     pub fn reject_content(&self, full_mod_sha256: [u8; 32], reason: String) {
         // Rejection already terminates the local admission. Reporting it to a
         // peer is best effort; retain the original local failure if it is gone.
-        if let Err(error) = self.send_required(NetOutbound::ContentReject {
+        if let Err(error) = self.send_required(NetOutbound::ContentReject(ContentReject {
             full_mod_sha256,
             reason: bounded_safe_diagnostic(&reason, MAX_REJECT_REASON_BYTES),
-        }) {
+        })) {
             tracing::warn!(%error, "could not notify peer of content rejection");
         }
     }
@@ -1423,12 +1418,12 @@ impl NetChannels {
         clock_frame: u32,
         ms_until_next_frame: u32,
     ) -> Result<(), String> {
-        self.send_required(NetOutbound::StateHash {
+        self.send_required(NetOutbound::StateHash(StateHashReport {
             frame,
             hash: Some(hash),
             clock_frame: Some(clock_frame),
             ms_until_next_frame: Some(ms_until_next_frame),
-        })
+        }))
     }
 
     /// Submit a visible client request without changing local modal state.
@@ -1441,12 +1436,12 @@ impl NetChannels {
     ) -> Result<(), String> {
         let requested_frame = self.frame_cursor.load(Ordering::Relaxed);
         self.outgoing
-            .send(NetOutbound::ModalProposal {
+            .send(NetOutbound::ModalProposal(ModalProposal {
                 instance,
                 kind,
                 result,
                 requested_frame,
-            })
+            }))
             .map_err(|_| "multiplayer modal proposal channel is closed".to_string())
     }
 
@@ -1461,12 +1456,12 @@ impl NetChannels {
     ) -> Result<(), String> {
         let decision_frame = self.frame_cursor.load(Ordering::Relaxed);
         self.outgoing
-            .send(NetOutbound::ModalDecision {
+            .send(NetOutbound::ModalDecision(ModalDecision {
                 instance,
                 kind,
                 result,
                 decision_frame,
-            })
+            }))
             .map_err(|_| "multiplayer modal decision channel is closed".to_string())
     }
 
@@ -1645,7 +1640,7 @@ pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, String> {
                 .validate()
                 .map_err(|error| format!("host sent invalid simulation configuration: {error}"))?;
         }
-        NetMsg::ContentReject { reason, .. } | NetMsg::Reject { reason } => {
+        NetMsg::ContentReject(ContentReject { reason, .. }) | NetMsg::Reject { reason } => {
             validate_safe_display_text(
                 "multiplayer rejection reason",
                 reason,
@@ -1728,6 +1723,108 @@ pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, String> {
 
 #[cfg(test)]
 mod tests {
+    /// The shared payload structs replaced inline struct variants. These bytes
+    /// and JSON strings were captured from the former `NetMsg` definition
+    /// (inline `{ .. }` variants) and must never change: bitcode enum
+    /// discriminants follow variant order and a newtype around a struct encodes
+    /// exactly like the inline fields.
+    #[test]
+    fn shared_payload_variants_keep_golden_wire_bytes() {
+        use super::*;
+        let instance = ModalInstanceId {
+            session_id: MultiplayerSessionId([7; 32]),
+            opened_frame: 123,
+            occurrence: 9,
+        };
+        let cases: [(NetMsg, &[u8]); 6] = [
+            (
+                NetMsg::ContentRequest(ContentRequest {
+                    full_mod_sha256: [0xab; 32],
+                    resume_offset: 0x0102_0304_0506,
+                }),
+                &[
+                    0x03, 0x09, 0xab, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x05, 0x04, 0x03, 0x02,
+                    0x01, 0x00, 0x00,
+                ],
+            ),
+            (
+                NetMsg::ContentChunk(ContentChunk {
+                    full_mod_sha256: [1; 32],
+                    offset: 4096,
+                    total_bytes: 9000,
+                    bytes: vec![9, 8, 7, 6],
+                }),
+                &[
+                    0x05, 0x0a, 0xff, 0xff, 0xff, 0xff, 0x04, 0x00, 0x10, 0x04, 0x28, 0x23, 0x04,
+                    0x02, 0x89, 0x67,
+                ],
+            ),
+            (
+                NetMsg::StateHash(StateHashReport {
+                    frame: 250,
+                    hash: Some(0xdead_beef_cafe),
+                    clock_frame: None,
+                    ms_until_next_frame: Some(17),
+                }),
+                &[
+                    0x0c, 0x04, 0xfa, 0x01, 0x00, 0xfe, 0xca, 0xef, 0xbe, 0xad, 0xde, 0x00, 0x00,
+                    0x00, 0x01, 0x04, 0x11,
+                ],
+            ),
+            (
+                NetMsg::ModalProposal(ModalProposal {
+                    instance,
+                    kind: ModalKind::Dialog { dialog_id: 42 },
+                    result: DialogResult::Load { slot: 3 },
+                    requested_frame: 77,
+                }),
+                &[
+                    0x10, 0x09, 0x07, 0x00, 0x00, 0x00, 0x00, 0x04, 0x7b, 0x06, 0x09, 0x00, 0x04,
+                    0x2a, 0x03, 0x04, 0x03, 0x04, 0x4d,
+                ],
+            ),
+            (
+                NetMsg::ModalDecision(ModalDecision {
+                    instance,
+                    kind: ModalKind::SherwoodReport,
+                    result: DialogResult::Aborted,
+                    decision_frame: 5,
+                }),
+                &[
+                    0x11, 0x09, 0x07, 0x00, 0x00, 0x00, 0x00, 0x04, 0x7b, 0x06, 0x09, 0x02, 0x01,
+                    0x04, 0x05,
+                ],
+            ),
+            (
+                NetMsg::RankedBrowseOnly {
+                    reason: RankedBrowseOnlyReason::PeerAttestationRejected,
+                },
+                &[0x1a, 0x03],
+            ),
+        ];
+        for (message, golden) in &cases {
+            assert_eq!(encode_msg(message), *golden, "{message:?}");
+        }
+        assert_eq!(
+            serde_json::to_string(&cases[2].0).unwrap(),
+            r#"{"StateHash":{"frame":250,"hash":244837814094590,"clock_frame":null,"ms_until_next_frame":17}}"#
+        );
+        let session_json = format!("[{}]", ["7"; 32].join(","));
+        assert_eq!(
+            serde_json::to_string(&cases[3].0).unwrap(),
+            format!(
+                r#"{{"ModalProposal":{{"instance":{{"session_id":{session_json},"opened_frame":123,"occurrence":9}},"kind":{{"Dialog":{{"dialog_id":42}}}},"result":{{"Load":{{"slot":3}}}},"requested_frame":77}}}}"#
+            )
+        );
+        let hash_json = format!("[{}]", ["171"; 32].join(","));
+        assert_eq!(
+            serde_json::to_string(&cases[0].0).unwrap(),
+            format!(
+                r#"{{"ContentRequest":{{"full_mod_sha256":{hash_json},"resume_offset":1108152157446}}}}"#
+            )
+        );
+    }
+
     #[test]
     fn required_sends_fail_and_close_polling_even_with_live_event_sender() {
         use super::*;
@@ -1957,14 +2054,14 @@ mod tests {
             NetMsg::ContentOffer { offer: decoded } if decoded == offer
         ));
         assert!(matches!(
-            decode_msg(&encode_msg(&NetMsg::ContentChunk {
+            decode_msg(&encode_msg(&NetMsg::ContentChunk(ContentChunk {
                 full_mod_sha256: [1; 32],
                 offset: 7,
                 total_bytes: 10,
                 bytes: vec![8, 9, 10],
-            }))
+            })))
             .unwrap(),
-            NetMsg::ContentChunk { offset: 7, bytes, .. } if bytes == [8, 9, 10]
+            NetMsg::ContentChunk(ContentChunk { offset: 7, bytes, .. }) if bytes == [8, 9, 10]
         ));
         assert!(matches!(
             decode_msg(&encode_msg(&NetMsg::ContentReady {
@@ -2048,10 +2145,10 @@ mod tests {
     fn content_rejection_channel_never_emits_an_unsafe_or_oversized_reason() {
         let (channels, _incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
         channels.reject_content([7; 32], format!("host\n{}", "🦊".repeat(1_024)));
-        let NetOutbound::ContentReject {
+        let NetOutbound::ContentReject(ContentReject {
             full_mod_sha256,
             reason,
-        } = outgoing.recv().expect("content rejection")
+        }) = outgoing.recv().expect("content rejection")
         else {
             panic!("content rejection helper emitted the wrong outbound message");
         };
@@ -2076,38 +2173,38 @@ mod tests {
             occurrence: 3,
         };
         let kind = ModalKind::Dialog { dialog_id: 44 };
-        let proposal = decode_msg(&encode_msg(&NetMsg::ModalProposal {
+        let proposal = decode_msg(&encode_msg(&NetMsg::ModalProposal(ModalProposal {
             instance,
             kind: kind.clone(),
             result: DialogResult::Aborted,
             requested_frame: 123,
-        }))
+        })))
         .expect("decode proposal");
-        let decision = decode_msg(&encode_msg(&NetMsg::ModalDecision {
+        let decision = decode_msg(&encode_msg(&NetMsg::ModalDecision(ModalDecision {
             instance,
             kind: kind.clone(),
             result: DialogResult::Completed,
             decision_frame: 125,
-        }))
+        })))
         .expect("decode decision");
 
         assert!(matches!(
             proposal,
-            NetMsg::ModalProposal {
+            NetMsg::ModalProposal(ModalProposal {
                 instance: decoded,
                 kind: ModalKind::Dialog { dialog_id: 44 },
                 result: DialogResult::Aborted,
                 requested_frame: 123,
-            } if decoded == instance
+            }) if decoded == instance
         ));
         assert!(matches!(
             decision,
-            NetMsg::ModalDecision {
+            NetMsg::ModalDecision(ModalDecision {
                 instance: decoded,
                 kind: ModalKind::Dialog { dialog_id: 44 },
                 result: DialogResult::Completed,
                 decision_frame: 125,
-            } if decoded == instance
+            }) if decoded == instance
         ));
     }
 
@@ -2144,18 +2241,18 @@ mod tests {
             NetMsg::Reject {
                 reason: "trusted\u{202e}failure".into(),
             },
-            NetMsg::ContentReject {
+            NetMsg::ContentReject(ContentReject {
                 full_mod_sha256: [1; 32],
                 reason: "padded ".into(),
-            },
+            }),
             NetMsg::Note("line\nspoof".into()),
         ] {
             assert!(decode_msg(&encode_msg(&message)).is_err());
         }
-        let oversized = NetMsg::ContentReject {
+        let oversized = NetMsg::ContentReject(ContentReject {
             full_mod_sha256: [1; 32],
             reason: "x".repeat(MAX_REJECT_REASON_BYTES + 1),
-        };
+        });
         assert!(decode_msg(&encode_msg(&oversized)).is_err());
     }
 

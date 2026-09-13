@@ -197,12 +197,14 @@ impl<'a> ModalNet<'a> {
         let mut matched = None;
         while let Ok(event) = self.net.try_recv_modal_event() {
             match event {
-                engine_multiplayer::NetEvent::ModalDecision {
-                    instance,
-                    kind,
-                    result,
-                    decision_frame,
-                } if instance == self.instance
+                engine_multiplayer::NetEvent::ModalDecision(
+                    engine_multiplayer::ModalDecision {
+                        instance,
+                        kind,
+                        result,
+                        decision_frame,
+                    },
+                ) if instance == self.instance
                     && kind == self.kind
                     && decision_frame >= instance.opened_frame
                     && decision_frame <= self.net.current_frame() =>
@@ -218,10 +220,13 @@ impl<'a> ModalNet<'a> {
                 }
                 engine_multiplayer::NetEvent::ModalProposal {
                     from,
-                    instance,
-                    kind,
-                    result,
-                    requested_frame,
+                    proposal:
+                        engine_multiplayer::ModalProposal {
+                            instance,
+                            kind,
+                            result,
+                            requested_frame,
+                        },
                 } if self.is_host && instance == self.instance && kind == self.kind => {
                     self.net
                         .record_visible_modal_request(engine_multiplayer::VisibleModalRequest {
@@ -311,7 +316,7 @@ mod tests {
         );
         assert!(matches!(
             outgoing.try_recv().expect("proposal"),
-            NetOutbound::ModalProposal { instance, kind: observed, result: DialogResult::Completed, requested_frame: 0 }
+            NetOutbound::ModalProposal(engine_multiplayer::ModalProposal { instance, kind: observed, result: DialogResult::Completed, requested_frame: 0 })
                 if instance == modal.instance() && observed == kind()
         ));
         assert!(modal.poll_remote_dismissal().is_none());
@@ -324,10 +329,12 @@ mod tests {
         incoming
             .send(NetEvent::ModalProposal {
                 from: PlayerId(2),
-                instance: modal.instance(),
-                kind: kind(),
-                result: DialogResult::Aborted,
-                requested_frame: 0,
+                proposal: engine_multiplayer::ModalProposal {
+                    instance: modal.instance(),
+                    kind: kind(),
+                    result: DialogResult::Aborted,
+                    requested_frame: 0,
+                },
             })
             .unwrap();
         assert_eq!(modal.poll_remote_dismissal(), None);
@@ -343,7 +350,7 @@ mod tests {
         );
         assert!(matches!(
             outgoing.try_recv().expect("decision"),
-            NetOutbound::ModalDecision { kind: observed, result: DialogResult::Completed, .. }
+            NetOutbound::ModalDecision(engine_multiplayer::ModalDecision { kind: observed, result: DialogResult::Completed, .. })
                 if observed == kind()
         ));
     }
@@ -353,12 +360,12 @@ mod tests {
         let (net, incoming, _outgoing) = fixture();
         let modal = ModalNet::new(&net, kind(), false);
         incoming
-            .send(NetEvent::ModalDecision {
+            .send(NetEvent::ModalDecision(engine_multiplayer::ModalDecision {
                 instance: modal.instance(),
                 kind: kind(),
                 result: DialogResult::Completed,
                 decision_frame: 0,
-            })
+            }))
             .unwrap();
         assert_eq!(modal.poll_remote_dismissal(), Some(DialogResult::Completed));
     }
@@ -408,13 +415,13 @@ mod tests {
             assert_eq!(completed, is_host.then_some(DialogResult::Aborted));
             assert!(matches!(
                 outgoing.try_recv().unwrap(),
-                NetOutbound::ModalDecision {
+                NetOutbound::ModalDecision(engine_multiplayer::ModalDecision {
                     result: DialogResult::Aborted,
                     ..
-                } | NetOutbound::ModalProposal {
+                }) | NetOutbound::ModalProposal(engine_multiplayer::ModalProposal {
                     result: DialogResult::Aborted,
                     ..
-                }
+                })
             ));
             assert_eq!(gate.poll(Some(&replacement)), None);
             assert!(
@@ -439,12 +446,12 @@ mod tests {
         assert_eq!(gate.poll(Some(&modal)), None);
         assert!(outgoing.try_recv().is_err());
         incoming
-            .send(NetEvent::ModalDecision {
+            .send(NetEvent::ModalDecision(engine_multiplayer::ModalDecision {
                 instance: modal.instance(),
                 kind: kind(),
                 result: DialogResult::Completed,
                 decision_frame: 0,
-            })
+            }))
             .unwrap();
         assert_eq!(gate.poll(Some(&modal)), Some(DialogResult::Completed));
         assert_eq!(gate.poll(Some(&modal)), None);
@@ -470,12 +477,12 @@ mod tests {
         let mut gate = ModalDismissalGate::default();
         assert_eq!(gate.request(DialogResult::Aborted, Some(&modal)), None);
         incoming
-            .send(NetEvent::ModalDecision {
+            .send(NetEvent::ModalDecision(engine_multiplayer::ModalDecision {
                 instance: modal.instance(),
                 kind: kind(),
                 result: DialogResult::Completed,
                 decision_frame: 0,
-            })
+            }))
             .unwrap();
         assert_eq!(gate.poll(Some(&modal)), Some(DialogResult::Completed));
         assert_eq!(gate.poll(Some(&modal)), None);

@@ -700,7 +700,7 @@ impl EngineInner {
                     Some(d) => d,
                     None => return false,
                 };
-                if pc_data.life_points >= crate::combat::LIFEPOINTS_PC {
+                if pc_data.life_points >= crate::pc_status::LIFEPOINTS_PC {
                     return false;
                 }
                 // In-coma check reads the campaign-level coma

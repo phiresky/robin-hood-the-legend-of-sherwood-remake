@@ -34,9 +34,6 @@ use crate::sprite::MotionState as SpriteMotionState;
 /// HP restored per bandage.
 pub const HEAL_AMOUNT: i16 = 75;
 
-/// Max life points for PCs.
-pub use crate::pc_status::LIFEPOINTS_PC;
-
 /// Max distance² for healing / tying (40² = 1600).
 pub const DISTANCE_MAX_SQ: f32 = 1600.0;
 
@@ -998,7 +995,7 @@ pub fn begin_untie(
 ///
 /// Called when `Command::HealCmd` is dispatched.  Self-heal runs
 /// `OrderType::Eating` instead of `Healing`; the post-heal speech cue
-/// fires from the `HealDone` branch in `engine::combat`.
+/// fires from the `HealDone` branch in `engine::archery`.
 pub fn begin_heal(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
@@ -1144,7 +1141,7 @@ pub fn begin_whistle(
 /// Called when `Command::EatCmd` is dispatched.  The dispatcher (tick.rs)
 /// checks Eat ammo > 0 before calling this; on success we queue the
 /// `Eating` animation order, and the post-animation effect is applied
-/// by the [`AbilityTickResult::EatDone`] handler in `engine::combat`.
+/// by the [`AbilityTickResult::EatDone`] handler in `engine::archery`.
 pub fn begin_eat(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
@@ -1200,7 +1197,7 @@ pub fn begin_eat(
 ///
 /// The attacker plays the `Hitting` animation; on completion
 /// [`tick_ability`] emits [`AbilityTickResult::HitDone`], and the
-/// engine handler (`engine::combat`) launches a
+/// engine handler (`engine::archery`) launches a
 /// [`Command::ReceiveHitDamage`] damage element on the target with
 /// concussion 80 (`Action::Hit`) or 150 (`Action::HitHard`) based on
 /// whether the attacker's profile carries the HitHard action slot.
@@ -1230,7 +1227,7 @@ pub fn begin_hit(
     // initial sequence-element validation gate
     // whose HIT arm tests whether the target is out of order. This implementation runs that
     // same gate in `EngineInner::tick_pending_hit_init`
-    // (`engine/combat.rs`), and the Original's actor is visibly committed to
+    // (`engine/archery.rs`), and the Original's actor is visibly committed to
     // hit command — including the walk-to-wait transition inserted during instruction
     // ahead of HITTING — for the frames before that abort.
     let target_pos = match entities.get(target_id) {
@@ -4669,7 +4666,7 @@ mod tests {
             .unwrap()
             .pc_data_mut()
             .unwrap()
-            .life_points = LIFEPOINTS_PC;
+            .life_points = crate::pc_status::LIFEPOINTS_PC;
 
         let mut manager = SequenceManager::new();
         let seq_id = launch_ability_element(&mut manager, Command::HealCmd, healer);

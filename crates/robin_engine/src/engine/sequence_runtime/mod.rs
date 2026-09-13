@@ -2934,7 +2934,7 @@ mod sequence_phase_context_tests {
                 ..Default::default()
             },
             pc: crate::element::PcData {
-                life_points: crate::combat::LIFEPOINTS_PC,
+                life_points: crate::pc_status::LIFEPOINTS_PC,
                 ..Default::default()
             },
             ..crate::engine::test_support::actors::unbound_pc(crate::element::Posture::Upright)

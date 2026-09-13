@@ -1,7 +1,9 @@
 //! Shared sequential content-transfer validation, independent of stream and clock.
 
 use super::{NetEvent, NetMsg, NetOutbound};
-use robin_engine::multiplayer::{DISTRIBUTED_MOD_CHUNK_LIMIT, DistributedModOffer};
+use robin_engine::multiplayer::{
+    ContentChunk, ContentReject, ContentRequest, DISTRIBUTED_MOD_CHUNK_LIMIT, DistributedModOffer,
+};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(super) enum ContentDecision {
@@ -15,27 +17,27 @@ impl ContentDecision {
         decision: NetOutbound,
     ) -> Result<Self, String> {
         match decision {
-            NetOutbound::ContentRequest {
+            NetOutbound::ContentRequest(ContentRequest {
                 full_mod_sha256,
                 resume_offset,
-            } if full_mod_sha256 == offer.full_mod_sha256
+            }) if full_mod_sha256 == offer.full_mod_sha256
                 && resume_offset <= offer.encoded_bytes =>
             {
                 Ok(Self::Request { resume_offset })
             }
-            NetOutbound::ContentRequest {
+            NetOutbound::ContentRequest(ContentRequest {
                 full_mod_sha256,
                 resume_offset,
-            } => Err(format!(
+            }) => Err(format!(
                 "invalid content request for {} at offset {resume_offset}; offered {} with {} bytes",
                 robin_engine::spellforge::hex_hash(&full_mod_sha256),
                 robin_engine::spellforge::hex_hash(&offer.full_mod_sha256),
                 offer.encoded_bytes
             )),
-            NetOutbound::ContentReject {
+            NetOutbound::ContentReject(ContentReject {
                 full_mod_sha256,
                 reason,
-            } if full_mod_sha256 == offer.full_mod_sha256 => Ok(Self::Reject { reason }),
+            }) if full_mod_sha256 == offer.full_mod_sha256 => Ok(Self::Reject { reason }),
             other => Err(format!(
                 "expected local ContentRequest/ContentReject, got {other:?}"
             )),
@@ -45,14 +47,14 @@ impl ContentDecision {
     pub(super) fn message(&self, offer: &DistributedModOffer) -> NetMsg {
         let full_mod_sha256 = offer.full_mod_sha256;
         match self {
-            Self::Request { resume_offset } => NetMsg::ContentRequest {
+            Self::Request { resume_offset } => NetMsg::ContentRequest(ContentRequest {
                 full_mod_sha256,
                 resume_offset: *resume_offset,
-            },
-            Self::Reject { reason } => NetMsg::ContentReject {
+            }),
+            Self::Reject { reason } => NetMsg::ContentReject(ContentReject {
                 full_mod_sha256,
                 reason: reason.clone(),
-            },
+            }),
         }
     }
 
@@ -81,12 +83,12 @@ pub(super) fn accept_chunk(
     received: u64,
     message: Option<NetMsg>,
 ) -> Result<(u64, NetEvent), String> {
-    let Some(NetMsg::ContentChunk {
+    let Some(NetMsg::ContentChunk(ContentChunk {
         full_mod_sha256,
         offset,
         total_bytes,
         bytes,
-    }) = message
+    })) = message
     else {
         return Err(format!(
             "expected sequential ContentChunk at offset {received}, got {message:?}"
@@ -118,12 +120,12 @@ pub(super) fn accept_chunk(
     }
     Ok((
         end,
-        NetEvent::ContentChunk {
+        NetEvent::ContentChunk(ContentChunk {
             full_mod_sha256,
             offset,
             total_bytes,
             bytes,
-        },
+        }),
     ))
 }
 
@@ -151,12 +153,12 @@ mod tests {
     }
 
     fn chunk(hash: [u8; 32], offset: u64, total_bytes: u64, bytes: Vec<u8>) -> Option<NetMsg> {
-        Some(NetMsg::ContentChunk {
+        Some(NetMsg::ContentChunk(ContentChunk {
             full_mod_sha256: hash,
             offset,
             total_bytes,
             bytes,
-        })
+        }))
     }
 
     #[test]
@@ -164,7 +166,7 @@ mod tests {
         let (next, event) = accept_chunk(&offer(), 2, chunk([1; 32], 2, 4, vec![7, 8])).unwrap();
         assert_eq!(next, 4);
         assert!(
-            matches!(event, NetEvent::ContentChunk { offset: 2, total_bytes: 4, bytes, .. } if bytes == [7, 8])
+            matches!(event, NetEvent::ContentChunk(ContentChunk { offset: 2, total_bytes: 4, bytes, .. }) if bytes == [7, 8])
         );
     }
 
@@ -175,40 +177,40 @@ mod tests {
             assert!(
                 ContentDecision::decode(
                     &offer,
-                    NetOutbound::ContentRequest {
+                    NetOutbound::ContentRequest(ContentRequest {
                         full_mod_sha256: hash,
                         resume_offset: offset,
-                    }
+                    })
                 )
                 .is_err()
             );
         }
         let request = ContentDecision::decode(
             &offer,
-            NetOutbound::ContentRequest {
+            NetOutbound::ContentRequest(ContentRequest {
                 full_mod_sha256: [1; 32],
                 resume_offset: 4,
-            },
+            }),
         )
         .unwrap();
         assert!(matches!(
             request.message(&offer),
-            NetMsg::ContentRequest {
+            NetMsg::ContentRequest(ContentRequest {
                 resume_offset: 4,
                 ..
-            }
+            })
         ));
         assert_eq!(request.resume_offset().unwrap(), 4);
         let rejected = ContentDecision::decode(
             &offer,
-            NetOutbound::ContentReject {
+            NetOutbound::ContentReject(ContentReject {
                 full_mod_sha256: [1; 32],
                 reason: "declined".into(),
-            },
+            }),
         )
         .unwrap();
         assert!(
-            matches!(rejected.message(&offer), NetMsg::ContentReject { reason, .. } if reason == "declined")
+            matches!(rejected.message(&offer), NetMsg::ContentReject(ContentReject { reason, .. }) if reason == "declined")
         );
         assert_eq!(
             rejected.resume_offset().unwrap_err(),

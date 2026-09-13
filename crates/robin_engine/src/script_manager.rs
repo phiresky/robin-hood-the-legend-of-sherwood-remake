@@ -224,7 +224,7 @@ impl ScriptManager {
     pub fn from_program(program: std::sync::Arc<ScriptProgram>) -> Self {
         Self {
             program,
-            static_area: std::sync::Arc::new(vec![0u8; 4096]),
+            static_area: crate::interp::shared_zero_static_area(),
         }
     }
 

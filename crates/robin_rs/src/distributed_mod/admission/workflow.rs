@@ -106,12 +106,12 @@ pub async fn admit_trusted_distributed_mod(
                 channels.reject_content(offer.full_mod_sha256, message.clone());
                 return Err(message);
             }
-            Ok(NetEvent::ContentChunk {
+            Ok(NetEvent::ContentChunk(robin_engine::multiplayer::ContentChunk {
                 full_mod_sha256,
                 offset,
                 total_bytes,
                 bytes,
-            }) => {
+            })) => {
                 if let Err(message) =
                     admission.check_chunk(full_mod_sha256, total_bytes, offset, bytes.len())
                 {

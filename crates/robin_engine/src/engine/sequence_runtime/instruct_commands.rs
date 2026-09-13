@@ -476,7 +476,7 @@ impl EngineInner {
                 return OwnerActionBarrier::Skip;
             };
             let max_life_points = match victim {
-                crate::element::Entity::Pc(_) => crate::combat::LIFEPOINTS_PC,
+                crate::element::Entity::Pc(_) => crate::pc_status::LIFEPOINTS_PC,
                 crate::element::Entity::Soldier(s) => s.soldier.cached_max_life_points,
                 crate::element::Entity::Civilian(_) => 100,
                 _ => 100,

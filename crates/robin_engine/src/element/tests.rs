@@ -616,11 +616,8 @@ fn explicit_posture_apis_preserve_legacy_state_hash_and_wire_bytes() {
 fn saved_posture_sources_remain_independent_until_explicit_v48_restore() {
     let element = ElementData::from_initial_posture(Posture::Dead);
     let sprite_posture = element.sprite.position_iface.v48_serialized_state().posture;
-    let saved = PersistedElementData::capture(&element);
-    let encoded = serde_json::to_vec(&saved).expect("encode element save projection");
-    let saved: PersistedElementData =
-        serde_json::from_slice(&encoded).expect("decode element save projection");
-    let mut restored = saved.into_runtime();
+    let encoded = serde_json::to_vec(&element).expect("encode element save");
+    let mut restored: ElementData = serde_json::from_slice(&encoded).expect("decode element save");
     assert_eq!(restored.posture(), Posture::Dead);
     assert_eq!(
         restored
@@ -1344,4 +1341,558 @@ fn entity_is_vip_reads_enemy_ai_flag_only_for_soldiers() {
         fx: FxData::default(),
     });
     assert!(!fx.is_vip());
+}
+
+/// SHA-256 digests of the bitcode bytes, the JSON string and the `StateHash`
+/// byte stream (native-endian writes, recorded on a little-endian host).
+fn human_golden_digests(human: &HumanData) -> [String; 3] {
+    use robin_util::state_hash::StateHash;
+    use sha2::Digest;
+
+    struct ByteRecorder(Vec<u8>);
+    impl std::hash::Hasher for ByteRecorder {
+        fn finish(&self) -> u64 {
+            unreachable!("state-hash byte recorder is never finished")
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes);
+        }
+    }
+
+    let sha = |bytes: &[u8]| hex::encode(sha2::Sha256::digest(bytes));
+    let mut recorder = ByteRecorder(Vec::new());
+    human.state_hash(&mut recorder);
+    [
+        sha(&bitcode::encode(human)),
+        sha(serde_json::to_string(human).unwrap().as_bytes()),
+        sha(&recorder.0),
+    ]
+}
+
+fn golden_human_fixture() -> HumanData {
+    use crate::entity_id::{PcId, SoldierId};
+
+    let mut shield = HumanShieldState {
+        top_plane: HumanPlaneState {
+            normal: WorldPoint3D::new(0.0, 0.0, 1.0),
+            az: 1.5,
+            d: -2.0,
+            ..HumanPlaneState::default()
+        },
+        box_3d: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        on_ground: true,
+        ..HumanShieldState::default()
+    };
+    shield.points[1] = HumanShieldPointState {
+        obstacle: [0.5, 1.5, 2.5, 3.5],
+        polygon: MapPoint::new(8.0, 9.0),
+    };
+    shield.ground_box.bounds_are_set = true;
+    shield.ground_box.bottom_right = MapPoint::new(30.0, 31.0);
+
+    HumanData {
+        carrier: Some(EntityId::Pc(PcId(3))),
+        concussion_of_the_brain: 11,
+        concussion_healing_timeout: 12,
+        tiredness: 13,
+        unconscious: true,
+        already_detectable_body: true,
+        detectable_list_index: 14,
+        sword_strike_boredom: vec![1, 2, 3],
+        stuck_under_nets_counter: 15,
+        hollow_man: true,
+        opponents: SwordfightOpponents::from_pairs([
+            (
+                EntityId::Soldier(SoldierId(21)),
+                Some(JumpLineIndex::new(35).unwrap()),
+            ),
+            (EntityId::Pc(PcId(22)), None),
+            (
+                EntityId::Soldier(SoldierId(23)),
+                Some(JumpLineIndex::new(2).unwrap()),
+            ),
+        ]),
+        smalltalk_initiative: true,
+        received_smalltalk_initiative: true,
+        smalltalk_hint: SmalltalkHint::Legs,
+        smalltalk_hint_opponent: Some(EntityId::Soldier(SoldierId(24))),
+        relative_fighting_ability: 16,
+        small_repulsive_radius: true,
+        last_is_lying_for_corpse_intersection: Some(true),
+        killed_by_accident: true,
+        parry_counter: 17,
+        invulnerable: true,
+        last_motion_was_step_back_in_combat: true,
+        running_hulk: 18,
+        time_hulk: 19,
+        hulk_level: 20,
+        hulk_direction: true,
+        hulk_speed: 0.75,
+        repulsive_point: HumanRepulsivePointState {
+            position: MapPoint::new(1.0, 2.0),
+            concave: true,
+            limit_left: MapPoint::new(3.0, 4.0),
+            limit_right: MapPoint::new(5.0, 6.0),
+            action_radius: 7.0,
+            force_a: 8.0,
+            force_b: 9.0,
+            radius: 10.0,
+            id: 42,
+            affects_pcs: true,
+            affects_soldiers: false,
+            affects_civilians: true,
+            affects_animals: false,
+        },
+        building_sector: SectorHandle::new(7),
+        produced_noise_first_word: 3.25,
+        shield,
+        sword_sweep: HumanSwordSweepState {
+            victims: vec![EntityId::Pc(PcId(5)), EntityId::Soldier(SoldierId(6))],
+            initial_angle: 0.5,
+            current_angle: 1.0,
+            final_angle: 1.5,
+        },
+        pending_shoots: vec![
+            crate::sequence::SequenceElementRef::new(crate::sequence::SequenceId(4), 2),
+            crate::sequence::SequenceElementRef::new(crate::sequence::SequenceId(9), 0),
+        ],
+    }
+}
+
+/// Save (JSON), native snapshot (bitcode) and state-hash encodings of
+/// `HumanData` are frozen; the digests were recorded from the hand-written
+/// `HumanDataWireRef` serializer before it was replaced by
+/// `#[serde(into, try_from)]`.
+#[test]
+fn human_data_encodings_match_golden_digests() {
+    const GOLDEN: [&str; 3] = [
+        "a345fdbeef1bcbcb73438cea08f98ac7a1e3ff2854d4d6cd536fcd9c02ec7a5b",
+        "eeda54a748e35f4dd3e7832493ef4ea7dbef53349ac5c5ebc01648a33e206e98",
+        "6a3bfa3bc9246a58205abe81f5ccb062bb711cea51e1b23af7bf9f61ff01b400",
+    ];
+
+    let human = golden_human_fixture();
+    assert_eq!(human_golden_digests(&human), GOLDEN);
+
+    let json = serde_json::to_string(&human).unwrap();
+    let from_json: HumanData = serde_json::from_str(&json).unwrap();
+    assert_eq!(from_json.opponents, human.opponents);
+    assert_eq!(human_golden_digests(&from_json), GOLDEN);
+
+    let from_bitcode: HumanData = bitcode::decode(&bitcode::encode(&human)).unwrap();
+    assert_eq!(human_golden_digests(&from_bitcode), GOLDEN);
+}
+
+/// SHA-256 digests of the entity table's bitcode bytes, the world save JSON
+/// (produced by the real `PersistedWorldState` save projection) and the entity
+/// table's `StateHash` byte stream (native-endian, little-endian host).
+fn world_entities_golden_digests(world: &crate::engine::state::WorldState) -> [String; 3] {
+    use robin_util::state_hash::StateHash;
+    use sha2::Digest;
+
+    struct ByteRecorder(Vec<u8>);
+    impl std::hash::Hasher for ByteRecorder {
+        fn finish(&self) -> u64 {
+            unreachable!("state-hash byte recorder is never finished")
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes);
+        }
+    }
+
+    let persisted = crate::engine::state::PersistedWorldState::capture(world);
+    robin_util::persistence_validation::validate(&persisted).expect("valid world save");
+    let sha = |bytes: &[u8]| hex::encode(sha2::Sha256::digest(bytes));
+    let mut recorder = ByteRecorder(Vec::new());
+    world.entities.state_hash(&mut recorder);
+    [
+        sha(&bitcode::encode(&world.entities)),
+        sha(serde_json::to_string(&persisted).unwrap().as_bytes()),
+        sha(&recorder.0),
+    ]
+}
+
+fn golden_element_fixture(kind: ElementKind, seed: u16) -> ElementData {
+    let seed_f = f32::from(seed);
+    let mut sprite = Sprite::default();
+    sprite
+        .position_iface
+        .set_map_position(MapPoint::new(12.5 + seed_f, -7.25));
+    sprite.current_row = 7 + seed;
+    sprite.current_frame = 3;
+    sprite.last_processed_order_id = 1234;
+    sprite.masked = true;
+    sprite.display_order_ref = Some(EntityId::Soldier(crate::entity_id::SoldierId(9)));
+    sprite.anims_to_be_replaced = vec![OrderType::WaitingUpright, OrderType::WaitingUprightBored];
+    sprite.replacing_anims = vec![
+        OrderType::TransitionWaitingUprightBoredWaitingUpright,
+        OrderType::TransitionWaitingUprightWaitingUprightBored,
+    ];
+    sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript::default()]);
+    sprite.conversion = std::sync::Arc::new(vec![1, 2, 3]);
+    sprite.frame_profile_name = format!("profile{seed}");
+    sprite.profile_cache_key = "profile#primary".to_owned();
+    sprite.alternate_profile_cache_key = "profile#alternate".to_owned();
+    ElementData {
+        kind,
+        blipped: true,
+        class_id: 100 + seed,
+        active: false,
+        hidden_in_building: true,
+        sprite_id: 200 + u32::from(seed),
+        select_id: 300,
+        position_map_delayed: true,
+        delayed_map_position: MapPoint::new(4.5, 5.5 + seed_f),
+        position_delayed: true,
+        delayed_position: WorldPoint3D::new(1.0, 2.0, 3.0 + seed_f),
+        in_honolulu: true,
+        index_in_elements_list: 17 + seed,
+        custom_minimap_dot: 5,
+        outline_colors: [1, 2, 3, 4, 5],
+        current_outline: OutlineColorName::Striking,
+        outline_width: 9,
+        unreachable: true,
+        posture: Posture::Lying,
+        sprite,
+        grid_cell: Some((3 + seed, 4)),
+    }
+}
+
+fn golden_ai_actor_fixture(ai_brain: AiBrain, seed: u16) -> AiActorData {
+    let seed_f = f32::from(seed);
+    let detectable = |id: u32, detectable_type| Detectable {
+        element: Some(EntityId::Pc(crate::entity_id::PcId(id))),
+        detectable_type,
+        seen_last_frame: true,
+        heard_last_frame: false,
+        seen_now: true,
+        shadow_seen_now: true,
+        shadow_seen_last_frame: false,
+        last_visibility: 0.25 * id as f32,
+    };
+    AiActorData {
+        register_number: 40 + seed,
+        number_of_arrows: 6,
+        direction_old: -3,
+        initial_view_direction: MapVec::new(0.5, -0.5 + seed_f),
+        initial_position_x: 11.0,
+        initial_position_y: 12.0,
+        initial_position_sector: SectorHandle::new(8),
+        initial_position_level: 2,
+        inform_my_friends: true,
+        money: 77,
+        wasp_victim: true,
+        old_cover_noise_deafness: 13,
+        old_cover_noise_deafness_frame_counter: 14,
+        stuck_on_ladder_emergency_counter: 15,
+        attached_scroll: Some(EntityId::Scroll(crate::entity_id::ScrollId(6))),
+        body_visitors: 16,
+        fried_pikachu: true,
+        detectable_lists: vec![
+            vec![
+                detectable(1, DetectableType::Enemy),
+                detectable(2, DetectableType::Body),
+            ],
+            vec![],
+            vec![detectable(3, DetectableType::Beggar)],
+        ],
+        detection_suspects: [1, 2, 3, 4, 5, 6],
+        maximal_detection_suspect: 18,
+        worst_detected_type: DetectableType::Friend,
+        has_given_money_to_beggar: true,
+        custom_values: [-1, 2, -3, 4, -5, 6, -7, 8, -9, 10],
+        display_double_status_bar: true,
+        ai_brain,
+        alerted: true,
+        view_radius: 19,
+        eye_status: EyeStatus::Stare,
+        half_aperture: 0.1,
+        real_half_aperture: 0.2,
+        view_angle: 0.3,
+        view_angle_step: 0.4,
+        view_transition: true,
+        view_half_angle_range: 0.5,
+        view_angle_iterator: 0.6,
+        view_angle_iterator_step: 0.7,
+        view_radius_base: 20,
+        view_radius_goal: 21,
+        view_radius_step: 22,
+        view_alpha_start: 23,
+        view_longrange_radius_factor: 0.8,
+        view_half_aperture_cosine: 0.9,
+        view_future_half_aperture: 1.1,
+        view_half_aperture_step: 1.2,
+        view_half_aperture_changes: true,
+        view_crazy_angle_iterator: 1.3,
+        view_crazy_angle_iterator_step: 1.4,
+        view_crazy_color_iterator: 24,
+        view_crazy_half_angle_range: 1.5,
+        view_direction: [1.6, 1.7],
+        view_left_side: [1.8, 1.9],
+        view_right_side: [2.1, 2.2],
+        view_lean_out: true,
+        drunken_cone_iterators: [2.3, 2.4, 2.5, 2.6],
+        view_radius_reduction_permil: 25,
+        view_sniper: true,
+        stare_point: GroundPoint::new(2.7, 2.8),
+        follow_target: Some(EntityId::Pc(crate::entity_id::PcId(4))),
+    }
+}
+
+fn golden_entities_fixture() -> crate::entities::Entities {
+    // The golden digests below were recorded while `EnemyAi::default()` still
+    // carried the original constructor starts; `EnemyAi` now derives an
+    // all-zero `Default` and those starts live in `EnemyAi::new`. Pin them
+    // explicitly so the digests keep guarding the encoding, not the default.
+    let enemy = EnemyAi {
+        pending_special_strike: true,
+        pc_gone_away_in_this_direction: 3,
+        thirsty: true,
+        previous_state: crate::ai::StoredEnumWord::new(crate::ai::AiState::Default),
+        previous_substate: crate::ai::StoredEnumWord::new(crate::ai::Substate::DefaultOnPost),
+        forced_next_battle_decision: crate::ai::Decision::None,
+        soldier_profile_iq: 50,
+        soldier_profile_courage: 50,
+        soldier_profile_shooting: 50,
+        sword_range: 40,
+        soldier_profile_hearing_factor: 1.0,
+        soldier_profile_rank: crate::profiles::ProfileRank::Soldier,
+        soldier_profile_initiative: 50,
+        ..EnemyAi::default()
+    };
+    let friendly = FriendlyAi {
+        beggar_dont_talk_counter: 5,
+        wants_to_talk: false,
+        ..FriendlyAi::default()
+    };
+    let human = golden_human_fixture();
+    crate::entities::Entities::from_legacy_slots(vec![
+        Some(Entity::Pc(ActorPc {
+            element: golden_element_fixture(ElementKind::ActorPc, 0),
+            actor: ActorData::default(),
+            human: human.clone(),
+            pc: PcData::default(),
+        })),
+        None,
+        Some(Entity::Soldier(ActorSoldier {
+            element: golden_element_fixture(ElementKind::ActorSoldier, 1),
+            actor: ActorData::default(),
+            human: human.clone(),
+            npc: NpcData {
+                life_points: 42,
+                ai: golden_ai_actor_fixture(AiBrain::Enemy(Box::new(enemy)), 1),
+            },
+            soldier: SoldierData {
+                apple_smell: 3,
+                rider: true,
+                ..SoldierData::default()
+            },
+        })),
+        Some(Entity::Civilian(ActorCivilian {
+            element: golden_element_fixture(ElementKind::ActorCivilian, 2),
+            actor: ActorData::default(),
+            human,
+            npc: NpcData {
+                life_points: -7,
+                ai: golden_ai_actor_fixture(AiBrain::Friendly(Box::new(friendly)), 2),
+            },
+            civilian: CivilianData {
+                current_scroll_set: 4,
+                ..CivilianData::default()
+            },
+        })),
+        Some(Entity::Fx(ElementFx {
+            element: golden_element_fixture(ElementKind::Fx, 3),
+            fx: FxData::default(),
+        })),
+        Some(Entity::Target(ElementTarget {
+            element: golden_element_fixture(ElementKind::Target, 4),
+            fx: FxData::default(),
+            target: TargetData::default(),
+        })),
+        Some(Entity::Bonus(ElementBonus {
+            element: golden_element_fixture(ElementKind::ObjectOther, 5),
+            object: ObjectData::default(),
+        })),
+        Some(Entity::Scroll(ElementScroll {
+            element: golden_element_fixture(ElementKind::ObjectOther, 6),
+            object: ObjectData::default(),
+            presence: [true, false, true],
+            tutorial: true,
+            script_class: "ScrollScript".to_owned(),
+            script_hourglass_timeout: 21,
+        })),
+        Some(Entity::Projectile(ElementProjectile {
+            element: golden_element_fixture(ElementKind::ObjectOther, 7),
+            object: ObjectData::default(),
+            projectile: ProjectileData::default(),
+        })),
+        Some(Entity::Net(ElementNet {
+            element: golden_element_fixture(ElementKind::ObjectOther, 8),
+            object: ObjectData::default(),
+            projectile: ProjectileData::default(),
+            net: NetData::default(),
+        })),
+        None,
+    ])
+}
+
+/// World save (JSON through `PersistedWorldState`), native snapshot (bitcode)
+/// and state-hash encodings of the entity table are frozen; the digests were
+/// recorded while entities were still saved through the hand-written
+/// `Persisted*` element mirrors.
+#[test]
+fn entity_table_encodings_match_golden_digests() {
+    // Debug-build serde of the nested AI owners needs more than the default
+    // test-thread stack.
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(entity_table_encodings_match_golden_digests_body)
+        .expect("spawn golden-digest thread")
+        .join()
+        .expect("golden-digest thread panicked");
+}
+
+fn entity_table_encodings_match_golden_digests_body() {
+    const GOLDEN: [&str; 3] = [
+        "a3b89a5bd6604ed26a30c0d87263ba440a245e22c72b7b1fe04a57c996bad5a5",
+        "118e748372560de47d2d10e39a930029c2237a33da0ca3a7ba42108d0c383a07",
+        "2245300ea6f6e05acefa718370855b77138899166be3cd12ef437a4eae5ef38a",
+    ];
+
+    let mut world = crate::engine::state::WorldState::new();
+    world.entities = golden_entities_fixture();
+    assert_eq!(world_entities_golden_digests(&world), GOLDEN);
+
+    let json =
+        serde_json::to_string(&crate::engine::state::PersistedWorldState::capture(&world)).unwrap();
+    let decoded: crate::engine::state::PersistedWorldState = serde_json::from_str(&json).unwrap();
+    let mut restored = crate::engine::state::WorldState::new();
+    restored.entities = decoded.into_runtime().entities;
+    assert_eq!(world_entities_golden_digests(&restored), GOLDEN);
+    let soldier = restored
+        .entities
+        .get(EntityId::Soldier(crate::entity_id::SoldierId(2)))
+        .and_then(Entity::npc_data)
+        .expect("restored soldier");
+    assert!(soldier.ai_brain.enemy().is_some());
+    assert!(
+        restored
+            .entities
+            .get(EntityId::Pc(crate::entity_id::PcId(1)))
+            .is_none()
+    );
+
+    let from_bitcode: crate::entities::Entities =
+        bitcode::decode(&bitcode::encode(&world.entities)).unwrap();
+    restored.entities = from_bitcode;
+    assert_eq!(world_entities_golden_digests(&restored), GOLDEN);
+}
+
+/// `PersistedWorldState::capture` is also used without serialization (replay
+/// save markers, rollback-safe snapshots), so its in-memory entity projection
+/// must equal a JSON save/load round trip, including runtime-only state that
+/// neither bitcode nor the state hash observe.
+#[test]
+fn entity_persisted_projection_matches_json_round_trip() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(entity_persisted_projection_matches_json_round_trip_body)
+        .expect("spawn projection thread")
+        .join()
+        .expect("projection thread panicked");
+}
+
+fn entity_persisted_projection_matches_json_round_trip_body() {
+    use robin_util::state_hash::compute;
+
+    let mut entities = golden_entities_fixture();
+    let soldier_id = EntityId::Soldier(crate::entity_id::SoldierId(2));
+    let civilian_id = EntityId::Civilian(crate::entity_id::CivilianId(3));
+    for id in [soldier_id, civilian_id] {
+        let entity = entities.get_mut(id).expect("fixture npc");
+        let sprite = &mut entity.element_data_mut().sprite;
+        sprite.alternate_scripts = Some(std::sync::Arc::new(vec![
+            crate::sprite_script::SpriteScript::default(),
+        ]));
+        sprite.alternate_conversion = Some(std::sync::Arc::new(vec![4, 5]));
+        sprite.last_motion_state = Some(crate::sprite::MotionState::InProgress);
+        let ai = entity
+            .npc_data_mut()
+            .unwrap()
+            .ai_brain
+            .base_mut()
+            .expect("fixture brain");
+        ai.open_end_think_frames = 2;
+        ai.engine_deferred_end_think_frames = 1;
+        ai.engine_completion_verdict_resolved = true;
+    }
+
+    let projected = entities.persisted_projection();
+    let json_round_trip: crate::entities::Entities =
+        serde_json::from_str(&serde_json::to_string(&entities).unwrap()).unwrap();
+
+    assert_eq!(
+        bitcode::encode(&projected),
+        bitcode::encode(&json_round_trip)
+    );
+    assert_eq!(compute(&projected), compute(&json_round_trip));
+    assert_eq!(
+        serde_json::to_string(&projected).unwrap(),
+        serde_json::to_string(&json_round_trip).unwrap()
+    );
+    assert_eq!(bitcode::encode(&projected), bitcode::encode(&entities));
+    assert_eq!(compute(&projected), compute(&entities));
+
+    let runtime_only = |entities: &crate::entities::Entities, id| {
+        let entity = entities.get(id).unwrap();
+        let sprite = &entity.element_data().sprite;
+        let ai = entity.npc_data().unwrap().ai_brain.base().unwrap();
+        (
+            sprite.scripts.len(),
+            sprite.alternate_scripts.is_some(),
+            sprite.conversion.len(),
+            sprite.alternate_conversion.is_some(),
+            sprite.last_motion_state,
+            ai.open_end_think_frames,
+            ai.engine_deferred_end_think_frames,
+            ai.engine_completion_verdict_resolved,
+        )
+    };
+    for id in [soldier_id, civilian_id] {
+        assert_eq!(
+            runtime_only(&entities, id),
+            (
+                1,
+                true,
+                3,
+                true,
+                Some(crate::sprite::MotionState::InProgress),
+                2,
+                1,
+                true
+            )
+        );
+        assert_eq!(
+            runtime_only(&projected, id),
+            runtime_only(&json_round_trip, id)
+        );
+        assert_eq!(
+            runtime_only(&projected, id),
+            (0, false, 0, false, None, 0, 0, false)
+        );
+    }
+
+    // The world save capture is the projection, and restores it unchanged.
+    let mut world = crate::engine::state::WorldState::new();
+    world.entities = entities;
+    let restored = crate::engine::state::PersistedWorldState::capture(&world)
+        .into_runtime()
+        .entities;
+    for id in [soldier_id, civilian_id] {
+        assert_eq!(
+            runtime_only(&restored, id),
+            runtime_only(&json_round_trip, id)
+        );
+    }
 }

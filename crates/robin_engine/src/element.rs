@@ -63,9 +63,7 @@ pub use objects::*;
 pub use pc::*;
 
 mod entity;
-mod persisted;
 mod traits;
-pub(crate) use persisted::*;
 pub use traits::{Actor, Element, Human};
 
 /// Re-export: `OrderType` is the canonical animation-type enum.
@@ -1735,7 +1733,16 @@ impl robin_util::state_hash::StateHash for SwordfightOpponents {
 }
 
 /// Human-level data.
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[serde(into = "HumanDataWire", try_from = "HumanDataWire")]
 pub struct HumanData {
     pub carrier: Option<EntityId>,
 
@@ -1801,9 +1808,10 @@ pub struct HumanData {
     pub pending_shoots: Vec<crate::sequence::SequenceElementRef>,
 }
 
-/// Compatibility view of [`HumanData`]. The two opponent vectors deliberately
-/// remain adjacent and in their historical order for JSON saves.
-#[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+/// Serde (save) view of [`HumanData`]. The two opponent vectors deliberately
+/// remain adjacent and in their historical order for JSON saves. Bitcode is
+/// derived on `HumanData` directly and does not use this view.
+#[derive(Serialize, Deserialize)]
 struct HumanDataWire {
     carrier: Option<EntityId>,
     concussion_of_the_brain: u16,
@@ -1840,133 +1848,6 @@ struct HumanDataWire {
     shield: HumanShieldState,
     sword_sweep: HumanSwordSweepState,
     pending_shoots: Vec<crate::sequence::SequenceElementRef>,
-}
-
-struct SerializedOpponentIds<'a>(&'a SwordfightOpponents);
-
-impl Serialize for SerializedOpponentIds<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeSeq;
-
-        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
-        for opponent in self.0.iter() {
-            sequence.serialize_element(opponent)?;
-        }
-        sequence.end()
-    }
-}
-
-struct SerializedOpponentJumpLines<'a>(&'a SwordfightOpponents);
-
-impl Serialize for SerializedOpponentJumpLines<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeSeq;
-
-        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
-        for entry in &self.0.entries {
-            sequence.serialize_element(&entry.jump_line)?;
-        }
-        sequence.end()
-    }
-}
-
-#[derive(Serialize)]
-struct HumanDataWireRef<'a> {
-    carrier: &'a Option<EntityId>,
-    concussion_of_the_brain: &'a u16,
-    concussion_healing_timeout: &'a u16,
-    tiredness: &'a u16,
-    unconscious: &'a bool,
-    already_detectable_body: &'a bool,
-    detectable_list_index: &'a u16,
-    sword_strike_boredom: &'a [u16],
-    stuck_under_nets_counter: &'a u16,
-    hollow_man: &'a bool,
-    opponents: SerializedOpponentIds<'a>,
-    opponent_jump_lines: SerializedOpponentJumpLines<'a>,
-    smalltalk_initiative: &'a bool,
-    received_smalltalk_initiative: &'a bool,
-    smalltalk_hint: &'a SmalltalkHint,
-    smalltalk_hint_opponent: &'a Option<EntityId>,
-    relative_fighting_ability: &'a u16,
-    small_repulsive_radius: &'a bool,
-    last_is_lying_for_corpse_intersection: &'a Option<bool>,
-    killed_by_accident: &'a bool,
-    parry_counter: &'a u16,
-    invulnerable: &'a bool,
-    last_motion_was_step_back_in_combat: &'a bool,
-    running_hulk: &'a u32,
-    time_hulk: &'a u32,
-    hulk_level: &'a u16,
-    hulk_direction: &'a bool,
-    hulk_speed: &'a f32,
-    repulsive_point: &'a HumanRepulsivePointState,
-    building_sector: &'a Option<SectorHandle>,
-    produced_noise_first_word: &'a f32,
-    shield: &'a HumanShieldState,
-    sword_sweep: &'a HumanSwordSweepState,
-    pending_shoots: &'a [crate::sequence::SequenceElementRef],
-}
-
-impl Serialize for HumanData {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        HumanDataWireRef {
-            carrier: &self.carrier,
-            concussion_of_the_brain: &self.concussion_of_the_brain,
-            concussion_healing_timeout: &self.concussion_healing_timeout,
-            tiredness: &self.tiredness,
-            unconscious: &self.unconscious,
-            already_detectable_body: &self.already_detectable_body,
-            detectable_list_index: &self.detectable_list_index,
-            sword_strike_boredom: &self.sword_strike_boredom,
-            stuck_under_nets_counter: &self.stuck_under_nets_counter,
-            hollow_man: &self.hollow_man,
-            opponents: SerializedOpponentIds(&self.opponents),
-            opponent_jump_lines: SerializedOpponentJumpLines(&self.opponents),
-            smalltalk_initiative: &self.smalltalk_initiative,
-            received_smalltalk_initiative: &self.received_smalltalk_initiative,
-            smalltalk_hint: &self.smalltalk_hint,
-            smalltalk_hint_opponent: &self.smalltalk_hint_opponent,
-            relative_fighting_ability: &self.relative_fighting_ability,
-            small_repulsive_radius: &self.small_repulsive_radius,
-            last_is_lying_for_corpse_intersection: &self.last_is_lying_for_corpse_intersection,
-            killed_by_accident: &self.killed_by_accident,
-            parry_counter: &self.parry_counter,
-            invulnerable: &self.invulnerable,
-            last_motion_was_step_back_in_combat: &self.last_motion_was_step_back_in_combat,
-            running_hulk: &self.running_hulk,
-            time_hulk: &self.time_hulk,
-            hulk_level: &self.hulk_level,
-            hulk_direction: &self.hulk_direction,
-            hulk_speed: &self.hulk_speed,
-            repulsive_point: &self.repulsive_point,
-            building_sector: &self.building_sector,
-            produced_noise_first_word: &self.produced_noise_first_word,
-            shield: &self.shield,
-            sword_sweep: &self.sword_sweep,
-            pending_shoots: &self.pending_shoots,
-        }
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for HumanData {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        HumanData::try_from(HumanDataWire::deserialize(deserializer)?)
-            .map_err(serde::de::Error::custom)
-    }
 }
 
 impl TryFrom<HumanDataWire> for HumanData {
@@ -2290,52 +2171,6 @@ pub enum Entity {
     Scroll(ElementScroll),
     Projectile(ElementProjectile),
     Net(ElementNet),
-}
-
-/// Entity save projection retains sparse identity and enum layout while NPC
-/// brains reconstruct their runtime-only continuation bookkeeping.
-#[derive(Clone, Serialize, Deserialize)]
-pub(crate) enum PersistedEntity {
-    Pc(PersistedActorPc),
-    Soldier(PersistedActorSoldier),
-    Civilian(PersistedActorCivilian),
-    Fx(PersistedElementFx),
-    Target(PersistedElementTarget),
-    Bonus(PersistedElementBonus),
-    Scroll(PersistedElementScroll),
-    Projectile(PersistedElementProjectile),
-    Net(PersistedElementNet),
-}
-
-impl PersistedEntity {
-    pub(crate) fn capture(value: &Entity) -> Self {
-        match value {
-            Entity::Pc(value) => Self::Pc(PersistedActorPc::capture(value)),
-            Entity::Soldier(value) => Self::Soldier(PersistedActorSoldier::capture(value)),
-            Entity::Civilian(value) => Self::Civilian(PersistedActorCivilian::capture(value)),
-            Entity::Fx(value) => Self::Fx(PersistedElementFx::capture(value)),
-            Entity::Target(value) => Self::Target(PersistedElementTarget::capture(value)),
-            Entity::Bonus(value) => Self::Bonus(PersistedElementBonus::capture(value)),
-            Entity::Scroll(value) => Self::Scroll(PersistedElementScroll::capture(value)),
-            Entity::Projectile(value) => {
-                Self::Projectile(PersistedElementProjectile::capture(value))
-            }
-            Entity::Net(value) => Self::Net(PersistedElementNet::capture(value)),
-        }
-    }
-    pub(crate) fn into_runtime(self) -> Entity {
-        match self {
-            Self::Pc(value) => Entity::Pc(value.into_runtime()),
-            Self::Soldier(value) => Entity::Soldier(value.into_runtime()),
-            Self::Civilian(value) => Entity::Civilian(value.into_runtime()),
-            Self::Fx(value) => Entity::Fx(value.into_runtime()),
-            Self::Target(value) => Entity::Target(value.into_runtime()),
-            Self::Bonus(value) => Entity::Bonus(value.into_runtime()),
-            Self::Scroll(value) => Entity::Scroll(value.into_runtime()),
-            Self::Projectile(value) => Entity::Projectile(value.into_runtime()),
-            Self::Net(value) => Entity::Net(value.into_runtime()),
-        }
-    }
 }
 
 /// Concrete original-game entity kind selected by the entity/object discriminants.
