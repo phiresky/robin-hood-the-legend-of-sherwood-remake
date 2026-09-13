@@ -3176,33 +3176,30 @@ impl EngineInner {
             self.striking_down_sword_valid_after_perform(assets, entity_id);
 
         let reusable_cloaks_enabled = self.control.sim_config.reusable_cloaks;
-        // The original loop only leaves through its actor arm; a non-actor
-        // entity keeps re-looking the slot up exactly as before (it cannot
-        // reach here: `actor_animation_operands` panics on a non-actor).
-        loop {
-            let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
-                panic!("actor {entity_id:?} vanished before generic animation dispatch")
-            });
-            // Actors: animate based on current action state
-            if entity.actor_data().is_some() {
-                return ActorAnimationStepCtx {
-                    entity,
-                    orders: &mut self.orders,
-                    sim,
-                    assets,
-                    entity_id,
-                    frame_counter: self.control.frame_counter,
-                    reusable_cloaks_enabled,
-                    selected_generic_order,
-                    entry,
-                    operands,
-                    striking_down_sword_valid_after_perform,
-                    combat_injury_terminated,
-                    completion_outcomes,
-                }
-                .run();
-            }
+        let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
+            panic!("actor {entity_id:?} vanished before generic animation dispatch")
+        });
+        // `actor_animation_operands` already panics on a non-actor.
+        assert!(
+            entity.actor_data().is_some(),
+            "generic animation dispatch owner {entity_id:?} is not an actor"
+        );
+        ActorAnimationStepCtx {
+            entity,
+            orders: &mut self.orders,
+            sim,
+            assets,
+            entity_id,
+            frame_counter: self.control.frame_counter,
+            reusable_cloaks_enabled,
+            selected_generic_order,
+            entry,
+            operands,
+            striking_down_sword_valid_after_perform,
+            combat_injury_terminated,
+            completion_outcomes,
         }
+        .run()
     }
 
     /// Initialize live takeoff and death placement before generic sprite dispatch.
