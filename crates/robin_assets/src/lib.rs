@@ -5,8 +5,6 @@
 //! disable default features to decode sprite grids, pictures, RLE/JXL canvases,
 //! and legacy frame banks without depending on the simulation engine.
 
-#![feature(portable_simd)]
-
 #[cfg(test)]
 mod original_data {
     pub use robin_test_support::original_data::*;
