@@ -8,12 +8,13 @@
 //! comment, Pay comment) — this module provides the full per-command
 //! gate and wires it into the per-tick sequence-element pickup path.
 
-use crate::element::{Command, Entity, EntityId, ObjectType, Posture};
+use crate::element::{Command, Entity, EntityId, Human, ObjectType, Posture};
 use crate::engine::{EngineInner, LevelAssets};
 use crate::sequence::{Field, FieldValue, SequenceElement, SequenceElementData};
 
 use super::input::BowTarget;
 use super::scroll_reveal::ScrollStatus;
+use super::selection::{PcActionSlotState, pc_action_slot_state};
 
 impl EngineInner {
     /// Re-validate a queued sequence element against the current world
@@ -419,8 +420,12 @@ impl EngineInner {
         }
         let actor_vip = self.is_entity_vip(assets, actor);
         let opp_vip = self.is_entity_vip(assets, opponent);
-        let actor_is_robin = is_entity_robin(actor);
-        let opp_is_robin = is_entity_robin(opponent);
+        // Same Robin predicate as the melee VIP gate
+        // (`melee::should_enter_swordfight_after_strike`): the
+        // `PcData::robin` flag set from the character kind at level load;
+        // non-PCs are never Robin.
+        let actor_is_robin = matches!(actor, Entity::Pc(pc) if pc.is_robin());
+        let opp_is_robin = matches!(opponent, Entity::Pc(pc) if pc.is_robin());
         if actor.is_soldier() && actor_vip && !opp_is_robin {
             return false;
         }
@@ -1813,7 +1818,8 @@ fn is_human_out_of_order(entity: &Entity) -> bool {
 /// Consulted by `check_sequence_element_validity` for
 /// `EnterHelpingClimb` / `EnterBeggar`.  Reads the PC's
 /// `disabled_actions` / `disabled_actions_temp` at the profile action
-/// slot. The action enum value is not the portrait slot.
+/// slot through the shared [`pc_action_slot_state`] policy. The action
+/// enum value is not the portrait slot.
 /// Non-PC actors don't have the toolbar — return true so the generic
 /// command path isn't blocked.
 fn is_pc_action_enabled(
@@ -1824,22 +1830,17 @@ fn is_pc_action_enabled(
     let Some(pc) = entity.pc_data() else {
         return true;
     };
-    let Some(profile) = assets.profile_manager.get_character(pc.profile_index) else {
-        tracing::warn!(profile_index = ?pc.profile_index, "PC action validation references a missing character profile");
-        return false;
-    };
-    let Some(idx) = crate::inventory::find_action_slot(profile, action) else {
-        return true;
-    };
-    !pc.action_slot_disabled(idx)
-}
-
-fn is_entity_robin(entity: &Entity) -> bool {
-    // The Robin slot lives at index 0 of the campaign character table.
-    entity
-        .pc_data()
-        .map(|pc| u32::from(pc.profile_index) == 0)
-        .unwrap_or(false)
+    match pc_action_slot_state(&assets.profile_manager, pc, action, "PC action validation") {
+        Some(PcActionSlotState::Enabled) => true,
+        Some(PcActionSlotState::Disabled) => false,
+        // TODO(parity): only a *disabled* toolbar slot invalidates the
+        // element here. A PC whose profile does not list the action has no
+        // slot that could be disabled, so the element is let through; the
+        // original's handling of that case is unverified.
+        Some(PcActionSlotState::NotInProfile) => true,
+        // Missing character profile: already warned by the shared helper.
+        None => false,
+    }
 }
 
 fn square_distance(a: &Entity, b: &Entity) -> f32 {

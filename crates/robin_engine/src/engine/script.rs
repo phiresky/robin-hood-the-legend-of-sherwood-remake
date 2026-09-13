@@ -1041,10 +1041,13 @@ impl EngineInner {
                         true
                     };
                     if filter_accepted {
-                        // The return flag reports whether this particular
-                        // owner needed another Think. The native continuation
-                        // below always runs after that optional Think settles.
-                        let _ = self.start_script_ai_native_think_post_filter(owner);
+                        // The post-filter is run for its lock/freeze/
+                        // special-state side effects. Its `bool` is the
+                        // no-event Think admission decision that the AI
+                        // decision tick would branch on; SetAIState ignores
+                        // it because the native continuation below runs
+                        // unconditionally, whether or not a Think was admitted.
+                        let _think_admitted = self.start_script_ai_native_think_post_filter(owner);
                     }
                 }
 
