@@ -590,7 +590,7 @@ impl EnemyAi {
     // -----------------------------------------------------------------------
 
     pub(crate) fn battle_decisions(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         if let Err(reason) = ctx.entity_observation(self.base.me) {
             // TODO: establish Original invalid-layer timer-tail behavior before
             // changing this existing skip policy.
@@ -666,6 +666,82 @@ impl EnemyAi {
         // at least one claimant. The engine-wide snapshot is deliberately not
         // equivalent: it still contains claims from actors outside this
         // decision's rebuilt us/them lists.
+        let (mut decision_target_multiplicity, friends_nearer_to_enemy) =
+            self.battle_select_primary_target(env, global);
+        self.battle_inject_friend_seen_targets(env, global, &mut decision_target_multiplicity);
+        let (min_square_enemy_distance, unconscious_enemies_from_them) = self
+            .battle_cleanup_them_list(
+                env,
+                global,
+                &mut decision_target_multiplicity,
+                &mut num_enemies_i_can_see,
+                debug_them,
+            );
+
+        if num_enemies_i_can_see == 0 {
+            self.battle_no_visible_enemies(env, global, &unconscious_enemies_from_them);
+            return;
+        }
+
+        let (decision, cover_shield_bearer) = self.choose_battle_decision(
+            env,
+            global,
+            BattleDecisionInputs {
+                friends_lower_company,
+                soldiers_lower_pride,
+                simple_soldiers_near,
+                min_square_enemy_distance,
+                num_enemies_i_can_see,
+                friends_nearer_to_enemy,
+            },
+            &decision_target_multiplicity,
+        );
+
+        tracing::trace!(
+            me = self.base.me,
+            ?decision,
+            primary_target = ?self.base.primary_target,
+            num_enemies_i_can_see,
+            friends_nearer_to_enemy,
+            soldiers_lower_pride = soldiers_lower_pride,
+            friends_lower_company = friends_lower_company,
+            "battle_decisions: chose decision"
+        );
+        if crate::ai_enemy::battle_decision_debug_enabled() {
+            crate::ai_enemy::parity_trace::battle_decision(
+                &(ctx.frame),
+                &(self.base.me),
+                &(decision),
+                &(old_substate),
+                &(self.base.primary_target),
+                &(num_enemies_i_can_see),
+                &(friends_nearer_to_enemy),
+            );
+        }
+        // Carry out decision (with possible fallback loop). The Observe
+        // arm's avenger-on-roof fallback returns from the whole routine
+        // before the log line is registered; every other path logs.
+        if self.execute_battle_decision(
+            env,
+            decision,
+            old_substate,
+            cover_shield_bearer,
+            &mut decision_target_multiplicity,
+            global,
+        ) {
+            self.base
+                .register_log_line(LogLineType::BattleDecision, decision as u16);
+        }
+    }
+
+    /// Battle-planning local target multiplicity reset, primary-target
+    /// selection, and the friends-nearer-to-enemy count.
+    fn battle_select_primary_target(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+    ) -> (std::collections::BTreeMap<HumanHandle, u32>, u16) {
+        let ThinkEnv { ctx, tick, .. } = env;
         let mut decision_target_multiplicity = std::collections::BTreeMap::new();
         for &enemy in &self.list_them {
             decision_target_multiplicity.insert(enemy, 0_u32);
@@ -748,7 +824,17 @@ impl EnemyAi {
                 }
             }
         }
+        (decision_target_multiplicity, friends_nearer_to_enemy)
+    }
 
+    /// Battle-planning friend-seen enemy injection into the Them list.
+    fn battle_inject_friend_seen_targets(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        decision_target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
+    ) {
+        let ThinkEnv { ctx, tick, .. } = env;
         // Walk same-camp soldiers in STATE_ATTACKING and inject their
         // primary target into list_them so we hunt where they are
         // fighting. Skip self, missing primary_target, and anything
@@ -793,12 +879,12 @@ impl EnemyAi {
                 // Original's reset loop, so retain its shared counter before
                 // applying this decision's possible increment.
                 seed_appended_battle_target_multiplicity(
-                    &mut decision_target_multiplicity,
+                    decision_target_multiplicity,
                     target,
                     &global.primary_target_multiplicity_scratch,
                 );
                 if cs.ai_substate.is_any_swordfight() {
-                    increment_battle_target_multiplicity(&mut decision_target_multiplicity, target);
+                    increment_battle_target_multiplicity(decision_target_multiplicity, target);
                     increment_battle_target_multiplicity(
                         &mut global.primary_target_multiplicity_scratch,
                         target,
@@ -816,7 +902,19 @@ impl EnemyAi {
             }
             self.list_them.extend(friend_seen);
         }
+    }
 
+    /// Battle-planning Them-list cleanup: drops friends and unable-to-fight
+    /// entries, collects unconscious enemies and measures the nearest enemy.
+    fn battle_cleanup_them_list(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        decision_target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
+        num_enemies_i_can_see: &mut usize,
+        debug_them: bool,
+    ) -> (u32, Vec<crate::ai::SleepingEnemyInfo>) {
+        let ctx = env.ctx;
         // Clean up the Them list. Walk each entry: if it's not
         // able-to-fight, drop it. Each removal that falls within
         // `num_enemies_i_can_see` decrements the personally-visible
@@ -903,8 +1001,8 @@ impl EnemyAi {
                     // consuming that count,
                     // battle-planning cleanup), which can intentionally
                     // leave a positive visible count with an empty Them list.
-                    if decrement_visible_count && idx < num_enemies_i_can_see {
-                        num_enemies_i_can_see -= 1;
+                    if decrement_visible_count && idx < *num_enemies_i_can_see {
+                        *num_enemies_i_can_see -= 1;
                     }
                     self.list_them.remove(idx);
                     continue;
@@ -918,7 +1016,7 @@ impl EnemyAi {
                 &(ctx.frame),
                 &(ctx.original_creation_order),
                 &(self.base.me),
-                &(num_enemies_i_can_see),
+                &(*num_enemies_i_can_see),
                 &(self.list_them),
                 &(unconscious_enemies_from_them
                     .iter()
@@ -926,116 +1024,133 @@ impl EnemyAi {
                     .collect::<Vec<_>>()),
             );
         }
+        (min_square_enemy_distance, unconscious_enemies_from_them)
+    }
 
-        if num_enemies_i_can_see == 0 {
-            // No visible enemies. Ordering:
-            //   combat_trainer → my_shooting_point → archer-leaning-out
-            //   → friends-see-enemies (seek) → missed-PC → unconscious
-            //   → kill_nearby_sleeping. archer-leaning-out MUST come
-            //   before the seek-friends-enemies arm — an archer parked
-            //   on a bend point with friend-seen enemies should hold
-            //   the firing position, not run away to seek.
-            if self.combat_trainer {
-                self.return_to_duty_default(env);
-            } else if self.my_shooting_point.is_some() {
-                // Archer has a shooting point — equip bow based on
-                // elevation relative to last-seen enemy.
-                let my_elevation: u16 = ctx.elevation as u16;
-                if my_elevation >= self.enemy_had_this_elevation + 50 {
-                    // Target is below — aim down
-                    self.base
-                        .outbox
-                        .actor
-                        .launch_commands
-                        .push(crate::element::Command::EquipBowDown);
-                    self.set_state(
-                        AiState::Attacking,
-                        Substate::AttackingArcherWaitOnArcheryPathBending,
-                    );
-                } else {
-                    // Target is at same level or above
-                    self.base
-                        .outbox
-                        .actor
-                        .launch_commands
-                        .push(crate::element::Command::EquipBow);
-                    self.set_state(
-                        AiState::Attacking,
-                        Substate::AttackingArcherWaitOnArcheryPath,
-                    );
-                }
-                self.base.launch_timer(1000, ctx.frame);
-            } else if self.enemy_seen_below
-                && self.is_archer()
-                && ctx.posture == crate::element::Posture::LeaningOut
-            {
-                // Archer leaning out saw enemy below; hold the bend point.
-                // Must precede the friend-seen seek arm so an archer
-                // mid-shot doesn't abandon his position to chase someone
-                // else's sighting.
-                self.set_state_with_timer(
+    /// Battle planning with no personally visible enemies.
+    fn battle_no_visible_enemies(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        unconscious_enemies_from_them: &[crate::ai::SleepingEnemyInfo],
+    ) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
+        // No visible enemies. Ordering:
+        //   combat_trainer → my_shooting_point → archer-leaning-out
+        //   → friends-see-enemies (seek) → missed-PC → unconscious
+        //   → kill_nearby_sleeping. archer-leaning-out MUST come
+        //   before the seek-friends-enemies arm — an archer parked
+        //   on a bend point with friend-seen enemies should hold
+        //   the firing position, not run away to seek.
+        if self.combat_trainer {
+            self.return_to_duty_default(env);
+        } else if self.my_shooting_point.is_some() {
+            // Archer has a shooting point — equip bow based on
+            // elevation relative to last-seen enemy.
+            let my_elevation: u16 = ctx.elevation as u16;
+            if my_elevation >= self.enemy_had_this_elevation + 50 {
+                // Target is below — aim down
+                self.base
+                    .outbox
+                    .actor
+                    .launch_commands
+                    .push(crate::element::Command::EquipBowDown);
+                self.set_state(
                     AiState::Attacking,
-                    Substate::AttackingArcherWaitOnBendPoint,
-                    500,
-                    ctx,
+                    Substate::AttackingArcherWaitOnArcheryPathBending,
                 );
-            } else if !self.list_them.is_empty() {
-                // Friends see enemies that I don't — seek toward the
-                // first friend's enemy position.
-                if let Some(first_enemy) = self.list_them.first().copied()
-                    && let Some(pos) = self
-                        .find_fighter(first_enemy, tick)
-                        .map(|f| f.position)
-                        .or_else(|| ctx.entity_view(first_enemy).map(|v| v.position))
-                {
-                    self.base.seek_position = pos;
-                }
-                self.seek_area(
-                    env,
-                    self.base.seek_position,
-                    parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
-                    SeekFlags::LOCATION_FIRST,
-                    UNDEFINED_DIRECTION,
-                    global,
-                );
-            } else if self.pc_missed
-                && self.missed_pc.is_some()
-                && tick.missed_pc_is_pc
-                && self.answer_question(Question::ShallIFollowLostEnemy, ctx)
-            {
-                // Lost enemy — re-forecast and seek with direction hint.
-                self.base.say(Remark::HuntsEnemy);
-                // Re-predict missed PC's destination before seeking. A
-                // synchronous queued Think can assign `missed_pc` after its
-                // per-tick snapshot was built, so use the handle-keyed
-                // detectable/primary forecast already prepared for that
-                // target before the snapshot's dedicated convenience slot.
-                // The original game forecasts the AI destination unconditionally;
-                // retaining an old seek position is not a valid fallback.
-                self.refresh_missed_pc_forecast(sim, tick);
-                self.seek_area(
-                    env,
-                    self.base.seek_position,
-                    parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
-                    SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
-                    self.pc_gone_away_in_this_direction,
-                    global,
-                );
-            } else if !unconscious_enemies_from_them.is_empty() && !self.is_merry_man_forest(ctx) {
-                // Enemies removed from the persistent Them list above are
-                // unconscious and not carried — put them back, select one,
-                // and walk up to finish them off.
-                debug_assert!(self.list_them.is_empty());
-                self.approach_sleeping_enemies(env, &unconscious_enemies_from_them);
             } else {
-                // Final "there is literally nothing going on" fallback —
-                // look for sleeping enemies anywhere within the 360°
-                // detection radius and walk over to one.
-                self.kill_nearby_sleeping_enemies(env);
+                // Target is at same level or above
+                self.base
+                    .outbox
+                    .actor
+                    .launch_commands
+                    .push(crate::element::Command::EquipBow);
+                self.set_state(
+                    AiState::Attacking,
+                    Substate::AttackingArcherWaitOnArcheryPath,
+                );
             }
-            return;
+            self.base.launch_timer(1000, ctx.frame);
+        } else if self.enemy_seen_below
+            && self.is_archer()
+            && ctx.posture == crate::element::Posture::LeaningOut
+        {
+            // Archer leaning out saw enemy below; hold the bend point.
+            // Must precede the friend-seen seek arm so an archer
+            // mid-shot doesn't abandon his position to chase someone
+            // else's sighting.
+            self.set_state_with_timer(
+                AiState::Attacking,
+                Substate::AttackingArcherWaitOnBendPoint,
+                500,
+                ctx,
+            );
+        } else if !self.list_them.is_empty() {
+            // Friends see enemies that I don't — seek toward the
+            // first friend's enemy position.
+            if let Some(first_enemy) = self.list_them.first().copied()
+                && let Some(pos) = self
+                    .find_fighter(first_enemy, tick)
+                    .map(|f| f.position)
+                    .or_else(|| ctx.entity_view(first_enemy).map(|v| v.position))
+            {
+                self.base.seek_position = pos;
+            }
+            self.seek_area(
+                env,
+                self.base.seek_position,
+                parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
+                SeekFlags::LOCATION_FIRST,
+                UNDEFINED_DIRECTION,
+                global,
+            );
+        } else if self.pc_missed
+            && self.missed_pc.is_some()
+            && tick.missed_pc_is_pc
+            && self.answer_question(Question::ShallIFollowLostEnemy, ctx)
+        {
+            // Lost enemy — re-forecast and seek with direction hint.
+            self.base.say(Remark::HuntsEnemy);
+            // Re-predict missed PC's destination before seeking. A
+            // synchronous queued Think can assign `missed_pc` after its
+            // per-tick snapshot was built, so use the handle-keyed
+            // detectable/primary forecast already prepared for that
+            // target before the snapshot's dedicated convenience slot.
+            // The original game forecasts the AI destination unconditionally;
+            // retaining an old seek position is not a valid fallback.
+            self.refresh_missed_pc_forecast(sim, tick);
+            self.seek_area(
+                env,
+                self.base.seek_position,
+                parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
+                SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
+                self.pc_gone_away_in_this_direction,
+                global,
+            );
+        } else if !unconscious_enemies_from_them.is_empty() && !self.is_merry_man_forest(ctx) {
+            // Enemies removed from the persistent Them list above are
+            // unconscious and not carried — put them back, select one,
+            // and walk up to finish them off.
+            debug_assert!(self.list_them.is_empty());
+            self.approach_sleeping_enemies(env, unconscious_enemies_from_them);
+        } else {
+            // Final "there is literally nothing going on" fallback —
+            // look for sleeping enemies anywhere within the 360°
+            // detection radius and walk over to one.
+            self.kill_nearby_sleeping_enemies(env);
         }
+    }
 
+    /// Choose the battle decision: forced-decision whitelist, then the
+    /// offensive/defensive predecision split.
+    fn choose_battle_decision(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        inputs: BattleDecisionInputs,
+        decision_target_multiplicity: &std::collections::BTreeMap<HumanHandle, u32>,
+    ) -> (Decision, HumanHandle) {
         // Determine decision
         let decision;
         // Shield bearer handle for CoverBehindShieldBearer decision.
@@ -1096,233 +1211,235 @@ impl EnemyAi {
             // (1) Predecision: Offensive or defensive?
             let predecision = self.make_battle_predecisions(env);
 
-            // Use the aggregates computed by this decision's camp scan.
-            let friends_with_lower_company = friends_lower_company;
-            let soldiers_with_lower_pride = soldiers_lower_pride;
-
             if self.combat_trainer {
                 decision = Decision::Observe;
             } else if predecision == Decision::PredecisionOffensive {
-                ////////// offensive decisions //////////////
+                decision = self.battle_offensive_decision(
+                    env,
+                    global,
+                    inputs,
+                    decision_target_multiplicity,
+                    &mut cover_shield_bearer,
+                );
+            } else {
+                decision = self.battle_defensive_decision(env);
+            }
+        }
+        (decision, cover_shield_bearer)
+    }
 
-                if self.is_archer() && self.base.blood_alcohol == 0 {
-                    if crate::ai_enemy::battle_decision_debug_enabled() {
-                        crate::ai_enemy::parity_trace::archer_decision(
-                            &(ctx.frame),
-                            &(self.base.me),
-                            &(self.tower_guard),
-                            &(self.shield_bearer_before_me),
-                            &(self.my_shooting_point),
-                            &(self.base.primary_target.is_some()
-                                && self.archer_is_too_near_to_enemy(
-                                    &ctx.position,
-                                    self.base.primary_target,
-                                    ctx,
-                                    tick,
-                                )),
-                            &(ctx.position),
-                            &(self.base.primary_target),
-                            &(self
-                                .find_fighter(self.base.primary_target, tick)
-                                .map(|f| f.position)),
-                        );
-                    }
-                    // Archer offensive.
-                    if self.tower_guard {
-                        if !self.base.friends_are_alerted {
-                            decision = Decision::TowerGuardAlert;
-                        } else {
-                            decision = Decision::Shoot;
-                        }
-                    } else if self.base.primary_target.is_some()
+    /// Offensive half of the battle decision tree (archer, tower guard,
+    /// officer alert, reserve, pride, observe, fight).
+    fn battle_offensive_decision(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        inputs: BattleDecisionInputs,
+        decision_target_multiplicity: &std::collections::BTreeMap<HumanHandle, u32>,
+        cover_shield_bearer: &mut HumanHandle,
+    ) -> Decision {
+        let ThinkEnv { ctx, tick, .. } = env;
+        let BattleDecisionInputs {
+            friends_lower_company,
+            soldiers_lower_pride,
+            simple_soldiers_near,
+            min_square_enemy_distance,
+            num_enemies_i_can_see,
+            friends_nearer_to_enemy,
+        } = inputs;
+        let decision;
+        // Use the aggregates computed by this decision's camp scan.
+        let friends_with_lower_company = friends_lower_company;
+        let soldiers_with_lower_pride = soldiers_lower_pride;
+
+        ////////// offensive decisions //////////////
+
+        if self.is_archer() && self.base.blood_alcohol == 0 {
+            if crate::ai_enemy::battle_decision_debug_enabled() {
+                crate::ai_enemy::parity_trace::archer_decision(
+                    &(ctx.frame),
+                    &(self.base.me),
+                    &(self.tower_guard),
+                    &(self.shield_bearer_before_me),
+                    &(self.my_shooting_point),
+                    &(self.base.primary_target.is_some()
                         && self.archer_is_too_near_to_enemy(
                             &ctx.position,
                             self.base.primary_target,
                             ctx,
                             tick,
-                        )
-                    {
-                        // Step back and decide again.
-                        decision = Decision::ArcherStepBack;
-                    } else if self.shield_bearer_before_me.is_some() && self.base.blood_alcohol == 0
-                    {
-                        // Already paired with a shield bearer — check if
-                        // we're still in cover or need to reposition.
-                        if let Some(cover_pos) =
-                            self.shield_bearer_cover_position(self.shield_bearer_before_me, tick)
-                        {
-                            let diff = pos_diff(&ctx.position, &cover_pos);
-                            if max_norm(diff) < archer::COVER_POINT_TOLERANCE as f32 {
-                                // Still in cover — shoot
-                                decision = Decision::Shoot;
-                            } else {
-                                // Need to reposition behind shield bearer
-                                cover_shield_bearer = self
-                                    .shield_bearer_before_me
-                                    .expect("active archer cover has no shield bearer")
-                                    .get();
-                                decision = Decision::CoverBehindShieldBearer;
-                            }
-                        } else {
-                            // Shield bearer lost or unreachable
-                            self.update_shield_bearer_before_me(None);
-                            decision = Decision::Shoot;
-                        }
-                    } else if self.my_shooting_point.is_some() {
-                        // Already have a shooting point.
-                        decision = Decision::Shoot;
-                    } else if self.choose_good_shooting_point(global, ctx, tick) {
-                        // Found a good archery point — run to it.
-                        decision = Decision::RunToArcheryPoint;
-                    } else {
-                        // Search for a shield bearer to hide behind.
-                        if let Some(sb) = self.get_nearest_free_shield_bearer(ctx, tick) {
-                            cover_shield_bearer = sb;
-                            decision = Decision::CoverBehindShieldBearer;
-                        } else {
-                            // No shield to hide behind
-                            decision = Decision::Shoot;
-                        }
-                    }
-                } else if self.tower_guard {
-                    // Tower guard offensive.
-                    if !self.base.friends_are_alerted {
-                        decision = Decision::TowerGuardAlert;
-                    } else if min_square_enemy_distance < combat::MIN_SQUARE_RESERVE_DISTANCE as u32
-                    {
-                        decision = Decision::Fight;
-                    } else {
-                        decision = Decision::TowerGuardObserve;
-                    }
-                } else if self.get_rank() == ProfileRank::Officer
-                    && simple_soldiers_near
-                    && !self.base.friends_are_alerted
-                    && self.base.blood_alcohol == 0
-                {
-                    // Officer alerts soldiers (only if simple soldiers are nearby).
-                    decision = Decision::AlertSoldiers;
-                } else if friends_with_lower_company >= self.list_them.len() as u16
-                    && min_square_enemy_distance > combat::MIN_SQUARE_RESERVE_DISTANCE as u32
-                {
-                    // Enough friends closer → hold back.
-                    decision = Decision::Reserve;
-                } else if self.company_number == 100
-                    && min_square_enemy_distance > combat::MIN_SQUARE_RESERVE_DISTANCE as u32
-                {
-                    // Company 100 → last reserve.
-                    decision = Decision::LastReserve;
-                } else if soldiers_with_lower_pride
-                    && self.is_too_proud_to_attack(ctx, tick, Some(&decision_target_multiplicity))
-                {
-                    // Too proud to fight alongside commoners.
-                    decision = Decision::TooProudToAttack;
-                } else if ctx.is_hostile_to_player()
-                    && !soldiers_with_lower_pride
-                    && enough_nearer_friends_to_observe(
-                        friends_nearer_to_enemy,
-                        num_enemies_i_can_see,
-                        self.get_courage(),
-                    )
-                {
-                    // Lacklandist observe — enough friends are already
-                    // fighting closer to the enemy, stand back and watch.
-                    // Camp-gated: only Lacklandists take this branch;
-                    // royalists fall through to Fight.
-                    // `num_enemies_i_can_see` is a persistent count of
-                    // tracked enemies, not a per-tick "detected this
-                    // frame" count, since `tick.personally_visible_enemies`
-                    // is only populated on the detection-commit dispatch
-                    // path; otherwise EVENT_TIMER-driven calls would see
-                    // `0 >= 0 + 0 = true` and wrongly observe instead of
-                    // charging.
-                    decision = Decision::Observe;
+                        )),
+                    &(ctx.position),
+                    &(self.base.primary_target),
+                    &(self
+                        .find_fighter(self.base.primary_target, tick)
+                        .map(|f| f.position)),
+                );
+            }
+            // Archer offensive.
+            if self.tower_guard {
+                if !self.base.friends_are_alerted {
+                    decision = Decision::TowerGuardAlert;
                 } else {
-                    // Charge! (Earlier port versions injected a
-                    // `refresh_arrow_protection` early-return here, but
-                    // the offensive-decision chain does not call
-                    // arrow-protection refresh — that sweep lives in
-                    // the every-16-frame update and a few explicit call sites.)
-                    decision = Decision::Fight;
+                    decision = Decision::Shoot;
                 }
-            } else {
-                // `only_enemy_soldiers` is initialized true, cleared if
-                // any PC is in list_them. Used to gate LookForHelp /
-                // RunAndAlertSoldiers — you don't call for help if your
-                // opponents are all enemy soldiers (friendly fire / brawl
-                // semantics).
-                let only_enemy_soldiers = !self
-                    .list_them
-                    .iter()
-                    .any(|&h| self.find_fighter(h, tick).map(|f| f.is_pc).unwrap_or(false));
-
-                // Archer with no arrows → run for new arrows.
-                if self.is_archer() && ctx.remaining_arrows == 0 {
-                    decision = Decision::RunForNewArrows;
-                } else {
-                    match self.get_rank() {
-                        ProfileRank::Soldier
-                            if !self.base.friends_are_alerted
-                                && !only_enemy_soldiers
-                                && self.base.blood_alcohol == 0 =>
-                        {
-                            decision = Decision::LookForHelp;
-                        }
-                        ProfileRank::Soldier => {
-                            decision = Decision::Cassos;
-                        }
-                        ProfileRank::Officer
-                            if !self.base.friends_are_alerted
-                                && !only_enemy_soldiers
-                                && self.base.blood_alcohol == 0 =>
-                        {
-                            decision = Decision::RunAndAlertSoldiers;
-                        }
-                        ProfileRank::Officer => {
-                            decision = Decision::Cassos;
-                        }
-                        _ => {
-                            decision = Decision::Cassos;
-                        }
+            } else if self.base.primary_target.is_some()
+                && self.archer_is_too_near_to_enemy(
+                    &ctx.position,
+                    self.base.primary_target,
+                    ctx,
+                    tick,
+                )
+            {
+                // Step back and decide again.
+                decision = Decision::ArcherStepBack;
+            } else if self.shield_bearer_before_me.is_some() && self.base.blood_alcohol == 0 {
+                // Already paired with a shield bearer — check if
+                // we're still in cover or need to reposition.
+                if let Some(cover_pos) =
+                    self.shield_bearer_cover_position(self.shield_bearer_before_me, tick)
+                {
+                    let diff = pos_diff(&ctx.position, &cover_pos);
+                    if max_norm(diff) < archer::COVER_POINT_TOLERANCE as f32 {
+                        // Still in cover — shoot
+                        decision = Decision::Shoot;
+                    } else {
+                        // Need to reposition behind shield bearer
+                        *cover_shield_bearer = self
+                            .shield_bearer_before_me
+                            .expect("active archer cover has no shield bearer")
+                            .get();
+                        decision = Decision::CoverBehindShieldBearer;
                     }
+                } else {
+                    // Shield bearer lost or unreachable
+                    self.update_shield_bearer_before_me(None);
+                    decision = Decision::Shoot;
+                }
+            } else if self.my_shooting_point.is_some() {
+                // Already have a shooting point.
+                decision = Decision::Shoot;
+            } else if self.choose_good_shooting_point(global, ctx, tick) {
+                // Found a good archery point — run to it.
+                decision = Decision::RunToArcheryPoint;
+            } else {
+                // Search for a shield bearer to hide behind.
+                if let Some(sb) = self.get_nearest_free_shield_bearer(ctx, tick) {
+                    *cover_shield_bearer = sb;
+                    decision = Decision::CoverBehindShieldBearer;
+                } else {
+                    // No shield to hide behind
+                    decision = Decision::Shoot;
+                }
+            }
+        } else if self.tower_guard {
+            // Tower guard offensive.
+            if !self.base.friends_are_alerted {
+                decision = Decision::TowerGuardAlert;
+            } else if min_square_enemy_distance < combat::MIN_SQUARE_RESERVE_DISTANCE as u32 {
+                decision = Decision::Fight;
+            } else {
+                decision = Decision::TowerGuardObserve;
+            }
+        } else if self.get_rank() == ProfileRank::Officer
+            && simple_soldiers_near
+            && !self.base.friends_are_alerted
+            && self.base.blood_alcohol == 0
+        {
+            // Officer alerts soldiers (only if simple soldiers are nearby).
+            decision = Decision::AlertSoldiers;
+        } else if friends_with_lower_company >= self.list_them.len() as u16
+            && min_square_enemy_distance > combat::MIN_SQUARE_RESERVE_DISTANCE as u32
+        {
+            // Enough friends closer → hold back.
+            decision = Decision::Reserve;
+        } else if self.company_number == 100
+            && min_square_enemy_distance > combat::MIN_SQUARE_RESERVE_DISTANCE as u32
+        {
+            // Company 100 → last reserve.
+            decision = Decision::LastReserve;
+        } else if soldiers_with_lower_pride
+            && self.is_too_proud_to_attack(ctx, tick, Some(decision_target_multiplicity))
+        {
+            // Too proud to fight alongside commoners.
+            decision = Decision::TooProudToAttack;
+        } else if ctx.is_hostile_to_player()
+            && !soldiers_with_lower_pride
+            && enough_nearer_friends_to_observe(
+                friends_nearer_to_enemy,
+                num_enemies_i_can_see,
+                self.get_courage(),
+            )
+        {
+            // Lacklandist observe — enough friends are already
+            // fighting closer to the enemy, stand back and watch.
+            // Camp-gated: only Lacklandists take this branch;
+            // royalists fall through to Fight.
+            // `num_enemies_i_can_see` is a persistent count of
+            // tracked enemies, not a per-tick "detected this
+            // frame" count, since `tick.personally_visible_enemies`
+            // is only populated on the detection-commit dispatch
+            // path; otherwise EVENT_TIMER-driven calls would see
+            // `0 >= 0 + 0 = true` and wrongly observe instead of
+            // charging.
+            decision = Decision::Observe;
+        } else {
+            // Charge! (Earlier port versions injected a
+            // `refresh_arrow_protection` early-return here, but
+            // the offensive-decision chain does not call
+            // arrow-protection refresh — that sweep lives in
+            // the every-16-frame update and a few explicit call sites.)
+            decision = Decision::Fight;
+        }
+        decision
+    }
+
+    /// Defensive half of the battle decision tree: arrows, then help/alert
+    /// by rank, otherwise Cassos.
+    fn battle_defensive_decision(&self, env: ThinkEnv<'_>) -> Decision {
+        let ThinkEnv { ctx, tick, .. } = env;
+        let decision;
+        // `only_enemy_soldiers` is initialized true, cleared if
+        // any PC is in list_them. Used to gate LookForHelp /
+        // RunAndAlertSoldiers — you don't call for help if your
+        // opponents are all enemy soldiers (friendly fire / brawl
+        // semantics).
+        let only_enemy_soldiers = !self
+            .list_them
+            .iter()
+            .any(|&h| self.find_fighter(h, tick).map(|f| f.is_pc).unwrap_or(false));
+
+        // Archer with no arrows → run for new arrows.
+        if self.is_archer() && ctx.remaining_arrows == 0 {
+            decision = Decision::RunForNewArrows;
+        } else {
+            match self.get_rank() {
+                ProfileRank::Soldier
+                    if !self.base.friends_are_alerted
+                        && !only_enemy_soldiers
+                        && self.base.blood_alcohol == 0 =>
+                {
+                    decision = Decision::LookForHelp;
+                }
+                ProfileRank::Soldier => {
+                    decision = Decision::Cassos;
+                }
+                ProfileRank::Officer
+                    if !self.base.friends_are_alerted
+                        && !only_enemy_soldiers
+                        && self.base.blood_alcohol == 0 =>
+                {
+                    decision = Decision::RunAndAlertSoldiers;
+                }
+                ProfileRank::Officer => {
+                    decision = Decision::Cassos;
+                }
+                _ => {
+                    decision = Decision::Cassos;
                 }
             }
         }
-
-        tracing::trace!(
-            me = self.base.me,
-            ?decision,
-            primary_target = ?self.base.primary_target,
-            num_enemies_i_can_see,
-            friends_nearer_to_enemy,
-            soldiers_lower_pride = soldiers_lower_pride,
-            friends_lower_company = friends_lower_company,
-            "battle_decisions: chose decision"
-        );
-        if crate::ai_enemy::battle_decision_debug_enabled() {
-            crate::ai_enemy::parity_trace::battle_decision(
-                &(ctx.frame),
-                &(self.base.me),
-                &(decision),
-                &(old_substate),
-                &(self.base.primary_target),
-                &(num_enemies_i_can_see),
-                &(friends_nearer_to_enemy),
-            );
-        }
-        // Carry out decision (with possible fallback loop). The Observe
-        // arm's avenger-on-roof fallback returns from the whole routine
-        // before the log line is registered; every other path logs.
-        if self.execute_battle_decision(
-            env,
-            decision,
-            old_substate,
-            cover_shield_bearer,
-            &mut decision_target_multiplicity,
-            global,
-        ) {
-            self.base
-                .register_log_line(LogLineType::BattleDecision, decision as u16);
-        }
+        decision
     }
 
     fn refresh_missed_pc_forecast(&mut self, sim: &SimulationContext, tick: &AiPerTickData) {
@@ -4209,6 +4326,18 @@ struct BattleFriendSummary {
     friends_lower_company: u16,
     soldiers_lower_pride: bool,
     simple_soldiers_near: bool,
+}
+
+/// Decision-local aggregates handed from `battle_decisions` to the
+/// decision-tree pieces.
+#[derive(Clone, Copy)]
+struct BattleDecisionInputs {
+    friends_lower_company: u16,
+    soldiers_lower_pride: bool,
+    simple_soldiers_near: bool,
+    min_square_enemy_distance: u32,
+    num_enemies_i_can_see: usize,
+    friends_nearer_to_enemy: u16,
 }
 
 impl EnemyAi {

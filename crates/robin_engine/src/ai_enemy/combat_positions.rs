@@ -24,6 +24,22 @@ use super::{
     ThinkEnv, UNDEFINED_DIRECTION, archer, combat, propose_good_step_back_goal,
 };
 
+/// Us / them aggregates built by `reconsider_swordfight`.
+#[derive(Clone, Copy)]
+struct SwordfightLists {
+    nearest_friend_solo: Option<AiEntityHandle>,
+    number_of_swordfighting_enemies: u16,
+    number_of_friends: u16,
+}
+
+/// Refreshed primary snapshot and range measurements carried from the
+/// weak-charge gate into repositioning and strike authorization.
+struct SwordfightStrikeRange {
+    primary: FighterSnapshot,
+    dist_to_target: u16,
+    my_max_range: f32,
+}
+
 fn reconsider_observation_debug_matches(frame: u32, owner: u32) -> bool {
     use crate::engine::diagnostics::ParityGate;
     static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
@@ -2894,12 +2910,48 @@ impl EnemyAi {
         enemy_weak: bool,
         global: &mut AiGlobalState,
     ) {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ctx = env.ctx;
         let reconsider_debug = reconsider_position_debug_matches(
             || ctx.frame,
             || ctx.original_creation_order,
             || self.base.me,
         );
+        let std::ops::ControlFlow::Continue(primary) =
+            self.reconsider_swordfight_entry_gates(env, global, reconsider_debug)
+        else {
+            return;
+        };
+        let lists = self.reconsider_swordfight_build_lists(env, reconsider_debug);
+        if self
+            .reconsider_swordfight_rebalance_gates(env, global, reconsider_debug, &primary, lists)
+            .is_break()
+        {
+            return;
+        }
+        let std::ops::ControlFlow::Continue(range) =
+            self.reconsider_swordfight_weak_charge(env, enemy_weak, reconsider_debug)
+        else {
+            return;
+        };
+        self.reconsider_swordfight_reposition_and_strike(
+            env,
+            global,
+            reconsider_debug,
+            lists,
+            range,
+        );
+    }
+
+    /// Swordfight reconsideration entry gates: heartbeat, pending
+    /// ENTER_SWORDFIGHT, quit, principal refresh, friendly target, sight,
+    /// primary snapshot and facing. `Break` means the caller returns.
+    fn reconsider_swordfight_entry_gates(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        reconsider_debug: bool,
+    ) -> std::ops::ControlFlow<(), FighterSnapshot> {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         if reconsider_debug {
             let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
             crate::ai_enemy::parity_trace::reconsider_entry_entry(
@@ -2938,7 +2990,7 @@ impl EnemyAi {
                     &(rng_cursor),
                 );
             }
-            return;
+            return std::ops::ControlFlow::Break(());
         }
 
         // Are we still swordfighting at all? Route through
@@ -2966,7 +3018,7 @@ impl EnemyAi {
                 );
             }
             self.think(env, &quit_stimulus, global);
-            return;
+            return std::ops::ControlFlow::Break(());
         }
 
         // Refresh principal opponent from the snapshot.
@@ -3019,7 +3071,7 @@ impl EnemyAi {
                 3,
                 ctx,
             );
-            return;
+            return std::ops::ControlFlow::Break(());
         }
 
         // Sight check. This must call the real 360° detection
@@ -3047,7 +3099,7 @@ impl EnemyAi {
         }
         if !detects_primary {
             self.finish_swordfight_after_target_loss(env, global);
-            return;
+            return std::ops::ControlFlow::Break(());
         }
 
         let primary_snapshot = self.find_fighter(self.base.primary_target, tick).cloned();
@@ -3069,7 +3121,7 @@ impl EnemyAi {
                     &(rng_cursor),
                 );
             }
-            return;
+            return std::ops::ControlFlow::Break(());
         };
 
         // Are we facing the primary opponent?
@@ -3105,14 +3157,21 @@ impl EnemyAi {
         }
         if !facing_primary {
             // Need to turn first; the engine will rotate us, then call back.
-            return;
+            return std::ops::ControlFlow::Break(());
         }
+        std::ops::ControlFlow::Continue(primary)
+    }
 
+    /// Build the swordfight us / them lists and their aggregates.
+    fn reconsider_swordfight_build_lists(
+        &mut self,
+        env: ThinkEnv<'_>,
+        reconsider_debug: bool,
+    ) -> SwordfightLists {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         // -----------------------------------------------------------------
         // Build the us / them lists from the cached snapshot.
         // -----------------------------------------------------------------
-        let me_pos = ctx.position;
-
         self.base.list_us.clear();
         self.base.list_us.push(self.base.me);
         self.list_them.clear();
@@ -3158,7 +3217,26 @@ impl EnemyAi {
                 &(rng_cursor),
             );
         }
+        SwordfightLists {
+            nearest_friend_solo,
+            number_of_swordfighting_enemies,
+            number_of_friends,
+        }
+    }
 
+    /// Merry-man archer flight, imbalanced-fight rebalance, stupid-soldiers
+    /// cheat and drunk freeze. `Break` means the caller returns.
+    fn reconsider_swordfight_rebalance_gates(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        reconsider_debug: bool,
+        primary: &FighterSnapshot,
+        lists: SwordfightLists,
+    ) -> std::ops::ControlFlow<()> {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let nearest_friend_solo = lists.nearest_friend_solo;
+        let me_pos = ctx.position;
         // Merry men with bow flee!
         if self.is_merry_man_forest(ctx)
             && self.is_archer()
@@ -3173,7 +3251,7 @@ impl EnemyAi {
                     &(rng_cursor),
                 );
             }
-            return;
+            return std::ops::ControlFlow::Break(());
         }
 
         // Imbalanced situation rebalance — if I'm dogpiling someone with
@@ -3254,7 +3332,7 @@ impl EnemyAi {
                             &(rng_cursor),
                         );
                     }
-                    return;
+                    return std::ops::ControlFlow::Break(());
                 }
             }
             // Re-confirm primary target from snapshot now that we kept it.
@@ -3273,7 +3351,7 @@ impl EnemyAi {
                     &(rng_cursor),
                 );
             }
-            return;
+            return std::ops::ControlFlow::Break(());
         }
 
         // Original: both gates are evaluated even for a sober soldier.
@@ -3288,7 +3366,7 @@ impl EnemyAi {
                     &(rng_cursor),
                 );
             }
-            return;
+            return std::ops::ControlFlow::Break(());
         }
         if reconsider_debug {
             let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
@@ -3299,7 +3377,18 @@ impl EnemyAi {
                 &(rng_cursor),
             );
         }
+        std::ops::ControlFlow::Continue(())
+    }
 
+    /// Refresh the primary snapshot, measure range, and take the weak-enemy
+    /// charge. `Break` means the caller returns.
+    fn reconsider_swordfight_weak_charge(
+        &mut self,
+        env: ThinkEnv<'_>,
+        enemy_weak: bool,
+        reconsider_debug: bool,
+    ) -> std::ops::ControlFlow<(), SwordfightStrikeRange> {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         // Refresh primary snapshot in case it changed above.
         let Some(primary) = self.find_fighter(self.base.primary_target, tick).cloned() else {
             if reconsider_debug {
@@ -3311,7 +3400,7 @@ impl EnemyAi {
                     &(rng_cursor),
                 );
             }
-            return;
+            return std::ops::ControlFlow::Break(());
         };
         let to_target = pos_diff(&primary.position, &ctx.position);
         // The original game stores the norm in an unsigned 16-bit value before every following range
@@ -3389,9 +3478,36 @@ impl EnemyAi {
                 GotoFlags::RUN | GotoFlags::SWORD,
                 ctx,
             );
-            return;
+            return std::ops::ControlFlow::Break(());
         }
+        std::ops::ControlFlow::Continue(SwordfightStrikeRange {
+            primary,
+            dist_to_target,
+            my_max_range,
+        })
+    }
 
+    /// One-in-three combat repositioning, step-in, trainer recall, honour
+    /// check and the one-shot strike authorization.
+    fn reconsider_swordfight_reposition_and_strike(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        reconsider_debug: bool,
+        lists: SwordfightLists,
+        range: SwordfightStrikeRange,
+    ) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let SwordfightLists {
+            number_of_friends,
+            number_of_swordfighting_enemies,
+            ..
+        } = lists;
+        let SwordfightStrikeRange {
+            primary,
+            dist_to_target,
+            my_max_range,
+        } = range;
         // Re-evaluate combat position 1 in 3 ticks (skip in pure 1v1
         // fights and combat-trainer mode).
         let reposition_debug = reconsider_debug;
