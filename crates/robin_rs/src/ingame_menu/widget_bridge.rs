@@ -33,7 +33,7 @@ use robin_engine::sprite::BBox;
 
 use super::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, BTN_STATE_SELECTED,
-    FALLBACK_PANEL_FILL, MenuTransform,
+    FALLBACK_PANEL_FILL, MenuRect, MenuTransform,
 };
 use super::resources::{IngameMenuResources, MenuSurface};
 
@@ -1090,28 +1090,22 @@ pub fn draw_menu_surface_rect(
     renderer: &mut Renderer,
     transform: MenuTransform,
     surface: crate::renderer::SurfaceHandle,
-    dst_x: i32,
-    dst_y: i32,
-    dst_w: i32,
-    dst_h: i32,
-    src_x: i32,
-    src_y: i32,
-    src_w: i32,
-    src_h: i32,
+    dst_rect: MenuRect,
+    src_rect: MenuRect,
     transparent: bool,
 ) {
-    let (sx, sy) = transform.to_screen(dst_x, dst_y);
+    let (sx, sy) = transform.to_screen(dst_rect.x, dst_rect.y);
     let src = BBox::from_coords(
-        src_x as f32,
-        src_y as f32,
-        (src_x + src_w) as f32,
-        (src_y + src_h) as f32,
+        src_rect.x as f32,
+        src_rect.y as f32,
+        (src_rect.x + src_rect.w) as f32,
+        (src_rect.y + src_rect.h) as f32,
     );
     let dst = BBox::from_coords(
         sx as f32,
         sy as f32,
-        (sx + dst_w) as f32,
-        (sy + dst_h) as f32,
+        (sx + dst_rect.w) as f32,
+        (sy + dst_rect.h) as f32,
     );
     renderer
         .draw_surface(
@@ -1147,10 +1141,7 @@ pub fn draw_frame_labels(
             font,
             transform,
             &widget.base().text,
-            vx,
-            vy,
-            w,
-            h,
+            MenuRect { x: vx, y: vy, w, h },
             align,
             super::layout::VAlign::Top,
         );
@@ -1190,14 +1181,13 @@ fn draw_surface_in_bbox(
         renderer,
         transform,
         surface_id,
-        vx,
-        vy,
-        w,
-        h,
-        src_x,
-        src_y,
-        src_w,
-        src_h,
+        MenuRect { x: vx, y: vy, w, h },
+        MenuRect {
+            x: src_x,
+            y: src_y,
+            w: src_w,
+            h: src_h,
+        },
         transparent,
     );
 }
