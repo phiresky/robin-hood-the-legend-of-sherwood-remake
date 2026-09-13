@@ -1,6 +1,24 @@
 //! Entity dispatch and derived body geometry.
 use super::*;
 
+/// Rider / emergency-lying / posture prologue shared by the
+/// `Entity::compute_*_point` functions (built by `human_body_context`).
+///
+/// Transient per-call value; never stored, so no serde/state-hash derives.
+struct HumanBodyContext<'a> {
+    element: &'a ElementData,
+    /// Mounted soldier (+60 instead of +45 upright eye offsets, etc.).
+    is_rider: bool,
+    /// Emergency lying box in use: crawling offsets are halved.
+    emergency_lying: bool,
+    /// Stored (or overridden) posture, `Undefined` left as-is.
+    raw_posture: Posture,
+    /// `raw_posture` with `Undefined` mapped to `Upright`.
+    posture: Posture,
+    /// Facing sector `0..16`, used to index the crawling-offset tables.
+    dir: usize,
+}
+
 /// Helper macro — dispatch `$self` to the `element` field of every variant.
 macro_rules! dispatch_element {
     ($self:expr_2021, $field:ident) => {
@@ -926,6 +944,40 @@ impl Entity {
         }
     }
 
+    /// Shared prologue of the `compute_*_point` posture switches.
+    ///
+    /// Every field is a pure read of live entity state, so computing them
+    /// all up front (even the ones a particular point function ignores)
+    /// cannot change any result. `override_posture` replaces the element's
+    /// stored posture, as `compute_eyes_point` and
+    /// `compute_hand_point_for_posture` need.
+    ///
+    /// Returns `None` for non-Human entities.
+    fn human_body_context(
+        &self,
+        override_posture: Option<Posture>,
+    ) -> Option<HumanBodyContext<'_>> {
+        let element = self.human_element()?;
+        let raw_posture = override_posture.unwrap_or(element.posture);
+        Some(HumanBodyContext {
+            element,
+            // Rider flag — only mounted soldiers ride.
+            is_rider: matches!(self, Self::Soldier(s) if s.soldier.rider),
+            // Emergency-lying-box halves crawling offsets.
+            emergency_lying: self.position_iface().is_using_emergency_lying_box(),
+            raw_posture,
+            // `element.posture` is not initialised at entity load (only
+            // combat / ability code writes to it), so `Undefined` is treated
+            // as `Upright`, the normal human resting state.
+            posture: if raw_posture == Posture::Undefined {
+                Posture::Upright
+            } else {
+                raw_posture
+            },
+            dir: (element.direction().rem_euclid(16)) as usize,
+        })
+    }
+
     /// Compute the 3D eye point of a Human actor (PC / soldier / civilian).
     ///
     /// Used by the shadow polygon / view cone overlay: the overlay
@@ -938,34 +990,17 @@ impl Entity {
     /// Returns `None` for non-Human entities (FX, objects).
     pub fn compute_eyes_point(&self, override_posture: Option<Posture>) -> Option<WorldPoint3D> {
         // Only Human actors have posture-dependent eye offsets.
-        let e = self.human_element()?;
-
-        // Rider flag — only mounted soldiers ride.
-        let is_rider = matches!(self, Self::Soldier(s) if s.soldier.rider);
-
-        // Emergency-lying-box halves crawling offsets.
-        let emergency_lying = self.position_iface().is_using_emergency_lying_box();
+        let ctx = self.human_body_context(override_posture)?;
 
         // The authoritative ground position lives in
         // `element.position_map`; see `human_feet_point_3d`.
         let mut eyes = self.human_feet_point_3d();
-        // `element.posture` is not initialised at entity load (only
-        // combat / ability code writes to it), so we treat
-        // `Undefined` as `Upright` here to match the normal human
-        // resting state.
-        let raw_posture = override_posture.unwrap_or(e.posture);
-        let posture = if raw_posture == Posture::Undefined {
-            Posture::Upright
-        } else {
-            raw_posture
-        };
-        let dir = (e.direction().rem_euclid(16)) as usize;
 
         use Posture::*;
-        match posture {
+        match ctx.posture {
             HelpingToClimb | CarryingOnShoulders | Upright | OnLadder | OnWall | Flying
             | CarryingCorpse | Leisure | Spy | AnonymousArcher | Siesta => {
-                eyes.z += if is_rider { 60.0 } else { 45.0 };
+                eyes.z += if ctx.is_rider { 60.0 } else { 45.0 };
             }
             OnShoulders => {
                 eyes.z += 85.0;
@@ -974,14 +1009,15 @@ impl Entity {
                 eyes.z += 25.0;
             }
             Lying | Dead | DeadBack | StuckUnderNet | Tied => {
-                let scale = if emergency_lying { 0.5 } else { 1.0 };
-                eyes.x += scale * CRAWLING_OFFSETS_X[dir];
-                eyes.y += scale * CRAWLING_OFFSETS_Y[dir];
+                let scale = if ctx.emergency_lying { 0.5 } else { 1.0 };
+                eyes.x += scale * CRAWLING_OFFSETS_X[ctx.dir];
+                eyes.y += scale * CRAWLING_OFFSETS_Y[ctx.dir];
                 eyes.z += 5.0;
             }
             LeaningOut => {
                 // Bend forward by 40 units along the facing direction.
-                let [dx, dy] = crate::position_interface::sector_to_vector_iso(e.direction());
+                let [dx, dy] =
+                    crate::position_interface::sector_to_vector_iso(ctx.element.direction());
                 eyes.x += dx * 40.0;
                 eyes.y += dy * 40.0;
                 eyes.z += 45.0;
@@ -1008,30 +1044,23 @@ impl Entity {
     ///
     /// Returns `None` for non-Human entities.
     pub fn compute_detection_point(&self) -> Option<WorldPoint3D> {
-        let e = self.human_element()?;
-
-        let is_rider = matches!(self, Self::Soldier(s) if s.soldier.rider);
+        let ctx = self.human_body_context(None)?;
 
         // The original game's detection-point calculation copies the raw position,
         // retained 3-D cache. During the bounded elevation-crossing callback
         // window that cache still names the outgoing plane; resolving it
         // here exposes the incoming plane one callback too early.
         let mut pt = self.element_data().position();
-        let raw_posture = e.posture;
-        let posture = if raw_posture == Posture::Undefined {
-            Posture::Upright
-        } else {
-            raw_posture
-        };
 
         use Posture::*;
-        match posture {
+        match ctx.posture {
             Upright | Spy | Leisure | Siesta | CarryingCorpse | HelpingToClimb
             | CarryingOnShoulders | AnonymousArcher | OnLadder | OnWall | Flying => {
-                pt.z += if is_rider { 60.0 } else { 45.0 };
+                pt.z += if ctx.is_rider { 60.0 } else { 45.0 };
             }
             LeaningOut => {
-                let [dx, dy] = crate::position_interface::sector_to_vector_iso(e.direction());
+                let [dx, dy] =
+                    crate::position_interface::sector_to_vector_iso(ctx.element.direction());
                 pt.x += dx * 40.0;
                 pt.y += dy * 40.0;
                 pt.z += 45.0;
@@ -1067,14 +1096,14 @@ impl Entity {
     ///
     /// Returns `None` for non-Human entities.
     pub fn compute_stars_point(&self) -> Option<WorldPoint3D> {
-        let e = self.human_element()?;
+        let ctx = self.human_body_context(None)?;
+        let e = ctx.element;
 
         // Live feet point — see note on `human_feet_point_3d`.
         let base = self.human_feet_point_3d();
 
         // Rider: offset backward from facing direction, high Z.
-        let is_rider = matches!(self, Self::Soldier(s) if s.soldier.rider);
-        if is_rider {
+        if ctx.is_rider {
             let [dx, dy] = crate::position_interface::sector_to_vector_iso(e.direction());
             return Some(WorldPoint3D {
                 x: base.x - dx * 10.0,
@@ -1083,8 +1112,11 @@ impl Entity {
             });
         }
 
+        // Unlike the other point functions, stars switch on the raw posture:
+        // `Undefined` falls through to `compute_eyes_point`, which then
+        // applies the `Upright` substitution itself.
         use Posture::*;
-        match e.posture {
+        match ctx.raw_posture {
             Lying | StuckUnderNet | Tied => {
                 //   pt_map = floor(position_map - sprite.center) + sprite_hotspot
                 //   pt_stars = (pt_map.x, pt_map.y + elev+5, elev+5)
@@ -1156,26 +1188,20 @@ impl Entity {
     ///
     /// Returns `None` for non-Human entities (FX, objects).
     pub fn compute_belt_point(&self) -> Option<WorldPoint3D> {
-        let e = self.human_element()?;
+        let ctx = self.human_body_context(None)?;
 
-        let is_rider = matches!(self, Self::Soldier(s) if s.soldier.rider);
         // Original-game belt-point computation copies the current position,
         // whose release-build accessor returns the retained mpointPosition
         // bytes without forcing 3D position recomputation. This matters during the
         // bounded elevation-crossing callback window: an arrow released there
         // must aim from the outgoing cached plane, just like the shipped game.
         let mut belt = self.element_data().position();
-        let posture = if e.posture == Posture::Undefined {
-            Posture::Upright
-        } else {
-            e.posture
-        };
 
         use Posture::*;
-        match posture {
+        match ctx.posture {
             Upright | Spy | LeaningOut | Leisure | Siesta | CarryingCorpse | HelpingToClimb
             | CarryingOnShoulders | AnonymousArcher | OnLadder | OnWall | Flying => {
-                belt.z += if is_rider {
+                belt.z += if ctx.is_rider {
                     RIDER_ELEVATION_BELT_UPRIGHT
                 } else {
                     HUMAN_ELEVATION_BELT_UPRIGHT
@@ -1214,9 +1240,8 @@ impl Entity {
     ///
     /// Returns `None` for non-Human entities.
     pub fn compute_hand_point(&self, forced_elevation: Option<f32>) -> Option<WorldPoint3D> {
-        let e = self.human_element()?;
+        let ctx = self.human_body_context(None)?;
 
-        let is_rider = matches!(self, Self::Soldier(s) if s.soldier.rider);
         // Seed X/Y from the per-frame sprite hotspot; fall back to
         // the feet point if the sprite has no script bound (headless
         // test).
@@ -1239,18 +1264,12 @@ impl Entity {
             return Some(hand);
         }
 
-        let posture = if e.posture == Posture::Undefined {
-            Posture::Upright
-        } else {
-            e.posture
-        };
-
         use Posture::*;
-        match posture {
+        match ctx.posture {
             Upright | Spy | Leisure | Siesta | CarryingCorpse | HelpingToClimb
             | CarryingOnShoulders | AnonymousArcher | OnLadder | OnWall | Flying => {
                 hand.z = elevation
-                    + if is_rider {
+                    + if ctx.is_rider {
                         45.0
                     } else {
                         HUMAN_ELEVATION_BELT_UPRIGHT
@@ -1279,13 +1298,10 @@ impl Entity {
         animation: OrderType,
         posture: Posture,
     ) -> Option<WorldPoint3D> {
-        // Validate this is a human entity.
-        match self {
-            Self::Pc(_) | Self::Soldier(_) | Self::Civilian(_) => {}
-            _ => return None,
-        }
+        // Validate this is a human entity (PC / soldier / civilian). The
+        // context's own facing sector is unused: `direction` is explicit here.
+        let ctx = self.human_body_context(Some(posture))?;
 
-        let is_rider = matches!(self, Self::Soldier(s) if s.soldier.rider);
         // Seed X/Y from the sprite hotspot for the requested
         // animation+direction (mirrors bow_shot::shoot_order_type_for_mode
         // sprite lookup pattern).  Fall back to feet point if the lookup
@@ -1302,18 +1318,13 @@ impl Entity {
             }
             None => self.human_feet_point_3d(),
         };
-        let posture = if posture == Posture::Undefined {
-            Posture::Upright
-        } else {
-            posture
-        };
 
         use Posture::*;
-        match posture {
+        match ctx.posture {
             Upright | Spy | Leisure | Siesta | CarryingCorpse | HelpingToClimb
             | CarryingOnShoulders | AnonymousArcher | OnLadder | OnWall | Flying => {
                 hand.z = elevation
-                    + if is_rider {
+                    + if ctx.is_rider {
                         40.0
                     } else {
                         HUMAN_ELEVATION_BELT_UPRIGHT
@@ -1335,19 +1346,12 @@ impl Entity {
     ///
     /// Returns `None` for non-Human entities.
     pub fn compute_feet_point(&self) -> Option<WorldPoint3D> {
-        let e = self.human_element()?;
-
-        let emergency_lying = self.position_iface().is_using_emergency_lying_box();
+        let ctx = self.human_body_context(None)?;
 
         let mut feet = self.human_feet_point_3d();
-        let posture = if e.posture == Posture::Undefined {
-            Posture::Upright
-        } else {
-            e.posture
-        };
 
         use Posture::*;
-        match posture {
+        match ctx.posture {
             // Standing postures: feet at ground level + 5.
             Upright | Spy | LeaningOut | Leisure | Siesta | CarryingCorpse | HelpingToClimb
             | CarryingOnShoulders | AnonymousArcher | OnLadder | OnWall | Flying => {
@@ -1363,10 +1367,9 @@ impl Entity {
             }
             // Lying/dead: feet displaced opposite to facing direction.
             Lying | Dead | DeadBack | StuckUnderNet | Tied => {
-                let dir = (e.direction().rem_euclid(16)) as usize;
-                let scale = if emergency_lying { 0.5 } else { 1.0 };
-                feet.x -= scale * CRAWLING_OFFSETS_X[dir];
-                feet.y -= scale * CRAWLING_OFFSETS_Y[dir];
+                let scale = if ctx.emergency_lying { 0.5 } else { 1.0 };
+                feet.x -= scale * CRAWLING_OFFSETS_X[ctx.dir];
+                feet.y -= scale * CRAWLING_OFFSETS_Y[ctx.dir];
                 feet.z += 5.0;
             }
             _ => {
