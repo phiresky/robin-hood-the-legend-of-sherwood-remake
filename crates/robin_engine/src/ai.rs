@@ -75,6 +75,7 @@ pub use contexts::{
 };
 
 mod effects;
+pub(crate) use effects::{AiActorCoreEffects, AiActorPreemptionEffects};
 pub use effects::{
     AiActorOutbox, AiDetectionOutbox, AiMusicOutbox, AiOutbox, AiOwnerWork, AiPatrolOutbox,
     AiRecoveryOutbox, AiReentrantOutbox, AiSpeechAttempt, AiStateChangeNotification,
