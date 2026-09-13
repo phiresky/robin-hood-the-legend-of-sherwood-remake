@@ -9,19 +9,20 @@
 use ed25519_dalek::{Signer, SigningKey};
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::replay::ReplayData;
+#[cfg(any(test, feature = "multiplayer"))]
+use robin_run_protocol::NamedSeatJoinClaimV1;
 use robin_run_protocol::{
     ArtifactRefV1, BoardMetricV1, CampaignAggregationConsentV1, CampaignChainReceiptV1,
     CampaignChainStateV1, CampaignContinuationAuthorizationClaimV1,
     CampaignContinuationPreflightGrantV1, CampaignContinuationPreflightRequestClaimV1,
     CampaignContinuationPreflightRequestV1, CampaignRosterContinuityV1, CanonicalDocument as _,
     Digest32, FreshRunPreflightGrantV1, FreshRunPreflightRequestClaimV1,
-    FreshRunPreflightRequestV1, FreshRunScopeV1, NamedSeatJoinAttestationV1, NamedSeatJoinClaimV1,
-    OpaqueId, ParticipantClaimV1, ParticipantPublicDisclosureV1, PublicKey32,
-    RANKED_CAMPAIGN_MEDIA_TYPE_V1, RankedSessionConfigV1, ReplaySeatLifecycleEventV1,
-    ReplaySeatLifecycleKindV1, ReplaySessionGenesisClaimV1, ReplaySessionGenesisV1,
-    ReplaySessionTranscriptV1, SCHEMA_VERSION_V1, ScopeRequestV1, Signature64,
-    SignatureAlgorithmV1, SubmissionArtifactsV1, SubmissionEnvelopeV1, SubmissionOfferRequestV1,
-    SubmissionOfferV1, Validate as _,
+    FreshRunPreflightRequestV1, FreshRunScopeV1, NamedSeatJoinAttestationV1, OpaqueId,
+    ParticipantClaimV1, ParticipantPublicDisclosureV1, PublicKey32, RANKED_CAMPAIGN_MEDIA_TYPE_V1,
+    RankedSessionConfigV1, ReplaySeatLifecycleEventV1, ReplaySeatLifecycleKindV1,
+    ReplaySessionGenesisClaimV1, ReplaySessionGenesisV1, ReplaySessionTranscriptV1,
+    SCHEMA_VERSION_V1, ScopeRequestV1, Signature64, SignatureAlgorithmV1, SubmissionArtifactsV1,
+    SubmissionEnvelopeV1, SubmissionOfferRequestV1, SubmissionOfferV1, Validate as _,
 };
 #[cfg(test)]
 use robin_run_protocol::{CompetitionRunGrantV1, InitialStateExpectationV1};
@@ -715,6 +716,7 @@ pub fn validate_official_session_genesis(
 /// Sign the closed named-seat claim with the same durable native identity used
 /// by leaderboard submission. The transport endpoint is separately bound in
 /// the claim and may only differ for the browser relay client.
+#[cfg(any(test, feature = "multiplayer"))]
 pub fn sign_named_seat_join(
     key: &SigningKey,
     claim: NamedSeatJoinClaimV1,
@@ -819,6 +821,9 @@ impl robin_run_protocol::Validate for RankedSessionClientAdmissionV1 {
     }
 }
 
+// Only the multiplayer transport client admits itself into a host's ranked
+// session; local-only builds never construct a client admission.
+#[cfg(any(test, feature = "multiplayer"))]
 impl RankedSessionClientAdmissionV1 {
     pub fn new_official(
         setup: OfficialRankedSessionSetupV1,
@@ -913,6 +918,12 @@ impl robin_run_protocol::Validate for RankedSessionClientV1 {
 /// Irreversible eligibility owner used by transport/bootstrap integration.
 /// Ranking failures never fabricate evidence or abort otherwise-compatible
 /// gameplay: the state moves once to `BrowseOnly` and stays there.
+///
+/// Without the `multiplayer` feature only `Ranked` is ever constructed (the
+/// local session installs it directly); the transport-driven states are still
+/// matched by the shared readers, so their construction is feature-gated
+/// rather than removed.
+#[cfg_attr(not(any(test, feature = "multiplayer")), allow(dead_code))]
 pub enum RankedSessionLifecycle {
     /// The transport exists, but the exact prepared mission inputs are not yet
     /// available. This state must be resolved before authoritative simulation.
@@ -928,6 +939,7 @@ pub enum RankedSessionLifecycle {
 pub type SharedRankedSessionLifecycle = Arc<Mutex<RankedSessionLifecycle>>;
 
 impl RankedSessionLifecycle {
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn awaiting_prepared_inputs() -> Self {
         Self::AwaitingPreparedInputs
     }
@@ -936,6 +948,7 @@ impl RankedSessionLifecycle {
         Self::Ranked(Box::new(session))
     }
 
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn browse_only(reason: impl Into<String>) -> Self {
         let reason = reason.into();
         assert!(
@@ -945,6 +958,7 @@ impl RankedSessionLifecycle {
         Self::BrowseOnly { reason }
     }
 
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn downgrade(&mut self, reason: impl Into<String>) {
         if matches!(self, Self::BrowseOnly { .. }) {
             return;
@@ -973,6 +987,7 @@ impl RankedSessionLifecycle {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn install_client_admission(
         &mut self,
         admission: RankedSessionClientAdmissionV1,
@@ -987,6 +1002,7 @@ impl RankedSessionLifecycle {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn accept_ranked_client(
         &mut self,
         local_seat: u16,
@@ -1081,6 +1097,7 @@ impl RankedSessionLifecycle {
         }
     }
 
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn client_admission(&self) -> Option<&RankedSessionClientAdmissionV1> {
         match self {
             Self::ClientAdmissionPending(admission) => Some(admission),
