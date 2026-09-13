@@ -149,7 +149,7 @@ const post = (line) => {
         if (line.includes('Restart snapshot restored')) restartRestored = true;
         if (line.includes('Restart snapshot could not be restored')) restartFailed = true;
         if (line.includes('Engine tick returned: LevelFailed')) terminalFailures++;
-        if (!restartCheckStarted && line.includes('mission bootstrap: total elapsed_ms')) {
+        if (!restartCheckStarted && line.includes('startup timing: first mission present returned')) {
             restartCheckStarted = true;
             setTimeout(() => globalThis.runRestartCheck().catch(error => console.error('restart verification failed: ' + error)), 0);
         }
@@ -407,7 +407,7 @@ const server = createServer((req, res) => {
                     inGameAt = pageMs;
                     console.log(`RESULT: in-game (recording replay) ${secs()}s after wasm_boot; ${(pageMs / 1000).toFixed(3)}s after navigation`);
                 }
-                if (line.includes('mission bootstrap: total elapsed_ms') && bootstrapAt === null) {
+                if (line.includes('startup timing: first mission present returned') && bootstrapAt === null) {
                     bootstrapAt = pageMs;
                     console.log(`RESULT: bootstrap complete ${(pageMs / 1000).toFixed(3)}s after navigation`);
                 }
