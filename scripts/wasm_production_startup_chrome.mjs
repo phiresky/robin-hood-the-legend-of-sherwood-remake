@@ -80,7 +80,8 @@ for (const [kind, file] of [['wasm', 'robin_bg.wasm'], ['admission', 'replay_adm
 }
 const hash = replayBuild ?? '000000000000'; // Replay builds retain their real envelope identity.
 const runtimePrefix = `/wasm/${hash}/`;
-const dataPrefix = '/datadirs/demo-leicester/';
+const dataPrefix = '/datadirs/demo-leicester/v16/';
+const demoDatadirName = 'v16-web-opus-q80.rhdata.zst';
 const preload = [];
 const { readdir } = await import('node:fs/promises');
 preload.push({ path: 'Data/AudioDurations.json', url: 'Data/AudioDurations.json' });
@@ -110,6 +111,14 @@ async function asset(path) {
         body = Buffer.from(JSON.stringify({ short: hash })); type = 'application/json';
     } else if (path === runtimePrefix + 'preload-assets.json') {
         body = Buffer.from(JSON.stringify(preload)); type = 'application/json';
+    } else if (path === runtimePrefix + 'manifest.json') {
+        // The shell loads the Demo datadir generation pinned by the build manifest.
+        const demo = await readFile(join(datadir, 'Data/datadir.bin'));
+        body = Buffer.from(JSON.stringify({ short: hash, multiplayerContent: { demo: {
+            url: `https://robinhood.phiresky.xyz${dataPrefix}${demoDatadirName}`,
+            sha256: sha256(demo), byteLength: demo.length,
+        } } }));
+        type = 'application/json';
     } else {
         let file;
         if (path.startsWith(runtimePrefix)) {
@@ -121,7 +130,7 @@ async function asset(path) {
             if (suffix === 'replay_admission_bg.wasm' && httpAdmissionBr) { body = httpAdmissionBr; encoding = 'br'; }
         } else if (path.startsWith(dataPrefix)) {
             const suffix = path.slice(dataPrefix.length);
-            file = safePath(datadir, suffix === 'v8-web-opus-q80.rhdata.zst' ? 'Data/datadir.bin' : `Data/${suffix}`);
+            file = safePath(datadir, suffix === demoDatadirName ? 'Data/datadir.bin' : `Data/${suffix}`);
         } else file = safePath(site, path === '/' ? 'index.html' : path.slice(1));
         body ??= await readFile(file);
         type = ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm', '.png': 'image/png', '.svg': 'image/svg+xml' })[extname(file)] ?? type;

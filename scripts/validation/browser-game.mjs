@@ -28,6 +28,9 @@ if (!Number.isFinite(cdpTimeout) || cdpTimeout <= 0) throw new Error('--cdp-time
 const gameHost = 'robinhood.phiresky.xyz', signerHost = 'identity.robinhood.phiresky.xyz';
 const gameOrigin = `https://${gameHost}`, signerOrigin = `https://${signerHost}`;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+// `--data` holds the published layout of the current Demo generation directory.
+const demoPrefix = '/datadirs/demo-leicester/v16/';
+const demoDatadirName = 'v16-web-opus-q80.rhdata.zst';
 const result = { source, chrome: execFileSync('google-chrome', ['--version'], { encoding: 'utf8' }).trim(),
     shellCheckout: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     runtime: pkg, data, softwareGpuRequested: true, isolationHeadersAdded: !!values.isolated,
@@ -66,6 +69,14 @@ const server = createServer({ cert: readFileSync(cert), key: readFileSync(key) }
     for (const [name, value] of Object.entries(headers(kind, url.pathname))) res.setHeader(name, value);
     if (url.pathname === '/acceptance-away') { res.setHeader('Content-Type', 'text/html'); res.end('<title>Local BFCache destination</title>'); return; }
     if (url.pathname === '/wasm/latest.json') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ commit: source, short })); return; }
+    if (url.pathname === `/wasm/${short}/manifest.json` && data) {
+        // The shell loads the Demo datadir generation pinned by the build manifest.
+        const demo = readFileSync(join(data, demoDatadirName));
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ commit: source, short, multiplayerContent: { demo: {
+            url: `${gameOrigin}${demoPrefix}${demoDatadirName}`, sha256: digest(demo), byteLength: demo.length,
+        } } })); return;
+    }
     if (url.pathname === `/wasm/${short}/preload-assets.json`) {
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify(preload.map(path => ({ path, url: `/acceptance-core/${path}` })))); return;
@@ -74,7 +85,7 @@ const server = createServer({ cert: readFileSync(cert), key: readFileSync(key) }
     let path = decodeURIComponent(url.pathname);
     if (path.startsWith('/acceptance-core/')) { root = resolve('assets/core-datadir'); path = path.slice('/acceptance-core'.length); }
     else if (path.startsWith(`/wasm/${short}/`)) { root = pkg; path = path.slice(`/wasm/${short}`.length); }
-    else if (path.startsWith('/datadirs/demo-leicester/') && data) { root = data; path = path.slice('/datadirs/demo-leicester'.length); }
+    else if (path.startsWith(demoPrefix) && data) { root = data; path = path.slice(demoPrefix.length - 1); }
     if (path.endsWith('/')) path += 'index.html';
     const file = resolve(root, `.${path}`);
     if (!file.startsWith(root + sep) || path.includes('browser_identity_vault') && kind !== 'signer'
@@ -241,10 +252,10 @@ try {
     if (!values['probe-only']) {
         if (!data) throw new Error('--data is required for game acceptance');
         record('runtimeHash', digest(readFileSync(join(pkg, 'robin_bg.wasm'))));
-        record('dataHash', digest(readFileSync(join(data, 'v8-web-opus-q80.rhdata.zst'))));
+        record('dataHash', digest(readFileSync(join(data, demoDatadirName))));
         const manifest = JSON.parse(readFileSync(join(data, 'robinhood-web-content.json')));
         for (const entry of [manifest.datadir, ...manifest.files]) {
-            const name = entry.path === 'datadir.bin' ? 'v8-web-opus-q80.rhdata.zst' : entry.path;
+            const name = entry.path === 'datadir.bin' ? demoDatadirName : entry.path;
             const bytes = readFileSync(join(data, name));
             if (bytes.length !== entry.byte_length || digest(bytes) !== entry.sha256) throw new Error(`Demo closure mismatch: ${name}`);
         }

@@ -134,8 +134,9 @@ saved by interface jxl after sprite trim                        2,435,771 B
 saved vs v2 q80                                                 7,229,849 B
 ```
 
-The canonical browser converter path for the artifact named
-`v8-web-opus-q80.rhdata.zst` is the checked-in wrapper:
+The canonical browser converter path for the published web Demo artifact
+(currently `datadirs/demo-leicester/v16/v16-web-opus-q80.rhdata.zst`; see the
+README deployment section) is the checked-in wrapper:
 
 ```sh
 scripts/build_web_shipping_datadir.sh \

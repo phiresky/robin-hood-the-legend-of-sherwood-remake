@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DEPLOYMENT } from './verify-cloudflare-deployment.mjs';
+import { DEMO_PATH, RETAINED_DEMO_GENERATIONS } from './verify-datadir-corpus.mjs';
 
 const ATTACKER_ORIGIN = 'https://attacker.invalid';
 const API_OPTIONS_STATUS = 405;
@@ -63,7 +64,11 @@ function requireImmutableApiResponse(response, label) {
         || expected.some(directive => !directives.includes(directive))) {
         throw new Error(`${label} must set Cache-Control: public, max-age=31536000, immutable`);
     }
-    if ((response.headers.get('x-content-type-options') ?? '').trim().toLowerCase() !== 'nosniff') {
+    // The API and nginx both emit nosniff; Fetch combines repeated fields.
+    // Require every value to agree, including rejecting empty list members.
+    const contentTypeOptions = (response.headers.get('x-content-type-options') ?? '')
+        .split(',').map(value => value.trim().toLowerCase());
+    if (contentTypeOptions.some(value => value !== 'nosniff')) {
         throw new Error(`${label} must set X-Content-Type-Options: nosniff`);
     }
     requireNoCors(response, label);
@@ -173,8 +178,7 @@ export async function smokeCloudflareDeployment(fetchImpl = fetch) {
     if (!/^[0-9a-f]{12}$/u.test(latest?.short)
         || latest?.ticketSchema !== 3
         || latest?.multiplayerContent?.schema !== 2
-        || latest?.multiplayerContent?.demo?.url
-            !== `${DEPLOYMENT.publicOrigin}/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst`) {
+        || latest?.multiplayerContent?.demo?.url !== `${DEPLOYMENT.publicOrigin}/${DEMO_PATH}`) {
         throw new Error('live runtime manifest is not the exact ticket3/content2 same-origin contract');
     }
     const versionedManifest = await request(
@@ -202,6 +206,17 @@ export async function smokeCloudflareDeployment(fetchImpl = fetch) {
         latest.multiplayerContent.demo,
         'live Demo object',
     );
+    // Older builds and replay links pin retained Demo generations.
+    for (const generation of RETAINED_DEMO_GENERATIONS) {
+        const label = `retained Demo object ${generation.datadirPath}`;
+        const retained = await request(fetchImpl, `${DEPLOYMENT.publicOrigin}/${generation.datadirPath}`, 200, 'HEAD');
+        requireHeader(retained, 'x-robinhood-static-origin', 'datadir-v1');
+        requireHeader(retained, 'cache-control', 'immutable');
+        const length = retained.headers.get('content-length');
+        if (length !== null && length !== String(generation.datadirByteLength)) {
+            throw new Error(`${label} Content-Length differs from its pinned identity`);
+        }
+    }
 
     const metadataUrl = `${DEPLOYMENT.publicOrigin}/api/v1/leaderboard-metadata`;
     let metadata;

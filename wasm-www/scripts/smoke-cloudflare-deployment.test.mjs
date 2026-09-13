@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { DEPLOYMENT } from './verify-cloudflare-deployment.mjs';
+import { DEMO_PATH, RETAINED_DEMO_GENERATIONS } from './verify-datadir-corpus.mjs';
 import { smokeCloudflareDeployment } from './smoke-cloudflare-deployment.mjs';
 
 const DEMO_BYTES = Uint8Array.from({ length: 123 }, (_, index) => index);
@@ -26,6 +27,7 @@ function fixtureFetch({
     demoContentLength,
     demoManifestByteLength = DEMO_BYTES.byteLength,
     demoManifestSha256 = DEMO_SHA256,
+    retainedDemoStatus = 200,
 } = {}) {
     const paths = [];
     const requests = [];
@@ -38,7 +40,7 @@ function fixtureFetch({
         multiplayerContent: {
             schema: 2,
             demo: {
-                url: `${DEPLOYMENT.publicOrigin}/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst`,
+                url: `${DEPLOYMENT.publicOrigin}/${DEMO_PATH}`,
                 byteLength: demoManifestByteLength,
                 sha256: demoManifestSha256,
             },
@@ -137,7 +139,17 @@ function fixtureFetch({
                 },
             });
         }
-        if (url.pathname === '/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst') {
+        if (url.pathname === `/${RETAINED_DEMO_GENERATIONS[0].datadirPath}`) {
+            return new Response(null, {
+                status: retainedDemoStatus,
+                headers: {
+                    'cache-control': 'public, max-age=31536000, immutable',
+                    'content-length': String(RETAINED_DEMO_GENERATIONS[0].datadirByteLength),
+                    'x-robinhood-static-origin': 'datadir-v1',
+                },
+            });
+        }
+        if (url.pathname === `/${DEMO_PATH}`) {
             return new Response(demoBytes, {
                 status: 200,
                 headers: {
@@ -183,7 +195,13 @@ test('deployment smoke covers both static origins, a deep link, assets, and API 
     assert(fixture.paths.includes(`GET ${DEPLOYMENT.publicOrigin}/.well-known/acme-challenge/robinhood-deployment-smoke-absent`));
     assert(fixture.paths.includes(`GET ${DEPLOYMENT.signerOrigin}/identity-signer/`));
     assert(fixture.paths.includes(`GET ${DEPLOYMENT.publicOrigin}/wasm/latest.json`));
-    assert(fixture.paths.includes(`GET ${DEPLOYMENT.publicOrigin}/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst`));
+    assert(fixture.paths.includes(`GET ${DEPLOYMENT.publicOrigin}/${DEMO_PATH}`));
+    assert(fixture.paths.includes(`HEAD ${DEPLOYMENT.publicOrigin}/${RETAINED_DEMO_GENERATIONS[0].datadirPath}`));
+    // A deployment that drops a retained Demo generation is a failure.
+    await assert.rejects(
+        smokeCloudflareDeployment(fixtureFetch({ retainedDemoStatus: 404 }).fetchImpl),
+        /v8-web-opus-q80\.rhdata\.zst returned 404/u,
+    );
     const metadataRequests = fixture.requests.filter(request =>
         request.url.href === `${DEPLOYMENT.publicOrigin}/api/v1/leaderboard-metadata`
         && request.options.method === 'GET');
@@ -294,6 +312,17 @@ test('deployment smoke rejects an immutable API document without nosniff', async
         smokeCloudflareDeployment(fixture.fetchImpl),
         /X-Content-Type-Options: nosniff/u,
     );
+});
+
+test('deployment smoke accepts combined repeated nosniff fields but rejects any other member', async () => {
+    // The API and nginx both emit the header; Fetch joins repeated fields.
+    await smokeCloudflareDeployment(fixtureFetch({ immutableContentTypeOptions: 'nosniff, nosniff' }).fetchImpl);
+    for (const value of ['nosniff, ', 'nosniff, sniff']) {
+        await assert.rejects(
+            smokeCloudflareDeployment(fixtureFetch({ immutableContentTypeOptions: value }).fetchImpl),
+            /X-Content-Type-Options: nosniff/u,
+        );
+    }
 });
 
 test('deployment smoke rejects CORS on immutable API documents', async () => {
