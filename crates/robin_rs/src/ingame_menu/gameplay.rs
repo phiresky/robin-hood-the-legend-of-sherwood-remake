@@ -298,10 +298,12 @@ pub async fn show_gameplay(
         if state.take_content_request() {
             super::spellforge_content::show_spellforge_content_settings(
                 application_context,
-                event_pump,
-                renderer,
-                resources,
-                cursor,
+                &mut widget_bridge::ModalScreenIo {
+                    window: event_pump,
+                    renderer,
+                    resources,
+                    cursor,
+                },
             )
             .await;
             state.resume_after_content(event_pump, renderer);

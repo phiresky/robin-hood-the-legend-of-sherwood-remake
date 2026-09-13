@@ -688,14 +688,16 @@ impl MultiplayerMenuState {
                                     };
                                 let attestation = crate::ingame_menu::spellforge_content::show_host_distribution_attestation(
                                     application_context,
-                                    event_pump,
-                                    renderer,
-                                    resources,
-                                    Some(ModalCursor::new(
-                                        cursor_renderer,
-                                        MOUSE_OPACITY_DEFAULT,
-                                        0,
-                                    )),
+                                    &mut crate::ingame_menu::widget_bridge::ModalScreenIo {
+                                        window: event_pump,
+                                        renderer,
+                                        resources,
+                                        cursor: Some(&ModalCursor::new(
+                                            cursor_renderer,
+                                            MOUSE_OPACITY_DEFAULT,
+                                            0,
+                                        )),
+                                    },
                                     custom,
                                     &host_id,
                                 )
@@ -1009,10 +1011,12 @@ async fn prepare_direct_browser_launch(
             let (key, metadata) = crate::distributed_mod::offer_trust_identity(&offer)?;
             let outcome = crate::ingame_menu::spellforge_content::show_spellforge_consent(
                 application_context,
-                event_pump,
-                renderer,
-                resources,
-                Some(ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0)),
+                &mut crate::ingame_menu::widget_bridge::ModalScreenIo {
+                    window: event_pump,
+                    renderer,
+                    resources,
+                    cursor: Some(&ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0)),
+                },
                 key,
                 metadata,
             )
@@ -1195,10 +1199,12 @@ async fn preflight_host_content(
     let (key, metadata) = crate::distributed_mod::offer_trust_identity(&offer)?;
     let outcome = crate::ingame_menu::spellforge_content::show_spellforge_consent(
         application_context,
-        event_pump,
-        renderer,
-        resources,
-        Some(ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0)),
+        &mut crate::ingame_menu::widget_bridge::ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor: Some(&ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0)),
+        },
         key,
         metadata,
     )

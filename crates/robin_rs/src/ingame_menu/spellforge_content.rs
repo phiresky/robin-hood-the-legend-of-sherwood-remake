@@ -7,7 +7,6 @@
 
 use crate::application::require;
 use crate::cache_maintenance::CacheClearStatus;
-use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
 use crate::localization::PortTextKey;
 use crate::native_font::Font;
@@ -16,12 +15,12 @@ use crate::spellforge_trust::{SpellforgeTrustGrant, SpellforgeTrustKey, Spellfor
 use crate::widget::FrameWnd;
 
 use super::layout::{
-    MenuTransform, align_bottom_right, dim_screen, draw_screen_background,
-    elide_text_to_width_by as elide_to_width_by, enter_modal_gpu_phase,
-    render_text_virt_font as render_text_virt, wrap_text_for_box_font,
+    MenuTransform, align_bottom_right, draw_screen_background,
+    elide_text_to_width_by as elide_to_width_by, render_text_virt_font as render_text_virt,
+    wrap_text_for_box_font,
 };
 use super::resources::{IngameMenuResources, MT_BTN_BACK};
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey};
 
 const ID_ACCEPT: u32 = 1;
 const ID_CANCEL: u32 = 2;
@@ -187,10 +186,7 @@ pub enum SpellforgeConsentOutcome {
 /// attestation bound to the authenticated host public key and source URL.
 pub async fn show_host_distribution_attestation(
     application_context: &ApplicationContext,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: Option<ModalCursor<'_>>,
+    io: &mut ModalScreenIo<'_, '_>,
     launch: &crate::main_menu::custom_missions::CustomMissionLaunch,
     host_endpoint_id: &str,
 ) -> Result<Option<String>, String> {
@@ -214,20 +210,11 @@ pub async fn show_host_distribution_attestation(
             4 * 1024,
         )?;
     }
-    let mut state =
-        HostDistributionAttestationState::new(application_context, event_pump, renderer, resources);
-    loop {
-        let io = widget_bridge::ModalScreenIo {
-            window: event_pump,
-            renderer,
-            resources,
-            cursor: cursor.as_ref(),
-        };
-        match state.tick(application_context, io, launch, host_endpoint_id)? {
-            std::ops::ControlFlow::Break(outcome) => return Ok(outcome),
-            std::ops::ControlFlow::Continue(()) => crate::window::sleep_ui_frame().await,
-        }
-    }
+    let mut state = HostDistributionAttestationState::new(application_context, io);
+    Ok(widget_bridge::run_modal(io, |io| {
+        state.tick(application_context, io, launch, host_endpoint_id)
+    })
+    .await)
 }
 
 // Owns live input/capture state, not a restorable screen document.
@@ -237,16 +224,8 @@ struct HostDistributionAttestationState {
 }
 
 impl HostDistributionAttestationState {
-    fn new(
-        application_context: &ApplicationContext,
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
-    ) -> Self {
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
+    fn new(application_context: &ApplicationContext, io: &ModalScreenIo<'_, '_>) -> Self {
+        let resources = io.resources;
         let (button_w, button_h) = resources.button_dimensions();
         let back_label = resources.menu_text.get(MT_BTN_BACK);
         let labels = [
@@ -274,64 +253,52 @@ impl HostDistributionAttestationState {
             bottom[1].w,
             bottom[1].h,
         ));
-        let input = ModalInputState::from_window(event_pump, transform);
+        let input = ModalInputState::for_screen(io.window, io.renderer);
         Self { frame, input }
     }
 
+    /// One frame; `Some(None)` cancels and `Some(Some(text))` attests.
     fn tick(
         &mut self,
         application_context: &ApplicationContext,
-        io: widget_bridge::ModalScreenIo<'_, '_>,
+        io: &mut ModalScreenIo<'_, '_>,
         launch: &crate::main_menu::custom_missions::CustomMissionLaunch,
         host_endpoint_id: &str,
-    ) -> Result<std::ops::ControlFlow<Option<String>>, String> {
-        let widget_bridge::ModalScreenIo {
-            window: event_pump,
-            renderer,
-            resources,
-            cursor,
-        } = io;
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            self.input.update_from_event(&event, transform);
-            if matches!(
-                event,
-                GameEvent::Quit
-                    | GameEvent::KeyDown {
-                        keycode: Keycode::Escape,
-                        ..
-                    }
-            ) {
-                return Ok(std::ops::ControlFlow::Break(None));
-            }
+    ) -> Option<Option<String>> {
+        let screen = ScreenFrame::begin(io, &mut self.input);
+        if screen
+            .keys()
+            .any(|key| matches!(key, ScreenKey::Quit | ScreenKey::Cancel))
+        {
+            return Some(None);
         }
-        let events = self.input.process_frame(&mut self.frame);
-        if let Some(id) = widget_bridge::find_activated(&events) {
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input, &mut self.frame);
+        if let Some(id) = activated {
             match id {
-                ID_CANCEL => return Ok(std::ops::ControlFlow::Break(None)),
+                ID_CANCEL => return Some(None),
                 ID_ACCEPT => {
-                    return Ok(std::ops::ControlFlow::Break(Some(
-                        if launch.license.trim().is_empty() {
-                            localized_format(
-                                application_context,
-                                PortTextKey::SpellforgeHostAttestation,
-                                &[
-                                    ("host", host_endpoint_id),
-                                    ("title", &launch.mod_title),
-                                    ("source", &launch.source_url),
-                                ],
-                            )
-                        } else {
-                            launch.license.clone()
-                        },
-                    )));
+                    return Some(Some(if launch.license.trim().is_empty() {
+                        localized_format(
+                            application_context,
+                            PortTextKey::SpellforgeHostAttestation,
+                            &[
+                                ("host", host_endpoint_id),
+                                ("title", &launch.mod_title),
+                                ("source", &launch.source_url),
+                            ],
+                        )
+                    } else {
+                        launch.license.clone()
+                    }));
                 }
                 _ => {}
             }
         }
 
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let transform = screen.transform;
+        screen.begin_draw(renderer);
         if let Some(background) = resources.menu_bg[2] {
             draw_screen_background(renderer, &background);
         }
@@ -405,20 +372,14 @@ impl HostDistributionAttestationState {
             }
         }
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
-        if let Some(cursor) = &cursor {
-            cursor.draw(renderer, transform, &self.input);
-        }
-        renderer.present();
-        Ok(std::ops::ControlFlow::Continue(()))
+        screen.finish(io, &self.input);
+        None
     }
 }
 
 pub async fn show_spellforge_consent(
     application_context: &ApplicationContext,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: Option<ModalCursor<'_>>,
+    io: &mut ModalScreenIo<'_, '_>,
     key: SpellforgeTrustKey,
     metadata: SpellforgeTrustMetadata,
 ) -> Result<SpellforgeConsentOutcome, String> {
@@ -434,26 +395,8 @@ pub async fn show_spellforge_consent(
         return Ok(SpellforgeConsentOutcome::AlreadyTrusted);
     }
 
-    let mut state = SpellforgeConsentState::new(
-        application_context,
-        event_pump,
-        renderer,
-        resources,
-        key,
-        metadata,
-    );
-    loop {
-        let io = widget_bridge::ModalScreenIo {
-            window: event_pump,
-            renderer,
-            resources,
-            cursor: cursor.as_ref(),
-        };
-        match state.tick(application_context, io)? {
-            std::ops::ControlFlow::Break(outcome) => return Ok(outcome),
-            std::ops::ControlFlow::Continue(()) => crate::window::sleep_ui_frame().await,
-        }
-    }
+    let mut state = SpellforgeConsentState::new(application_context, io, key, metadata);
+    Ok(widget_bridge::run_modal(io, |io| state.tick(application_context, io)).await)
 }
 
 // Trust metadata is ordinary data; pending keyboard/capture ownership is not.
@@ -468,16 +411,11 @@ struct SpellforgeConsentState {
 impl SpellforgeConsentState {
     fn new(
         application_context: &ApplicationContext,
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
+        io: &ModalScreenIo<'_, '_>,
         key: SpellforgeTrustKey,
         metadata: SpellforgeTrustMetadata,
     ) -> Self {
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
+        let resources = io.resources;
         let (button_w, button_h) = resources.button_dimensions();
         let back_label = resources.menu_text.get(MT_BTN_BACK);
         let labels = [
@@ -505,7 +443,7 @@ impl SpellforgeConsentState {
             bottom[1].w,
             bottom[1].h,
         ));
-        let input = ModalInputState::from_window(event_pump, transform);
+        let input = ModalInputState::for_screen(io.window, io.renderer);
         let status = String::new();
 
         Self {
@@ -520,38 +458,22 @@ impl SpellforgeConsentState {
     fn tick(
         &mut self,
         application_context: &ApplicationContext,
-        io: widget_bridge::ModalScreenIo<'_, '_>,
-    ) -> Result<std::ops::ControlFlow<SpellforgeConsentOutcome>, String> {
-        let widget_bridge::ModalScreenIo {
-            window: event_pump,
-            renderer,
-            resources,
-            cursor,
-        } = io;
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            self.input.update_from_event(&event, transform);
-            if matches!(
-                event,
-                GameEvent::Quit
-                    | GameEvent::KeyDown {
-                        keycode: Keycode::Escape,
-                        ..
-                    }
-            ) {
-                return Ok(std::ops::ControlFlow::Break(
-                    SpellforgeConsentOutcome::Cancelled,
-                ));
-            }
-            // Deliberately no Return/KpEnter approval accelerator.
+        io: &mut ModalScreenIo<'_, '_>,
+    ) -> Option<SpellforgeConsentOutcome> {
+        let screen = ScreenFrame::begin(io, &mut self.input);
+        // Only window close and Escape are handled: deliberately no
+        // Return/KpEnter approval accelerator.
+        if screen
+            .keys()
+            .any(|key| matches!(key, ScreenKey::Quit | ScreenKey::Cancel))
+        {
+            return Some(SpellforgeConsentOutcome::Cancelled);
         }
-        let events = self.input.process_frame(&mut self.frame);
-        if let Some(id) = widget_bridge::find_activated(&events) {
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input, &mut self.frame);
+        if let Some(id) = activated {
             match id {
                 ID_CANCEL => {
-                    return Ok(std::ops::ControlFlow::Break(
-                        SpellforgeConsentOutcome::Cancelled,
-                    ));
+                    return Some(SpellforgeConsentOutcome::Cancelled);
                 }
                 ID_ACCEPT => {
                     let result = current_unix_seconds().and_then(|approved_unix_seconds| {
@@ -563,9 +485,7 @@ impl SpellforgeConsentState {
                     });
                     match result {
                         Ok(()) => {
-                            return Ok(std::ops::ControlFlow::Break(
-                                SpellforgeConsentOutcome::Approved,
-                            ));
+                            return Some(SpellforgeConsentOutcome::Approved);
                         }
                         Err(error) => {
                             self.status = localized_format(
@@ -580,8 +500,10 @@ impl SpellforgeConsentState {
             }
         }
 
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let transform = screen.transform;
+        screen.begin_draw(renderer);
         if let Some(background) = resources.menu_bg[2] {
             draw_screen_background(renderer, &background);
         }
@@ -702,11 +624,8 @@ impl SpellforgeConsentState {
             }
         }
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
-        if let Some(cursor) = &cursor {
-            cursor.draw(renderer, transform, &self.input);
-        }
-        renderer.present();
-        Ok(std::ops::ControlFlow::Continue(()))
+        screen.finish(io, &self.input);
+        None
     }
 }
 
@@ -739,10 +658,7 @@ impl SpellforgeContentSettingsState {
         renderer: &Renderer,
         resources: &IngameMenuResources,
     ) -> Self {
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
+        let transform = MenuTransform::for_renderer(renderer);
         let input = ModalInputState::from_window(event_pump, transform);
         let mut state = Self {
             page: 0,
@@ -872,27 +788,20 @@ impl SpellforgeContentSettingsState {
         application_context: &ApplicationContext,
         io: &mut widget_bridge::ModalScreenIo<'_, '_>,
     ) -> SpellforgeContentSettingsOutcome {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
         let resources = io.resources;
-        let cursor = io.cursor;
         self.poll_cache_clear(application_context, resources);
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        self.transform = transform;
-        for event in events {
-            self.input.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit => return SpellforgeContentSettingsOutcome::ExitRequested,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => return SpellforgeContentSettingsOutcome::Closed,
+        let screen = ScreenFrame::begin(io, &mut self.input);
+        self.transform = screen.transform;
+        for key in screen.keys() {
+            match key {
+                ScreenKey::Quit => return SpellforgeContentSettingsOutcome::ExitRequested,
+                ScreenKey::Cancel => return SpellforgeContentSettingsOutcome::Closed,
                 _ => {}
             }
         }
 
-        let events = self.input.process_frame(&mut self.frame);
-        if let Some(id) = widget_bridge::find_activated(&events) {
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input, &mut self.frame);
+        if let Some(id) = activated {
             match id {
                 ID_BACK => return SpellforgeContentSettingsOutcome::Closed,
                 ID_PREVIOUS if self.page > 0 => self.page -= 1,
@@ -956,8 +865,7 @@ impl SpellforgeContentSettingsState {
             self.reload(application_context, resources);
         }
 
-        self.render(application_context, renderer, resources, cursor);
-        renderer.present();
+        self.render(application_context, io, &screen);
         SpellforgeContentSettingsOutcome::Pending
     }
 
@@ -1016,15 +924,16 @@ impl SpellforgeContentSettingsState {
         );
     }
 
+    /// Draw the manager page, then the cursor, and present.
     fn render(
         &self,
         application_context: &ApplicationContext,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
+        io: &mut ModalScreenIo<'_, '_>,
+        screen: &ScreenFrame,
     ) {
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        screen.begin_draw(renderer);
         if let Some(background) = resources.menu_bg[2] {
             draw_screen_background(renderer, &background);
         }
@@ -1083,36 +992,26 @@ impl SpellforgeContentSettingsState {
             }
         }
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
-        if let Some(cursor) = cursor {
-            cursor.draw(renderer, self.transform, &self.input);
-        }
+        screen.finish(io, &self.input);
     }
 }
 
 pub async fn show_spellforge_content_settings(
     application_context: &ApplicationContext,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: Option<&ModalCursor<'_>>,
+    io: &mut ModalScreenIo<'_, '_>,
 ) {
-    let mut state =
-        SpellforgeContentSettingsState::new(application_context, event_pump, renderer, resources);
-    loop {
-        match state.tick(
-            application_context,
-            &mut widget_bridge::ModalScreenIo {
-                window: event_pump,
-                renderer,
-                resources,
-                cursor,
-            },
-        ) {
-            SpellforgeContentSettingsOutcome::Pending => crate::window::sleep_ui_frame().await,
-            SpellforgeContentSettingsOutcome::Closed
-            | SpellforgeContentSettingsOutcome::ExitRequested => return,
-        }
-    }
+    let mut state = SpellforgeContentSettingsState::new(
+        application_context,
+        io.window,
+        io.renderer,
+        io.resources,
+    );
+    widget_bridge::run_modal(io, |io| match state.tick(application_context, io) {
+        SpellforgeContentSettingsOutcome::Pending => None,
+        SpellforgeContentSettingsOutcome::Closed
+        | SpellforgeContentSettingsOutcome::ExitRequested => Some(()),
+    })
+    .await
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1228,6 +1127,8 @@ mod tests {
             .unwrap();
         assert!(!consent.contains("Keycode::Return"));
         assert!(!consent.contains("Keycode::KpEnter"));
+        // Screens classify Return/KpEnter as `ScreenKey::Confirm`.
+        assert!(!consent.contains("ScreenKey::Confirm"));
     }
 
     #[test]
