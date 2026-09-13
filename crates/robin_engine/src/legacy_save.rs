@@ -63,8 +63,6 @@ use robin_legacy_save::post_hiking;
 use robin_legacy_save::post_sequence_manager;
 use robin_legacy_save::post_simple;
 use robin_legacy_save::post_tail;
-#[cfg(test)]
-mod test_support;
 mod vm_schema;
 
 pub use robin_legacy_save::{
