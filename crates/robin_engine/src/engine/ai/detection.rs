@@ -597,7 +597,7 @@ impl SoldierSightContext {
         // inactive NPC merely passing a door stops after acoustics.
         if (!entity.is_active() && viewer_building_sector.is_none())
             || entity.is_dead()
-            || entity.human_data().is_some_and(|human| human.unconscious)
+            || entity.is_unconscious()
             || entity.element_data().posture() == crate::element::Posture::Tied
         {
             return None;
@@ -1410,7 +1410,7 @@ impl EngineInner {
             if entity.is_dead() || entity.element_data().posture() == Posture::Tied {
                 return;
             }
-            if entity.human_data().map(|h| h.unconscious).unwrap_or(false) {
+            if entity.is_unconscious() {
                 return;
             }
             let Some(npc) = entity.ai_actor_data() else {

@@ -68,7 +68,7 @@ impl EngineInner {
             let entity = self.expect_entity(entity_id, "smalltalk speech owner");
             let pos = entity.element_data().position_map();
             let dead = entity.is_dead();
-            let unc = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+            let unc = entity.is_unconscious();
             // Brawling / looting NPCs (any take-money or
             // fight-for-money substate) skip the wounded remark
             // entirely — they're focused on the money / fight and

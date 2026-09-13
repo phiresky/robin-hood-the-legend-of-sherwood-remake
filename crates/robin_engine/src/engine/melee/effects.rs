@@ -524,9 +524,9 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let posture = self
-            .get_entity(owner)
-            .map(|e| e.element_data().posture())
-            .unwrap_or_default();
+            .expect_entity(owner, "dispatch_fall owner")
+            .element_data()
+            .posture();
 
         // Pick the fall animation by current posture and insert it
         // as an order on the element.  The order is consumed by
@@ -854,9 +854,9 @@ impl EngineInner {
         // `translate_shoulder_damage` before falling through to the
         // base-class push-damage path.
         let victim_posture = self
-            .get_entity(victim_id)
-            .map(|e| e.element_data().posture())
-            .unwrap_or_default();
+            .expect_entity(victim_id, "push effect victim posture")
+            .element_data()
+            .posture();
         if matches!(
             victim_posture,
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
@@ -872,9 +872,9 @@ impl EngineInner {
         // selection sees the carrier's new Upright posture.
         let victim_posture = if victim_posture == Posture::CarryingCorpse {
             self.force_drop_carried_corpse_instant(victim_id);
-            self.get_entity(victim_id)
-                .map(|e| e.element_data().posture())
-                .unwrap_or_default()
+            self.expect_entity(victim_id, "push effect victim after corpse drop")
+                .element_data()
+                .posture()
         } else {
             victim_posture
         };
@@ -896,10 +896,10 @@ impl EngineInner {
             let posture = victim.element_data().posture();
             let action = victim
                 .actor_data()
-                .map(|a| a.action_state)
-                .unwrap_or_default();
+                .expect("damage effect animation victim must be an actor")
+                .action_state;
             let dead = victim.is_dead();
-            let unconscious = victim.human_data().map(|h| h.unconscious).unwrap_or(false);
+            let unconscious = victim.is_unconscious();
             let conc = victim
                 .human_data()
                 .map(|h| h.concussion_of_the_brain)

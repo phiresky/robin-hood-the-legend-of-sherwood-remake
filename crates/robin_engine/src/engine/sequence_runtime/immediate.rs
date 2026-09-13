@@ -257,8 +257,7 @@ impl EngineInner {
             Command::LockAi | Command::UnlockAi => {
                 let unconscious = self
                     .get_entity(owner)
-                    .and_then(|entity| entity.human_data())
-                    .is_some_and(|human| human.unconscious);
+                    .is_some_and(|entity| entity.is_unconscious());
                 let mut stop_for_lock = false;
                 if let Some(ai) = self
                     .get_entity_mut(owner)

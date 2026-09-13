@@ -1197,7 +1197,7 @@ impl WaitCommandContext<'_> {
                 actor.action_state,
                 entity.enemy_ai().is_some_and(|enemy| enemy.attentive),
                 entity.is_dead(),
-                entity.human_data().is_some_and(|human| human.unconscious),
+                entity.is_unconscious(),
                 entity
                     .human_data()
                     .is_some_and(|human| !human.opponents.is_empty()),

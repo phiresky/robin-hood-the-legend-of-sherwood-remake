@@ -743,7 +743,7 @@ pub(super) fn determine_use_command(
 
     let is_dead = entity.is_dead();
     let posture = entity.element_data().posture();
-    let is_unconscious = entity.human_data().is_some_and(|h| h.unconscious);
+    let is_unconscious = entity.is_unconscious();
     let is_tied = posture == crate::element::Posture::Tied;
 
     // PC override fires before the human fallback.  When the target

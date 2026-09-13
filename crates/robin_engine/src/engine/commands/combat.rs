@@ -165,7 +165,7 @@ impl EngineInner {
                 .camp();
             let is_blipped = target.element_data().blipped;
             let is_dead = target.is_dead();
-            let is_unconscious = target.human_data().is_some_and(|h| h.unconscious);
+            let is_unconscious = target.is_unconscious();
             let (is_hostile, scroll_attached) = match target {
                 Entity::Soldier(s) => (
                     self.camps_are_hostile(s.camp(), selector_camp),

@@ -2012,11 +2012,7 @@ pub(crate) fn is_possible_sword_strike_victim(
     if target_entity.is_dead() {
         return false;
     }
-    if target_entity
-        .human_data()
-        .map(|h| h.unconscious)
-        .unwrap_or(false)
-    {
+    if target_entity.is_unconscious() {
         return false;
     }
     let posture = target_entity.element_data().posture();

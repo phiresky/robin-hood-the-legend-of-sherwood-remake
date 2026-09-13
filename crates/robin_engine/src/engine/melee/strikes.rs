@@ -3649,14 +3649,14 @@ impl EngineInner {
             let healing_speed =
                 concussion_healing_speed_for_entity(entity, &assets.profile_manager);
 
-            let was_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+            let was_unconscious = entity.is_unconscious();
 
             if let Some(human) = entity.human_data_mut() {
                 combat::concussion_healing_tick(human, healing_speed, life_points, &ctx);
             }
 
             // Check if entity woke up
-            let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+            let is_unconscious = entity.is_unconscious();
             if was_unconscious && !is_unconscious {
                 // Wake up: restore posture and play standup
                 // animation.  The standup path chains standup +
@@ -3666,10 +3666,12 @@ impl EngineInner {
                 // play them in sequence.
                 let standing_anim = {
                     let posture = entity.element_data().posture();
+                    // Only reached for a human that was unconscious, so
+                    // the actor state is required.
                     let action = entity
                         .actor_data()
-                        .map(|a| a.action_state)
-                        .unwrap_or_default();
+                        .expect("waking concussion owner must be an actor")
+                        .action_state;
                     select_combat_animations(posture, action).map(|a| a.standing_up)
                 };
                 let concussion = entity

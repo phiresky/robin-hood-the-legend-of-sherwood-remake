@@ -1844,10 +1844,9 @@ impl EngineInner {
     ) -> Vec<crate::ai::ReconsiderSwordfightFriend> {
         use crate::ai::ReconsiderSwordfightFriend;
 
-        let Some(me) = self.world.entities.get(npc_id) else {
-            return Vec::new();
-        };
+        let me = self.expect_entity(npc_id, "reconsider-swordfight friends owner");
         let Some(me_ai) = me.enemy_ai() else {
+            // Enemy-brain capability; inapplicable to civilians and PCs.
             return Vec::new();
         };
         let me_world = me.element_data().position();
@@ -1902,10 +1901,9 @@ impl EngineInner {
     ) -> Vec<crate::ai::PhalanxMemberThemList> {
         use crate::ai::{PhalanxEnemySnapshot, PhalanxMemberThemList, Position};
         use crate::element::Human;
-        let Some(owner) = self.world.entities.get(npc_id) else {
-            return Vec::new();
-        };
+        let owner = self.expect_entity(npc_id, "phalanx them-list owner");
         let Some(enemy_ai) = owner.enemy_ai() else {
+            // Enemy-brain capability; inapplicable to civilians and PCs.
             return Vec::new();
         };
 

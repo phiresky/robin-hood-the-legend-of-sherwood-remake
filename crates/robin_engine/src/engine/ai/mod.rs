@@ -3465,7 +3465,7 @@ pub(super) fn build_ai_context_from_entity(
         self_life_points: entity.human_life_points(),
         self_max_life_points: entity.human_max_life_points(),
         self_is_dead: entity.is_dead(),
-        self_is_unconscious: entity.human_data().is_some_and(|human| human.unconscious),
+        self_is_unconscious: entity.is_unconscious(),
         self_detectable_friend_count,
         self_detectable_missed_friend_count,
         self_seen_enemy_handles,
@@ -6016,12 +6016,7 @@ impl EngineInner {
             .world
             .entities
             .get(npc_id)
-            .map(|entity| {
-                (
-                    entity.is_dead(),
-                    entity.human_data().is_some_and(|human| human.unconscious),
-                )
-            })
+            .map(|entity| (entity.is_dead(), entity.is_unconscious()))
             .unwrap_or_else(|| {
                 panic!(
                     "SetAIState post-filter decision-entry owner {} disappeared",

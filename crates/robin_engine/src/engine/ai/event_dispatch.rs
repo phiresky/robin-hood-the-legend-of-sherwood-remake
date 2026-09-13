@@ -981,7 +981,7 @@ impl EngineInner {
                 .current_order_for_actor(npc_id)
                 .map(|(_, _, o)| o.order_type);
 
-            let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+            let is_unconscious = entity.is_unconscious();
 
             let follow_target_position = npc.follow_target.and_then(|target_id| {
                 self.world.entities.get(target_id).map(|target| {

@@ -321,20 +321,21 @@ impl EngineInner {
         // `entity_building_sector` needs a `&self` borrow; compute it
         // up-front while we don't hold a mutable entity borrow.
         let building_sector = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
+            let entity = self.expect_entity(npc_id, "AI initialization owner after classification");
             self.entity_building_sector(entity.element_data().sector())
         };
 
         // Determine whether this NPC is a Merry-Man archer (Royalist
         // soldier, forest level, archer flag set by the level loader).
         let is_merry_man_archer = if is_enemy {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            let is_archer = entity.enemy_ai().map(|e| e.is_archer()).unwrap_or(false);
-            let is_rider = entity.soldier_data().map(|s| s.rider).unwrap_or(false);
+            let entity = self.expect_entity(npc_id, "AI initialization Merry-Man archer owner");
+            // `is_enemy` was classified from a present enemy brain above.
+            let is_archer = entity
+                .enemy_ai()
+                .expect("AI initialization enemy owner lost its enemy brain")
+                .is_archer();
+            // AI-driven PCs carry an enemy brain but no soldier data; they are never riders.
+            let is_rider = entity.soldier_data().is_some_and(|s| s.rider);
             self.is_player_aligned_camp(self_camp) && is_forest_level && is_archer && !is_rider
         } else {
             false
@@ -343,9 +344,7 @@ impl EngineInner {
         // Grab the (possibly corrected) map position / direction /
         // sector / layer before the write-back borrow.
         let (pos_map_final, direction_final, sector_final, layer_final, current_lp) = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
+            let entity = self.expect_entity(npc_id, "AI initialization owner before write-back");
             let elem = entity.element_data();
             let lp = entity.human_life_points();
             (
