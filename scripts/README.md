@@ -7,7 +7,8 @@ live corpus or deployment. See `docs/TESTING.md` for package and fixture gates.
 
 ## Build and quality gates
 
-- `check-quality.sh`: named CI/local quality suites and explicit fixture gates.
+- `check-quality.sh`: named CI/local quality suites and explicit fixture gates, including the advisory `unreferenced-items` suite (never fails the run).
+- `fetch-slang-shaders.sh`: fetch the libretro preset collection for `retroarch-shaders` at its pinned commit into the ignored `vendor/slang-shaders/`.
 - `check_asset_boundary.py`: engine/assets ownership boundary checks.
 - `build-native.sh`: build the native client and matching replay admission helper.
 - `build-wasm-threads.sh`: supported threaded browser build wrapper; not obsolete.
@@ -23,8 +24,10 @@ live corpus or deployment. See `docs/TESTING.md` for package and fixture gates.
 ## Replay evidence and campaigns
 
 These scripts may launch long-running processes or write evidence. Read their
-usage and select explicit inputs/output roots before running them. The entire
-`reference-saves/` tree is a capture input, not just the named Rust fixture.
+usage and select explicit inputs/output roots before running them. Capture
+drivers default to the `reference-saves/` tree, which now tracks only the Rust
+test fixture; restore the retired capture saves from Git history (see
+`reference-saves/README.md`) or pass an explicit save directory.
 The separate ignored `binaries/` artifact checkout supplies pinned recorders;
 it is not a source submodule. Never silently rebuild a recorder whose hash is
 part of campaign provenance.
@@ -44,8 +47,6 @@ part of campaign provenance.
 - `run_corpus_work_supervised.sh`: bounded supervision of corpus work.
 - `run_distributed_replay_worker.sh`: execute a worker's assigned replay cases.
 - `run_replay_refill_controller.sh`: refill available replay worker capacity.
-- `run_schema16_corpus_ladder.sh`: restart-aware sequential capture ladder.
-- `run_schema16_distributed_capture.sh`: disjoint local/remote save-shard capture and collection.
 - `run_schema16_existing_corpora_orchestrator.sh`: coordinate already captured corpora.
 - `run_schema16_final_validation.sh`: final validation and evidence publication.
 - `run_schema16_onward_corpus_controller.sh`: advance capture/validation campaigns.
@@ -53,11 +54,16 @@ part of campaign provenance.
 - `test_parity_orchestration.sh`: aggregate orchestration regression suite.
 - `test_parity_result.py`, `test_replay_state_db.py`, `test_run_*.py`, `test_run_*.sh`: isolated module/driver regressions.
 
-The schema16 ladder/distributed scripts remain live callers of each other and
-of shared evidence tooling. Their historical recorder hashes and seed defaults
-are provenance, not permission to capture arbitrary new inputs. Their workspace
-defaults resolve from the script location; override `SCHEMA16_*_WORKSPACE` and
-audit directories explicitly for a different checkout/campaign.
+The completed schema16 capture supervisors are archived with their campaign:
+`parity-campaigns/schema16-20260824/run_schema16_corpus_ladder.sh`
+(restart-aware sequential capture ladder) and
+`parity-campaigns/schema16-20260824/run_schema16_distributed_capture.sh`
+(disjoint local/remote save-shard capture and collection). They are campaign
+provenance, not live callers of each other or of the scripts above. Their
+historical recorder hashes and seed defaults are not permission to capture
+arbitrary new inputs. Their workspace defaults resolve from the script
+location; override `SCHEMA16_*_WORKSPACE` and audit directories explicitly for
+a different checkout/campaign.
 
 The completed motion-state worktree driver and fixed 98-case schema15 replacement
 validator were removed. Use the current manifest/evidence-based drivers above;
@@ -70,7 +76,7 @@ code. Keep standalone tools discoverable instead of treating no importers as
 proof of dead code. Most require external game data or Python imaging packages.
 
 - `build_robin_hood_engineer_sprites.py`: export atlases to an explicitly chosen external Factorio mod graphics directory.
-- `convert_native_fonts_to_woff2.py`: convert original fonts; the tracked [font specimen](../web-font-specimen/index.html) is a manual visual comparison page.
+- `convert_native_fonts_to_woff2.py`: convert original fonts (the former `web-font-specimen/` comparison page is retained only in Git history).
 - `generate_ferris_overlay.py`: generate the local Ferris overlay assets.
 - `generate_missing_knights.py`: reconstruct missing mounted-knight colour families.
 - `import_fabri18_sprites.py`: import an external sprite collection.
@@ -80,7 +86,7 @@ proof of dead code. Most require external game data or Python imaging packages.
 - `sprite_compress_atlas.sh`, `sprite_compress_streams.sh`: sprite compression experiments.
 - `render_all_mission_maps.sh`: batch map rendering with external game data.
 - `extract_dump_entity.py`: inspect one entity from a diagnostic dump.
-- `find_unreferenced_rust_items.py`: advisory source scan; references through macros/features need manual confirmation.
+- `find_unreferenced_rust_items.py`: advisory source scan, run by `check-quality.sh unreferenced-items`; references through macros/features need manual confirmation.
 - `benchmark_fog_history.py`: fog-history benchmark driver.
 
 ## Browser measurement and experiments

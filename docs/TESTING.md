@@ -12,9 +12,13 @@ Run the suite owning your change, then its affected consumers. Cargo retains
 the checkout's normal `target/` directory. Build and run the game separately;
 do not hide Cargo output behind filters. These gates do not run Clippy.
 
-`bash scripts/check-quality.sh format` checks Cargo-discovered sources. Client
-modules are explicit declarations, so rustfmt traverses their real module tree.
-Only the shared fixture helper included by test macros needs a direct pass.
+`bash scripts/check-quality.sh format` runs `cargo fmt --all -- --check` over
+Cargo-discovered sources. Client modules are explicit declarations, so rustfmt
+traverses their real module tree; no file needs a separate direct pass.
+
+The legacy mlua comparison tests in `robin_rs` are compiled only with
+`cargo test -p robin_rs --features lua`; ordinary client suites do not build
+Luau's C++ sources.
 
 ## Crate-to-gate matrix
 
@@ -33,7 +37,7 @@ workspace member has an explicit gate, so adding a crate requires assigning it.
 | `services` | `robin_highscores`, `robin_manifest_tool`, `robin_replay_verifier` | Server, manifest and verifier tests |
 | `parity` | `robin_parity` | Runner unit/contract tests; does not replay licensed corpora |
 | `client` | `robin_rs`, default features | Build native admission helper, client tests, then a separate `robin` binary build |
-| `client-release` | `robin_rs`, `release` features | Client library tests and binary build with desktop/audio/Lua/multiplayer/updates; audio example check |
+| `client-release` | `robin_rs`, `release` features | Client library tests and binary build with desktop/audio/multiplayer/updates; audio example check |
 | `tools` | `robin_modding_tools`; `robin_rs`, `tools` and `projection-export` | Modding CLI and encoder tests; explicit converter/dump tests; minimal export example tests; check tool binaries and examples |
 | `wasm` | `robin_replay_admission_wasm`, `robin_rs`, `robin_identity_signer` | Target checks for `wasm32-unknown-unknown` using `wasm-dev` |
 | `browser-audio` | `robin_rs`, WASM `audio,multiplayer` | Audio and multiplayer target checks, linked module, real Chrome audio ownership/residency, shared protocol and identity tests |

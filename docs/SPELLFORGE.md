@@ -129,6 +129,14 @@ SPELLFORGE_CORPUS_DIR=/path/to/verified-corpus \
 
 The manifest pins every download SHA-256 before production package admission.
 
+The Lua 5.1 implementation is crates.io `rilua` 0.1.24 with local determinism
+patches (libm float ops, locale-independent `strtod`/formatting/ctype),
+vendored at `vendor/rilua/` via the root `[patch.crates-io]`. The full diff is
+`vendor/rilua.patch`; per-file rationale and the upgrade procedure are in
+`vendor/rilua/ROBIN_PATCHES.md`. `robin_spellforge/build.rs` hashes that tree
+into `SPELLFORGE_RILUA_SOURCE_SHA256`, so any patch change alters the recorded
+runtime identity.
+
 ## Release policies
 
 The compatibility promise covers every ordinary mission currently inventoried
