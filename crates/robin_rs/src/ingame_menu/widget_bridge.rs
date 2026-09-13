@@ -48,6 +48,35 @@ pub struct ModalScreenIo<'frame, 'cursor> {
     pub cursor: Option<&'frame ModalCursor<'cursor>>,
 }
 
+/// [`ModalScreenIo`] with the cursor lent mutably, for screens that advance
+/// the cursor animation every frame (Select Player and its dialogs).
+///
+/// [`ModalCursor::draw`] only needs `&self`, so ordinary screens keep the
+/// shared cursor form; this bundle exists solely for the animation step.
+pub struct AnimatedScreenIo<'frame, 'cursor> {
+    pub window: &'frame mut crate::window::GameWindow,
+    pub renderer: &'frame mut Renderer,
+    pub resources: &'frame IngameMenuResources,
+    pub cursor: Option<&'frame mut ModalCursor<'cursor>>,
+}
+
+impl<'cursor> AnimatedScreenIo<'_, 'cursor> {
+    /// Lend the shared-cursor view that [`ScreenFrame`] and nested screens use.
+    pub fn screen_io(&mut self) -> ModalScreenIo<'_, 'cursor> {
+        ModalScreenIo {
+            window: &mut *self.window,
+            renderer: &mut *self.renderer,
+            resources: self.resources,
+            cursor: self.cursor.as_deref(),
+        }
+    }
+
+    /// The lent cursor renderer, when a cursor is present.
+    pub fn cursor_renderer(&mut self) -> Option<&mut CursorRenderer> {
+        self.cursor.as_mut().map(|cursor| &mut *cursor.cursor)
+    }
+}
+
 /// Borrowed menu-sound services for screens that play widget noises.
 ///
 /// Every field is optional because headless/test hosts run menus without

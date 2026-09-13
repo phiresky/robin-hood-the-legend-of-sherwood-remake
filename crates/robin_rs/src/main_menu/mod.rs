@@ -24,6 +24,7 @@ use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, MenuTransform, align_bottom_right, button_sprite_state,
 };
+use crate::ingame_menu::resources::MenuSurface;
 use crate::ingame_menu::resources::{
     MT_BTN_LOAD, MT_BTN_OPTIONS, MT_BTN_QUIT_GAME, MT_BTN_SELECT_PLAYER, MT_BTN_SHOW_CREDITS,
     MT_BTN_SHOW_MOVIES, MT_BTN_START_GAME, MT_MSG_RETURN_TO_WINDOWS, MT_PORT_STR_DIFFICULTY_CUSTOM,
@@ -31,7 +32,9 @@ use crate::ingame_menu::resources::{
     MT_STR_DIFFICULTY_HARD, MT_STR_DIFFICULTY_LEVEL, MT_STR_DIFFICULTY_MEDIUM, MT_STR_MONEY,
     MT_STR_PLAYING_TIME, MT_STR_PROGRESSION, MT_STR_SCORE, substitute_integer,
 };
-use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
+use crate::ingame_menu::widget_bridge::{
+    self, AnimatedScreenIo, ModalCursor, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey,
+};
 use crate::ingame_menu::yesno::show_yesno;
 use crate::renderer::BLIT_SOURCE_TRANSPARENT;
 use crate::renderer::Renderer;
@@ -271,7 +274,7 @@ pub(crate) async fn show_main_menu(
             "Main menu: RHID_MENU_BACKGROUND_1 missing from DEFAULT.RES — rendering with no background"
         );
     }
-    let mut menu_audio = MainMenuAudio::new(application_context);
+    let menu_audio = MainMenuAudio::new(application_context);
 
     // Cursor — prepare the in-game arrow sprite (the window hides the OS cursor).
     // (the default cursor is set at start-up, before the menu comes up).
@@ -310,59 +313,7 @@ pub(crate) async fn show_main_menu(
         }
     }
 
-    // ── Button layout (align_bottom_right, spacing=2) ────────────────
-    let (btn_w, btn_h) = menu_resources.button_dimensions();
-
-    let mut buttons: Vec<(String, ClickAction)> = vec![(
-        menu_resources.menu_text.get(MT_BTN_START_GAME),
-        ClickAction::Return(MainMenuChoice::Start),
-    )];
-    #[cfg(feature = "multiplayer")]
-    buttons.push(("Multiplayer".to_string(), ClickAction::Multiplayer));
-    buttons.extend([
-        (
-            menu_resources.menu_text.get(MT_BTN_LOAD),
-            ClickAction::LoadGame,
-        ),
-        // TODO: Localize this label with the campaign history UI.
-        ("Campaign Manager".to_string(), ClickAction::CampaignManager),
-        ("Custom Missions".to_string(), ClickAction::CustomMissions),
-    ]);
-    buttons.extend([
-        (
-            menu_resources.menu_text.get(MT_BTN_SELECT_PLAYER),
-            ClickAction::SelectPlayer,
-        ),
-        (
-            menu_resources.menu_text.get(MT_BTN_OPTIONS),
-            ClickAction::Options,
-        ),
-        (
-            menu_resources.menu_text.get(MT_BTN_SHOW_MOVIES),
-            ClickAction::ShowMovies,
-        ),
-        (
-            menu_resources.menu_text.get(MT_BTN_SHOW_CREDITS),
-            ClickAction::ShowCredits,
-        ),
-        (
-            menu_resources.menu_text.get(MT_BTN_QUIT_GAME),
-            ClickAction::Return(MainMenuChoice::Exit),
-        ),
-    ]);
-
-    let labels: Vec<(&str, bool)> = buttons
-        .iter()
-        .map(|(label, _)| (label.as_str(), true))
-        .collect();
-    let positions = align_bottom_right(&labels, btn_w, btn_h);
-
-    let mut frame = FrameWnd::interactive();
-    for (i, mb) in positions.iter().enumerate() {
-        frame.add_widget_absolute(widget_bridge::make_button_enabled(
-            i as u32, &mb.label, mb.enabled, mb.x, mb.y, mb.w, mb.h,
-        ));
-    }
+    let (buttons, frame) = main_menu_layout(&menu_resources);
 
     // ── First-launch default-profile prompt ──────────────────────────
     //
@@ -375,30 +326,22 @@ pub(crate) async fn show_main_menu(
     if let Some(bg) = bg {
         renderer.begin_gpu_frame_clear();
         renderer.begin_ui_only_frame();
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
-        let bg_x = transform.origin_x + (MENU_W - bg.width) / 2;
-        let bg_y = transform.origin_y + (MENU_H - bg.height) / 2;
-        let src = BBox::from_coords(0.0, 0.0, bg.width as f32, bg.height as f32);
-        let dst = BBox::from_coords(
-            bg_x as f32,
-            bg_y as f32,
-            (bg_x + bg.width) as f32,
-            (bg_y + bg.height) as f32,
-        );
-        renderer
-            .draw_surface(bg.id, Some(&src), Some(&dst), 0)
-            .expect("live menu background");
+        let transform = MenuTransform::for_renderer(&renderer);
+        draw_menu_background(&mut renderer, transform, bg);
         renderer.present();
     }
     prompt_first_launch_new_player(
         application_context,
-        &mut *window,
-        &mut renderer,
-        &menu_resources,
-        &mut cursor_renderer,
+        &mut AnimatedScreenIo {
+            window: &mut *window,
+            renderer: &mut renderer,
+            resources: &menu_resources,
+            cursor: Some(&mut ModalCursor::new(
+                &mut cursor_renderer,
+                MOUSE_OPACITY_DEFAULT,
+                0,
+            )),
+        },
     )
     .await;
 
@@ -438,43 +381,149 @@ pub(crate) async fn show_main_menu(
         return Ok(MainMenuChoice::RedisplayOptions);
     }
 
-    let mut state = MainMenuState::new(frame);
+    let mut state = MainMenuState::new(frame, buttons, bg, menu_audio);
+    let mut io = MainMenuIo {
+        window,
+        renderer: &mut renderer,
+        resources: &mut menu_resources,
+        cursor_renderer: &mut cursor_renderer,
+    };
+    let mut session = MainMenuSession {
+        application_context,
+        campaign,
+        profiles,
+        save_manager: &mut save_manager,
+    };
     loop {
-        if let Some(choice) = state
-            .tick(
-                window,
-                &mut renderer,
-                &mut menu_resources,
-                &mut save_manager,
-                &mut cursor_renderer,
-                campaign,
-                profiles,
-                application_context,
-                bg,
-                &buttons,
-                &mut menu_audio,
-            )
-            .await?
-        {
+        if let Some(choice) = state.tick(&mut io, &mut session).await? {
             return Ok(choice);
         }
         crate::window::sleep_ui_frame().await;
     }
 }
 
-/// Owns the live menu widget/input state; phase resources stay borrowed.
+/// Main-menu buttons (bottom-right column, `align_bottom_right` spacing=2)
+/// and the widget frame that arms them.
+fn main_menu_layout(resources: &IngameMenuResources) -> (Vec<(String, ClickAction)>, FrameWnd) {
+    let (btn_w, btn_h) = resources.button_dimensions();
+
+    let mut buttons: Vec<(String, ClickAction)> = vec![(
+        resources.menu_text.get(MT_BTN_START_GAME),
+        ClickAction::Return(MainMenuChoice::Start),
+    )];
+    #[cfg(feature = "multiplayer")]
+    buttons.push(("Multiplayer".to_string(), ClickAction::Multiplayer));
+    buttons.extend([
+        (resources.menu_text.get(MT_BTN_LOAD), ClickAction::LoadGame),
+        // TODO: Localize this label with the campaign history UI.
+        ("Campaign Manager".to_string(), ClickAction::CampaignManager),
+        ("Custom Missions".to_string(), ClickAction::CustomMissions),
+    ]);
+    buttons.extend([
+        (
+            resources.menu_text.get(MT_BTN_SELECT_PLAYER),
+            ClickAction::SelectPlayer,
+        ),
+        (
+            resources.menu_text.get(MT_BTN_OPTIONS),
+            ClickAction::Options,
+        ),
+        (
+            resources.menu_text.get(MT_BTN_SHOW_MOVIES),
+            ClickAction::ShowMovies,
+        ),
+        (
+            resources.menu_text.get(MT_BTN_SHOW_CREDITS),
+            ClickAction::ShowCredits,
+        ),
+        (
+            resources.menu_text.get(MT_BTN_QUIT_GAME),
+            ClickAction::Return(MainMenuChoice::Exit),
+        ),
+    ]);
+
+    let labels: Vec<(&str, bool)> = buttons
+        .iter()
+        .map(|(label, _)| (label.as_str(), true))
+        .collect();
+    let positions = align_bottom_right(&labels, btn_w, btn_h);
+
+    let mut frame = FrameWnd::interactive();
+    for (i, mb) in positions.iter().enumerate() {
+        frame.add_widget_absolute(widget_bridge::make_button_enabled(
+            i as u32, &mb.label, mb.enabled, mb.x, mb.y, mb.w, mb.h,
+        ));
+    }
+    (buttons, frame)
+}
+
+/// Draw `RHID_MENU_BACKGROUND_1` centred on the virtual 640x480 menu.
+fn draw_menu_background(renderer: &mut Renderer, transform: MenuTransform, bg: MenuSurface) {
+    let bg_x = transform.origin_x + (MENU_W - bg.width) / 2;
+    let bg_y = transform.origin_y + (MENU_H - bg.height) / 2;
+    let src = BBox::from_coords(0.0, 0.0, bg.width as f32, bg.height as f32);
+    let dst = BBox::from_coords(
+        bg_x as f32,
+        bg_y as f32,
+        (bg_x + bg.width) as f32,
+        (bg_y + bg.height) as f32,
+    );
+    renderer
+        .draw_surface(bg.id, Some(&src), Some(&dst), 0)
+        .expect("live menu background");
+}
+
+/// Borrowed window/render/cursor services shared by the main menu frame and
+/// the sub-menus it opens in place.
+struct MainMenuIo<'a> {
+    window: &'a mut GameWindow,
+    renderer: &'a mut Renderer,
+    /// Mutable because the Campaign Manager browser loads artwork lazily.
+    resources: &'a mut IngameMenuResources,
+    cursor_renderer: &'a mut CursorRenderer,
+}
+
+/// Application authority, campaign catalogue and the active profile's save
+/// index that main-menu actions read or replace.
+struct MainMenuSession<'a> {
+    application_context: &'a ApplicationContext,
+    #[cfg_attr(
+        not(feature = "multiplayer"),
+        expect(
+            dead_code,
+            reason = "only the multiplayer menu consumes the live campaign"
+        )
+    )]
+    campaign: &'a Campaign,
+    profiles: &'a engine_profiles::ProfileManager,
+    save_manager: &'a mut SaveGameManager,
+}
+
+/// Owns the live menu widget/input state, button actions and menu audio;
+/// phase resources stay borrowed.
 struct MainMenuState {
     frame: FrameWnd,
     input_state: ModalInputState,
     keyboard_selection: u32,
+    buttons: Vec<(String, ClickAction)>,
+    bg: Option<MenuSurface>,
+    menu_audio: Option<MainMenuAudio>,
 }
 
 impl MainMenuState {
-    fn new(frame: FrameWnd) -> Self {
+    fn new(
+        frame: FrameWnd,
+        buttons: Vec<(String, ClickAction)>,
+        bg: Option<MenuSurface>,
+        menu_audio: Option<MainMenuAudio>,
+    ) -> Self {
         Self {
             frame,
             input_state: ModalInputState::new(),
             keyboard_selection: 0,
+            buttons,
+            bg,
+            menu_audio,
         }
     }
 
@@ -482,49 +531,37 @@ impl MainMenuState {
         &mut self,
         events: Vec<GameEvent>,
         transform: MenuTransform,
-        menu_audio: &mut Option<MainMenuAudio>,
     ) -> (Option<u32>, bool) {
         // ── Events ──────────────────────────────────────────────
         let mut activated: Option<u32> = None;
         let mut exit_requested = false;
         for event in events {
             self.input_state.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit => exit_requested = true,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => exit_requested = true,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Up,
-                    ..
-                } => move_keyboard_selection(&self.frame, &mut self.keyboard_selection, -1),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Down,
-                    ..
-                } => move_keyboard_selection(&self.frame, &mut self.keyboard_selection, 1),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Space,
-                    ..
-                } => {
-                    activated = Some(self.keyboard_selection);
-                }
-                _ => {}
+            match ScreenKey::from_event(&event) {
+                Some(ScreenKey::Quit | ScreenKey::Cancel) => exit_requested = true,
+                Some(ScreenKey::Confirm) => activated = Some(self.keyboard_selection),
+                Some(ScreenKey::Next) => {}
+                None => match event {
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Up,
+                        ..
+                    } => move_keyboard_selection(&self.frame, &mut self.keyboard_selection, -1),
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Down,
+                        ..
+                    } => move_keyboard_selection(&self.frame, &mut self.keyboard_selection, 1),
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Space,
+                        ..
+                    } => activated = Some(self.keyboard_selection),
+                    _ => {}
+                },
             }
         }
 
-        let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
-        self.input_state.end_frame();
-        if let Some(audio) = menu_audio.as_mut() {
+        let (events, widget_activated) =
+            ScreenFrame::dispatch(&mut self.input_state, &mut self.frame);
+        if let Some(audio) = self.menu_audio.as_mut() {
             audio.play_button_noise(&events, &self.frame);
         }
 
@@ -536,7 +573,7 @@ impl MainMenuState {
             }
         }
 
-        if let Some(id) = widget_bridge::find_activated(&events) {
+        if let Some(id) = widget_activated {
             activated = Some(id);
         }
 
@@ -545,41 +582,29 @@ impl MainMenuState {
 
     async fn tick(
         &mut self,
-        window: &mut GameWindow,
-        renderer: &mut Renderer,
-        menu_resources: &mut IngameMenuResources,
-        save_manager: &mut SaveGameManager,
-        cursor_renderer: &mut CursorRenderer,
-        campaign: &Campaign,
-        profiles: &engine_profiles::ProfileManager,
-        application_context: &ApplicationContext,
-        bg: Option<crate::ingame_menu::resources::MenuSurface>,
-        buttons: &[(String, ClickAction)],
-        menu_audio: &mut Option<MainMenuAudio>,
+        io: &mut MainMenuIo<'_>,
+        session: &mut MainMenuSession<'_>,
     ) -> Result<Option<MainMenuChoice>, String> {
         // Queued score verification is application work, not mission/UI work.
         // Keep it moving while the player remains at the main menu.
-        application_context.poll_leaderboard_receipts();
-        let events = window.poll_events();
+        session.application_context.poll_leaderboard_receipts();
+        let events = io.window.poll_events();
         // A nested modal may have consumed the resize event; the window still
         // retains the latest policy-derived logical dimensions.
-        renderer.sync_window_size(window);
+        io.renderer.sync_window_size(io.window);
         // Recomputed each frame so a resolution change from the Options
         // / Select Player sub-menus re-centres the virtual 640x480 menu
         // on the new physical surface without an explicit "redisplay"
         // round-trip.
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
+        let transform = MenuTransform::for_renderer(io.renderer);
 
-        let (activated, mut exit_requested) = self.process_events(events, transform, menu_audio);
+        let (activated, mut exit_requested) = self.process_events(events, transform);
 
         // ── Dispatch ────────────────────────────────────────────
         // OS close takes priority over a simultaneous Start/other activation:
         // dispatching first can reset the campaign or load another mission.
-        if let Some(id) = activated.filter(|_| !window.close_requested) {
-            let action = buttons[id as usize].1.clone();
+        if let Some(id) = activated.filter(|_| !io.window.close_requested) {
+            let action = self.buttons[id as usize].1.clone();
             let browsing_campaign = matches!(action, ClickAction::CampaignManager);
             // Clicking Exit goes through the same confirmation path as
             // Escape below: show the
@@ -587,84 +612,47 @@ impl MainMenuState {
             // Exit and saving the profile manager.
             if matches!(action, ClickAction::Return(MainMenuChoice::Exit)) {
                 exit_requested = true;
-            } else if let Some(choice) = dispatch_click(
-                action,
-                &mut *window,
-                renderer,
-                menu_resources,
-                save_manager,
-                cursor_renderer,
-                campaign,
-                profiles,
-                application_context,
-            )
-            .await?
-            {
+            } else if let Some(choice) = dispatch_click(action, io, session).await? {
                 return Ok(Some(choice));
             }
             if browsing_campaign {
                 // The browser consumed pointer releases; do not carry its
                 // opening press into the restored main menu.
                 self.input_state = ModalInputState::new();
-                self.input_state.seed_mouse_from_window(window, transform);
+                self.input_state
+                    .seed_mouse_from_window(io.window, transform);
                 for widget in self.frame.widgets_mut() {
                     widget.base_mut().state = UiState::Default;
                 }
             }
         }
 
-        if exit_requested {
-            let msg = menu_resources.menu_text.get(MT_MSG_RETURN_TO_WINDOWS);
-            // OS close is already a durable shutdown request. Escape and the
-            // menu's Exit button still ask, but a nested dialog must not turn
-            // WM_DELETE_WINDOW into "No" and reopen forever.
-            if window.close_requested
-                || show_yesno(
-                    &mut ModalScreenIo {
-                        window: &mut *window,
-                        renderer,
-                        resources: menu_resources,
-                        cursor: Some(&ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0)),
-                    },
-                    &msg,
-                )
-                .await
-            {
-                // Persist the profile manager right before closing so
-                // unsaved profile-level changes (active selection,
-                // renames, etc.) survive the exit.
-                application_context
-                    .save_player_profiles()
-                    .unwrap_or_else(|error| {
-                        panic!("Main menu Exit lost its ApplicationContext: {error}")
-                    })
-                    .log_persistence_error("Main menu Exit: failed to save profile manager");
-                return Ok(Some(MainMenuChoice::Exit));
-            }
-            // Cancelled — stay in the menu and redraw next frame.
+        if exit_requested && confirm_exit(io, session.application_context).await {
+            return Ok(Some(MainMenuChoice::Exit));
         }
 
         // ── Render ──────────────────────────────────────────────
-        //
+        self.draw(io, session.application_context, transform);
+
+        Ok(None)
+    }
+
+    fn draw(
+        &self,
+        io: &mut MainMenuIo<'_>,
+        application_context: &ApplicationContext,
+        transform: MenuTransform,
+    ) {
         // Background, button sprites, text, and cursor all draw through the
         // GPU queue; no menu frame mutates a retained software surface.
+        let renderer = &mut *io.renderer;
+        let menu_resources = &*io.resources;
 
         renderer.begin_gpu_frame_clear();
         renderer.begin_ui_only_frame();
 
-        if let Some(bg) = bg {
-            let bg_x = transform.origin_x + (MENU_W - bg.width) / 2;
-            let bg_y = transform.origin_y + (MENU_H - bg.height) / 2;
-            let src = BBox::from_coords(0.0, 0.0, bg.width as f32, bg.height as f32);
-            let dst = BBox::from_coords(
-                bg_x as f32,
-                bg_y as f32,
-                (bg_x + bg.width) as f32,
-                (bg_y + bg.height) as f32,
-            );
-            renderer
-                .draw_surface(bg.id, Some(&src), Some(&dst), 0)
-                .expect("live menu background");
+        if let Some(bg) = self.bg {
+            draw_menu_background(renderer, transform, bg);
         }
 
         // Buttons (sprite layer).
@@ -703,17 +691,51 @@ impl MainMenuState {
 
         // Custom cursor on top — the OS cursor is hidden, so skip this
         // and the mouse appears to vanish.
-        cursor_renderer.advance_ui_animation();
-        ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0).draw(
+        io.cursor_renderer.advance_ui_animation();
+        ModalCursor::new(io.cursor_renderer, MOUSE_OPACITY_DEFAULT, 0).draw(
             renderer,
             transform,
             &self.input_state,
         );
 
         renderer.present();
-
-        Ok(None)
     }
+}
+
+/// Escape, the Exit button and OS close all end here. Returns `true` once
+/// exit is confirmed and the profile manager has been saved.
+async fn confirm_exit(io: &mut MainMenuIo<'_>, application_context: &ApplicationContext) -> bool {
+    let msg = io.resources.menu_text.get(MT_MSG_RETURN_TO_WINDOWS);
+    // OS close is already a durable shutdown request. Escape and the
+    // menu's Exit button still ask, but a nested dialog must not turn
+    // WM_DELETE_WINDOW into "No" and reopen forever.
+    if io.window.close_requested
+        || show_yesno(
+            &mut ModalScreenIo {
+                window: &mut *io.window,
+                renderer: &mut *io.renderer,
+                resources: &*io.resources,
+                cursor: Some(&ModalCursor::new(
+                    io.cursor_renderer,
+                    MOUSE_OPACITY_DEFAULT,
+                    0,
+                )),
+            },
+            &msg,
+        )
+        .await
+    {
+        // Persist the profile manager right before closing so
+        // unsaved profile-level changes (active selection,
+        // renames, etc.) survive the exit.
+        application_context
+            .save_player_profiles()
+            .unwrap_or_else(|error| panic!("Main menu Exit lost its ApplicationContext: {error}"))
+            .log_persistence_error("Main menu Exit: failed to save profile manager");
+        return true;
+    }
+    // Cancelled — stay in the menu and redraw next frame.
+    false
 }
 
 /// Default-profile prompt: runs before the event loop so the user picks
@@ -726,10 +748,7 @@ impl MainMenuState {
 /// context transition. On cancel, the placeholder becomes the final profile.
 async fn prompt_first_launch_new_player(
     application_context: &ApplicationContext,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor_renderer: &mut CursorRenderer,
+    io: &mut AnimatedScreenIo<'_, '_>,
 ) {
     let needs_prompt = require(
         application_context.with_player_profiles(|mgr| mgr.default_profiles),
@@ -755,14 +774,7 @@ async fn prompt_first_launch_new_player(
         FIRST_LAUNCH_PROMPT,
     );
 
-    let outcome = player_select::show_new_player_prompt(
-        event_pump,
-        renderer,
-        resources,
-        initial_name,
-        Some(ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0)),
-    )
-    .await;
+    let outcome = player_select::show_new_player_prompt(io, initial_name).await;
 
     if let Err(error) = application_context.complete_first_launch_profile(outcome, base_resolution)
     {
@@ -816,34 +828,23 @@ fn campaign_browser_profiles(
 /// choice; `None` when control should stay on the menu.
 async fn dispatch_click(
     action: ClickAction,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    menu_resources: &mut IngameMenuResources,
-    save_manager: &mut SaveGameManager,
-    cursor_renderer: &mut CursorRenderer,
-    #[cfg_attr(
-        not(feature = "multiplayer"),
-        expect(
-            unused_variables,
-            reason = "only the multiplayer menu consumes the live campaign"
-        )
-    )]
-    campaign: &Campaign,
-    profiles: &engine_profiles::ProfileManager,
-    application_context: &ApplicationContext,
+    io: &mut MainMenuIo<'_>,
+    session: &mut MainMenuSession<'_>,
 ) -> Result<Option<MainMenuChoice>, String> {
+    let application_context = session.application_context;
     Ok(match action {
         ClickAction::Return(c) => Some(c),
         ClickAction::CampaignManager => {
-            let mut view_profiles = profiles.clone();
-            let view_campaign = if let Some(index) = save_manager.find_resume_target() {
-                let save = save_manager
+            let mut view_profiles = session.profiles.clone();
+            let view_campaign = if let Some(index) = session.save_manager.find_resume_target() {
+                let save = session
+                    .save_manager
                     .preflight_exact_slot(index)
                     .map_err(|error| format!("Cannot open Campaign Manager: {error:#}"))?;
                 // Reconstruct only the static descriptor used for presentation.
                 // No mission assets are mounted and no saved simulation is applied.
                 view_profiles = campaign_browser_profiles(
-                    profiles,
+                    session.profiles,
                     save.engine.campaign(),
                     &save.header.mission_assets,
                 )?;
@@ -859,14 +860,14 @@ async fn dispatch_click(
             };
             let mut state = crate::campaign_map::CampaignMapModalState::new_browser(
                 application_context,
-                renderer,
+                io.renderer,
                 &view_campaign,
                 &view_profiles,
-                menu_resources,
+                io.resources,
             );
             loop {
-                let cursor = ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0);
-                if let Some(exit) = state.tick_browser(event_pump, renderer, Some(&cursor)) {
+                let cursor = ModalCursor::new(io.cursor_renderer, MOUSE_OPACITY_DEFAULT, 0);
+                if let Some(exit) = state.tick_browser(io.window, io.renderer, Some(&cursor)) {
                     break if exit {
                         Some(MainMenuChoice::Exit)
                     } else {
@@ -879,22 +880,22 @@ async fn dispatch_click(
         ClickAction::LoadGame => {
             save_load::run_main_menu_load(
                 application_context,
-                event_pump,
-                renderer,
-                menu_resources,
-                ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0),
-                save_manager,
+                io.window,
+                io.renderer,
+                io.resources,
+                ModalCursor::new(io.cursor_renderer, MOUSE_OPACITY_DEFAULT, 0),
+                session.save_manager,
             )
             .await
         }
         #[cfg(feature = "multiplayer")]
         ClickAction::Multiplayer => multiplayer_menu::show_multiplayer_menu(
-            event_pump,
-            renderer,
-            menu_resources,
-            cursor_renderer,
-            campaign,
-            profiles,
+            io.window,
+            io.renderer,
+            io.resources,
+            io.cursor_renderer,
+            session.campaign,
+            session.profiles,
             application_context,
             None,
         )
@@ -903,10 +904,16 @@ async fn dispatch_click(
         ClickAction::SelectPlayer => {
             player_select::show_select_player(
                 application_context,
-                event_pump,
-                renderer,
-                menu_resources,
-                Some(ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0)),
+                &mut AnimatedScreenIo {
+                    window: &mut *io.window,
+                    renderer: &mut *io.renderer,
+                    resources: &*io.resources,
+                    cursor: Some(&mut ModalCursor::new(
+                        io.cursor_renderer,
+                        MOUSE_OPACITY_DEFAULT,
+                        0,
+                    )),
+                },
             )
             .await;
             // Active profile may have changed — reopen the save manager so
@@ -914,60 +921,35 @@ async fn dispatch_click(
             // `Profile_NNN/saves.json` index rather than the prior one.
             match crate::save_recovery::open_with_recovery(
                 application_context,
-                event_pump,
-                renderer,
-                menu_resources,
-                Some(&ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0)),
+                io.window,
+                io.renderer,
+                io.resources,
+                Some(&ModalCursor::new(
+                    io.cursor_renderer,
+                    MOUSE_OPACITY_DEFAULT,
+                    0,
+                )),
             )
             .await
             {
-                crate::save_recovery::OpenedSaveStore::Ready(manager) => *save_manager = manager,
+                crate::save_recovery::OpenedSaveStore::Ready(manager) => {
+                    *session.save_manager = manager
+                }
                 crate::save_recovery::OpenedSaveStore::Cancelled
                 | crate::save_recovery::OpenedSaveStore::ExitRequested => {
                     return Ok(Some(MainMenuChoice::Exit));
                 }
             }
-            // If the new active profile carries a different resolution,
-            // resize so the surrounding menu re-lays out at the new size
-            // on the next frame. `MenuTransform::centered` picks up the
-            // new dimensions automatically.
-            //
-            // Sound-settings re-application is deliberately omitted here:
-            // the main menu has no persistent `SoundManager` to apply to
-            // (no menu music plays at this layer; the only main-menu
-            // `SoundManager` is the transient one inside
-            // `show_main_menu_options` for slider-tick noises, and it
-            // gets torn down when Options exits). The new profile's
-            // sound settings are picked up at the next session boot via
-            // `game_session::init_audio_backend`, which reads the active
-            // profile's `sound_config` when constructing the session-time
-            // `SoundManager`. Hosting menu music at the main-menu level
-            // would require a top-level main-menu `SoundManager` first;
-            // that is a structural change beyond the scope of this arm.
-            // Preserve the original game's player-selection entry behavior.
-            let graphic = application_context
-                .with_active_profile(|profile| profile.graphic_config.clone())
-                .unwrap_or_else(|error| {
-                    panic!("Select Player removed the active profile: {error}")
-                });
-            event_pump.set_logical_resolution_policy(&graphic);
-            renderer.sync_window_size(event_pump);
-            renderer.apply_upscale_config(&graphic);
-            event_pump.set_native_refresh_presentation(graphic.native_refresh_presentation);
-            renderer.configure_native_refresh_presentation(
-                graphic.native_refresh_presentation,
-                event_pump.surface_config.width,
-                event_pump.surface_config.height,
-            );
+            apply_selected_profile_graphics(io, application_context);
             None
         }
         ClickAction::Options => {
             let language_changed = options::show_main_menu_options(
                 application_context,
-                event_pump,
-                renderer,
-                menu_resources,
-                cursor_renderer,
+                io.window,
+                io.renderer,
+                io.resources,
+                io.cursor_renderer,
             )
             .await;
             if language_changed {
@@ -977,21 +959,21 @@ async fn dispatch_click(
                 application_context.with_active_profile(|profile| profile.graphic_config.clone()),
                 SCREEN,
             );
-            event_pump.set_logical_resolution_policy(&graphic);
-            renderer.sync_window_size(event_pump);
+            io.window.set_logical_resolution_policy(&graphic);
+            io.renderer.sync_window_size(io.window);
             None
         }
         ClickAction::ShowCredits => {
-            credits::show_credits(application_context, event_pump, renderer).await;
+            credits::show_credits(application_context, io.window, io.renderer).await;
             None
         }
         ClickAction::ShowMovies => {
             movies::show_movies(
                 application_context,
                 &mut ModalScreenIo {
-                    window: event_pump,
-                    renderer,
-                    resources: menu_resources,
+                    window: &mut *io.window,
+                    renderer: &mut *io.renderer,
+                    resources: &*io.resources,
                     cursor: None,
                 },
             )
@@ -1001,10 +983,16 @@ async fn dispatch_click(
         ClickAction::CustomMissions => {
             let mods_root = crate::mod_pack::default_mods_root();
             custom_missions::show_custom_missions(
-                event_pump,
-                renderer,
-                menu_resources,
-                ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0),
+                &mut ModalScreenIo {
+                    window: &mut *io.window,
+                    renderer: &mut *io.renderer,
+                    resources: &*io.resources,
+                    cursor: Some(&ModalCursor::new(
+                        io.cursor_renderer,
+                        MOUSE_OPACITY_DEFAULT,
+                        0,
+                    )),
+                },
                 &mods_root,
                 application_context.preparation_files()?,
             )
@@ -1012,6 +1000,45 @@ async fn dispatch_click(
             .map(MainMenuChoice::CustomMission)
         }
     })
+}
+
+/// Re-apply the (possibly changed) active profile's presentation settings
+/// after Select Player closes.
+fn apply_selected_profile_graphics(
+    io: &mut MainMenuIo<'_>,
+    application_context: &ApplicationContext,
+) {
+    // If the new active profile carries a different resolution,
+    // resize so the surrounding menu re-lays out at the new size
+    // on the next frame. `MenuTransform::for_renderer` picks up the
+    // new dimensions automatically.
+    //
+    // Sound-settings re-application is deliberately omitted here:
+    // the main menu has no persistent `SoundManager` to apply to
+    // (no menu music plays at this layer; the only main-menu
+    // `SoundManager` is the transient one inside
+    // `show_main_menu_options` for slider-tick noises, and it
+    // gets torn down when Options exits). The new profile's
+    // sound settings are picked up at the next session boot via
+    // `game_session::init_audio_backend`, which reads the active
+    // profile's `sound_config` when constructing the session-time
+    // `SoundManager`. Hosting menu music at the main-menu level
+    // would require a top-level main-menu `SoundManager` first;
+    // that is a structural change beyond the scope of this arm.
+    // Preserve the original game's player-selection entry behavior.
+    let graphic = application_context
+        .with_active_profile(|profile| profile.graphic_config.clone())
+        .unwrap_or_else(|error| panic!("Select Player removed the active profile: {error}"));
+    io.window.set_logical_resolution_policy(&graphic);
+    io.renderer.sync_window_size(io.window);
+    io.renderer.apply_upscale_config(&graphic);
+    io.window
+        .set_native_refresh_presentation(graphic.native_refresh_presentation);
+    io.renderer.configure_native_refresh_presentation(
+        graphic.native_refresh_presentation,
+        io.window.surface_config.width,
+        io.window.surface_config.height,
+    );
 }
 
 /// Render every piece of text in the main menu (profile info block on
@@ -1215,33 +1242,31 @@ mod tests {
                 20,
             ));
         }
-        let mut state = MainMenuState::new(frame);
+        let mut state = MainMenuState::new(frame, Vec::new(), None, None);
         let transform = MenuTransform::centered(640, 480);
         let key = |keycode| GameEvent::KeyDown {
             keycode,
             physical_key: None,
         };
         assert_eq!(
-            state.process_events(vec![key(Keycode::Down)], transform, &mut None),
+            state.process_events(vec![key(Keycode::Down)], transform),
             (None, false)
         );
         assert_eq!(state.keyboard_selection, 2);
-        assert_eq!(
-            state.process_events(vec![], transform, &mut None),
-            (None, false)
-        );
+        assert_eq!(state.process_events(vec![], transform), (None, false));
         assert_eq!(state.keyboard_selection, 2);
         assert_eq!(
-            state.process_events(
-                vec![key(Keycode::Return), GameEvent::Quit],
-                transform,
-                &mut None
-            ),
+            state.process_events(vec![key(Keycode::Return), GameEvent::Quit], transform),
             (Some(2), true)
         );
         assert_eq!(
-            state.process_events(vec![key(Keycode::Up)], transform, &mut None),
+            state.process_events(vec![key(Keycode::Up)], transform),
             (None, false)
+        );
+        // Space activates like Return; Escape requests exit like Quit.
+        assert_eq!(
+            state.process_events(vec![key(Keycode::Space), key(Keycode::Escape)], transform),
+            (Some(0), true)
         );
         assert_eq!(state.keyboard_selection, 0);
     }
