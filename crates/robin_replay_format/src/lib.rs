@@ -15,7 +15,7 @@
 //! before construction, but attacker-controlled collection lengths can still
 //! amplify a small valid payload into substantial typed heap/work before the
 //! post-decode structural limits can inspect it. The ranked server therefore
-//! runs [`decode_compact_for_admission`] under its verifier's address-space,
+//! runs [`decode_compact_for_build`] under its verifier's address-space,
 //! CPU and wall-time limits. Do not move that call into an unsandboxed request
 //! handler. Browser public playback must run this decoder in the separately
 //! built replay-admission wasm inside a Dedicated Worker; that artifact owns a
@@ -374,40 +374,33 @@ pub fn decode_compact_bounded(
     decode_compact_inner(text, Some(limits), None)
 }
 
-/// Decode the current build's production format under public limits.
+/// Decode a production artifact that must have been recorded by
+/// `required_hash`, under explicit limits.
 ///
 /// This does not create a sandbox: callers must already run inside the
-/// documented resource-limited admission worker.
+/// documented resource-limited admission worker. The build hash is rejected
+/// before base64/zstd work.
 ///
-/// The build hash is rejected before base64/zstd work. Server installations
-/// that route several approved build hashes should call
-/// [`decode_compact_for_build`] in the selected build's sandbox.
-pub fn decode_compact_for_admission(text: &str) -> Result<(String, ReplayData), FormatError> {
-    if ENGINE_VERSION_HASH == "unknown" {
-        return Err(FormatError::BuildIdentityUnavailable);
-    }
-    decode_compact_for_build(text, &DEFAULT_REPLAY_ADMISSION_LIMITS, ENGINE_VERSION_HASH)
-}
-
-/// Decode local/browser playback in the isolated replay worker. This remains
-/// bounded for a 384-MiB worker while fitting the engine's maximum valid
-/// 16-MiB canonical Spellforge package.
-pub fn decode_compact_for_local_playback(text: &str) -> Result<(String, ReplayData), FormatError> {
-    if ENGINE_VERSION_HASH == "unknown" {
-        return Err(FormatError::BuildIdentityUnavailable);
-    }
-    decode_compact_for_build(
-        text,
-        &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
-        ENGINE_VERSION_HASH,
-    )
-}
-
+/// Policies in use:
+/// - public/ranked admission of this build:
+///   `(text, &DEFAULT_REPLAY_ADMISSION_LIMITS, ENGINE_VERSION_HASH)`;
+/// - local/browser playback in the isolated replay worker (bounded for a
+///   384-MiB worker while fitting the engine's maximum valid 16-MiB canonical
+///   Spellforge package): `(text, &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
+///   ENGINE_VERSION_HASH)`;
+/// - server installations routing several approved build hashes pass the
+///   selected build's hash in that build's sandbox.
+///
+/// A build without durable source identity (`ENGINE_VERSION_HASH ==
+/// "unknown"`) cannot admit production replays.
 pub fn decode_compact_for_build(
     text: &str,
     limits: &ReplayAdmissionLimits,
     required_hash: &str,
 ) -> Result<(String, ReplayData), FormatError> {
+    if required_hash == "unknown" {
+        return Err(FormatError::BuildIdentityUnavailable);
+    }
     validate_version_hash(required_hash)?;
     decode_compact_inner(text, Some(limits), Some(required_hash))
 }
