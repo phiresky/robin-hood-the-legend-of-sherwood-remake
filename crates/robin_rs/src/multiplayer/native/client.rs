@@ -1730,3 +1730,6 @@ pub(super) fn client_gameplay_wire_msg(outgoing: NetOutbound) -> Result<NetMsg, 
     .map_err(|error| error.to_string())?
     .ok_or_else(|| "outgoing publication has no wire frame".to_owned())
 }
+
+#[cfg(test)]
+mod tests;

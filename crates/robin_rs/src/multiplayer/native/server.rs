@@ -2261,3 +2261,6 @@ pub(super) fn validate_peer_command_authority(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
