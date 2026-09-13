@@ -10,8 +10,8 @@ use robin_engine::trading::{
 };
 
 use super::layout::{
-    MENU_W, MenuTransform, TextAlign, VAlign, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, render_clipped_text_in_box_font, render_text_virt_font,
+    MENU_W, MenuTransform, TextAlign, VAlign, draw_screen_background,
+    render_clipped_text_in_box_font, render_text_virt_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_SELL_FIVE, MT_BTN_SELL_ONE, MT_STR_TRADE_CONFIRM,
@@ -20,7 +20,7 @@ use super::resources::{
     MT_STR_TRADE_REJECTED, MT_STR_TRADE_ROW, MT_STR_TRADE_SOLD, MT_STR_TRADE_WAITING,
     MT_TTL_SHERWOOD_TRADING,
 };
-use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
+use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey};
 
 const ID_SELL_ONE: u32 = 400;
 const ID_SELL_FIVE: u32 = 401;
@@ -78,11 +78,7 @@ impl TradingModalState {
         sectors: &[SectorProduction],
         ransom: i32,
     ) -> Self {
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
-        let input = ModalInputState::from_window(window, transform);
+        let input = ModalInputState::for_screen(window, renderer);
         Self::build(resources, sectors, ransom, input)
     }
 
@@ -168,19 +164,17 @@ impl TradingModalState {
         receipts: Vec<TradeReceipt>,
         sectors: &[SectorProduction],
     ) -> Option<TradingOutcome> {
-        let window = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
         self.refresh_stocks(sectors);
         for receipt in receipts {
-            self.apply_receipt(resources, receipt);
+            self.apply_receipt(io.resources, receipt);
         }
 
-        let (events, transform) = super::layout::poll_events_with_transform(window, renderer);
-        let outcome = self.handle_events(resources, &events, transform);
+        // Input updates stay interleaved with widget processing per event
+        // (see `handle_events`), so this polls without `ScreenFrame::begin`.
+        let screen = ScreenFrame::poll(io);
+        let outcome = self.handle_events(io.resources, &screen.events, screen.transform);
 
-        self.render(renderer, resources, transform, cursor);
+        self.render(io, &screen);
         outcome
     }
 
@@ -197,53 +191,52 @@ impl TradingModalState {
         let mut activated = None;
         for event in events {
             self.input.update_from_event(event, transform);
-            let keyboard_activation = match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => return Some(TradingOutcome::Close),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Up,
-                    ..
-                } => {
-                    self.move_selection(-1);
-                    None
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Down,
-                    ..
-                } => {
-                    self.move_selection(1);
-                    None
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Tab | Keycode::Right,
-                    ..
-                } => {
+            let keyboard_activation = match ScreenKey::from_event(event) {
+                Some(ScreenKey::Quit | ScreenKey::Cancel) => return Some(TradingOutcome::Close),
+                Some(ScreenKey::Next) => {
                     self.focus = (self.focus + 1) % 3;
                     None
                 }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Left,
-                    ..
-                } => {
-                    self.focus = (self.focus + 2) % 3;
-                    None
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return | Keycode::KpEnter,
-                    ..
-                } => Some([ID_SELL_ONE, ID_SELL_FIVE, ID_CLOSE][self.focus]),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Char(b'1'),
-                    ..
-                } => Some(ID_SELL_ONE),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Char(b'5'),
-                    ..
-                } => Some(ID_SELL_FIVE),
-                _ => None,
+                Some(ScreenKey::Confirm) => Some([ID_SELL_ONE, ID_SELL_FIVE, ID_CLOSE][self.focus]),
+                None => match event {
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Up,
+                        ..
+                    } => {
+                        self.move_selection(-1);
+                        None
+                    }
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Down,
+                        ..
+                    } => {
+                        self.move_selection(1);
+                        None
+                    }
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Right,
+                        ..
+                    } => {
+                        self.focus = (self.focus + 1) % 3;
+                        None
+                    }
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Left,
+                        ..
+                    } => {
+                        self.focus = (self.focus + 2) % 3;
+                        None
+                    }
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Char(b'1'),
+                        ..
+                    } => Some(ID_SELL_ONE),
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Char(b'5'),
+                        ..
+                    } => Some(ID_SELL_FIVE),
+                    _ => None,
+                },
             };
 
             let widget_input = self.input.as_widget_input();
@@ -441,15 +434,11 @@ impl TradingModalState {
         self.update_button_enablement();
     }
 
-    fn render(
-        &self,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        transform: MenuTransform,
-        cursor: Option<&ModalCursor<'_>>,
-    ) {
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+    fn render(&self, io: &mut ModalScreenIo<'_, '_>, screen: &ScreenFrame) {
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let transform = screen.transform;
+        screen.begin_draw(renderer);
         if let Some(background) = resources.menu_bg[0] {
             draw_screen_background(renderer, &background);
         }
@@ -520,10 +509,7 @@ impl TradingModalState {
                 );
             }
         }
-        if let Some(cursor) = cursor {
-            cursor.draw(renderer, transform, &self.input);
-        }
-        renderer.present();
+        screen.finish(io, &self.input);
     }
 }
 
