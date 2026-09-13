@@ -19,16 +19,28 @@ macro_rules! trace_event {
             $($argument: &dyn std::fmt::$format_trait,)*
             $($capture: &dyn std::fmt::$capture_trait,)*
         ) {
-            eprintln!(
+            $crate::ai::parity_trace::write_line(format_args!(
                 $format,
                 $($argument,)*
                 $($capture = $capture,)*
-            );
+            ));
         }
     };
 }
 
 pub(crate) use trace_event;
+
+/// Single stderr sink for every parity payload line.
+pub(crate) fn write_line(line: std::fmt::Arguments<'_>) {
+    #[cfg(test)]
+    if tests::capture_line(line) {
+        return;
+    }
+    eprintln!("{line}");
+}
+
+#[cfg(test)]
+pub(crate) mod tests;
 
 trace_event! {
     forecast(

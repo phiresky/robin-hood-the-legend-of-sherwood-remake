@@ -3,6 +3,9 @@
 
 use crate::ai::parity_trace::trace_event;
 
+#[cfg(test)]
+mod tests;
+
 trace_event! {
     aidecision_reactiontime_running_event(
         frame: Display,
