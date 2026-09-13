@@ -55,46 +55,9 @@ impl EngineInner {
             if !should_return {
                 continue;
             }
-            let scratch = self.build_sim_scratch(assets);
-            let mut ctx =
-                { self.ai_context_for(member, self.control.frame_counter, &scratch, assets) };
-            self.refresh_selected_default_wait_identity(member, &mut ctx);
-            let tick_data = self.build_npc_tick_data(sim, member, assets);
-            {
-                let npc = self.world.entities.expect_ai_actor_data_mut(
-                    member,
-                    format_args!("RemoveAllSubordinates member before forced return to duty"),
-                );
-                match &mut npc.ai_brain {
-                    crate::element::AiBrain::Enemy(ai) => ai.return_to_duty(
-                        crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick_data, None),
-                        crate::ai::DutyFlags::empty(),
-                    ),
-                    crate::element::AiBrain::Friendly(ai) => {
-                        ai.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx)
-                    }
-                    crate::element::AiBrain::None => panic!(
-                        "RemoveAllSubordinates member {} has no AI brain",
-                        member.index()
-                    ),
-                }
-            }
-
-            {
-                let ai = self
-                    .world
-                    .entities
-                    .get_mut(member)
-                    .and_then(Entity::ai_controller_mut)
-                    .expect("RemoveAllSubordinates member lost its AI after forced return to duty");
-                if let Some(crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
-                    defer_clear_patrol_close_post,
-                    ..
-                }) = ai.outbox.reentrant.owner_work.last_mut()
-                {
-                    *defer_clear_patrol_close_post = true;
-                }
-            }
+            self.execute_ai_return_to_duty(sim, assets, member, crate::ai::DutyFlags::empty());
+            // A forced duty call does not close a Think frame. Keep its
+            // close-post latch available for the actor's actual completion.
             self.drain_direct_ai_owner_boundary(sim, member, assets);
             self.drain_pending_move_requests_for_owner(sim, member);
         }
@@ -816,7 +779,6 @@ impl EngineInner {
             // into a global batch or strand in the outbox.
             self.launch_pending_orders_for_npc(sim, assets, npc_id);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
-            self.surface_synchronous_completion_events_for_owner(npc_id);
 
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
 
@@ -865,169 +827,6 @@ impl EngineInner {
         }
 
         handled
-    }
-
-    /// Deliver completion latches produced after typed decision-tick completion at the
-    /// same logical boundary as the operation that produced them.
-    ///
-    /// The original game constructs appended movement paths inline, so
-    /// failures and already-at-destination results are visible to the
-    /// enclosing decision-tick completion. Rust may discover either result only after the
-    /// controller borrow is released: path construction is engine-owned, and
-    /// owner-work continuations such as patrol initialization resume outside
-    /// the typed decision tick. Surface all three completion latches before a
-    /// sibling synchronous event can enter tick admission and clear them.
-    pub(in crate::engine) fn surface_synchronous_completion_events_for_owner(
-        &mut self,
-        npc_id: EntityId,
-    ) {
-        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
-            && crate::ai_enemy::decision_path_debug_matches_raw(
-                self.control.frame_counter,
-                npc_id.index(),
-            );
-        // A movement element's Impossible transition already owns a pending
-        // synchronous removal-notification callback. Original delivers that
-        // callback directly from the state change before any enclosing stack can
-        // return to decision-tick completion. Rust's suspended notification must therefore win this
-        // boundary; surfacing the same latch first mislabels a genuine
-        // movement condolation as an engine completion.
-        let pending_couldnt_condolation = self
-            .orders
-            .sequence_manager
-            .has_pending_couldnt_reachpoint_condolation(npc_id);
-        // A preflight rejection can occur before Rust has materialized the
-        // replacement movement element and its Impossible condolence card.
-        // If the actor still has an authored movement selected, Original's
-        // replacement arbitration reaches the movement state-change callback and
-        // reports the rejection as EVENT_COULDNT_REACHPOINT from
-        // removal notification. A nonmovement selection (notably the attentive
-        // transition in the lift-entry continuation) instead belongs to the
-        // engine-completion bridge.
-        let selected_movement_owns_failure = self
-            .orders
-            .sequence_manager
-            .actor_has_selected_movement(npc_id);
-        let ai = self.world.entities.expect_ai_controller_mut(
-            npc_id,
-            format_args!("synchronous move owner before path-result delivery"),
-        );
-        // Only decision-tick completion delivers these latches, so one whose operation ran
-        // outside a Think is discarded exactly as the next Think entry would.
-        // Dispatching a completion also re-enters Think, whose entry gate
-        // clears all three latches before the nested handler runs, so a single
-        // boundary surfaces at most one event even when several were set.
-        let typed_tail_pending = ai.has_typed_completion_pending();
-        let retain_couldnt_reachpoint = ai.completion_latch_inside_think
-            && ai.couldnt_reachpoint
-            && (typed_tail_pending || pending_couldnt_condolation);
-        // Owner-work prefixes (notably the enemy state change's synchronous callback)
-        // can ask for a completion surface while the caller-tail movement is still
-        // queued on the controller. Original cannot close that decision tick yet:
-        // movement-sequence construction runs before control returns to tick completion, and its
-        // path verdict belongs to the same open frame. Keep the deferred frame
-        // alive until the engine has actually drained the queued intent.
-        let engine_verdict_pending =
-            ai.engine_deferred_end_think_frames != 0 && !ai.engine_completion_verdict_resolved;
-        if debug_decision_path {
-            Self::trace_surface_completion_enter(
-                self.control.frame_counter,
-                npc_id,
-                ai,
-                [
-                    typed_tail_pending,
-                    retain_couldnt_reachpoint,
-                    engine_verdict_pending,
-                ],
-            );
-        }
-        let event = if !ai.completion_latch_inside_think {
-            None
-        } else if retain_couldnt_reachpoint {
-            None
-        } else if ai.couldnt_reachpoint {
-            Some(crate::ai::StimulusType::EventCouldntReachPoint)
-        } else if ai.already_on_point {
-            Some(crate::ai::StimulusType::EventReachPoint)
-        } else if ai.already_turned {
-            Some(crate::ai::StimulusType::EventDone)
-        } else {
-            None
-        };
-        if !retain_couldnt_reachpoint {
-            ai.couldnt_reachpoint = false;
-        }
-        ai.already_on_point = false;
-        ai.already_turned = false;
-        if let Some(event) = event {
-            ai.engine_completion_verdict_resolved = false;
-            let origin = if selected_movement_owns_failure
-                && event == crate::ai::StimulusType::EventCouldntReachPoint
-            {
-                crate::ai::SelfStimulusOrigin::Condolation
-            } else {
-                crate::ai::SelfStimulusOrigin::EngineCompletion
-            };
-            ai.outbox
-                .reentrant
-                .self_stimuli
-                .push(crate::ai::QueuedSelfStimulus::new(event, origin));
-        } else if !retain_couldnt_reachpoint && !typed_tail_pending && !engine_verdict_pending {
-            // A successful engine-side authorization produces no recursive
-            // completion event. This is the point where Original returns
-            // through every decision frame that was kept live while Rust
-            // released the AI borrow to build the path.
-            ai.close_engine_deferred_end_think_frames();
-        }
-        if debug_decision_path {
-            Self::trace_surface_completion_result(self.control.frame_counter, npc_id, event, ai);
-        }
-    }
-
-    /// `[typed_tail_pending, retain_couldnt, engine_verdict_pending]`.
-    #[inline(never)]
-    fn trace_surface_completion_enter(
-        frame: u32,
-        npc_id: EntityId,
-        ai: &crate::ai::AiController,
-        [
-            typed_tail_pending,
-            retain_couldnt_reachpoint,
-            engine_verdict_pending,
-        ]: [bool; 3],
-    ) {
-        eprintln!(
-            "AIDECISION frame={} owner={} stage=surface_completion_enter inside_think={} couldnt={} already_on_point={} already_turned={} typed_tail_pending={} retain_couldnt={} engine_verdict_pending={} owner_work={:?}",
-            frame,
-            npc_id.index(),
-            ai.completion_latch_inside_think,
-            ai.couldnt_reachpoint,
-            ai.already_on_point,
-            ai.already_turned,
-            typed_tail_pending,
-            retain_couldnt_reachpoint,
-            engine_verdict_pending,
-            ai.outbox.reentrant.owner_work,
-        );
-    }
-
-    #[inline(never)]
-    fn trace_surface_completion_result(
-        frame: u32,
-        npc_id: EntityId,
-        event: Option<crate::ai::StimulusType>,
-        ai: &crate::ai::AiController,
-    ) {
-        eprintln!(
-            "AIDECISION frame={} owner={} stage=surface_completion_result event={event:?} couldnt={} already_on_point={} already_turned={} self_stimuli={:?} owner_work={:?}",
-            frame,
-            npc_id.index(),
-            ai.couldnt_reachpoint,
-            ai.already_on_point,
-            ai.already_turned,
-            ai.outbox.reentrant.self_stimuli,
-            ai.outbox.reentrant.owner_work,
-        );
     }
 
     pub(in crate::engine) fn process_synchronous_reentrant_actions_for(
@@ -1107,32 +906,12 @@ impl EngineInner {
                     crate::ai::CrossNpcAction::BreakPhalanx {
                         target,
                         refresh_them_list,
-                    } => {
-                        // The original game stores AI-update recursion depth in one shared
-                        // shared AI byte, not on each NPC.
-                        // A direct recursive BreakPhalanx call on a neighbour
-                        // therefore observes the still-live source Think. The
-                        // typed Rust handler has already returned through its
-                        // controller-local decision-tick completion before the engine can
-                        // drain this action, so zero here still represents
-                        // the one logical frame which emitted BreakPhalanx.
-                        // A nonzero value represents an explicitly suspended
-                        // outer frame and is already the global logical depth.
-                        let logical_think_depth = self
-                            .world
-                            .entities
-                            .expect_ai_controller(source_id, format_args!("break-phalanx source"))
-                            .think_recursion_depth
-                            .max(1);
-                        self.process_synchronous_break_phalanx(
-                            sim,
-                            target,
-                            refresh_them_list,
-                            logical_think_depth,
-                            target == source_id.index(),
-                            assets,
-                        )
-                    }
+                    } => self.process_synchronous_break_phalanx(
+                        sim,
+                        target,
+                        refresh_them_list,
+                        assets,
+                    ),
                     crate::ai::CrossNpcAction::ConsiderReport { target, flags } => {
                         let target_id =
                             self.expect_human_id_for_ai_handle(target, "report transfer target");
@@ -1357,8 +1136,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         target: u32,
         refresh_them_list: bool,
-        logical_think_depth: u8,
-        owns_end_think: bool,
         assets: &LevelAssets,
     ) {
         let target_id =
@@ -1384,18 +1161,6 @@ impl EngineInner {
         // cache handoff as the Think wrapper.
         ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
         let mut tick_data = self.build_npc_tick_data(sim, target_id, assets);
-        let previous_target_depth = self.replace_cross_npc_logical_think_depth(
-            target_id,
-            logical_think_depth,
-            "break-phalanx target",
-        );
-        let previous_target_completion_ownership = self
-            .world
-            .entities
-            .get(target_id)
-            .and_then(Entity::ai_controller)
-            .expect("break-phalanx target lost its AI after depth projection")
-            .completion_latch_inside_think;
 
         if refresh_them_list {
             // The original game recursively installs the phalanx member list
@@ -1452,13 +1217,7 @@ impl EngineInner {
             tick_data = self.build_npc_tick_data(sim, target_id, assets);
         }
 
-        // Keep the borrowed static depth installed through the immediate
-        // engine-side prefix. Battle planning can recursively break another
-        // member while its orders settle, and that member must inherit the
-        // same Original-global depth. Phalanx breaking itself owns no decision-tick completion,
-        // so restore the target's controller-local approximation raw after
-        // the statement boundary instead of calling a tick-completion helper.
-        {
+        let flow = {
             let ai_global = &mut self.ai.global;
             let grid = &self.world.fast_grid;
             let Entity::Soldier(soldier) = self
@@ -1475,50 +1234,13 @@ impl EngineInner {
             enemy_ai.break_phalanx_from_neighbour(
                 crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick_data, Some(grid)),
                 ai_global,
-            );
-        }
+            )
+        };
         ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
-        if owns_end_think {
-            // The flattened BreakPhalanx batch ends with the initiating
-            // member itself. Its battle-planning tail is still part of the
-            // initiating decision tick and closes that owner's decision frame.
-            self.drain_direct_ai_owner_boundary(sim, target_id, assets);
-        } else {
-            // Recursive neighbours execute under the same static depth but
-            // own no decision-tick completion of their own.
-            self.drain_direct_ai_owner_prefix_boundary(sim, target_id, assets);
+        if let Err(call) = flow {
+            self.execute_ai_duty_call(sim, assets, target_id, call);
         }
-        self.replace_cross_npc_logical_think_depth(
-            target_id,
-            previous_target_depth,
-            "break-phalanx target after prefix",
-        );
-        self.world
-            .entities
-            .get_mut(target_id)
-            .and_then(Entity::ai_controller_mut)
-            .expect("break-phalanx target lost its AI after prefix")
-            .completion_latch_inside_think = previous_target_completion_ownership;
-    }
-
-    /// Temporarily project Original's static Think recursion byte onto the
-    /// controller currently entered through a deferred direct original-game call.
-    /// Returns the controller-local approximation so the caller can restore
-    /// it raw; the direct method does not necessarily own a decision-tick completion.
-    pub(in crate::engine) fn replace_cross_npc_logical_think_depth(
-        &mut self,
-        target_id: EntityId,
-        logical_think_depth: u8,
-        operation: &str,
-    ) -> u8 {
-        let ai = self.world.entities.expect_ai_controller_mut(
-            target_id,
-            format_args!(
-                "cross-NPC {operation} {} lost its AI controller",
-                target_id.index()
-            ),
-        );
-        std::mem::replace(&mut ai.think_recursion_depth, logical_think_depth)
+        self.drain_direct_ai_owner_boundary(sim, target_id, assets);
     }
 
     /// Resume the statement immediately following Original
@@ -1538,10 +1260,6 @@ impl EngineInner {
             caller,
             "tower-guard battle continuation caller must be its owner"
         );
-        begin_suspended_tower_guard_alert_think(self.world.entities.expect_ai_controller_mut(
-            source_id,
-            format_args!("tower-guard caller {caller} lost its AI"),
-        ));
         let scratch = self.build_sim_scratch(assets);
         let building_sector = self
             .world
@@ -1563,7 +1281,8 @@ impl EngineInner {
         let tick = self.build_npc_tick_data(sim, source_id, assets);
         let global = &mut self.ai.global;
         let grid = &self.world.fast_grid;
-        self.world
+        let flow = self
+            .world
             .entities
             .expect_enemy_ai_mut(
                 source_id,
@@ -1573,14 +1292,10 @@ impl EngineInner {
                 crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, Some(grid)),
                 global,
             );
-        self.drain_direct_ai_owner_boundary(sim, source_id, assets);
-        end_suspended_tower_guard_alert_think(self.world.entities.expect_ai_controller_mut(
-            source_id,
-            format_args!("tower-guard caller {caller} lost its AI"),
-        ));
-        // Decision-tick completion can itself publish a completion event. Close that final
-        // piece of resumed original-game evaluation before returning to the
-        // cross-NPC action dispatcher.
+        if let Err(call) = flow {
+            self.execute_ai_duty_call(sim, assets, source_id, call);
+        }
+        // The enclosing decision still owns its completion latches.
         self.drain_direct_ai_owner_boundary(sim, source_id, assets);
     }
 
@@ -1619,7 +1334,8 @@ impl EngineInner {
         let tick = self.build_npc_tick_data(sim, source_id, assets);
         let global = &mut self.ai.global;
         let grid = use_formation.then_some(&*self.world.fast_grid);
-        self.world
+        let flow = self
+            .world
             .entities
             .expect_enemy_ai_mut(
                 source_id,
@@ -1630,6 +1346,9 @@ impl EngineInner {
                 failure,
                 global,
             );
+        if let Err(call) = flow {
+            self.execute_ai_duty_call(sim, assets, source_id, call);
+        }
         self.drain_direct_ai_owner_boundary(sim, source_id, assets);
     }
 
@@ -1779,7 +1498,8 @@ impl EngineInner {
         let tick = self.build_npc_tick_data_for_target(sim, source_id, assets, target_override);
         let global = &mut self.ai.global;
         let grid = &self.world.fast_grid;
-        self.world
+        let flow = self
+            .world
             .entities
             .expect_enemy_ai_mut(
                 source_id,
@@ -1790,6 +1510,9 @@ impl EngineInner {
                 continuation,
                 global,
             );
+        if let Err(call) = flow {
+            self.execute_ai_duty_call(sim, assets, source_id, call);
+        }
         self.drain_direct_ai_owner_boundary(sim, source_id, assets);
     }
 

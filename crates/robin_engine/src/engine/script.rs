@@ -1398,46 +1398,12 @@ impl EngineInner {
                 if in_default {
                     // The original game returns the actor to duty directly here,
                     // rather than routing through Think and FilterAIEvent.
-                    let scratch = self.build_sim_scratch(assets);
-                    let tick_data = self.build_npc_tick_data(sim, owner, assets);
-                    let frame = self.control.frame_counter;
-                    let in_uninterruptible_command = self.is_very_very_busy(owner);
-                    let building_sector = self.entity_building_sector(
-                        self.get_entity(owner)
-                            .expect("validated SwitchToAlertPath soldier disappeared")
-                            .element_data()
-                            .sector(),
+                    self.execute_ai_return_to_duty(
+                        sim,
+                        assets,
+                        owner,
+                        crate::ai::DutyFlags::empty(),
                     );
-                    let entity = self.world.entities.get(owner).expect(
-                        "validated SwitchToAlertPath soldier disappeared before ReturnToDuty",
-                    );
-                    let mut ctx = super::ai::build_ai_context_from_entity(
-                        entity,
-                        frame,
-                        building_sector,
-                        self.world.weather.is_forest_level,
-                        self.world.weather.ambiance,
-                        self.ai.standard_view_polygon_radius,
-                        &scratch.ai_entity_views,
-                        &scratch.ai_sight_obstacles,
-                        &self.world.fast_grid,
-                        &assets.navigation.hiking_paths,
-                        &assets.navigation.hiking_waypoint_sectors,
-                        &self.ai.global.all_soldier_handles,
-                        self.control.sim_config.difficulty,
-                    );
-                    ctx.in_uninterruptible_command = in_uninterruptible_command;
-                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
-                    let entity = self.world.entities.get_mut(owner).expect(
-                        "validated SwitchToAlertPath soldier disappeared before ReturnToDuty",
-                    );
-                    entity
-                        .enemy_ai_mut()
-                        .expect("validated SwitchToAlertPath soldier lost its enemy AI")
-                        .return_to_duty(
-                            crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick_data, None),
-                            crate::ai::DutyFlags::empty(),
-                        );
 
                     // Close the direct owner-local AI boundary and
                     // materialize any movement before the script VM resumes.
@@ -3584,15 +3550,7 @@ impl EngineInner {
     /// completion, reach-point, etc.) should route through here so
     /// `FilterAIEvent` fires live with the actual source.
     ///
-    /// Cascades — `self.think(&other_stimulus, ...)` calls inside
-    /// `EnemyAi::think` / `FriendlyAi::think` — intentionally do *not*
-    /// go through this path.  `think()` doesn't have engine access;
-    /// routing cascades through a deferred queue would break the
-    /// synchronous-within-tick semantics the script runtime relies on.
-    /// Audit of the shipped `fullgame` `.scb` content confirmed no
-    /// script filters any cascade-emitted stimulus, so the divergence
-    /// is harmless for shipped content.  A warning is logged in
-    /// `EnemyAi::think_*` cascades if this assumption ever breaks.
+    /// Nested decisions enter this same boundary on the engine call stack.
     pub(crate) fn dispatch_filtered_stimulus(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -3691,13 +3649,14 @@ impl EngineInner {
                 ai.current_substate,
                 ai.locks_flag_field,
                 ai.script_locked,
-                ai.think_recursion_depth,
+                engine.ai_think_depth(),
                 ai.stimulus_queue,
                 ai.outbox.reentrant.self_stimuli,
                 ai.outbox.reentrant.owner_work,
                 ai.outbox.actor.begin_panic.is_some(),
             );
         };
+        let entered_think = self.begin_ai_think_before_filter(entity_id, stimulus);
         debug_snapshot(self, "before_filter");
         let handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
         let filter_allowed = self.filter_stimulus(sim, assets, handle, stimulus);
@@ -3710,14 +3669,12 @@ impl EngineInner {
             },
         );
         if !filter_allowed {
-            return false;
+            if entered_think {
+                self.execute_ai_end_think(sim, assets, entity_id);
+            }
+            return entered_think;
         }
-        // The original game's AI-event filter returns synchronously before the
-        // decision body begins. Battle planning then reads these volatile fields
-        // directly from every already-admitted camp soldier. Rust captures
-        // camp membership and owner-boundary geometry before filtering, so
-        // refresh only the live fields that the Original dereferences after
-        // the callback; preserve registry order and all position/LOS data.
+        // The filter may mutate actors before decision admission reads them.
         let mut live_enemy_tick = enemy_tick_data.cloned();
         if let Some(tick) = live_enemy_tick.as_mut() {
             for friend in &mut tick.camp_soldiers {
@@ -3730,7 +3687,7 @@ impl EngineInner {
                 });
                 let Entity::Soldier(soldier) = live else {
                     panic!(
-                        "camp soldier handle {} resolved to non-soldier {friend_id:?}",
+                        "camp soldier {} resolved to non-soldier {friend_id:?}",
                         friend.handle
                     )
                 };
@@ -3743,16 +3700,12 @@ impl EngineInner {
                 friend.primary_target = enemy.base.primary_target;
             }
         }
-        // Every Think, however it was reached, must see the surface radii this
-        // viewer already computed earlier in the frame. Cross-NPC calls and
-        // the panic/report dispatch sites enter here without passing through
-        // the drain wrapper, and used to start from an empty memo.
-        ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
-        // This predicate is live sequence-manager state in the Original,
-        // queried during swordfight reconsideration. AI contexts can predate a
-        // re-entrant removal-notification callback, so refresh it at the
-        // actual Think boundary.
-        let mut live_ctx = ctx.clone();
+
+        let live_scratch = self.build_sim_scratch(assets);
+        let mut live_ctx =
+            self.ai_context_for(entity_id, self.control.frame_counter, &live_scratch, assets);
+        live_ctx.in_uninterruptible_command = self.is_very_very_busy(entity_id);
+        live_ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
         live_ctx.enter_swordfight_pending = self
             .orders
             .sequence_manager
@@ -3805,7 +3758,7 @@ impl EngineInner {
                 assets,
                 entity_id,
                 stimulus,
-                &live_ctx,
+                &mut live_ctx,
                 live_enemy_tick.as_ref(),
                 friendly_tick.as_ref(),
             )
@@ -3890,6 +3843,8 @@ impl EngineInner {
                 &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
+                u8::try_from(self.ai.think_call_stack.len())
+                    .expect("think recursion depth overflow"),
             );
             fresh_ctx.enter_swordfight_pending = self
                 .orders
@@ -3916,7 +3871,7 @@ impl EngineInner {
                     entity_id.index()
                 )
             });
-            if let Some(enemy) = entity.enemy_ai_mut() {
+            let outcome = if let Some(enemy) = entity.enemy_ai_mut() {
                 enemy.base.outbox.reentrant.engine_drains_after_script_go_on = false;
                 if completed {
                     enemy.think_unexpected_event(
@@ -3930,16 +3885,10 @@ impl EngineInner {
                         ),
                         stimulus,
                         ai_global,
-                    );
+                    )
+                } else {
+                    Ok(false)
                 }
-                enemy.end_think(crate::ai_enemy::ThinkEnv::new(
-                    sim,
-                    &fresh_ctx,
-                    fresh_enemy_tick
-                        .as_ref()
-                        .expect("AfterScript Enemy tick data"),
-                    Some(&self.world.fast_grid),
-                ));
             } else if let Some(friendly) = entity.friendly_ai_mut() {
                 friendly
                     .base
@@ -3957,15 +3906,20 @@ impl EngineInner {
                             .expect("AfterScript Friendly tick data"),
                         Some(&self.world.fast_grid),
                         Some(self.script_domains.interactables.doors.as_slice()),
-                    );
+                    )
+                } else {
+                    Ok(false)
                 }
-                friendly.end_think(sim, &fresh_ctx);
             } else {
                 panic!(
                     "AfterScript owner has invalid kind {:?}",
                     entity.element_data().kind
                 )
+            };
+            if let Err(call) = outcome {
+                self.execute_ai_duty_call(sim, assets, entity_id, call);
             }
+            self.execute_ai_end_think(sim, assets, entity_id);
             ctx.absorb_view_radius_cache(&fresh_ctx);
             ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
         }
@@ -4014,21 +3968,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: crate::element::EntityId,
-    ) {
-        self.drain_ai_owner_work_for_boundary(
-            sim,
-            assets,
-            owner,
-            crate::engine::ai::CompletionBoundary::OwnerReturn,
-        );
-    }
-
-    pub(super) fn drain_ai_owner_work_for_boundary(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: crate::element::EntityId,
-        completion_boundary: crate::engine::ai::CompletionBoundary,
     ) {
         const MAX_OWNER_WORK: usize = 128;
 
@@ -4164,41 +4103,6 @@ impl EngineInner {
                 }
                 crate::ai::AiOwnerWork::ConsiderToBeginParade { attacker } => {
                     self.owner_work_consider_to_begin_parade(sim, assets, owner, attacker);
-                    continue;
-                }
-                crate::ai::AiOwnerWork::VirtualReturnToDuty { flags, .. } => {
-                    self.virtual_return_to_duty_for_npc(sim, owner, assets, flags);
-                    continue;
-                }
-                crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
-                    flags,
-                    defer_clear_patrol_close_post,
-                    ..
-                } => {
-                    self.owner_work_resume_return_to_duty_after_patrol_init(
-                        sim,
-                        assets,
-                        owner,
-                        completion_boundary,
-                        flags,
-                        defer_clear_patrol_close_post,
-                    );
-                    continue;
-                }
-                crate::ai::AiOwnerWork::ResumeHighRecursionReturnToDutyAfterPatrolInit {
-                    flags,
-                    ..
-                } => {
-                    self.resume_return_to_duty_after_patrol_init_for_npc(
-                        sim, owner, assets, flags, true,
-                    );
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
-                    continue;
-                }
-                crate::ai::AiOwnerWork::ResumeKillNearbySleepingEnemiesAfterReturnToDuty => {
-                    self.owner_work_resume_kill_nearby_sleeping_enemies_after_return_to_duty(
-                        sim, assets, owner,
-                    );
                     continue;
                 }
                 crate::ai::AiOwnerWork::ConsumeTowerGuardAlertOfficerRouteFailure => {
@@ -4436,6 +4340,8 @@ impl EngineInner {
                 &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
+                u8::try_from(self.ai.think_call_stack.len())
+                    .expect("think recursion depth overflow"),
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
@@ -4490,6 +4396,8 @@ impl EngineInner {
                 &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
+                u8::try_from(self.ai.think_call_stack.len())
+                    .expect("think recursion depth overflow"),
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
@@ -4507,12 +4415,15 @@ impl EngineInner {
             .outbox
             .reentrant
             .dead_body_alert_completion_pending = false;
-        enemy.resume_dead_body_alert_after_alert_officer(
+        let outcome = enemy.resume_dead_body_alert_after_alert_officer(
             crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None),
             center,
             radius,
             ai_global,
         );
+        if let Err(call) = outcome {
+            self.execute_ai_duty_call(sim, assets, owner, call);
+        }
     }
 
     fn owner_work_resume_civilian_report_after_alert_officer(
@@ -4548,6 +4459,8 @@ impl EngineInner {
                 &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
+                u8::try_from(self.ai.think_call_stack.len())
+                    .expect("think recursion depth overflow"),
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
@@ -4565,11 +4478,14 @@ impl EngineInner {
             .outbox
             .reentrant
             .civilian_report_alert_officer_completion_pending = false;
-        enemy.resume_civilian_report_after_alert_officer(
+        let outcome = enemy.resume_civilian_report_after_alert_officer(
             crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None),
             seek_position,
             ai_global,
         );
+        if let Err(call) = outcome {
+            self.execute_ai_duty_call(sim, assets, owner, call);
+        }
     }
 
     fn owner_work_resume_friendly_alert_soldier_after_go_near(
@@ -4611,6 +4527,8 @@ impl EngineInner {
                 &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
+                u8::try_from(self.ai.think_call_stack.len())
+                    .expect("think recursion depth overflow"),
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
@@ -4623,7 +4541,7 @@ impl EngineInner {
             .get_mut(owner)
             .and_then(Entity::friendly_ai_mut)
             .unwrap_or_else(|| panic!("soldier-alert owner {} lost Friendly AI", owner.index()));
-        friendly.resume_alert_soldier_after_go_near(
+        let flow = friendly.resume_alert_soldier_after_go_near(
             sim,
             center,
             check_door_path,
@@ -4632,6 +4550,9 @@ impl EngineInner {
             Some(&self.world.fast_grid),
             Some(doors),
         );
+        if let Err(call) = flow {
+            self.execute_ai_duty_call(sim, assets, owner, call);
+        }
     }
 
     fn owner_work_nearby_civilians_panic180(
@@ -4675,6 +4596,8 @@ impl EngineInner {
                 &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
+                u8::try_from(self.ai.think_call_stack.len())
+                    .expect("think recursion depth overflow"),
             )
         };
         ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
@@ -4714,6 +4637,8 @@ impl EngineInner {
                 &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
+                u8::try_from(self.ai.think_call_stack.len())
+                    .expect("think recursion depth overflow"),
             )
         };
         self.world
@@ -4739,7 +4664,6 @@ impl EngineInner {
                 )
             });
         ai.outbox.reentrant.brawl_hitting_completion_pending = false;
-        ai.resolve_engine_completion_verdict();
     }
 
     fn owner_work_consider_to_begin_parade(
@@ -4803,103 +4727,6 @@ impl EngineInner {
             Some(command_strike),
             animation_strike,
         );
-    }
-
-    fn owner_work_resume_return_to_duty_after_patrol_init(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        completion_boundary: crate::engine::ai::CompletionBoundary,
-        flags: crate::ai::DutyFlags,
-        defer_clear_patrol_close_post: bool,
-    ) {
-        self.resume_return_to_duty_after_patrol_init_for_npc(sim, owner, assets, flags, false);
-        if defer_clear_patrol_close_post {
-            // Patrol clearing's forced return leaves a close idle
-            // member in DEFAULT_GOTOPOST at this native boundary:
-            // Original records neither a Move nor the nested
-            // reach-point/completion/boredom-timing chain.
-            let ai = self
-                .world
-                .entities
-                .get_mut(owner)
-                .and_then(crate::element::Entity::ai_controller_mut)
-                .expect("patrol-clearing return continuation lost its AI owner");
-            if ai.current_state == crate::ai::AiState::Default
-                && ai.current_substate == crate::ai::Substate::DefaultGotoPost
-                && ai.outbox.actor.orders.is_empty()
-                && ai
-                    .outbox
-                    .reentrant
-                    .self_stimuli
-                    .last()
-                    .map(|queued| queued.stimulus_type)
-                    == Some(crate::ai::StimulusType::EventReachPoint)
-            {
-                ai.outbox.reentrant.self_stimuli.pop();
-            }
-        } else {
-            // Ordinary return-to-duty handling resumes on the same call stack
-            // and recursively closes its completion callbacks.
-            if completion_boundary.surfaces_completion() {
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
-            } else {
-                self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
-            }
-        }
-    }
-
-    fn owner_work_resume_kill_nearby_sleeping_enemies_after_return_to_duty(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let frame = self.control.frame_counter;
-        let scratch = self.build_sim_scratch(assets);
-        let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
-        let in_uninterruptible_command = self.is_very_very_busy(owner);
-        let mut ctx = {
-            let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                panic!(
-                    "sleeping-enemy continuation owner {} disappeared",
-                    owner.index()
-                )
-            });
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                entity,
-                frame,
-                building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            );
-            ctx.in_uninterruptible_command = in_uninterruptible_command;
-            ctx
-        };
-        self.refresh_selected_default_wait_identity(owner, &mut ctx);
-        self.world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "sleeping-enemy continuation owner {} lost Enemy AI",
-                    owner.index()
-                )
-            })
-            .resume_kill_nearby_sleeping_enemies_after_return_to_duty(
-                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None),
-            );
     }
 
     fn owner_work_resume_battle_observe_after_go_near(
@@ -4972,6 +4799,8 @@ impl EngineInner {
                 &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
+                u8::try_from(self.ai.think_call_stack.len())
+                    .expect("think recursion depth overflow"),
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
@@ -5104,6 +4933,8 @@ impl EngineInner {
                 &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
+                u8::try_from(self.ai.think_call_stack.len())
+                    .expect("think recursion depth overflow"),
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
@@ -5164,6 +4995,8 @@ impl EngineInner {
                 &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
+                u8::try_from(self.ai.think_call_stack.len())
+                    .expect("think recursion depth overflow"),
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
@@ -5252,6 +5085,8 @@ impl EngineInner {
                 &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
+                u8::try_from(self.ai.think_call_stack.len())
+                    .expect("think recursion depth overflow"),
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
@@ -5394,7 +5229,7 @@ impl EngineInner {
             // ordinary element is instructed until the later global
             // sequence-manager update. Preserve that FIFO rather than
             // making this owner boundary execute either element early.
-            self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
+            self.drain_direct_ai_owner_boundary(sim, owner, assets);
             let ai = self
                 .world
                 .entities

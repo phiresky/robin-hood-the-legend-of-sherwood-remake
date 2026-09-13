@@ -1330,7 +1330,6 @@ trace_event! {
         owner: Display,
         co: Debug,
         depth: Display,
-        open: Display,
         stimulus: Debug,
         state: Debug,
         substate: Debug,
@@ -1340,5 +1339,5 @@ trace_event! {
         already: Display,
         list_them: Debug,
         owner_work: Debug;
-    } => "AIDECISION frame={} owner={} co={:?} stage=think_enter depth={}/open={} stimulus={:?} state={:?}/{:?} primary={:?} rider={} couldnt={} already={} list_them={:?} owner_work={:?}"
+    } => "AIDECISION frame={} owner={} co={:?} stage=think_enter depth={} stimulus={:?} state={:?}/{:?} primary={:?} rider={} couldnt={} already={} list_them={:?} owner_work={:?}"
 }

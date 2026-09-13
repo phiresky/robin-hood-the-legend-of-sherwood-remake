@@ -44,7 +44,6 @@ fn classify_ai_controller(value: &AiController) {
                 stop_before_end_of_path,
                 use_max_norm_to_stop_before_end_of_path,
                 stop_before_end_of_path_distance,
-                think_recursion_depth,
                 macro_command,
                 macro_command_offset,
                 macro_command_waypoint,
@@ -80,7 +79,6 @@ fn classify_ai_controller(value: &AiController) {
                 couldnt_reachpoint,
                 already_on_point,
                 already_turned,
-                completion_latch_inside_think,
                 likes_to_sit_around,
                 special_action,
                 remaining_tequila_gulps,
@@ -143,11 +141,7 @@ fn classify_ai_controller(value: &AiController) {
                 cached_frame,
                 cached_in_building,
             ],
-            skipped: [
-                open_end_think_frames,
-                engine_deferred_end_think_frames,
-                engine_completion_verdict_resolved,
-            ],
+            skipped: [],
         }
     );
 }

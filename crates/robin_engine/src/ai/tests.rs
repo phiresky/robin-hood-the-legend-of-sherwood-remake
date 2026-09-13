@@ -349,106 +349,6 @@ fn ai_controller_defaults() {
 }
 
 #[test]
-fn friend_check_scans_a_detached_alert_path_without_consuming_the_following_wait() {
-    use crate::ai::macro_patrol::{DetachedPatrolPathStatus, MacroOpcode, PathId};
-    use crate::ai_entity_view::{AiEntityViewMap, entity_view_from_entity, shared_entity_views};
-    use crate::element::{ActorSoldier, AiBrain, ElementData, ElementKind, Entity};
-    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
-
-    let path_id = PathId::new(0).expect("path zero is valid");
-    let paths = vec![RawHikingPath {
-        waypoints: vec![RawWaypoint {
-            x: 10,
-            y: 0,
-            sector: 0,
-            level: 0,
-            command: WaypointCommand::None,
-        }],
-    }];
-
-    let mut target = Entity::Soldier(ActorSoldier {
-        element: {
-            let mut initial_element =
-                ElementData::from_initial_posture(crate::element::Posture::Upright);
-            initial_element.kind = ElementKind::ActorSoldier;
-            initial_element
-        },
-        actor: Default::default(),
-        human: Default::default(),
-        npc: Default::default(),
-        soldier: Default::default(),
-    });
-    let Entity::Soldier(target_soldier) = &mut target else {
-        unreachable!()
-    };
-    target_soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
-    let target_ai = target_soldier
-        .npc
-        .ai_brain
-        .base_mut()
-        .expect("target has AI");
-    target_ai.has_patrol_path = true;
-    target_ai.path_id = Some(path_id);
-    target_ai.detached_patrol_path_status = DetachedPatrolPathStatus {
-        hiking_path_index: Some(path_id),
-        current_waypoint_index: 0,
-        last_waypoint_index: 0,
-        forward: true,
-        history: Vec::new(),
-    };
-    assert!(target_ai.patrol_path.is_none());
-
-    let target_view = entity_view_from_entity(
-        &target,
-        22,
-        false,
-        None,
-        None,
-        crate::order::OrderType::WaitingUprightBored,
-    );
-    assert_eq!(target_view.patrol_hiking_path_index, Some(path_id));
-
-    let mut views = AiEntityViewMap::new();
-    views.insert(2, target_view);
-    let ctx = AiContext {
-        position: Position::default(),
-        posture: crate::element::Posture::Upright,
-        sq_self_view_radius: 1000.0 * 1000.0,
-        entity_views: shared_entity_views(views),
-        hiking_paths: std::sync::Arc::new(paths),
-        hiking_waypoint_sectors: Some(std::sync::Arc::new(vec![vec![
-            crate::position_interface::SectorHandle::new(0)
-                .unwrap()
-                .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap()),
-        ]])),
-        all_soldier_handles: std::sync::Arc::new(vec![1, 2]),
-        self_is_soldier: true,
-        ..AiContext::test_fixture_with_motion_sector(0, 0)
-    };
-
-    let mut ai = AiController::new(1);
-    ai.current_state = AiState::Default;
-    ai.current_substate = Substate::DefaultInMacro;
-    ai.macro_in_progress = true;
-    ai.macro_command = vec![0; 20];
-    ai.macro_command[17] = MacroOpcode::Wait as u8;
-    ai.macro_command[18..20].copy_from_slice(&75_u16.to_le_bytes());
-    ai.macro_command_offset = 17;
-    ai.number_of_remaining_macro_bytes = 3;
-
-    ai.initialize_friend_check(&crate::sim_rng::test_context(), 1, 225, u16::MAX, &ctx);
-
-    assert_eq!(
-        ai.current_substate,
-        Substate::DefaultLookingSidewardsForCharly
-    );
-    assert_eq!(ai.checkpoint_charly, Some(AiEntityHandle::new(2)));
-    assert_eq!(ai.macro_command_offset, 17);
-    assert_eq!(ai.number_of_remaining_macro_bytes, 3);
-    assert!(!ai.macro_timer_is_running);
-}
-
-#[test]
 fn goto_sword_sets_force_sword_movement_flag() {
     let order = AiController::make_move_order(
         &Position {
@@ -549,6 +449,7 @@ fn goto_find_accessible_and_ask_obstacle_survive_order_intent() {
 
 fn goto_short_circuit_ctx(animation: crate::order::OrderType) -> AiContext {
     AiContext {
+        think_depth: 1,
         position: Position {
             x: 100.0,
             y: 200.0,
@@ -570,7 +471,6 @@ fn goto_already_on_point_uses_original_animation_gate() {
     ] {
         let ctx = goto_short_circuit_ctx(animation);
         let mut ai = AiController::new(1);
-        ai.think_recursion_depth = 1;
 
         ai.go_to(ctx.position, GotoFlags::empty(), &ctx);
 
@@ -579,14 +479,15 @@ fn goto_already_on_point_uses_original_animation_gate() {
         assert!(ai.take_pending_orders().is_empty());
 
         let mut speed_ai = AiController::new(1);
-        speed_ai.think_recursion_depth = 1;
+
         speed_ai.go_to_speed(ctx.position, GotoFlags::empty(), 1.5, &ctx);
         assert!(speed_ai.already_on_point);
         assert!(speed_ai.outbox.reentrant.self_stimuli.is_empty());
         assert!(speed_ai.take_pending_orders().is_empty());
     }
 
-    let outside_ctx = goto_short_circuit_ctx(crate::order::OrderType::WaitingUpright);
+    let mut outside_ctx = goto_short_circuit_ctx(crate::order::OrderType::WaitingUpright);
+    outside_ctx.think_depth = 0;
     let mut outside_ai = AiController::new(1);
     outside_ai.go_to(outside_ctx.position, GotoFlags::empty(), &outside_ctx);
     assert!(!outside_ai.already_on_point);
@@ -620,7 +521,7 @@ fn gonear_runs_goto_idle_shortcut_before_zero_near_tolerance() {
         level: 0,
     };
     let mut idle = AiController::new(1);
-    idle.think_recursion_depth = 1;
+
     let idle_ctx = goto_short_circuit_ctx(crate::order::OrderType::NonanimationEnd);
 
     idle.go_near(destination, 0, GotoFlags::RUN, &idle_ctx);
@@ -629,7 +530,7 @@ fn gonear_runs_goto_idle_shortcut_before_zero_near_tolerance() {
     assert!(idle.take_pending_orders().is_empty());
 
     let mut running = AiController::new(1);
-    running.think_recursion_depth = 1;
+
     let running_ctx = goto_short_circuit_ctx(crate::order::OrderType::RunningUpright);
 
     running.go_near(destination, 0, GotoFlags::RUN, &running_ctx);
@@ -641,6 +542,7 @@ fn gonear_runs_goto_idle_shortcut_before_zero_near_tolerance() {
 #[test]
 fn goto_replayed_near_flags_finish_inside_stored_tolerance() {
     let ctx = AiContext {
+        think_depth: 1,
         position: Position {
             x: 1191.0,
             y: 1807.0,
@@ -661,7 +563,7 @@ fn goto_replayed_near_flags_finish_inside_stored_tolerance() {
     };
     let flags = GotoFlags::NEAR | GotoFlags::SWORD;
     let mut ai = AiController::new(178);
-    ai.think_recursion_depth = 1;
+
     ai.stop_before_end_of_path_distance = 65;
 
     ai.go_to(destination, flags, &ctx);
@@ -696,128 +598,12 @@ fn goto_replayed_near_flags_propagate_stored_tolerance_outside_radius() {
 }
 
 #[test]
-fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
-    let mut ctx =
-        goto_short_circuit_ctx(crate::order::OrderType::TransitionWalkingUprightRunningUpright);
-    ctx.self_selected_element_is_default_wait = Some(false);
-    ctx.self_selected_element_priority = Some(Some(crate::sequence::SequencePriority::Preference));
-    let mut ai = AiController::new(1);
-    ai.think_recursion_depth = 1;
-    ai.outbox.actor.queue_halt();
-    let halted_prefix = std::mem::take(&mut ai.outbox.actor);
-    ai.outbox
-        .reentrant
-        .owner_work
-        .push(AiOwnerWork::StateChange(AiStateChangeNotification {
-            outgoing_state: AiState::Attacking,
-            outgoing_substate: Substate::AttackingReactiontimeRunning,
-            incoming_state: AiState::Seeking,
-            incoming_substate: Substate::SeekingSeekpoint,
-            source: AiStateChangeSource::SelfActor,
-            actor_effects_before_callback: Some(halted_prefix),
-        }));
-    ai.go_to(ctx.position, GotoFlags::empty(), &ctx);
-
-    assert!(ai.already_on_point);
-    assert!(ai.take_pending_orders().is_empty());
-
-    let mut running_ctx = goto_short_circuit_ctx(crate::order::OrderType::RunningUpright);
-    running_ctx.self_selected_element_is_default_wait = Some(false);
-    running_ctx.self_selected_element_priority =
-        Some(Some(crate::sequence::SequencePriority::Preference));
-    let mut speed_ai = AiController::new(1);
-    speed_ai.think_recursion_depth = 1;
-    speed_ai.outbox.actor.queue_halt();
-    speed_ai.outbox.actor.queue_halt();
-    speed_ai.go_to_speed(running_ctx.position, GotoFlags::empty(), 1.5, &running_ctx);
-
-    assert!(speed_ai.already_on_point);
-    assert!(speed_ai.take_pending_orders().is_empty());
-
-    for animation in [
-        crate::order::OrderType::WalkingUpright,
-        crate::order::OrderType::RunningUpright,
-        crate::order::OrderType::WalkingCrouched,
-        crate::order::OrderType::TransitionWalkingCrouchedWaitingCrouched,
-    ] {
-        let mut transition_ctx = goto_short_circuit_ctx(animation);
-        transition_ctx.self_selected_element_is_default_wait = Some(false);
-        transition_ctx.self_selected_element_priority =
-            Some(Some(crate::sequence::SequencePriority::Preference));
-        let mut one_halt_ai = AiController::new(1);
-        one_halt_ai.think_recursion_depth = 1;
-        one_halt_ai.outbox.actor.queue_halt();
-
-        one_halt_ai.go_to(transition_ctx.position, GotoFlags::empty(), &transition_ctx);
-
-        assert!(!one_halt_ai.already_on_point, "animation {animation:?}");
-        assert_eq!(
-            one_halt_ai.take_pending_orders().len(),
-            1,
-            "animation {animation:?}"
-        );
-    }
-
-    // Close-point handling observes the upright Wait successor of
-    // these outgoing transitions, so one synchronous halt is sufficient.
-    for animation in [
-        crate::order::OrderType::TransitionWalkingUprightWaitingUpright,
-        crate::order::OrderType::TransitionRunningUprightWaitingUpright,
-    ] {
-        let mut transition_ctx = goto_short_circuit_ctx(animation);
-        transition_ctx.self_selected_element_is_default_wait = Some(false);
-        transition_ctx.self_selected_element_priority =
-            Some(Some(crate::sequence::SequencePriority::Preference));
-        let mut one_halt_ai = AiController::new(1);
-        one_halt_ai.think_recursion_depth = 1;
-        one_halt_ai.outbox.actor.queue_halt();
-
-        one_halt_ai.go_to(transition_ctx.position, GotoFlags::empty(), &transition_ctx);
-
-        assert!(one_halt_ai.already_on_point, "animation {animation:?}");
-        assert!(
-            one_halt_ai.take_pending_orders().is_empty(),
-            "animation {animation:?}"
-        );
-    }
-
-    let mut walking_ctx = goto_short_circuit_ctx(crate::order::OrderType::WalkingUpright);
-    walking_ctx.self_selected_element_is_default_wait = Some(false);
-    walking_ctx.self_selected_element_priority =
-        Some(Some(crate::sequence::SequencePriority::Preference));
-    let mut two_halt_ai = AiController::new(1);
-    two_halt_ai.think_recursion_depth = 1;
-    two_halt_ai.outbox.actor.queue_halt();
-    two_halt_ai.outbox.actor.queue_halt();
-
-    two_halt_ai.go_to(walking_ctx.position, GotoFlags::empty(), &walking_ctx);
-
-    assert!(two_halt_ai.already_on_point);
-    assert!(two_halt_ai.take_pending_orders().is_empty());
-
-    let mut uninterruptible_ctx = ctx.clone();
-    uninterruptible_ctx.in_uninterruptible_command = true;
-    let mut uninterruptible_ai = AiController::new(1);
-    uninterruptible_ai.think_recursion_depth = 1;
-    uninterruptible_ai.outbox.actor.queue_halt();
-
-    uninterruptible_ai.go_to(
-        uninterruptible_ctx.position,
-        GotoFlags::empty(),
-        &uninterruptible_ctx,
-    );
-
-    assert!(!uninterruptible_ai.already_on_point);
-    assert_eq!(uninterruptible_ai.take_pending_orders().len(), 1);
-}
-
-#[test]
 fn goto_pending_halt_does_not_clear_selected_default_wait_animation() {
     let mut ctx = goto_short_circuit_ctx(crate::order::OrderType::AimingWithBow);
     ctx.self_selected_element_is_default_wait = Some(true);
     ctx.self_selected_element_priority = Some(Some(crate::sequence::SequencePriority::Wait));
     let mut ai = AiController::new(91);
-    ai.think_recursion_depth = 1;
+
     ai.stop_all();
 
     ai.go_to(ctx.position, GotoFlags::RUN, &ctx);
@@ -844,7 +630,7 @@ fn goto_pending_halt_respects_selected_injury_priority_near_route_point() {
         ..injury_ctx.position
     };
     let mut injury_ai = AiController::new(29);
-    injury_ai.think_recursion_depth = 1;
+
     injury_ai.stop_all();
 
     injury_ai.go_to(route_point, GotoFlags::RUN, &injury_ctx);
@@ -853,135 +639,37 @@ fn goto_pending_halt_respects_selected_injury_priority_near_route_point() {
     assert!(injury_ai.outbox.reentrant.self_stimuli.is_empty());
     assert_eq!(injury_ai.take_pending_orders().len(), 1);
 
-    // Stop(PREFERENCE) can stop an equal-priority selected element, so the
-    // same deferred Halt does expose an idle animation and takes Original's
-    // under-five-pixel route shortcut.
+    // An unexecuted halt does not change the installed animation.
     let mut preference_ctx = injury_ctx;
     preference_ctx.self_selected_element_priority =
         Some(Some(crate::sequence::SequencePriority::Preference));
     let mut preference_ai = AiController::new(29);
-    preference_ai.think_recursion_depth = 1;
+
     preference_ai.stop_all();
 
     preference_ai.go_to(route_point, GotoFlags::RUN, &preference_ctx);
 
-    assert!(preference_ai.already_on_point);
-    assert!(preference_ai.take_pending_orders().is_empty());
+    assert!(!preference_ai.already_on_point);
+    assert_eq!(preference_ai.take_pending_orders().len(), 1);
 }
 
 #[test]
-fn goto_already_on_point_projects_move_to_wait_transition_only_at_exact_destination() {
-    // The original actor update exposes the idle successor before the later
-    // timer-driven battle-planning call. The Rust phase split can still expose
-    // the authored transition to AiContext, including the Save049 trace where
-    // the proposed archer step-back goal is the actor's exact position.
-    let mut ctx =
-        goto_short_circuit_ctx(crate::order::OrderType::TransitionRunningUprightWaitingUpright);
-    ctx.self_action_state = crate::element::ActionState::MovingFast;
-    ctx.self_animation_reached_action_done = true;
-    let mut ai = AiController::new(93);
-    ai.think_recursion_depth = 1;
-
-    ai.go_to(ctx.position, GotoFlags::RUN, &ctx);
-
-    assert!(ai.already_on_point);
-    assert!(ai.take_pending_orders().is_empty());
-
-    ctx.self_animation_reached_action_done = false;
-    let mut unfinished_ai = AiController::new(93);
-    unfinished_ai.think_recursion_depth = 1;
-    unfinished_ai.go_to(ctx.position, GotoFlags::RUN, &ctx);
-    assert!(unfinished_ai.already_on_point);
-    assert!(unfinished_ai.take_pending_orders().is_empty());
-
-    // This projection is exact-position only. A nearby nonzero destination
-    // still sees the unfinished transition and must launch a real movement.
-    let nearby = Position {
-        x: ctx.position.x + 1.0,
-        ..ctx.position
-    };
-    let mut nearby_ai = AiController::new(93);
-    nearby_ai.think_recursion_depth = 1;
-    nearby_ai.go_to(nearby, GotoFlags::RUN, &ctx);
-    assert!(!nearby_ai.already_on_point);
-    assert_eq!(nearby_ai.take_pending_orders().len(), 1);
-
-    // A transition on its first live motion frame is not a stale outgoing
-    // transition. The original game still exposes that transition to movement.
-    let mut starting_ctx =
-        goto_short_circuit_ctx(crate::order::OrderType::TransitionWalkingUprightWaitingUpright);
-    starting_ctx.self_animation_motion_state = crate::sprite::MotionState::Start;
-    let mut starting_ai = AiController::new(93);
-    starting_ai.think_recursion_depth = 1;
-    starting_ai.go_to(starting_ctx.position, GotoFlags::RUN, &starting_ctx);
-    assert!(!starting_ai.already_on_point);
-    assert_eq!(starting_ai.take_pending_orders().len(), 1);
-
-    // Once the transition has executed its Waiting state change it is a live
-    // transition in the original game too. A timer-driven return to duty at the exact
-    // post must therefore launch the Move and remain in GOTOPOST until that
-    // movement reports EVENT_REACHPOINT (Save018/replay-006, frame 8809).
-    let mut waiting_ctx =
-        goto_short_circuit_ctx(crate::order::OrderType::TransitionRunningUprightWaitingUpright);
-    waiting_ctx.self_action_state = crate::element::ActionState::Waiting;
-    waiting_ctx.self_animation_motion_state = crate::sprite::MotionState::InProgress;
-    let mut waiting_ai = AiController::new(93);
-    waiting_ai.think_recursion_depth = 1;
-    waiting_ai.go_to(waiting_ctx.position, GotoFlags::empty(), &waiting_ctx);
-    assert!(!waiting_ai.already_on_point);
-    assert_eq!(waiting_ai.take_pending_orders().len(), 1);
-
-    // A live transition owned by the actor's default Wait is not a stale
-    // movement projection. Original-game animation selection reads that transition,
-    // so exact-position movement registers a real Move and reaches the point
-    // later through the sequence-manager tick (Save071/replay-021).
-    let mut default_wait_ctx = ctx.clone();
-    default_wait_ctx.self_animation_reached_action_done = false;
-    default_wait_ctx.self_selected_element_is_default_wait = Some(true);
-    let mut default_wait_ai = AiController::new(93);
-    default_wait_ai.think_recursion_depth = 1;
-    default_wait_ai.go_to(default_wait_ctx.position, GotoFlags::RUN, &default_wait_ctx);
-    assert!(!default_wait_ai.already_on_point);
-    assert_eq!(default_wait_ai.take_pending_orders().len(), 1);
-
-    let mut speed_ai = AiController::new(93);
-    speed_ai.think_recursion_depth = 1;
-    speed_ai.go_to_speed(ctx.position, GotoFlags::RUN, 1.5, &ctx);
-    assert!(speed_ai.already_on_point);
-    assert!(speed_ai.take_pending_orders().is_empty());
-
-    // Close-point animation handling does not accept
-    // WaitingCrouched, so its outgoing transition must remain real movement.
-    let crouched_ctx =
-        goto_short_circuit_ctx(crate::order::OrderType::TransitionWalkingCrouchedWaitingCrouched);
-    let mut crouched_ai = AiController::new(93);
-    crouched_ai.think_recursion_depth = 1;
-    crouched_ai.go_to(crouched_ctx.position, GotoFlags::RUN, &crouched_ctx);
-    assert!(!crouched_ai.already_on_point);
-    assert_eq!(crouched_ai.take_pending_orders().len(), 1);
-}
-
-#[test]
-fn goto_with_live_animation_does_not_project_transition_to_idle() {
+fn goto_transition_never_counts_as_idle() {
     let mut ctx =
         goto_short_circuit_ctx(crate::order::OrderType::TransitionRunningUprightWaitingUpright);
     ctx.self_animation_reached_action_done = false;
     let mut ai = AiController::new(39);
 
-    ai.go_to_with_live_animation(ctx.position, GotoFlags::RUN, &ctx);
+    ai.go_to(ctx.position, GotoFlags::RUN, &ctx);
 
     assert!(!ai.already_on_point);
     assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     assert_eq!(ai.take_pending_orders().len(), 1);
 
-    // `go_to_with_live_animation` is used by the nested panic seek-point
-    // fallback after reconstructing Original's live sequence order. Even at
-    // the action-done point, a transition is not one of the original game's
-    // literal idle animations and must launch the coincident Move instead of
-    // recursively delivering EVENT_REACHPOINT.
+    // The action-done marker does not change the installed order's animation.
     ctx.self_animation_reached_action_done = true;
     let mut action_done_ai = AiController::new(39);
-    action_done_ai.go_to_with_live_animation(ctx.position, GotoFlags::RUN, &ctx);
+    action_done_ai.go_to(ctx.position, GotoFlags::RUN, &ctx);
     assert!(!action_done_ai.already_on_point);
     assert!(action_done_ai.outbox.reentrant.self_stimuli.is_empty());
     assert_eq!(action_done_ai.take_pending_orders().len(), 1);
@@ -1498,64 +1186,6 @@ fn goto_route_turn_lookup_preserves_original_endpoint_direction_flip() {
 }
 
 #[test]
-fn one_point_path_post_preserves_store_initial_direction_round_trip() {
-    use crate::ai::macro_patrol::{PathId, PatrolPath};
-    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
-
-    let paths = vec![RawHikingPath {
-        waypoints: vec![RawWaypoint {
-            x: 699,
-            y: 1464,
-            sector: 50,
-            level: 1,
-            command: WaypointCommand::None,
-        }],
-    }];
-    let mut ai = AiController::new(142);
-    ai.current_state = AiState::Default;
-    ai.current_substate = Substate::DefaultGotoRouteTurn;
-    ai.has_patrol_path = true;
-    ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &paths);
-    ai.think_recursion_depth = 1;
-    let ctx = AiContext {
-        position: Position {
-            x: 698.99304,
-            y: 1464.0072,
-            sector: SectorHandle::new(50),
-            level: 1,
-        },
-        direction: 3,
-        posture: crate::element::Posture::Upright,
-        self_action_state: crate::element::ActionState::Waiting,
-        self_animation: crate::order::OrderType::NonanimationEnd,
-        hiking_paths: std::sync::Arc::new(paths),
-        ..AiContext::test_fixture()
-    };
-    let sim = crate::sim_rng::test_context();
-
-    ai.think_expected_event_common_stuff(&sim, &Stimulus::new(StimulusType::EventDone), &ctx);
-
-    assert!(!ai.has_patrol_path);
-    assert_eq!(ai.initial_position, ctx.position);
-    assert_eq!(
-        ai.initial_view_direction, 2,
-        "initial-position setup stores sector 3 as a unit vector, whose later facing aspect conversion selects sector 2"
-    );
-    assert_eq!(ai.current_substate, Substate::DefaultGotoPost);
-    assert!(ai.already_on_point);
-
-    ai.already_on_point = false;
-    ai.think_expected_event_common_stuff(&sim, &Stimulus::new(StimulusType::EventReachPoint), &ctx);
-
-    assert_eq!(ai.current_substate, Substate::DefaultGotoPostTurn);
-    assert!(!ai.already_turned);
-    let orders = ai.take_pending_orders();
-    assert_eq!(orders.len(), 1);
-    assert_eq!(orders[0].order_type, crate::order::OrderType::Turning);
-    assert_eq!(orders[0].explicit_direction, Some(2));
-}
-
-#[test]
 fn entering_fleeing_hiding_blinks_visible_enemies_for_redetection() {
     for substate in [
         Substate::FleeingRunToHide,
@@ -1588,180 +1218,6 @@ fn entering_fleeing_hiding_blinks_visible_enemies_for_redetection() {
             "The original game's enemy-blink notification is unconditional when {substate:?} enters hiding"
         );
     }
-}
-
-// ──────────────────────────────────────────────────────────
-// init_state — initial-action gate
-// ──────────────────────────────────────────────────────────
-
-#[test]
-fn init_state_waiting_upright_returns_go_to_duty() {
-    // `WaitingUpright` → OnPost + bored timer + `go_to_duty = true`.
-    // This is the hot path — the vast majority of NPCs are
-    // authored with this action.
-    crate::sim_rng::with_seed(1, |sim| {
-        let mut ai = AiController::new(1);
-        ai.initial_action = crate::order::OrderType::WaitingUpright as u32;
-        let fx = ai.init_state(sim, &AiContext::test_fixture());
-
-        assert!(fx.go_to_duty);
-        assert!(!fx.launch_wait);
-        assert_eq!(ai.current_state, AiState::Default);
-        assert_eq!(ai.current_substate, Substate::DefaultOnPost);
-        assert!(fx.set_posture.is_none());
-        assert!(!ai.likes_to_sit_around);
-        assert!(!ai.special_action);
-        assert!(!ai.is_stay_at_home);
-    });
-}
-
-#[test]
-fn init_state_sleeping_upright_closes_eyes_and_emoticon() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    // `SleepingUpright` → SleepingNapping, eyes closed, Zzz
-    // emoticon, upright posture + Sleeping action state.
-    // `go_to_duty = false` — the NPC stays asleep until something
-    // wakes them.
-    use crate::element::{ActionState, EyeStatus, Posture};
-    let mut ai = AiController::new(1);
-    ai.initial_action = crate::order::OrderType::SleepingUpright as u32;
-    let fx = ai.init_state(sim, &AiContext::test_fixture());
-
-    assert!(!fx.go_to_duty);
-    assert_eq!(ai.current_state, AiState::Sleeping);
-    assert_eq!(ai.current_substate, Substate::SleepingNapping);
-    assert_eq!(ai.current_emoticon_type, EmoticonType::Zzz);
-    assert_eq!(fx.set_eye_status, Some(EyeStatus::Closed));
-    assert_eq!(fx.set_posture, Some(Posture::Upright));
-    assert_eq!(fx.set_action_state, Some(ActionState::Sleeping));
-    assert!(fx.launch_wait);
-}
-
-#[test]
-fn init_state_sitting_flags_likes_to_sit_around() {
-    // `Sitting` → OnPost + Sitting posture, and crucially sets
-    // `likes_to_sit_around = true` so `return_to_duty_common_stuff`
-    // routes back to this place with the sitting-specific posture
-    // gate.
-    crate::sim_rng::with_seed(1, |sim| {
-        let mut ai = AiController::new(1);
-        ai.initial_action = crate::order::OrderType::Sitting as u32;
-        let fx = ai.init_state(sim, &AiContext::test_fixture());
-
-        assert!(!fx.go_to_duty);
-        assert_eq!(ai.current_state, AiState::Default);
-        assert_eq!(ai.current_substate, Substate::DefaultOnPost);
-        assert!(ai.likes_to_sit_around);
-        assert_eq!(fx.set_posture, Some(crate::element::Posture::Sitting));
-        assert!(fx.launch_wait);
-    });
-}
-
-#[test]
-fn init_state_special_flags_special_action() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    // `Special` → Leisure posture, flips `special_action = true`.
-    // Pairs with the corresponding branch in
-    // `return_to_duty_common_stuff`.
-    let mut ai = AiController::new(1);
-    ai.initial_action = crate::order::OrderType::Special as u32;
-    let fx = ai.init_state(sim, &AiContext::test_fixture());
-
-    assert!(!fx.go_to_duty);
-    assert!(ai.special_action);
-    assert_eq!(fx.set_posture, Some(crate::element::Posture::Leisure));
-    assert!(fx.launch_wait);
-}
-
-#[test]
-fn init_state_being_unconscious_queues_max_concussion() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    // `BeingUnconscious` → SleepingUnconscious, Lying posture,
-    // concussion/unconscious side effect.
-    let mut ai = AiController::new(1);
-    ai.initial_action = crate::order::OrderType::BeingUnconscious as u32;
-    let fx = ai.init_state(sim, &AiContext::test_fixture());
-
-    assert!(!fx.go_to_duty);
-    assert_eq!(ai.current_state, AiState::Sleeping);
-    assert_eq!(ai.current_substate, Substate::SleepingUnconscious);
-    assert!(fx.concussion_max_and_unconscious);
-    assert_eq!(fx.set_posture, Some(crate::element::Posture::Lying));
-}
-
-#[test]
-fn init_state_being_dead_zeroes_life_points() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    // `BeingDead{FallenBack}` → SleepingForever,
-    // `zero_life_points` side effect. Two variants differ only in
-    // posture.
-    for (raw, expected_posture) in [
-        (
-            crate::order::OrderType::BeingDead as u32,
-            crate::element::Posture::Dead,
-        ),
-        (
-            crate::order::OrderType::BeingDeadFallenBack as u32,
-            crate::element::Posture::DeadBack,
-        ),
-    ] {
-        let mut ai = AiController::new(1);
-        ai.initial_action = raw;
-        let fx = ai.init_state(sim, &AiContext::test_fixture());
-
-        assert!(!fx.go_to_duty);
-        assert_eq!(ai.current_substate, Substate::SleepingForever);
-        assert!(fx.zero_life_points);
-        assert_eq!(fx.set_posture, Some(expected_posture));
-    }
-}
-
-#[test]
-fn init_state_in_building_stays_at_home() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    // Indoor NPCs short-circuit to `is_stay_at_home=true` +
-    // DefaultHomeSweetHome, regardless of `initial_action`.
-    // `go_to_duty = false`.
-    let mut ai = AiController::new(1);
-    ai.initial_action = crate::order::OrderType::WaitingUpright as u32;
-    let ctx = AiContext {
-        in_building: true,
-        building_sector: SectorHandle::new(7),
-        ..AiContext::test_fixture()
-    };
-    let fx = ai.init_state(sim, &ctx);
-
-    assert!(!fx.go_to_duty);
-    assert!(ai.is_stay_at_home);
-    assert_eq!(ai.current_substate, Substate::DefaultHomeSweetHome);
-}
-
-#[test]
-fn init_state_resets_flags_before_branching() {
-    // Calling `init_state` repeatedly should clear stale
-    // `likes_to_sit_around` / `special_action` / `is_stay_at_home`
-    // flags from a prior call.  Guards against level-editor
-    // authored sequences that change `initial_action` between
-    // init passes (e.g. respawn via script).
-    crate::sim_rng::with_seed(1, |sim| {
-        let mut ai = AiController::new(1);
-        ai.likes_to_sit_around = true;
-        ai.special_action = true;
-        ai.is_stay_at_home = true;
-        ai.initial_action = crate::order::OrderType::WaitingUpright as u32;
-
-        let fx = ai.init_state(sim, &AiContext::test_fixture());
-
-        assert!(fx.go_to_duty);
-        assert!(!ai.likes_to_sit_around);
-        assert!(!ai.special_action);
-        assert!(!ai.is_stay_at_home);
-    });
 }
 
 #[test]
@@ -2054,31 +1510,6 @@ fn position_to_point_3d_uses_building_door_outside_projection() {
     assert_eq!(point.z, 20.0);
 }
 
-#[test]
-fn is_detecting_point_360_uses_current_eye_point() {
-    let ctx = AiContext {
-        position: Position {
-            x: 0.0,
-            y: 0.0,
-            sector: None,
-            level: 0,
-        },
-        direction: 4,
-        posture: crate::element::Posture::LeaningOut,
-        sq_standard_view_radius: 11.0 * 11.0,
-        sq_self_view_radius: 11.0 * 11.0,
-        ..AiContext::test_fixture()
-    };
-
-    assert!(
-        ctx.is_detecting_point_360(crate::coordinates::WorldPoint3D {
-            x: 50.0,
-            y: 0.0,
-            z: 45.0,
-        })
-    );
-}
-
 // ── House / building-AI tests ─────────────────────────────────
 
 #[test]
@@ -2176,9 +1607,7 @@ fn ai_outbox_drain_barriers_are_independent_and_serializable() {
     outbox
         .reentrant
         .owner_work
-        .push(AiOwnerWork::VirtualReturnToDuty {
-            flags: DutyFlags::empty(),
-        });
+        .push(AiOwnerWork::NearbyCiviliansPanic);
     outbox.music.instant_change = true;
     outbox.actor.archery_reservation_release = ArcheryReservationRelease {
         shooting_point: Some(ReservedShootingPoint {
@@ -2204,7 +1633,7 @@ fn ai_outbox_drain_barriers_are_independent_and_serializable() {
     );
     assert!(matches!(
         decoded.reentrant.owner_work.as_slice(),
-        [AiOwnerWork::VirtualReturnToDuty { flags }] if flags.is_empty()
+        [AiOwnerWork::NearbyCiviliansPanic]
     ));
     assert!(decoded.music.instant_change);
 

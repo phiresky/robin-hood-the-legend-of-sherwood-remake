@@ -1892,10 +1892,11 @@ impl EnemyAi {
         &mut self,
         env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
-    ) {
+    ) -> crate::ai::AiFlow<()> {
         self.clear_combat_neighbours();
         self.phalanx_aborted = true;
-        self.battle_decisions(env, global);
+        self.battle_decisions(env, global)?;
+        Ok(())
     }
 
     /// Rebuild the shared enemy list for
@@ -2925,7 +2926,7 @@ impl EnemyAi {
         env: ThinkEnv<'_>,
         enemy_weak: bool,
         global: &mut AiGlobalState,
-    ) {
+    ) -> crate::ai::AiFlow<()> {
         let ctx = env.ctx;
         let reconsider_debug = reconsider_position_debug_matches(
             || ctx.frame,
@@ -2933,21 +2934,21 @@ impl EnemyAi {
             || self.base.me,
         );
         let std::ops::ControlFlow::Continue(primary) =
-            self.reconsider_swordfight_entry_gates(env, global, reconsider_debug)
+            self.reconsider_swordfight_entry_gates(env, global, reconsider_debug)?
         else {
-            return;
+            return Ok(());
         };
         let lists = self.reconsider_swordfight_build_lists(env, reconsider_debug);
         if self
             .reconsider_swordfight_rebalance_gates(env, global, reconsider_debug, &primary, lists)
             .is_break()
         {
-            return;
+            return Ok(());
         }
         let std::ops::ControlFlow::Continue(range) =
             self.reconsider_swordfight_weak_charge(env, enemy_weak, reconsider_debug)
         else {
-            return;
+            return Ok(());
         };
         self.reconsider_swordfight_reposition_and_strike(
             env,
@@ -2956,6 +2957,7 @@ impl EnemyAi {
             lists,
             range,
         );
+        Ok(())
     }
 
     /// Swordfight reconsideration entry gates: heartbeat, pending
@@ -2966,7 +2968,7 @@ impl EnemyAi {
         env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
         reconsider_debug: bool,
-    ) -> std::ops::ControlFlow<(), FighterSnapshot> {
+    ) -> crate::ai::AiFlow<std::ops::ControlFlow<(), FighterSnapshot>> {
         let ThinkEnv { sim, ctx, tick, .. } = env;
         if reconsider_debug {
             let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
@@ -3008,13 +3010,10 @@ impl EnemyAi {
                 }
                 .emit();
             }
-            return std::ops::ControlFlow::Break(());
+            return Ok(std::ops::ControlFlow::Break(()));
         }
 
-        // Are we still swordfighting at all? Route through
-        // Think(EVENT_QUIT_SWORDFIGHT) so the unexpected-event handler
-        // fires. Cascade caveat: skips engine FilterAIEvent gate — see
-        // end_think comment.
+        // Release the borrowed handler before the recursive quit decision.
         if !ctx.is_swordfighting {
             if reconsider_debug {
                 let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
@@ -3025,19 +3024,14 @@ impl EnemyAi {
                 }
                 .emit();
             }
-            let quit_stimulus = Stimulus::new(StimulusType::EventQuitSwordfight);
-            if self.base.has_script_filter_override {
-                tracing::warn!(
-                    target: "filter_ai_event_divergence",
-                    handle = self.base.me as i32,
-                    stimulus_type = ?quit_stimulus.stimulus_type,
-                    "cascade think() skipped FilterAIEvent gate (reconsider_swordfight \
-                     quit) — would re-filter; scripted actor may see divergent \
-                     behavior"
-                );
-            }
-            self.think(env, &quit_stimulus, global);
-            return std::ops::ControlFlow::Break(());
+            return Err(crate::ai::DutyCall {
+                flags: DutyFlags::empty(),
+                think_result: false,
+                tail: crate::ai::DutyTail::Think {
+                    stimulus: Stimulus::new(StimulusType::EventQuitSwordfight),
+                },
+                after: Vec::new(),
+            });
         }
 
         // Refresh principal opponent from the snapshot.
@@ -3092,7 +3086,7 @@ impl EnemyAi {
                 3,
                 ctx,
             );
-            return std::ops::ControlFlow::Break(());
+            return Ok(std::ops::ControlFlow::Break(()));
         }
 
         // Sight check. This must call the real 360° detection
@@ -3120,8 +3114,8 @@ impl EnemyAi {
             .emit();
         }
         if !detects_primary {
-            self.finish_swordfight_after_target_loss(env, global);
-            return std::ops::ControlFlow::Break(());
+            self.finish_swordfight_after_target_loss(env, global)?;
+            return Ok(std::ops::ControlFlow::Break(()));
         }
 
         let primary_snapshot = self.find_fighter(self.base.primary_target, tick).cloned();
@@ -3144,7 +3138,7 @@ impl EnemyAi {
                 }
                 .emit();
             }
-            return std::ops::ControlFlow::Break(());
+            return Ok(std::ops::ControlFlow::Break(()));
         };
 
         // Are we facing the primary opponent?
@@ -3181,9 +3175,9 @@ impl EnemyAi {
         }
         if !facing_primary {
             // Need to turn first; the engine will rotate us, then call back.
-            return std::ops::ControlFlow::Break(());
+            return Ok(std::ops::ControlFlow::Break(()));
         }
-        std::ops::ControlFlow::Continue(primary)
+        Ok(std::ops::ControlFlow::Continue(primary))
     }
 
     /// Build the swordfight us / them lists and their aggregates.
@@ -4599,7 +4593,7 @@ impl EnemyAi {
         &mut self,
         env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
-    ) {
+    ) -> crate::ai::AiFlow<()> {
         let ThinkEnv { sim, ctx, tick, .. } = env;
         // Lost sight: forecast their direction and abandon the fight.
         // `primary_target` may just have changed to the actor's principal
@@ -4654,7 +4648,7 @@ impl EnemyAi {
                 SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
                 self.pc_gone_away_in_this_direction,
                 global,
-            );
+            )?;
         } else {
             // AI destination forecasting above only populates the retained
             // seek center. Original aims this immediate snap at the
@@ -4674,6 +4668,6 @@ impl EnemyAi {
             self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
             self.get_battle_overview(0, ThinkEnv { grid: None, ..env });
         }
-        return;
+        Ok(())
     }
 }

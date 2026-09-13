@@ -12,6 +12,11 @@ use crate::ai::AiGlobalState;
     bitcode::Decode,
 )]
 pub(crate) struct AiRuntime {
+    /// Active synchronous decision frames, shared by all actors.
+    #[serde(skip)]
+    #[state_hash(skip)]
+    #[bitcode(skip)]
+    pub(crate) think_call_stack: Vec<crate::element::EntityId>,
     pub(crate) global: AiGlobalState,
     pub(crate) standard_view_polygon_radius: u16,
     /// Authoritative within-frame memo state stored on the ground singleton
@@ -34,6 +39,7 @@ impl PersistedAiRuntime {
     pub(crate) fn capture(value: &AiRuntime) -> Self {
         use crate::ai::persisted::PersistedProjection;
         let AiRuntime {
+            think_call_stack: _,
             global: _,
             standard_view_polygon_radius: _,
             view_radius_cache: _,
@@ -47,6 +53,7 @@ impl PersistedAiRuntime {
 
     pub(crate) fn into_runtime(self) -> AiRuntime {
         AiRuntime {
+            think_call_stack: Vec::new(),
             global: self.global,
             standard_view_polygon_radius: self.standard_view_polygon_radius,
             view_radius_cache: self.view_radius_cache,
@@ -57,6 +64,7 @@ impl PersistedAiRuntime {
 impl AiRuntime {
     pub(crate) fn new() -> Self {
         Self {
+            think_call_stack: Vec::new(),
             global: AiGlobalState::default(),
             standard_view_polygon_radius: 0,
             view_radius_cache: crate::ai_vision::ViewRadiusCache::default(),

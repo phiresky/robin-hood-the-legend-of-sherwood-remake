@@ -823,6 +823,7 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
+        engine.ai_think_depth(),
     );
     let tick = engine.build_npc_tick_data(&sim, officer_id, &assets);
     assert_eq!(tick.camp_soldiers.len(), candidates.len());
@@ -5839,7 +5840,7 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
         .ai_controller()
         .unwrap();
     assert!(!at_point_ai.already_on_point);
-    assert_eq!(at_point_ai.think_recursion_depth, 0);
+    assert_eq!(engine.ai_think_depth(), 0);
 
     run_ai_state_native_probe(&mut engine, &assets, default);
     // The orderless actor reports the no-animation sentinel, so return-to-duty
@@ -6012,7 +6013,7 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
         .ai_controller()
         .unwrap();
     assert!(!seeking_ai.already_on_point);
-    assert_eq!(seeking_ai.think_recursion_depth, 0);
+    assert_eq!(engine.ai_think_depth(), 0);
 
     let (mut fleeing_engine, fleeing_assets, fleeing) =
         setup_ai_state_native_probe("FleeingRngProbe", 5);
@@ -6227,7 +6228,7 @@ fn fleeing_panic_classification_occurs_after_no_event_callback_mutation() {
         crate::ai::Remark::Panic,
         "post-callback ScriptDriven state makes this a new panic with synchronous speech"
     );
-    assert_eq!(ai.base.think_recursion_depth, 0);
+    assert_eq!(engine.ai_think_depth(), 0);
 }
 
 #[test]
@@ -6279,7 +6280,7 @@ fn set_ai_state_ignores_start_think_freeze_script_lock_and_ai_lock_results() {
             .ai_controller()
             .unwrap();
         assert_eq!(ai.current_state, crate::ai::AiState::Seeking);
-        assert_eq!(ai.think_recursion_depth, 0);
+        assert_eq!(engine.ai_think_depth(), 0);
         assert!(ai.ai_log.iter().any(|line| {
             line.line_type == crate::ai::LogLineType::EventRefused && line.info == refusal
         }));
@@ -6357,7 +6358,8 @@ fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero
     );
     assert_eq!(ai.base.current_remark, crate::ai::Remark::Panic);
     assert_eq!(
-        ai.base.think_recursion_depth, 0,
+        engine.ai_think_depth(),
+        0,
         "nested decision-entry/completion brackets balance before the outer callback resumes"
     );
     assert!(ai.base.outbox.actor.begin_panic.is_none());
@@ -7174,7 +7176,7 @@ fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move(
         .entities
         .expect_ai_controller(owner, format_args!("arrived owner"));
     assert_eq!(ai.current_substate, Substate::DefaultGotoRouteTurn);
-    assert_eq!(ai.think_recursion_depth, 0);
+    assert_eq!(engine.ai_think_depth(), 0);
     assert!(
         ai.outbox.actor.orders.is_empty(),
         "Turn is registered at its call site"
@@ -7304,8 +7306,6 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
     ai.current_substate = Substate::DefaultGotoRoute;
     ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &assets.navigation.hiking_paths);
     // This sibling belongs to an enclosing queued completion, after arrival.
-    ai.think_recursion_depth = 3;
-    ai.open_end_think_frames = 3;
     ai.outbox
         .reentrant
         .self_stimuli
@@ -7328,8 +7328,7 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
         .expect_ai_controller(owner, format_args!("arrival result"));
     assert!(ai.script_locked);
     assert_eq!(ai.current_substate, Substate::DefaultGotoRouteTurn);
-    assert_eq!(ai.think_recursion_depth, 0);
-    assert_eq!(ai.open_end_think_frames, 0);
+    assert_eq!(engine.ai_think_depth(), 0);
     assert_eq!(
         ai.outbox.reentrant.self_stimuli.len(),
         1,

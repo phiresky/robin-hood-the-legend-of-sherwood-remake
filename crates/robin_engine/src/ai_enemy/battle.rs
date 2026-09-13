@@ -230,28 +230,6 @@ fn battle_friend_detected_360(
     detected
 }
 
-#[track_caller]
-fn sleeping_enemy_detected_360(
-    ctx: &AiContext,
-    enemy: &SleepingEnemyInfo,
-    target: &crate::ai_entity_view::AiEntityView,
-) -> bool {
-    super::soldier_detects_target_360(
-        ctx.position,
-        ctx.elevation,
-        ctx.self_is_rider,
-        ctx.self_view_radius,
-        ctx.in_building,
-        enemy.position,
-        target.elevation,
-        target.posture,
-        target.is_rider,
-        target.direction as i16,
-        target.in_building,
-        ctx.obstacle_list(),
-    )
-}
-
 impl EnemyAi {
     pub(super) fn enter_battle_reserve(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
         self.enter_battle_reserve_with_multiplicity(ctx, tick, None);
@@ -275,123 +253,19 @@ impl EnemyAi {
     }
 
     // -----------------------------------------------------------------------
-    // approach_sleeping_enemies
-    // -----------------------------------------------------------------------
-
-    /// Move the supplied unconscious enemies into `list_them`, pick
-    /// the nearest one as primary target, and walk up to finish them
-    /// off. If no allowed target is found, return to duty.
-    ///
-    /// `targets` is typically `tick.unconscious_enemies` (the
-    /// "already-seen-then-knocked-out" path from battle planning)
-    /// or `tick.nearby_sleeping_enemies` (the
-    /// nearby sleeping-enemy fallback). The two paths share the
-    /// exact same tail end — only the source of the list differs.
-    fn approach_sleeping_enemies(
-        &mut self,
-        env: ThinkEnv<'_>,
-        targets: &[crate::ai::SleepingEnemyInfo],
-    ) {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Fold the sleeping-enemy list into list_them so the later
-        // combat selection code sees them.
-        for se in targets {
-            if !self.list_them.contains(&se.handle) {
-                self.list_them.push(se.handle);
-            }
-        }
-
-        // The original game performs ordinary primary-target selection here after
-        // inserting the sleeping enemies. Reuse that path so target ranking
-        // keeps its live world-position geometry, isometric Y stretch, Z
-        // component, 16-bit truncation, and attack-authorization gate.
-        let target_handle = self.get_new_primary_target(PrimaryTargetFlags::empty(), ctx, tick);
-        if let Some(target_handle) = target_handle {
-            let target_pos = ctx
-                .entity_view(target_handle)
-                .unwrap_or_else(|| {
-                    panic!("sleeping primary target {target_handle} disappeared after selection")
-                })
-                .position;
-            // State change to attacking / approaching a sleeping enemy +
-            // run to within 20 units of target_pos.
-            self.base.primary_target = Some(target_handle);
-            self.go_near(
-                AiState::Attacking,
-                Substate::AttackingApproachingSleepingEnemy,
-                target_pos,
-                20,
-                GotoFlags::RUN,
-                ctx,
-            );
-        } else {
-            // No allowed target — stand down.
-            self.return_to_duty_default(env);
-        }
-    }
-
-    // -----------------------------------------------------------------------
     // Attack nearby sleeping enemies
     // -----------------------------------------------------------------------
 
-    /// Final fallback from battle planning when the NPC has nothing
-    /// else to do: scan the nearby area for unconscious enemies and
-    /// walk over to finish one off.
-    ///
-    /// The nearby-enemy scan is performed by the engine during
-    /// tick-data population and surfaced via
-    /// `tick.nearby_sleeping_enemies`.  This method just performs
-    /// the target selection + state transition that the reference
-    /// runs after the inline fighter-count loop.
-    fn kill_nearby_sleeping_enemies(&mut self, env: ThinkEnv<'_>) {
-        let ctx = env.ctx;
-        // Combat trainers and merry-man-forest fighters call
-        // Return to duty first — note the quirk that the function then
-        // *continues* and may still overwrite state with
-        // `SUBSTATE_ATTACKING_APPROACHING_SLEEPING_ENEMY` below. We
-        // mirror the behaviour exactly.
-        if self.combat_trainer || self.is_merry_man_forest(ctx) {
-            self.return_to_duty_default(env);
-            // Return to duty suspends around engine-owned patrol initialization in
-            // Rust. Keep the remaining statements behind that continuation,
-            // just as they are behind the complete synchronous call in the
-            // Original.
-            self.base
-                .outbox
-                .reentrant
-                .owner_work
-                .push(crate::ai::AiOwnerWork::ResumeKillNearbySleepingEnemiesAfterReturnToDuty);
-            return;
-        }
-
-        self.resume_kill_nearby_sleeping_enemies_after_return_to_duty(env);
-    }
-
-    pub(crate) fn resume_kill_nearby_sleeping_enemies_after_return_to_duty(
-        &mut self,
-        env: ThinkEnv<'_>,
-    ) {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // The original game performs all-around detection here, after the
-        // unconscious/not-carried gates and only when the final battle
-        // fallback is reached. The engine snapshot carries ordered fighter
-        // candidates but must remain observer-neutral.
-        let visible = tick
-            .nearby_sleeping_enemies
-            .iter()
-            .filter(|enemy| {
-                let target = ctx.entity_view(enemy.handle).unwrap_or_else(|| {
-                    panic!(
-                        "nearby sleeping-enemy candidate {} is absent from the AI entity view",
-                        enemy.handle
-                    )
-                });
-                sleeping_enemy_detected_360(ctx, enemy, target)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-
-        self.approach_sleeping_enemies(env, &visible);
+    /// Release the actor borrow before duty and the following live fighter scan.
+    fn kill_nearby_sleeping_enemies(&mut self, env: ThinkEnv<'_>) -> crate::ai::AiFlow<()> {
+        Err(crate::ai::DutyCall {
+            flags: DutyFlags::empty(),
+            think_result: false,
+            tail: crate::ai::DutyTail::ScanSleepingEnemies {
+                observer_camp: env.ctx.camp,
+            },
+            after: Vec::new(),
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -585,7 +459,11 @@ impl EnemyAi {
     // Battle decisions — the heart of tactical AI
     // -----------------------------------------------------------------------
 
-    pub(crate) fn battle_decisions(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
+    pub(crate) fn battle_decisions(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+    ) -> crate::ai::AiFlow<()> {
         let ThinkEnv { ctx, tick, .. } = env;
         if let Err(reason) = ctx.entity_observation(self.base.me) {
             // TODO: establish Original invalid-layer timer-tail behavior before
@@ -595,7 +473,7 @@ impl EnemyAi {
                 ?reason,
                 "battle planning skipped: owner spatial observation unavailable"
             );
-            return;
+            return Ok(());
         }
         // Battle planning does not use the shared nearby-fighter list. The original game
         // scans the complete same-camp fighter registry and gates each entry
@@ -676,8 +554,8 @@ impl EnemyAi {
             );
 
         if num_enemies_i_can_see == 0 {
-            self.battle_no_visible_enemies(env, global, &unconscious_enemies_from_them);
-            return;
+            self.battle_no_visible_enemies(env, global, unconscious_enemies_from_them)?;
+            return Ok(());
         }
 
         let (decision, cover_shield_bearer) = self.choose_battle_decision(
@@ -730,6 +608,7 @@ impl EnemyAi {
             self.base
                 .register_log_line(LogLineType::BattleDecision, decision as u16);
         }
+        Ok(())
     }
 
     /// Battle-planning local target multiplicity reset, primary-target
@@ -912,7 +791,7 @@ impl EnemyAi {
         decision_target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
         num_enemies_i_can_see: &mut usize,
         debug_them: bool,
-    ) -> (u32, Vec<crate::ai::SleepingEnemyInfo>) {
+    ) -> (u32, Vec<HumanHandle>) {
         let ctx = env.ctx;
         // Clean up the Them list. Walk each entry: if it's not
         // able-to-fight, drop it. Each removal that falls within
@@ -945,13 +824,7 @@ impl EnemyAi {
                             // can stop being detectable as soon as it falls
                             // unconscious while its authoritative Them-list
                             // entry remains until battle planning consumes it.
-                            unconscious_enemies_from_them.push(crate::ai::SleepingEnemyInfo {
-                                handle: h,
-                                position: view.position,
-                                is_pc: view.is_pc,
-                                is_robin: view.is_robin,
-                                is_vip: view.is_vip,
-                            });
+                            unconscious_enemies_from_them.push(h);
                         }
                         if !is_friend && view.is_able_to_fight {
                             // The minimum enemy distance is measured over
@@ -1017,10 +890,7 @@ impl EnemyAi {
                 me: &(self.base.me),
                 visible_count: &(*num_enemies_i_can_see),
                 list: &(self.list_them),
-                unconscious: &(unconscious_enemies_from_them
-                    .iter()
-                    .map(|enemy| enemy.handle)
-                    .collect::<Vec<_>>()),
+                unconscious: &unconscious_enemies_from_them,
             }
             .emit();
         }
@@ -1032,8 +902,8 @@ impl EnemyAi {
         &mut self,
         env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
-        unconscious_enemies_from_them: &[crate::ai::SleepingEnemyInfo],
-    ) {
+        unconscious_enemies_from_them: Vec<HumanHandle>,
+    ) -> crate::ai::AiFlow<()> {
         let ThinkEnv { sim, ctx, tick, .. } = env;
         // No visible enemies. Ordering:
         //   combat_trainer → my_shooting_point → archer-leaning-out
@@ -1043,7 +913,7 @@ impl EnemyAi {
         //   on a bend point with friend-seen enemies should hold
         //   the firing position, not run away to seek.
         if self.combat_trainer {
-            self.return_to_duty_default(env);
+            self.return_to_duty_default(env)?;
         } else if self.my_shooting_point.is_some() {
             // Archer has a shooting point — equip bow based on
             // elevation relative to last-seen enemy.
@@ -1104,7 +974,7 @@ impl EnemyAi {
                 SeekFlags::LOCATION_FIRST,
                 UNDEFINED_DIRECTION,
                 global,
-            );
+            )?;
         } else if self.pc_missed
             && self.missed_pc.is_some()
             && tick.missed_pc_is_pc
@@ -1127,19 +997,27 @@ impl EnemyAi {
                 SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
                 self.pc_gone_away_in_this_direction,
                 global,
-            );
+            )?;
         } else if !unconscious_enemies_from_them.is_empty() && !self.is_merry_man_forest(ctx) {
             // Enemies removed from the persistent Them list above are
             // unconscious and not carried — put them back, select one,
             // and walk up to finish them off.
             debug_assert!(self.list_them.is_empty());
-            self.approach_sleeping_enemies(env, unconscious_enemies_from_them);
+            return Err(crate::ai::DutyCall {
+                flags: DutyFlags::empty(),
+                think_result: false,
+                tail: crate::ai::DutyTail::ApproachSleepingEnemies {
+                    targets: unconscious_enemies_from_them,
+                },
+                after: Vec::new(),
+            });
         } else {
             // Final "there is literally nothing going on" fallback —
             // look for sleeping enemies anywhere within the 360°
             // detection radius and walk over to one.
-            self.kill_nearby_sleeping_enemies(env);
+            self.kill_nearby_sleeping_enemies(env)?;
         }
+        Ok(())
     }
 
     /// Choose the battle decision: forced-decision whitelist, then the
@@ -1378,9 +1256,7 @@ impl EnemyAi {
             // royalists fall through to Fight.
             // `num_enemies_i_can_see` is a persistent count of
             // tracked enemies, not a per-tick "detected this
-            // frame" count, since `tick.personally_visible_enemies`
-            // is only populated on the detection-commit dispatch
-            // path; otherwise EVENT_TIMER-driven calls would see
+            // frame" count; otherwise EVENT_TIMER-driven calls would see
             // `0 >= 0 + 0 = true` and wrongly observe instead of
             // charging.
             decision = Decision::Observe;
@@ -1765,7 +1641,6 @@ impl EnemyAi {
         // authoritative ownership across that call so a second route failure
         // is surfaced as a could-not-reach-point event at enclosing decision-tick completion
         // through the ordinary stop path.
-        let completion_latch_inside_think = self.base.completion_latch_inside_think;
         self.base.couldnt_reachpoint = false;
         let mut target_multiplicity = self
             .list_them
@@ -1790,9 +1665,6 @@ impl EnemyAi {
             &mut target_multiplicity,
             global,
         );
-        if self.base.outbox.reentrant.battle_observe_completion_pending {
-            self.base.completion_latch_inside_think = completion_latch_inside_think;
-        }
         if completed_inline {
             self.base
                 .register_log_line(LogLineType::BattleDecision, Decision::Observe as u16);
@@ -3143,7 +3015,11 @@ impl EnemyAi {
     }
 
     /// Handle reattack after a rider has passed through enemies and returned.
-    pub(super) fn rider_reattack(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
+    pub(super) fn rider_reattack(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+    ) -> crate::ai::AiFlow<()> {
         let ctx = env.ctx;
         self.reinitialize_them_list(ctx);
 
@@ -3157,8 +3033,9 @@ impl EnemyAi {
                 .go_to(self.base.seek_position, GotoFlags::RUN, ctx);
         } else {
             // Enemies visible — reconsider battle
-            self.battle_decisions(env, global);
+            self.battle_decisions(env, global)?;
         }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------

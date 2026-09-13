@@ -6,6 +6,170 @@
 
 use super::*;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::{AiState, EmoticonType, Substate};
+    use crate::element::{ActionState, EyeStatus, Posture};
+    use crate::order::OrderType;
+
+    fn fixture(action: OrderType, indoors: bool) -> (EngineInner, LevelAssets, EntityId) {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(128, 128);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        let mut sector = crate::engine::test_support::square_sector(
+            1,
+            0,
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(2000.0, 2000.0),
+        );
+        if indoors {
+            sector.sector_type |= crate::sector::SectorType::BUILDING;
+        }
+        let index = engine.world.fast_grid_mut().add_sector(sector, 0);
+        let sector = crate::position_interface::SectorHandle::new(1)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
+        let mut entity =
+            crate::engine::test_support::actors::make_test_ai_soldier(Camp::Lacklandists);
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(100.0, 100.0));
+        entity
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(100.0, 100.0, 0.0));
+        entity.element_data_mut().set_sector(Some(sector));
+        entity.npc_data_mut().unwrap().life_points = 100;
+        let owner = engine.add_test_entity(entity);
+        let ai = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .ai_controller_mut()
+            .unwrap();
+        ai.owner_entity_id = Some(owner);
+        ai.me = owner.index();
+        ai.initial_action = action as u32;
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        (engine, assets, owner)
+    }
+
+    #[test]
+    fn authored_waiting_enters_post_and_clears_previous_pose_preferences() {
+        for action in [
+            OrderType::WaitingUpright,
+            OrderType::WaitingUprightBored,
+            OrderType::WaitingUprightBoredRandom,
+        ] {
+            let (mut engine, assets, owner) = fixture(action, false);
+            let ai = engine
+                .world
+                .entities
+                .get_mut(owner)
+                .unwrap()
+                .ai_controller_mut()
+                .unwrap();
+            ai.likes_to_sit_around = true;
+            ai.special_action = true;
+            ai.is_stay_at_home = true;
+            assert!(engine.initialize_ai_state(&crate::sim_rng::test_context(), &assets, owner));
+            let ai = engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .ai_controller()
+                .unwrap();
+            assert_eq!(ai.current_state, AiState::Default);
+            assert_eq!(ai.current_substate, Substate::DefaultOnPost);
+            assert!(ai.timer_is_running);
+            assert!(!ai.likes_to_sit_around && !ai.special_action && !ai.is_stay_at_home);
+        }
+    }
+
+    #[test]
+    fn authored_sleep_and_leisure_apply_live_actor_pose() {
+        for (action, posture, action_state) in [
+            (
+                OrderType::SleepingUpright,
+                Posture::Upright,
+                ActionState::Sleeping,
+            ),
+            (OrderType::Sitting, Posture::Sitting, ActionState::Waiting),
+            (OrderType::Special, Posture::Leisure, ActionState::Waiting),
+        ] {
+            let (mut engine, assets, owner) = fixture(action, false);
+            assert!(!engine.initialize_ai_state(&crate::sim_rng::test_context(), &assets, owner));
+            let entity = engine.world.entities.get(owner).unwrap();
+            let ai = entity.ai_controller().unwrap();
+            assert_eq!(entity.posture(), posture);
+            assert_eq!(entity.actor_data().unwrap().action_state, action_state);
+            assert_eq!(ai.likes_to_sit_around, action == OrderType::Sitting);
+            assert_eq!(ai.special_action, action == OrderType::Special);
+            if action == OrderType::SleepingUpright {
+                assert_eq!(ai.current_substate, Substate::SleepingNapping);
+                assert_eq!(ai.current_emoticon_type, EmoticonType::Zzz);
+                assert_eq!(
+                    entity.ai_actor_data().unwrap().eye_status,
+                    EyeStatus::Closed
+                );
+            } else {
+                assert_eq!(ai.current_substate, Substate::DefaultOnPost);
+            }
+        }
+    }
+
+    #[test]
+    fn authored_dead_and_unconscious_poses_commit_human_state() {
+        for (action, posture, substate) in [
+            (
+                OrderType::BeingDead,
+                Posture::Dead,
+                Substate::SleepingForever,
+            ),
+            (
+                OrderType::BeingDeadFallenBack,
+                Posture::DeadBack,
+                Substate::SleepingForever,
+            ),
+            (
+                OrderType::BeingUnconscious,
+                Posture::Lying,
+                Substate::SleepingUnconscious,
+            ),
+        ] {
+            let (mut engine, assets, owner) = fixture(action, false);
+            assert!(!engine.initialize_ai_state(&crate::sim_rng::test_context(), &assets, owner));
+            let entity = engine.world.entities.get(owner).unwrap();
+            assert_eq!(entity.posture(), posture);
+            assert_eq!(entity.ai_controller().unwrap().current_substate, substate);
+            let human = entity.human_data().unwrap();
+            if action == OrderType::BeingUnconscious {
+                assert!(human.unconscious);
+                assert_eq!(human.concussion_of_the_brain, crate::combat::CONCUSSION_MAX);
+                assert_eq!(entity.human_life_points(), 100);
+            } else {
+                assert_eq!(entity.human_life_points(), 0);
+                assert!(human.killed_by_accident);
+            }
+        }
+    }
+
+    #[test]
+    fn building_membership_overrides_authored_initial_action() {
+        let (mut engine, assets, owner) = fixture(OrderType::BeingDead, true);
+        assert!(!engine.initialize_ai_state(&crate::sim_rng::test_context(), &assets, owner));
+        let entity = engine.world.entities.get(owner).unwrap();
+        let ai = entity.ai_controller().unwrap();
+        assert!(ai.is_stay_at_home);
+        assert_eq!(ai.current_substate, Substate::DefaultHomeSweetHome);
+        assert_eq!(entity.human_life_points(), 100);
+        assert_eq!(entity.posture(), Posture::Upright);
+    }
+}
+
 impl EngineInner {
     // ─── AI initialization ──────────────────────────────────────
 
@@ -73,10 +237,6 @@ impl EngineInner {
         // Initialize each NPC's AI.
         let npc_ids: Vec<EntityId> = self.world.entities.ai_owner_ids().collect();
         let hiking_paths = assets.navigation.hiking_paths.clone();
-        // Populate the handle → entity view map so the per-NPC
-        // init_ctx hands each AI a usable map (even though init
-        // mostly just reads self position).
-        let scratch = self.build_sim_scratch(assets);
         // For "get soldier from all by id" in the AI tick: copy the
         // level's soldier load-order array onto AiGlobalState so
         // AiContext can resolve script-baked friend IDs.
@@ -88,35 +248,17 @@ impl EngineInner {
                 .map(|eid| eid.index())
                 .collect(),
         );
-        let entity_views = scratch.ai_entity_views.clone();
-        let sight_obstacles = scratch.ai_sight_obstacles.clone();
-        let all_soldier_handles = self.ai.global.all_soldier_handles.clone();
-        let ambiance = self.world.weather.ambiance;
-
-        // Snapshot of every live human in the engine; every per-NPC
-        // init pass reuses the same list to build its detectable enemy
-        // array.  Equivalent to iterating the engine's element list
-        // inside each per-NPC init.
-        let potential_detectables = build_potential_detectables(self);
         let ambush_points_count = self.ai.global.ambush_points.len();
 
         let all_soldier_entity_ids = assets.entities.soldier_entity_ids.clone();
         let soldier_subordinate_ids = assets.entities.soldier_subordinate_ids.clone();
-        let fast_grid = self.world.fast_grid.clone();
         for &npc_id in &npc_ids {
             self.init_one_ai(
                 sim,
                 npc_id,
                 assets,
                 &hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &potential_detectables,
                 ambush_points_count,
-                &entity_views,
-                &sight_obstacles,
-                &fast_grid,
-                ambiance,
-                &all_soldier_handles,
                 &all_soldier_entity_ids,
                 &soldier_subordinate_ids,
             );
@@ -214,30 +356,20 @@ impl EngineInner {
     /// 9. Fill this enemy's `ambush_point_status` vector with
     ///    `Far` × `ambush_points_count` so ambush-point updates
     ///    has a slot per global ambush point.
-    /// 10. Dispatch to the subclass's `init_one_ai` for the
-    ///     initial-action / state-transition / return-to-duty logic.
+    /// 10. Execute authored state transitions and duty with live callbacks.
     fn init_one_ai(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
         hiking_paths: &std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
-        hiking_waypoint_sectors: &Option<
-            std::sync::Arc<Vec<Vec<crate::position_interface::SectorHandle>>>,
-        >,
-        potential_detectables: &[PotentialDetectable],
         ambush_points_count: usize,
-        entity_views: &SharedAiEntityViews,
-        sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
-        fast_grid: &std::sync::Arc<crate::fast_find_grid::FastFindGrid>,
-        ambiance: crate::engine::types::Ambiance,
-        all_soldier_handles: &std::sync::Arc<Vec<u32>>,
         all_soldier_entity_ids: &[EntityId],
         soldier_subordinate_ids: &[Vec<u16>],
     ) {
         // -- Phase 1: Peek at the entity to classify (enemy / friendly,
         //    camp) and read the fields we need for the obstacle fix. --
-        let (is_enemy, is_friendly, self_camp, pos_map, layer, move_box_opt) = {
+        let (is_enemy, is_friendly, self_camp, move_box_opt) = {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
@@ -262,18 +394,10 @@ impl EngineInner {
                 ),
                 _ => return,
             };
-            let elem = entity.element_data();
             let move_box = entity
                 .actor_data()
                 .map(|_| *entity.position_iface().get_move_box());
-            (
-                is_enemy,
-                is_friendly,
-                self_camp,
-                elem.position_map(),
-                elem.layer(),
-                move_box,
-            )
+            (is_enemy, is_friendly, self_camp, move_box)
         };
         if !(is_enemy || is_friendly) {
             return;
@@ -293,7 +417,12 @@ impl EngineInner {
                 .entities
                 .get_mut(npc_id)
                 .expect("AI initialization owner");
+            let direction = entity.element_data().direction();
+            if let Some(enemy) = entity.enemy_ai_mut() {
+                enemy.old_odds = 50;
+            }
             let npc = entity.ai_actor_data_mut().expect("AI initialization actor");
+            npc.direction_old = direction;
             npc.view_radius = standard_view_radius;
             npc.view_radius_base = standard_view_radius;
             npc.view_radius_goal = standard_view_radius;
@@ -333,10 +462,79 @@ impl EngineInner {
             self.initialize_patrol_for_npc(assets, npc_id);
         }
 
+        // -- Phase 3: Build the detectable-enemy list for this NPC. --
+        let detectables = self
+            .world
+            .entities
+            .humans()
+            .filter_map(|(id, entity)| {
+                let id: EntityId = id.into();
+                if id == npc_id {
+                    return None;
+                }
+                let (is_pc, is_soldier, camp) = match entity {
+                    Entity::Pc(pc) => (true, false, pc.pc.cached_camp),
+                    Entity::Soldier(soldier) => (false, true, soldier.soldier.cached_camp),
+                    _ => return None,
+                };
+                crate::ai_detectable_filter::should_add_enemy_detectable_with(
+                    &self.mission_domain.diplomacy,
+                    self_camp,
+                    !is_friendly,
+                    is_pc,
+                    is_soldier,
+                    camp,
+                )
+                .then_some(Detectable {
+                    element: Some(id),
+                    detectable_type: DetectableType::Enemy,
+                    seen_last_frame: false,
+                    heard_last_frame: false,
+                    seen_now: false,
+                    shadow_seen_now: false,
+                    shadow_seen_last_frame: false,
+                    last_visibility: 0.0,
+                })
+            })
+            .collect();
+
+        {
+            let entity = self
+                .world
+                .entities
+                .expect_entity_mut(npc_id, format_args!("AI initial state owner"));
+            let life = entity.human_life_points().clamp(0, 255) as u8;
+            entity
+                .ai_actor_data_mut()
+                .expect("AI initialization actor")
+                .detectable_lists[DetectableType::Enemy as usize] = detectables;
+            if let Some(enemy) = entity.enemy_ai_mut() {
+                enemy.old_life_points = life;
+                enemy.initial_life_points = life;
+            }
+        }
+        if is_enemy && self_camp != Camp::Error {
+            self.ai.global.soldier_camps.insert(self_camp);
+        }
+        let state_allows_duty = self.initialize_ai_state(sim, assets, npc_id);
+        let go_to_duty = {
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller(npc_id, format_args!("AI initialization duty gate"));
+            state_allows_duty && !ai.ai_is_script_locked() && !ai.ai_is_locked()
+        };
+
         // -- Phase 2: Stuck-in-obstacle correction (enemy only). --
         // If the NPC's move-box overlaps the playable area, attempt to
         // push it to an authorized position via `find_authorized_position`.
         if is_enemy && let Some(move_box) = move_box_opt {
+            let entity = self
+                .world
+                .entities
+                .expect_entity(npc_id, format_args!("AI bootstrap obstacle owner"));
+            let pos_map = entity.element_data().position_map();
+            let layer = entity.element_data().layer();
             let mut abs_box = move_box.translated(pos_map);
             if !self.world.fast_grid.is_position_authorized(&abs_box, layer)
                 && self
@@ -356,25 +554,9 @@ impl EngineInner {
             }
         }
 
-        // -- Phase 3: Build the detectable-enemy list for this NPC. --
-        let detectables = build_detectable_enemies_for_with(
-            &self.mission_domain.diplomacy,
-            self_camp,
-            is_friendly,
-            npc_id,
-            potential_detectables,
-        );
-
         // -- Phase 4: Re-read entity (post-fix) and mutate all the
         //    per-NPC state fields in one shot. --
         let is_forest_level = self.world.weather.is_forest_level;
-
-        // `entity_building_sector` needs a `&self` borrow; compute it
-        // up-front while we don't hold a mutable entity borrow.
-        let building_sector = {
-            let entity = self.expect_entity(npc_id, "AI initialization owner after classification");
-            self.entity_building_sector(entity.element_data().sector())
-        };
 
         // Determine whether this NPC is a Merry-Man archer (Royalist
         // soldier, forest level, archer flag set by the level loader).
@@ -394,16 +576,14 @@ impl EngineInner {
 
         // Grab the (possibly corrected) map position / direction /
         // sector / layer before the write-back borrow.
-        let (pos_map_final, direction_final, sector_final, layer_final, current_lp) = {
+        let (pos_map_final, direction_final, sector_final, layer_final) = {
             let entity = self.expect_entity(npc_id, "AI initialization owner before write-back");
             let elem = entity.element_data();
-            let lp = entity.human_life_points();
             (
                 elem.position_map(),
                 elem.direction(),
                 elem.sector(),
                 elem.layer(),
-                lp,
             )
         };
 
@@ -413,19 +593,10 @@ impl EngineInner {
                 return;
             };
             if let Some(npc) = entity.ai_actor_data_mut() {
-                // `initialize_direction_offset_very_old`: seed from current body dir.
-                npc.direction_old = direction_final;
-
                 if is_merry_man_archer {
                     // Seed the bow ammo for forest-level Merry Man archers.
                     npc.number_of_arrows = MERRY_MAN_ARROWS;
                 }
-
-                // Detectable enemies list (`DetectableType::Enemy`
-                // slot).  Other slots (Body/Object/Friend/...) are
-                // populated later by runtime events.
-                let enemy_idx = DetectableType::Enemy as usize;
-                npc.detectable_lists[enemy_idx] = detectables;
 
                 // `store_initial_position_parameters`: snapshot current
                 // position, sector, level, and facing into the
@@ -437,33 +608,6 @@ impl EngineInner {
                 let dir_vec = crate::shadow_polygon::sector_to_direction(direction_final);
                 npc.initial_view_direction.x = dir_vec[0];
                 npc.initial_view_direction.y = dir_vec[1];
-            }
-
-            // Preserve initialization-time camp presence for later mixed-camp
-            // hostility checks; this is not a live census of surviving NPCs.
-            if is_enemy && self_camp != Camp::Error {
-                self.ai.global.soldier_camps.insert(self_camp);
-            }
-
-            // Enemy-specific state.
-            if is_enemy && let Some(enemy) = entity.enemy_ai_mut() {
-                // `old_life_points` = `initial_life_points` =
-                // `get_life_points()`.  The level loader already applied
-                // difficulty scaling to `cached_max_life_points` at
-                // `engine::level_loading::spawn_soldier`, so the current
-                // life points are already correct.
-                let clamped = current_lp.clamp(0, 255) as u8;
-                enemy.old_life_points = clamped;
-                enemy.initial_life_points = clamped;
-
-                // Reset the ambush-point-status array and insert
-                // `AMBUSH_POINT_FAR` for every point in the global
-                // ambush array.
-                enemy.ambush_point_array_reset = true;
-                enemy.ambush_point_status.clear();
-                enemy
-                    .ambush_point_status
-                    .resize(ambush_points_count, crate::ai_enemy::AmbushPointStatus::Far);
             }
         }
 
@@ -505,29 +649,6 @@ impl EngineInner {
             false
         };
 
-        // -- Phase 6: Build the init ctx and commit patrol/path state. --
-        let mut init_ctx = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            build_ai_context_from_entity(
-                entity,
-                0,
-                building_sector,
-                is_forest_level,
-                ambiance,
-                standard_view_radius,
-                entity_views,
-                sight_obstacles,
-                fast_grid,
-                hiking_paths,
-                hiking_waypoint_sectors,
-                all_soldier_handles,
-                self.control.sim_config.difficulty,
-            )
-        };
-        self.refresh_selected_default_wait_identity(npc_id, &mut init_ctx);
-
         {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
@@ -564,123 +685,239 @@ impl EngineInner {
             }
         }
 
-        // -- Phase 7: Dispatch to the subclass for state transitions. --
-        // The initial-state / return-to-duty / beggar-lock tail. The actor-specific
-        // commits the AI-side state transition via
-        // `AiController::init_state` and returns the entity-side side
-        // effects — posture / action state / eye status / life-point /
-        // concussion writes that the AI layer can't reach on its own.
-        let init_fx: crate::ai::InitStateSideEffects = {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            match &mut entity.ai_actor_data_mut().map(|n| &mut n.ai_brain) {
-                Some(crate::element::AiBrain::Enemy(e)) => {
-                    // Initialization runs before any detection
-                    // or target selection — `primary_target` is 0 and
-                    // no battle context exists yet, so the centralized
-                    // `build_npc_tick_data` would return `stub()`
-                    // anyway.  Skip the round-trip and pass stub
-                    // directly.
-                    let tick = AiPerTickData::stub();
-                    e.init_one_ai(crate::ai_enemy::ThinkEnv::new(sim, &init_ctx, &tick, None))
-                }
-                Some(crate::element::AiBrain::Friendly(f)) => f.init_one_ai(sim, &init_ctx),
-                _ => return,
+        if is_friendly {
+            let entity = self
+                .world
+                .entities
+                .expect_entity_mut(npc_id, format_args!("civilian bootstrap owner"));
+            let is_beggar = matches!(&*entity, Entity::Civilian(civilian)
+                if civilian.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar);
+            let friendly = entity.friendly_ai_mut().expect("civilian bootstrap brain");
+            friendly.wants_to_talk = false;
+            if is_beggar {
+                friendly
+                    .base
+                    .non_script_lock(crate::ai::AiLockFlags::BEGGAR);
             }
+        }
+        let has_path = {
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("AI bootstrap path owner"));
+            let has_path = ai.has_patrol_path && (!is_friendly || !ai.ai_is_locked());
+            ai.has_patrol_path = has_path;
+            if has_path {
+                ai.substate_at_last_timer_launch = ai.current_substate;
+            }
+            has_path
         };
-        if let Some(enemy) = self
+        if has_path && go_to_duty {
+            if is_enemy {
+                self.duty_set_state(
+                    sim,
+                    assets,
+                    npc_id,
+                    crate::ai::AiState::Default,
+                    crate::ai::Substate::DefaultEnroute,
+                );
+            }
+            self.execute_ai_return_to_duty(sim, assets, npc_id, crate::ai::DutyFlags::empty());
+        } else if is_friendly && go_to_duty {
+            let duration = crate::parameters_ai::AB_MIN_DEFAULT_LOOK_TIME
+                + crate::sim_rng::i32(
+                    sim,
+                    crate::sim_rng::RngSite::CivilianFirstLookTimer,
+                    0..crate::parameters_ai::AB_DELTA_DEFAULT_LOOK_TIME,
+                );
+            let frame = self.control.frame_counter;
+            self.world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("civilian bootstrap timer"))
+                .launch_timer(duration as u32, frame);
+            self.duty_set_state(
+                sim,
+                assets,
+                npc_id,
+                crate::ai::AiState::Default,
+                crate::ai::Substate::DefaultOnPost,
+            );
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("civilian bootstrap timer state"));
+            ai.substate_at_last_timer_launch = ai.current_substate;
+        }
+        let frame = self.control.frame_counter;
+        let entity = self
             .world
             .entities
-            .get_mut(npc_id)
-            .and_then(|entity| entity.enemy_ai_mut())
-        {
-            // Bootstrap patrol assembly already completed synchronously.
-            // Do not repeat it on the first owner tick.
-            enemy.base.needs_patrol_reinit = false;
+            .expect_entity_mut(npc_id, format_args!("AI bootstrap completion"));
+        if let Some(enemy) = entity.enemy_ai_mut() {
+            enemy.ambush_point_array_reset = true;
+            enemy.ambush_point_status.clear();
+            enemy
+                .ambush_point_status
+                .resize(ambush_points_count, crate::ai_enemy::AmbushPointStatus::Far);
         }
+        entity
+            .ai_controller_mut()
+            .expect("AI bootstrap controller")
+            .last_hint_actuality = frame;
+    }
 
-        // -- Phase 8: Apply entity-side side effects from `init_state`. --
-        // Posture, action state, eye status, life points, and
-        // concussion all live on the entity, not the AI brain.  The
-        // subclass dispatch already committed the AI-side state
-        // transitions; here we flush the entity half.
-        if init_fx.set_posture.is_some()
-            || init_fx.set_action_state.is_some()
-            || init_fx.set_eye_status.is_some()
-            || init_fx.zero_life_points
-            || init_fx.concussion_max_and_unconscious
+    fn initialize_ai_state(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) -> bool {
+        use crate::ai::{AiState, EmoticonType, Substate};
+        use crate::element::{ActionState, EyeStatus, Posture};
+        use crate::order::OrderType;
+
+        let in_building = self
+            .entity_building_sector(
+                self.world
+                    .entities
+                    .expect_entity(owner, format_args!("initial AI building owner"))
+                    .element_data()
+                    .sector(),
+            )
+            .is_some();
+        let initial_action = {
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("initial AI state"));
+            ai.likes_to_sit_around = false;
+            ai.special_action = false;
+            ai.is_stay_at_home = in_building;
+            ai.initial_action
+        };
+        if in_building {
+            self.duty_set_state(
+                sim,
+                assets,
+                owner,
+                AiState::Default,
+                Substate::DefaultHomeSweetHome,
+            );
+            return false;
+        }
+        let action = OrderType::try_from(initial_action).ok();
+        let (state, substate) = match action {
+            Some(OrderType::SleepingUpright) => (AiState::Sleeping, Substate::SleepingNapping),
+            Some(OrderType::BeingDead | OrderType::BeingDeadFallenBack) => {
+                (AiState::Sleeping, Substate::SleepingForever)
+            }
+            Some(OrderType::BeingUnconscious) => (AiState::Sleeping, Substate::SleepingUnconscious),
+            _ => (AiState::Default, Substate::DefaultOnPost),
+        };
+        self.duty_set_state(sim, assets, owner, state, substate);
+        let posture = match action {
+            Some(OrderType::SleepingUpright) => Some(Posture::Upright),
+            Some(OrderType::Sitting) => Some(Posture::Sitting),
+            Some(OrderType::BeingDeadFallenBack) => Some(Posture::DeadBack),
+            Some(OrderType::BeingDead) => Some(Posture::Dead),
+            Some(OrderType::BeingUnconscious) => Some(Posture::Lying),
+            Some(OrderType::Special) => Some(Posture::Leisure),
+            _ => None,
+        };
+        if posture.is_none() || action == Some(OrderType::Sitting) {
+            let bored = self.ai_bored_time(sim, owner);
+            let frame = self.control.frame_counter;
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("initial AI bored timer"));
+            ai.launch_timer(bored as u32, frame);
+        }
+        let Some(posture) = posture else {
+            if !matches!(
+                action,
+                Some(
+                    OrderType::WaitingUpright
+                        | OrderType::WaitingUprightBored
+                        | OrderType::WaitingUprightBoredRandom
+                )
+            ) {
+                tracing::warn!(npc = ?owner, initial_action, "Unsupported initial AI action; using the default post state");
+            }
+            return true;
+        };
         {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-
-            // Posture: write to `ElementData::posture`.  Matches the
-            // existing `pending_posture` drain path which deliberately
-            // skips `PositionInterface::set_posture` — the move-box
-            // recomputation is deferred and every other posture write
-            // in the codebase (melee knock-out paths,
-            // ability.CarryingCorpse, …) follows the same pattern.
-            if let Some(posture) = init_fx.set_posture {
-                entity.set_posture(posture);
+            let entity = self
+                .world
+                .entities
+                .expect_entity_mut(owner, format_args!("initial AI posture owner"));
+            if action == Some(OrderType::SleepingUpright) {
+                crate::ai_vision::set_view_status(
+                    entity.ai_actor_data_mut().expect("initial AI vision"),
+                    EyeStatus::Closed,
+                );
             }
-
-            // Action state: write on `ActorData`.  `set_states(...,
-            // action_state)` + `wait()` collapse to a direct
-            // `action_state = X` at init time, since the entity has no
-            // active animation to interrupt.
-            if let Some(action_state) = init_fx.set_action_state
-                && let Some(actor) = entity.actor_data_mut()
-            {
-                actor.action_state = action_state;
-            }
-
-            // Eye status: use the existing `ai_vision::set_view_status`
-            // helper so `view_transition` is flipped alongside the raw
-            // field.  Equivalent to `close_eyes` (which just calls
-            // `set_view_status(EYES_CLOSED)`).
-            if let Some(status) = init_fx.set_eye_status
-                && let Some(npc) = entity.ai_actor_data_mut()
-            {
-                crate::ai_vision::set_view_status(npc, status);
-            }
-
-            // Zero life points + killed-by-accident.  Bundled because
-            // they are always written together at init
-            // (`init_with_zero_life_points` followed by
-            // `set_killed_by_accident(true)`).
-            if init_fx.zero_life_points {
+            if matches!(
+                action,
+                Some(OrderType::BeingDead | OrderType::BeingDeadFallenBack)
+            ) {
                 match entity {
                     Entity::Pc(pc) => pc.pc.life_points = 0,
                     Entity::Soldier(soldier) => soldier.npc.life_points = 0,
                     Entity::Civilian(civilian) => civilian.npc.life_points = 0,
-                    _ => panic!("AI init side effect targeted a non-human entity"),
-                }
-                if let Some(human) = entity.human_data_mut() {
-                    human.killed_by_accident = true;
+                    _ => panic!("initial AI state requires a human"),
                 }
             }
-
-            // Max concussion + unconscious.  Init-time bypasses
-            // the full `combat::set_concussion` state machine
-            // because none of its gates (script lock, tied,
-            // carried) apply on a freshly-spawned NPC.
-            if init_fx.concussion_max_and_unconscious
-                && let Some(human) = entity.human_data_mut()
-            {
+            if action == Some(OrderType::BeingUnconscious) {
+                let human = entity
+                    .human_data_mut()
+                    .expect("initial AI unconscious human");
                 human.concussion_of_the_brain = crate::combat::CONCUSSION_MAX;
                 human.unconscious = true;
             }
+            entity.set_posture(posture);
+            entity
+                .actor_data_mut()
+                .expect("initial AI actor")
+                .action_state = if action == Some(OrderType::SleepingUpright) {
+                ActionState::Sleeping
+            } else {
+                ActionState::Waiting
+            };
         }
-
-        if init_fx.launch_wait {
-            // Original-game AI state initialization makes the actor wait only
-            // after state assignment for authored sleeping/sitting/dead/etc. poses.
-            // This must be a new launch, not ensure_wait_element: mission
-            // script initialization may already have installed an Upright
-            // wait whose translated orders are stale for the new posture.
-            self.actor_wait(npc_id);
+        self.actor_wait(owner);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(owner, format_args!("initial AI state completion"));
+        match action {
+            Some(OrderType::SleepingUpright) => entity
+                .ai_controller_mut()
+                .expect("initial AI sleeping controller")
+                .set_emoticon(EmoticonType::Zzz),
+            Some(OrderType::Sitting) => {
+                entity
+                    .ai_controller_mut()
+                    .expect("initial AI sitting controller")
+                    .likes_to_sit_around = true
+            }
+            Some(OrderType::Special) => {
+                entity
+                    .ai_controller_mut()
+                    .expect("initial AI leisure controller")
+                    .special_action = true
+            }
+            Some(OrderType::BeingDead | OrderType::BeingDeadFallenBack) => {
+                entity
+                    .human_data_mut()
+                    .expect("initial AI dead human")
+                    .killed_by_accident = true
+            }
+            _ => {}
         }
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        false
     }
 
     /// Populate `AiGlobalState::houses` and `door_rally_points` from

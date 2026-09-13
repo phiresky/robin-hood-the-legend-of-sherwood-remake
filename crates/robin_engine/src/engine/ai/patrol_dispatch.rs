@@ -33,69 +33,92 @@ impl EngineInner {
             stimulus.info = info;
             stimulus.to_whole_patrol = true;
 
-            for member in members {
-                let member_id = self.entity_id_for_index(member).unwrap_or_else(|| {
-                    panic!(
-                        "patrol broadcast from chief {} references missing member {member}",
-                        source_id.index()
-                    )
-                });
+            self.execute_ai_patrol_member_broadcast(sim, assets, source_id, &stimulus, members);
+        }
+    }
 
-                let scratch = self.build_sim_scratch(assets);
-                let detected = {
-                    let building_sector = self
-                        .world
-                        .entities
-                        .get(source_id)
-                        .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                        .unwrap_or_else(|| {
-                            panic!("patrol broadcast chief {} disappeared", source_id.index())
-                        });
-                    let entity = self.expect_entity(source_id, "patrol broadcast chief");
-                    let chief_ctx = self.ai_context_from_entity(
-                        entity,
-                        self.control.frame_counter,
-                        building_sector,
-                        &scratch,
-                        assets,
-                    );
-                    let chief_ai = self
-                        .world
-                        .entities
-                        .expect_enemy_ai(source_id, format_args!("patrol broadcast chief"));
-                    chief_ai.detects_patrol_member_360(member, &chief_ctx)
-                };
-                tracing::trace!(
-                    target: "patrol_relay",
-                    chief = source_id.index(),
-                    member,
-                    ?stimulus_type,
-                    detected,
-                    "patrol broadcast member gate"
-                );
-                if !detected {
-                    continue;
-                }
+    pub(in crate::engine) fn execute_ai_patrol_broadcast(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        source_id: EntityId,
+        stimulus: crate::ai::Stimulus,
+        members: Vec<u32>,
+    ) {
+        self.execute_ai_callback(sim, assets, source_id, &stimulus);
+        self.execute_ai_patrol_member_broadcast(sim, assets, source_id, &stimulus, members);
+    }
 
+    fn execute_ai_patrol_member_broadcast(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        source_id: EntityId,
+        stimulus: &crate::ai::Stimulus,
+        members: Vec<u32>,
+    ) {
+        for member in members {
+            let member_id = self.entity_id_for_index(member).unwrap_or_else(|| {
+                panic!(
+                    "patrol broadcast from chief {} references missing member {member}",
+                    source_id.index()
+                )
+            });
+
+            let scratch = self.build_sim_scratch(assets);
+            let detected = {
                 let building_sector = self
                     .world
                     .entities
-                    .get(member_id)
+                    .get(source_id)
                     .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                    .unwrap_or_else(|| panic!("patrol broadcast member {member} disappeared"));
-                let ctx = {
-                    let entity = self.expect_entity(member_id, "patrol broadcast member");
-                    self.ai_context_from_entity(
-                        entity,
-                        self.control.frame_counter,
-                        building_sector,
-                        &scratch,
-                        assets,
-                    )
-                };
-                let tick_data = self.build_npc_tick_data(sim, member_id, assets);
-                self.dispatch_think_with_drain(sim, member_id, &stimulus, &ctx, &tick_data, assets);
+                    .unwrap_or_else(|| {
+                        panic!("patrol broadcast chief {} disappeared", source_id.index())
+                    });
+                let entity = self.expect_entity(source_id, "patrol broadcast chief");
+                let chief_ctx = self.ai_context_from_entity(
+                    entity,
+                    self.control.frame_counter,
+                    building_sector,
+                    &scratch,
+                    assets,
+                );
+                let chief_ai = self
+                    .world
+                    .entities
+                    .expect_enemy_ai(source_id, format_args!("patrol broadcast chief"));
+                chief_ai.detects_patrol_member_360(member, &chief_ctx)
+            };
+            tracing::trace!(
+                target: "patrol_relay",
+                chief = source_id.index(),
+                member,
+                stimulus_type = ?stimulus.stimulus_type,
+                detected,
+                "patrol broadcast member gate"
+            );
+            if !detected {
+                continue;
             }
+
+            let building_sector = self
+                .world
+                .entities
+                .get(member_id)
+                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                .unwrap_or_else(|| panic!("patrol broadcast member {member} disappeared"));
+            let ctx = {
+                let entity = self.expect_entity(member_id, "patrol broadcast member");
+                self.ai_context_from_entity(
+                    entity,
+                    self.control.frame_counter,
+                    building_sector,
+                    &scratch,
+                    assets,
+                )
+            };
+            let tick_data = self.build_npc_tick_data(sim, member_id, assets);
+            self.dispatch_think_with_drain(sim, member_id, stimulus, &ctx, &tick_data, assets);
         }
     }
 
@@ -178,6 +201,13 @@ impl EngineInner {
                     )
             };
             chief_ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
+            let dispatched = match dispatched {
+                Ok(dispatched) => dispatched,
+                Err(call) => {
+                    self.execute_ai_duty_call(sim, assets, chief_id, call);
+                    true
+                }
+            };
 
             // A successful chief routine can recursively Think and queue the
             // member walk. Close those effects before the direct call returns.
@@ -324,7 +354,8 @@ impl EngineInner {
             let source_tick = self.build_npc_tick_data(sim, source_id, assets);
             let global = &mut self.ai.global;
             let grid = &self.world.fast_grid;
-            self.world
+            let flow = self
+                .world
                 .entities
                 .expect_enemy_ai_mut(
                     source_id,
@@ -337,6 +368,9 @@ impl EngineInner {
                     continuation,
                     global,
                 );
+            if let Err(call) = flow {
+                self.execute_ai_duty_call(sim, assets, source_id, call);
+            }
 
             // The continuation is the caller's original-game stack frame resuming
             // immediately after target event processing returned. The officer's
@@ -434,7 +468,8 @@ impl EngineInner {
             };
             self.refresh_selected_default_wait_identity(source_id, &mut source_ctx);
             let source_tick = self.build_npc_tick_data(sim, source_id, assets);
-            self.world
+            let flow = self
+                .world
                 .entities
                 .expect_enemy_ai_mut(
                     source_id,
@@ -444,6 +479,9 @@ impl EngineInner {
                     crate::ai_enemy::ThinkEnv::new(sim, &source_ctx, &source_tick, None),
                     accepted,
                 );
+            if let Err(call) = flow {
+                self.execute_ai_duty_call(sim, assets, source_id, call);
+            }
         }
     }
 
@@ -525,10 +563,13 @@ impl EngineInner {
                 .world
                 .entities
                 .expect_enemy_ai_mut(charly_id, format_args!("reporting Charly {charly}"));
-            enemy.resolve_charly_officer_report(
+            let flow = enemy.resolve_charly_officer_report(
                 crate::ai_enemy::ThinkEnv::new(sim, &charly_ctx, &charly_tick, None),
                 accepted,
             );
+            if let Err(call) = flow {
+                self.execute_ai_duty_call(sim, assets, charly_id, call);
+            }
         }
     }
 }

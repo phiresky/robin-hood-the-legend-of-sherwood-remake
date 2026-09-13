@@ -1233,7 +1233,8 @@ fn swordfight_step_in_uses_live_exact_target_sector() {
         ThinkEnv::new(&SimulationContext::with_seed(seed), &ctx, &tick, None),
         false,
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(
         ai.base
@@ -1319,7 +1320,8 @@ fn lost_enemy_overview_faces_live_target_not_forecast_destination() {
         ThinkEnv::new(&sim, &ctx, &tick, None),
         false,
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.seek_position, position(0.0, 100.0));
     assert_eq!(vec_to_sector(100.0, 0.0), 4);
@@ -1359,7 +1361,8 @@ fn lost_enemy_follow_path_keeps_forecast_as_seek_center_without_direction_snap()
         ThinkEnv::new(&sim, &ctx, &tick, None),
         false,
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.outbox.actor.set_direction_instantly, None);
     assert_eq!(ai.seek_center, position(0.0, 100.0));
@@ -1399,7 +1402,8 @@ fn lost_enemy_refreshes_forecast_with_swordfight_principal() {
         ThinkEnv::new(&sim, &ctx, &tick, None),
         false,
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(NEW_PRINCIPAL)));
     assert_eq!(ai.seek_center, refreshed_forecast);

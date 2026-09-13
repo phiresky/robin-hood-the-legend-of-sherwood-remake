@@ -911,6 +911,7 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
         &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
+        engine.ai_think_depth(),
     );
     let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
 

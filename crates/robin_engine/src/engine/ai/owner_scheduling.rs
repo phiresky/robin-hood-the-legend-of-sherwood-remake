@@ -1,41 +1,5 @@
 use super::*;
 
-/// A statement prefix cannot surface decision completion while its enclosing
-/// owner call still has a detached continuation to execute.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(in crate::engine) enum CompletionBoundary {
-    OwnerReturn,
-    StatementPrefix,
-}
-
-impl CompletionBoundary {
-    pub(in crate::engine) fn surfaces_completion(self) -> bool {
-        matches!(self, Self::OwnerReturn)
-    }
-}
-
-#[cfg(test)]
-mod policy_tests {
-    use super::*;
-
-    #[test]
-    fn statement_prefix_and_owner_return_keep_distinct_completion_contracts() {
-        assert!(!CompletionBoundary::StatementPrefix.surfaces_completion());
-        assert!(CompletionBoundary::OwnerReturn.surfaces_completion());
-        for (boundary, name) in [
-            (CompletionBoundary::StatementPrefix, "StatementPrefix"),
-            (CompletionBoundary::OwnerReturn, "OwnerReturn"),
-        ] {
-            let encoded = serde_json::to_value(boundary).unwrap();
-            assert_eq!(encoded, serde_json::json!(name));
-            assert_eq!(
-                serde_json::from_value::<CompletionBoundary>(encoded).unwrap(),
-                boundary
-            );
-        }
-    }
-}
-
 impl EngineInner {
     /// Drain each NPC's `pending_self_stimuli` queue and re-dispatch each
     /// stimulus through `think` on the same frame.  Matches
@@ -105,21 +69,6 @@ impl EngineInner {
                     npc = npc_id.index(),
                     "self-stimulus recursion exceeded the original 111-call guard"
                 );
-                // The cascade is being force-abandoned with events still
-                // queued, so no innermost tick completion will unwind the open
-                // ancestor frames (`open_end_think_frames`) — close them
-                // here so the depth cannot leak across frames.
-                if let Some(ai) = self
-                    .world
-                    .entities
-                    .get_mut(npc_id)
-                    .and_then(Entity::ai_controller_mut)
-                {
-                    let open = std::mem::take(&mut ai.open_end_think_frames);
-                    if open > 0 {
-                        ai.think_recursion_depth = ai.think_recursion_depth.saturating_sub(open);
-                    }
-                }
                 break;
             }
 
@@ -175,7 +124,7 @@ impl EngineInner {
             self.drain_pending_for_npc(sim, npc_id, assets);
             self.launch_pending_orders_for_npc(sim, assets, npc_id);
             launched_moves.extend(self.drain_pending_move_requests_for_owner(sim, npc_id));
-            self.surface_synchronous_completion_events_for_owner(npc_id);
+
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             self.dispatch_condolations(sim, assets);
         }
@@ -237,67 +186,10 @@ impl EngineInner {
             return;
         }
 
-        self.with_suspended_waypoint_think(npc_id, |engine| {
-            engine
-                .dispatch_waypoint_script_on_suspended_think(sim, npc_id, assets, path_idx, wp_idx);
-        });
+        self.dispatch_waypoint_script_on_suspended_think(sim, npc_id, assets, path_idx, wp_idx);
     }
 
-    /// Keep the route-arrival decision logically live while Rust releases its AI
-    /// borrow to enter the waypoint VM. The restoration is unwind-safe so a
-    /// script panic cannot leak a fake recursion level into later AI work.
-    fn with_suspended_waypoint_think<T>(
-        &mut self,
-        npc_id: EntityId,
-        operation: impl FnOnce(&mut Self) -> T,
-    ) -> T {
-        // Waypoint-script execution runs inside the route-arrival
-        // decision in the original game. Rust has to release the AI borrow before it
-        // can enter the waypoint VM, but native AI calls made by ReachPoint
-        // must still observe that suspended outer decision. In particular, a
-        // close-point movement sets `already_on_point` for the enclosing tick completion
-        // instead of immediately queueing a second EVENT_REACHPOINT. The
-        // recursively entered EVENT_AFTER_SCRIPT_GO_ON resets that latch in
-        // handler entry, exactly as original-game evaluation does.
-        {
-            let ai = self.world.entities.expect_ai_controller_mut(
-                npc_id,
-                format_args!(
-                    "waypoint-script owner {} lost its AI before ReachPoint",
-                    npc_id.index()
-                ),
-            );
-            ai.think_recursion_depth = ai
-                .think_recursion_depth
-                .checked_add(1)
-                .expect("waypoint-script suspended decision depth overflow");
-        }
-
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(self)));
-        if let Some(ai) = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-        {
-            // This is the completion of the outer route-arrival decision tick that was
-            // suspended while the waypoint VM and its recursive
-            // EventAfterScriptGoOn ran.  Merely restoring the depth strands
-            // completion latches produced by the final recursive action
-            // (for example clearing a patrol path and returning to a post at the
-            // actor's current position).  Original consumes those latches
-            // here and recursively dispatches the matching event.
-            assert!(
-                ai.end_think_completion_events(),
-                "waypoint-script suspended decision unexpectedly hit the typed recursion fallback"
-            );
-        }
-        match result {
-            Ok(value) => value,
-            Err(payload) => std::panic::resume_unwind(payload),
-        }
-    }
-
+    /// Run the waypoint VM inside the caller's existing decision frame.
     fn dispatch_waypoint_script_on_suspended_think(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -398,6 +290,7 @@ impl EngineInner {
             }
         };
         if !admitted {
+            self.execute_ai_end_think(sim, assets, owner);
             return true;
         }
 
@@ -409,19 +302,15 @@ impl EngineInner {
                 .current_substate,
             crate::ai::Substate::DefaultGotoRoute
         );
-        // Queued siblings and deferred ancestor completions belong to the
-        // caller. Nested synchronous Think calls must not consume either.
-        let (later_stimuli, ancestor_frames) = {
+        // Queued siblings belong to the caller after this synchronous call.
+        let later_stimuli = {
             let ai = self
                 .world
                 .entities
                 .expect_ai_controller_mut(owner, format_args!("patrol arrival caller scope"));
-            (
-                std::mem::take(&mut ai.outbox.reentrant.self_stimuli),
-                std::mem::take(&mut ai.open_end_think_frames),
-            )
+            std::mem::take(&mut ai.outbox.reentrant.self_stimuli)
         };
-        self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
         // State-change notifications ignore the callback's return value.
         self.call_ai_event_filter(
@@ -485,142 +374,8 @@ impl EngineInner {
             .expect_entity_mut(owner, format_args!("patrol Think completion"));
         let ai = entity.ai_controller_mut().expect("patrol completion AI");
         ai.outbox.reentrant.self_stimuli.extend(later_stimuli);
-        ai.open_end_think_frames = ai.open_end_think_frames.saturating_add(ancestor_frames);
-        if let Some(enemy) = entity.enemy_ai_mut() {
-            enemy.end_think(crate::ai_enemy::ThinkEnv::new(
-                sim,
-                ctx,
-                enemy_tick.expect("enemy patrol completion tick"),
-                Some(&self.world.fast_grid),
-            ));
-        } else {
-            entity
-                .friendly_ai_mut()
-                .expect("friendly patrol completion")
-                .end_think(sim, ctx);
-        }
+        self.execute_ai_end_think(sim, assets, owner);
         false
-    }
-
-    /// Invoke the enemy/friendly return-to-duty behavior requested
-    /// by shared AI code. Enemy queues its patrol-initialization continuation
-    /// on the same owner FIFO; Friendly applies its busy gate before entering
-    /// the common tail. In both cases the caller observes the complete
-    /// call before later owner work runs.
-    pub(in crate::engine) fn virtual_return_to_duty_for_npc(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-        flags: crate::ai::DutyFlags,
-    ) {
-        // Work already behind this response belongs to the caller after
-        // returning to duty completes. Detach it so work emitted by that operation
-        // (notably ResumeReturnToDutyAfterPatrolInit) stays nested ahead of
-        // that caller tail instead of being appended after it.
-        let later_owner_work = {
-            let ai = self.world.entities.expect_ai_controller_mut(
-                npc_id,
-                format_args!("virtual ReturnToDuty owner {} lost its AI", npc_id.index()),
-            );
-            std::mem::take(&mut ai.outbox.reentrant.owner_work)
-        };
-        let scratch = self.build_sim_scratch(assets);
-
-        let frame = self.control.frame_counter;
-        let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-        let mut ctx = {
-            let entity = self.expect_entity(npc_id, "virtual ReturnToDuty owner");
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx =
-                self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
-            ctx.in_uninterruptible_command = in_uninterruptible_command;
-            ctx
-        };
-        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-        let is_enemy = self
-            .world
-            .entities
-            .get(npc_id)
-            .is_some_and(|entity| entity.enemy_ai().is_some());
-        if is_enemy {
-            let tick = self.build_npc_tick_data(sim, npc_id, assets);
-            self.world
-                .entities
-                .expect_enemy_ai_mut(
-                    npc_id,
-                    format_args!(
-                        "virtual ReturnToDuty enemy owner {} lost its AI",
-                        npc_id.index()
-                    ),
-                )
-                .return_to_duty(
-                    crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None),
-                    flags,
-                );
-        } else {
-            self.world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::friendly_ai_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "virtual ReturnToDuty owner {} has neither Enemy nor Friendly AI",
-                        npc_id.index()
-                    )
-                })
-                .return_to_duty(sim, flags, &ctx);
-        }
-
-        self.world
-            .entities
-            .expect_ai_controller_mut(
-                npc_id,
-                format_args!(
-                    "virtual ReturnToDuty owner {} lost its AI after override",
-                    npc_id.index()
-                ),
-            )
-            .outbox
-            .reentrant
-            .owner_work
-            .extend(later_owner_work);
-    }
-
-    /// Run the enemy return-to-duty behavior's synchronous patrol initialization and then
-    /// resume the common tail at the same owner boundary.
-    pub(in crate::engine) fn resume_return_to_duty_after_patrol_init_for_npc(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-        flags: crate::ai::DutyFlags,
-        high_recursion_failsafe: bool,
-    ) {
-        self.initialize_patrol_for_npc(assets, npc_id);
-        let scratch = self.build_sim_scratch(assets);
-
-        let frame = self.control.frame_counter;
-        let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-        let mut ctx = {
-            let entity = self.expect_entity(npc_id, "return-to-duty continuation owner");
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx =
-                self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
-            ctx.in_uninterruptible_command = in_uninterruptible_command;
-            ctx
-        };
-        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-        self.world
-            .entities
-            .expect_enemy_ai_mut(
-                npc_id,
-                format_args!(
-                    "return-to-duty continuation owner {} lost its Enemy AI",
-                    npc_id.index()
-                ),
-            )
-            .resume_return_to_duty_after_patrol_init(sim, flags, &ctx, high_recursion_failsafe);
     }
 
     /// Run the original game's patrol initialization at a captured owner boundary.
@@ -761,39 +516,6 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
     ) {
-        self.drain_direct_ai_owner_boundary_inner(
-            sim,
-            npc_id,
-            assets,
-            CompletionBoundary::OwnerReturn,
-        );
-    }
-
-    /// The state change's pre-callback actor prefix is only a statement boundary
-    /// inside the enclosing decision. Its caller tail is temporarily detached
-    /// by `drain_ai_owner_work_for`, so there is no complete decision-tick completion
-    /// boundary to surface until that tail has been restored and executed.
-    pub(in crate::engine) fn drain_direct_ai_owner_prefix_boundary(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
-        self.drain_direct_ai_owner_boundary_inner(
-            sim,
-            npc_id,
-            assets,
-            CompletionBoundary::StatementPrefix,
-        );
-    }
-
-    fn drain_direct_ai_owner_boundary_inner(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-        completion_boundary: CompletionBoundary,
-    ) {
         // This entry point models one direct, synchronous member-call stack.
         // Cards that were already queued for other owners belong to their
         // established later update boundaries; nested helpers below still
@@ -810,12 +532,9 @@ impl EngineInner {
 
         const MAX_ITERS: u32 = 8;
         for iter in 0..MAX_ITERS {
-            self.drain_pending_for_npc_boundary(sim, npc_id, assets, completion_boundary);
+            self.drain_pending_for_npc(sim, npc_id, assets);
             self.launch_pending_orders_for_npc(sim, assets, npc_id);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
-            if completion_boundary.surfaces_completion() {
-                self.surface_synchronous_completion_events_for_owner(npc_id);
-            }
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             // All foreign cards that predated this direct boundary are held
             // aside above. Any foreign-owner card visible here was therefore
@@ -1046,7 +765,7 @@ impl EngineInner {
         // following live command/pending-sequence-launch reads,
         // but retain the enclosing direct-call completion boundary until the
         // suffix has run.
-        self.drain_direct_ai_owner_prefix_boundary(sim, npc_id, assets);
+        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
         let actor_command = self.actor_command(npc_id);
         let post_refresh_stuck_command_active = matches!(
             actor_command,
@@ -1574,37 +1293,7 @@ impl EngineInner {
             return;
         }
 
-        // `force_return_to_duty == return_to_duty`.  Dispatch via
-        // the specialized AI to complete the response. Build the
-        // ctx + tick data the way `tick_periodic_ai` does.
-        let scratch = self.build_sim_scratch(assets);
-        let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
-        let frame = self.control.frame_counter;
-        let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-        let building_sector = self
-            .world
-            .entities
-            .get(npc_id)
-            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-            .unwrap_or_else(|| panic!("ladder-tail NPC {} disappeared", npc_id.index()));
-        let entity = self.expect_entity(npc_id, "ladder-tail NPC before recovery");
-        let mut ctx = self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
-        ctx.in_uninterruptible_command = in_uninterruptible_command;
-        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-        let entity = self.expect_entity_mut(npc_id, "ladder-tail NPC before recovery");
-        if let Some(enemy) = entity.enemy_ai_mut() {
-            enemy.return_to_duty(
-                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick_data, None),
-                crate::ai::DutyFlags::empty(),
-            );
-        } else if let Some(friendly) = entity.friendly_ai_mut() {
-            friendly.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx);
-        } else {
-            panic!(
-                "ladder-tail owner {} has neither enemy nor friendly AI",
-                npc_id.index()
-            );
-        }
+        self.execute_ai_return_to_duty(sim, assets, npc_id, crate::ai::DutyFlags::empty());
         self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 }

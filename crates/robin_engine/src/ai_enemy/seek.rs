@@ -294,7 +294,7 @@ impl EnemyAi {
         flags: SeekFlags,
         seek_direction: u16,
         global: &mut AiGlobalState,
-    ) {
+    ) -> crate::ai::AiFlow<()> {
         let ThinkEnv { sim, ctx, .. } = env;
         let center = resolve_seek_area_center_sector(center, ctx);
         tracing::trace!(
@@ -318,14 +318,14 @@ impl EnemyAi {
 
         // Royalists just return to duty.
         if ctx.is_player_aligned() {
-            self.return_to_duty_default(env);
-            return;
+            self.return_to_duty_default(env)?;
+            return Ok(());
         }
 
         // Company 100 (combat trainer dummy) just returns to duty.
         if self.company_number == 100 {
-            self.return_to_duty_default(env);
-            return;
+            self.return_to_duty_default(env)?;
+            return Ok(());
         }
 
         if !flags.contains(SeekFlags::CHARLY_SEEK) {
@@ -343,7 +343,7 @@ impl EnemyAi {
         // to the body. `examine_other_bodies` prunes recovered bodies
         // from the queue automatically.
         if self.examine_other_bodies(ThinkEnv { grid: None, ..env }) {
-            return;
+            return Ok(());
         }
 
         self.rebuild_area_search_beggars(ctx);
@@ -396,7 +396,7 @@ impl EnemyAi {
         );
 
         if !ctx.in_building {
-            self.seek_next_point(env, global);
+            self.seek_next_point(env, global)?;
         } else {
             // Inside a building: delay before seeking.
             self.seek_point_view_directions.clear();
@@ -407,6 +407,7 @@ impl EnemyAi {
                 ctx,
             );
         }
+        Ok(())
     }
 
     fn rebuild_area_search_beggars(&mut self, ctx: &AiContext) {
@@ -891,7 +892,11 @@ impl EnemyAi {
     /// Advance to the next seek point, or return to duty if none remain.
     /// Checks interest and lock state, skipping uninteresting or locked
     /// points.
-    pub(crate) fn seek_next_point(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
+    pub(crate) fn seek_next_point(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+    ) -> crate::ai::AiFlow<()> {
         let ThinkEnv { sim, ctx, .. } = env;
         let current_frame = ctx.frame;
 
@@ -958,33 +963,17 @@ impl EnemyAi {
                     GotoFlags::RUN,
                     ctx,
                 );
-                return;
+                return Ok(());
             }
         }
 
-        // No more seek points → return to duty
         if self.my_seek_points.is_empty() {
-            self.return_to_duty_default(env);
-
-            // Say "ends search" if nothing alarming was found.
-            let quiet_report = self.base.my_reconnaissance_report.report_type <= ReportType::Noise;
-            let pending_followup = self
-                .seek_flags
-                .intersects(SeekFlags::REPORT_OFFICER_AFTER | SeekFlags::LOOK_FOR_HELP_AFTER);
-            tracing::trace!(
-                target: "robin_engine::ai_enemy::seek",
-                frame = ctx.frame,
-                me = self.base.me,
-                report_type = ?self.base.my_reconnaissance_report.report_type,
-                seek_flags = ?self.seek_flags,
-                quiet_report,
-                pending_followup,
-                "next seek point: seek list exhausted"
-            );
-            if quiet_report && !pending_followup {
-                self.base.say(Remark::EndsSearch);
-            }
-            return;
+            return Err(crate::ai::DutyCall {
+                flags: DutyFlags::empty(),
+                think_result: false,
+                tail: crate::ai::DutyTail::FinishSeek,
+                after: Vec::new(),
+            });
         }
 
         // Pop the next seek point
@@ -1007,8 +996,8 @@ impl EnemyAi {
                 sp.locked
             } else {
                 // Invalid ID — skip
-                self.seek_next_point(env, global);
-                return;
+                self.seek_next_point(env, global)?;
+                return Ok(());
             }
         };
 
@@ -1027,8 +1016,8 @@ impl EnemyAi {
                 }
                 .emit();
             }
-            self.seek_next_point(env, global);
-            return;
+            self.seek_next_point(env, global)?;
+            return Ok(());
         }
 
         // Recalculate interest
@@ -1058,8 +1047,8 @@ impl EnemyAi {
         }
         if acceptance_roll >= interest {
             // Skip this point — try the next one
-            self.seek_next_point(env, global);
-            return;
+            self.seek_next_point(env, global)?;
+            return Ok(());
         }
 
         // Subtract interest and lock this point
@@ -1101,6 +1090,7 @@ impl EnemyAi {
             goto_flags,
             ctx,
         );
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -1202,7 +1192,7 @@ impl EnemyAi {
         pos_center: Position,
         flags: SeekFlags,
         global: &mut AiGlobalState,
-    ) {
+    ) -> crate::ai::AiFlow<()> {
         let ThinkEnv { ctx, tick, .. } = env;
         // Preamble: record the report regardless of rank.
         self.base
@@ -1234,7 +1224,7 @@ impl EnemyAi {
                             | SeekFlags::LOOK_FOR_HELP_AFTER,
                         UNDEFINED_DIRECTION,
                         global,
-                    );
+                    )?;
                 } else {
                     let returns_to_instructed_group =
                         self.alert_officer_returns_to_instructed_group(tick);
@@ -1268,7 +1258,7 @@ impl EnemyAi {
                             SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
                             UNDEFINED_DIRECTION,
                             global,
-                        );
+                        )?;
                     }
                 }
             }
@@ -1295,7 +1285,7 @@ impl EnemyAi {
                         SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
                         UNDEFINED_DIRECTION,
                         global,
-                    );
+                    )?;
                 }
             }
             ProfileRank::Knight => {
@@ -1307,10 +1297,11 @@ impl EnemyAi {
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
                     UNDEFINED_DIRECTION,
                     global,
-                );
+                )?;
             }
             _ => {}
         }
+        Ok(())
     }
 
     /// Resume soldier corpse-alert processing after its call to
@@ -1322,9 +1313,9 @@ impl EnemyAi {
         center: Position,
         radius: u16,
         global: &mut AiGlobalState,
-    ) {
+    ) -> crate::ai::AiFlow<()> {
         if !self.base.couldnt_reachpoint {
-            return;
+            return Ok(());
         }
         self.base.couldnt_reachpoint = false;
         self.seek_area(
@@ -1334,17 +1325,8 @@ impl EnemyAi {
             SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
             UNDEFINED_DIRECTION,
             global,
-        );
-        // This fallback is the statement immediately following
-        // the officer alert's synchronous approach inside the original enclosing
-        // Think. Rust resumes it from owner work after releasing the AI
-        // borrow, so `think_recursion_depth` alone no longer records that
-        // ownership. Any movement selected by area search must still deliver a
-        // synchronous route failure to that open logical Think, allowing
-        // next-point selection to try the following candidate in the same frame.
-        if !self.base.outbox.actor.orders.is_empty() {
-            self.base.completion_latch_inside_think = true;
-        }
+        )?;
+        Ok(())
     }
     // -----------------------------------------------------------------------
     // Body examination
@@ -1454,7 +1436,11 @@ impl EnemyAi {
     ///
     /// Multi-waypoint sweeps run with `RUN | DONT_STOP` so the seeker
     /// chains waypoints without halting between them.
-    pub(crate) fn search_charly(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
+    pub(crate) fn search_charly(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+    ) -> crate::ai::AiFlow<()> {
         let ThinkEnv { ctx, .. } = env;
         self.base.set_emoticon(EmoticonType::QuestionMark);
 
@@ -1465,8 +1451,8 @@ impl EnemyAi {
             // observable: stopping actions for an area search preserves a macro
             // in the two checkpoint-look substates. Do not insert a synthetic
             // SEEKING_CHARLY_WATCHING/EventDone boundary here.
-            self.missed_charly_alert(env, global);
-            return;
+            self.missed_charly_alert(env, global)?;
+            return Ok(());
         }
 
         // Soldier/knight prelude.
@@ -1478,12 +1464,12 @@ impl EnemyAi {
 
         // No checkpoint → return to duty.
         if self.base.checkpoint_charly.is_none() {
-            self.return_to_duty_default(env);
-            return;
+            self.return_to_duty_default(env)?;
+            return Ok(());
         }
         let Some(view) = ctx.entity_view(self.base.checkpoint_charly) else {
-            self.return_to_duty_default(env);
-            return;
+            self.return_to_duty_default(env)?;
+            return Ok(());
         };
 
         // Build the search way.
@@ -1553,8 +1539,8 @@ impl EnemyAi {
         };
 
         if waypoints.is_empty() {
-            self.return_to_duty_default(env);
-            return;
+            self.return_to_duty_default(env)?;
+            return Ok(());
         }
 
         // Stash the way and kick off the seek.
@@ -1570,12 +1556,17 @@ impl EnemyAi {
             crate::ai::GotoFlags::RUN
         };
         self.base.go_to(first, flags, ctx);
+        Ok(())
     }
 
     /// Report a failed checkpoint search and either delegate it or begin the
     /// area search locally. The original game's target search invokes this synchronously
     /// for officers; completion of watching a checkpoint member is its other caller.
-    pub(super) fn missed_charly_alert(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
+    pub(super) fn missed_charly_alert(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+    ) -> crate::ai::AiFlow<()> {
         let ThinkEnv { ctx, .. } = env;
         self.base.say(Remark::DidntFindCharly);
         let my_pos = ctx.position;
@@ -1604,7 +1595,7 @@ impl EnemyAi {
             ProfileRank::Knight | ProfileRank::None => false,
         };
         if alert_handled {
-            return;
+            return Ok(());
         }
 
         let charly_has_path = ctx
@@ -1625,7 +1616,8 @@ impl EnemyAi {
             SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
             UNDEFINED_DIRECTION,
             global,
-        );
+        )?;
+        Ok(())
     }
 
     pub(crate) fn run_to_examine_body(&mut self, body: HumanHandle, env: ThinkEnv<'_>) {

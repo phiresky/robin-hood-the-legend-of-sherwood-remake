@@ -123,20 +123,6 @@ pub(crate) fn consider_report_debug_matches(frame: u32, owner: u32) -> bool {
     config.matches_required([Some(frame), Some(owner)])
 }
 
-/// Reproduce the Original's mixed signed/unsigned waypoint expression:
-/// `current + (signed_16(encoded) - 1000)`, narrowed to 16 bits.
-fn resolve_synchronize_index(current: u16, encoded: u16) -> u16 {
-    if encoded > 500 {
-        (current as i32 + encoded as i16 as i32 - 1000) as u16
-    } else {
-        encoded
-    }
-}
-
-fn friend_check_look_count(frames: u16, interval: u16) -> u8 {
-    (frames / interval + 1) as u8
-}
-
 /// Geometry result of the original game's common patrol coordination.
 ///
 /// The common routine chooses the formation action, but its state change
@@ -238,58 +224,6 @@ pub struct AiController {
     pub use_max_norm_to_stop_before_end_of_path: bool,
     pub stop_before_end_of_path_distance: u16,
 
-    /// Think-method recursion depth — incremented on every `Think(...)`
-    /// entry, decremented on exit. Read by `go_near` to shrink the
-    /// stop-distance on deep recursion so panic/seek chains don't loop
-    /// forever.
-    pub think_recursion_depth: u8,
-
-    /// Decision frames left open by a tick completion that queued a completion
-    /// event instead of dispatching it recursively.
-    ///
-    /// Original-game end-think handling calls the follow-up
-    /// `Think(EVENT_*)` *before* decrementing
-    /// the decision recursion depth, so every level of a same-frame
-    /// completion cascade keeps its ancestors' frames open and the depth
-    /// climbs by one per nested decision — reaching the 100.. return-to-duty
-    /// failsafe after ~100 chained completions. The Rust port queues those
-    /// events and dispatches them iteratively from the engine drain, so an
-    /// A tick completion that queues another completion must skip its decrement (the
-    /// frame stays logically open) and count it here instead. The cascade's
-    /// innermost decision tick — the first one whose completion queues nothing —
-    /// then unwinds its own frame plus every counted ancestor frame at once,
-    /// mirroring the stacked decrements the Original performs while
-    /// returning out of the nested calls. The drain's 111-stimulus abandon
-    /// path closes any frames still open when a cascade is force-terminated,
-    /// so a cascade never survives a frame boundary and this stays transient
-    /// bookkeeping.
-    #[serde(skip)]
-    #[state_hash(skip)]
-    #[bitcode(skip)]
-    pub open_end_think_frames: u8,
-    /// Subset of `open_end_think_frames` whose completion verdict is still
-    /// owned by the engine-side movement drain.  Original constructs a path
-    /// inside movement, before decision-tick completion; Rust releases the AI borrow first,
-    /// so an immediately rejected path otherwise makes tick completion unwind
-    /// before the matching recursive EVENT_COULDNT_REACHPOINT is known.
-    #[serde(skip)]
-    #[state_hash(skip)]
-    #[bitcode(skip)]
-    pub engine_deferred_end_think_frames: u8,
-    /// Whether the engine has actually settled the movement/order verdict
-    /// owned by `engine_deferred_end_think_frames`.
-    ///
-    /// Owner-work drains can encounter a generic completion surface while a
-    /// caller-tail movement is temporarily detached from the AI outbox. The
-    /// absence of a failure at that intermediate surface is not a successful
-    /// path verdict: the original game has not returned from appending movement yet.
-    /// Keep this explicit transient handshake so only the engine operation
-    /// that consumed the order may close the deferred decision frames.
-    #[serde(skip)]
-    #[state_hash(skip)]
-    #[bitcode(skip)]
-    pub engine_completion_verdict_resolved: bool,
-
     // -- Macro system --
     /// Macro bytecode (if any) currently being executed.
     pub macro_command: Vec<u8>,
@@ -361,12 +295,6 @@ pub struct AiController {
     pub couldnt_reachpoint: bool,
     pub already_on_point: bool,
     pub already_turned: bool,
-    /// Whether a Think enclosed the operation that raised the completion
-    /// latches above. Only decision-tick completion ever delivers them, so a latch
-    /// raised outside a Think is discarded rather than dispatched. Rust
-    /// needs this recorded because path construction — and therefore the
-    /// failure verdict — happens after the typed AI borrow is released.
-    pub completion_latch_inside_think: bool,
 
     // -- Sitting around --
     pub likes_to_sit_around: bool,
@@ -540,10 +468,6 @@ impl Default for AiController {
             stop_before_end_of_path: false,
             use_max_norm_to_stop_before_end_of_path: false,
             stop_before_end_of_path_distance: 0,
-            think_recursion_depth: 0,
-            open_end_think_frames: 0,
-            engine_deferred_end_think_frames: 0,
-            engine_completion_verdict_resolved: false,
             macro_command: Vec::new(),
             macro_command_offset: 0,
             macro_command_waypoint: None,
@@ -579,7 +503,6 @@ impl Default for AiController {
             couldnt_reachpoint: false,
             already_on_point: false,
             already_turned: false,
-            completion_latch_inside_think: false,
             likes_to_sit_around: false,
             special_action: false,
             remaining_tequila_gulps: 0,
@@ -657,160 +580,6 @@ impl AiController {
             me: owner,
             ..Default::default()
         }
-    }
-
-    // -- Per-NPC init (called from EngineInner::init_one_ai) --
-
-    /// Evaluate `initial_action` and commit the matching AI-side
-    /// state transition.
-    ///
-    /// Returns an [`InitStateSideEffects`] describing the entity-side
-    /// mutations the caller (`EngineInner::init_one_ai`) must apply on
-    /// NpcData / HumanData / ElementData / ActorData — fields the AI
-    /// layer can't reach directly. The AI-side fields
-    /// (`current_state` / `current_substate`, timer, emoticon,
-    /// `likes_to_sit_around` / `special_action` / `is_stay_at_home`)
-    /// are mutated in place before the return.
-    ///
-    /// The returned `go_to_duty` flag means: `true` — caller should
-    /// run the standard "walk onto patrol path or launch a bored timer"
-    /// tail; `false` — init placed the NPC in a sleeping / dead /
-    /// sitting state and the caller must leave it alone.
-    pub fn init_state(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-    ) -> InitStateSideEffects {
-        use crate::element::{ActionState, EyeStatus, Posture};
-        use crate::order::OrderType;
-
-        // Reset the three "I'm authored as X" flags; the matching
-        // switch-case below flips the one that applies.
-        self.likes_to_sit_around = false;
-        self.special_action = false;
-        self.is_stay_at_home = false;
-
-        let mut fx = InitStateSideEffects::default();
-
-        // Indoor NPCs stay at home. House membership is already
-        // guaranteed because `ai_global.houses` is populated from
-        // *every* building sector during
-        // `EngineInner::initialize_buildings`, so we just flip the
-        // stay-at-home flag + substate here.
-        if ctx.in_building {
-            self.is_stay_at_home = true;
-            self.set_ai_state(AiState::Default);
-            self.current_substate = Substate::DefaultHomeSweetHome;
-            return fx; // go_to_duty = false
-        }
-
-        let raw = self.initial_action;
-        match OrderType::try_from(raw).ok() {
-            // Plain waiting variants → on-post with a bored timer;
-            // return `true` so the caller also returns to duty.
-            Some(
-                OrderType::WaitingUpright
-                | OrderType::WaitingUprightBored
-                | OrderType::WaitingUprightBoredRandom,
-            ) => {
-                self.set_ai_state(AiState::Default);
-                self.current_substate = Substate::DefaultOnPost;
-                let bored = self.get_bored_time(sim, ctx);
-                self.launch_timer(bored as u32, ctx.frame);
-                fx.go_to_duty = true;
-            }
-
-            // Sleeping-upright — close eyes, posture Upright +
-            // action_state Sleeping, Zzz emoticon.
-            Some(OrderType::SleepingUpright) => {
-                self.set_ai_state(AiState::Sleeping);
-                self.current_substate = Substate::SleepingNapping;
-                self.set_emoticon(EmoticonType::Zzz);
-                fx.set_eye_status = Some(EyeStatus::Closed);
-                fx.set_posture = Some(Posture::Upright);
-                fx.set_action_state = Some(ActionState::Sleeping);
-                fx.launch_wait = true;
-            }
-
-            // Authored sitting. OnPost + bored timer, posture Sitting,
-            // `likes_to_sit_around = true` so the return-to-duty branch
-            // below picks the sitting placement path.
-            Some(OrderType::Sitting) => {
-                self.set_ai_state(AiState::Default);
-                self.current_substate = Substate::DefaultOnPost;
-                let bored = self.get_bored_time(sim, ctx);
-                self.launch_timer(bored as u32, ctx.frame);
-                self.likes_to_sit_around = true;
-                fx.set_posture = Some(Posture::Sitting);
-                fx.set_action_state = Some(ActionState::Waiting);
-                fx.launch_wait = true;
-            }
-
-            // Dead-fallen-back — zero life points, posture DeadBack,
-            // killed-by-accident (engine side, bundled with
-            // `zero_life_points`).
-            Some(OrderType::BeingDeadFallenBack) => {
-                self.set_ai_state(AiState::Sleeping);
-                self.current_substate = Substate::SleepingForever;
-                fx.zero_life_points = true;
-                fx.set_posture = Some(Posture::DeadBack);
-                fx.set_action_state = Some(ActionState::Waiting);
-                fx.launch_wait = true;
-            }
-
-            // Dead — same shape but posture Dead.
-            Some(OrderType::BeingDead) => {
-                self.set_ai_state(AiState::Sleeping);
-                self.current_substate = Substate::SleepingForever;
-                fx.zero_life_points = true;
-                fx.set_posture = Some(Posture::Dead);
-                fx.set_action_state = Some(ActionState::Waiting);
-                fx.launch_wait = true;
-            }
-
-            // Unconscious — max concussion + `unconscious = true`,
-            // posture Lying. Init-time has no script-lock / carried /
-            // tied gates to honour, so we bypass the full
-            // `combat::set_concussion` state machine and write the
-            // fields directly on the engine side.
-            Some(OrderType::BeingUnconscious) => {
-                self.set_ai_state(AiState::Sleeping);
-                self.current_substate = Substate::SleepingUnconscious;
-                fx.concussion_max_and_unconscious = true;
-                fx.set_posture = Some(Posture::Lying);
-                fx.set_action_state = Some(ActionState::Waiting);
-                fx.launch_wait = true;
-            }
-
-            // Special leisure — OnPost, posture Leisure,
-            // `special_action = true` so the return-to-duty branch picks
-            // the leisure placement path.
-            Some(OrderType::Special) => {
-                self.set_ai_state(AiState::Default);
-                self.current_substate = Substate::DefaultOnPost;
-                self.special_action = true;
-                fx.set_posture = Some(Posture::Leisure);
-                fx.set_action_state = Some(ActionState::Waiting);
-                fx.launch_wait = true;
-            }
-
-            // Unknown initial action — log a warning and default to
-            // on-post.
-            _ => {
-                tracing::warn!(
-                    "NPC {}: state initialization received unsupported initial action {} — defaulting to OnPost",
-                    self.me,
-                    raw,
-                );
-                self.set_ai_state(AiState::Default);
-                self.current_substate = Substate::DefaultOnPost;
-                let bored = self.get_bored_time(sim, ctx);
-                self.launch_timer(bored as u32, ctx.frame);
-                fx.go_to_duty = true;
-            }
-        }
-
-        fx
     }
 
     // -- Timer --
@@ -1195,8 +964,18 @@ impl AiController {
     /// Officers and high-pride soldiers use longer intervals; everyone
     /// else uses the short default.
     pub fn get_bored_time(&self, sim: &crate::sim_rng::SimulationContext, ctx: &AiContext) -> u16 {
+        self.get_bored_time_for(sim, ctx.frame, ctx.self_rank, ctx.self_pride)
+    }
+
+    pub(crate) fn get_bored_time_for(
+        &self,
+        sim: &crate::sim_rng::SimulationContext,
+        frame: u32,
+        rank: crate::profiles::ProfileRank,
+        pride: u16,
+    ) -> u16 {
         // Check the process-local gate before reading any diagnostic-only state.
-        let debug = Self::bored_boundary_debug_matches(ctx.frame, self.me);
+        let debug = Self::bored_boundary_debug_matches(frame, self.me);
         use crate::profiles::ProfileRank;
         const AI_MIN_DEFAULT_BORED_INTERVAL: u16 = 70;
         const AI_DELTA_DEFAULT_BORED_INTERVAL: u16 = 70;
@@ -1205,12 +984,12 @@ impl AiController {
         const AI_MIN_DEFAULT_BORED_INTERVAL_PRIDE: u16 = 400;
         const AI_DELTA_DEFAULT_BORED_INTERVAL_PRIDE: u16 = 800;
 
-        let (min, delta) = if ctx.self_rank == ProfileRank::Officer {
+        let (min, delta) = if rank == ProfileRank::Officer {
             (
                 AI_MIN_DEFAULT_BORED_INTERVAL_OFFICER,
                 AI_DELTA_DEFAULT_BORED_INTERVAL_OFFICER,
             )
-        } else if ctx.self_pride > 0 {
+        } else if pride > 0 {
             (
                 AI_MIN_DEFAULT_BORED_INTERVAL_PRIDE,
                 AI_DELTA_DEFAULT_BORED_INTERVAL_PRIDE,
@@ -1223,12 +1002,12 @@ impl AiController {
         };
         if debug {
             crate::ai::parity_trace::BoredBoundaryGetBoredTime {
-                frame: &(ctx.frame),
+                frame: &(frame),
                 owner: &(self.me),
                 state: &(self.current_state),
                 substate: &(self.current_substate),
-                rank: &(ctx.self_rank),
-                pride: &(ctx.self_pride),
+                rank: &(rank),
+                pride: &(pride),
                 min: &(min),
                 delta: &(delta),
                 timer_running: &(self.timer_is_running),
@@ -1498,13 +1277,23 @@ impl AiController {
         phase: &str,
         reason: impl std::fmt::Debug,
     ) {
+        self.debug_macro_lifecycle_at(ctx.frame, ctx.original_creation_order, phase, reason);
+    }
+
+    pub(crate) fn debug_macro_lifecycle_at(
+        &self,
+        frame: u32,
+        original_creation_order: Option<u32>,
+        phase: &str,
+        reason: impl std::fmt::Debug,
+    ) {
         let config = macro_lifecycle_debug_config();
-        if !config.matches_required([Some(ctx.frame), ctx.original_creation_order]) {
+        if !config.matches_required([Some(frame), original_creation_order]) {
             return;
         }
         crate::ai::parity_trace::Macrolife {
-            frame: &(ctx.frame),
-            owner_creation_order: &(ctx.original_creation_order),
+            frame: &(frame),
+            owner_creation_order: &(original_creation_order),
             me: &(self.me),
             state: &(self.current_state),
             substate: &(self.current_substate),
@@ -1701,8 +1490,7 @@ impl AiController {
     /// - Unconditionally cancel the macro first.
     /// - On clear: snapshot current position/direction into
     ///   `initial_position` / `initial_view_direction` so
-    ///   `return_to_duty_common_stuff` sends the NPC back to the
-    ///   right anchor.
+    ///   returning to duty sends the NPC back to the right anchor.
     /// - Reset `likes_to_sit_around` (per variant), `is_stay_at_home`,
     ///   and — for every variant except [`PatrolAssignment::ScriptWay`] —
     ///   `special_action`.
@@ -1929,139 +1717,6 @@ impl AiController {
             return false;
         }
         true
-    }
-
-    /// Context-free normal-depth decision-tick completion. Returns `false` only for the
-    /// original-game 100.. recursion fallback, whose return to duty needs a typed
-    /// owner context.
-    pub fn end_think_completion_events(&mut self) -> bool {
-        assert!(
-            self.think_recursion_depth > 0,
-            "decision completion without decision entry"
-        );
-        let has_completion =
-            self.couldnt_reachpoint || self.already_on_point || self.already_turned;
-        if (100..111).contains(&self.think_recursion_depth) && has_completion {
-            return false;
-        }
-        if self.think_recursion_depth >= 100 {
-            self.couldnt_reachpoint = false;
-            self.already_on_point = false;
-            self.already_turned = false;
-            let open = std::mem::take(&mut self.open_end_think_frames);
-            self.think_recursion_depth = self
-                .think_recursion_depth
-                .saturating_sub(1)
-                .saturating_sub(open);
-            return true;
-        }
-        // Dispatching a completion event re-enters Think, and Think's entry
-        // gate unconditionally clears all three latches before the nested
-        // handler runs. The remaining latches are therefore already gone by
-        // the time control returns here, so a tick completion emits at most one
-        // completion event no matter how many latches were set.
-        let event = if self.couldnt_reachpoint {
-            Some(StimulusType::EventCouldntReachPoint)
-        } else if self.already_on_point {
-            Some(StimulusType::EventReachPoint)
-        } else if self.already_turned {
-            Some(StimulusType::EventDone)
-        } else {
-            None
-        };
-        self.couldnt_reachpoint = false;
-        self.already_on_point = false;
-        self.already_turned = false;
-        if let Some(event) = event {
-            self.outbox.reentrant.self_stimuli.push(event.into());
-            // Original dispatches this event recursively before the
-            // decrement, so the frame stays open until the cascade's
-            // innermost Think unwinds (see `open_end_think_frames`).
-            self.open_end_think_frames = self.open_end_think_frames.saturating_add(1);
-        } else if self.defer_end_think_for_engine_completion() {
-            // The engine-side drain will either surface the recursively
-            // delivered completion or close this frame after a successful
-            // path authorization.
-        } else {
-            // Innermost Think of the cascade: unwind this frame together
-            // with every still-open ancestor frame.
-            let open = std::mem::take(&mut self.open_end_think_frames);
-            self.think_recursion_depth = self
-                .think_recursion_depth
-                .saturating_sub(1)
-                .saturating_sub(open);
-        }
-        true
-    }
-
-    /// Keep the current Think frame alive until a queued movement/turn
-    /// intent has received its engine-owned synchronous completion verdict.
-    pub(crate) fn defer_end_think_for_engine_completion(&mut self) -> bool {
-        // Several synchronous helpers have to release the AI borrow while the
-        // engine constructs a route, then resume the caller tail from
-        // `owner_work`.  That tail is still inside the enclosing Original
-        // Think even though it temporarily owns the movement order itself.
-        // Keep the decision frame open until the typed continuation has consumed the
-        // first verdict and any fallback movement it authors has settled.
-        // Only continuations whose *resumed tail can enqueue another route*
-        // need to hold the decision frame open while their first order lives solely in
-        // owner work. Friendly soldier alerting and the ordinary battle route
-        // tails consume their result entirely inside the owner-work drain;
-        // treating those as an open decision frame changes later timer ownership
-        // (notably a PC door-route callback's 10-frame timer to 30).
-        let typed_continuation = self.outbox.reentrant.dead_body_alert_completion_pending
-            || self.outbox.reentrant.brawl_hitting_completion_pending;
-        if !self.completion_latch_inside_think
-            || (self.outbox.actor.orders.is_empty() && !typed_continuation)
-        {
-            return false;
-        }
-        self.open_end_think_frames = self.open_end_think_frames.saturating_add(1);
-        self.engine_deferred_end_think_frames =
-            self.engine_deferred_end_think_frames.saturating_add(1);
-        self.engine_completion_verdict_resolved = false;
-        true
-    }
-
-    pub(crate) fn has_typed_completion_pending(&self) -> bool {
-        self.outbox.reentrant.reconsider_approach_completion_pending
-            || self.outbox.reentrant.battle_observe_completion_pending
-            || self.outbox.reentrant.look_for_help_completion_pending
-            || self.outbox.reentrant.alert_soldier_completion_pending
-            || self.outbox.reentrant.dead_body_alert_completion_pending
-            || self
-                .outbox
-                .reentrant
-                .tower_guard_alert_officer_completion_pending
-            || self
-                .outbox
-                .reentrant
-                .civilian_report_alert_officer_completion_pending
-            || self.outbox.reentrant.brawl_hitting_completion_pending
-    }
-
-    /// Publish that the engine has consumed the order whose synchronous
-    /// result an open decision frame is awaiting. This is deliberately
-    /// independent of success/failure: the ordinary completion latches carry
-    /// the result, while this bit distinguishes a successful result from an
-    /// intermediate drain that simply has no result yet.
-    pub(crate) fn resolve_engine_completion_verdict(&mut self) {
-        if self.engine_deferred_end_think_frames != 0 {
-            self.engine_completion_verdict_resolved = true;
-        }
-    }
-
-    /// Close every frame kept alive solely for an engine-side completion
-    /// verdict. Called only once the drain produced no recursive event.
-    pub(crate) fn close_engine_deferred_end_think_frames(&mut self) {
-        if self.engine_deferred_end_think_frames == 0 {
-            return;
-        }
-        let open = std::mem::take(&mut self.open_end_think_frames);
-        self.think_recursion_depth = self.think_recursion_depth.saturating_sub(open);
-        self.engine_deferred_end_think_frames = 0;
-        self.engine_completion_verdict_resolved = false;
-        self.completion_latch_inside_think = false;
     }
 
     /// Broadcast a facing direction to every member of this NPC's patrol
@@ -2348,305 +2003,6 @@ impl AiController {
         ]))
     }
 
-    // -- Friend-check behavior --
-
-    /// Start friend-check behavior against another NPC — the
-    /// direct target of CMD_CHECK_4 / CMD_CHECK_4_SYNC from the macro
-    /// VM.
-    ///
-    /// Steps:
-    ///  (a) bounds-check `friend_id` against the all-soldier count,
-    ///      assert NPC, store on `checkpoint_charly`, assert not self.
-    ///  (b) early-resume the macro if the partner is already known dead
-    ///      / missing (`missed_in_action`) or we recently saw an enemy
-    ///      (`NO_CHECK_FOR_AFTER_CHARLY_ALERT_TIME` cooldown).
-    ///  (c) **pure-synchronization branch** when `frames==0 && index!=
-    ///      u16::MAX`: compare partner's current/last waypoint index
-    ///      and forward-movement direction against ours and either
-    ///      resume the macro or queue a `RegisterSynchronizingActor`
-    ///      and switch to `Substate::DefaultSynchronizing`.
-    ///  (d) waypoint / post visibility check: scan the partner's patrol
-    ///      waypoints (or fall back to its initial post) via
-    ///      [`AiContext::is_detecting_point_360`]. If nothing is
-    ///      visible, log + resume the macro.
-    ///  (e) optionally seed `synchronize_charly` + `synchronize_index`
-    ///      so the wait-loop can synchronise once the friend arrives.
-    ///  (f) configure the look-around wait: `number_of_looks =
-    ///      frames / AI_CHECKFOR_TIME_INTERVAL + 1`,
-    ///      `delta_sorrow_level = 1000 / number_of_looks`, transition
-    ///      to `DefaultLookingSidewardsForCharly`, and queue
-    ///      `pending_look_sidewards` with a random `LeftRight` /
-    ///      `RightLeft` direction.
-    pub fn initialize_friend_check(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        friend_id: u16,
-        frames: u16,
-        index: u16,
-        ctx: &AiContext,
-    ) {
-        // (a) Resolve friend_id → handle. Degrade to a warn +
-        // early-resume on out-of-range or non-NPC, since panicking
-        // would crash the engine on a malformed mission script.
-        let number_of_all = ctx.number_of_all_soldiers();
-        if friend_id >= number_of_all {
-            tracing::warn!(
-                "NPC {}: friend check at ({:.0}, {:.0}): friend_id {} out of range (max {})",
-                self.me,
-                ctx.position.x,
-                ctx.position.y,
-                friend_id,
-                number_of_all
-            );
-            self.set_checkpoint_charly(None);
-            self.current_substate = Substate::DefaultInMacro;
-            self.execute_next_macro_command(sim, ctx);
-            return;
-        }
-        let target = match ctx.all_soldier_handle(friend_id) {
-            Some(h) if h != 0 => h,
-            _ => {
-                tracing::warn!(
-                    "NPC {}: friend check at ({:.0}, {:.0}): friend_id {} resolves to no live actor",
-                    self.me,
-                    ctx.position.x,
-                    ctx.position.y,
-                    friend_id
-                );
-                self.set_checkpoint_charly(None);
-                self.current_substate = Substate::DefaultInMacro;
-                self.execute_next_macro_command(sim, ctx);
-                return;
-            }
-        };
-        // Bail with a warn (instead of panicking) on level-data
-        // issues if the resolved actor isn't an NPC.
-        let target_view = match ctx.entity_view(target) {
-            Some(v)
-                if matches!(
-                    v.kind,
-                    crate::ai_entity_view::EntityKind::Soldier
-                        | crate::ai_entity_view::EntityKind::Civilian
-                ) =>
-            {
-                v.clone()
-            }
-            _ => {
-                tracing::warn!(
-                    "NPC {}: friend check friend_id {} → handle {} is not an NPC",
-                    self.me,
-                    friend_id,
-                    target
-                );
-                self.set_checkpoint_charly(None);
-                self.current_substate = Substate::DefaultInMacro;
-                self.execute_next_macro_command(sim, ctx);
-                return;
-            }
-        };
-        // Store + warn if not self.
-        self.set_checkpoint_charly(Some(AiEntityHandle::new(target)));
-        if target == self.me {
-            tracing::warn!(
-                "NPC {}: friend check at ({:.0}, {:.0}) targets the checking NPC",
-                self.me,
-                ctx.position.x,
-                ctx.position.y
-            );
-        }
-
-        // (b1) friend already on the missed list → skip the check,
-        // resume the macro.
-        if self.missed_in_action.contains(&target) {
-            self.set_checkpoint_charly(None);
-            self.current_substate = Substate::DefaultInMacro;
-            self.execute_next_macro_command(sim, ctx);
-            return;
-        }
-
-        // (b2) recently saw an enemy → no-op.
-        if self.frame_when_enemy_detected > 0
-            && ctx.frame.wrapping_sub(self.frame_when_enemy_detected)
-                < crate::parameters_ai::NO_CHECK_FOR_AFTER_CHARLY_ALERT_TIME
-        {
-            self.set_checkpoint_charly(None);
-            self.current_substate = Substate::DefaultInMacro;
-            self.execute_next_macro_command(sim, ctx);
-            return;
-        }
-
-        // Self path direction / current waypoint — read once.
-        // Forward-movement defaults to true when the path is
-        // uninitialised; matches `PatrolPath::forward`.
-        let my_forward = self.patrol_path.as_ref().map(|p| p.forward).unwrap_or(true);
-        let my_current_wp_index = self
-            .patrol_path
-            .as_ref()
-            .map(|p| p.current_waypoint_index as u16)
-            .unwrap_or(0);
-
-        // (c) Pure synchronization branch.
-        if frames == 0 && index != u16::MAX {
-            let synchronize_index = resolve_synchronize_index(my_current_wp_index, index);
-            self.synchronize_charly = Some(AiEntityHandle::new(target));
-            self.synchronize_index = synchronize_index;
-            self.set_checkpoint_charly(None);
-            debug_assert!(
-                self.macro_in_progress,
-                "friend-check initialization's pure-sync branch requires a macro to be in progress"
-            );
-
-            let target_alive_in_default =
-                target_view.ai_state == AiState::Default && !target_view.is_dead;
-
-            let friend_is_already_there = if target_alive_in_default {
-                if target_view.macro_in_progress {
-                    // Standing at the right waypoint?
-                    if index < 500 {
-                        target_view.path_current_waypoint_index as u16 == synchronize_index
-                    } else if target_view.path_forward_movement != my_forward {
-                        // backwards guy waits — only the forward leg proceeds
-                        my_forward
-                    } else if my_forward {
-                        target_view.path_current_waypoint_index as u16 >= synchronize_index
-                    } else {
-                        target_view.path_current_waypoint_index as u16 <= synchronize_index
-                    }
-                } else if target_view.ai_substate == Substate::DefaultEnroute {
-                    // Last waypoint was the right one?
-                    if index < 500 {
-                        target_view.path_last_waypoint_index as u16 == synchronize_index
-                    } else if target_view.path_forward_movement != my_forward {
-                        my_forward
-                    } else if my_forward {
-                        target_view.path_last_waypoint_index as u16 >= synchronize_index
-                    } else {
-                        target_view.path_last_waypoint_index as u16 <= synchronize_index
-                    }
-                } else {
-                    false
-                }
-            } else {
-                // Friend not in STATE_DEFAULT or dead → forget it.
-                self.current_substate = Substate::DefaultInMacro;
-                self.execute_next_macro_command(sim, ctx);
-                return;
-            };
-
-            if friend_is_already_there {
-                self.current_substate = Substate::DefaultInMacro;
-                self.execute_next_macro_command(sim, ctx);
-            } else {
-                // Not yet there — wait, register us.
-                self.outbox.reentrant.cross_npc_actions.push(
-                    CrossNpcAction::RegisterSynchronizingActor {
-                        target,
-                        actor: self.me,
-                    },
-                );
-                self.current_substate = Substate::DefaultSynchronizing;
-            }
-            return;
-        }
-
-        // (d) Visibility check.
-        if !target_view.has_patrol_path {
-            // Post-only friend. Try the post, then post + 15 Z; if
-            // neither is visible, warn and continue into the wait
-            // setup anyway.
-            // The original game converts the position to 3D here. `initial_position` is
-            // projected map space, so using its Y directly as world Y drops
-            // the ground elevation and can suppress both post LOS queries.
-            let post = ctx.position_to_point_3d(target_view.initial_position);
-            if !ctx.is_detecting_point_360(post) {
-                let mut elevated = post;
-                elevated.z += 15.0;
-                if !ctx.is_detecting_point_360(elevated) {
-                    tracing::warn!(
-                        "NPC {}: friend check at ({:.0}, {:.0}): partner's post at ({:.0}, {:.0}) not visible",
-                        self.me,
-                        ctx.position.x,
-                        ctx.position.y,
-                        target_view.initial_position.x,
-                        target_view.initial_position.y
-                    );
-                }
-            }
-            if index != u16::MAX {
-                tracing::warn!(
-                    "NPC {}: synchronized friend check at ({:.0}, {:.0}): can't synchronise with a partner that has no path",
-                    self.me,
-                    ctx.position.x,
-                    ctx.position.y
-                );
-            }
-        } else {
-            // Scan the partner's patrol waypoints for at least one
-            // that we can see.
-            let hiking_paths = &ctx.hiking_paths;
-            let mut visible_point_found = false;
-            if let Some(path_id) = target_view.patrol_hiking_path_index
-                && let Some(raw_path) = hiking_paths.get(path_id.get() as usize)
-            {
-                for (waypoint_index, wp) in raw_path.waypoints.iter().enumerate() {
-                    let mut pt = ctx.position_to_point_3d(Position {
-                        x: wp.x as f32,
-                        y: wp.y as f32,
-                        sector: ctx.hiking_waypoint_sector(
-                            usize::from(path_id.get()),
-                            waypoint_index,
-                            wp.sector,
-                        ),
-                        level: wp.level,
-                    });
-                    pt.z += 15.0;
-                    if ctx.is_detecting_point_360(pt) {
-                        visible_point_found = true;
-                        break;
-                    }
-                }
-            }
-            if !visible_point_found {
-                // No waypoint visible → log + resume macro.
-                tracing::trace!(
-                    "NPC {}: friend check at ({:.0}, {:.0}): no waypoint of partner's path is visible",
-                    self.me,
-                    ctx.position.x,
-                    ctx.position.y
-                );
-                self.current_substate = Substate::DefaultInMacro;
-                self.execute_next_macro_command(sim, ctx);
-                return;
-            }
-        }
-        // (e) Maybe prepare for later sync.
-        if index == u16::MAX {
-            self.synchronize_charly = None;
-            self.synchronize_index = u16::MAX;
-        } else {
-            self.synchronize_charly = Some(AiEntityHandle::new(target));
-            self.synchronize_index = resolve_synchronize_index(my_current_wp_index, index);
-        }
-
-        // (f) Begin to wait.
-        let interval = crate::parameters_ai::AI_CHECKFOR_TIME_INTERVAL.max(1) as u16;
-        // Original evaluates the expression as an integer and narrows it to
-        // UBYTE. Preserve that modulo-256 conversion rather than saturating.
-        // A zero result is invalid authored data in both engines: Original's
-        // immediately following division by zero fails rather than inventing
-        // a one-look fallback.
-        self.number_of_looks = friend_check_look_count(frames, interval);
-        self.delta_sorrow_level = 1000 / self.number_of_looks as u16;
-        self.current_substate = Substate::DefaultLookingSidewardsForCharly;
-        self.outbox.actor.look_sidewards = Some(
-            if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CheckForLookDirection, 0..2) != 0 {
-                LookDirection::LeftRight
-            } else {
-                LookDirection::RightLeft
-            },
-        );
-    }
-
     // -- Stop all --
 
     /// Halts the actor's current active sequence element via the engine
@@ -2777,69 +2133,14 @@ impl AiController {
         order
     }
 
-    /// Check if the entity is already at `destination` within `tolerance`
-    /// (maximum norm).
-    fn check_already_on_point(
-        &self,
-        destination: &Position,
-        tolerance: f32,
-        ctx: &AiContext,
-    ) -> bool {
-        let dx = (ctx.position.x - destination.x).abs();
-        let dy = (ctx.position.y - destination.y).abs();
-        dx.max(dy) < tolerance
-    }
-
-    /// Rust can still expose the outgoing move-to-wait transition in the AI
-    /// snapshot after Original's actor boundary has exposed its idle
-    /// successor. Keep this projection narrower than ordinary movement's
-    /// five-pixel gate: only a literal same-position request can observe it.
-    fn outgoing_wait_transition_at_exact_destination(
-        destination: &Position,
-        ctx: &AiContext,
-    ) -> bool {
-        ctx.position == *destination
-            // A transition installed on the actor's real default Wait is
-            // live in the original game too: animation selection reads that order and
-            // the close-point switch must launch a coincident Move.  The
-            // projection is only for Rust's stale outgoing movement view,
-            // never for the wait sequence element itself.
-            && ctx.self_selected_element_is_default_wait != Some(true)
-            // This projection only repairs the phase split where Rust still
-            // publishes the outgoing transition order while the actor state
-            // remains on the movement it terminates.  Once Execute has
-            // changed the actor to Waiting, original-game animation selection still
-            // observes that live transition and its close-point movement check
-            // must not pretend that the idle successor is installed.
-            && ctx.self_action_state.is_moving()
-            && ctx.self_animation_motion_state != crate::sprite::MotionState::Start
-            && matches!(
-                ctx.self_animation,
-                crate::order::OrderType::TransitionWalkingUprightWaitingUpright
-                    | crate::order::OrderType::TransitionRunningUprightWaitingUpright
-                    | crate::order::OrderType::TransitionWalkingAlertedWaitingAlerted
-                    | crate::order::OrderType::TransitionRunningAlertedWaitingAlerted
-            )
-    }
-
-    /// Near movement has a separate early-out from ordinary movement: the original game
-    /// compares squared distance with the squared near tolerance.
-    /// Do not reuse the maximum-axis-distance five-pixel movement check above.
-    fn check_already_near(&self, destination: &Position, tolerance: f32, ctx: &AiContext) -> bool {
-        let dx = ctx.position.x - destination.x;
-        let dy = ctx.position.y - destination.y;
-        dx * dx + dy * dy <= tolerance * tolerance
-    }
-
     /// Preserve movement's split close-point callback boundary. Inside AI decisions the
     /// original game defers EVENT_REACHPOINT through the already-on-point flag until
     /// decision-tick completion; callers outside a tick dispatch the reach-point event
     /// synchronously. Rust's owner-boundary drain provides that synchronous
     /// re-entry for a queued self stimulus.
-    fn finish_already_on_point(&mut self) {
-        if self.think_recursion_depth > 0 {
+    fn finish_already_on_point(&mut self, depth: u8) {
+        if depth > 0 {
             self.already_on_point = true;
-            self.completion_latch_inside_think = self.think_recursion_depth > 0;
         } else {
             self.fire_self_stimulus(StimulusType::EventReachPoint);
         }
@@ -2940,255 +2241,106 @@ impl AiController {
         )
     }
 
-    /// Low-level movement primitive — queues a movement intent without
-    /// committing to a substate transition.  Prefer the `EnemyAi::go_to` /
-    /// `FriendlyAi::go_to` wrappers, which enforce the Shape 1 contract
-    /// (every queued movement names the new substate atomically so the
-    /// halt-teardown in `process_pending_ai_orders` can't orphan the AI
-    /// in a "waiting" substate). Calling this directly via
-    /// `ai.base.go_to(...)` bypasses that contract and risks wedge bugs.
+    /// Queue movement using the owner values available at this call boundary.
     pub fn go_to(&mut self, destination: Position, flags: GotoFlags, ctx: &AiContext) {
-        self.go_to_with_transition_projection(destination, flags, ctx, true);
+        self.request_move(
+            destination,
+            flags,
+            1.0,
+            ctx.position,
+            ctx.self_layer,
+            ctx.position.sector,
+            ctx.self_animation,
+            ctx.self_action_state,
+            !ctx.self_is_soldier,
+            ctx.think_depth,
+        );
     }
 
-    /// Start movement when the caller has reconstructed the original game's live
-    /// animation at the exact synchronous call boundary.
-    ///
-    /// Most Rust callers need the outgoing-transition projection because their
-    /// context can lag Original's already-selected idle successor. Deferred
-    /// continuations that explicitly refresh the live sequence order must not
-    /// use that projection: a still-running move-to-wait transition is not one
-    /// of the original game's accepted idle animations for movement.
-    pub(crate) fn go_to_with_live_animation(
+    /// Shared movement setup. Engine-owned callers pass live actor values after
+    /// completing preceding state and movement callbacks.
+    pub(crate) fn request_move(
         &mut self,
         destination: Position,
         flags: GotoFlags,
-        ctx: &AiContext,
+        speed: f32,
+        position: Position,
+        layer: u16,
+        sector: Option<crate::position_interface::SectorHandle>,
+        animation: crate::order::OrderType,
+        action_state: crate::element::ActionState,
+        civilian: bool,
+        depth: u8,
     ) {
-        self.go_to_with_transition_projection(destination, flags, ctx, false);
-    }
-
-    fn go_to_with_transition_projection(
-        &mut self,
-        destination: Position,
-        flags: GotoFlags,
-        ctx: &AiContext,
-        project_outgoing_wait: bool,
-    ) {
-        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
-            && crate::ai_enemy::decision_path_debug_matches(ctx.frame, self.me);
-        if debug_decision_path {
-            crate::ai::parity_trace::AidecisionGotoEnter {
-                frame: &(ctx.frame),
-                owner: &(self.me),
-                co: &(ctx.original_creation_order),
-                destination_x_bits: &(destination.x.to_bits()),
-                destination_y_bits: &(destination.y.to_bits()),
-                destination_sector: &(destination.sector),
-                destination_level: &(destination.level),
-                position_x_bits: &(ctx.position.x.to_bits()),
-                position_y_bits: &(ctx.position.y.to_bits()),
-                position_sector: &(ctx.position.sector),
-                position_level: &(ctx.position.level),
-                couldnt_before: &(self.couldnt_reachpoint),
-                already_before: &(self.already_on_point),
-                owner_work_before: &(self.outbox.reentrant.owner_work),
-                flags: &(flags),
-            }
-            .emit();
-        }
-        // Record the latest destination / flags so stuck-retry replays,
-        // cancellation, and the EventReachPoint re-entry path can see
-        // what was most recently requested.
         self.last_goto_destination = destination;
         self.last_goto_flags = flags;
         self.couldnt_reachpoint = false;
-        // Remember the enclosing-Think context now: the engine finishes path
-        // construction after this borrow ends, and only decision-tick completion delivers
-        // the resulting failure.
-        self.completion_latch_inside_think = self.think_recursion_depth > 0;
-
-        // Civilians must not be issued combat / rider-charge flags.
-        // Mask `FORBIDDEN_CIVILIANS` silently — civilians hitting one
-        // of these flags usually indicates a script or AI bug, but the
-        // game keeps running.
         let mut flags = flags;
-        if !ctx.self_is_soldier {
-            let forbidden = flags & GotoFlags::FORBIDDEN_CIVILIANS;
-            if !forbidden.is_empty() {
-                tracing::warn!(
-                    me = self.me,
-                    ?forbidden,
-                    "civilian movement with forbidden flags — masking",
-                );
-                flags -= GotoFlags::FORBIDDEN_CIVILIANS;
-            }
+        if civilian {
+            flags -= GotoFlags::FORBIDDEN_CIVILIANS;
         }
-
-        // Already-on-point fast-exit. Gated on:
-        //   - maximum norm < 5 from the entity to the destination
-        //   - `!likes_to_sit_around && !special_action`
-        //   - animation state ∈ {WAITING_UPRIGHT, WAITING_ALERTED,
-        //                         NONANIMATION_END}
-        // When the gate fires, `end_think` drains `already_on_point`
-        // into a `Think(EVENT_REACHPOINT)` re-entry. Deferred Halt effects are
-        // projected through the original game's movement stop by the helper above.
-        let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
-            || (project_outgoing_wait
-                && Self::outgoing_wait_transition_at_exact_destination(&destination, ctx))
-            || (project_outgoing_wait
-                && ctx.self_animation_reached_action_done
-                && matches!(
-                    ctx.self_animation,
-                    crate::order::OrderType::TransitionWalkingUprightWaitingUpright
-                        | crate::order::OrderType::TransitionRunningUprightWaitingUpright
-                        | crate::order::OrderType::TransitionWalkingAlertedWaitingAlerted
-                        | crate::order::OrderType::TransitionRunningAlertedWaitingAlerted
-                ))
-            || matches!(
-                ctx.self_animation,
+        let dx = (position.x - destination.x).abs();
+        let dy = (position.y - destination.y).abs();
+        if dx.max(dy) < 5.0
+            && !self.likes_to_sit_around
+            && !self.special_action
+            && matches!(
+                animation,
                 crate::order::OrderType::WaitingUpright
                     | crate::order::OrderType::WaitingAlerted
                     | crate::order::OrderType::NonanimationEnd
-            );
-        let may_short_circuit =
-            idle_for_goto_short_circuit && !self.likes_to_sit_around && !self.special_action;
-        tracing::trace!(
-            target: "robin_engine::ai::goto",
-            me = self.me,
-            animation = ?ctx.self_animation,
-            idle = idle_for_goto_short_circuit,
-            on_point = self.check_already_on_point(&destination, 5.0, ctx),
-            dx = (ctx.position.x - destination.x).abs(),
-            dy = (ctx.position.y - destination.y).abs(),
-            "go_to: already-on-point gate"
-        );
-        if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
-            self.finish_already_on_point();
-            if debug_decision_path {
-                crate::ai::parity_trace::AidecisionGotoResultAlreadyOnPoint {
-                    frame: &(ctx.frame),
-                    owner: &(self.me),
-                    couldnt: &(self.couldnt_reachpoint),
-                    already: &(self.already_on_point),
-                    owner_work: &(self.outbox.reentrant.owner_work),
-                }
-                .emit();
-            }
+            )
+        {
+            self.finish_already_on_point(depth);
             return;
         }
-
-        // Near movement uses the same original-game movement path
-        // method with `GOTO_NEAR` stored in the flags. Stuck recovery later
-        // replays those stored flags by requesting movement directly, so the
-        // low-level primitive must preserve the near-distance early-out too.
-        // Unlike the five-pixel shortcut above, this gate is independent of
-        // the current animation and uses squared norm on the same layer.
-        let near_tolerance = if flags.contains(GotoFlags::NEAR) {
+        let tolerance = if flags.contains(GotoFlags::NEAR) {
             self.stop_before_end_of_path_distance as f32
         } else {
             0.0
         };
         if flags.contains(GotoFlags::NEAR)
-            && destination.level == ctx.self_layer
-            && self.check_already_near(&destination, near_tolerance, ctx)
+            && destination.level == layer
+            && dx * dx + dy * dy <= tolerance * tolerance
         {
-            self.finish_already_on_point();
-            if debug_decision_path {
-                crate::ai::parity_trace::AidecisionGotoResultAlreadyNear {
-                    frame: &(ctx.frame),
-                    owner: &(self.me),
-                    tolerance_bits: &(near_tolerance.to_bits()),
-                    couldnt: &(self.couldnt_reachpoint),
-                    already: &(self.already_on_point),
-                    owner_work: &(self.outbox.reentrant.owner_work),
-                }
-                .emit();
-            }
+            self.finish_already_on_point(depth);
             return;
         }
-
-        // Out-of-level-bounds destinations fail fast with
-        // `couldnt_reachpoint`. The non-negative half is enforced here;
-        // the upper bound at the level size is enforced by the
-        // engine drain in `preflight_ai_goto`, which has access to the
-        // shared cutscene camera's level size.
-        if destination.x <= 0.0 || destination.y <= 0.0 {
+        if destination.x <= 0.0
+            || destination.y <= 0.0
+            || destination.sector.is_none()
+            || (destination.level as i16) < 0
+        {
             self.couldnt_reachpoint = true;
-            if debug_decision_path {
-                crate::ai::parity_trace::AidecisionGotoResultRejectNonpositive {
-                    frame: &(ctx.frame),
-                    owner: &(self.me),
-                }
-                .emit();
-            }
             return;
         }
-
-        // Null sector or negative layer → fail fast.
-        // `Position.sector == None` represents a null sector; layer is
-        // `u16` so the "negative layer" branch becomes unreachable
-        // unless a caller stuffs `u16::MAX` in deliberately.
-        if destination.sector.is_none() {
-            self.couldnt_reachpoint = true;
-            if debug_decision_path {
-                crate::ai::parity_trace::AidecisionGotoResultRejectNullSector {
-                    frame: &(ctx.frame),
-                    owner: &(self.me),
-                }
-                .emit();
-            }
-            return;
-        }
-
-        // Strip `GOTO_STRAIGHT` when the destination crosses sector or
-        // layer **and** the caller didn't pair it with
-        // `GOTO_ASKOBSTACLE` — straight doesn't make sense across
-        // sectors without an obstacle check.
         let crosses_sector = match (
-            destination.sector.and_then(|sector| sector.arena_index()),
-            ctx.position.sector.and_then(|sector| sector.arena_index()),
+            destination.sector.and_then(|s| s.arena_index()),
+            sector.and_then(|s| s.arena_index()),
         ) {
             (Some(destination), Some(current)) => destination != current,
-            _ => destination.sector != ctx.position.sector,
+            _ => destination.sector != sector,
         };
-        let crosses_boundary = crosses_sector || destination.level != ctx.position.level;
         if flags.contains(GotoFlags::STRAIGHT)
             && !flags.contains(GotoFlags::ASK_OBSTACLE)
-            && crosses_boundary
+            && (crosses_sector || destination.level != layer)
         {
             flags -= GotoFlags::STRAIGHT;
         }
-
-        // Prepend the appropriate action-state teardown before the
-        // move is launched. Centralised here so every caller benefits
-        // — the engine drain processes these intents before
-        // `launch_pending_orders_for_npc` runs the move.
         let GotoActionStateTeardown {
             quit_swordfight_before_move,
             enter_swordfight_before_move,
             stop_menace_before_move,
             lower_shield_before_move,
-        } = self.apply_goto_action_state_teardown(flags, ctx);
-
+        } = self.apply_goto_action_state_teardown(flags, action_state);
         let mut order = Self::make_move_order(&destination, flags);
-        order.tolerance = near_tolerance;
+        order.speed_factor = speed;
+        order.tolerance = tolerance;
         order.quit_swordfight_before_move = quit_swordfight_before_move;
         order.enter_swordfight_before_move = enter_swordfight_before_move;
         order.stop_menace_before_move = stop_menace_before_move;
         order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
-        if debug_decision_path {
-            crate::ai::parity_trace::AidecisionGotoResultQueued {
-                frame: &(ctx.frame),
-                owner: &(self.me),
-                couldnt: &(self.couldnt_reachpoint),
-                already: &(self.already_on_point),
-                pending_orders: &(self.outbox.actor.orders.len()),
-                owner_work: &(self.outbox.reentrant.owner_work),
-            }
-            .emit();
-        }
     }
 
     /// Prepend the action-state teardown for a launching movement / approach /
@@ -3211,9 +2363,8 @@ impl AiController {
     fn apply_goto_action_state_teardown(
         &mut self,
         flags: GotoFlags,
-        ctx: &AiContext,
+        action_state: crate::element::ActionState,
     ) -> GotoActionStateTeardown {
-        let action_state = ctx.self_action_state;
         let mut quit_swordfight_before_move = false;
         let mut enter_swordfight_before_move = false;
         let mut stop_menace_before_move = false;
@@ -3250,9 +2401,6 @@ impl AiController {
         }
     }
 
-    /// Low-level movement primitive (speed variant) — see
-    /// [`AiController::go_to`] for the Shape 1 contract caveat.  Prefer
-    /// `EnemyAi::go_to_speed` / `FriendlyAi::go_to_speed`.
     pub fn go_to_speed(
         &mut self,
         destination: Position,
@@ -3260,45 +2408,18 @@ impl AiController {
         speed: f32,
         ctx: &AiContext,
     ) {
-        self.last_goto_destination = destination;
-        self.last_goto_flags = flags;
-        self.couldnt_reachpoint = false;
-        // Remember the enclosing-Think context now: the engine finishes path
-        // construction after this borrow ends, and only decision-tick completion delivers
-        // the resulting failure.
-        self.completion_latch_inside_think = self.think_recursion_depth > 0;
-        // This is the same original-game movement path as the default-speed
-        // wrapper. Its close-point shortcut is legal only from one of the
-        // idle animations; a running patrol member may pass within five
-        // units of a newly coordinated formation point and must still book
-        // the replacement walk rather than synthesize EventReachPoint.
-        let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
-            || Self::outgoing_wait_transition_at_exact_destination(&destination, ctx)
-            || matches!(
-                ctx.self_animation,
-                crate::order::OrderType::WaitingUpright
-                    | crate::order::OrderType::WaitingAlerted
-                    | crate::order::OrderType::NonanimationEnd
-            );
-        let may_short_circuit =
-            idle_for_goto_short_circuit && !self.likes_to_sit_around && !self.special_action;
-        if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
-            self.finish_already_on_point();
-            return;
-        }
-        let GotoActionStateTeardown {
-            quit_swordfight_before_move,
-            enter_swordfight_before_move,
-            stop_menace_before_move,
-            lower_shield_before_move,
-        } = self.apply_goto_action_state_teardown(flags, ctx);
-        let mut order = Self::make_move_order(&destination, flags);
-        order.speed_factor = speed;
-        order.quit_swordfight_before_move = quit_swordfight_before_move;
-        order.enter_swordfight_before_move = enter_swordfight_before_move;
-        order.stop_menace_before_move = stop_menace_before_move;
-        order.lower_shield_before_move = lower_shield_before_move;
-        self.outbox.actor.orders.push(order);
+        self.request_move(
+            destination,
+            flags,
+            speed,
+            ctx.position,
+            ctx.self_layer,
+            ctx.position.sector,
+            ctx.self_animation,
+            ctx.self_action_state,
+            !ctx.self_is_soldier,
+            ctx.think_depth,
+        );
     }
 
     /// Queue the direct map-exit movement used by
@@ -3310,7 +2431,6 @@ impl AiController {
         self.last_goto_destination = destination;
         self.last_goto_flags = GotoFlags::RUN;
         self.couldnt_reachpoint = false;
-        self.completion_latch_inside_think = self.think_recursion_depth > 0;
 
         let mut order = Self::make_move_order(&destination, GotoFlags::RUN);
         // This is deliberately a local map-movement element, not the full
@@ -3321,14 +2441,7 @@ impl AiController {
         self.outbox.actor.orders.push(order);
     }
 
-    /// Low-level movement primitive (go-near variant) — see
-    /// [`AiController::go_to`] for the Shape 1 contract caveat. Prefer
-    /// `EnemyAi::go_near` / `FriendlyAi::go_near`.
-    ///
-    /// Pre-scales the tolerance under deep recursion (release-build
-    /// mitigation), then tail-calls `go_to` with the NEAR flag OR'd in
-    /// so `last_goto_flags` preserves the near semantics for
-    /// stuck-retry replays.
+    /// Set approach tolerance, then run ordinary movement with the near flag.
     pub fn go_near(
         &mut self,
         destination: Position,
@@ -3336,131 +2449,19 @@ impl AiController {
         flags: GotoFlags,
         ctx: &AiContext,
     ) {
-        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
-            && crate::ai_enemy::decision_path_debug_matches(ctx.frame, self.me);
-        if debug_decision_path {
-            crate::ai::parity_trace::AidecisionGoNearEnter {
-                frame: &(ctx.frame),
-                owner: &(self.me),
-                co: &(ctx.original_creation_order),
-                destination_x_bits: &(destination.x.to_bits()),
-                destination_y_bits: &(destination.y.to_bits()),
-                destination_sector: &(destination.sector),
-                destination_level: &(destination.level),
-                distance: &(distance),
-                recursion_depth: &(self.think_recursion_depth),
-                couldnt_before: &(self.couldnt_reachpoint),
-                already_before: &(self.already_on_point),
-                flags: &(flags),
-            }
-            .emit();
-        }
-        // Deep recursion shrinks the stop-distance toward zero so the
-        // actor doesn't loop on Think() recursion. Always applied — a
-        // mitigation, not a behaviour knob.
-        let effective_distance = if self.think_recursion_depth < 10 {
+        self.prepare_approach(distance, flags, ctx.think_depth);
+        self.go_to(destination, flags | GotoFlags::NEAR, ctx);
+    }
+
+    pub(crate) fn prepare_approach(&mut self, distance: i32, flags: GotoFlags, depth: u8) {
+        let effective_distance = if depth < 10 {
             distance
         } else {
-            let depth = self.think_recursion_depth as i32;
-            (((100 - depth) * distance) / 100).max(0)
+            (((100 - depth as i32) * distance) / 100).max(0)
         };
         self.stop_before_end_of_path = true;
         self.use_max_norm_to_stop_before_end_of_path = !flags.contains(GotoFlags::USE_NORM);
         self.stop_before_end_of_path_distance = effective_distance as u16;
-
-        // Preserve the GOTO_NEAR state which ordinary movement setup
-        // observes after its generic close-idle shortcut.
-        self.last_goto_destination = destination;
-        self.last_goto_flags = flags | GotoFlags::NEAR;
-        self.couldnt_reachpoint = false;
-        self.completion_latch_inside_think = self.think_recursion_depth > 0;
-
-        // Approach movement stores its stop distance and then requests ordinary
-        // movement with GOTO_NEAR. Consequently the five-pixel idle
-        // shortcut runs before the separate near-tolerance test
-        // during movement initialization. This is observable
-        // when a terminal movement card has detached the actor's order:
-        // The animation is NONANIMATION_END during the re-entrant decision tick, so
-        // even a zero-distance approach reports EVENT_REACHPOINT instead of
-        // launching a replacement Move.
-        let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
-            || Self::outgoing_wait_transition_at_exact_destination(&destination, ctx)
-            || (ctx.self_animation_reached_action_done
-                && matches!(
-                    ctx.self_animation,
-                    crate::order::OrderType::TransitionWalkingUprightWaitingUpright
-                        | crate::order::OrderType::TransitionRunningUprightWaitingUpright
-                        | crate::order::OrderType::TransitionWalkingAlertedWaitingAlerted
-                        | crate::order::OrderType::TransitionRunningAlertedWaitingAlerted
-                ))
-            || matches!(
-                ctx.self_animation,
-                crate::order::OrderType::WaitingUpright
-                    | crate::order::OrderType::WaitingAlerted
-                    | crate::order::OrderType::NonanimationEnd
-            );
-        let may_short_circuit =
-            idle_for_goto_short_circuit && !self.likes_to_sit_around && !self.special_action;
-        if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
-            self.finish_already_on_point();
-            if debug_decision_path {
-                crate::ai::parity_trace::AidecisionGoNearResultAlreadyOnPoint {
-                    frame: &(ctx.frame),
-                    owner: &(self.me),
-                    effective_distance: &(effective_distance),
-                    couldnt: &(self.couldnt_reachpoint),
-                    already: &(self.already_on_point),
-                }
-                .emit();
-            }
-            return;
-        }
-
-        // The AI position can snap a door-passing actor to the committed
-        // gate side, including that side's level. Original nevertheless
-        // compares the requested level with the actor's layer here, so use
-        // the live actor layer rather than the snapped Position level.
-        let same_layer = destination.level == ctx.self_layer;
-        if same_layer && self.check_already_near(&destination, effective_distance as f32, ctx) {
-            self.finish_already_on_point();
-            if debug_decision_path {
-                crate::ai::parity_trace::AidecisionGoNearResultAlreadyNear {
-                    frame: &(ctx.frame),
-                    owner: &(self.me),
-                    effective_distance: &(effective_distance),
-                    couldnt: &(self.couldnt_reachpoint),
-                    already: &(self.already_on_point),
-                }
-                .emit();
-            }
-            return;
-        }
-
-        let GotoActionStateTeardown {
-            quit_swordfight_before_move,
-            enter_swordfight_before_move,
-            stop_menace_before_move,
-            lower_shield_before_move,
-        } = self.apply_goto_action_state_teardown(flags, ctx);
-        let mut order = Self::make_move_order(&destination, flags);
-        order.tolerance = effective_distance as f32;
-        order.quit_swordfight_before_move = quit_swordfight_before_move;
-        order.enter_swordfight_before_move = enter_swordfight_before_move;
-        order.stop_menace_before_move = stop_menace_before_move;
-        order.lower_shield_before_move = lower_shield_before_move;
-        self.outbox.actor.orders.push(order);
-        if debug_decision_path {
-            crate::ai::parity_trace::AidecisionGoNearResultQueued {
-                frame: &(ctx.frame),
-                owner: &(self.me),
-                effective_distance: &(effective_distance),
-                couldnt: &(self.couldnt_reachpoint),
-                already: &(self.already_on_point),
-                pending_orders: &(self.outbox.actor.orders.len()),
-                owner_work: &(self.outbox.reentrant.owner_work),
-            }
-            .emit();
-        }
     }
 
     // -- Facing commands --
@@ -3539,7 +2540,6 @@ impl AiController {
         );
         if target_dir as u16 == ctx.direction && may_short_circuit {
             self.already_turned = true;
-            self.completion_latch_inside_think = self.think_recursion_depth > 0;
             return;
         }
         let mut intent = AiOrderIntent::face_direction(target_dir);
@@ -3729,7 +2729,7 @@ impl AiController {
         self.face_direction_from_actor(direction, ctx.direction, ctx.self_action_state);
     }
 
-    fn face_direction_from_actor(
+    pub(crate) fn face_direction_from_actor(
         &mut self,
         direction: u16,
         current_direction: u16,
@@ -3742,7 +2742,6 @@ impl AiController {
             )
         {
             self.already_turned = true;
-            self.completion_latch_inside_think = self.think_recursion_depth > 0;
             return;
         }
         self.launch_turn_direction_unconditionally(direction);
@@ -3805,9 +2804,6 @@ impl AiController {
     /// This does not bias head tracking toward the point, matching the
     /// original game's behavior.
     pub fn point_to(&mut self, pos: Position, ctx: &AiContext) {
-        use crate::element::Command;
-        use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
-
         let owner = self
             .owner_entity_id
             .expect("pointing requires an AI controller bound to an owner");
@@ -3832,6 +2828,13 @@ impl AiController {
             }
             .emit();
         }
+        self.point_direction(direction);
+    }
+
+    pub(crate) fn point_direction(&mut self, direction: i16) {
+        use crate::element::Command;
+        use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
+        let owner = self.owner_entity_id.expect("pointing requires an owner");
         let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
         turn.set_property(Field::Direction, FieldValue::Integer(direction as u32));
         let mut point = SequenceElement::new_generic(2, Command::Point, Some(owner));
@@ -3900,246 +2903,6 @@ impl AiController {
 
     // -- Return to duty (common) --
 
-    /// Common return-to-duty logic shared by soldiers and civilians.
-    pub fn return_to_duty_common_stuff(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        flags: DutyFlags,
-        ctx: &AiContext,
-    ) {
-        // Start with green alert status — no macro interruption /
-        // memory clearing here, those are called by their own
-        // call-sites elsewhere in the state machine. Route through the
-        // flags-aware setter so a forced-attentive soldier returning
-        // to duty keeps the view cone YELLOW even though the music
-        // drops to GREEN.
-        self.set_alert_status_with_flags(
-            AlertLevel::Green,
-            AlertFlags::empty(),
-            ctx.self_forced_attentive,
-        );
-
-        if !flags.contains(DutyFlags::KEEP_EMOTICON) {
-            self.clear_emoticon();
-        }
-
-        // Reset patrol path history so formation rebuilds cleanly.
-        if let Some(ref mut path) = self.patrol_path {
-            path.reset_history();
-        }
-        self.my_reconnaissance_report.reset();
-
-        // Drop any stale `detected_body` pointer once the NPC no
-        // longer has outstanding `DETECTABLE_FRIEND` entries (i.e.
-        // it's finished swapping reports with alerted allies). The
-        // friend count rides in on `ctx` so we don't have to crack
-        // open `NpcData` from inside the AI.
-        if ctx.self_detectable_friend_count == 0 {
-            self.detected_body = None;
-        }
-
-        // If this NPC has a live patrol chief that's able to fight
-        // *and* detectable with the authoritative 360° human query,
-        // run to them and enter `DefaultGotoChief` — let the chief
-        // re-gather the patrol as the minion closes. The original query
-        // requires both actors to be active outside buildings, checks
-        // the live view radius in 3-D, and tests opaque LOS; distance
-        // alone is not sufficient. Only abandon the goto-chief path
-        // when `couldnt_reachpoint` fires (then fall through to the
-        // normal return-to-post logic below).
-        if let Some(chief_id) = self.patrol_chief
-            && let Some(chief_view) = ctx.entity_view(chief_id.index())
-            && chief_view.is_able_to_fight
-            && chief_view.active
-            && crate::ai_enemy::soldier_detects_detection_point_360(
-                ctx.self_upright_eye_world,
-                ctx.self_view_radius,
-                ctx.in_building,
-                crate::stealth::detection_point_world(
-                    chief_view.detection_position_world,
-                    chief_view.posture,
-                    chief_view.direction as i16,
-                    chief_view.is_rider,
-                ),
-                chief_view.in_building,
-                ctx.obstacle_list(),
-            )
-        {
-            self.set_ai_state(AiState::Default);
-            self.current_substate = Substate::DefaultGotoChief;
-            self.go_near(
-                chief_view.position,
-                crate::parameters_ai::AI_TALK_DISTANCE,
-                GotoFlags::empty(),
-                ctx,
-            );
-            if !self.couldnt_reachpoint {
-                return;
-            }
-            // Couldn't reach — reset flag and fall through to the
-            // post/patrol-path logic.
-            self.couldnt_reachpoint = false;
-        }
-
-        let hiking_paths = &ctx.hiking_paths;
-
-        if self.has_patrol_path {
-            let mut initial_nearest_waypoint_distance = f32::MAX;
-            // Initialize patrol path if not yet done.
-            if self.patrol_path.is_none() {
-                self.patrol_path = self
-                    .path_id
-                    .and_then(|pid| PatrolPath::new(pid, hiking_paths));
-                if self.patrol_path.is_none() {
-                    tracing::warn!(
-                        "NPC {} has_patrol_path but path_id {:?} is invalid, falling back to post",
-                        self.me,
-                        self.path_id,
-                    );
-                    self.has_patrol_path = false;
-                }
-            }
-
-            if let Some(ref mut path) = self.patrol_path {
-                let pos_here = ctx.position;
-                let num_waypoints = path.size;
-
-                // Find the nearest waypoint by maximum-norm distance.
-                let mut best_index: u8 = 0;
-                let mut min_dist = f32::MAX;
-                for i in 0..num_waypoints {
-                    if let Some(wp) = path.get_waypoint(i, hiking_paths) {
-                        let dx = (wp.x as f32 - pos_here.x).abs();
-                        let dy = (wp.y as f32 - pos_here.y).abs();
-                        let dist = dx.max(dy); // Maximum norm
-                        if dist < min_dist {
-                            min_dist = dist;
-                            best_index = i;
-                        }
-                    }
-                }
-                initial_nearest_waypoint_distance = min_dist;
-
-                path.set_current_index(best_index);
-
-                // Check whether going from here → nearest → next requires >90° turn.
-                // If so, skip to the next waypoint.
-                if let Some(wp) = path.current_waypoint(hiking_paths) {
-                    let dir_x = wp.x as f32 - pos_here.x;
-                    let dir_y = wp.y as f32 - pos_here.y;
-                    let dir_norm = dir_x.abs().max(dir_y.abs());
-
-                    if (best_index as usize) < (num_waypoints as usize).saturating_sub(1)
-                        && let Some(next_wp) = path.peek_next_waypoint(hiking_paths)
-                    {
-                        let next_dx = next_wp.x as f32 - wp.x as f32;
-                        let next_dy = next_wp.y as f32 - wp.y as f32;
-                        // Dot product < 0 means >90° turn
-                        let dot = dir_x * next_dx + dir_y * next_dy;
-                        if dir_norm < 10.0 || dot < 0.0 {
-                            path.advance();
-                        }
-                    }
-                }
-            }
-
-            // Now that the path borrow is done, set state and issue walk order.
-            if self.patrol_path.is_some() {
-                self.set_ai_state(AiState::Default);
-                self.current_substate = Substate::DefaultGotoRoute;
-
-                // At frame 0, if this is a patrol chief near its start, pre-seed
-                // history so minions can form up immediately.
-                let is_patrol_chief = self.has_patrol();
-                let is_frame_zero = ctx.frame == 0;
-                if is_patrol_chief
-                    && is_frame_zero
-                    && let Some(ref mut path) = self.patrol_path
-                {
-                    // Original tests the vector to the nearest waypoint as
-                    // computed before it may advance past that waypoint for
-                    // the actual movement request. Recomputing against the advanced
-                    // waypoint can incorrectly suppress history seeding.
-                    if initial_nearest_waypoint_distance < 50.0 {
-                        path.initialize_history_entries_on_path(hiking_paths, ctx);
-                    }
-                }
-
-                // Walk to current waypoint.
-                let dest = self.patrol_path.as_ref().and_then(|path| {
-                    path.current_waypoint(hiking_paths).map(|wp| Position {
-                        x: wp.x as f32,
-                        y: wp.y as f32,
-                        sector: ctx.hiking_waypoint_sector(
-                            usize::from(path.hiking_path_index),
-                            usize::from(path.current_waypoint_index),
-                            wp.sector,
-                        ),
-                        level: wp.level,
-                    })
-                });
-                if let Some(dest) = dest {
-                    let mut walk_flags = self.default_path_walking_flags;
-                    if !self.will_stop_at_next_waypoint_debug(
-                        sim,
-                        hiking_paths,
-                        ctx,
-                        WillStopCaller::ReturnToDuty,
-                    ) {
-                        walk_flags |= GotoFlags::DONT_STOP;
-                    }
-                    self.go_to(dest, walk_flags, ctx);
-                }
-            }
-        } else if self.likes_to_sit_around {
-            // Sitting NPCs: check if already at initial position — if
-            // so, stay put; otherwise walk back with
-            // `GOTO_SPECIAL_ACTION`.
-            let ip = self.initial_position;
-            let dx = (ctx.position.x - ip.x).abs();
-            let dy = (ctx.position.y - ip.y).abs();
-            if matches!(ctx.posture, crate::element::Posture::Sitting) && dx.max(dy) < 3.0 {
-                // Already on sitting place.
-                self.set_ai_state(AiState::Default);
-                self.current_substate = Substate::DefaultOnPost;
-                let bored = self.get_bored_time(sim, ctx);
-                self.launch_timer(bored as u32, ctx.frame);
-            } else {
-                // Return to sitting place.
-                self.set_ai_state(AiState::Default);
-                self.current_substate = Substate::DefaultGotoPost;
-                self.go_to(ip, GotoFlags::SPECIAL_ACTION, ctx);
-            }
-        } else if self.special_action {
-            // Leisure-posture NPCs: same shape as the sitting branch
-            // but keyed on posture==LEISURE and also uses
-            // GOTO_SPECIAL_ACTION.
-            let ip = self.initial_position;
-            let dx = (ctx.position.x - ip.x).abs();
-            let dy = (ctx.position.y - ip.y).abs();
-            if matches!(ctx.posture, crate::element::Posture::Leisure) && dx.max(dy) < 3.0 {
-                // Already on leisure place.
-                self.set_ai_state(AiState::Default);
-                self.current_substate = Substate::DefaultOnPost;
-                let bored = self.get_bored_time(sim, ctx);
-                self.launch_timer(bored as u32, ctx.frame);
-            } else {
-                // Return to leisure place.
-                self.set_ai_state(AiState::Default);
-                self.current_substate = Substate::DefaultGotoPost;
-                self.go_to(ip, GotoFlags::SPECIAL_ACTION, ctx);
-            }
-        } else {
-            // Plain return-to-post: no `GOTO_SPECIAL_ACTION`, no
-            // posture gate — just the Original's bare
-            // movement to the initial position with default flags.
-            let ip = self.initial_position;
-            self.set_ai_state(AiState::Default);
-            self.current_substate = Substate::DefaultGotoPost;
-            self.go_to(ip, GotoFlags::empty(), ctx);
-        }
-    }
-
     /// Forecast whether the actor will stop at its current waypoint.
     ///
     /// Returns `true` when the selected macro section starts with an
@@ -4165,8 +2928,25 @@ impl AiController {
         ctx: &AiContext,
         caller: WillStopCaller,
     ) -> bool {
+        self.will_stop_at_next_waypoint_at(
+            sim,
+            hiking_paths,
+            ctx.frame,
+            ctx.original_creation_order,
+            caller,
+        )
+    }
+
+    pub(crate) fn will_stop_at_next_waypoint_at(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        hiking_paths: &[crate::level_data::RawHikingPath],
+        frame: u32,
+        original_creation_order: Option<u32>,
+        caller: WillStopCaller,
+    ) -> bool {
         let config = will_stop_debug_config();
-        let debug = config.matches_required([Some(ctx.frame), ctx.original_creation_order]);
+        let debug = config.matches_required([Some(frame), original_creation_order]);
         let before = debug.then(|| {
             let path = self.patrol_path.as_ref();
             let waypoint = path.and_then(|path| path.current_waypoint(hiking_paths));
@@ -4180,8 +2960,8 @@ impl AiController {
         let result = self.will_stop_at_next_waypoint_inner(sim, hiking_paths);
         if let Some((forecasted_before, value_before, path, waypoint)) = before {
             crate::ai::parity_trace::Willstop {
-                frame: &(ctx.frame),
-                owner: &(ctx.original_creation_order),
+                frame: &(frame),
+                owner: &(original_creation_order),
                 forecast_after: &(self.next_macro_rand_forecasted),
                 value_after: &(self.next_macro_rand),
                 caller: &(caller),
@@ -4203,8 +2983,8 @@ impl AiController {
     ) -> bool {
         use crate::level_data::WaypointCommand;
 
-        // Collapse the path/waypoint borrow into owned data so the rest
-        // of the function can take `&mut self` for `forecast_macro_rand`.
+        // Bytecode belongs to immutable path assets; retain that borrow while
+        // advancing the controller's RNG forecast state.
         let (forward, macro_data) = {
             let Some(path) = self.patrol_path.as_ref() else {
                 // No path → conservatively report "will stop".
@@ -4218,7 +2998,7 @@ impl AiController {
                 WaypointCommand::None => return false,
                 // Script may halt → will stop.
                 WaypointCommand::Script(_) => return true,
-                WaypointCommand::Macro(data) => (path.forward, data.clone()),
+                WaypointCommand::Macro(data) => (path.forward, data.as_slice()),
             }
         };
 
@@ -4497,7 +3277,7 @@ impl AiController {
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         ctx: &AiContext,
-    ) -> bool {
+    ) -> AiFlow<bool> {
         let stimulus_type = stimulus.stimulus_type;
 
         match self.current_substate {
@@ -4569,7 +3349,7 @@ impl AiController {
 
             // ─── Fleeing ────────────────────────────────────────────
             Substate::FleeingRunToHide | Substate::FleeingRunToDoor => {
-                return self.expected_common_fleeing_run_to_hide(sim, stimulus, ctx);
+                return Ok(self.expected_common_fleeing_run_to_hide(sim, stimulus, ctx));
             }
 
             // ─── Panic-run state machine ────────────────────────────
@@ -4577,23 +3357,14 @@ impl AiController {
             // into `FleeingHiding` (panic is spent) or pick a new run
             // direction and move along it.
             Substate::FleeingPanic => {
-                return self.expected_common_fleeing_panic(sim, stimulus, ctx);
+                return Ok(self.expected_common_fleeing_panic(sim, stimulus, ctx));
             }
 
             Substate::FleeingHiding => {
                 if stimulus_type == StimulusType::EventTimer {
-                    // The original game returns the actor to duty here
-                    // when clearing a primary target. Friendly's
-                    // override clears the fleeing-enemy counter before
-                    // entering the common tail; bypassing it can permanently
-                    // suppress later EVENT_VIEW panic refreshes once the
-                    // counter has reached its cap.
-                    self.outbox
-                        .reentrant
-                        .owner_work
-                        .push(AiOwnerWork::VirtualReturnToDuty {
-                            flags: DutyFlags::empty(),
-                        });
+                    // Dispatch through the actor's duty implementation so
+                    // civilians also reset their fleeing-enemy counter.
+                    return Err(DutyCall::new(DutyFlags::empty(), false));
                 }
             }
 
@@ -4605,7 +3376,7 @@ impl AiController {
             }
         }
 
-        false
+        Ok(false)
     }
 
     /// Resolve the turn authored by route arrival using the post-callback path.
@@ -4633,38 +3404,6 @@ impl AiController {
         })
     }
 
-    pub(crate) fn finish_suspended_common_handler(&mut self) {
-        // The resumed tail still belongs to the Think whose typed Rust frame
-        // had to unwind before an engine-owned synchronous callback could run.
-        // Movement path construction happens only after this helper returns,
-        // so retain that logical tick-completion ownership for a deferred
-        // couldn't-reach/already-on-point result. Without this marker a
-        // cross-topology approach rejected by the owner drain is treated as an
-        // out-of-Think call and its completion is discarded.
-        self.completion_latch_inside_think = true;
-        if self.couldnt_reachpoint {
-            self.couldnt_reachpoint = false;
-            self.outbox
-                .reentrant
-                .self_stimuli
-                .push(StimulusType::EventCouldntReachPoint.into());
-        }
-        if self.already_on_point {
-            self.already_on_point = false;
-            self.outbox
-                .reentrant
-                .self_stimuli
-                .push(StimulusType::EventReachPoint.into());
-        }
-        if self.already_turned {
-            self.already_turned = false;
-            self.outbox
-                .reentrant
-                .self_stimuli
-                .push(StimulusType::EventDone.into());
-        }
-    }
-
     /// Advance past the current waypoint and continue walking.
     /// Called when a waypoint's command is handled (or skipped).
     fn proceed_on_path(
@@ -4683,7 +3422,6 @@ impl AiController {
             // move.
             if path.size <= 1 {
                 self.already_on_point = true;
-                self.completion_latch_inside_think = self.think_recursion_depth > 0;
                 return;
             }
             path.advance();
@@ -4989,7 +3727,7 @@ impl AiController {
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         ctx: &AiContext,
-    ) -> bool {
+    ) -> AiFlow<bool> {
         let stimulus_type = stimulus.stimulus_type;
         let hiking_paths = &ctx.hiking_paths;
         let is_route_turn = self.current_substate == Substate::DefaultGotoRouteTurn;
@@ -5001,8 +3739,7 @@ impl AiController {
             if let Some(ref mut path) = self.patrol_path {
                 if path.size == 0 {
                     // Path was eliminated (by script?) — return to duty.
-                    self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
-                    return false;
+                    return Err(DutyCall::new(DutyFlags::empty(), false));
                 }
 
                 // Dispatch `EventSyncCharly` to every
@@ -5058,8 +3795,7 @@ impl AiController {
                                 // One-point path → treat as post.
                                 // Snap the post anchor to the
                                 // current location; otherwise
-                                // `return_to_duty_common_stuff`
-                                // would walk back to the
+                                // returning to duty would walk back to the
                                 // level-load spawn.
                                 self.has_patrol_path = false;
                                 self.initial_position = ctx.position;
@@ -5079,22 +3815,7 @@ impl AiController {
                                             * crate::position_interface::ASPECT_RATIO,
                                         initial_view_vector[1],
                                     ) as u16;
-                                if ctx.self_is_soldier {
-                                    // The common original-game route handler calls the
-                                    // actor-specific return to duty here. A soldier must
-                                    // enter EnemyAi::return_to_duty so its inline
-                                    // Patrol initialization runs before the common
-                                    // tail. Resume that response at the owner
-                                    // boundary, where the containing Enemy AI and
-                                    // engine patrol geometry are both available.
-                                    self.outbox.reentrant.owner_work.push(
-                                        AiOwnerWork::VirtualReturnToDuty {
-                                            flags: DutyFlags::empty(),
-                                        },
-                                    );
-                                } else {
-                                    self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
-                                }
+                                return Err(DutyCall::new(DutyFlags::empty(), false));
                             } else {
                                 let next_wp = next_wp.clone();
                                 let path_index = path.hiking_path_index;
@@ -5127,7 +3848,7 @@ impl AiController {
                             }
                         } else {
                             // No next waypoint — done.
-                            self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
+                            return Err(DutyCall::new(DutyFlags::empty(), false));
                         }
                     }
                     crate::level_data::WaypointCommand::Script(_script) => {
@@ -5157,11 +3878,10 @@ impl AiController {
                 }
             } else {
                 // No patrol path — fall back to post.
-                self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
-                return false;
+                return Err(DutyCall::new(DutyFlags::empty(), false));
             }
         }
-        false
+        Ok(false)
     }
 
     fn expected_common_fleeing_run_to_hide(

@@ -372,11 +372,10 @@ impl EnemyAi {
     /// Pops the next queued money-fight victim and approaches it;
     /// returns to duty when the queue drains.  Sets `detected_body`
     /// before going near.
-    pub(super) fn awake_next_money_fight_victim_if_any(&mut self, env: ThinkEnv<'_>) {
+    pub(super) fn awake_next_money_fight_victim_if_any(&mut self, env: ThinkEnv<'_>) -> AiFlow<()> {
         let ctx = env.ctx;
         if self.money_fight_victims.is_empty() {
-            self.return_to_duty_default(env);
-            return;
+            return Err(DutyCall::new(DutyFlags::empty(), false));
         }
         let next = self.money_fight_victims.remove(0);
         self.base.detected_body = Some(AiEntityHandle::new(next));
@@ -393,6 +392,7 @@ impl EnemyAi {
                 ctx,
             );
         }
+        Ok(())
     }
 
     /// After a brawl ends the soldier scans its seen-money list for

@@ -427,6 +427,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             &assets.navigation.hiking_waypoint_sectors,
             &engine.ai.global.all_soldier_handles,
             engine.control.sim_config.difficulty,
+            engine.ai_think_depth(),
         )
     };
     assert!(ctx.is_night_or_fog);
@@ -554,6 +555,7 @@ fn run_synchronous_civilian_alert(
             &assets.navigation.hiking_waypoint_sectors,
             &engine.ai.global.all_soldier_handles,
             engine.control.sim_config.difficulty,
+            engine.ai_think_depth(),
         )
     };
     let tick = engine.build_npc_tick_data(sim, civilian_id, &assets);
@@ -647,6 +649,7 @@ fn review2_context_and_tick(
         &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
+        engine.ai_think_depth(),
     );
     let tick = engine.build_npc_tick_data(sim, id, assets);
     (ctx, tick)

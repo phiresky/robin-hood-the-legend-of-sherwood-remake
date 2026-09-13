@@ -91,54 +91,6 @@ fn owner_walk_observes_live_geometry_in_original_creation_order() {
 }
 
 #[test]
-fn typed_route_continuation_keeps_end_think_open_for_its_fallback_move() {
-    use crate::ai::{StimulusType, Substate};
-    use crate::element::AiBrain;
-
-    let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(owner)
-        .expect("typed-continuation test soldier exists")
-    else {
-        unreachable!()
-    };
-    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
-
-    let ai = soldier
-        .npc
-        .ai_brain
-        .base_mut()
-        .expect("typed-continuation test soldier has AI");
-    ai.current_substate = Substate::SeekingBodyLookingDeadBody;
-    ai.think_recursion_depth = 1;
-    ai.completion_latch_inside_think = true;
-    // Dead-body alerting moved its first approach into an ActorEffects owner-work
-    // prefix. The following typed tail will consume that verdict and may
-    // author fallback area-seeking movement before the same tick completion returns.
-    ai.outbox.reentrant.dead_body_alert_completion_pending = true;
-    assert!(ai.end_think_completion_events());
-    assert_eq!(ai.think_recursion_depth, 1);
-    assert_eq!(ai.engine_deferred_end_think_frames, 1);
-
-    // Model the typed tail consuming its first failure, then its fallback
-    // movement failing synchronously. That second verdict still belongs to
-    // the original open Think and must recurse into the seek handler.
-    ai.outbox.reentrant.dead_body_alert_completion_pending = false;
-    ai.couldnt_reachpoint = true;
-    engine.surface_synchronous_completion_events_for_owner(owner);
-
-    let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::ai_controller)
-        .expect("typed-continuation test soldier retains AI");
-    assert_eq!(
-        ai.outbox.reentrant.self_stimuli,
-        [StimulusType::EventCouldntReachPoint]
-    );
-}
-
-#[test]
 fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
     use crate::ai::AttentiveModeEffect;
     use crate::element::{AiBrain, Command, Posture};
@@ -292,36 +244,6 @@ fn stop_exclamation_removes_only_first_same_actor_request_in_each_sound_phase() 
         vec![(7, 0), (8, 5)],
         "StopExclamation cannot retract an already-delivered completion"
     );
-}
-
-#[test]
-fn unrelated_running_to_officer_failure_remains_generic() {
-    use crate::ai::{AiState, StimulusType, Substate};
-
-    let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let ai = engine
-        .get_entity_mut(owner)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("generic route-failure owner has Enemy AI");
-    ai.base.current_state = AiState::Seeking;
-    ai.base.current_substate = Substate::SeekingRunningToOfficer;
-    ai.base.completion_latch_inside_think = true;
-    ai.base.couldnt_reachpoint = true;
-
-    engine.surface_synchronous_completion_events_for_owner(owner);
-
-    let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("generic route-failure owner retains Enemy AI");
-    assert!(!ai.base.couldnt_reachpoint);
-    assert_eq!(
-        ai.base.outbox.reentrant.self_stimuli,
-        vec![StimulusType::EventCouldntReachPoint]
-    );
-    assert!(ai.seek_flags.is_empty());
-    assert!(ai.personal_seek_point_2.is_none());
 }
 
 #[test]

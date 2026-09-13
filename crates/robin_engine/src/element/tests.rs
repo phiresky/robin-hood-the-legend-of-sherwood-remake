@@ -1809,15 +1809,6 @@ fn entity_persisted_projection_matches_json_round_trip_body() {
         ]));
         sprite.alternate_conversion = Some(std::sync::Arc::new(vec![4, 5]));
         sprite.last_motion_state = Some(crate::sprite::MotionState::InProgress);
-        let ai = entity
-            .npc_data_mut()
-            .unwrap()
-            .ai_brain
-            .base_mut()
-            .expect("fixture brain");
-        ai.open_end_think_frames = 2;
-        ai.engine_deferred_end_think_frames = 1;
-        ai.engine_completion_verdict_resolved = true;
     }
 
     let projected = entities.persisted_projection();
@@ -1839,16 +1830,12 @@ fn entity_persisted_projection_matches_json_round_trip_body() {
     let runtime_only = |entities: &crate::entities::Entities, id| {
         let entity = entities.get(id).unwrap();
         let sprite = &entity.element_data().sprite;
-        let ai = entity.npc_data().unwrap().ai_brain.base().unwrap();
         (
             sprite.scripts.len(),
             sprite.alternate_scripts.is_some(),
             sprite.conversion.len(),
             sprite.alternate_conversion.is_some(),
             sprite.last_motion_state,
-            ai.open_end_think_frames,
-            ai.engine_deferred_end_think_frames,
-            ai.engine_completion_verdict_resolved,
         )
     };
     for id in [soldier_id, civilian_id] {
@@ -1860,19 +1847,13 @@ fn entity_persisted_projection_matches_json_round_trip_body() {
                 3,
                 true,
                 Some(crate::sprite::MotionState::InProgress),
-                2,
-                1,
-                true
             )
         );
         assert_eq!(
             runtime_only(&projected, id),
             runtime_only(&json_round_trip, id)
         );
-        assert_eq!(
-            runtime_only(&projected, id),
-            (0, false, 0, false, None, 0, 0, false)
-        );
+        assert_eq!(runtime_only(&projected, id), (0, false, 0, false, None));
     }
 
     // The world save capture is the projection, and restores it unchanged.

@@ -172,7 +172,7 @@ fn trace_reactive_step_back_after_goto(
     flags: impl std::fmt::Debug,
 ) {
     eprintln!(
-        "REACTIVE_STEP_BACK frame={} co={} phase=after_goto victim={} state={:?} substate={:?} goal=({:08x},{:08x},sector={:?},level={}) flags={:?} couldnt={} already={} inside_think={} pending_orders={} owner_work={:?}",
+        "REACTIVE_STEP_BACK frame={} co={} phase=after_goto victim={} state={:?} substate={:?} goal=({:08x},{:08x},sector={:?},level={}) flags={:?} couldnt={} already={} pending_orders={} owner_work={:?}",
         debug.frame,
         debug.creation_order,
         victim_id.index(),
@@ -185,7 +185,6 @@ fn trace_reactive_step_back_after_goto(
         flags,
         ai.base.couldnt_reachpoint,
         ai.base.already_on_point,
-        ai.base.completion_latch_inside_think,
         ai.base.outbox.actor.orders.len(),
         ai.base.outbox.reentrant.owner_work,
     );
@@ -349,7 +348,7 @@ impl EngineInner {
             format_args!("reactive step-back diagnostic victim"),
         );
         eprintln!(
-            "REACTIVE_STEP_BACK frame={} co={} phase=parry_selected victim={} attacker={} fighting_ability={} push_back_distance={} state={:?} substate={:?} position=({:08x},{:08x},sector={:?},level={}) animation={:?} command={:?} couldnt={} already={} inside_think={} owner_work={:?}",
+            "REACTIVE_STEP_BACK frame={} co={} phase=parry_selected victim={} attacker={} fighting_ability={} push_back_distance={} state={:?} substate={:?} position=({:08x},{:08x},sector={:?},level={}) animation={:?} command={:?} couldnt={} already={} owner_work={:?}",
             debug.frame,
             debug.creation_order,
             victim_id.index(),
@@ -370,7 +369,6 @@ impl EngineInner {
             self.actor_command(victim_id),
             ai.couldnt_reachpoint,
             ai.already_on_point,
-            ai.completion_latch_inside_think,
             ai.outbox.reentrant.owner_work,
         );
     }
@@ -390,7 +388,7 @@ impl EngineInner {
             format_args!("reactive step-back diagnostic victim after drain"),
         );
         eprintln!(
-            "REACTIVE_STEP_BACK frame={} co={} phase=after_drain victim={} state={:?} substate={:?} animation={:?} command={:?} couldnt={} already={} inside_think={} self_stimuli={:?} owner_work={:?}",
+            "REACTIVE_STEP_BACK frame={} co={} phase=after_drain victim={} state={:?} substate={:?} animation={:?} command={:?} couldnt={} already={} self_stimuli={:?} owner_work={:?}",
             debug.frame,
             debug.creation_order,
             victim_id.index(),
@@ -404,7 +402,6 @@ impl EngineInner {
             self.actor_command(victim_id),
             ai.couldnt_reachpoint,
             ai.already_on_point,
-            ai.completion_latch_inside_think,
             ai.outbox.reentrant.self_stimuli,
             ai.outbox.reentrant.owner_work,
         );

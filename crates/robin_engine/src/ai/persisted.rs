@@ -43,9 +43,6 @@ pub(crate) trait PersistedProjection: Clone {
 
 impl PersistedProjection for AiController {
     fn clear_runtime_only_state(&mut self) {
-        self.open_end_think_frames = Default::default();
-        self.engine_deferred_end_think_frames = Default::default();
-        self.engine_completion_verdict_resolved = Default::default();
         self.stimulus_queue
             .iter_mut()
             .for_each(Stimulus::clear_runtime_only_state);

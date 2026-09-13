@@ -1,5 +1,32 @@
 use super::*;
 
+fn duty_fixture(
+    mut ai: FriendlyAi,
+) -> (
+    crate::engine::EngineInner,
+    crate::engine::LevelAssets,
+    crate::element::EntityId,
+) {
+    use crate::element::{AiBrain, Entity, Posture};
+    let mut engine = crate::engine::EngineInner::new();
+    let mut entity = crate::engine::test_support::actors::make_test_civilian(Posture::Leisure);
+    // A civilian already resting at its post needs no navigation fixture.
+    ai.base.special_action = true;
+    ai.base.outbox = Default::default();
+    let Entity::Civilian(civilian) = &mut entity else {
+        unreachable!()
+    };
+    civilian.npc.ai_brain = AiBrain::Friendly(Box::new(ai));
+    let owner = engine.add_test_entity(entity);
+    let mut assets = crate::engine::LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    (engine, assets, owner)
+}
+
+fn friendly(engine: &crate::engine::EngineInner, owner: crate::element::EntityId) -> &FriendlyAi {
+    engine.get_entity(owner).unwrap().friendly_ai().unwrap()
+}
+
 impl FriendlyAi {
     /// Raw-coordinate panic entry point (tests only).  Production
     /// code uses [`Self::panic_from_point_at`] so the panic
@@ -184,16 +211,16 @@ fn patrol_coordinate_same_substate_still_calls_friendly_state_without_stop_prefi
 
 #[test]
 fn civilian_return_to_duty() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
+    let sim = crate::sim_rng::test_context();
     let mut ai = FriendlyAi::new(1);
+    ai.base.current_state = AiState::Fleeing;
+    ai.base.current_substate = Substate::FleeingPanic;
     ai.fleeing_seen_enemy_counter = 5;
-    ai.set_state(AiState::Fleeing, Substate::FleeingPanic);
-    ai.return_to_duty(sim, DutyFlags::empty(), &AiContext::test_fixture());
+    let (mut engine, assets, owner) = duty_fixture(ai);
+    engine.execute_ai_return_to_duty(&sim, &assets, owner, DutyFlags::empty());
+    let ai = friendly(&engine, owner);
     assert_eq!(ai.base.current_state, AiState::Default);
-    // NPC walks back to initial position first, then transitions
-    // to DefaultOnPost via EventReachPoint → DefaultGotoPostTurn → EventDone.
-    assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+    assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
     assert_eq!(ai.fleeing_seen_enemy_counter, 0);
 }
 
@@ -234,29 +261,28 @@ fn apple_chase_does_not_replace_a_missing_chaser_with_undirected_panic() {
         &FriendlyPerTickData::without_patrol_chief(),
         None,
         None,
-    );
+    )
+    .unwrap();
 }
 
 #[test]
 fn think_expected_admiring_hero_returns_to_duty() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
+    let sim = crate::sim_rng::test_context();
     let mut ai = FriendlyAi::new(1);
-    ai.set_state(AiState::Wondering, Substate::WonderingCivilianAdmiringHero);
-
-    let stimulus = Stimulus::new(StimulusType::EventTimer);
-    ai.think_expected_event(
-        sim,
-        &stimulus,
-        &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
-        None,
-        None,
+    ai.base.current_state = AiState::Wondering;
+    ai.base.current_substate = Substate::WonderingCivilianAdmiringHero;
+    ai.fleeing_seen_enemy_counter = 5;
+    let (mut engine, assets, owner) = duty_fixture(ai);
+    engine.execute_ai_callback(
+        &sim,
+        &assets,
+        owner,
+        &Stimulus::new(StimulusType::EventTimer),
     );
-
+    let ai = friendly(&engine, owner);
     assert_eq!(ai.base.current_state, AiState::Default);
-    // Walks back to post first (DefaultGotoPost → EventReachPoint → OnPost).
-    assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+    assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
+    assert_eq!(ai.fleeing_seen_enemy_counter, 0);
 }
 
 #[test]
@@ -348,105 +374,82 @@ fn think_alerting_event_stop_while_sleeping() {
 
 #[test]
 fn think_unexpected_couldnt_reachpoint_returns_to_duty() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
+    let sim = crate::sim_rng::test_context();
     let mut ai = FriendlyAi::new(1);
-    let mut global = AiGlobalState::default();
-    ai.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
-
-    let stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
-    ai.think_unexpected_event(
-        sim,
-        &stimulus,
-        &mut global,
-        &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
-        None,
-        None,
+    ai.base.current_state = AiState::Seeking;
+    ai.base.current_substate = Substate::SeekingCivilianRunningToSoldier;
+    ai.fleeing_seen_enemy_counter = 5;
+    let (mut engine, assets, owner) = duty_fixture(ai);
+    engine.execute_ai_callback(
+        &sim,
+        &assets,
+        owner,
+        &Stimulus::new(StimulusType::EventCouldntReachPoint),
     );
-
+    let ai = friendly(&engine, owner);
     assert_eq!(ai.base.current_state, AiState::Default);
-    // Walks back to post first.
-    assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+    assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
+    assert_eq!(ai.fleeing_seen_enemy_counter, 0);
 }
 
 #[test]
 fn after_script_queue_rebuilds_retained_view_antagonist() {
-    use crate::ai_entity_view::{AiEntityViewMap, EntityKind, shared_entity_views};
     use crate::element::Camp;
-
     let sim = crate::sim_rng::test_context();
-    let mut global = AiGlobalState::default();
-    let mut ai = FriendlyAi::new(1);
-    let target = 42;
-    let target_pos = Position {
-        x: 150.0,
-        y: 250.0,
-        sector: None,
-        level: 0,
-    };
-    let mut target_view = make_soldier_view(target_pos, Camp::Lacklandists, AiState::Attacking);
-    target_view.kind = EntityKind::Pc;
-    target_view.is_pc = true;
-    target_view.is_swordfighting = true;
-    let mut views = AiEntityViewMap::new();
-    views.insert(target, target_view);
-    let ctx = AiContext {
-        camp: Camp::Royalists,
-        entity_views: shared_entity_views(views),
-        // The outer EVENT_AFTER_SCRIPT_GO_ON has no antagonist.
-        antagonist: None,
-        ..AiContext::test_fixture()
-    };
-
-    ai.base
+    let (mut engine, mut assets, owner) = duty_fixture(FriendlyAi::new(1));
+    let mut target = crate::engine::test_support::actors::make_test_ai_soldier(Camp::Lacklandists);
+    target
+        .element_data_mut()
+        .set_position_map(MapPoint::new(150.0, 250.0));
+    target.human_data_mut().unwrap().opponents.push(owner);
+    let target = engine.add_test_entity(target);
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
         .stimulus_queue
-        .push(Stimulus::with_human(StimulusType::EventView, target));
-    ai.think_unexpected_event(
+        .push(Stimulus::with_human(
+            StimulusType::EventView,
+            target.index(),
+        ));
+    engine.execute_ai_callback(
         &sim,
+        &assets,
+        owner,
         &Stimulus::new(StimulusType::EventAfterScriptGoOn),
-        &mut global,
-        &ctx,
-        &FriendlyPerTickData::without_patrol_chief(),
-        None,
-        None,
     );
-
+    let ai = friendly(&engine, owner);
+    assert!(ai.base.stimulus_queue.is_empty());
     assert_eq!(ai.base.current_state, AiState::Fleeing);
-    assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
-    let request = ai
-        .base
-        .outbox
-        .actor
-        .begin_panic
-        .expect("retained swordfighter view must launch panic");
-    assert_eq!(request.center, Some(target_pos));
+    assert!(ai.base.directed_panic);
+    assert_eq!(ai.base.panic_center_x, 150.0);
+    assert_eq!(ai.base.panic_center_y, 250.0);
 }
 
 #[test]
 fn think_unexpected_fit_again_returns_to_duty() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
+    let sim = crate::sim_rng::test_context();
     let mut ai = FriendlyAi::new(1);
-    let mut global = AiGlobalState::default();
-    ai.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
-
-    let stimulus = Stimulus::new(StimulusType::EventFitAgain);
-    ai.think_unexpected_event(
-        sim,
-        &stimulus,
-        &mut global,
-        &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
-        None,
-        None,
+    ai.base.current_state = AiState::Sleeping;
+    ai.base.current_substate = Substate::SleepingUnconscious;
+    ai.fleeing_seen_enemy_counter = 5;
+    let (mut engine, assets, owner) = duty_fixture(ai);
+    engine.execute_ai_callback(
+        &sim,
+        &assets,
+        owner,
+        &Stimulus::new(StimulusType::EventFitAgain),
     );
-
+    let ai = friendly(&engine, owner);
     assert_eq!(ai.base.current_state, AiState::Default);
+    assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
+    assert_eq!(ai.fleeing_seen_enemy_counter, 0);
 }
 
 #[test]
-fn fit_again_queues_ordered_resurrection_eye_and_state_work() {
+fn fit_again_returns_duty_after_ordered_resurrection_and_eye_prefix() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     // EVENT_FITAGAIN must fire the resurrection fan-out and
@@ -460,22 +463,25 @@ fn fit_again_queues_ordered_resurrection_eye_and_state_work() {
     ai.base.outbox.reentrant.owner_work.clear();
 
     let stimulus = Stimulus::new(StimulusType::EventFitAgain);
-    ai.think_unexpected_event(
-        sim,
-        &stimulus,
-        &mut global,
-        &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
-        None,
-        None,
-    );
+    let duty = ai
+        .think_unexpected_event(
+            sim,
+            &stimulus,
+            &mut global,
+            &AiContext::test_fixture(),
+            &FriendlyPerTickData::without_patrol_chief(),
+            None,
+            None,
+        )
+        .expect_err("recovery hands duty to the engine after its actor prefix");
+    assert!(!duty.think_result);
+    assert!(duty.flags.is_empty());
 
     assert!(matches!(
         ai.base.outbox.reentrant.owner_work.as_slice(),
         [
             crate::ai::AiOwnerWork::InformResurrection,
             crate::ai::AiOwnerWork::SetEyeStatus(crate::element::EyeStatus::LookForward),
-            crate::ai::AiOwnerWork::StateChange(_),
         ]
     ));
     assert!(!ai.base.outbox.recovery.inform_resurrection);
@@ -496,38 +502,20 @@ fn hiding_timer_uses_virtual_return_before_fleeing_event_view_panics() {
     use crate::order::OrderType;
     let mut ai = FriendlyAi::new(1);
 
-    // The original game's AI hiding-timer branch uses a specialized
-    // return to duty. The engine drains this owner work through
-    // FriendlyAi::return_to_duty, which resets the capped
-    // fleeing-view counter before running the ordinary common tail.
     ai.fleeing_seen_enemy_counter = 7;
-    ai.set_state(AiState::Fleeing, Substate::FleeingHiding);
-    ai.think_expected_event(
+    ai.base.current_state = AiState::Fleeing;
+    ai.base.current_substate = Substate::FleeingHiding;
+    let (mut engine, assets, owner) = duty_fixture(ai);
+    engine.execute_ai_callback(
         sim,
+        &assets,
+        owner,
         &Stimulus::new(StimulusType::EventTimer),
-        &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
-        None,
-        None,
     );
-    assert_eq!(ai.fleeing_seen_enemy_counter, 7);
-    assert_eq!(ai.base.current_state, AiState::Fleeing);
-    assert_eq!(ai.base.current_substate, Substate::FleeingHiding);
-    let work = ai
-        .base
-        .outbox
-        .reentrant
-        .owner_work
-        .pop()
-        .expect("hiding timer must invoke virtual ReturnToDuty");
-    assert!(matches!(
-        work,
-        crate::ai::AiOwnerWork::VirtualReturnToDuty { .. }
-    ));
-    ai.return_to_duty(sim, DutyFlags::empty(), &AiContext::test_fixture());
+    let mut ai = friendly(&engine, owner).clone();
     assert_eq!(ai.fleeing_seen_enemy_counter, 0);
     assert_eq!(ai.base.current_state, AiState::Default);
-    assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+    assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
 
     ai.set_state(AiState::Fleeing, Substate::FleeingRunToDoor);
 
@@ -643,7 +631,8 @@ fn think_unexpected_net_away_panics() {
         &FriendlyPerTickData::without_patrol_chief(),
         None,
         None,
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_state, AiState::Fleeing);
     assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
@@ -687,7 +676,8 @@ fn patrol_coordinate_uses_real_chief_position_for_near_backwards_gate() {
         },
     );
 
-    ai.think_unexpected_event(sim, &stimulus, &mut global, &ctx, &tick, None, None);
+    ai.think_unexpected_event(sim, &stimulus, &mut global, &ctx, &tick, None, None)
+        .unwrap();
     let orders = ai.base.take_pending_orders();
 
     assert_eq!(orders.len(), 1);
@@ -714,7 +704,8 @@ fn patrol_handler_cannot_silently_consume_missing_friendly_tick_data() {
         &FriendlyPerTickData::without_patrol_chief(),
         None,
         None,
-    );
+    )
+    .unwrap();
 }
 
 #[test]
@@ -774,7 +765,8 @@ fn expected_event_body_reactiontime_alert_fails_panics() {
         &FriendlyPerTickData::without_patrol_chief(),
         None,
         None,
-    );
+    )
+    .unwrap();
 
     // Soldier alerting fails (stub) → should panic
     assert_eq!(ai.base.current_state, AiState::Fleeing);
@@ -805,7 +797,8 @@ fn expected_event_whistling_child_approaches() {
         &FriendlyPerTickData::without_patrol_chief(),
         None,
         None,
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_state, AiState::Wondering);
     assert_eq!(
@@ -825,22 +818,22 @@ fn expected_event_whistling_child_approaches() {
 
 #[test]
 fn fleeing_child_chased_end_returns_to_duty() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
+    let sim = crate::sim_rng::test_context();
     let mut ai = FriendlyAi::new(1);
-    ai.set_state(AiState::Fleeing, Substate::FleeingChildChasedEnd);
-
-    let stimulus = Stimulus::new(StimulusType::EventTimer);
-    ai.think_expected_event(
-        sim,
-        &stimulus,
-        &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
-        None,
-        None,
+    ai.base.current_state = AiState::Fleeing;
+    ai.base.current_substate = Substate::FleeingChildChasedEnd;
+    ai.fleeing_seen_enemy_counter = 5;
+    let (mut engine, assets, owner) = duty_fixture(ai);
+    engine.execute_ai_callback(
+        &sim,
+        &assets,
+        owner,
+        &Stimulus::new(StimulusType::EventTimer),
     );
-
+    let ai = friendly(&engine, owner);
     assert_eq!(ai.base.current_state, AiState::Default);
+    assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
+    assert_eq!(ai.fleeing_seen_enemy_counter, 0);
 }
 
 // ──────────────────────────────────────────────────────────
@@ -1330,7 +1323,8 @@ fn alert_soldier_first_route_success_delays_then_emits_success_remark() {
         &AiContext::test_fixture(),
         None,
         None,
-    );
+    )
+    .unwrap();
     assert!(!ai.base.outbox.reentrant.alert_soldier_completion_pending);
     assert!(ai.base.outbox.actor.begin_panic.is_none());
     assert!(matches!(
@@ -1390,7 +1384,7 @@ fn alert_soldier_second_route_failure_runs_each_caller_tail_once() {
         let mut ai = FriendlyAi::new(1);
         ai.base.couldnt_reachpoint = true;
         ai.base.outbox.reentrant.alert_soldier_completion_pending = true;
-        ai.resume_alert_soldier_after_go_near(
+        let flow = ai.resume_alert_soldier_after_go_near(
             &sim,
             Position::default(),
             true,
@@ -1424,6 +1418,7 @@ fn alert_soldier_second_route_failure_runs_each_caller_tail_once() {
         assert_eq!(live_deletes + callback_prefix_deletes, 1);
         match failure {
             AlertSoldierFailureContinuation::PanicWithRemark => {
+                flow.unwrap();
                 assert!(ai.base.outbox.actor.begin_panic.is_some());
                 assert!(matches!(
                     ai.base.outbox.reentrant.owner_work.first(),
@@ -1434,6 +1429,7 @@ fn alert_soldier_second_route_failure_runs_each_caller_tail_once() {
                 ));
             }
             AlertSoldierFailureContinuation::Panic => {
+                flow.unwrap();
                 assert!(ai.base.outbox.actor.begin_panic.is_some());
                 assert!(
                     !ai.base
@@ -1445,12 +1441,14 @@ fn alert_soldier_second_route_failure_runs_each_caller_tail_once() {
                 );
             }
             AlertSoldierFailureContinuation::ReturnToDuty => {
+                let duty = flow.expect_err("failed alert returns to engine-owned duty");
                 assert!(ai.base.outbox.actor.begin_panic.is_none());
-                assert_eq!(ai.base.current_state, AiState::Default);
-                assert_ne!(
-                    ai.base.current_substate,
-                    Substate::SeekingCivilianRunningToSoldier
-                );
+                ai.fleeing_seen_enemy_counter = 7;
+                let (mut engine, assets, owner) = duty_fixture(ai);
+                engine.execute_ai_return_to_duty(&sim, &assets, owner, duty.flags);
+                let ai = friendly(&engine, owner);
+                assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
+                assert_eq!(ai.fleeing_seen_enemy_counter, 0);
             }
         }
     }
@@ -1491,7 +1489,8 @@ fn alert_soldier_first_failure_then_retry_success_avoids_failure_tail() {
         &ctx,
         None,
         None,
-    );
+    )
+    .unwrap();
     assert!(ai.base.outbox.reentrant.alert_soldier_completion_pending);
     assert!(ai.base.outbox.actor.begin_panic.is_none());
     assert!(matches!(
@@ -1510,7 +1509,8 @@ fn alert_soldier_first_failure_then_retry_success_avoids_failure_tail() {
         &ctx,
         None,
         None,
-    );
+    )
+    .unwrap();
     assert!(!ai.base.outbox.reentrant.alert_soldier_completion_pending);
     assert!(ai.base.outbox.actor.begin_panic.is_none());
     assert!(matches!(

@@ -13,25 +13,6 @@ pub(super) fn is_archer_from_bow(bow: Option<&crate::profiles::BowProfile>) -> b
     bow.is_some()
 }
 
-/// PC inputs retained until the next PC noise-refresh invalidation.
-/// Combat fields are read live at each Think, not copied into this capture.
-#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub(super) struct PcDetectionState {
-    pub(super) id: EntityId,
-    pub(super) position: MapPoint,
-    pub(super) layer: u16,
-    pub(super) detection_speed_in_forest: u16,
-    pub(super) detection_speed_in_city: u16,
-    pub(super) is_vip: bool,
-    pub(super) is_robin: bool,
-    pub(super) unconscious: bool,
-    pub(super) carried: bool,
-    /// Persistent bounds can intentionally differ from the produced-noise origin.
-    pub(super) hear_noise_box: crate::coordinates::MapBBox,
-    pub(super) produced_noise: crate::ai::Noise,
-    pub(super) is_swordfighting: bool,
-}
-
 /// Per-tick read-only snapshot of a human-typed detection target —
 /// shared across the `DetectableType::Body / Friend / MissedFriend /
 /// Beggar` per-type passes since all four feed `compute_visibility`
@@ -113,11 +94,9 @@ fn object_detection_world_position(
     crate::coordinates::WorldPoint3D::new(position.x, position.y, position.z + 1.0)
 }
 
-/// Inputs retained across NPC detection refreshes until a PC publishes noise.
-/// This is not a tactical world projection: each Think builds its live inputs.
+/// Shared occupancy inputs retained across NPC detection refreshes.
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct DetectionFrameState {
-    pub(super) pcs: Vec<PcDetectionState>,
     /// Optical target selection uses this captured occupancy; tactical target
     /// selectors use Original's separately ordered 16-bit scratch counters.
     pub(super) detection_target_multiplicity: std::collections::BTreeMap<EntityId, u32>,
@@ -125,80 +104,23 @@ pub(super) struct DetectionFrameState {
 }
 
 impl EngineInner {
-    /// Preserve the established capture/invalidation cadence while retaining
-    /// only data consumed by detection and its queued sleeping-enemy lists.
-    pub(super) fn capture_detection_frame_state(
-        &mut self,
-        assets: &LevelAssets,
-    ) -> DetectionFrameState {
+    /// Refresh shared detection occupancy and reconcile archer/shield links.
+    pub(super) fn capture_detection_frame_state(&mut self) -> DetectionFrameState {
         let _detail = super::super::tick::entity_system_detail_guard(
             super::super::tick::EntitySystemDetail::BuildWorldView,
         );
-        let pcs = self.capture_pc_detection_state(assets);
         let detection_target_multiplicity = self.tick_enemy_ai_build_primary_target_multiplicity();
         self.refresh_archer_shield_links();
         let unconscious_soldiers = self.tick_enemy_ai_build_unconscious_soldiers();
         DetectionFrameState {
-            pcs,
             detection_target_multiplicity,
             unconscious_soldiers,
         }
     }
 
-    /// Capture the PC registry in its insertion order, independently of portrait
-    /// sorting. Noise was already produced by the PC's human-update tail.
-    pub(super) fn capture_pc_detection_state(&self, assets: &LevelAssets) -> Vec<PcDetectionState> {
-        self.world
-            .original_pc_registry()
-            .iter()
-            .map(|&id| {
-                let Entity::Pc(pc) = self.expect_entity(id, "PC detection registry") else {
-                    panic!("non-PC {id:?} in PC detection registry");
-                };
-                let character = assets
-                    .profile_manager
-                    .get_character(pc.pc.profile_index)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "PC {} requires missing character profile {}",
-                            id.index(),
-                            u32::from(pc.pc.profile_index)
-                        )
-                    });
-                let mut position = pc.element.position_map();
-                // Preserve the captured sleeping-candidate geometry. Optical
-                // detection separately reads the body's stored world coordinates.
-                if pc.element.posture() == crate::element::Posture::LeaningOut {
-                    let (dx, dy) = crate::element::direction_vector_16(pc.element.direction());
-                    position.x += 40.0 * dx;
-                    position.y += 40.0 * dy;
-                }
-                PcDetectionState {
-                    id,
-                    position,
-                    layer: pc.element.layer(),
-                    detection_speed_in_forest: character.detection_speed_in_forest,
-                    detection_speed_in_city: character.detection_speed_in_city,
-                    is_vip: character.vip,
-                    is_robin: pc.pc.robin,
-                    unconscious: pc.human.unconscious,
-                    carried: pc.human.carrier.is_some(),
-                    hear_noise_box: pc.actor.hear_noise_box,
-                    produced_noise: pc.actor.produced_noise.unwrap_or_else(|| {
-                        panic!("PC {} has no initialized produced-noise record", id.index())
-                    }),
-                    is_swordfighting: !pc.human.opponents.is_empty(),
-                }
-            })
-            .collect()
-    }
-
     #[cfg(test)]
-    pub(crate) fn ai_pc_snapshot_ids_for_test(&mut self, assets: &LevelAssets) -> Vec<EntityId> {
-        self.capture_pc_detection_state(assets)
-            .into_iter()
-            .map(|snapshot| snapshot.id)
-            .collect()
+    pub(crate) fn ai_pc_snapshot_ids_for_test(&mut self, _assets: &LevelAssets) -> Vec<EntityId> {
+        self.world.original_pc_registry().to_vec()
     }
 
     /// Build the live-derived target multiplicity used by optical detection.

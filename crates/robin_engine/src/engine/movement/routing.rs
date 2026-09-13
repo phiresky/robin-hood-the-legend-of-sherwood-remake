@@ -268,18 +268,6 @@ impl EngineInner {
         ai.couldnt_reachpoint = true;
     }
 
-    /// Mark the engine-owned result of an AI order as available to the
-    /// deferred decision-completion handler. Order construction and authorization
-    /// are synchronous in the original game; do not interpret an earlier nested drain with no result
-    /// as a successful authorization.
-    pub(in crate::engine) fn resolve_ai_engine_completion_verdict(&mut self, entity_id: EntityId) {
-        let ai = self.world.entities.expect_ai_controller_mut(
-            entity_id,
-            format_args!("AI order owner before its engine verdict"),
-        );
-        ai.resolve_engine_completion_verdict();
-    }
-
     pub(in crate::engine) fn launch_ai_move(
         &mut self,
         entity_id: EntityId,
@@ -431,7 +419,6 @@ impl EngineInner {
             if launched.is_some() && intent.halt_after_launch_for_path_waiter {
                 self.halt_actor(entity_id);
             }
-            self.resolve_ai_engine_completion_verdict(entity_id);
         }
         // Work authored while draining may already have appended newer
         // intents. The retained older FIFO prefix stays ahead of those.
@@ -484,7 +471,6 @@ impl EngineInner {
                     launched.push(sequence_id);
                 }
             }
-            self.resolve_ai_engine_completion_verdict(owner);
         }
         launched
     }

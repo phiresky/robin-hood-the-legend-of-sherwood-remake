@@ -155,18 +155,6 @@ pub(crate) trait AiRole {
         base.already_on_point = false;
         base.already_turned = false;
         base.old_state = base.current_state as i32;
-        // The roles used to disagree here (friendly `saturating_add`, enemy
-        // `+= 1`). Depth 255 is not reachable: completion cascades stop
-        // queueing nested Thinks at depth 100 (`end_think`), a resumed
-        // continuation pins the depth to 100, and every other re-entry
-        // (direct `think` re-dispatch, SetAIState decision entry, deferred
-        // engine completion) adds a single bounded frame. Both spellings are
-        // therefore observably identical; fail loudly on the impossible state
-        // instead of silently saturating or wrapping.
-        base.think_recursion_depth = base
-            .think_recursion_depth
-            .checked_add(1)
-            .expect("think recursion depth overflow");
 
         // Track stimulus actor
         if let StimulusInfo::Human(h) = stimulus.info {

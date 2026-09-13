@@ -87,9 +87,6 @@ fn scrub_outbox(value: &mut AiOutbox) {
 }
 
 fn scrub_controller(value: &mut AiController) {
-    value.open_end_think_frames = 0;
-    value.engine_deferred_end_think_frames = 0;
-    value.engine_completion_verdict_resolved = false;
     value.stimulus_queue.iter_mut().for_each(scrub_stimulus);
     scrub_outbox(&mut value.outbox);
 }
@@ -375,13 +372,6 @@ fn reentrant_outbox_missing_defaulted_fields_decode_to_type_defaults() {
 #[test]
 fn skipped_scratch_keys_are_absent_and_ignored_on_decode() {
     let controller = serde_json::to_value(golden_controller()).unwrap();
-    for key in [
-        "open_end_think_frames",
-        "engine_deferred_end_think_frames",
-        "engine_completion_verdict_resolved",
-    ] {
-        assert!(controller.get(key).is_none(), "{key} must not be persisted");
-    }
     assert!(
         controller["stimulus_queue"][0].get("self_origin").is_none(),
         "self_origin must not be persisted"

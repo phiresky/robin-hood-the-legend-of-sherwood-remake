@@ -10,14 +10,17 @@
 
 mod cross_npc_actions;
 mod detection;
+mod duty_callers;
+mod duty_common;
+mod duty_execution;
 mod enemy_report_execution;
 mod event_dispatch;
 mod execution;
+mod friend_check_execution;
 mod friendly_execution;
 mod initialization;
 mod macro_execution;
 mod owner_scheduling;
-pub(in crate::engine) use owner_scheduling::CompletionBoundary;
 mod patrol_assembly;
 mod patrol_coordination;
 mod patrol_dispatch;
@@ -640,12 +643,6 @@ pub(super) struct PreparedAiEntityViewCache {
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct PreparedNpcOwnerPass {
     detection: Option<snapshots::DetectionFrameState>,
-    /// Derived AI views reused across consecutive creation-order owners.
-    /// Mutable entity borrows and the small set of non-entity view inputs
-    /// invalidate individual entries before the next synchronous Think.
-    #[serde(skip)]
-    #[bitcode(skip)]
-    entity_views: PreparedAiEntityViewCache,
 }
 
 impl PreparedNpcOwnerPass {
@@ -867,14 +864,7 @@ mod panic_boundary_tests {
 
         engine.start_script_ai_native_think_pre_filter(pc_id);
 
-        assert_eq!(
-            engine
-                .get_entity(pc_id)
-                .and_then(Entity::ai_controller)
-                .expect("AI-controlled hero retains its AI")
-                .think_recursion_depth,
-            1
-        );
+        assert_eq!(engine.ai_think_depth(), 1);
     }
 
     #[test]
@@ -1180,62 +1170,6 @@ mod detectable_append_tests {
     }
 }
 
-fn sleeping_enemy_candidates_from_fighter_registry(
-    fighters: &[crate::ai_enemy::FighterSnapshot],
-) -> Vec<crate::ai::SleepingEnemyInfo> {
-    fighters
-        .iter()
-        .filter(|fighter| !fighter.is_friendly && fighter.is_unconscious && !fighter.is_carried)
-        .map(|fighter| crate::ai::SleepingEnemyInfo {
-            handle: fighter.handle,
-            position: fighter.position,
-            is_pc: fighter.is_pc,
-            is_robin: fighter.is_robin,
-            is_vip: fighter.is_vip,
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod sleeping_enemy_candidate_tests {
-    use super::*;
-
-    #[test]
-    fn live_registry_keeps_only_unconscious_non_carried_enemies_in_order() {
-        let fighter =
-            |handle, is_friendly, is_unconscious, is_carried| crate::ai_enemy::FighterSnapshot {
-                handle,
-                is_friendly,
-                is_unconscious,
-                is_carried,
-                is_pc: true,
-                is_robin: handle == 14,
-                is_vip: handle == 14,
-                ..Default::default()
-            };
-        let registry = vec![
-            fighter(11, false, false, false),
-            fighter(12, false, true, true),
-            fighter(13, true, true, false),
-            fighter(14, false, true, false),
-            fighter(15, false, true, false),
-        ];
-
-        let candidates = sleeping_enemy_candidates_from_fighter_registry(&registry);
-
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|candidate| candidate.handle)
-                .collect::<Vec<_>>(),
-            vec![14, 15]
-        );
-        assert!(candidates[0].is_pc);
-        assert!(candidates[0].is_robin);
-        assert!(candidates[0].is_vip);
-    }
-}
-
 /// Snapshot of a potential detectable human at level-load time.
 ///
 /// Used by [`EngineInner::init_one_ai`] to filter which other humans each
@@ -1243,6 +1177,7 @@ mod sleeping_enemy_candidate_tests {
 /// the "create list of detectable enemies" pass inside the per-NPC
 /// init for both enemy and friendly AI.
 #[derive(Debug, Clone, Copy)]
+#[cfg(test)]
 pub(super) struct PotentialDetectable {
     id: EntityId,
     is_pc: bool,
@@ -1289,6 +1224,7 @@ pub(super) struct CategorySpeechRejectionFinalization {
 /// Build a snapshot of every authored human in the engine. Called once at
 /// the start of [`EngineInner::init_ai`] and handed to every per-NPC init
 /// pass.
+#[cfg(test)]
 pub(super) fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable> {
     let mut out = Vec::new();
     for (id, entity) in engine.world.entities.humans() {
@@ -1363,6 +1299,7 @@ pub(super) fn build_detectable_enemies_for(
     )
 }
 
+#[cfg(test)]
 pub(super) fn build_detectable_enemies_for_with(
     diplomacy: &crate::diplomacy::DiplomacyState,
     self_camp: Camp,
@@ -1553,24 +1490,6 @@ fn installed_animation_has_reached_action_done(
                 && sprite.frame_count >= sprite.action_done_counter))
 }
 
-/// Recreate the still-live `EVENT_DONE` Think frame around the deferred tail
-/// of the tower-guard alert. The original game evaluates battle decisions before that
-/// handler reaches decision-tick completion; Rust releases the AI borrow while the alert's
-/// recipient Think calls run and resumes the tail afterward.
-fn begin_suspended_tower_guard_alert_think(ai: &mut crate::ai::AiController) {
-    ai.think_recursion_depth = ai
-        .think_recursion_depth
-        .checked_add(1)
-        .expect("tower-guard alert suspended Think depth overflow");
-}
-
-fn end_suspended_tower_guard_alert_think(ai: &mut crate::ai::AiController) {
-    assert!(
-        ai.end_think_completion_events(),
-        "tower-guard alert suspended Think unexpectedly hit the typed recursion fallback"
-    );
-}
-
 #[cfg(test)]
 mod parity_tests {
     use super::*;
@@ -1643,423 +1562,6 @@ mod parity_tests {
             radius_squared - 1.0,
             radius_squared
         ));
-    }
-
-    #[test]
-    fn pending_move_condolation_owns_failure_before_engine_completion_surface() {
-        let mut engine = EngineInner::new();
-        let mut soldier =
-            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
-        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_test_entity(Entity::Soldier(soldier));
-        let sequence = engine.orders.sequence_manager.launch_element(
-            crate::sequence::SequenceElement::new_movement(
-                1,
-                crate::element::Command::MoveOk,
-                Some(owner),
-                crate::order::OrderType::RunningUpright,
-            ),
-        );
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
-        engine
-            .orders
-            .sequence_manager
-            .element_impossible(sequence, 0);
-        assert!(
-            engine
-                .orders
-                .sequence_manager
-                .has_pending_couldnt_reachpoint_condolation(owner)
-        );
-
-        let ai = engine
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("test soldier has AI");
-        ai.completion_latch_inside_think = true;
-        ai.couldnt_reachpoint = true;
-
-        engine.surface_synchronous_completion_events_for_owner(owner);
-
-        let ai = engine
-            .world
-            .entities
-            .get(owner)
-            .and_then(Entity::ai_controller)
-            .expect("test soldier retains AI");
-        assert!(ai.couldnt_reachpoint);
-        assert!(ai.outbox.reentrant.self_stimuli.is_empty());
-        assert!(
-            engine
-                .orders
-                .sequence_manager
-                .has_pending_couldnt_reachpoint_condolation(owner),
-            "the suspended Original callback must remain next in line"
-        );
-    }
-
-    #[test]
-    fn selected_move_preflight_failure_has_condolation_provenance() {
-        let mut engine = EngineInner::new();
-        let mut soldier =
-            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
-        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_test_entity(Entity::Soldier(soldier));
-        let sequence = engine.orders.sequence_manager.launch_element(
-            crate::sequence::SequenceElement::new_movement(
-                1,
-                crate::element::Command::MoveOk,
-                Some(owner),
-                crate::order::OrderType::RunningUpright,
-            ),
-        );
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
-
-        let ai = engine
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("test soldier has AI");
-        ai.completion_latch_inside_think = true;
-        ai.couldnt_reachpoint = true;
-
-        engine.surface_synchronous_completion_events_for_owner(owner);
-
-        let ai = engine
-            .world
-            .entities
-            .get(owner)
-            .and_then(Entity::ai_controller)
-            .expect("test soldier retains AI");
-        assert_eq!(ai.outbox.reentrant.self_stimuli.len(), 1);
-        assert_eq!(
-            ai.outbox.reentrant.self_stimuli[0].stimulus_type,
-            crate::ai::StimulusType::EventCouldntReachPoint
-        );
-        assert_eq!(
-            ai.outbox.reentrant.self_stimuli[0].origin,
-            crate::ai::SelfStimulusOrigin::Condolation
-        );
-    }
-
-    #[test]
-    fn suspended_look_there_tail_surfaces_engine_deferred_route_rejection() {
-        let mut engine = EngineInner::new();
-        let mut soldier =
-            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
-        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_test_entity(Entity::Soldier(soldier));
-        let ai = engine
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("test soldier has AI");
-
-        // The look-there broadcast resumes its caller tail after typed AI processing has
-        // unwound. The helper closes synchronous flags now, while a failed
-        // gate-route build is reported by the immediately following owner
-        // drain. Model that exact split boundary.
-        ai.finish_suspended_common_handler();
-        ai.couldnt_reachpoint = true;
-        engine.surface_synchronous_completion_events_for_owner(owner);
-
-        let ai = engine
-            .world
-            .entities
-            .get(owner)
-            .and_then(Entity::ai_controller)
-            .expect("test soldier retains AI");
-        assert_eq!(
-            ai.outbox.reentrant.self_stimuli,
-            [crate::ai::StimulusType::EventCouldntReachPoint]
-        );
-        assert_eq!(
-            ai.outbox.reentrant.self_stimuli[0].origin,
-            crate::ai::SelfStimulusOrigin::EngineCompletion
-        );
-
-        // A genuine outside-tick operation still has no tick-completion delivery
-        // boundary, so the same deferred result must be discarded.
-        let ai = engine
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("test soldier retains AI");
-        ai.outbox.reentrant.self_stimuli.clear();
-        ai.completion_latch_inside_think = false;
-        ai.couldnt_reachpoint = true;
-        engine.surface_synchronous_completion_events_for_owner(owner);
-        let ai = engine
-            .world
-            .entities
-            .get(owner)
-            .and_then(Entity::ai_controller)
-            .expect("test soldier retains AI");
-        assert!(ai.outbox.reentrant.self_stimuli.is_empty());
-    }
-
-    #[test]
-    fn engine_deferred_completion_preserves_recursive_think_depth_until_success() {
-        let mut engine = EngineInner::new();
-        let mut soldier =
-            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
-        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_test_entity(Entity::Soldier(soldier));
-
-        let ai = engine
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("test soldier has AI");
-        ai.think_recursion_depth = 1;
-        ai.completion_latch_inside_think = true;
-        ai.outbox
-            .actor
-            .orders
-            .push(crate::order::AiOrderIntent::new(
-                crate::order::OrderType::RunningUpright,
-                100.0,
-                200.0,
-            ));
-        assert!(ai.end_think_completion_events());
-        ai.outbox.actor.orders.clear();
-        ai.couldnt_reachpoint = true;
-
-        engine.surface_synchronous_completion_events_for_owner(owner);
-        let ai = engine
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("test soldier retains AI");
-        assert_eq!(
-            ai.outbox.reentrant.self_stimuli,
-            [crate::ai::StimulusType::EventCouldntReachPoint]
-        );
-        assert_eq!(ai.think_recursion_depth, 1);
-        assert_eq!(ai.open_end_think_frames, 1);
-
-        // Model the recursively dispatched failure issuing a successful
-        // replacement movement. Its decision-tick admission adds one level; authorization
-        // then returns through both retained Original frames.
-        ai.outbox.reentrant.self_stimuli.clear();
-        ai.think_recursion_depth += 1;
-        ai.outbox
-            .actor
-            .orders
-            .push(crate::order::AiOrderIntent::new(
-                crate::order::OrderType::RunningUpright,
-                300.0,
-                400.0,
-            ));
-        assert!(ai.end_think_completion_events());
-        ai.outbox.actor.orders.clear();
-        ai.resolve_engine_completion_verdict();
-        engine.surface_synchronous_completion_events_for_owner(owner);
-
-        let ai = engine
-            .world
-            .entities
-            .get(owner)
-            .and_then(Entity::ai_controller)
-            .expect("test soldier retains AI");
-        assert_eq!(ai.think_recursion_depth, 0);
-        assert_eq!(ai.open_end_think_frames, 0);
-        assert_eq!(ai.engine_deferred_end_think_frames, 0);
-    }
-
-    #[test]
-    fn set_state_prefix_boundary_retains_enclosing_end_think_for_tail_route_failure() {
-        let sim = crate::sim_rng::test_context();
-        let assets = LevelAssets::new();
-        let mut engine = EngineInner::new();
-        let mut soldier =
-            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
-        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_test_entity(Entity::Soldier(soldier));
-
-        {
-            let ai = engine
-                .world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::ai_controller_mut)
-                .expect("test soldier has AI");
-            // Model the view event's tick completion retained across an engine-owned
-            // approach verdict. The state change has detached that caller-tail intent
-            // while its pre-callback effects are being settled.
-            ai.think_recursion_depth = 1;
-            ai.completion_latch_inside_think = true;
-            ai.open_end_think_frames = 1;
-            ai.engine_deferred_end_think_frames = 1;
-        }
-
-        engine.drain_direct_ai_owner_prefix_boundary(&sim, owner, &assets);
-        {
-            let ai = engine
-                .world
-                .entities
-                .get(owner)
-                .and_then(Entity::ai_controller)
-                .expect("test soldier retains AI");
-            assert!(ai.completion_latch_inside_think);
-            assert_eq!(ai.think_recursion_depth, 1);
-            assert_eq!(ai.open_end_think_frames, 1);
-        }
-
-        // The restored caller-tail approach now fails gate construction. This
-        // is the original game's decision-tick completion surface and must recursively deliver
-        // EVENT_COULDNT_REACHPOINT instead of discarding it as outside-Think.
-        engine
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("test soldier retains AI")
-            .couldnt_reachpoint = true;
-        engine.surface_synchronous_completion_events_for_owner(owner);
-        let ai = engine
-            .world
-            .entities
-            .get(owner)
-            .and_then(Entity::ai_controller)
-            .expect("test soldier retains AI after failure surface");
-        assert_eq!(
-            ai.outbox.reentrant.self_stimuli,
-            [crate::ai::StimulusType::EventCouldntReachPoint]
-        );
-    }
-
-    #[test]
-    fn detached_goto_tail_does_not_turn_an_absent_verdict_into_success() {
-        let mut engine = EngineInner::new();
-        let mut soldier =
-            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
-        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_test_entity(Entity::Soldier(soldier));
-
-        {
-            let ai = engine
-                .world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::ai_controller_mut)
-                .expect("test soldier has AI");
-            // Model tick completion after it retained movement whose caller tail is
-            // temporarily held outside the controller by a nested state change
-            // drain. No visible order and no failure is not a verdict.
-            ai.think_recursion_depth = 1;
-            ai.open_end_think_frames = 1;
-            ai.engine_deferred_end_think_frames = 1;
-            ai.completion_latch_inside_think = true;
-        }
-
-        engine.surface_synchronous_completion_events_for_owner(owner);
-        {
-            let ai = engine
-                .world
-                .entities
-                .get(owner)
-                .and_then(Entity::ai_controller)
-                .expect("test soldier retains AI");
-            assert_eq!(ai.think_recursion_depth, 1);
-            assert_eq!(ai.open_end_think_frames, 1);
-            assert_eq!(ai.engine_deferred_end_think_frames, 1);
-            assert!(ai.completion_latch_inside_think);
-        }
-
-        // Once the engine actually consumes the restored order, a successful
-        // authorization closes the retained Original frame.
-        engine
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("test soldier retains AI")
-            .resolve_engine_completion_verdict();
-        engine.surface_synchronous_completion_events_for_owner(owner);
-        let ai = engine
-            .world
-            .entities
-            .get(owner)
-            .and_then(Entity::ai_controller)
-            .expect("test soldier retains AI after success");
-        assert_eq!(ai.think_recursion_depth, 0);
-        assert_eq!(ai.open_end_think_frames, 0);
-        assert_eq!(ai.engine_deferred_end_think_frames, 0);
-        assert!(!ai.completion_latch_inside_think);
-    }
-
-    #[test]
-    fn suspended_tower_guard_alert_tail_owns_deferred_route_rejection() {
-        let mut engine = EngineInner::new();
-        let mut soldier =
-            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
-        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_test_entity(Entity::Soldier(soldier));
-        let ai = engine
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("test soldier has AI");
-
-        begin_suspended_tower_guard_alert_think(ai);
-        ai.go_to(
-            crate::ai::Position {
-                x: 100.0,
-                y: 200.0,
-                ..Default::default()
-            },
-            crate::ai::GotoFlags::RUN,
-            &crate::ai::AiContext::test_fixture(),
-        );
-        assert_eq!(ai.think_recursion_depth, 1);
-        assert!(ai.completion_latch_inside_think);
-
-        // Path construction is engine-owned and can reject only after the
-        // resumed battle-planning borrow has ended. The suspended outer
-        // Think must still own and surface that result.
-        ai.couldnt_reachpoint = true;
-        engine.surface_synchronous_completion_events_for_owner(owner);
-        let ai = engine
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("test soldier retains AI");
-        assert_eq!(
-            ai.outbox.reentrant.self_stimuli,
-            [crate::ai::StimulusType::EventCouldntReachPoint]
-        );
-        end_suspended_tower_guard_alert_think(ai);
-        assert_eq!(ai.think_recursion_depth, 0);
-
-        // Ordinary direct battle-planning calls do not gain completion
-        // ownership merely because this specific tower-guard tail does.
-        ai.outbox.reentrant.self_stimuli.clear();
-        ai.go_to(
-            crate::ai::Position {
-                x: 300.0,
-                y: 400.0,
-                ..Default::default()
-            },
-            crate::ai::GotoFlags::RUN,
-            &crate::ai::AiContext::test_fixture(),
-        );
-        assert!(!ai.completion_latch_inside_think);
     }
 
     #[test]
@@ -3096,40 +2598,20 @@ mod seek_area_friend_position_tests {
 }
 
 impl EngineInner {
-    /// Read owner scalars for local movement operations that make no target
-    /// or sight queries. Position resolves the selected door side and carrier
-    /// directly; shared navigation assets do not require a world capture.
-    pub(in crate::engine) fn ai_owner_context(
+    pub(in crate::engine) fn ai_bored_time(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
         owner: EntityId,
-        assets: &LevelAssets,
-    ) -> AiContext {
-        static EMPTY_VIEWS: std::sync::LazyLock<SharedAiEntityViews> =
-            std::sync::LazyLock::new(Default::default);
-        static EMPTY_SIGHT: std::sync::LazyLock<crate::sight_obstacle::SharedSightObstacles> =
-            std::sync::LazyLock::new(Default::default);
-        let entity = self.expect_entity(owner, "owner movement context");
-        let building_sector = self.entity_building_sector(entity.element_data().sector());
-        let mut ctx = build_ai_owner_scalars(
-            entity,
-            self.live_ai_position(owner),
-            Some(self.world.original_creation_order(owner)),
-            self.control.frame_counter,
-            building_sector,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &EMPTY_VIEWS,
-            &EMPTY_SIGHT,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-        );
-        self.refresh_selected_default_wait_identity(owner, &mut ctx);
-        ctx.in_uninterruptible_command = self.is_very_very_busy(owner);
-        ctx
+    ) -> u16 {
+        let entity = self.expect_entity(owner, "bored timer owner");
+        let (rank, pride) = entity
+            .enemy_ai()
+            .map(|ai| (ai.soldier_profile_rank, ai.soldier_profile_pride))
+            .unwrap_or((crate::profiles::ProfileRank::None, 0));
+        entity
+            .ai_controller()
+            .expect("bored timer requires AI")
+            .get_bored_time_for(sim, self.control.frame_counter, rank, pride)
     }
 
     /// Build a dispatch context from the selected observation, preserving the
@@ -3156,6 +2638,7 @@ impl EngineInner {
             &assets.navigation.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
+            self.ai_think_depth(),
         )
     }
 
@@ -3202,6 +2685,7 @@ pub(super) fn build_ai_context_from_entity(
     >,
     all_soldier_handles: &std::sync::Arc<Vec<u32>>,
     difficulty: crate::player_profile::DifficultyLevel,
+    think_depth: u8,
 ) -> AiContext {
     let elem = entity.element_data();
     let actor = entity.actor_data();
@@ -3245,6 +2729,7 @@ pub(super) fn build_ai_context_from_entity(
         hiking_waypoint_sectors,
         all_soldier_handles,
         difficulty,
+        think_depth,
     )
 }
 
@@ -3266,6 +2751,7 @@ fn build_ai_owner_scalars(
     >,
     all_soldier_handles: &std::sync::Arc<Vec<u32>>,
     difficulty: crate::player_profile::DifficultyLevel,
+    think_depth: u8,
 ) -> AiContext {
     let elem = entity.element_data();
     let camp = entity.camp();
@@ -3443,6 +2929,7 @@ fn build_ai_owner_scalars(
         .map(|npc| npc.eye_status)
         .unwrap_or_default();
     AiContext {
+        think_depth,
         difficulty,
         original_creation_order,
         position: self_position,
@@ -5110,8 +4597,7 @@ impl EngineInner {
 
         // Drain the PanicRequest so a door gets picked and movement starts.
         self.process_pending_begin_panic_for(sim, assets, civ_id, &ctx);
-        self.refresh_selected_default_wait_identity(civ_id, &mut ctx);
-        self.process_pending_panic_seek_fallback_for(sim, assets, civ_id, &ctx);
+        self.process_pending_panic_seek_fallback_for(sim, assets, civ_id);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(source = source.index()))]
@@ -5858,109 +5344,61 @@ impl EngineInner {
         }
     }
 
-    /// Drain a queued `pending_panic_seek_fallback` on a single NPC.
-    ///
-    /// `FLEEING_PANIC` / `EventCouldntReachPoint` fallback: the
-    /// panic-run movement was blocked, so pick the nearest seek point
-    /// (with a +1000 sector-change and +5000 fleeing-toward-source
-    /// penalty applied by
-    /// [`crate::ai::AiController::nearest_seek_point_to_flee`]) and
-    /// Move to it, with `RUN | DONT_STOP` mid-panic-run and plain `RUN`
-    /// on the last segment.  If no seek point is in range, re-fire
-    /// the self `EventReachPoint` for the emergency case
-    /// fall-through.
+    /// Resolve a failed panic segment before deciding whether to retry.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(super) fn process_pending_panic_seek_fallback_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         npc_id: EntityId,
-        ctx: &crate::ai::AiContext,
     ) {
-        let Some(entity) = self.world.entities.get_mut(npc_id) else {
-            return;
-        };
-        let Some(ai) = entity.ai_controller_mut() else {
-            return;
-        };
-        if !ai.outbox.actor.panic_seek_fallback {
+        let position = self.live_ai_position(npc_id);
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(npc_id, format_args!("panic fallback owner"));
+        if !std::mem::take(&mut ai.outbox.actor.panic_seek_fallback) {
             return;
         }
-        ai.outbox.actor.panic_seek_fallback = false;
-
-        let anchor = ai.nearest_seek_point_to_flee(
-            &self.ai.global.seek_points,
-            ctx.position,
-            ctx.position.sector,
-        );
-
-        let Some(entity) = self.world.entities.get_mut(npc_id) else {
-            return;
-        };
-        let Some(ai) = entity.ai_controller_mut() else {
-            return;
-        };
-
-        match anchor {
-            Some(idx) => {
-                let dest = self.ai.global.seek_points[idx].position;
-                // The blocked movement order has already sent its
-                // condolence callback before Original enters
-                // the could-not-reach-point event. The animation at this nested
-                // Movement setup therefore observes the sequence manager's live order
-                // (usually the end-of-animation state), not the actor's movement
-                // latch, which Rust clears later in the owner drain.
-                let mut goto_ctx = ctx.clone();
-                goto_ctx.self_animation = self
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(npc_id)
-                    .map(|(_, _, order)| order.order_type)
-                    .unwrap_or(crate::order::OrderType::NonanimationEnd);
-                let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                    return;
+        let anchor =
+            ai.nearest_seek_point_to_flee(&self.ai.global.seek_points, position, position.sector);
+        if let Some(index) = anchor {
+            let destination = self.ai.global.seek_points[index].position;
+            let runs = self
+                .world
+                .entities
+                .expect_ai_controller(npc_id, format_args!("panic segment count"))
+                .lasting_panic_runs;
+            let flags = crate::ai::GotoFlags::RUN
+                | if runs > 0 {
+                    crate::ai::GotoFlags::DONT_STOP
+                } else {
+                    crate::ai::GotoFlags::empty()
                 };
-                let Some(ai) = entity.ai_controller_mut() else {
-                    return;
-                };
-                let mut flags = crate::ai::GotoFlags::RUN;
-                if ai.lasting_panic_runs > 0 {
-                    flags |= crate::ai::GotoFlags::DONT_STOP;
-                }
-                ai.go_to_with_live_animation(dest, flags, &goto_ctx);
-
-                // The original game builds cross-sector gate routes and translates
-                // the first movement before returning to this handler. Mirror
-                // that owner-local translation now so movement construction's
-                // synchronous no-gate-route failure is visible to the emergency
-                // retry below. `drain_pending_move_requests_for_owner` does not
-                // run the pathfinder: same-area A*-requiring work is only queued
-                // and remains deferred to the normal path-request processing phase.
-                self.launch_pending_orders_for_npc(sim, assets, npc_id);
-                let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
-                let ai = self.world.entities.expect_ai_controller_mut(
-                    npc_id,
-                    format_args!(
-                        "panic seek fallback owner {} disappeared after movement",
-                        npc_id.index()
-                    ),
-                );
-                if ai.couldnt_reachpoint {
-                    // Emergency-case retry — decrement runs and
-                    // self-fire `EventReachPoint` so the common-stuff
-                    // state machine tries a new random direction before
-                    // the enclosing Think returns.
-                    ai.couldnt_reachpoint = false;
-                    ai.lasting_panic_runs = ai.lasting_panic_runs.saturating_sub(1);
-                    ai.fire_self_stimulus(crate::ai::StimulusType::EventReachPoint);
-                }
-            }
-            None => {
-                // Emergency case — no seek point available, re-fire
-                // reach-point so the common-stuff handler picks a
-                // fresh random direction.
-                ai.fire_self_stimulus(crate::ai::StimulusType::EventReachPoint);
-            }
+            self.duty_go_to(sim, assets, npc_id, destination, flags);
+        } else {
+            self.execute_ai_callback(
+                sim,
+                assets,
+                npc_id,
+                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReachPoint),
+            );
+        }
+        // Inspect the live failure latch after either movement or the nested
+        // emergency callback. A failed retry consumes one more panic segment.
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(npc_id, format_args!("panic fallback result"));
+        if ai.couldnt_reachpoint {
+            ai.couldnt_reachpoint = false;
+            ai.lasting_panic_runs = ai.lasting_panic_runs.wrapping_sub(1);
+            self.execute_ai_callback(
+                sim,
+                assets,
+                npc_id,
+                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReachPoint),
+            );
         }
     }
 
@@ -6100,6 +5538,7 @@ impl EngineInner {
     pub(super) fn start_script_ai_native_think_pre_filter(&mut self, npc_id: EntityId) {
         use crate::ai::AiRole;
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::NoEvent);
+        self.enter_ai_think_frame(npc_id);
         let entity = self.expect_entity_mut(npc_id, "SetAIState decision-entry owner");
         if let Some(enemy) = entity.enemy_ai_mut() {
             enemy.start_think_pre_filter(&stimulus);
@@ -6150,73 +5589,7 @@ impl EngineInner {
         assets: &LevelAssets,
         npc_id: EntityId,
     ) {
-        let normal_depth_complete = self
-            .world
-            .entities
-            .expect_ai_controller_mut(
-                npc_id,
-                format_args!(
-                    "SetAIState decision-completion owner {} lost its typed AI",
-                    npc_id.index()
-                ),
-            )
-            .end_think_completion_events();
-        if normal_depth_complete {
-            return;
-        }
-        let scratch = self.build_sim_scratch(assets);
-        let entity = self.expect_entity(npc_id, "SetAIState decision-completion owner");
-        let mut ctx = self.ai_context_from_entity(
-            entity,
-            self.control.frame_counter,
-            self.entity_building_sector(entity.element_data().sector()),
-            &scratch,
-            assets,
-        );
-        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-        let enemy_tick = self
-            .world
-            .entities
-            .get(npc_id)
-            .is_some_and(|entity| entity.enemy_ai().is_some())
-            .then(|| self.build_npc_tick_data_without_forecasts(sim, npc_id, assets));
-        let stimulus_depth = self
-            .world
-            .entities
-            .get(npc_id)
-            .and_then(Entity::ai_controller)
-            .map(|ai| ai.think_recursion_depth)
-            .unwrap_or(0);
-        assert!(
-            stimulus_depth > 0,
-            "SetAIState decision-completion owner {} has no matching decision entry",
-            npc_id.index()
-        );
-        let entity = self
-            .world
-            .entities
-            .expect_entity_mut(npc_id, format_args!("SetAIState decision-completion owner"));
-        if let Some(enemy) = entity.enemy_ai_mut() {
-            enemy.end_think(crate::ai_enemy::ThinkEnv::new(
-                sim,
-                &ctx,
-                enemy_tick.as_ref().unwrap_or_else(|| {
-                    panic!(
-                        "SetAIState decision-completion owner {} lost its Enemy tick context",
-                        npc_id.index()
-                    )
-                }),
-                None,
-            ));
-        } else if let Some(friendly) = entity.friendly_ai_mut() {
-            friendly.end_think(sim, &ctx);
-        } else {
-            panic!(
-                "SetAIState decision-completion owner {} has no typed AI for entity kind {:?}",
-                npc_id.index(),
-                entity.element_data().kind
-            );
-        }
+        self.execute_ai_end_think(sim, assets, npc_id);
     }
 
     /// Drain a pending script-driven area-search request. Consumes
@@ -6262,7 +5635,7 @@ impl EngineInner {
         {
             Self::trace_seek_area_script_caller(npc_id, ctx);
         }
-        enemy_ai.seek_area(
+        let outcome = enemy_ai.seek_area(
             crate::ai_enemy::ThinkEnv::new(sim, ctx, tick, None),
             request.center,
             request.radius,
@@ -6270,6 +5643,9 @@ impl EngineInner {
             crate::ai_enemy::UNDEFINED_DIRECTION,
             &mut self.ai.global,
         );
+        if let Err(call) = outcome {
+            self.execute_ai_duty_call(sim, assets, npc_id, call);
+        }
         // Area seeking's typed state-change callback is inside the decision-tick
         // scope and must finish before its later movement/order tail is
         // exposed to the enclosing native barrier.

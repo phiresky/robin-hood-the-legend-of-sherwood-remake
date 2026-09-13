@@ -21,22 +21,6 @@ fn forecast_line_is_byte_stable() {
 }
 
 #[test]
-fn considerreport_merge_start_line_is_byte_stable() {
-    let line = super::ConsiderreportMergeStart {
-        owner: &42u32,
-        incoming: &vec![(1u32, "a\"b\\c\n")],
-        known_before: &Vec::<u32>::new(),
-        frame: &9u32,
-        flags: &0x10u32,
-    }
-    .to_string();
-    assert_eq!(
-        line,
-        r#"CONSIDERREPORT {"stage":"merge_start","frame":9,"owner":42,"flags":16,"incoming":[(1, "a\"b\\c\n")],"known_before":[]}"#
-    );
-}
-
-#[test]
 fn aidecision_goto_enter_line_is_byte_stable() {
     let line = super::AidecisionGotoEnter {
         frame: &100u32,

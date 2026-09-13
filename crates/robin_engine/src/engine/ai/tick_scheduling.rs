@@ -99,10 +99,7 @@ impl EngineInner {
             self.ai.global.primary_target_multiplicity_scratch.clear();
             self.ai.global.primary_target_multiplicity_initialized = true;
         }
-        PreparedNpcOwnerPass {
-            detection: None,
-            entity_views: PreparedAiEntityViewCache::default(),
-        }
+        PreparedNpcOwnerPass { detection: None }
     }
 
     /// Run one NPC's complete post-human envelope using live inputs sampled at
@@ -130,7 +127,7 @@ impl EngineInner {
         }
 
         if prepared.detection.is_none() {
-            prepared.detection = Some(self.capture_detection_frame_state(assets));
+            prepared.detection = Some(self.capture_detection_frame_state());
         }
         let world = prepared
             .detection
@@ -138,13 +135,7 @@ impl EngineInner {
             .expect("prepared NPC owner pass lost its detection capture");
         self.tick_inform_my_friends_for_npc(npc_id);
         self.refresh_npc_view_for_npc(npc_id);
-        self.tick_enemy_ai_refresh_detection(
-            sim,
-            assets,
-            world,
-            npc_id,
-            &mut prepared.entity_views,
-        );
+        self.tick_enemy_ai_refresh_detection(sim, assets, world, npc_id);
         self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
     }
 
@@ -183,7 +174,7 @@ impl EngineInner {
 
         // Capture detection inputs at the same point as the production owner
         // pass. Tactical data is built live at each subsequent Think.
-        let world = self.capture_detection_frame_state(assets);
+        let world = self.capture_detection_frame_state();
 
         // ── 2a. Listen/object blip work. ────────────────────────
         // NPC-owned SeesBlip remains inside its creation-ordered
@@ -196,7 +187,6 @@ impl EngineInner {
         // Test drivers explicitly choose either a complete NPC envelope or
         // detection alone. Geometry arguments never select scheduling phases.
         let owners: Vec<_> = self.world.entities.ai_owner_ids().collect();
-        let mut entity_views = PreparedAiEntityViewCache::default();
         for npc_id in owners {
             if run_owner_envelope {
                 if self.dispatch_pending_fit_again_for_npc(sim, npc_id, assets) {
@@ -206,7 +196,7 @@ impl EngineInner {
                 self.tick_inform_my_friends_for_npc(npc_id);
                 self.refresh_npc_view_for_npc(npc_id);
             }
-            self.tick_enemy_ai_refresh_detection(sim, assets, &world, npc_id, &mut entity_views);
+            self.tick_enemy_ai_refresh_detection(sim, assets, &world, npc_id);
             if run_owner_envelope {
                 self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
             }
@@ -232,24 +222,7 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        self.drain_pending_for_npc_boundary(
-            sim,
-            npc_id,
-            assets,
-            crate::engine::ai::CompletionBoundary::OwnerReturn,
-        );
-    }
-
-    pub(in crate::engine) fn drain_pending_for_npc_boundary(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: crate::element::EntityId,
-        assets: &LevelAssets,
-        completion_boundary: crate::engine::ai::CompletionBoundary,
-    ) {
-        let Some(mut drain) =
-            self.drain_pending_owner_prelude(sim, npc_id, assets, completion_boundary)
-        else {
+        let Some(mut drain) = self.drain_pending_owner_prelude(sim, npc_id, assets) else {
             return;
         };
         self.drain_pending_swordfight_effects(sim, npc_id, assets, &mut drain);
@@ -270,11 +243,10 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
-        completion_boundary: crate::engine::ai::CompletionBoundary,
     ) -> Option<PendingDrainBarrier> {
         // Direct engine-owned AI calls also enter this drain. Close the
         // state-change callback boundary before consuming halt/effect/order work.
-        self.drain_ai_owner_work_for_boundary(sim, assets, npc_id, completion_boundary);
+        self.drain_ai_owner_work_for(sim, assets, npc_id);
         self.drain_patrol_direction_broadcast_for(sim, npc_id, assets);
 
         // Direct direction assignments made before stopping must update the goal
@@ -1711,20 +1683,7 @@ impl EngineInner {
             .and_then(Entity::ai_controller)
             .is_some_and(|ai| ai.outbox.actor.panic_seek_fallback);
         if has_panic_seek_fallback {
-            // Panic startup above can mutate the owner and world; do not reuse
-            // its context snapshot at this later synchronous boundary.
-            let scratch = self.build_sim_scratch(assets);
-            let entity = self.expect_entity(npc_id, "pending-drain NPC");
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = self.ai_context_from_entity(
-                entity,
-                self.control.frame_counter,
-                building_sector,
-                &scratch,
-                assets,
-            );
-            self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-            self.process_pending_panic_seek_fallback_for(sim, assets, npc_id, &ctx);
+            self.process_pending_panic_seek_fallback_for(sim, assets, npc_id);
         }
 
         // Drain any pending script-driven area-search request. Matches
@@ -1791,7 +1750,7 @@ impl EngineInner {
 }
 
 /// Locals taken at the first post-Think barrier of
-/// [`EngineInner::drain_pending_for_npc_boundary`] that its later phases
+/// [`EngineInner::drain_pending_for_npc`] that its later phases
 /// consume. Transient per-drain state (no serde: the effect channels it holds
 /// are runtime-only and never persisted).
 struct PendingDrainBarrier {

@@ -1705,18 +1705,9 @@ fn convert_local_ai_common(
         converted.macro_command_offset = cursor.offset;
         converted.macro_command_waypoint = cursor.waypoint;
     }
-    reset_loaded_ai_completion_ownership(&mut converted);
     // Saved patrol membership is authoritative, not a bootstrap reinitialization request.
     converted.needs_patrol_reinit = false;
     Ok(converted)
-}
-
-fn reset_loaded_ai_completion_ownership(ai: &mut AiController) {
-    // The Original serializes the three completion latches above, but not its
-    // AI decision recursion depth. Consequently a loaded latch has no live
-    // completion owner: the next decision entry clears it before doing any work.
-    // Do not retain ownership left by the initialized mission being replaced.
-    ai.completion_latch_inside_think = false;
 }
 
 fn payload_parts(
@@ -3031,24 +3022,6 @@ mod tests {
         assert_eq!(detached.history.len(), 1);
         assert_eq!(detached.history[0].direction, 9);
         assert_eq!(detached.history[0].distance, 13);
-    }
-
-    #[test]
-    fn legacy_ai_load_drops_initialized_mission_completion_ownership() {
-        let mut ai = AiController {
-            couldnt_reachpoint: true,
-            already_on_point: true,
-            already_turned: true,
-            completion_latch_inside_think: true,
-            ..AiController::default()
-        };
-
-        reset_loaded_ai_completion_ownership(&mut ai);
-
-        assert!(!ai.completion_latch_inside_think);
-        assert!(ai.couldnt_reachpoint);
-        assert!(ai.already_on_point);
-        assert!(ai.already_turned);
     }
 
     #[test]

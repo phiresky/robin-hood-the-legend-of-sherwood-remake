@@ -202,21 +202,6 @@ fn actor_effect_prefix_does_not_consume_caller_tail_self_stimulus() {
 }
 
 #[test]
-fn friendly_alert_soldier_tail_does_not_extend_end_think() {
-    let mut ai = crate::ai::AiController::new(168);
-    ai.think_recursion_depth = 1;
-    ai.completion_latch_inside_think = true;
-    ai.outbox.reentrant.alert_soldier_completion_pending = true;
-
-    // Soldier alerting's result and optional retry are fully consumed by its
-    // owner-work continuation. Unlike corpse-alert processing, it does not author a
-    // second route which needs the original decision frame to remain open.
-    assert!(ai.end_think_completion_events());
-    assert_eq!(ai.think_recursion_depth, 0);
-    assert_eq!(ai.engine_deferred_end_think_frames, 0);
-}
-
-#[test]
 fn stop_exclamation_cancels_unresolved_request_before_fifo_resolution() {
     use crate::ai::Remark;
 
@@ -857,56 +842,6 @@ fn live_this_type_forbid_candidate_requires_contextual_speech_profile() {
 }
 
 #[test]
-fn alert_soldier_typed_tail_owns_couldnt_reachpoint_before_event_surface() {
-    use crate::element::AiBrain;
-
-    let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
-    let Entity::Civilian(civilian) = engine
-        .get_entity_mut(owner)
-        .expect("soldier-alert test civilian exists")
-    else {
-        panic!("soldier-alert test owner changed kind")
-    };
-    civilian.npc.ai_brain =
-        AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(owner.index())));
-    let ai = civilian
-        .npc
-        .ai_brain
-        .base_mut()
-        .expect("soldier-alert test civilian has AI");
-    ai.completion_latch_inside_think = true;
-    ai.couldnt_reachpoint = true;
-    ai.outbox.reentrant.alert_soldier_completion_pending = true;
-
-    engine.surface_synchronous_completion_events_for_owner(owner);
-    let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::ai_controller)
-        .expect("soldier-alert test civilian retains AI");
-    assert!(ai.couldnt_reachpoint);
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
-
-    engine
-        .get_entity_mut(owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("soldier-alert test civilian retains mutable AI")
-        .outbox
-        .reentrant
-        .alert_soldier_completion_pending = false;
-    engine.surface_synchronous_completion_events_for_owner(owner);
-    let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::ai_controller)
-        .expect("soldier-alert test civilian retains AI after surface");
-    assert!(!ai.couldnt_reachpoint);
-    assert_eq!(
-        ai.outbox.reentrant.self_stimuli,
-        vec![crate::ai::StimulusType::EventCouldntReachPoint]
-    );
-}
-
-#[test]
 fn tower_guard_alert_officer_tail_consumes_ignored_route_failure() {
     use crate::ai::{AiOwnerWork, StimulusType};
 
@@ -919,7 +854,6 @@ fn tower_guard_alert_officer_tail_consumes_ignored_route_failure() {
             .get_entity_mut(owner)
             .and_then(Entity::enemy_ai_mut)
             .expect("tower-guard call-me owner has Enemy AI");
-        ai.base.completion_latch_inside_think = true;
         ai.base.couldnt_reachpoint = true;
         ai.base
             .outbox
@@ -931,16 +865,6 @@ fn tower_guard_alert_officer_tail_consumes_ignored_route_failure() {
             .owner_work
             .push(AiOwnerWork::ConsumeTowerGuardAlertOfficerRouteFailure);
     }
-
-    // The generic tick-completion boundary must leave officer alerting's synchronous
-    // result for its typed no-result tail, rather than dispatching a seek.
-    engine.surface_synchronous_completion_events_for_owner(owner);
-    let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("tower-guard call-me owner retains Enemy AI");
-    assert!(ai.base.couldnt_reachpoint);
-    assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
 
     engine.drain_ai_owner_work_for(&sim, &assets, owner);
     let ai = engine
@@ -999,7 +923,6 @@ fn dead_body_alert_tail_consumes_route_failure_before_generic_event_surface() {
             .get_entity_mut(owner)
             .and_then(Entity::enemy_ai_mut)
             .expect("dead-body-alert owner has Enemy AI");
-        ai.base.completion_latch_inside_think = true;
         ai.base.couldnt_reachpoint = true;
         ai.base.outbox.reentrant.dead_body_alert_completion_pending = true;
         ai.base.outbox.reentrant.owner_work.push(
@@ -1010,8 +933,6 @@ fn dead_body_alert_tail_consumes_route_failure_before_generic_event_surface() {
         );
     }
 
-    // Tick completion observes the typed latch before the owner continuation runs.
-    engine.surface_synchronous_completion_events_for_owner(owner);
     engine.drain_ai_owner_work_for(&sim, &assets, owner);
     engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
@@ -1156,7 +1077,6 @@ fn alert_soldier_owner_boundary_first_failure_retries_and_consumes_success() {
         .and_then(Entity::ai_controller_mut)
         .expect("soldier-alert owner has AI");
     ai.couldnt_reachpoint = true;
-    ai.completion_latch_inside_think = true;
     ai.outbox.reentrant.alert_soldier_completion_pending = true;
     ai.outbox
         .reentrant
@@ -1203,7 +1123,6 @@ fn alert_soldier_owner_boundary_second_failure_runs_typed_tail_without_event4() 
         .and_then(Entity::ai_controller_mut)
         .expect("soldier-alert owner has AI");
     ai.couldnt_reachpoint = true;
-    ai.completion_latch_inside_think = true;
     ai.outbox.reentrant.alert_soldier_completion_pending = true;
     ai.outbox
         .reentrant
@@ -1447,6 +1366,7 @@ fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
             &assets.navigation.hiking_waypoint_sectors,
             &accepted.ai.global.all_soldier_handles,
             accepted.control.sim_config.difficulty,
+            engine.ai_think_depth(),
         )
     };
     let civilian_entity_id = EntityId::Civilian(civilian_id);
@@ -1618,6 +1538,7 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
         &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
+        engine.ai_think_depth(),
     );
     let tick = engine.build_npc_tick_data(&sim, officer_id, &assets);
     engine.dispatch_think_with_drain(
@@ -1679,6 +1600,7 @@ fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
         &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
+        engine.ai_think_depth(),
     );
     let tick = engine.build_npc_tick_data(&sim, officer_id, &assets);
     engine.dispatch_think_with_drain(
@@ -1779,6 +1701,7 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
             &assets.navigation.hiking_waypoint_sectors,
             &engine.ai.global.all_soldier_handles,
             engine.control.sim_config.difficulty,
+            engine.ai_think_depth(),
         )
     };
     let tick = engine.build_npc_tick_data(sim, reporter_id, &assets);

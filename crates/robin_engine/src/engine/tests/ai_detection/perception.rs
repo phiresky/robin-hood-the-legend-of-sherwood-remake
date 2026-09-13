@@ -139,6 +139,7 @@ fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surf
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.enter_ai_think_frame(owner);
 
         let position = Position {
             x: 100.0,
@@ -148,6 +149,7 @@ fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surf
         };
         let ctx = AiContext {
             position,
+            think_depth: engine.ai_think_depth(),
             self_animation: OrderType::WaitingAlerted,
             self_is_soldier: true,
             ..AiContext::test_fixture()
@@ -164,15 +166,6 @@ fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surf
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingRunningToPhalanx;
         ai.base.stuck_counter = 2;
-        // An enclosing Think owns this latch. The prefix boundary must not
-        // manufacture its decision completion while materializing movement registration.
-        ai.base.think_recursion_depth = 1;
-        ai.base.completion_latch_inside_think = true;
-        if case == "accepted" {
-            ai.base.open_end_think_frames = 1;
-            ai.base.engine_deferred_end_think_frames = 1;
-            ai.base.engine_completion_verdict_resolved = false;
-        }
         let destination = match case {
             "accepted" => Position {
                 x: 140.0,
@@ -197,29 +190,25 @@ fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surf
         (
             pending,
             ai.base.stuck_counter,
-            ai.base.completion_latch_inside_think,
             ai.base.already_on_point,
             ai.base.couldnt_reachpoint,
-            ai.base.think_recursion_depth,
-            ai.base.open_end_think_frames,
-            ai.base.engine_deferred_end_think_frames,
-            ai.base.engine_completion_verdict_resolved,
+            engine.ai_think_depth(),
         )
     };
 
     assert_eq!(
         run_case("accepted"),
-        (true, 0, true, false, false, 1, 1, 1, true),
+        (true, 0, false, false, 1),
         "accepted movement must register before the wildcard query, reset the watchdog, and retain the enclosing completion latch"
     );
     assert_eq!(
         run_case("already"),
-        (false, 3, true, true, false, 1, 0, 0, false),
+        (false, 3, true, false, 1),
         "already-on-point movement leaves no manager element, so the selected Wait advances without surfacing completion"
     );
     assert_eq!(
         run_case("denied"),
-        (false, 3, true, false, true, 1, 0, 0, false),
+        (false, 3, false, true, 1),
         "denied movement leaves no manager element, so the selected Wait advances without surfacing completion"
     );
 }
@@ -1085,6 +1074,7 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
         &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
+        engine.ai_think_depth(),
     );
     let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
 

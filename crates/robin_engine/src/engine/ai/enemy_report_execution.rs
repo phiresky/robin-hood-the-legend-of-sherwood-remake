@@ -280,13 +280,12 @@ impl EngineInner {
                             flags: SpeechFlags::empty().bits(),
                         },
                     );
-                    let ctx = self.ai_owner_context(owner, assets);
-                    let ai = self
+                    let position = self
                         .world
                         .entities
-                        .expect_ai_controller_mut(owner, format_args!("report pointing"));
-                    ai.point_to(ai.seek_position, &ctx);
-                    self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
+                        .expect_ai_controller(owner, format_args!("report pointing"))
+                        .seek_position;
+                    self.duty_point_to(sim, assets, owner, position);
                 }
                 StimulusType::EventDone => {
                     self.report_state(
@@ -465,7 +464,7 @@ impl EngineInner {
             .entities
             .expect_enemy_ai_mut(owner, format_args!("report transition"))
             .set_state(AiState::Seeking, substate);
-        self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     fn report_face(
@@ -480,12 +479,7 @@ impl EngineInner {
             .expect_entity(target, "report facing target")
             .position_iface()
             .get_elevation() as i16 as f32;
-        let ctx = self.ai_owner_context(owner, assets);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("report facing"))
-            .face_position_at_elevation_with_ctx(position, elevation, &ctx);
-        self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
+        self.duty_face_position_at_elevation(sim, assets, owner, position, elevation);
     }
 
     /// Transfer a report directly from its owning brain. Only the loop extent is
@@ -567,7 +561,7 @@ impl EngineInner {
                 .my_reconnaissance_report
                 .update(kind, position);
         }
-        self.drain_direct_ai_owner_prefix_boundary(sim, recipient, assets);
+        self.drain_direct_ai_owner_boundary(sim, recipient, assets);
     }
 }
 

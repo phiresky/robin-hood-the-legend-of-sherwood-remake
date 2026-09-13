@@ -1,50 +1,5 @@
 use super::*;
 
-// InitStateSideEffects — entity-side fallout from `AiController::init_state`
-// ---------------------------------------------------------------------------
-
-/// Entity-side mutations that [`AiController::init_state`] asks the
-/// caller to apply once the AI-side state transition has been
-/// committed. The non-AI side effects of state initialization — posture /
-/// action state / eye status / life points / concussion — all live on
-/// the entity, not the AI brain.
-///
-/// The caller (`EngineInner::init_one_ai`) applies these inside a
-/// mutable-entity scope after the subclass dispatch returns.
-#[derive(Debug, Default, Clone)]
-pub struct InitStateSideEffects {
-    /// `true` when the caller should run the standard
-    /// "walk onto patrol path or launch a bored timer" tail after
-    /// applying the side effects. The caller still has to AND this with
-    /// `!ai_is_locked() && !ai_is_script_locked()` before actually
-    /// returning to duty.
-    pub go_to_duty: bool,
-    /// Launch a fresh low-priority actor wait after applying the authored
-    /// posture/action state. State initialization does this for every
-    /// non-duty pose; replacing any pre-init idle element is required so its
-    /// translated animation uses the new posture.
-    pub launch_wait: bool,
-    /// New posture — applied via
-    /// `PositionInterface::set_posture` (+ a sync write-back to
-    /// `ElementData::posture`).
-    pub set_posture: Option<crate::element::Posture>,
-    /// New action state — applied on `ActorData::action_state`.
-    pub set_action_state: Option<crate::element::ActionState>,
-    /// New `eye_status` — applied via
-    /// `ai_vision::set_view_status`. Set to `Closed` by the
-    /// sleeping-upright branch.
-    pub set_eye_status: Option<crate::element::EyeStatus>,
-    /// Zero out `NpcData::life_points` and flip
-    /// `HumanData::killed_by_accident = true`. The two always co-occur
-    /// at init.
-    pub zero_life_points: bool,
-    /// Seed `HumanData::concussion_of_the_brain = CONCUSSION_MAX`
-    /// and flip `HumanData::unconscious = true`. Init-time has no
-    /// script-lock / tied / carried gates to honour, so we bypass
-    /// the full `combat::set_concussion` state machine.
-    pub concussion_max_and_unconscious: bool,
-}
-
 // ---------------------------------------------------------------------------
 // Base AI controller (per-NPC instance state)
 // ---------------------------------------------------------------------------
@@ -223,24 +178,6 @@ pub enum AiOwnerWork {
     /// owner FIFO because callers can speak or change state immediately
     /// before/after it and those operations are observably ordered.
     NearbyCiviliansPanic,
-    /// Invoke actor-specific return-to-duty behavior requested by shared AI logic.
-    ///
-    /// The shared controller cannot borrow its containing Enemy AI to call
-    /// the override directly. Keep the call on the synchronous owner FIFO;
-    /// the Enemy override will in turn queue
-    /// `ResumeReturnToDutyAfterPatrolInit` around its engine-owned
-    /// patrol initialization.
-    VirtualReturnToDuty {
-        flags: DutyFlags,
-    },
-    /// Continue enemy return-to-duty behavior after its synchronous
-    /// patrol-initialization engine callback has completed.
-    ResumeReturnToDutyAfterPatrolInit {
-        flags: DutyFlags,
-        /// Patrol clearing's direct forced-return boundary does not
-        /// recursively surface the close-post reach-point callback.
-        defer_clear_patrol_close_post: bool,
-    },
     /// Continue enemy approach reconsideration after its synchronous movement
     /// construction has either succeeded or set the unreachable-point flag.
     ResumeReconsiderEnemyApproachAfterGoNear {
@@ -298,11 +235,6 @@ pub enum AiOwnerWork {
     ResumeSendCharlyAfterSpeech {
         charly: NpcHandle,
     },
-    /// High-recursion counterpart of `ResumeReturnToDutyAfterPatrolInit`.
-    /// Retains the in-decision movement boundary.
-    ResumeHighRecursionReturnToDutyAfterPatrolInit {
-        flags: DutyFlags,
-    },
     /// Finish the ignored-result officer-alert call made by
     /// `CALL_TOWER_GUARD_CALLS_ME`; its tail consumes route failure.
     ConsumeTowerGuardAlertOfficerRouteFailure,
@@ -321,11 +253,6 @@ pub enum AiOwnerWork {
     /// the local decision to `DECISION_OBSERVE` before battle planning logs
     /// or returns.
     ResumeBattleFightAfterReconsider,
-    /// Continue the nearby sleeping-enemy scan after the forest/trainer-only
-    /// synchronous return-to-duty action. The original game deliberately continues
-    /// scanning and may overwrite the duty state with a sleeping-enemy
-    /// approach.
-    ResumeKillNearbySleepingEnemiesAfterReturnToDuty,
     /// Enter the engine-owned macro interpreter at this statement boundary.
     RunMacro,
 }
@@ -968,17 +895,6 @@ impl AiActorOutbox {
             .iter()
             .filter_map(|mutation| match *mutation {
                 DetectableMutation::DeleteType(kind) => Some(kind),
-                _ => None,
-            })
-            .collect()
-    }
-    pub(crate) fn deleted_detectable_entities(
-        &self,
-    ) -> Vec<(EntityId, crate::element::DetectableType)> {
-        self.detectable_mutations
-            .iter()
-            .filter_map(|mutation| match *mutation {
-                DetectableMutation::DeleteEntity(target, kind) => Some((target, kind)),
                 _ => None,
             })
             .collect()

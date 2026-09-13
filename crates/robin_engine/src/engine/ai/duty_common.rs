@@ -1,0 +1,1123 @@
+//! Common duty execution with live actor reads and synchronous role changes.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::*;
+    use crate::ai_enemy::{EnemyAi, task_priority};
+    use crate::element::{Camp, DetectableType, Posture};
+    use crate::engine::test_support::{
+        actors::{make_test_ai_soldier, make_test_pc},
+        square_sector,
+    };
+
+    fn fixture(count: usize) -> (EngineInner, LevelAssets, Vec<EntityId>) {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(128, 128);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        let index = engine.world.fast_grid_mut().add_sector(
+            square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(2000.0, 2000.0)),
+            0,
+        );
+        let sector = crate::position_interface::SectorHandle::new(1)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
+        let ids: Vec<EntityId> = (0..count)
+            .map(|i| {
+                let mut entity = make_test_ai_soldier(Camp::Lacklandists);
+                let position = MapPoint::new(100.0 + i as f32 * 100.0, 100.0);
+                entity.element_data_mut().set_position_map(position);
+                entity.element_data_mut().set_sector(Some(sector));
+                entity
+                    .element_data_mut()
+                    .set_position(crate::coordinates::WorldPoint3D::new(
+                        position.x, position.y, 0.0,
+                    ));
+                entity.actor_data_mut().unwrap().action_state =
+                    crate::element::ActionState::Waiting;
+                entity.ai_actor_data_mut().unwrap().view_radius = 500;
+                entity.npc_data_mut().unwrap().life_points = 100;
+                let owner = engine.add_test_entity(entity);
+                let ai = enemy_mut(&mut engine, owner);
+                ai.base.owner_entity_id = Some(owner);
+                ai.base.me = owner.index();
+                ai.base.initial_position = Position {
+                    x: 400.0,
+                    y: 100.0,
+                    sector: Some(sector),
+                    level: 0,
+                };
+                owner
+            })
+            .collect();
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        if let Some(&owner) = ids.first() {
+            engine.enter_ai_think_frame(owner);
+        }
+        (engine, assets, ids)
+    }
+
+    #[test]
+    fn duty_clears_reciprocal_pc_guard() {
+        let (mut engine, mut assets, ids) = fixture(1);
+        let owner = ids[0];
+        let pc = engine.add_test_entity(make_test_pc(Posture::Upright));
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let EntityId::Pc(pc_id) = pc else {
+            unreachable!()
+        };
+        let Entity::Pc(actor) = engine.world.entities.get_mut(pc).unwrap() else {
+            unreachable!()
+        };
+        actor.pc.guard = Some(owner);
+        let ai = enemy_mut(&mut engine, owner);
+        ai.base.current_state = AiState::Menacing;
+        ai.base.current_substate = Substate::MenacingPcInComa;
+        ai.guarded_pc = Some(pc_id);
+        duty(&mut engine, &assets, owner);
+        assert_eq!(enemy(&engine, owner).guarded_pc, None);
+        let Entity::Pc(actor) = engine.world.entities.get(pc).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(actor.pc.guard, None);
+    }
+
+    #[test]
+    fn duty_settles_attentive_exit_before_return_movement() {
+        for attentive in [false, true] {
+            let (mut engine, assets, ids) = fixture(1);
+            let owner = ids[0];
+            let ai = enemy_mut(&mut engine, owner);
+            ai.attentive = attentive;
+            ai.will_be_attentive = attentive;
+            ai.base
+                .outbox
+                .actor
+                .orders
+                .push(crate::order::AiOrderIntent::new(
+                    crate::order::OrderType::Turning,
+                    10.0,
+                    0.0,
+                ));
+            duty(&mut engine, &assets, owner);
+            let ai = enemy(&engine, owner);
+            assert!(!ai.attentive);
+            assert!(!ai.will_be_attentive);
+            assert!(ai.base.outbox.actor.orders.is_empty());
+            assert_eq!(ai.base.last_goto_destination.x, 400.0);
+            assert!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .sequences_iter()
+                    .flat_map(|s| s.elements.iter())
+                    .any(|e| e.owner == Some(owner) && e.command == crate::element::Command::Move)
+            );
+        }
+    }
+
+    #[test]
+    fn duty_chief_visibility_uses_body_but_approach_uses_selected_gate() {
+        for visible_body in [false, true] {
+            let (mut engine, assets, ids) = fixture(2);
+            let (owner, chief) = (ids[0], ids[1]);
+            engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+                "duty_gate.scs",
+            ));
+            let chief_x = if visible_body { 200.0 } else { 1200.0 };
+            let endpoint = if visible_body { 1200.0 } else { 200.0 };
+            let entity = engine.world.entities.get_mut(chief).unwrap();
+            entity
+                .element_data_mut()
+                .set_position(crate::coordinates::WorldPoint3D::new(chief_x, 100.0, 0.0));
+            entity
+                .element_data_mut()
+                .set_position_map(MapPoint::new(chief_x, 100.0));
+            let sector = entity.element_data().sector().unwrap();
+            engine
+                .script_domains
+                .interactables
+                .doors
+                .push(crate::gate::Door {
+                    point_in: MapPoint::new(endpoint, 100.0),
+                    point_out: MapPoint::new(endpoint, 100.0),
+                    sector_in: crate::sector::SectorNumber::new(1),
+                    sector_out: crate::sector::SectorNumber::new(1),
+                    sector_in_index: sector.arena_index(),
+                    sector_out_index: sector.arena_index(),
+                    ..Default::default()
+                });
+            let mut pass = crate::sequence::SequenceElement::new_movement(
+                1,
+                crate::element::Command::PassDoor,
+                Some(chief),
+                crate::order::OrderType::WalkingUpright,
+            );
+            let crate::sequence::SequenceElementData::Movement {
+                gate_id, direction, ..
+            } = &mut pass.data
+            else {
+                unreachable!()
+            };
+            *gate_id = Some(crate::gate::DoorIndex::new(0).unwrap());
+            *direction = 1;
+            let sequence = engine.orders.sequence_manager.launch_element(pass);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(sequence, 0);
+            enemy_mut(&mut engine, owner).base.patrol_chief = Some(chief);
+            engine.execute_common_ai_duty(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                DutyFlags::empty(),
+            );
+            let ai = enemy(&engine, owner);
+            if visible_body {
+                assert_eq!(ai.base.current_substate, Substate::DefaultGotoChief);
+                assert_eq!(ai.base.last_goto_destination.x, endpoint);
+            } else {
+                assert_ne!(ai.base.current_substate, Substate::DefaultGotoChief);
+                assert_ne!(ai.base.last_goto_destination.x, endpoint);
+            }
+        }
+    }
+
+    #[test]
+    fn remembered_ale_keeps_live_patrol_return_point() {
+        let (mut engine, assets, ids) = fixture(2);
+        let (owner, ale) = (ids[0], ids[1]);
+        let here = engine.live_ai_position(owner);
+        let destination = engine.live_ai_position(ale);
+        let ai = enemy_mut(&mut engine, owner);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingDrinkingAle;
+        ai.other_seen_ale.push(ale.index());
+        duty(&mut engine, &assets, owner);
+        let ai = enemy(&engine, owner);
+        assert_eq!(ai.base.current_substate, Substate::WonderingApproachingAle);
+        assert_eq!(
+            ai.base.interesting_object,
+            Some(AiEntityHandle::new(ale.index()))
+        );
+        assert_eq!(ai.return_to_patrol_point, here);
+        assert_eq!(ai.base.last_goto_destination, destination);
+    }
+
+    #[test]
+    fn one_point_path_keeps_initial_direction_conversion_and_virtual_duty() {
+        let (mut engine, mut assets, ids) = fixture(1);
+        let owner = ids[0];
+        let here = engine.live_ai_position(owner);
+        assets.navigation.hiking_paths =
+            std::sync::Arc::new(vec![crate::level_data::RawHikingPath {
+                waypoints: vec![crate::level_data::RawWaypoint {
+                    x: here.x as i16,
+                    y: here.y as i16,
+                    sector: 1,
+                    level: 0,
+                    command: crate::level_data::WaypointCommand::None,
+                }],
+            }]);
+        assets.navigation.hiking_waypoint_sectors =
+            Some(std::sync::Arc::new(vec![vec![here.sector.unwrap()]]));
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(3);
+        let ai = enemy_mut(&mut engine, owner);
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultGotoRouteTurn;
+        ai.base.has_patrol_path = true;
+        ai.base.patrol_path =
+            PatrolPath::new(PathId::new(0).unwrap(), &assets.navigation.hiking_paths);
+        ai.current_task_priority = task_priority::ENEMY;
+        engine.execute_ai_callback(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            &Stimulus::new(StimulusType::EventDone),
+        );
+        let ai = enemy(&engine, owner);
+        assert!(!ai.base.has_patrol_path);
+        assert_eq!(ai.base.initial_position, here);
+        assert_eq!(ai.base.initial_view_direction, 2);
+        assert_eq!(ai.current_task_priority, task_priority::NONE);
+        assert_eq!(ai.base.current_substate, Substate::DefaultGotoPostTurn);
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|s| s.elements.iter())
+                .any(|e| e.owner == Some(owner) && e.command == crate::element::Command::Turn)
+        );
+    }
+
+    #[test]
+    fn refused_officer_report_finishes_duty_on_engine_stack() {
+        let (mut engine, assets, ids) = fixture(2);
+        let (owner, officer) = (ids[0], ids[1]);
+        let scratch = engine.build_sim_scratch(&assets);
+        let ctx = engine.ai_context_for(owner, engine.control.frame_counter, &scratch, &assets);
+        let sim = crate::sim_rng::test_context();
+        let ai = enemy_mut(&mut engine, owner);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingCharlyGoToOfficer;
+        ai.base.antagonist = Some(AiEntityHandle::new(officer.index()));
+        let call = ai
+            .resolve_charly_officer_report(
+                crate::ai_enemy::ThinkEnv::new(
+                    &sim,
+                    &ctx,
+                    &crate::ai_enemy::AiPerTickData::stub(),
+                    None,
+                ),
+                false,
+            )
+            .expect_err("refused report requests duty");
+        engine.execute_ai_duty_call(&sim, &assets, owner, call);
+        let ai = enemy(&engine, owner);
+        assert_eq!(ai.base.current_state, AiState::Default);
+        assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+        assert_eq!(ai.base.antagonist, None);
+    }
+
+    #[test]
+    fn special_strike_freeze_retains_event_and_unfreeze_completes_strike() {
+        let (mut engine, assets, ids) = fixture(1);
+        let owner = ids[0];
+        let ai = enemy_mut(&mut engine, owner);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingSwordfight;
+        ai.begin_special_strike();
+        ai.reconcile_special_strike(true, 40);
+        assert!(ai.pending_special_strike);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingSwordfightSpecialStrike
+        );
+        for locks in [
+            AiLockFlags::BUSY,
+            AiLockFlags::FREEZE,
+            AiLockFlags::BUSY | AiLockFlags::FREEZE,
+        ] {
+            ai.base.locks_flag_field = locks;
+            ai.reconcile_special_strike(false, 41);
+            assert!(ai.pending_special_strike);
+            assert_eq!(
+                ai.base.current_substate,
+                Substate::AttackingSwordfightSpecialStrike
+            );
+        }
+        ai.base.locks_flag_field = AiLockFlags::FREEZE;
+        engine.control.frame_counter = 41;
+        engine.execute_ai_callback(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            &Stimulus::new(StimulusType::EventDone),
+        );
+        let ai = enemy_mut(&mut engine, owner);
+        ai.reconcile_special_strike(false, 41);
+        assert!(ai.pending_special_strike);
+        assert_eq!(
+            ai.base
+                .stimulus_queue
+                .iter()
+                .map(|s| s.stimulus_type)
+                .collect::<Vec<_>>(),
+            vec![StimulusType::EventDone]
+        );
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingSwordfightSpecialStrike
+        );
+        ai.base.non_script_unlock(AiLockFlags::FREEZE);
+        let event = ai.base.stimulus_queue.remove(0);
+        engine.control.frame_counter = 42;
+        engine.execute_ai_callback(&crate::sim_rng::test_context(), &assets, owner, &event);
+        let ai = enemy_mut(&mut engine, owner);
+        assert!(!ai.pending_special_strike);
+        assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+        assert_eq!(ai.next_sword_strike_frame, 62);
+        ai.begin_special_strike();
+        ai.set_state(AiState::Attacking, Substate::AttackingSwordfightParade);
+        ai.reconcile_special_strike(false, 62);
+        assert!(!ai.pending_special_strike);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingSwordfightParade
+        );
+    }
+
+    #[test]
+    fn swordfight_notification_does_not_launch_another_entry() {
+        let (mut engine, assets, ids) = fixture(2);
+        let (owner, target) = (ids[0], ids[1]);
+        engine.execute_ai_callback(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            &Stimulus::with_human(StimulusType::EventEnterSwordfight, target.index()),
+        );
+        let ai = enemy(&engine, owner);
+        assert_eq!(
+            ai.base.primary_target,
+            Some(AiEntityHandle::new(target.index()))
+        );
+        assert_eq!(ai.base.current_state, AiState::Attacking);
+        assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+        assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|s| s.elements.iter())
+                .any(|e| e.owner == Some(owner)
+                    && e.command == crate::element::Command::EnterSwordfight)
+        );
+    }
+
+    #[test]
+    fn attentive_forgetting_preserves_script_latch_through_live_callbacks() {
+        for stimulus in [
+            StimulusType::EventLoseConsciousness,
+            StimulusType::EventWasp,
+            StimulusType::EventNet,
+        ] {
+            for forced in [false, true] {
+                let (mut engine, assets, ids) = fixture(1);
+                let owner = ids[0];
+                let ai = enemy_mut(&mut engine, owner);
+                ai.attentive = true;
+                ai.will_be_attentive = true;
+                ai.forced_attentive = forced;
+                engine.execute_ai_callback(
+                    &crate::sim_rng::test_context(),
+                    &assets,
+                    owner,
+                    &Stimulus::new(stimulus),
+                );
+                let ai = enemy(&engine, owner);
+                assert!(!ai.attentive, "{stimulus:?}");
+                assert!(!ai.will_be_attentive, "{stimulus:?}");
+                assert_eq!(ai.forced_attentive, forced);
+                assert!(
+                    ai.base.outbox.actor.set_attentive_mode.is_none(),
+                    "attentive transition must have executed"
+                );
+                if stimulus == StimulusType::EventLoseConsciousness {
+                    engine.execute_ai_callback(
+                        &crate::sim_rng::test_context(),
+                        &assets,
+                        owner,
+                        &Stimulus::new(StimulusType::EventFitAgain),
+                    );
+                    let ai = enemy(&engine, owner);
+                    assert_eq!(ai.base.current_substate, Substate::SleepingAwakening);
+                    assert_eq!(ai.forced_attentive, forced);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn money_watch_skips_looted_body_and_marks_next_live_body() {
+        let (mut engine, assets, ids) = fixture(3);
+        let (owner, looted, unlooted) = (ids[0], ids[1], ids[2]);
+        for body in [looted, unlooted] {
+            let entity = engine.world.entities.get_mut(body).unwrap();
+            entity.human_data_mut().unwrap().unconscious = true;
+            let ai = entity.enemy_ai_mut().unwrap();
+            ai.base.knocked_out_in_money_fight = true;
+            ai.base.looted_after_money_fight = body == looted;
+        }
+        let ai = enemy_mut(&mut engine, owner);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingWatchingForMoreMoney;
+        engine.execute_ai_callback(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            &Stimulus::new(StimulusType::EventDone),
+        );
+        let ai = enemy(&engine, owner);
+        assert_eq!(
+            ai.base.detected_body,
+            Some(AiEntityHandle::new(unlooted.index()))
+        );
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::WonderingApproachingToLoot
+        );
+        assert!(enemy(&engine, unlooted).base.looted_after_money_fight);
+    }
+
+    fn enemy(engine: &EngineInner, owner: EntityId) -> &EnemyAi {
+        engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .enemy_ai()
+            .unwrap()
+    }
+    fn enemy_mut(engine: &mut EngineInner, owner: EntityId) -> &mut EnemyAi {
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+    }
+    fn duty(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId) {
+        engine.execute_ai_return_to_duty(
+            &crate::sim_rng::test_context(),
+            assets,
+            owner,
+            DutyFlags::empty(),
+        );
+    }
+
+    #[test]
+    fn duty_resets_state_priority_and_finishes_movement() {
+        let (mut engine, assets, ids) = fixture(1);
+        let owner = ids[0];
+        let ai = enemy_mut(&mut engine, owner);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingSwordfight;
+        ai.current_task_priority = task_priority::ENEMY;
+        duty(&mut engine, &assets, owner);
+        let ai = enemy(&engine, owner);
+        assert_eq!(ai.base.current_state, AiState::Default);
+        assert_eq!(ai.current_task_priority, task_priority::NONE);
+        assert!(!ai.base.needs_patrol_reinit);
+        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+        assert!(!ai.base.outbox.actor.has_boundary_work());
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|s| s.elements.iter())
+                .any(|element| element.owner == Some(owner)
+                    && element.command == crate::element::Command::Move)
+        );
+    }
+
+    #[test]
+    fn duty_releases_actual_archery_reservations() {
+        let (mut engine, assets, ids) = fixture(1);
+        let owner = ids[0];
+        let position = engine.live_ai_position(owner);
+        engine.ai.global.archery_sectors.push(SectorArchery {
+            points: vec![PointArchery {
+                position,
+                direction: 0,
+                is_shooting_point: true,
+                sector_index: crate::sector::SectorNumber::new(1),
+                owner: Some(owner),
+            }],
+            polygon: vec![],
+            layer: 0,
+            index_first_shooting_point: Some(crate::sector::ArcheryPointIdx(0)),
+            index_last_shooting_point: Some(crate::sector::ArcheryPointIdx(0)),
+            num_shooting_points: 1,
+            num_owners: 1,
+        });
+        let ai = enemy_mut(&mut engine, owner);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingArcherWaitOnArcheryPath;
+        ai.my_archery_sector = Some(0);
+        ai.my_shooting_point = Some((0, 0));
+        duty(&mut engine, &assets, owner);
+        assert_eq!(enemy(&engine, owner).my_shooting_point, None);
+        assert_eq!(enemy(&engine, owner).my_archery_sector, None);
+        assert_eq!(engine.ai.global.archery_sectors[0].num_owners, 0);
+        assert_eq!(engine.ai.global.archery_sectors[0].points[0].owner, None);
+    }
+
+    #[test]
+    fn duty_deletes_beggars_added_before_call_and_retains_enemies() {
+        let (mut engine, assets, ids) = fixture(2);
+        let (owner, target) = (ids[0], ids[1]);
+        let ai = enemy_mut(&mut engine, owner);
+        ai.base
+            .outbox
+            .actor
+            .add_detectable((target, DetectableType::Beggar));
+        ai.base
+            .outbox
+            .actor
+            .add_detectable((target, DetectableType::Enemy));
+        duty(&mut engine, &assets, owner);
+        let npc = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .ai_actor_data()
+            .unwrap();
+        assert!(npc.detectable_lists[DetectableType::Beggar as usize].is_empty());
+        assert!(
+            npc.detectable_lists[DetectableType::Enemy as usize]
+                .iter()
+                .any(|d| d.element == Some(target))
+        );
+    }
+
+    #[test]
+    fn duty_state_timer_reset_precedes_new_bored_timer() {
+        for sitting in [false, true] {
+            let (mut engine, assets, ids) = fixture(1);
+            let owner = ids[0];
+            engine.control.frame_counter = 254;
+            if sitting {
+                engine
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .unwrap()
+                    .set_posture(Posture::Sitting);
+            }
+            let here = engine.live_ai_position(owner);
+            let ai = enemy_mut(&mut engine, owner);
+            ai.base.timer_is_running = true;
+            ai.base.when_does_timer_ring = 999;
+            ai.base.likes_to_sit_around = sitting;
+            if sitting {
+                ai.base.initial_position = here;
+            }
+            duty(&mut engine, &assets, owner);
+            let ai = enemy(&engine, owner);
+            assert_eq!(ai.base.timer_is_running, sitting);
+            if sitting {
+                assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
+                assert!((324..394).contains(&ai.base.when_does_timer_ring));
+            } else {
+                assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+            }
+        }
+    }
+
+    #[test]
+    fn deep_duty_keeps_close_point_on_live_recursion_stack() {
+        let (mut engine, assets, ids) = fixture(1);
+        let owner = ids[0];
+        let here = engine.live_ai_position(owner);
+        let ai = enemy_mut(&mut engine, owner);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+        ai.base.initial_position = here;
+        for _ in 1..100 {
+            engine.enter_ai_think_frame(owner);
+        }
+        duty(&mut engine, &assets, owner);
+        let ai = enemy(&engine, owner);
+        assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+        assert!(ai.base.already_on_point);
+        assert_eq!(engine.ai_think_depth(), 100);
+        assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+    }
+
+    #[test]
+    fn duty_clears_reciprocal_combat_neighbours() {
+        let (mut engine, assets, ids) = fixture(3);
+        let (owner, left, right) = (ids[0], ids[1], ids[2]);
+        enemy_mut(&mut engine, owner).left_combat_neighbour =
+            Some(AiEntityHandle::new(left.index()));
+        enemy_mut(&mut engine, owner).right_combat_neighbour =
+            Some(AiEntityHandle::new(right.index()));
+        enemy_mut(&mut engine, left).right_combat_neighbour =
+            Some(AiEntityHandle::new(owner.index()));
+        enemy_mut(&mut engine, right).left_combat_neighbour =
+            Some(AiEntityHandle::new(owner.index()));
+        duty(&mut engine, &assets, owner);
+        assert_eq!(enemy(&engine, owner).left_combat_neighbour, None);
+        assert_eq!(enemy(&engine, owner).right_combat_neighbour, None);
+        assert_eq!(enemy(&engine, left).right_combat_neighbour, None);
+        assert_eq!(enemy(&engine, right).left_combat_neighbour, None);
+    }
+
+    #[test]
+    fn duty_clears_reciprocal_shield_pair_from_either_side() {
+        for returning_archer in [false, true] {
+            let (mut engine, assets, ids) = fixture(3);
+            let (archer, bearer) = (ids[0], ids[1]);
+            let ai = enemy_mut(&mut engine, archer);
+            ai.is_archer_unit = true;
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = Substate::AttackingBowShooting;
+            ai.shield_bearer_before_me = Some(AiEntityHandle::new(bearer.index()));
+            let ai = enemy_mut(&mut engine, bearer);
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = Substate::AttackingProtectingWithShield;
+            ai.base.primary_target = Some(AiEntityHandle::new(ids[2].index()));
+            ai.archer_behind_me = Some(AiEntityHandle::new(archer.index()));
+            duty(
+                &mut engine,
+                &assets,
+                if returning_archer { archer } else { bearer },
+            );
+            assert_eq!(enemy(&engine, archer).shield_bearer_before_me, None);
+            assert_eq!(enemy(&engine, bearer).archer_behind_me, None);
+            if returning_archer {
+                engine.execute_ai_callback(
+                    &crate::sim_rng::test_context(),
+                    &assets,
+                    bearer,
+                    &Stimulus::new(StimulusType::EventTimer),
+                );
+                assert_eq!(
+                    enemy(&engine, bearer).base.current_substate,
+                    Substate::AttackingOverviewLookLeft
+                );
+            }
+        }
+    }
+}
+
+use super::*;
+use crate::ai::{
+    AiState, AlertFlags, AlertLevel, DutyFlags, GotoFlags, Position, Substate, WillStopCaller,
+};
+
+impl EngineInner {
+    pub(in crate::engine) fn duty_set_state(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        state: AiState,
+        substate: Substate,
+    ) {
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(owner, format_args!("duty state owner"));
+        if let Some(enemy) = entity.enemy_ai_mut() {
+            enemy.set_state(state, substate);
+        } else {
+            entity
+                .friendly_ai_mut()
+                .expect("duty owner has no AI role")
+                .set_state(state, substate);
+        }
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+    }
+
+    pub(in crate::engine) fn duty_face_direction(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        direction: u16,
+    ) {
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(owner, format_args!("duty facing owner"));
+        let current_direction = entity.element_data().direction() as u16;
+        let action_state = entity
+            .actor_data()
+            .expect("facing requires actor")
+            .action_state;
+        entity
+            .ai_controller_mut()
+            .expect("facing requires controller")
+            .face_direction_from_actor(direction, current_direction, action_state);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+    }
+
+    pub(in crate::engine) fn duty_face_position_at_elevation(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        position: Position,
+        elevation: f32,
+    ) {
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let here = self.live_ai_position(owner);
+        let entity = self.expect_entity(owner, "duty facing position owner");
+        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+            position.x - here.x,
+            position.y - here.y + elevation - entity.position_iface().get_elevation(),
+        );
+        self.duty_face_direction(sim, assets, owner, direction as u16);
+    }
+
+    pub(in crate::engine) fn duty_point_to(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        position: Position,
+    ) {
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let target = self.position_to_point_3d(
+            assets,
+            position.sector,
+            position.level,
+            position.x,
+            position.y,
+        );
+        let body = self
+            .expect_entity(owner, "pointing owner")
+            .element_data()
+            .position();
+        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+            target.x - body.x,
+            target.y - body.y,
+        );
+        self.world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("pointing owner"))
+            .point_direction(direction);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+    }
+
+    pub(in crate::engine) fn duty_go_to(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        destination: Position,
+        flags: GotoFlags,
+    ) {
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let position = self.live_ai_position(owner);
+        let depth = self.ai_think_depth();
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(owner, format_args!("duty movement owner"));
+        let element = entity.element_data();
+        let layer = element.layer();
+        let sector = element.sector();
+        let actor = entity.actor_data().expect("duty movement requires actor");
+        let animation = actor
+            .installed_order
+            .map(|order| order.order_type)
+            .unwrap_or(crate::order::OrderType::NonanimationEnd);
+        let action_state = actor.action_state;
+        let civilian = entity.is_civilian();
+        entity
+            .ai_controller_mut()
+            .expect("duty movement requires controller")
+            .request_move(
+                destination,
+                flags,
+                1.0,
+                position,
+                layer,
+                sector,
+                animation,
+                action_state,
+                civilian,
+                depth,
+            );
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+    }
+
+    pub(in crate::engine) fn duty_go_near(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        destination: Position,
+        distance: i32,
+        flags: GotoFlags,
+    ) {
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let depth = self.ai_think_depth();
+        self.world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("duty approach owner"))
+            .prepare_approach(distance, flags, depth);
+        self.duty_go_to(sim, assets, owner, destination, flags | GotoFlags::NEAR);
+    }
+
+    pub(in crate::engine) fn execute_common_ai_duty(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        flags: DutyFlags,
+    ) {
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        {
+            let entity = self
+                .world
+                .entities
+                .expect_entity_mut(owner, format_args!("common duty owner"));
+            let no_friends = entity
+                .ai_actor_data()
+                .expect("duty owner has no actor")
+                .detectable_lists[crate::element::DetectableType::Friend as usize]
+                .is_empty();
+            if let Some(enemy) = entity.enemy_ai_mut() {
+                enemy.set_alert_status_with_flags(AlertLevel::Green, AlertFlags::empty());
+            } else {
+                entity
+                    .friendly_ai_mut()
+                    .expect("duty owner has no AI role")
+                    .base
+                    .set_alert_status(AlertLevel::Green);
+            }
+            let ai = entity
+                .ai_controller_mut()
+                .expect("duty owner has no controller");
+            if !flags.contains(DutyFlags::KEEP_EMOTICON) {
+                ai.clear_emoticon();
+            }
+            if let Some(path) = &mut ai.patrol_path {
+                path.reset_history();
+            } else {
+                ai.detached_patrol_path_status.history.clear();
+            }
+            ai.my_reconnaissance_report.reset();
+            if no_friends {
+                ai.detected_body = None;
+            }
+        }
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
+        let chief = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("duty chief query"))
+            .patrol_chief;
+        if let Some(chief) = chief {
+            let able = match self.expect_entity(chief, "duty patrol chief") {
+                Entity::Soldier(soldier) => crate::element::Human::is_able_to_fight(soldier),
+                Entity::Pc(pc) => crate::element::Human::is_able_to_fight(pc),
+                _ => false,
+            };
+            if able && self.patrol_member_visible(assets, owner, chief) {
+                self.duty_set_state(
+                    sim,
+                    assets,
+                    owner,
+                    AiState::Default,
+                    Substate::DefaultGotoChief,
+                );
+                // State notifications may replace the chief before the approach.
+                let chief = self
+                    .world
+                    .entities
+                    .expect_ai_controller(owner, format_args!("duty chief after state"))
+                    .patrol_chief
+                    .expect("duty state callback cleared required patrol chief");
+                let destination = self.live_ai_position(chief);
+                self.duty_go_near(
+                    sim,
+                    assets,
+                    owner,
+                    destination,
+                    crate::parameters_ai::AI_TALK_DISTANCE,
+                    GotoFlags::empty(),
+                );
+                let ai = self
+                    .world
+                    .entities
+                    .expect_ai_controller_mut(owner, format_args!("duty approach result"));
+                if !ai.couldnt_reachpoint {
+                    return;
+                }
+                ai.couldnt_reachpoint = false;
+            }
+        }
+
+        if self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("duty path query"))
+            .has_patrol_path
+        {
+            let here = self.live_ai_position(owner);
+            let paths = &assets.navigation.hiking_paths;
+            let nearest_distance = {
+                let ai = self
+                    .world
+                    .entities
+                    .expect_ai_controller_mut(owner, format_args!("duty path selection"));
+                let path = ai
+                    .patrol_path
+                    .as_mut()
+                    .expect("duty path flag requires initialized path");
+                let first = path
+                    .get_waypoint(0, paths)
+                    .expect("duty path requires a waypoint");
+                let mut best = 0;
+                let mut distance = (first.x as f32 - here.x)
+                    .abs()
+                    .max((first.y as f32 - here.y).abs());
+                for index in 0..path.size {
+                    let waypoint = path.get_waypoint(index, paths).expect("duty path waypoint");
+                    let candidate = (waypoint.x as f32 - here.x)
+                        .abs()
+                        .max((waypoint.y as f32 - here.y).abs());
+                    if candidate < distance {
+                        best = index;
+                        distance = candidate;
+                    }
+                }
+                path.set_current_index(best);
+                let waypoint = path
+                    .current_waypoint(paths)
+                    .expect("selected duty waypoint");
+                let dx = waypoint.x as f32 - here.x;
+                let dy = waypoint.y as f32 - here.y;
+                let nearest_distance = dx.abs().max(dy.abs());
+                if best < path.size - 1 {
+                    let next = path.peek_next_waypoint(paths).expect("next duty waypoint");
+                    if nearest_distance < 10.0
+                        || dx * (next.x as f32 - waypoint.x as f32)
+                            + dy * (next.y as f32 - waypoint.y as f32)
+                            < 0.0
+                    {
+                        path.advance();
+                    }
+                }
+                nearest_distance
+            };
+            self.duty_set_state(
+                sim,
+                assets,
+                owner,
+                AiState::Default,
+                Substate::DefaultGotoRoute,
+            );
+            let frame = self.control.frame_counter;
+            let creation_order = self.world.original_creation_order(owner);
+            {
+                let ai = self
+                    .world
+                    .entities
+                    .expect_ai_controller_mut(owner, format_args!("duty route history"));
+                if ai.has_patrol() && frame == 0 && nearest_distance < 50.0 {
+                    ai.patrol_path
+                        .as_mut()
+                        .expect("duty route state requires path")
+                        .initialize_history_entries_on_path(paths, |p, w, s| {
+                            assets.navigation.hiking_waypoint_sector(p, w, s)
+                        });
+                }
+            }
+            let walk_flags = {
+                let ai = self
+                    .world
+                    .entities
+                    .expect_ai_controller_mut(owner, format_args!("duty route forecast"));
+                let stop = ai.will_stop_at_next_waypoint_at(
+                    sim,
+                    paths,
+                    frame,
+                    Some(creation_order),
+                    WillStopCaller::ReturnToDuty,
+                );
+                ai.default_path_walking_flags
+                    | if stop {
+                        GotoFlags::empty()
+                    } else {
+                        GotoFlags::DONT_STOP
+                    }
+            };
+            let destination = {
+                let path = self
+                    .world
+                    .entities
+                    .expect_ai_controller(owner, format_args!("duty route destination"))
+                    .patrol_path
+                    .as_ref()
+                    .expect("duty route requires path");
+                let waypoint = path
+                    .current_waypoint(paths)
+                    .expect("duty route requires waypoint");
+                Position {
+                    x: waypoint.x as f32,
+                    y: waypoint.y as f32,
+                    sector: assets.navigation.hiking_waypoint_sector(
+                        usize::from(path.hiking_path_index),
+                        usize::from(path.current_waypoint_index),
+                        waypoint.sector,
+                    ),
+                    level: waypoint.level,
+                }
+            };
+            self.duty_go_to(sim, assets, owner, destination, walk_flags);
+            return;
+        }
+
+        let (posture, initial, special_posture) = {
+            let entity = self.expect_entity(owner, "duty post owner");
+            let ai = entity.ai_controller().expect("duty post controller");
+            let special = if ai.likes_to_sit_around {
+                Some(crate::element::Posture::Sitting)
+            } else if ai.special_action {
+                Some(crate::element::Posture::Leisure)
+            } else {
+                None
+            };
+            (
+                entity.element_data().posture(),
+                ai.initial_position,
+                special,
+            )
+        };
+        let here = self.live_ai_position(owner);
+        if special_posture == Some(posture)
+            && (here.x - initial.x).abs().max((here.y - initial.y).abs()) < 3.0
+        {
+            self.duty_set_state(
+                sim,
+                assets,
+                owner,
+                AiState::Default,
+                Substate::DefaultOnPost,
+            );
+            let bored = self.ai_bored_time(sim, owner);
+            let frame = self.control.frame_counter;
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("duty post timer"));
+            ai.launch_timer(bored as u32, frame);
+        } else {
+            self.duty_set_state(
+                sim,
+                assets,
+                owner,
+                AiState::Default,
+                Substate::DefaultGotoPost,
+            );
+            let initial = self
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("duty post after state"))
+                .initial_position;
+            self.duty_go_to(
+                sim,
+                assets,
+                owner,
+                initial,
+                if special_posture.is_some() {
+                    GotoFlags::SPECIAL_ACTION
+                } else {
+                    GotoFlags::empty()
+                },
+            );
+        }
+    }
+}

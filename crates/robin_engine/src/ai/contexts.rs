@@ -1,5 +1,154 @@
 use super::*;
 
+pub(crate) fn ai_position_to_point_3d(
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    position: Position,
+) -> crate::coordinates::WorldPoint3D {
+    let z = match position.sector {
+        None => 0.0,
+        Some(handle) => {
+            let sector_number = crate::sector::SectorNumber::new(handle.get() as i16);
+            // Navigation requires an exact sector reference here. Schema-16 NPC
+            // session-boundary transients predate exact arena identities,
+            // though, and can restore number-only seek positions. Recover
+            // that omitted pointer from the position, layer, and authored
+            // polygons rather than consulting the lossy public-number map:
+            // shipped levels may contain duplicate public sector numbers.
+            let grid_idx = handle.arena_index().map(usize::from).or_else(|| {
+                    let point = MapPoint::new(position.x, position.y);
+                    let candidates = fast_grid
+                        .level
+                        .sectors
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, sector)| sector.sector_number == sector_number)
+                        .collect::<Vec<_>>();
+                    let matches = candidates
+                        .iter()
+                        .copied()
+                        .filter(|(_, sector)| {
+                            sector.layer == position.level && sector.contains_point(point)
+                        })
+                        .collect::<Vec<_>>();
+                    match matches.as_slice() {
+                        [(index, _)] => Some(*index),
+                        [] => {
+                            let same_layer = candidates
+                                .iter()
+                                .copied()
+                                .filter(|(_, sector)| sector.layer == position.level)
+                                .collect::<Vec<_>>();
+                            match (same_layer.as_slice(), candidates.as_slice()) {
+                                ([(index, _)], _) | (_, [(index, _)]) => Some(*index),
+                                ([], []) => None,
+                                _ => panic!(
+                                    "AI position sector {sector_number} layer {} at ({}, {}) is ambiguous in the exact arena",
+                                    position.level, position.x, position.y
+                                ),
+                            }
+                        }
+                        _ => panic!(
+                            "AI position sector {sector_number} layer {} at ({}, {}) has multiple containing exact sectors",
+                            position.level, position.x, position.y
+                        ),
+                    }
+                });
+            let grid_sector = grid_idx.and_then(|idx| fast_grid.level.sectors.get(idx));
+            let is_motion = grid_sector.is_some_and(|sector| sector.sector_type.is_motion());
+            if grid_idx.is_some() && !is_motion {
+                panic!(
+                    "position_to_point_3d: sector {} is not a motion sector",
+                    handle.get()
+                );
+            }
+
+            // Building motion sectors have no projection area of their
+            // own. Position conversion walks the sector's gates
+            // in order, finds the first door whose inside point is within
+            // maximum norm < 20, and samples the outside sector at the exit point.
+            let (projection_sector, projection_layer, point) =
+                if grid_sector.is_some_and(|sector| sector.sector_type.is_building()) {
+                    let sector = grid_sector.expect("building sector disappeared");
+                    let door = sector
+                    .gate_indices
+                    .iter()
+                    .filter_map(|index| {
+                        fast_grid
+                            .level
+                            .door_projection_infos
+                            .get(usize::from(*index))
+                    })
+                    .find(|door| {
+                        (door.point_in.x - position.x)
+                            .abs()
+                            .max((door.point_in.y - position.y).abs())
+                            < 20.0
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "position_to_point_3d: building sector {} has no door near ({}, {})",
+                            handle.get(),
+                            position.x,
+                            position.y
+                        )
+                    });
+                    (
+                        crate::position_interface::SectorHandle::from_number(door.sector_out)
+                            .with_arena_index(door.sector_out_index.unwrap_or_else(|| {
+                                panic!("building exit door has no outside sector arena identity")
+                            })),
+                        door.layer_out,
+                        door.point_out,
+                    )
+                } else {
+                    (
+                        grid_idx.map_or(handle, |index| {
+                            handle.with_arena_index(
+                                crate::fast_find_grid::SectorIndex::new(index as u32)
+                                    .expect("AI projection sector index exceeds the arena range"),
+                            )
+                        }),
+                        position.level,
+                        MapPoint::new(position.x, position.y),
+                    )
+                };
+            let projection_layer = crate::position_interface::Layer::new(projection_layer)
+                .expect("AI projection lookup cannot use absent layer");
+            let projection = crate::sight_obstacle::ProjectionAreaRef {
+                layer: projection_layer,
+                sector: projection_sector
+                    .arena_index()
+                    .unwrap_or_else(|| panic!("AI projection lookup lacks exact sector identity")),
+            };
+            let mut best: Option<(f32, f32)> = None;
+            for (_, obstacle) in obstacles.iter_indexed() {
+                if obstacle.projection_area_ref() != Some(projection)
+                    || !obstacle.box_projection.contains_point(point)
+                    || !obstacle.contains_point_projection(point)
+                {
+                    continue;
+                }
+                let z_max = obstacle.box_3d_max[2];
+                let z = obstacle.compute_top_z_from_projection(point.x, point.y);
+                match best {
+                    None => best = Some((z_max, z)),
+                    Some((prev_z_max, _)) if z_max > prev_z_max => best = Some((z_max, z)),
+                    _ => {}
+                }
+            }
+
+            best.map(|(_, z)| z).unwrap_or(0.0)
+        }
+    };
+
+    crate::coordinates::WorldPoint3D {
+        x: position.x,
+        y: position.y + z,
+        z,
+    }
+}
+
 /// Resolve the entry point used when enemy approach reconsideration's final target
 /// position belongs to a lift.
 ///
@@ -147,6 +296,8 @@ pub struct AiContext {
     /// gate endpoint. Direct element-distance tests must use this point.
     pub self_body_position_world: crate::coordinates::WorldPoint3D,
     pub frame: u32,
+    /// Depth of the current engine decision call, supplied at the call boundary.
+    pub think_depth: u8,
     pub direction: u16,
     pub posture: crate::element::Posture,
     /// Live eye point and view-cone parameters after view refresh.
@@ -655,148 +806,7 @@ impl AiContext {
     /// Resolve the original game's 3D point from a sector/layer
     /// position. The returned y coordinate is screen-space (`y + z`).
     pub fn position_to_point_3d(&self, position: Position) -> crate::coordinates::WorldPoint3D {
-        let z = match position.sector {
-            None => 0.0,
-            Some(handle) => {
-                let sector_number = crate::sector::SectorNumber::new(handle.get() as i16);
-                // The original game receives an exact sector reference here. Schema-16 NPC
-                // session-boundary transients predate exact arena identities,
-                // though, and can restore number-only seek positions. Recover
-                // that omitted pointer from the position, layer, and authored
-                // polygons rather than consulting the lossy public-number map:
-                // shipped levels may contain duplicate public sector numbers.
-                let grid_idx = handle.arena_index().map(usize::from).or_else(|| {
-                    let point = MapPoint::new(position.x, position.y);
-                    let candidates = self
-                        .fast_grid
-                        .level
-                        .sectors
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, sector)| sector.sector_number == sector_number)
-                        .collect::<Vec<_>>();
-                    let matches = candidates
-                        .iter()
-                        .copied()
-                        .filter(|(_, sector)| {
-                            sector.layer == position.level && sector.contains_point(point)
-                        })
-                        .collect::<Vec<_>>();
-                    match matches.as_slice() {
-                        [(index, _)] => Some(*index),
-                        [] => {
-                            let same_layer = candidates
-                                .iter()
-                                .copied()
-                                .filter(|(_, sector)| sector.layer == position.level)
-                                .collect::<Vec<_>>();
-                            match (same_layer.as_slice(), candidates.as_slice()) {
-                                ([(index, _)], _) | (_, [(index, _)]) => Some(*index),
-                                ([], []) => None,
-                                _ => panic!(
-                                    "AI position sector {sector_number} layer {} at ({}, {}) is ambiguous in the exact arena",
-                                    position.level, position.x, position.y
-                                ),
-                            }
-                        }
-                        _ => panic!(
-                            "AI position sector {sector_number} layer {} at ({}, {}) has multiple containing exact sectors",
-                            position.level, position.x, position.y
-                        ),
-                    }
-                });
-                let grid_sector = grid_idx.and_then(|idx| self.fast_grid.level.sectors.get(idx));
-                let is_motion = grid_sector.is_some_and(|sector| sector.sector_type.is_motion());
-                if grid_idx.is_some() && !is_motion {
-                    panic!(
-                        "position_to_point_3d: sector {} is not a motion sector",
-                        handle.get()
-                    );
-                }
-
-                // Building motion sectors have no projection area of their
-                // own. The original game's 3D position conversion walks the sector's gates
-                // in order, finds the first door whose inside point is within
-                // maximum norm < 20, and samples the outside sector at the exit point.
-                let (projection_sector, projection_layer, point) = if grid_sector
-                    .is_some_and(|sector| sector.sector_type.is_building())
-                {
-                    let sector = grid_sector.expect("building sector disappeared");
-                    let door = sector
-                            .gate_indices
-                            .iter()
-                            .filter_map(|index| {
-                                self.fast_grid
-                                    .level
-                                    .door_projection_infos
-                                    .get(usize::from(*index))
-                            })
-                            .find(|door| {
-                                (door.point_in.x - position.x)
-                                    .abs()
-                                    .max((door.point_in.y - position.y).abs())
-                                    < 20.0
-                            })
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "position_to_point_3d: building sector {} has no door near ({}, {})",
-                                    handle.get(), position.x, position.y
-                                )
-                            });
-                    (
-                        crate::position_interface::SectorHandle::from_number(door.sector_out)
-                            .with_arena_index(door.sector_out_index.unwrap_or_else(|| {
-                                panic!("building exit door has no outside sector arena identity")
-                            })),
-                        door.layer_out,
-                        door.point_out,
-                    )
-                } else {
-                    (
-                        grid_idx.map_or(handle, |index| {
-                            handle.with_arena_index(
-                                crate::fast_find_grid::SectorIndex::new(index as u32)
-                                    .expect("AI projection sector index exceeds the arena range"),
-                            )
-                        }),
-                        position.level,
-                        MapPoint::new(position.x, position.y),
-                    )
-                };
-                let projection_layer = crate::position_interface::Layer::new(projection_layer)
-                    .expect("AI projection lookup cannot use absent layer");
-                let projection = crate::sight_obstacle::ProjectionAreaRef {
-                    layer: projection_layer,
-                    sector: projection_sector.arena_index().unwrap_or_else(|| {
-                        panic!("AI projection lookup lacks exact sector identity")
-                    }),
-                };
-                let mut best: Option<(f32, f32)> = None;
-                for (_, obstacle) in self.sight_obstacles.list().iter_indexed() {
-                    if obstacle.projection_area_ref() != Some(projection)
-                        || !obstacle.box_projection.contains_point(point)
-                        || !obstacle.contains_point_projection(point)
-                    {
-                        continue;
-                    }
-                    let z_max = obstacle.box_3d_max[2];
-                    let z = obstacle.compute_top_z_from_projection(point.x, point.y);
-                    match best {
-                        None => best = Some((z_max, z)),
-                        Some((prev_z_max, _)) if z_max > prev_z_max => best = Some((z_max, z)),
-                        _ => {}
-                    }
-                }
-
-                best.map(|(_, z)| z).unwrap_or(0.0)
-            }
-        };
-
-        crate::coordinates::WorldPoint3D {
-            x: position.x,
-            y: position.y + z,
-            z,
-        }
+        ai_position_to_point_3d(&self.fast_grid, self.obstacle_list(), position)
     }
 
     /// Borrowed [`crate::sight_obstacle::ObstacleList`] view over this
@@ -804,55 +814,6 @@ impl AiContext {
     /// `ai_vision::los_clear` and the visibility query helpers accept.
     pub fn obstacle_list(&self) -> crate::sight_obstacle::ObstacleList<'_> {
         self.sight_obstacles.list()
-    }
-
-    /// Resolve a soldier register number (load-order index) to an
-    /// entity slot handle. Returns `None` when the ID is out of range
-    /// — the caller should treat that as a null actor and warn/abort
-    /// the operation.
-    pub fn all_soldier_handle(&self, register: u16) -> Option<u32> {
-        self.all_soldier_handles.get(register as usize).copied()
-    }
-
-    /// Number of soldiers in the level.
-    pub fn number_of_all_soldiers(&self) -> u16 {
-        self.all_soldier_handles.len() as u16
-    }
-
-    /// Raw-point variant of the 360° detection check. Used by
-    /// friend-check initialization to ask "can I still see my friend's post
-    /// / waypoint from here?".
-    /// Steps:
-    /// 1. viewer in a building → false
-    /// 2. stretched-Y 3D distance vs. `sq_self_view_radius`
-    /// 3. opaque-LOS via the context-only LOS helper.
-    pub fn is_detecting_point_360(&self, pt: crate::coordinates::WorldPoint3D) -> bool {
-        if self.in_building {
-            return false;
-        }
-        let viewer_eye = crate::stealth::eye_point_xy(
-            crate::coordinates::MapPoint::new(self.position.x, self.position.y),
-            self.posture,
-            self.direction as i16,
-            false,
-        );
-        let viewer_eye_z =
-            self.elevation + crate::stealth::eye_z_for_posture(self.posture, self.self_is_rider);
-        let viewer_eye_ground =
-            crate::coordinates::GroundPoint::from_map_and_z(viewer_eye, self.elevation);
-        let dx = pt.x - viewer_eye_ground.x;
-        let dy = (pt.y - viewer_eye_ground.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-        let dz = pt.z - viewer_eye_z;
-        let sq_distance = dx * dx + dy * dy + dz * dz;
-        if sq_distance > self.sq_self_view_radius {
-            return false;
-        }
-        crate::sight_obstacle::is_reachable_3d(
-            self.obstacle_list(),
-            [viewer_eye_ground.x, viewer_eye_ground.y, viewer_eye_z],
-            [pt.x, pt.y, pt.z],
-            crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
-        )
     }
 }
 
@@ -879,30 +840,6 @@ pub struct AntagonistInfo {
     pub is_vip: bool,
     /// True when the antagonist is inside a building sector.
     pub in_building: bool,
-}
-
-/// Summary of an unconscious or otherwise-disabled enemy that an NPC
-/// could approach and finish off.
-///
-/// Used by the two "sleeping enemy" paths in battle planning:
-///
-///  * `unconscious_enemies` — enemies that were in `list_them` when
-///    the cleanup pass filtered them out because they weren't
-///    combat readiness.
-///  * `nearby_sleeping_enemies` — ordered unconscious, non-carried fighter
-///    candidates. The final nearby sleeping-enemy fallback performs its
-///    360°-range and LOS query lazily at the original-game decision point.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SleepingEnemyInfo {
-    pub handle: HumanHandle,
-    pub position: Position,
-    /// True if the target is a player character (as opposed to an
-    /// enemy NPC in an opposing camp).
-    pub is_pc: bool,
-    /// True if this PC is Robin Hood (used for VIP rules).
-    pub is_robin: bool,
-    /// True if the target is a VIP (hero PC or VIP NPC).
-    pub is_vip: bool,
 }
 
 /// Same-camp swordfighter considered during swordfight reconsideration.
@@ -961,8 +898,6 @@ pub struct AiPerTickData {
     pub owner_live_position: Option<Position>,
     pub patrol_chief_position: Position,
     pub patrol_chief_state: AiState,
-    pub enemy_sq_distances: Vec<(HumanHandle, i32)>,
-    pub min_sq_enemy_distance: i32,
     pub primary_target_multiplicity: Vec<(HumanHandle, u32)>,
     /// Complete fighter-registry snapshot for direct pointer dereferences.
     ///
@@ -1030,21 +965,6 @@ pub struct AiPerTickData {
     pub missed_pc_forecast_handle: Option<AiEntityHandle>,
     /// True when `missed_pc` refers to a player character.
     pub missed_pc_is_pc: bool,
-    /// Number of enemies this soldier personally detected (not shared by
-    /// friends). Used for observe decisions where the count should
-    /// reflect only what this NPC can see, not the merged `list_them`.
-    pub personally_visible_enemies: u16,
-    /// Enemies that showed up in detection this tick but were filtered
-    /// out of `enemy_sq_distances` / `list_them` because they are
-    /// unconscious (or otherwise unable to fight) and not being carried.
-    /// Consumed by the "approach unconscious enemy" branch in
-    /// `battle_decisions`.
-    pub unconscious_enemies: Vec<SleepingEnemyInfo>,
-    /// All unconscious, non-carried enemies within the NPC's 360°
-    /// real-view radius (with LOS), regardless of whether they were
-    /// in the detection list. Consumed by the final
-    /// nearby sleeping-enemy fallback.
-    pub nearby_sleeping_enemies: Vec<SleepingEnemyInfo>,
     /// Precomputed jump-line index for table swordfight with the primary
     /// target. `Some(line_idx)` when the NPC and primary target are in
     /// different sectors reachable via a jump-line pair. Used during
@@ -1241,30 +1161,8 @@ impl AiPerTickData {
         )
     }
 
-    /// Construct an empty/stub `AiPerTickData` with all fields zeroed
-    /// or empty. **Use sparingly** — every call site is shipping a
-    /// stripped-down snapshot to whatever AI dispatch follows, and any
-    /// AI logic that needs the missing fields will silently see empty
-    /// data instead of the real engine state. The user-visible bug
-    /// class this caused: `battle_decisions` reads `enemy_sq_distances`
-    /// and falls back to `return_to_duty` when the list is empty even
-    /// if the soldier has a valid `primary_target` — soldier wedges in
-    /// a Reactiontime/Default ping-pong because the timer-dispatch
-    /// path passes `stub()` instead of the rich per-NPC tick data
-    /// that the detection-dispatch path builds.
-    ///
-    /// This used to be the `Default` trait impl, but `Default` was
-    /// removed so call sites can no longer accidentally pull in
-    /// stripped data via the `..Default::default()` shorthand without
-    /// noticing. Renaming to `stub` and requiring an explicit call
-    /// makes the loss-of-fidelity visible at every dispatch site.
-    ///
-    /// Most engine-side dispatch paths now use the centralized
-    /// `EngineInner::build_npc_tick_data(sim, npc_id)` builder.  Remaining
-    /// direct stubs should stay limited to call sites that provably
-    /// dispatch non-combat AI paths (init before target selection,
-    /// friendly panic, or non-soldier entities); otherwise add a
-    /// builder call instead of silently feeding empty combat context.
+    /// Empty inputs for dispatches that do not enter tactical decisions.
+    /// Combat handlers require the relevant target and registry inputs.
     pub fn stub() -> Self {
         Self {
             fix_hard_reaction_times: false,
@@ -1272,8 +1170,6 @@ impl AiPerTickData {
             owner_live_position: None,
             patrol_chief_position: Position::default(),
             patrol_chief_state: AiState::Default,
-            enemy_sq_distances: Vec::new(),
-            min_sq_enemy_distance: i32::MAX,
             primary_target_multiplicity: Vec::new(),
             fighter_registry: Vec::new(),
             nearby_fighters: Vec::new(),
@@ -1293,9 +1189,6 @@ impl AiPerTickData {
             missed_pc_forecast: None,
             missed_pc_forecast_handle: None,
             missed_pc_is_pc: false,
-            personally_visible_enemies: 0,
-            unconscious_enemies: Vec::new(),
-            nearby_sleeping_enemies: Vec::new(),
             primary_target_jump_line: None,
             primary_target_position: None,
             primary_target_snapshot_handle: None,

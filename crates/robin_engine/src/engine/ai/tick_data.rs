@@ -487,39 +487,9 @@ impl EngineInner {
         })
     }
 
-    /// Build a per-NPC [`AiPerTickData`] snapshot on demand, outside
-    /// the main detection pass.
-    ///
-    /// The detection pass (see the builder at `engine/ai.rs:4319`)
-    /// assembles a full-fidelity `AiPerTickData` with camp soldiers,
-    /// nearby fighters, battle points, multiplicity, etc. — but it
-    /// only runs once per frame per NPC.  Off-detection dispatch sites
-    /// (timer events, reach-point events, panic, patrol, cross-NPC
-    /// actions, civilian EventView...) previously called
-    /// `AiPerTickData::stub()`, losing every field that matters for
-    /// `battle_decisions` and swordfight tactics.  The symptom: a
-    /// soldier with a valid `primary_target` but empty
-    /// `enemy_sq_distances` bails to `return_to_duty`, producing the
-    /// Reactiontime/Default ping-pong.
-    ///
-    /// This builder fills in everything that can be cheaply computed
-    /// from the live entity store without re-running the detection
-    /// loop: same-camp soldier snapshots for alert coordination,
-    /// primary target metadata (position, posture, animation,
-    /// carrier, destination forecast, table-swordfight jump line),
-    /// `primary_target_is_pc`, friend-swap candidates for
-    /// enemy approach reconsideration, the avenger-on-the-roof wait
-    /// position, and a single-target seed for
-    /// `enemy_sq_distances` / `min_sq_enemy_distance` so
-    /// `battle_decisions` doesn't see an empty list when a valid
-    /// `primary_target` exists. Fields that truly require the full detection
-    /// scan (`unconscious_enemies`, `nearby_sleeping_enemies`, final visible
-    /// enemy distances/latches, ...) remain empty; detection refresh overlays
-    /// those scan products when it uses this builder for a queued stimulus.
-    ///
-    /// Returns a stub for non-enemy-soldier entities (civilians, PCs,
-    /// beggar/animal NPCs); their AI paths don't consult the combat
-    /// tick fields, so the stub is adequate.
+    /// Prepare combat inputs for a dispatch outside the detection pass.
+    /// Target metadata and registry inputs reflect the current owner boundary;
+    /// the detection FIFO separately retains its completed camp scan.
     pub(in crate::engine) fn build_npc_tick_data(
         &self,
         sim: &crate::sim_rng::SimulationContext,
@@ -920,14 +890,6 @@ impl EngineInner {
                 &tick.reconsider_swordfight_observation_fighters,
             );
         }
-        // The sleeping-enemy scan walks the live opposing-camp fighter
-        // registry synchronously at the battle-planning boundary. Populate
-        // this from the same live registry for every Think, including timer
-        // events that do not own a detection VIEW/OUTOFVIEW aggregate.
-        // Restricting this field to the detection aggregate leaves the final
-        // fallback blind whenever no optical stimulus was queued.
-        tick.nearby_sleeping_enemies =
-            sleeping_enemy_candidates_from_fighter_registry(&tick.fighter_registry);
         tick.reconsider_swordfight_enemies = tick
             .fighter_registry
             .iter()
@@ -1026,8 +988,7 @@ impl EngineInner {
         }
 
         let Some(target_id) = target_id else {
-            // No target selected — primary-target fields stay None,
-            // enemy_sq_distances stays empty.  Friend-swap still
+            // No target selected — primary-target fields stay None. Friend-swap still
             // scans the other soldiers; the helper handles the
             // empty-target case.
             tick.friend_swap_candidates = build_friend_swap_candidates(
@@ -1060,16 +1021,6 @@ impl EngineInner {
             tick.primary_target_animation = anim;
             tick.primary_target_carrier_position = carrier_pos;
             tick.primary_target_carrier_handle = carrier_handle;
-
-            // Seed enemy_sq_distances from the primary target so
-            // `battle_decisions` sees a non-empty list when the
-            // soldier has a valid target — same rationale as the
-            // timer-dispatch seed at line 5916.
-            let dx = pos.x - me_pos.x;
-            let dy = (pos.y - me_pos.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-            let sq = (dx * dx + dy * dy) as i32;
-            tick.enemy_sq_distances.push((target_id.index(), sq));
-            tick.min_sq_enemy_distance = sq;
         }
 
         // primary_target_is_pc: look up the target's entity variant.

@@ -49,7 +49,7 @@ impl EngineInner {
         match substate {
             Substate::SeekingCivilianRunningToSoldier => {
                 if event == StimulusType::EventReachPoint {
-                    let target = self.reporting_soldier(owner);
+                    let target = self.reporting_target(owner);
                     let state = self
                         .world
                         .entities
@@ -98,7 +98,7 @@ impl EngineInner {
                     event,
                     StimulusType::EventReachPoint | StimulusType::EventTimer
                 ) {
-                    let target = self.reporting_soldier(owner);
+                    let target = self.reporting_target(owner);
                     let waiting = self
                         .world
                         .entities
@@ -137,7 +137,7 @@ impl EngineInner {
                         owner,
                         Substate::SeekingCivilianGiveAlertingReportToSoldierPoint,
                     );
-                    let target = self.reporting_soldier(owner);
+                    let target = self.reporting_target(owner);
                     self.execute_ai_callback(
                         sim,
                         assets,
@@ -147,10 +147,9 @@ impl EngineInner {
                     self.reporting_civilian_mut(owner)
                         .base
                         .say(Remark::CivDenunciates);
-                    self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
-                    let ctx = self.ai_owner_context(owner, assets);
-                    let civilian = self.reporting_civilian_mut(owner);
-                    civilian.base.point_to(civilian.base.seek_position, &ctx);
+                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                    let position = self.reporting_civilian_mut(owner).base.seek_position;
+                    self.duty_point_to(sim, assets, owner, position);
                 }
             }
             Substate::SeekingCivilianGiveAlertingReportToSoldierPoint => {
@@ -161,21 +160,24 @@ impl EngineInner {
                         owner,
                         Substate::SeekingCivilianGiveAlertingReportToSoldierEnd,
                     );
-                    let target = self.reporting_soldier(owner);
+                    let target = self.reporting_target(owner);
                     let position = self.live_ai_position(target);
                     let elevation = self
                         .expect_entity(target, "civilian report facing target")
                         .element_data()
                         .position()
                         .z as i16;
-                    let ctx = self.ai_owner_context(owner, assets);
+                    self.duty_face_position_at_elevation(
+                        sim,
+                        assets,
+                        owner,
+                        position,
+                        f32::from(elevation),
+                    );
+                    let frame = self.control.frame_counter;
                     self.reporting_civilian_mut(owner)
                         .base
-                        .face_position_at_elevation_with_ctx(position, f32::from(elevation), &ctx);
-                    self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
-                    self.reporting_civilian_mut(owner)
-                        .base
-                        .launch_timer(30, ctx.frame);
+                        .launch_timer(30, frame);
                 }
             }
             Substate::SeekingCivilianGiveAlertingReportToSoldierEnd => {
@@ -189,7 +191,7 @@ impl EngineInner {
             }
             _ => return None,
         }
-        self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         Some(false)
     }
 
@@ -201,7 +203,7 @@ impl EngineInner {
             .expect("reporting civilian lost its brain")
     }
 
-    fn reporting_soldier(&self, owner: EntityId) -> EntityId {
+    fn reporting_target(&self, owner: EntityId) -> EntityId {
         let handle = self
             .world
             .entities
@@ -209,14 +211,7 @@ impl EngineInner {
             .antagonist
             .expect("reporting civilian requires an antagonist")
             .get();
-        let target = self
-            .entity_id_for_index(handle)
-            .expect("reporting civilian requires a live antagonist");
-        assert!(
-            matches!(self.world.entities.get(target), Some(Entity::Soldier(_))),
-            "civilian report target must be a soldier"
-        );
-        target
+        self.expect_human_id_for_ai_handle(handle, "reporting civilian antagonist")
     }
 
     fn reporting_state(
@@ -228,7 +223,7 @@ impl EngineInner {
     ) {
         self.reporting_civilian_mut(owner)
             .set_state(AiState::Seeking, substate);
-        self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     fn clear_reporting_friends(
@@ -242,7 +237,7 @@ impl EngineInner {
             .outbox
             .actor
             .delete_detectable_type(crate::element::DetectableType::Friend);
-        self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     fn civilian_call_alert(
@@ -253,7 +248,7 @@ impl EngineInner {
         ctx: &AiContext,
         reached: bool,
     ) {
-        let target = self.reporting_soldier(owner);
+        let target = self.reporting_target(owner);
         let accepted = self.execute_ai_callback(
             sim,
             assets,
@@ -263,7 +258,7 @@ impl EngineInner {
         if !accepted {
             self.reporting_civilian_mut(owner)
                 .panic_undirected(AI_STANDARD_PANIC_RUNS as u8);
-            self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
+            self.drain_direct_ai_owner_boundary(sim, owner, assets);
             return;
         }
         if reached {
@@ -286,7 +281,7 @@ impl EngineInner {
             self.reporting_civilian_mut(owner)
                 .base
                 .say(Remark::CivCallsSoldier);
-            self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
+            self.drain_direct_ai_owner_boundary(sim, owner, assets);
             self.approach_reporting_soldier(sim, assets, owner);
             self.reporting_civilian_mut(owner)
                 .base
@@ -300,7 +295,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        let target = self.reporting_soldier(owner);
+        let target = self.reporting_target(owner);
         let entity = self.expect_entity(target, "civilian approach forecast");
         let passing_door =
             selected_pass_door_movement(&self.orders.sequence_manager, target).is_some();
@@ -314,14 +309,14 @@ impl EngineInner {
             &self.world.fast_grid.level.sector_number_map,
         )
         .position;
-        let ctx = self.ai_owner_context(owner, assets);
-        self.reporting_civilian_mut(owner).base.go_near(
+        self.duty_go_near(
+            sim,
+            assets,
+            owner,
             position,
             AI_TALK_DISTANCE,
             GotoFlags::RUN,
-            &ctx,
         );
-        self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
     }
 }
 
@@ -347,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "reporting civilian requires a live antagonist")]
+    #[should_panic(expected = "reporting civilian antagonist: missing entity")]
     fn running_to_soldier_requires_live_antagonist() {
         let (mut engine, owner, _) = reporting_pair(Substate::SeekingCivilianRunningToSoldier);
         engine.reporting_civilian_mut(owner).base.antagonist =

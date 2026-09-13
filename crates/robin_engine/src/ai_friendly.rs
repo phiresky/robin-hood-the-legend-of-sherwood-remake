@@ -8,10 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ai::*;
 use crate::coordinates::MapPoint;
-use crate::parameters_ai::{
-    AB_DELTA_DEFAULT_LOOK_TIME, AB_MIN_DEFAULT_LOOK_TIME, AI_FIRST_LOOK_TIME,
-    AI_STANDARD_PANIC_RUNS, AI_TALK_DISTANCE,
-};
+use crate::parameters_ai::{AI_FIRST_LOOK_TIME, AI_STANDARD_PANIC_RUNS, AI_TALK_DISTANCE};
 
 /// Caller tail to run only when both synchronous soldier-alert route
 /// attempts fail.
@@ -307,10 +304,10 @@ impl FriendlyAi {
     // -----------------------------------------------------------------------
 
     /// Admit a civilian Think without retaining its borrow across callbacks.
-    /// Rejection completes the call here; an admitted caller must run end_think.
+    /// The engine completes both admitted and rejected calls after releasing this borrow.
     pub(crate) fn begin_think(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        _sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
         ctx: &AiContext,
@@ -320,45 +317,19 @@ impl FriendlyAi {
 
         let stimulus_type = stimulus.stimulus_type;
 
-        self.base
-            .register_log_line(LogLineType::Event, stimulus_type as u16);
-
         // Pre-think checks
         if !self.start_think(stimulus, ctx, global.freeze) {
             if stimulus_type == StimulusType::EventAfterScriptGoOn {
                 self.base.outbox.reentrant.engine_drains_after_script_go_on = false;
             }
-            self.end_think(sim, ctx);
             return false;
         }
 
         // Script filter gate applied by the engine before this call —
         // see `Engine::filter_stimulus` and the matching note in
-        // ai_enemy::think.
+        // the engine-owned decision dispatcher.
 
         true
-    }
-
-    pub(crate) fn think(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        stimulus: &Stimulus,
-        global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &FriendlyPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        doors: Option<&[crate::gate::Door]>,
-    ) -> bool {
-        if !self.begin_think(sim, stimulus, global, ctx) {
-            return true;
-        }
-        let result = self.think_body(sim, stimulus, global, ctx, tick, grid, doors);
-        if !(stimulus.stimulus_type == StimulusType::EventAfterScriptGoOn
-            && self.base.outbox.reentrant.engine_drains_after_script_go_on)
-        {
-            self.end_think(sim, ctx);
-        }
-        result
     }
 
     /// Run only the admitted handler; the engine owns the surrounding call.
@@ -371,10 +342,10 @@ impl FriendlyAi {
         tick: &FriendlyPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         doors: Option<&[crate::gate::Door]>,
-    ) -> bool {
+    ) -> AiFlow<bool> {
         let stimulus_type = stimulus.stimulus_type;
 
-        match stimulus_type {
+        Ok(match stimulus_type {
             // Expected events
             StimulusType::EventReachPoint
             | StimulusType::EventDone
@@ -385,7 +356,7 @@ impl FriendlyAi {
             | StimulusType::EventMyTalk1
             | StimulusType::EventMyTalk2
             | StimulusType::EventMyTalk3 => {
-                self.think_expected_event(sim, stimulus, ctx, tick, grid, doors)
+                self.think_expected_event(sim, stimulus, ctx, tick, grid, doors)?
             }
 
             // Unexpected events
@@ -398,7 +369,7 @@ impl FriendlyAi {
             | StimulusType::CallYouJustWait
             | StimulusType::EventAppleChaseNear
             | StimulusType::EventNetAway => {
-                self.think_unexpected_event(sim, stimulus, global, ctx, tick, grid, doors)
+                self.think_unexpected_event(sim, stimulus, global, ctx, tick, grid, doors)?
             }
 
             // Alerting events
@@ -432,8 +403,7 @@ impl FriendlyAi {
             StimulusType::EventReturnToDuty => {
                 // EVENT_RETURN_TO_DUTY runs the duty hand-off but
                 // Think returns false.
-                self.return_to_duty(sim, DutyFlags::empty(), ctx);
-                false
+                return Err(DutyCall::new(DutyFlags::empty(), false));
             }
 
             // Shadows are ignored by civilians; Think returns false.
@@ -447,7 +417,7 @@ impl FriendlyAi {
                 );
                 false
             }
-        }
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -460,7 +430,6 @@ impl FriendlyAi {
         ctx: &AiContext,
         static_ai_frozen: bool,
     ) -> bool {
-        self.start_think_pre_filter(stimulus);
         self.start_think_post_filter(stimulus, ctx, static_ai_frozen)
     }
 
@@ -531,66 +500,6 @@ impl FriendlyAi {
         true
     }
 
-    pub(crate) fn end_think(&mut self, sim: &crate::sim_rng::SimulationContext, ctx: &AiContext) {
-        // The original game's end-think phase dispatches this event here and runs the
-        // script FilterAIEvent gate before dispatch. Queue these as
-        // same-frame self-stimuli so the engine-side drain can apply
-        // that filter without re-entering the script VM through this
-        // borrowed AI object. The three-tier depth gate still matches
-        // original game: <100 queues the follow-up, 100..=110 bails to
-        // returning to duty, 111+ drops it silently.
-
-        if self.base.think_recursion_depth < 100 {
-            // Dispatching a completion re-enters Think, and Think's entry gate
-            // clears all three latches before the nested handler runs. Only
-            // the first set latch can therefore survive to be dispatched.
-            let event = if self.base.couldnt_reachpoint {
-                Some(StimulusType::EventCouldntReachPoint)
-            } else if self.base.already_on_point {
-                Some(StimulusType::EventReachPoint)
-            } else if self.base.already_turned {
-                Some(StimulusType::EventDone)
-            } else {
-                None
-            };
-            self.base.couldnt_reachpoint = false;
-            self.base.already_on_point = false;
-            self.base.already_turned = false;
-            if let Some(event) = event {
-                self.base.outbox.reentrant.self_stimuli.push(event.into());
-                // Original dispatches this event recursively before the
-                // decrement, so the frame stays open until the cascade's
-                // innermost Think unwinds (see `open_end_think_frames`).
-                self.base.open_end_think_frames = self.base.open_end_think_frames.saturating_add(1);
-                return;
-            }
-        } else {
-            // The deep-recursion fallback returns to duty instead of running a
-            // nested Think, so it never clears the sibling latches and each
-            // one falls back independently.
-            let couldnt_reachpoint = std::mem::take(&mut self.base.couldnt_reachpoint);
-            let already_on_point = std::mem::take(&mut self.base.already_on_point);
-            let already_turned = std::mem::take(&mut self.base.already_turned);
-            if self.base.think_recursion_depth < 111 {
-                for pending in [couldnt_reachpoint, already_on_point, already_turned] {
-                    if pending {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx);
-                    }
-                }
-            }
-        }
-        // No continuation was queued: the innermost Think of a completion
-        // cascade unwinds the whole chain of still-open ancestor frames —
-        // the deferred equivalent of the stacked tick-completion decrements the
-        // Original performs while returning out of the nested calls.
-        let open = std::mem::take(&mut self.base.open_end_think_frames);
-        self.base.think_recursion_depth = self
-            .base
-            .think_recursion_depth
-            .saturating_sub(1)
-            .saturating_sub(open);
-    }
-
     // -----------------------------------------------------------------------
     // Expected-event civilian dispatcher
     // -----------------------------------------------------------------------
@@ -603,7 +512,7 @@ impl FriendlyAi {
         tick: &FriendlyPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         doors: Option<&[crate::gate::Door]>,
-    ) -> bool {
+    ) -> AiFlow<bool> {
         debug_assert_eq!(
             self.base.current_substate.ai_state_family(),
             Some(self.base.current_state),
@@ -673,7 +582,7 @@ impl FriendlyAi {
                             self.base.launch_timer(200, ctx.frame);
                         }
                         _ => {
-                            self.return_to_duty(sim, DutyFlags::empty(), ctx);
+                            return Err(DutyCall::new(DutyFlags::empty(), false));
                         }
                     }
                 }
@@ -681,14 +590,14 @@ impl FriendlyAi {
 
             Substate::DefaultChildApproachedWhistling => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx);
+                    return Err(DutyCall::new(DutyFlags::empty(), false));
                 }
             }
 
             // ############## W O N D E R I N G #####################
             Substate::WonderingCivilianAdmiringHero => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx);
+                    return Err(DutyCall::new(DutyFlags::empty(), false));
                 }
             }
 
@@ -755,7 +664,7 @@ impl FriendlyAi {
             // ############## S E E K I N G #####################
             Substate::SeekingGotStopEvent => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx);
+                    return Err(DutyCall::new(DutyFlags::empty(), false));
                 }
             }
 
@@ -869,7 +778,7 @@ impl FriendlyAi {
 
             Substate::FleeingChildChasedEnd => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx);
+                    return Err(DutyCall::new(DutyFlags::empty(), false));
                 }
             }
 
@@ -886,7 +795,7 @@ impl FriendlyAi {
                 );
             }
         }
-        false
+        Ok(false)
     }
 
     // -----------------------------------------------------------------------
@@ -897,12 +806,12 @@ impl FriendlyAi {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
-        global: &mut AiGlobalState,
+        _global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &FriendlyPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        doors: Option<&[crate::gate::Door]>,
-    ) -> bool {
+        _doors: Option<&[crate::gate::Door]>,
+    ) -> AiFlow<bool> {
         let stimulus_type = stimulus.stimulus_type;
 
         match stimulus_type {
@@ -916,55 +825,9 @@ impl FriendlyAi {
 
             StimulusType::EventAfterScriptGoOn => {
                 if self.base.outbox.reentrant.engine_drains_after_script_go_on {
-                    return false;
+                    return Ok(false);
                 }
-                // Drain retained stimuli exactly as the Original's recursive
-                // Think(stimulus) loop does. Preserve the complete stimulus:
-                // reducing an EventView to its type discards the viewed actor
-                // and turns the remembered event into a silent no-op.
-                //
-                // Re-check the AI lock / script-lock flags at the
-                // top of every iteration and return false if either
-                // becomes set, leaving the remaining queued stimuli
-                // for the next `EventAfterScriptGoOn`.  A lock that
-                // was already set before this call (e.g. acquired
-                // by a different dispatch path that bypassed
-                // `start_think`) must leave the queue intact so the
-                // next `EventAfterScriptGoOn` after the script
-                // unlocks can pick up where this one left off.
-                while !self.base.stimulus_queue.is_empty() {
-                    if !self.base.locks_flag_field.is_empty() || self.base.script_locked {
-                        return false;
-                    }
-                    let q = self.base.stimulus_queue.remove(0);
-                    if q.stimulus_type != StimulusType::EventAfterScriptGoOn {
-                        // `Think(stimulus)` receives the queued stimulus's live
-                        // human reference in the original game. Rust carries that
-                        // target-specific view separately on `AiContext`, so
-                        // the outer EVENT_AFTER_SCRIPT_GO_ON context cannot be
-                        // reused unchanged for a retained EVENT_VIEW.
-                        let mut nested_ctx = ctx.clone();
-                        if let StimulusInfo::Human(handle) = q.info {
-                            let view = nested_ctx.entity_view(handle.get()).unwrap_or_else(|| {
-                                panic!(
-                                    "retained {:?} for civilian {} references missing human {}",
-                                    q.stimulus_type, self.base.me, handle
-                                )
-                            });
-                            nested_ctx.antagonist = Some(crate::ai::AntagonistInfo {
-                                position: view.position,
-                                camp: view.camp,
-                                is_swordfighting: view.is_swordfighting,
-                                is_pc: view.is_pc,
-                                is_robin: view.is_robin,
-                                is_vip: view.is_vip,
-                                in_building: view.in_building,
-                            });
-                        }
-                        self.think(sim, &q, global, &nested_ctx, tick, grid, doors);
-                    }
-                }
-
+                // The engine drains retained stimuli before invoking this tail.
                 // After the drain, if we're in STATE_DEFAULT we
                 // either advance on the patrol path (next waypoint
                 // → enter the en-route state → move) or return
@@ -1018,12 +881,12 @@ impl FriendlyAi {
                                 ctx,
                             );
                         } else {
-                            self.return_to_duty(sim, DutyFlags::empty(), ctx);
+                            return Err(DutyCall::new(DutyFlags::empty(), false));
                         }
                     } else {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx);
+                        return Err(DutyCall::new(DutyFlags::empty(), false));
                     }
-                    return false;
+                    return Ok(false);
                 }
             }
 
@@ -1090,9 +953,9 @@ impl FriendlyAi {
                         self.fleeing_seen_enemy_counter = 0;
                     }
                     self.base
-                        .think_expected_event_common_stuff(sim, stimulus, ctx);
+                        .think_expected_event_common_stuff(sim, stimulus, ctx)?;
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx);
+                    return Err(DutyCall::new(DutyFlags::empty(), false));
                 }
             }
 
@@ -1116,27 +979,7 @@ impl FriendlyAi {
                     .push(crate::ai::AiOwnerWork::SetEyeStatus(
                         crate::element::EyeStatus::LookForward,
                     ));
-                let outgoing_state = self.base.current_state;
-                let outgoing_substate = self.base.current_substate;
-                let return_to_duty_sets_state = !ctx.in_uninterruptible_command
-                    && !matches!(
-                        ctx.posture,
-                        crate::element::Posture::Flying
-                            | crate::element::Posture::OnLadder
-                            | crate::element::Posture::OnWall
-                    );
-                self.return_to_duty(sim, DutyFlags::empty(), ctx);
-                if return_to_duty_sets_state {
-                    // Outgoing state was captured before `return_to_duty`
-                    // mutated it; no actor prefix rides this callback.
-                    let incoming = (self.base.current_state, self.base.current_substate);
-                    self.base.queue_state_transition(
-                        (outgoing_state, outgoing_substate),
-                        incoming,
-                        AiStateChangeSource::SelfActor,
-                        None,
-                    );
-                }
+                return Err(DutyCall::new(DutyFlags::empty(), false));
             }
 
             StimulusType::EventOutOfView => {
@@ -1146,7 +989,7 @@ impl FriendlyAi {
             _ => {}
         }
 
-        false
+        Ok(false)
     }
 
     // -----------------------------------------------------------------------
@@ -1294,45 +1137,6 @@ impl FriendlyAi {
     // -----------------------------------------------------------------------
     // Standard procedures
     // -----------------------------------------------------------------------
-
-    /// Return to default duty behavior.
-    pub fn return_to_duty(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        flags: DutyFlags,
-        ctx: &AiContext,
-    ) {
-        self.fleeing_seen_enemy_counter = 0;
-
-        // "Very very busy" gates on a posture that can't be
-        // interrupted mid-transition: Flying / OnLadder / OnWall,
-        // or an active PassDoor / Fall sequence element.  The
-        // posture arm is checked off `ctx.posture`; the sequence-
-        // element arm arrives via `ctx.in_uninterruptible_command`,
-        // populated by `build_ai_context_from_entity` from
-        // `EngineInner::is_very_very_busy`'s command-element check
-        // (`Command::PassDoor | Command::Fall` for the actor's
-        // currently-in-flight sequence element).  Defer the
-        // re-entry via `pending_self_stimuli` so the AI re-evaluates
-        // once the busy state clears (recursive
-        // `Think(EVENT_RETURN_TO_DUTY)` after the lock).
-        use crate::element::Posture;
-        if ctx.in_uninterruptible_command
-            || matches!(
-                ctx.posture,
-                Posture::Flying | Posture::OnLadder | Posture::OnWall,
-            )
-        {
-            self.base.non_script_lock(AiLockFlags::BUSY);
-            self.base.was_busy = true;
-            self.base
-                .fire_self_stimulus(StimulusType::EventReturnToDuty);
-            return;
-        }
-
-        // Call the common return-to-duty method for civilians and villains
-        self.base.return_to_duty_common_stuff(sim, flags, ctx);
-    }
 
     /// Standard procedure when a civilian sees a PC.
     pub fn event_view_standard_procedure(&mut self, good_guy: HumanHandle, ctx: &AiContext) {
@@ -1763,11 +1567,11 @@ impl FriendlyAi {
         ctx: &AiContext,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         doors: Option<&[crate::gate::Door]>,
-    ) {
+    ) -> AiFlow<()> {
         self.base.outbox.reentrant.alert_soldier_completion_pending = false;
         if !self.base.couldnt_reachpoint {
             self.base.say(Remark::CivPanic);
-            return;
+            return Ok(());
         }
         self.base.couldnt_reachpoint = false;
         if !check_door_path
@@ -1781,7 +1585,7 @@ impl FriendlyAi {
                 doors,
             )
         {
-            return;
+            return Ok(());
         }
         if check_door_path {
             self.delete_all_friend_detectables();
@@ -1795,9 +1599,10 @@ impl FriendlyAi {
                 self.panic_from_point_at(center, AI_STANDARD_PANIC_RUNS as u8);
             }
             AlertSoldierFailureContinuation::ReturnToDuty => {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx);
+                return Err(DutyCall::new(DutyFlags::empty(), false));
             }
         }
+        Ok(())
     }
 
     /// Random ambient speech for civilians.
@@ -1938,98 +1743,6 @@ impl FriendlyAi {
                 self.base.stuck_counter = 0;
             }
         }
-    }
-
-    /// Initialize civilian AI after loading.
-    ///
-    /// The per-entity wiring (direction/view radius/detectables/
-    /// initial position/patrol path creation + fine-check) is
-    /// handled by `EngineInner::init_one_ai` before this runs; here
-    /// we only handle the beggar-lock + initial-action / return-to-
-    /// duty tail.  The returned [`InitStateSideEffects`] carries the
-    /// entity-side mutations the caller must apply on NpcData /
-    /// HumanData / ElementData / ActorData.
-    pub fn init_one_ai(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-    ) -> InitStateSideEffects {
-        // Default civilian life points are set on `NpcData::default()`
-        // (in `element.rs`) to the engine's `CIVILIAN_LIFE_POINTS = 100`.
-
-        // `go_to_duty = init_state(sim, ) && !ai_is_script_locked() && !ai_is_locked()`.
-        // The `init_state` call commits the AI-side state
-        // transition chosen by the level designer's authored
-        // initial action and tells us whether the actor should
-        // launch into its duty loop after.
-        let fx = self.base.init_state(sim, ctx);
-
-        // `go_to_duty` is computed *before* the beggar-lock below,
-        // so a beggar authored as `WaitingUpright` /
-        // `WaitingUprightBored` / etc. still gets `go_to_duty=true`
-        // and takes the else-branch's timer launch and
-        // default / on-post state-change cascade below. (Re-reading
-        // `ai_is_locked()` post-beggar-lock to gate the patrol-path
-        // vs else branches is correct, and matches the downstream
-        // check below.)
-        let go_to_duty =
-            fx.go_to_duty && !self.base.ai_is_script_locked() && !self.base.ai_is_locked();
-
-        // Beggar civilians get a non-script `BEGGAR` lock so their
-        // script-driven begging loop isn't interrupted by ambient
-        // AI decisions.  This runs *after* `init_state` and *after*
-        // `go_to_duty` is computed.
-        if ctx.self_is_beggar {
-            self.base.non_script_lock(crate::ai::AiLockFlags::BEGGAR);
-        }
-
-        if !self.base.ai_is_locked() && self.base.has_patrol_path {
-            self.base.substate_at_last_timer_launch = self.base.current_substate;
-            if go_to_duty {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx);
-            }
-            // Movement requests check the AI decision-method recursion depth and
-            // either sets `already_on_point` (for the enclosing
-            // tick completion to dispatch) or fires a reach-point decision tick
-            // directly when called outside a Think cycle.
-            // `return_to_duty` runs outside AI decisions, so movement to a
-            // waypoint we already stand on sets `already_on_point =
-            // true` but nothing drains it — queue a self-stimulus
-            // so the engine's next-tick drain dispatches it (same
-            // shape as the enemy branch).
-            if self.base.already_on_point {
-                self.base.already_on_point = false;
-                self.base
-                    .fire_self_stimulus(crate::ai::StimulusType::EventReachPoint);
-            }
-            // A failed movement and a no-op facing command raise their latches
-            // unconditionally, with no outside-Think delivery path of their
-            // own. Outside a Think the next Think entry simply discards them,
-            // so drop them here instead of inventing completions.
-            self.base.couldnt_reachpoint = false;
-            self.base.already_turned = false;
-        } else if go_to_duty {
-            // Civilians without a patrol path and `go_to_duty=true`
-            // get the authored "first look" randomised delay.
-            // `init_state` already launched the bored timer via
-            // its `WaitingUpright` branch, so we overwrite with the
-            // longer look timer here — the second `launch_timer`
-            // call wins.
-            let timer_value = AB_MIN_DEFAULT_LOOK_TIME
-                + crate::sim_rng::i32(
-                    sim,
-                    crate::sim_rng::RngSite::CivilianFirstLookTimer,
-                    0..AB_DELTA_DEFAULT_LOOK_TIME,
-                );
-            self.base.launch_timer(timer_value as u32, ctx.frame);
-            self.set_state(AiState::Default, Substate::DefaultOnPost);
-            self.base.substate_at_last_timer_launch = self.base.current_substate;
-        }
-
-        // The original game stamps this after all patrol-path setup.
-        self.base.last_hint_actuality = ctx.frame;
-
-        fx
     }
 
     /// Propose a good destination for fleeing an apple chase.

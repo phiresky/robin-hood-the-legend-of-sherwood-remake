@@ -973,235 +973,6 @@ fn rider_charge_trusts_persistent_primary_over_transient_camp_classification() {
 }
 
 #[test]
-fn sleeping_enemy_visibility_is_evaluated_only_by_the_fallback() {
-    let mut target = pc_view();
-    target.position.x = 100.0;
-    target.is_unconscious = true;
-    let candidate = SleepingEnemyInfo {
-        handle: 198,
-        position: target.position,
-        is_pc: true,
-        is_robin: false,
-        is_vip: false,
-    };
-    let ctx = AiContext {
-        self_view_radius: 500,
-        ..AiContext::test_fixture()
-    };
-
-    assert!(sleeping_enemy_detected_360(&ctx, &candidate, &target));
-    target.in_building = true;
-    assert!(!sleeping_enemy_detected_360(&ctx, &candidate, &target));
-}
-
-#[test]
-fn trainer_sleeping_enemy_scan_waits_for_return_to_duty_continuation() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(91);
-    ai.combat_trainer = true;
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingBowObserving;
-
-    let mut target = pc_view_at(Position {
-        x: 100.0,
-        ..Position::default()
-    });
-    target.is_unconscious = true;
-    let mut owner = pc_view();
-    owner.is_pc = false;
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(91, owner);
-    views.insert(198, target.clone());
-    let ctx = AiContext {
-        self_view_radius: 500,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    tick.nearby_sleeping_enemies = vec![SleepingEnemyInfo {
-        handle: 198,
-        position: target.position,
-        is_pc: true,
-        is_robin: false,
-        is_vip: false,
-    }];
-
-    ai.kill_nearby_sleeping_enemies(ThinkEnv::new(&sim, &ctx, &tick, None));
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingBowObserving,
-        "the sleeping scan must not run before ReturnToDuty completes"
-    );
-    assert!(matches!(
-        ai.base.outbox.reentrant.owner_work.as_slice(),
-        [
-            crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. },
-            crate::ai::AiOwnerWork::ResumeKillNearbySleepingEnemiesAfterReturnToDuty,
-        ]
-    ));
-
-    ai.resume_kill_nearby_sleeping_enemies_after_return_to_duty(ThinkEnv::new(
-        &sim, &ctx, &tick, None,
-    ));
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingApproachingSleepingEnemy
-    );
-    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(198)));
-}
-
-fn sleeping_target_case(
-    first: Position,
-    second: Position,
-    expected: HumanHandle,
-) -> (EnemyAi, AiContext) {
-    let mut first_view = pc_view_at(first);
-    first_view.elevation = 0.0;
-    first_view.is_unconscious = true;
-    let mut second_view = pc_view_at(second);
-    second_view.elevation = 0.0;
-    second_view.is_unconscious = true;
-    let owner_position = Position {
-        x: 1377.2015,
-        y: 252.88869,
-        sector: crate::position_interface::SectorHandle::new(14),
-        ..Position::default()
-    };
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(346, first_view);
-    views.insert(345, second_view);
-    views.insert(139, pc_view_at(owner_position));
-    let ctx = AiContext {
-        position: owner_position,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-    let targets = [
-        SleepingEnemyInfo {
-            handle: 346,
-            position: first,
-            is_pc: true,
-            is_robin: false,
-            is_vip: false,
-        },
-        SleepingEnemyInfo {
-            handle: 345,
-            position: second,
-            is_pc: true,
-            is_robin: false,
-            is_vip: false,
-        },
-    ];
-    let mut ai = EnemyAi::new(139);
-    ai.approach_sleeping_enemies(
-        ThinkEnv::new(
-            &crate::sim_rng::test_context(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        ),
-        &targets,
-    );
-
-    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(expected)));
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingApproachingSleepingEnemy
-    );
-    let order = ai
-        .base
-        .outbox
-        .actor
-        .orders
-        .last()
-        .expect("sleeping target selection must queue approach movement");
-    let target = ctx.entity_view(expected).unwrap().position;
-    assert_eq!((order.target_x, order.target_y), (target.x, target.y));
-    (ai, ctx)
-}
-
-#[test]
-fn sleeping_enemy_selection_uses_isometric_get_position_distance() {
-    let raw_nearer = Position {
-        x: 1394.2125,
-        y: 328.31696,
-        sector: crate::position_interface::SectorHandle::new(14),
-        ..Position::default()
-    };
-    let isometric_nearer = Position {
-        x: 1417.7587,
-        y: 185.4791,
-        sector: crate::position_interface::SectorHandle::new(14),
-        ..Position::default()
-    };
-
-    let owner = Position {
-        x: 1377.2015,
-        y: 252.88869,
-        ..Position::default()
-    };
-    let raw_sq = |target: Position| {
-        let dx = target.x - owner.x;
-        let dy = target.y - owner.y;
-        dx * dx + dy * dy
-    };
-    let isometric_sq = |target: Position| {
-        let dx = target.x - owner.x;
-        let dy = (target.y - owner.y) * INVERSE_ASPECT_RATIO;
-        dx * dx + dy * dy
-    };
-    assert!(raw_sq(raw_nearer) < raw_sq(isometric_nearer));
-    assert!(isometric_sq(isometric_nearer) < isometric_sq(raw_nearer));
-
-    let (ai, _ctx) = sleeping_target_case(raw_nearer, isometric_nearer, 345);
-    // The isometric-nearer sleeper (handle 345) wins over the raw-nearer one
-    // (handle 346), and the queued approach walks to its position.
-    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(345)));
-    assert_ne!(ai.base.primary_target, Some(AiEntityHandle::new(346)));
-    let order = ai
-        .base
-        .outbox
-        .actor
-        .orders
-        .last()
-        .expect("isometric selection must queue an approach order");
-    assert_eq!(
-        (order.target_x, order.target_y),
-        (isometric_nearer.x, isometric_nearer.y)
-    );
-}
-
-#[test]
-fn sleeping_enemy_selection_keeps_ordinary_nearest_target() {
-    let nearest = Position {
-        x: 1417.0,
-        y: 250.0,
-        sector: crate::position_interface::SectorHandle::new(14),
-        ..Position::default()
-    };
-    let farther = Position {
-        x: 1500.0,
-        y: 400.0,
-        sector: crate::position_interface::SectorHandle::new(14),
-        ..Position::default()
-    };
-
-    let (ai, _ctx) = sleeping_target_case(nearest, farther, 346);
-    // Both metrics agree here, so the plain nearest sleeper (handle 346) is
-    // chosen and the approach order targets its position.
-    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(346)));
-    let order = ai
-        .base
-        .outbox
-        .actor
-        .orders
-        .last()
-        .expect("nearest selection must queue an approach order");
-    assert_eq!((order.target_x, order.target_y), (nearest.x, nearest.y));
-}
-
-#[test]
 fn reconsider_approach_resolves_position_after_synchronous_retarget() {
     let mut ai = EnemyAi::new(110);
     ai.base.current_state = AiState::Attacking;
@@ -1437,7 +1208,6 @@ fn reconsider_approach_move_precedes_state_change_callback() {
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingTooProudToAttackApproach;
     ai.base.primary_target = Some(AiEntityHandle::new(198));
-    ai.base.think_recursion_depth = 1;
     ai.sword_range = 50;
 
     let target_position = Position {
@@ -1446,6 +1216,7 @@ fn reconsider_approach_move_precedes_state_change_callback() {
         ..Position::default()
     };
     let ctx = AiContext {
+        think_depth: 1,
         position: Position {
             x: 1773.7925,
             y: 2523.631,
@@ -1542,7 +1313,6 @@ fn reconsider_approach_same_substate_seals_live_move_without_stealing_old_callba
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingRunningToEnemy;
     ai.base.primary_target = Some(AiEntityHandle::new(198));
-    ai.base.think_recursion_depth = 1;
     ai.sword_range = 50;
     ai.base
         .outbox
@@ -1565,6 +1335,7 @@ fn reconsider_approach_same_substate_seals_live_move_without_stealing_old_callba
         ..Position::default()
     };
     let ctx = AiContext {
+        think_depth: 1,
         position: Position {
             x: 1773.7925,
             y: 2523.631,
@@ -1698,7 +1469,6 @@ fn close_avenger_roof_wait_position_completes_without_an_order() {
     ai.base.current_substate = Substate::AttackingRunningToEnemy;
     ai.base.primary_target = Some(AiEntityHandle::new(298));
     ai.base.couldnt_reachpoint = true;
-    ai.base.think_recursion_depth = 1;
     ai.base
         .outbox
         .reentrant
@@ -1715,6 +1485,7 @@ fn close_avenger_roof_wait_position_completes_without_an_order() {
         level: 1,
     };
     let ctx = AiContext {
+        think_depth: 1,
         position: wait_position,
         self_layer: wait_position.level,
         ..AiContext::test_fixture()
@@ -1782,7 +1553,6 @@ fn reconsider_approach_already_near_engages_before_approach_state_change() {
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingReactiontime;
     ai.base.primary_target = Some(AiEntityHandle::new(198));
-    ai.base.think_recursion_depth = 1;
     ai.sword_range = 150;
     ai.sword_is_charge_weapon = true;
 
@@ -1790,7 +1560,10 @@ fn reconsider_approach_already_near_engages_before_approach_state_change() {
         x: 100.0,
         ..Position::default()
     };
-    let ctx = AiContext::test_fixture();
+    let ctx = AiContext {
+        think_depth: 1,
+        ..AiContext::test_fixture()
+    };
     let mut tick = AiPerTickData::stub();
     add_owner_sword_range(&mut tick, 180, 150);
     tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(198));
@@ -1993,10 +1766,6 @@ fn failed_fight_approach_resumes_inline_observe_decision() {
     ai.base.current_substate = Substate::AttackingRunningToEnemy;
     ai.base.primary_target = Some(AiEntityHandle::new(198));
     ai.base.couldnt_reachpoint = true;
-    // Rust has temporarily unwound the recursion depth while the first
-    // engine-owned route is settled, but the continuation still belongs
-    // to the enclosing original-game decision tick.
-    ai.base.completion_latch_inside_think = true;
     ai.list_them = vec![198];
 
     let target_position = Position {
@@ -2039,10 +1808,6 @@ fn failed_fight_approach_resumes_inline_observe_decision() {
         crate::order::OrderType::WalkingUpright
     );
     assert!(ai.base.outbox.reentrant.battle_observe_completion_pending);
-    assert!(
-        ai.base.completion_latch_inside_think,
-        "the nested Observe route must retain the enclosing Think's completion ownership"
-    );
 }
 
 fn proud_decision_speech(
@@ -2078,7 +1843,6 @@ fn proud_decision_speech(
         ..AiContext::test_fixture()
     };
     let mut tick = AiPerTickData::stub();
-    tick.enemy_sq_distances = vec![(198, 150 * 150)];
     tick.nearby_fighters = vec![FighterSnapshot {
         handle: 198,
         position: target_position,
@@ -2253,7 +2017,6 @@ fn tower_guard_uses_live_ai_position_instead_of_stale_nearby_snapshot() {
         ..AiContext::test_fixture_with_motion_sector(19, 1)
     };
     let mut tick = AiPerTickData::stub();
-    tick.enemy_sq_distances = vec![(198, 100)];
     tick.nearby_fighters = vec![FighterSnapshot {
         handle: 198,
         position: stale_position,
@@ -2377,20 +2140,21 @@ fn unable_nonfriend_them_entry_consumes_visible_count_and_returns_to_duty() {
     unable_enemy.is_able_to_fight = false;
     let (ctx, tick) = battle_cleanup_context(unable_enemy);
 
-    ai.battle_decisions(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        &mut AiGlobalState::default(),
-    );
+    let call = ai
+        .battle_decisions(
+            ThinkEnv::new(&sim, &ctx, &tick, None),
+            &mut AiGlobalState::default(),
+        )
+        .expect_err("an exhausted battle delegates its live sleeping-enemy scan");
 
     assert!(ai.list_them.is_empty());
     assert_ne!(ai.base.current_substate, Substate::AttackingReserve);
     assert!(!ai.base.timer_is_running);
-    assert!(ai.base.outbox.reentrant.owner_work.iter().any(|work| {
-        matches!(
-            work,
-            crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }
-        )
-    }));
+    assert!(
+        matches!(call.tail, crate::ai::DutyTail::ScanSleepingEnemies { observer_camp } if observer_camp == ctx.camp)
+    );
+    assert!(call.after.is_empty());
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
 }
 
 #[test]
@@ -2443,7 +2207,6 @@ fn battle_decisions_preserves_enemy_list_from_last_explicit_rebuild() {
         ..AiContext::test_fixture()
     };
     let mut tick = AiPerTickData::stub();
-    tick.enemy_sq_distances = vec![(198, 100)];
     tick.nearby_fighters = vec![
         FighterSnapshot {
             handle: 198,

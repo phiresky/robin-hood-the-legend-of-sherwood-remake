@@ -126,7 +126,6 @@ fn ai_controller_scalar_projection_matrix() {
             stop_before_end_of_path: seed & (1 << 2) != 0,
             use_max_norm_to_stop_before_end_of_path: seed & (1 << 3) != 0,
             stop_before_end_of_path_distance: (21u32 + seed) as u16,
-            think_recursion_depth: (22u32 + seed) as u8,
             macro_command: vec![(26u32 + seed) as u8, seed as u8],
             macro_command_offset: (27u32 + seed) as usize,
             number_of_remaining_macro_bytes: (29u32 + seed) as u16,
@@ -147,7 +146,6 @@ fn ai_controller_scalar_projection_matrix() {
             couldnt_reachpoint: seed & (1 << 1) != 0,
             already_on_point: seed & (1 << 2) != 0,
             already_turned: seed & (1 << 3) != 0,
-            completion_latch_inside_think: seed & (1 << 0) != 0,
             likes_to_sit_around: seed & (1 << 1) != 0,
             special_action: seed & (1 << 2) != 0,
             remaining_tequila_gulps: (64u32 + seed) as u8,
@@ -311,10 +309,6 @@ fn populated_controller() -> AiController {
         primary_target: Some(AiEntityHandle::new(0)),
         macro_command: vec![0, 1, 254, 255],
         macro_command_offset: 3,
-        think_recursion_depth: 8,
-        open_end_think_frames: 7,
-        engine_deferred_end_think_frames: 5,
-        engine_completion_verdict_resolved: true,
         forbidden_remark_ids: vec![9, 3, 9],
         list_us: vec![17, 0, 8],
         stimulus_queue: vec![provenance_stimulus(SelfStimulusOrigin::Condolation)],
@@ -369,17 +363,10 @@ fn controller_projection_matches_existing_json_native_and_hash_contracts() {
     let raw = populated_controller();
     let raw_clone = raw.clone();
     let restored = assert_projection_matches_wire!(raw.clone(), AiController);
-    assert_eq!(raw_clone.open_end_think_frames, 7);
-    assert_eq!(raw_clone.engine_deferred_end_think_frames, 5);
-    assert!(raw_clone.engine_completion_verdict_resolved);
     assert_eq!(
         raw_clone.stimulus_queue[0].self_origin,
         SelfStimulusOrigin::Condolation
     );
-    assert_eq!(restored.open_end_think_frames, 0);
-    assert_eq!(restored.engine_deferred_end_think_frames, 0);
-    assert!(!restored.engine_completion_verdict_resolved);
-    assert_eq!(restored.think_recursion_depth, 8);
     assert_eq!(
         restored.stimulus_queue[0].self_origin,
         SelfStimulusOrigin::Ordinary
@@ -485,7 +472,6 @@ fn enemy_and_friendly_projection_recurse_into_base_and_last_patrol_stimulus() {
         ..Default::default()
     };
     let restored = assert_projection_matches_wire!(friendly, FriendlyAi);
-    assert_eq!(restored.base.open_end_think_frames, 0);
     assert_eq!(restored.last_talk_partner, Some(AiEntityHandle::new(0)));
 }
 

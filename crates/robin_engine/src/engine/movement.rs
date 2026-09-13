@@ -7111,7 +7111,6 @@ impl EngineInner {
                     order = ?intent.order_type,
                     "allied stance suppressed AI-authored combat movement"
                 );
-                self.resolve_ai_engine_completion_verdict(entity_id);
                 continue;
             }
             match intent.order_type {
@@ -7156,7 +7155,6 @@ impl EngineInner {
                     // move.
                     let mut intent = intent;
                     if !self.preflight_ai_goto(entity_id, &mut intent) {
-                        self.resolve_ai_engine_completion_verdict(entity_id);
                         continue;
                     }
                     // A generated locomotion transition continues to own its
@@ -7202,7 +7200,6 @@ impl EngineInner {
                         && !self.ai_move_gate_route_is_authorized(entity_id, &intent);
                     if route_rejected_before_launch {
                         self.set_ai_couldnt_reachpoint(entity_id);
-                        self.resolve_ai_engine_completion_verdict(entity_id);
                     } else {
                         // `launch_ai_move` only stages the intent; the actual
                         // Movement construction happens in the
@@ -7344,9 +7341,6 @@ impl EngineInner {
                         order,
                     );
                 }
-            }
-            if !is_movement {
-                self.resolve_ai_engine_completion_verdict(entity_id);
             }
         }
     }

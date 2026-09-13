@@ -3,7 +3,6 @@ use super::*;
 #[test]
 fn go_near_uses_live_actor_layer_while_door_position_is_snapped() {
     let mut ai = AiController::new(183);
-    ai.think_recursion_depth = 1;
     let destination = Position {
         x: 296.64883,
         y: 1408.1284,
@@ -11,6 +10,7 @@ fn go_near_uses_live_actor_layer_while_door_position_is_snapped() {
         level: 3,
     };
     let ctx = AiContext {
+        think_depth: 1,
         // The actor's AI position has already snapped
         // across the door and is within the 30-unit tolerance.
         position: Position {
@@ -39,73 +39,6 @@ fn go_near_uses_live_actor_layer_while_door_position_is_snapped() {
 /// The queued-dispatch port must therefore skip the decrement whenever a
 /// completion event is queued and record the open frame for the engine
 /// drain to close.
-#[test]
-fn end_think_keeps_frame_open_while_completion_event_is_queued() {
-    let mut ai = AiController::new(17);
-
-    // Queued completion: frame stays open, depth is preserved.
-    ai.think_recursion_depth = 1;
-    ai.already_on_point = true;
-    assert!(ai.end_think_completion_events());
-    assert_eq!(
-        ai.outbox.reentrant.self_stimuli,
-        [StimulusType::EventReachPoint]
-    );
-    assert_eq!(
-        ai.think_recursion_depth, 1,
-        "queuing decision completion must not unwind"
-    );
-    assert_eq!(ai.open_end_think_frames, 1);
-
-    // A deeper cascade level stacks another open frame.
-    ai.outbox.reentrant.self_stimuli.clear();
-    ai.think_recursion_depth = 2;
-    ai.already_turned = true;
-    assert!(ai.end_think_completion_events());
-    assert_eq!(ai.think_recursion_depth, 2);
-    assert_eq!(ai.open_end_think_frames, 2);
-
-    // Innermost Think (no latch): the whole chain of open ancestor
-    // frames unwinds with it, like the original game's stacked tick completion
-    // decrements while returning out of the recursion.
-    ai.outbox.reentrant.self_stimuli.clear();
-    ai.think_recursion_depth = 3;
-    assert!(ai.end_think_completion_events());
-    assert_eq!(ai.think_recursion_depth, 0);
-    assert_eq!(ai.open_end_think_frames, 0);
-
-    // 100..111 with a pending latch still reports the typed
-    // return-to-duty fallback to the caller.
-    ai.think_recursion_depth = 100;
-    ai.already_on_point = true;
-    assert!(!ai.end_think_completion_events());
-}
-
-#[test]
-fn end_think_keeps_engine_deferred_goto_frame_open_until_authorized() {
-    let mut ai = AiController::new(17);
-    ai.think_recursion_depth = 1;
-    ai.completion_latch_inside_think = true;
-    ai.outbox.actor.orders.push(AiOrderIntent::new(
-        crate::order::OrderType::RunningUpright,
-        100.0,
-        200.0,
-    ));
-
-    assert!(ai.end_think_completion_events());
-    assert_eq!(ai.think_recursion_depth, 1);
-    assert_eq!(ai.open_end_think_frames, 1);
-    assert_eq!(ai.engine_deferred_end_think_frames, 1);
-
-    // The engine has consumed the intent and authorized it without an
-    // EVENT_* completion. Returning through the suspended Original
-    // Tick completion closes the retained frame.
-    ai.outbox.actor.orders.clear();
-    ai.close_engine_deferred_end_think_frames();
-    assert_eq!(ai.think_recursion_depth, 0);
-    assert_eq!(ai.open_end_think_frames, 0);
-    assert_eq!(ai.engine_deferred_end_think_frames, 0);
-}
 
 #[test]
 fn panic_retry_side_uses_original_creation_order_parity() {
@@ -159,20 +92,6 @@ fn repeated_checkpoint_charly_calls_preserve_immediate_original_order() {
             ),
         ]
     );
-}
-
-#[test]
-fn relative_synchronize_indices_narrow_like_original_uword() {
-    assert_eq!(resolve_synchronize_index(7, 500), 500);
-    assert_eq!(resolve_synchronize_index(3, 1002), 5);
-    assert_eq!(resolve_synchronize_index(1, 998), u16::MAX);
-    assert_eq!(resolve_synchronize_index(0, u16::MAX), 64_535);
-}
-
-#[test]
-fn friend_check_look_count_narrows_instead_of_saturating() {
-    assert_eq!(friend_check_look_count(254, 1), 255);
-    assert_eq!(friend_check_look_count(255, 1), 0);
 }
 
 #[test]

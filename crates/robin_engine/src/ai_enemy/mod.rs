@@ -898,25 +898,13 @@ impl EnemyAi {
         }
     }
 
-    fn initialize_patrol(&mut self) {
-        // Patrol initialization requires engine access to resolve soldier IDs to
-        // entity handles and check visibility/state. The actual initialization
-        // happens in EngineInner::tick_patrol_coordination — we just raise a
-        // one-shot flag the engine tick honours next pass, mirroring the
-        // explicit patrol-initialization points (`init_ai`
-        // / `return_to_duty`).
-        self.base.needs_patrol_reinit = true;
-    }
-
-    /// Forwards a stimulus to all patrol members via
-    /// CrossNpcAction::SendStimulus.  Returns `true` if dispatched
-    /// (caller should NOT process the stimulus itself).
+    /// Decide patrol forwarding, releasing the brain before recursive delivery.
     pub(crate) fn dispatch_stimulus_to_whole_patrol(
         &mut self,
         env: ThinkEnv<'_>,
         stimulus: &Stimulus,
-        global: &mut AiGlobalState,
-    ) -> bool {
+        _global: &mut AiGlobalState,
+    ) -> AiFlow<bool> {
         let ThinkEnv { ctx, .. } = env;
         tracing::trace!(
             target: "patrol_relay",
@@ -932,7 +920,7 @@ impl EnemyAi {
         );
         // Already dispatched to whole patrol — skip
         if stimulus.to_whole_patrol {
-            return false;
+            return Ok(false);
         }
 
         // Dedup gate — only consults
@@ -951,7 +939,7 @@ impl EnemyAi {
                 me = self.base.me as i32,
                 "dispatch dedup hit"
             );
-            return true;
+            return Ok(true);
         }
 
         // Only dispatch from DEFAULT (excluding
@@ -960,11 +948,11 @@ impl EnemyAi {
         match self.base.current_state {
             AiState::Default => {
                 if self.base.current_substate == Substate::DefaultPatrolEnrouteRunning {
-                    return false;
+                    return Ok(false);
                 }
             }
             AiState::Wondering => {}
-            _ => return false,
+            _ => return Ok(false),
         }
 
         // Delegate to the chief only when the chief exists, is a
@@ -992,7 +980,7 @@ impl EnemyAi {
                     chief,
                     "dispatch relay to chief"
                 );
-                return true;
+                return Ok(true);
             }
         }
 
@@ -1001,12 +989,12 @@ impl EnemyAi {
         // side-effect for the empty-patrol case below.
         let mut forwarded_stimulus = *stimulus;
         forwarded_stimulus.to_whole_patrol = true;
-        self.last_stimulus_dispatched_to_patrol = Some(forwarded_stimulus);
+        self.last_stimulus_dispatched_to_patrol = Some(*stimulus);
 
         // Empty patrol — nothing to relay; return `false` so our
         // caller still runs its local handler.
         if self.base.patrol.is_empty() {
-            return false;
+            return Ok(false);
         }
 
         // Snapshot the patrol before the self-call below: the broadcast walks
@@ -1018,52 +1006,15 @@ impl EnemyAi {
             .map(|member_id| member_id.index())
             .collect();
 
-        // `think(stimulus_for_whole_patrol)` — the chief feeds the
-        // stimulus back into its own Think *before* relaying to
-        // subordinates.  The recursive Think re-enters the event
-        // handler, `dispatch_stimulus_to_whole_patrol` early-exits
-        // via the `to_whole_patrol` guard at the top of this
-        // function, and the standard-procedure handler runs for the
-        // chief.  Without this self-recursion, patrol chiefs skipped
-        // event_view_standard_procedure after seeing an enemy —
-        // primary_target stayed 0, and the subsequent
-        // begin_swordfight aborted.
-        //
-        // Cascade caveat: this re-entrant `think` skips the engine
-        // `filter_ai_event` gate because `self` is mut-borrowed
-        // here.  See the matching note in `end_think` for why that's
-        // safe against shipped `fullgame` scripts.
-        if self.base.has_script_filter_override {
-            tracing::warn!(
-                target: "filter_ai_event_divergence",
-                handle = self.base.me as i32,
-                stimulus_type = ?forwarded_stimulus.stimulus_type,
-                "cascade think() skipped filter_ai_event gate (patrol chief re-entrant \
-                 dispatch); scripted actor may see divergent behavior"
-            );
-        }
-        self.think(env, &forwarded_stimulus, global);
-
-        // Forward to patrol members that are soldiers and within 360°
-        // detection range. Queue the walk as one action rather than resolving
-        // it here: the detection gate for each member belongs immediately
-        // before that member's `think`, after the self-call above has finished
-        // cascading.
-        tracing::trace!(
-            target: "patrol_relay",
-            me = self.base.me as i32,
-            members = ?members,
-            "dispatch queue relay to members"
-        );
-        self.base.outbox.reentrant.cross_npc_actions.push(
-            CrossNpcAction::RelayStimulusToPatrolMembers {
+        Err(DutyCall {
+            flags: DutyFlags::empty(),
+            think_result: false,
+            tail: crate::ai::DutyTail::BroadcastPatrol {
+                stimulus: forwarded_stimulus,
                 members,
-                stimulus_type: forwarded_stimulus.stimulus_type,
-                info: forwarded_stimulus.info,
             },
-        );
-
-        true
+            after: Vec::new(),
+        })
     }
 
     fn nearby_civilians_panic(&mut self) {
@@ -1394,7 +1345,7 @@ impl EnemyAi {
         env: ThinkEnv<'_>,
         enemy: HumanHandle,
         global: &mut AiGlobalState,
-    ) {
+    ) -> AiFlow<()> {
         let ThinkEnv { sim, ctx, tick, .. } = env;
         tracing::trace!(
             npc = self.base.me,
@@ -1461,7 +1412,7 @@ impl EnemyAi {
                     SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
                     self.pc_gone_away_in_this_direction,
                     global,
-                );
+                )?;
             } else {
                 // The lost-enemy branch snaps toward the missed human's
                 // current position, then enters the ordinary (non-FAST)
@@ -1491,6 +1442,7 @@ impl EnemyAi {
                 }
             }
         }
+        Ok(())
     }
 
     /// `radius` is the look-there radius (100 for vision-triggered
@@ -1554,7 +1506,7 @@ impl EnemyAi {
         env: ThinkEnv<'_>,
         continuation: LookThereContinuation,
         global: &mut AiGlobalState,
-    ) {
+    ) -> crate::ai::AiFlow<()> {
         let ThinkEnv { ctx, tick, .. } = env;
         tracing::trace!(
             target: "look_there",
@@ -1566,7 +1518,7 @@ impl EnemyAi {
         );
         match continuation {
             LookThereContinuation::EventView { enemy, enemy_pos } => {
-                self.event_view_after_look_there(env, enemy, enemy_pos, global);
+                self.event_view_after_look_there(env, enemy, enemy_pos, global)?;
             }
             LookThereContinuation::EventSeesBody {
                 body,
@@ -1583,14 +1535,8 @@ impl EnemyAi {
             }
         }
 
-        // The look-there broadcast is synchronous, so everything above
-        // still runs inside the decision tick that suspended here and its completion
-        // dispatches whatever completion the tail raised. Rust parks the tail
-        // outside that Think, so close the completion boundary explicitly —
-        // otherwise a no-op Face in the tail (`already_turned`) is discarded
-        // and the actor is stranded in a *_TURNING substate waiting on an
-        // EVENT_DONE that never arrives.
-        self.base.finish_suspended_common_handler();
+        // The engine completes the enclosing Think after this synchronous tail.
+        Ok(())
     }
 
     /// Default bored behavior — look sidewards randomly on post.
@@ -2172,7 +2118,7 @@ impl EnemyAi {
     // -----------------------------------------------------------------------
 
     /// Admit a Think call without borrowing the actor across its body.
-    /// Rejection completes the call here; an admitted caller must run end_think.
+    /// The engine completes both admitted and rejected calls after this borrow.
     pub(crate) fn begin_think(
         &mut self,
         env: ThinkEnv<'_>,
@@ -2191,8 +2137,7 @@ impl EnemyAi {
                 frame: &(ctx.frame),
                 owner: &(self.base.me),
                 co: &(ctx.original_creation_order),
-                depth: &(self.base.think_recursion_depth),
-                open: &(self.base.open_end_think_frames),
+                depth: &(ctx.think_depth),
                 stimulus: &(stimulus.stimulus_type),
                 state: &(self.base.current_state),
                 substate: &(self.base.current_substate),
@@ -2219,52 +2164,19 @@ impl EnemyAi {
             timer_ring = self.base.when_does_timer_ring,
             "think: ENTRY"
         );
-        self.base
-            .register_log_line(LogLineType::Event, stimulus_type as u16);
-
         // Pre-think: check locks, queue if busy, etc.
         if !self.start_think(stimulus, ctx, global.freeze) {
             if stimulus_type == StimulusType::EventAfterScriptGoOn {
                 self.base.outbox.reentrant.engine_drains_after_script_go_on = false;
             }
-            self.end_think(env);
             self.base
                 .debug_macro_lifecycle(ctx, "think_rejected_return", stimulus_type);
             return false;
         }
 
-        // The script filter gate is applied by the engine *before*
-        // this function is entered — see `Engine::filter_stimulus`.
-        // Callers invoke it prior to borrowing the entity for
-        // `think()`, so by the time we get here, the stimulus has
-        // already passed the script's `filter_ai_event`.  Cascade
-        // `self.think(sim, ...)` calls below re-dispatch
-        // internally-generated stimuli and intentionally skip the
-        // filter (see the cascade-divergence note on those sites).
-
         self.update_new_task_priority(stimulus);
 
         true
-    }
-
-    pub(crate) fn think(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus: &Stimulus,
-        global: &mut AiGlobalState,
-    ) -> bool {
-        if !self.begin_think(env, stimulus, global) {
-            return true;
-        }
-        let result = self.think_body(env, stimulus, global);
-        if !(stimulus.stimulus_type == StimulusType::EventAfterScriptGoOn
-            && self.base.outbox.reentrant.engine_drains_after_script_go_on)
-        {
-            self.end_think(env);
-        }
-        self.base
-            .debug_macro_lifecycle(env.ctx, "think_return", stimulus.stimulus_type);
-        result
     }
 
     /// Run an admitted handler. The engine owns admission and completion
@@ -2274,7 +2186,7 @@ impl EnemyAi {
         env: ThinkEnv<'_>,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         let stimulus_type = stimulus.stimulus_type;
 
         match stimulus_type {
@@ -2349,12 +2261,11 @@ impl EnemyAi {
             | StimulusType::EventStop => self.think_alerting_event(env, stimulus, global),
 
             StimulusType::EventReturnToDuty => {
-                self.return_to_duty_default(env);
                 // This arm never assigns the return value, so it
                 // returns `false` (the default).  Callers test the
                 // bool to decide whether to re-dispatch / continue
                 // the cascade, so the false return matters.
-                false
+                Err(crate::ai::DutyCall::new(DutyFlags::empty(), false))
             }
 
             _ => {
@@ -2362,7 +2273,7 @@ impl EnemyAi {
                     "Unknown stimulus type in EnemyAi::think: {:?}",
                     stimulus_type
                 );
-                false
+                Ok(false)
             }
         }
     }
@@ -2377,7 +2288,6 @@ impl EnemyAi {
         ctx: &AiContext,
         static_ai_frozen: bool,
     ) -> bool {
-        self.start_think_pre_filter(stimulus);
         self.start_think_post_filter(stimulus, ctx, static_ai_frozen)
     }
 
@@ -2479,93 +2389,6 @@ impl EnemyAi {
     // Decision-tick completion — post-tick event dispatch
     // -----------------------------------------------------------------------
 
-    pub(crate) fn end_think(&mut self, env: ThinkEnv<'_>) {
-        // The original game's end-think phase dispatches this event here and runs the
-        // script FilterAIEvent gate before dispatch. Queue these as
-        // same-frame self-stimuli so the engine-side drain can apply
-        // that filter without re-entering the script VM through this
-        // borrowed AI object.
-
-        let mut queued_completion = false;
-
-        // Post a reachability-failure event if a movement request failed
-        if self.base.couldnt_reachpoint {
-            self.base.couldnt_reachpoint = false;
-            if self.base.think_recursion_depth < 100 {
-                self.base
-                    .outbox
-                    .reentrant
-                    .self_stimuli
-                    .push(StimulusType::EventCouldntReachPoint.into());
-                queued_completion = true;
-            } else if self.base.think_recursion_depth < 111 {
-                // 100..=110 asserts and bails to return_to_duty;
-                // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty_default(env);
-            }
-        }
-
-        // Post ReachPoint event if movement was already at destination
-        if self.base.already_on_point {
-            self.base.already_on_point = false;
-            if self.base.think_recursion_depth < 100 {
-                self.base
-                    .outbox
-                    .reentrant
-                    .self_stimuli
-                    .push(StimulusType::EventReachPoint.into());
-                queued_completion = true;
-            } else if self.base.think_recursion_depth < 111 {
-                // 100..=110 asserts and bails to return_to_duty;
-                // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty_default(env);
-            }
-        }
-
-        // Post Done event if Turn was already facing the right direction
-        if self.base.already_turned {
-            self.base.already_turned = false;
-            if self.base.think_recursion_depth < 100 {
-                self.base
-                    .outbox
-                    .reentrant
-                    .self_stimuli
-                    .push(StimulusType::EventDone.into());
-                queued_completion = true;
-            } else if self.base.think_recursion_depth < 111 {
-                // 100..=110 asserts and bails to return_to_duty;
-                // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty_default(env);
-            }
-        }
-
-        if queued_completion {
-            // The original game recursively dispatches the completion update
-            // *before* its decrement, so the cascade's ancestor frames stay
-            // open and the recursion depth climbs one per nested Think —
-            // that climb is what makes the 100.. return-to-duty failsafe
-            // reachable. This frame stays open until the cascade ends (see
-            // `open_end_think_frames`).
-            self.base.open_end_think_frames = self.base.open_end_think_frames.saturating_add(1);
-        } else if self.base.defer_end_think_for_engine_completion() {
-            // Rust learns an engine-owned movement failure after releasing this
-            // AI borrow. Keep the original game's end-of-tick frame alive until that
-            // synchronous path verdict is surfaced.
-        } else {
-            // No continuation was queued: this is the innermost Think of the
-            // cascade, so the entire chain of still-open ancestor frames
-            // unwinds with it — the deferred equivalent of the stacked
-            // completion decrements the original game performs while returning out
-            // of the nested calls.
-            let open = std::mem::take(&mut self.base.open_end_think_frames);
-            self.base.think_recursion_depth = self
-                .base
-                .think_recursion_depth
-                .saturating_sub(1)
-                .saturating_sub(open);
-        }
-    }
-
     // -----------------------------------------------------------------------
     // Update new-task priority
     // -----------------------------------------------------------------------
@@ -2630,8 +2453,8 @@ impl EnemyAi {
 
     /// Ordinary return with no special duty-transition flags.
     #[track_caller]
-    fn return_to_duty_default(&mut self, env: ThinkEnv<'_>) {
-        self.return_to_duty(env, DutyFlags::empty());
+    fn return_to_duty_default(&mut self, _env: ThinkEnv<'_>) -> crate::ai::AiFlow<()> {
+        Err(crate::ai::DutyCall::new(DutyFlags::empty(), false))
     }
 
     /// Change virtual enemy state before arming the incoming state's timer.
@@ -2645,335 +2468,6 @@ impl EnemyAi {
     ) {
         self.set_state(state, substate);
         self.base.launch_timer(frames, ctx.frame);
-    }
-
-    pub(crate) fn return_to_duty(&mut self, env: ThinkEnv<'_>, flags: DutyFlags) {
-        let ThinkEnv { ctx, tick, .. } = env;
-        self.investigating_distraction = false;
-
-        // Removing all beggar detectables is synchronous in
-        // original game. In particular, selecting the next seek point can return to duty after
-        // Area search queued beggars earlier in the same borrowed AI dispatch;
-        // The ordered mutation list applies those additions before this scrub.
-        self.base
-            .outbox
-            .actor
-            .delete_detectable_type(crate::element::DetectableType::Beggar);
-        self.beggar_to_examine = None;
-        self.beggar_is_npc = false;
-        self.clear_swordstrike_experiences();
-        // Release any stare/follow target before the
-        // report-to-officer / look-for-help branches so the focus releases
-        // on every exit path, including the early returns.
-        self.base.outbox.actor.set_unfocus();
-        self.fleeing_seen_enemy_counter = 0;
-
-        // Report to officer after seeking?
-        if self.seek_flags.contains(SeekFlags::REPORT_OFFICER_AFTER)
-            && self.base.antagonist.is_some()
-            && !flags.contains(DutyFlags::BECAUSE_COULDNT_REACHPOINT)
-        {
-            self.set_state(AiState::Seeking, Substate::SeekingSoldierReturnToOfficer);
-            self.base.clear_emoticon();
-            self.base
-                .go_near(self.officers_position, 40, GotoFlags::RUN, ctx);
-            if self.base.already_on_point {
-                self.base.already_on_point = false;
-            } else {
-                self.base.launch_timer(20, ctx.frame);
-                return;
-            }
-        }
-
-        // Look for help after seeking?
-        if self.seek_flags.contains(SeekFlags::LOOK_FOR_HELP_AFTER)
-            && !flags.contains(DutyFlags::BECAUSE_COULDNT_REACHPOINT)
-        {
-            self.seek_flags = SeekFlags::empty();
-            if self.get_rank() == ProfileRank::Soldier
-                && self.alert_officer(env, self.seek_center, 0)
-            {
-                return;
-            }
-        }
-
-        // Reset state
-        self.base.friends_are_alerted = false;
-        self.seek_flags = SeekFlags::empty();
-        self.base.sorrow_level = 0;
-        self.phalanx_aborted = false;
-        self.base.antagonist = None;
-        self.current_task_priority = self.minimal_task_priority;
-
-        // "If you were searching charly, forget him." When the NPC has any
-        // `DETECTABLE_MISSED_FRIEND` entries (the search-for-charly path
-        // placed at least one), record the abandoned `checkpoint_charly`
-        // in `missed_in_action` and clear the checkpoint pointer so
-        // subsequent mission scripts querying the list see the right
-        // entries.
-        if ctx.self_detectable_missed_friend_count > 0
-            && let Some(checkpoint_charly) = self.base.checkpoint_charly
-        {
-            self.base.missed_in_action.push(checkpoint_charly.get());
-            self.base.set_checkpoint_charly(None);
-        }
-
-        // Did you forget some money?
-        //
-        // Also gates on a missing interesting object or
-        // no angry officer nearby: if we still remember a specific
-        // coin and an officer is sermoning a finished brawl right next to
-        // it, back off (the angry officer will discipline anyone who
-        // re-engages).
-        let angry_officer_near_coin = self.base.interesting_object.is_some()
-            && ctx
-                .entity_position(self.base.interesting_object)
-                .is_some_and(|p| self.is_any_angry_officer_near(p, tick));
-        if (self.base.current_substate.is_take_money()
-            || self.base.current_substate.is_fight_for_money())
-            && self.answer_question(Question::ShallITakeMoney, ctx)
-            && !flags.contains(DutyFlags::BECAUSE_COULDNT_REACHPOINT)
-            && !self.other_seen_money.is_empty()
-            && !angry_officer_near_coin
-        {
-            if self.base.interesting_object.is_none() {
-                // Nearest-seen-money selection and removal: picks the
-                // closest live coin (maximum norm, +300 layer malus) after
-                // sweeping inactive entries, rather than popping by
-                // insertion order.
-                if let Some(coin) = self.get_nearest_seen_money_and_remove_it_from_list(ctx) {
-                    self.base.interesting_object = Some(AiEntityHandle::new(coin));
-                }
-            }
-            // Approach the interesting-object position. Look up the freshly
-            // adopted money pickup in the per-tick view map. If the
-            // pickup was swept out from under us between snapshot time
-            // and now (another NPC grabbed it, script removed it), skip
-            // the branch and fall through to the patrol/ale checks.
-            if let Some(obj_pos) = ctx.entity_position(self.base.interesting_object) {
-                self.go_near(
-                    AiState::Wondering,
-                    Substate::WonderingApproachingMoney,
-                    obj_pos,
-                    parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
-                    GotoFlags::FIND_ACCESSIBLE,
-                    ctx,
-                );
-                self.base.launch_timer(5, ctx.frame);
-                return;
-            }
-            // Stale handle — drop it so we don't re-attempt forever.
-            self.base.interesting_object = None;
-        }
-
-        // Return to patrol point?
-        if self.return_to_patrol_point.sector.is_some() {
-            if !self.base.patrol.is_empty() {
-                self.set_state(AiState::Default, Substate::DefaultPatrolChiefReturnToPatrol);
-                self.base
-                    .go_to(self.return_to_patrol_point, GotoFlags::empty(), ctx);
-                self.return_to_patrol_point.sector = None;
-                return;
-            }
-            self.return_to_patrol_point.sector = None;
-        }
-
-        // Remember ale?
-        if !self.other_seen_ale.is_empty() && !flags.contains(DutyFlags::BECAUSE_COULDNT_REACHPOINT)
-        {
-            self.base.interesting_object = Some(AiEntityHandle::new(self.other_seen_ale.remove(0)));
-            self.base.object_of_desire = self.base.interesting_object;
-            // Same rationale as the money branch above — if the ale
-            // bottle was removed before the snapshot, skip this
-            // branch and fall through to `initialize_patrol`.
-            if let Some(obj_pos) = ctx.entity_position(self.base.interesting_object) {
-                self.go_near(
-                    AiState::Wondering,
-                    Substate::WonderingApproachingAle,
-                    obj_pos,
-                    parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
-                    GotoFlags::FIND_ACCESSIBLE,
-                    ctx,
-                );
-                // Returning to duty remembers where the
-                // patrol was interrupted so the soldier returns there after
-                // finishing this newly remembered ale.
-                self.return_to_patrol_point = ctx.position;
-                self.base.launch_timer(1, ctx.frame);
-                return;
-            }
-            self.base.interesting_object = None;
-            self.base.object_of_desire = None;
-        }
-
-        // The original game initializes patrol synchronously, then immediately
-        // enters common return-to-duty processing. Patrol admission needs the engine's
-        // entity table and can itself issue authoritative visibility queries,
-        // so suspend the tail at the owner boundary instead of setting the
-        // frame-deferred `needs_patrol_reinit` flag. This also lets a patrol
-        // member observe the chief assignment written moments earlier and
-        // perform its reciprocal member -> chief visibility query in-order.
-        //
-        // Clear the reconnaissance report here rather than leaving it to the
-        // suspended return-to-duty processing. Because the whole return runs
-        // synchronously in the reference, callers observe a cleared report
-        // the instant the return completes — next-point selection reads it on the
-        // very next statement to decide whether to say "ends search", and
-        // against an unreset report that decision inverts. Only this path is
-        // hoisted: the early returns above never reach the common tail and
-        // must leave the report standing.
-        self.base.my_reconnaissance_report.reset();
-        let continuation = if (100..111).contains(&self.base.think_recursion_depth) {
-            AiOwnerWork::ResumeHighRecursionReturnToDutyAfterPatrolInit { flags }
-        } else {
-            AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
-                flags,
-                defer_clear_patrol_close_post: false,
-            }
-        };
-        self.base.outbox.reentrant.owner_work.push(continuation);
-    }
-
-    /// Resume the non-engine half of original-game enemy return-to-duty after its
-    /// inline patrol initialization has returned.
-    pub fn resume_return_to_duty_after_patrol_init(
-        &mut self,
-        sim: &SimulationContext,
-        flags: DutyFlags,
-        ctx: &AiContext,
-        high_recursion_failsafe: bool,
-    ) {
-        let outgoing_state = self.base.current_state;
-        let outgoing_substate = self.base.current_substate;
-        let first_new_order = self.base.outbox.actor.orders.len();
-
-        // Returning to duty clears the previous enemy-state timer before
-        // deciding whether to launch a fresh bored timer.
-        self.base.timer_is_running = false;
-        let resumed_depth = self.base.think_recursion_depth;
-        if high_recursion_failsafe && resumed_depth == 0 {
-            self.base.think_recursion_depth = 100;
-        }
-        self.base.return_to_duty_common_stuff(sim, flags, ctx);
-        if high_recursion_failsafe && resumed_depth == 0 {
-            self.base.think_recursion_depth = resumed_depth;
-            // The original game's high-recursion return to duty is already inside the
-            // currently executing decision-tick completion branch. Its newly-set latch is
-            // not revisited by that branch; it survives the unwind and is
-            // cleared by the next decision-tick admission. The deferred Rust boundary has
-            // no matching completion left, so prevent the generic completion
-            // surfacer from converting it into an immediate self event.
-            self.base.completion_latch_inside_think = false;
-        }
-        let incoming_state = self.base.current_state;
-        let incoming_substate = self.base.current_substate;
-
-        // Common return-to-duty processing invokes enemy state changes in the
-        // original. The shared Rust common tail assigns its state directly,
-        // so run the override's shooting-point and sector release here too.
-        self.release_archery_reservation_for_substate(incoming_substate);
-
-        // The shared common routine assigns Default directly instead of
-        // entering through enemy state selection. Preserve the
-        // shield-bearer state transition too: leaving the three
-        // protection substates clear both the rear archer and the archer's
-        // reciprocal forward shield bearer before the next NPC owner runs.
-        if self.archer_behind_me.is_some()
-            && !matches!(
-                incoming_substate,
-                Substate::AttackingProtectingWithShield
-                    | Substate::AttackingPhalanx
-                    | Substate::AttackingRunningToPhalanx
-            )
-        {
-            let old_archer = self
-                .archer_behind_me
-                .take()
-                .expect("checked archer-behind-me presence");
-            self.base.outbox.reentrant.cross_npc_actions.push(
-                CrossNpcAction::SetShieldBearerBeforeMe {
-                    target: old_archer.get(),
-                    shield_bearer: None,
-                },
-            );
-        }
-
-        // When an archer leaves the bow substates, clear the forward shield
-        // bearer and its reciprocal rear archer before the next AI owner runs.
-        if self.shield_bearer_before_me.is_some()
-            && !matches!(
-                incoming_substate,
-                Substate::AttackingBowShooting
-                    | Substate::AttackingBowLoading
-                    | Substate::AttackingBowAiming
-                    | Substate::AttackingBowObservingLoading
-                    | Substate::AttackingBowObserving
-                    | Substate::AttackingBowRunningBehindShieldBearer
-                    | Substate::AttackingBowCorrectingPosition
-            )
-        {
-            self.update_shield_bearer_before_me(None);
-        }
-
-        // Returning to duty must synchronously clear relationships when
-        // leaving Menacing. In particular, the
-        // reciprocal PC guard must be cleared before a later NPC owner slot
-        // runs detection refresh; an unobserved guarded PC is rejected before
-        // the otherwise-authoritative visibility query.
-        if outgoing_state == AiState::Menacing && self.base.current_state != AiState::Menacing {
-            self.set_guarded_pc(None);
-        }
-
-        // Returning to duty also clears combat neighbours based on the
-        // incoming substate: clear when the destination is neither a phalanx
-        // nor a real swordfight substate. Queue reciprocal clears before dropping local
-        // links, matching reciprocal combat-neighbour clearing.
-        let incoming_keeps_combat_neighbours = matches!(
-            incoming_substate,
-            Substate::AttackingPhalanx
-                | Substate::AttackingRunningToPhalanx
-                | Substate::AttackingProtectingWithShield
-        ) || incoming_substate.is_real_swordfight();
-        if !incoming_keeps_combat_neighbours {
-            self.clear_combat_neighbours();
-        }
-
-        // Original-game return-to-duty handling uses the enemy-specific state
-        // transition. The shared Rust base performs the assignment directly.
-        // Restore the Enemy override's attentive-mode tail: every Default
-        // substate requests ordinary (or forced) attention, which may launch
-        // LeaveAttentiveMode alongside the return route. The shared common
-        // routine has already built the route because it cannot invoke the
-        // Enemy override directly, so restore Original's authored
-        // state-change-before-movement barrier on only the orders emitted by this
-        // return-to-duty tail.
-        self.base
-            .outbox
-            .actor
-            .queue_set_attentive_mode(AttentiveModeEffect::new(self.forced_attentive, false));
-        self.hold_new_orders_behind_attentive(first_new_order);
-
-        // TODO: move the complete enemy state-change boundary into the
-        // shared return-to-duty routine. This closes final owner-boundary
-        // publication, but the deferred Rust model still queues the earlier
-        // return-to-duty actor prefix after owner-work StateChange callbacks;
-        // scripted callback observation order is not claimed exact here.
-
-        // Preserve the corresponding script callback item explicitly.
-        // Without this final FIFO entry, an older queued transition (notably
-        // the init-time Default/Enroute transition) is restored after the
-        // common code has already advanced the live state to
-        // Default/GotoRoute.
-        if outgoing_substate != incoming_substate {
-            // Outgoing/incoming were captured around the common
-            // return-to-duty tail; no actor prefix rides this callback.
-            self.base.queue_state_transition(
-                (outgoing_state, outgoing_substate),
-                (incoming_state, incoming_substate),
-                AiStateChangeSource::SelfActor,
-                None,
-            );
-        }
     }
 
     // -----------------------------------------------------------------------
@@ -3279,70 +2773,6 @@ impl EnemyAi {
             AiState::Seeking | AiState::Wondering => false,
             _ => self.minimal_task_priority == task_priority::NONE,
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // AI initialization
-    // -----------------------------------------------------------------------
-
-    /// Initialize patrol membership, authored AI state, and initial duty.
-    pub(crate) fn init_one_ai(&mut self, env: ThinkEnv<'_>) -> crate::ai::InitStateSideEffects {
-        let ThinkEnv { sim, ctx, .. } = env;
-        // Initialize the "old odds" accumulator used by the weighted
-        // decision RNG (old_odds = 50).
-        self.old_odds = 50;
-
-        // Build the minion list from patrol_ids.
-        self.initialize_patrol();
-
-        // Return to duty only if state initialization allows it and neither
-        // script nor AI locks are active. Evaluate the authored
-        // initial-action and commit the matching AI-side state
-        // transition first — the subclass tail below only runs when
-        // the authored action allows it *and* the AI isn't locked.
-        let fx = self.base.init_state(sim, ctx);
-
-        let go_to_duty =
-            fx.go_to_duty && !self.base.ai_is_script_locked() && !self.base.ai_is_locked();
-
-        // If the soldier has a patrol path, walk onto it.
-        if go_to_duty && self.base.has_patrol_path {
-            // Snapshot the substate-at-last-timer-launch *before* the
-            // state-change / return-to-duty pair so a subsequent
-            // timer-expiry-against-launch-substate check at
-            // `ai_enemy.rs:2915/2920` sees this snapshot rather than
-            // the default `Substate::DefaultOnPost`.
-            self.base.substate_at_last_timer_launch = self.base.current_substate;
-            self.set_state(AiState::Default, Substate::DefaultEnroute);
-            self.return_to_duty_default(env);
-        }
-
-        // Movement setup checks `think_method_recursion_depth > 0` and
-        // either sets `already_on_point` (for the enclosing decision-tick completion
-        // to dispatch) or fires `Think(EVENT_REACHPOINT)` directly when
-        // called outside a Think cycle.  `return_to_duty` above runs outside Think, so a
-        // movement to a waypoint we're already standing on (e.g. a 1-
-        // waypoint patrol where the spawn sits next to the waypoint)
-        // sets `already_on_point = true` but nothing drains it — the
-        // NPC never gets EVENT_REACHPOINT and the waypoint macro never
-        // fires.  Queue a self-stimulus so the engine's next-tick
-        // drain dispatches it (same shape as decision-tick completion's cascade).
-        if self.base.already_on_point {
-            self.base.already_on_point = false;
-            self.base
-                .fire_self_stimulus(crate::ai::StimulusType::EventReachPoint);
-        }
-        // A failed movement and a no-op facing command raise their latches unconditionally,
-        // with no outside-Think delivery path of their own. Outside a Think the
-        // next Think entry simply discards them, so drop them here rather than
-        // inventing completions the actor never receives.
-        self.base.couldnt_reachpoint = false;
-        self.base.already_turned = false;
-
-        // The original game stamps this after all patrol-path setup.
-        self.base.last_hint_actuality = ctx.frame;
-
-        fx
     }
 
     // -----------------------------------------------------------------------

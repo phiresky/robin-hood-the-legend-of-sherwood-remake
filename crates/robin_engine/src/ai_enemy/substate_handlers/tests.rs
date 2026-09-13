@@ -1,5 +1,14 @@
 use super::*;
 
+fn assert_duty_call(flow: crate::ai::AiFlow<bool>, think_result: bool, ai: &EnemyAi) {
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+    let call = flow.expect_err("expected an engine-owned duty call");
+    assert_eq!(call.flags, DutyFlags::empty());
+    assert_eq!(call.think_result, think_result);
+    assert!(matches!(call.tail, crate::ai::DutyTail::None));
+    assert!(call.after.is_empty());
+}
+
 fn soldier_view_with_substate(
     handle: u32,
     substate: Substate,
@@ -66,21 +75,19 @@ fn drinking_ale_completes_on_event_done_without_fabricated_timer() {
     let ctx = AiContext::test_fixture();
     let tick = AiPerTickData::stub();
 
-    ai.wondering_drinking_ale(
+    let flow = ai.wondering_drinking_ale(
         ThinkEnv::new(&sim, &ctx, &tick, None),
         StimulusType::EventTimer,
     );
+    assert_eq!(flow.unwrap(), false);
     assert!(ai.base.outbox.reentrant.owner_work.is_empty());
     assert_eq!(ai.base.blood_alcohol, 17);
 
-    ai.wondering_drinking_ale(
+    let flow = ai.wondering_drinking_ale(
         ThinkEnv::new(&sim, &ctx, &tick, None),
         StimulusType::EventDone,
     );
-    assert!(matches!(
-        ai.base.outbox.reentrant.owner_work.as_slice(),
-        [crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
-    ));
+    assert_duty_call(flow, false, &ai);
     assert_eq!(
         ai.base.blood_alcohol, 17,
         "the animation completion path owns the profile-specific beer increment"
@@ -108,7 +115,7 @@ fn ale_reaction_uses_latched_position_after_bottle_becomes_inactive() {
 
     // No view for object 321: the bottle was consumed while React's timer
     // was pending. The original game still commits to the retained identity and position.
-    ai.wondering_ale_reactiontime(
+    let flow = ai.wondering_ale_reactiontime(
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         StimulusType::EventTimer,
     );
@@ -118,17 +125,7 @@ fn ale_reaction_uses_latched_position_after_bottle_becomes_inactive() {
     assert_eq!(ai.base.object_of_desire, Some(AiEntityHandle::new(321)));
     assert_eq!(ai.base.seek_position.x, 632.4453);
     assert_eq!(ai.base.seek_position.y, 1835.14);
-    assert!(
-        !ai.base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .any(|work| matches!(
-                work,
-                crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }
-            ))
-    );
+    assert!(flow.is_ok());
 }
 
 #[test]
@@ -197,7 +194,8 @@ fn taking_money_event_done_selects_nearest_coin_and_starts_reaction_timer() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventDone),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(
         ai.base.current_substate,
@@ -326,7 +324,8 @@ fn approaching_money_timer_with_visible_rival_runs_instead_of_taking() {
         ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_substate, Substate::WonderingRunningForMoney);
     assert_eq!(ai.base.when_does_timer_ring, 0);
@@ -362,7 +361,8 @@ fn approaching_money_timer_without_visible_rival_only_rearms_poll() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(
         ai.base.current_substate,
@@ -441,7 +441,8 @@ fn brawl_reach_near_awake_friend_stops_and_launches_hit() {
             None,
         ),
         StimulusType::EventReachPoint,
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_substate, Substate::WonderingBrawlHitting);
     assert_eq!(
@@ -463,7 +464,8 @@ fn brawl_reach_far_awake_friend_retries_approach_without_hit() {
             None,
         ),
         StimulusType::EventReachPoint,
-    );
+    )
+    .unwrap();
 
     assert_eq!(
         ai.base.current_substate,
@@ -484,7 +486,8 @@ fn brawl_reach_sleeping_friend_removes_target_and_queues_done() {
             None,
         ),
         StimulusType::EventReachPoint,
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_substate, Substate::WonderingBrawlHitting);
     assert_eq!(ai.base.friend_in_trouble, None);
@@ -509,7 +512,8 @@ fn brawl_reach_missing_friend_returns_to_duty_without_hit() {
             None,
         ),
         StimulusType::EventReachPoint,
-    );
+    )
+    .unwrap();
 
     assert_ne!(ai.base.current_substate, Substate::WonderingBrawlHitting);
     assert!(launched_hit_targets(&ai).is_empty());
@@ -545,20 +549,11 @@ fn brawl_hitting_stages_panic_then_officer_then_tail() {
     let mut ai = EnemyAi::new(88);
     ai.base.current_state = AiState::Wondering;
     ai.base.current_substate = Substate::WonderingBrawlHitting;
-    ai.base.think_recursion_depth = 1;
     ai.wondering_brawl_hitting(StimulusType::EventDone);
     assert!(matches!(
         ai.base.outbox.reentrant.owner_work.as_slice(),
         [AiOwnerWork::NearbyCiviliansPanic180]
     ));
-    ai.end_think(ThinkEnv::new(
-        &crate::sim_rng::test_context(),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
-        None,
-    ));
-    assert_eq!(ai.base.think_recursion_depth, 1);
-    assert_eq!(ai.base.engine_deferred_end_think_frames, 1);
     assert!(ai.base.outbox.reentrant.brawl_hitting_completion_pending);
 
     // Simulate the engine consuming the civilian-sweep owner work. The
@@ -593,10 +588,6 @@ fn brawl_hitting_stages_panic_then_officer_then_tail() {
             .any(|work| matches!(work, AiOwnerWork::StateChange(_)))
     );
     ai.base.outbox.reentrant.brawl_hitting_completion_pending = false;
-    ai.base.resolve_engine_completion_verdict();
-    ai.base.close_engine_deferred_end_think_frames();
-    assert_eq!(ai.base.think_recursion_depth, 0);
-    assert_eq!(ai.base.engine_deferred_end_think_frames, 0);
 }
 
 #[test]
@@ -625,7 +616,8 @@ fn civilian_report_alert_officer_route_failure_seeks_retained_report_position() 
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         report_position,
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert!(!ai.base.couldnt_reachpoint);
     assert_eq!(ai.seek_center, report_position);
@@ -666,7 +658,8 @@ fn send_charly_speech_completion_faces_live_friend_before_waiting() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventMyTalk2),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_state, AiState::Seeking);
     assert_eq!(
@@ -700,7 +693,8 @@ fn send_charly_speech_completion_without_live_friend_still_waits() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventMyTalk2),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_state, AiState::Seeking);
     assert_eq!(
@@ -725,7 +719,7 @@ fn seeking_got_stop_timer_wonders_without_alert_path() {
         ..AiContext::test_fixture()
     };
 
-    ai.think_expected_event(
+    let flow = ai.think_expected_event(
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
@@ -740,14 +734,7 @@ fn seeking_got_stop_timer_wonders_without_alert_path() {
     assert_eq!(ai.base.when_does_timer_ring, 23_935);
     assert!(!ai.changed_to_alert_path);
     assert!(ai.base.patrol_path.is_none());
-    assert!(
-        ai.base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .all(|work| { !matches!(work, AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }) })
-    );
+    assert!(flow.is_ok());
 }
 
 #[test]
@@ -778,7 +765,8 @@ fn seeking_got_stop_timer_adopts_alert_path_before_wondering() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert!(ai.changed_to_alert_path);
     let adopted = ai
@@ -827,7 +815,8 @@ fn officer_wait_for_instructed_group_keeps_full_original_seek_area_set() {
             ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
             &Stimulus::new(StimulusType::EventTimer),
             &mut AiGlobalState::default(),
-        );
+        )
+        .unwrap();
 
         assert_eq!(ai.alerted_us, vec![148], "{member_substate:?}");
         assert_eq!(
@@ -867,7 +856,8 @@ fn officer_group_instruction_retries_location_first_after_refusal() {
         ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::new(StimulusType::EventDone),
         &mut global,
-    );
+    )
+    .unwrap();
 
     let take_instruction = |ai: &mut EnemyAi| {
         let action = ai.base.outbox.reentrant.cross_npc_actions.remove(0);
@@ -986,7 +976,8 @@ fn avenger_roof_timeout_seeks_from_live_owner_position() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut global,
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.seek_center, live_position);
     assert_ne!(ai.seek_center, ai.base.seek_position);
@@ -1045,7 +1036,8 @@ fn avenger_roof_timeout_refaces_detected_target_and_rearms_thirty_ticks() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     let [turn] = ai.base.outbox.actor.orders.as_slice() else {
         panic!("detected avenger must receive exactly one authored Face turn");
@@ -1078,17 +1070,14 @@ fn officer_wait_for_instructed_group_prunes_taking_net() {
         ..AiContext::test_fixture()
     };
 
-    ai.think_expected_event(
+    let flow = ai.think_expected_event(
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
     );
 
     assert!(ai.alerted_us.is_empty());
-    assert!(matches!(
-        ai.base.outbox.reentrant.owner_work.as_slice(),
-        [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
-    ));
+    assert_duty_call(flow, false, &ai);
 }
 
 #[test]
@@ -1113,21 +1102,19 @@ fn officer_wait_for_instructed_group_waits_for_approaching_charly() {
             ..AiContext::test_fixture()
         };
 
-        ai.think_expected_event(
+        let flow = ai.think_expected_event(
             ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
             &Stimulus::new(StimulusType::EventTimer),
             &mut AiGlobalState::default(),
         );
 
         if should_wait {
+            assert_eq!(flow.unwrap(), false);
             assert!(ai.base.timer_is_running);
             assert_eq!(ai.base.when_does_timer_ring, 7_945);
             assert!(ai.base.outbox.reentrant.owner_work.is_empty());
         } else {
-            assert!(matches!(
-                ai.base.outbox.reentrant.owner_work.as_slice(),
-                [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
-            ));
+            assert_duty_call(flow, false, &ai);
         }
     }
 }
@@ -1143,7 +1130,7 @@ fn archer_waiting_on_shooting_path_returns_to_duty_only_on_timer() {
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = substate;
 
-        ai.think_expected_attacking_event(
+        let flow = ai.think_expected_attacking_event(
             &Stimulus::new(StimulusType::EventDone),
             &mut AiGlobalState::default(),
             crate::ai_enemy::ThinkEnv {
@@ -1154,11 +1141,12 @@ fn archer_waiting_on_shooting_path_returns_to_duty_only_on_timer() {
             },
         );
 
+        assert_eq!(flow.unwrap(), false);
         assert_eq!(ai.base.current_state, AiState::Attacking);
         assert_eq!(ai.base.current_substate, substate);
         assert!(ai.base.outbox.reentrant.owner_work.is_empty());
 
-        ai.think_expected_attacking_event(
+        let flow = ai.think_expected_attacking_event(
             &Stimulus::new(StimulusType::EventTimer),
             &mut AiGlobalState::default(),
             crate::ai_enemy::ThinkEnv {
@@ -1169,10 +1157,7 @@ fn archer_waiting_on_shooting_path_returns_to_duty_only_on_timer() {
             },
         );
 
-        assert!(matches!(
-            ai.base.outbox.reentrant.owner_work.as_slice(),
-            [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
-        ));
+        assert_duty_call(flow, false, &ai);
     }
 }
 
@@ -1194,11 +1179,7 @@ fn fleeing_hiding_timer_invokes_enemy_return_to_duty() {
         },
     );
 
-    assert!(handled);
-    assert!(matches!(
-        ai.base.outbox.reentrant.owner_work.as_slice(),
-        [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
-    ));
+    assert_duty_call(handled, true, &ai);
 }
 
 #[test]
@@ -1293,7 +1274,8 @@ fn approaching_new_enemy_close_gate_uses_literal_positions() {
         ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
     assert_eq!(
@@ -1320,7 +1302,8 @@ fn approaching_new_enemy_requires_primary_target_snapshot() {
         ),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 }
 
 #[test]
@@ -1344,7 +1327,8 @@ fn approaching_new_enemy_rejects_stale_primary_target_geometry() {
         ThinkEnv::new(&sim, &AiContext::test_fixture(), &tick, None),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 }
 
 #[test]
@@ -1392,7 +1376,8 @@ fn bow_running_behind_shield_faces_target_with_its_elevation() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     let [turn] = ai.base.outbox.actor.orders.as_slice() else {
         panic!("shield-bearer arrival must author exactly one turn");
@@ -1638,7 +1623,8 @@ fn officer_wait_missed_soldier_does_not_relaunch_timer() {
         ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.missed_soldier_timer, 12);
     assert!(!ai.base.timer_is_running);
@@ -1664,7 +1650,8 @@ fn goto_post_arrival_runs_enemy_attentive_tail_after_turn_request() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_substate, Substate::DefaultGotoPostTurn);
     let state_change = ai
@@ -1742,7 +1729,8 @@ fn reached_beggar_launches_one_ordered_turn_then_response_sequence() {
             ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
             &Stimulus::new(StimulusType::EventReachPoint),
             &mut AiGlobalState::default(),
-        );
+        )
+        .unwrap();
 
         assert!(ai.base.outbox.actor.orders.is_empty());
         assert!(ai.base.outbox.actor.launch_commands.is_empty());
@@ -1791,7 +1779,8 @@ fn identified_npc_beggar_shows_face_then_identifies_himself() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     let prefix = ai
         .base
@@ -1844,7 +1833,8 @@ fn identified_disguised_pc_uses_live_type_despite_stale_npc_cache() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_state, AiState::Attacking);
     assert_eq!(ai.base.current_substate, Substate::AttackingBowShooting);
@@ -1871,7 +1861,8 @@ fn combat_alert_ignores_timer_until_reaching_the_alert_point() {
         ),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_state, AiState::Seeking);
     assert_eq!(ai.base.current_substate, Substate::SeekingCombatAlert);
@@ -1898,7 +1889,8 @@ fn combat_alert_reachpoint_starts_lost_enemy_seek() {
         ),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut global,
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_state, AiState::Seeking);
     assert_eq!(ai.seek_center, ai.base.seek_position);
@@ -1937,7 +1929,8 @@ fn heardsteps_arrival_starts_zero_radius_walking_seek() {
             ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
             &Stimulus::new(StimulusType::EventReachPoint),
             &mut global,
-        );
+        )
+        .unwrap();
     });
 
     assert_eq!(
@@ -2034,7 +2027,8 @@ fn reaching_near_officer_redispatches_reachpoint_synchronously() {
         ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(
         ai.base.current_substate,
@@ -2075,7 +2069,8 @@ fn running_to_officer_tracks_rejected_civilian_alert_antagonist() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.gather_position, civilian_position);
     assert_eq!(ai.base.last_goto_destination, civilian_position);
@@ -2103,7 +2098,8 @@ fn parade_timer_stops_only_an_active_normal_parry() {
             ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
             &Stimulus::new(StimulusType::EventTimer),
             &mut AiGlobalState::default(),
-        );
+        )
+        .unwrap();
 
         // The stop-parry command is issued before the handler's state change
         // suspends the actor-outbox prefix into the queued state-change
@@ -2246,7 +2242,8 @@ fn officer_body_reaction_uses_stretched_max_norm_to_delegate() {
         ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(
         ai.base.current_substate,
@@ -2309,7 +2306,8 @@ fn officer_body_reaction_examines_body_within_stretched_threshold() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_substate, Substate::SeekingBody);
     assert_eq!(ai.base.seek_position, destination);
@@ -2362,7 +2360,8 @@ fn run_approaching_sleeping_enemy(target_live: Position) -> EnemyAi {
         ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::new(StimulusType::EventDone),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
     ai
 }
 
@@ -2453,7 +2452,8 @@ fn run_reactiontime_turning(
             tick: &AiPerTickData::stub(),
             grid: None,
         },
-    );
+    )
+    .unwrap();
     ai
 }
 
@@ -2610,7 +2610,8 @@ fn instructed_soldier_adds_officers_selected_body_after_speech() {
         ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::new(StimulusType::EventMyTalk2),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert!(matches!(
         ai.base.outbox.reentrant.cross_npc_actions.first(),
@@ -2678,7 +2679,8 @@ fn seeking_body_reach_rejects_a_body_outside_the_live_sixty_unit_gate() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_ne!(
         ai.base.current_substate,
@@ -2745,7 +2747,8 @@ fn seeking_body_reach_does_not_turn_toward_a_nearby_dead_body() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(
         ai.base.current_substate,
@@ -2786,7 +2789,7 @@ fn seeking_body_reach_returns_to_duty_when_the_nearby_body_recovered() {
         ..AiContext::test_fixture()
     };
 
-    ai.think_expected_event(
+    let flow = ai.think_expected_event(
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut AiGlobalState::default(),
@@ -2797,14 +2800,7 @@ fn seeking_body_reach_returns_to_duty_when_the_nearby_body_recovered() {
         Substate::SeekingBodyLookingDeadBody
     );
     assert!(ai.already_seen_bodies.is_empty());
-    assert!(
-        ai.base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .any(|work| matches!(work, AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }))
-    );
+    assert_duty_call(flow, false, &ai);
 }
 
 #[test]
@@ -2834,7 +2830,8 @@ fn arrow_reactiontime_uses_plain_goto_without_near_tolerance() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(ai.base.current_substate, Substate::SeekingArrow);
     assert_eq!(ai.base.last_goto_flags, GotoFlags::RUN);
@@ -2869,7 +2866,8 @@ fn arrow_watching_ignores_event_done() {
             ),
             &Stimulus::new(StimulusType::EventDone),
             &mut global,
-        );
+        )
+        .unwrap();
 
         assert_eq!(ai.base.current_state, AiState::Seeking);
         assert_eq!(ai.base.current_substate, substate);
@@ -2904,7 +2902,8 @@ fn bow_transition_states_ignore_shield_bearer_coordinate_calls() {
             ),
             &Stimulus::new(StimulusType::CallCoordinate),
             &mut AiGlobalState::default(),
-        );
+        )
+        .unwrap();
 
         assert_eq!(ai.base.current_state, AiState::Attacking);
         assert_eq!(ai.base.current_substate, substate);
@@ -2982,7 +2981,8 @@ fn goto_chief_reach_faces_live_chief_with_elevation() {
         ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     assert!(!ai.base.already_turned);
     let [crate::ai::AiOwnerWork::StateChange(notification)] =
@@ -3024,7 +3024,8 @@ fn shooting_path_does_not_fabricate_an_end_of_path_recovery() {
         ),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 }
 
 #[test]
@@ -3045,7 +3046,8 @@ fn shooting_path_final_sprint_requires_its_reserved_point() {
         ),
         &Stimulus::new(StimulusType::EventReachPoint),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 }
 
 #[test]
@@ -3090,7 +3092,8 @@ fn charly_defence_completion_relays_talk_to_officer() {
             None,
         ),
         StimulusType::EventMyTalk1,
-    );
+    )
+    .unwrap();
     assert!(matches!(
         ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
         [CrossNpcAction::SendStimulus {
@@ -3250,7 +3253,6 @@ fn group_synchronous_reachpoint_same_direction_still_authors_turn() {
     // A non-waiting actor does not qualify for the original game's facing
     // same-direction shortcut, even when the already-at-destination movement
     // completion is surfaced recursively.
-    ai.base.open_end_think_frames = 1;
     ai.gather_position_instructed = true;
     ai.gather_direction = 8;
     let ctx = AiContext {
@@ -3267,7 +3269,8 @@ fn group_synchronous_reachpoint_same_direction_still_authors_turn() {
             None,
         ),
         StimulusType::EventReachPoint,
-    );
+    )
+    .unwrap();
 
     let [turn] = ai.base.outbox.actor.orders.as_slice() else {
         panic!("group ReachPoint must author one Turn");
@@ -3283,7 +3286,6 @@ fn group_synchronous_reachpoint_retained_waiting_uses_same_direction_shortcut() 
     // Movement setup accepted an already-at-destination request without replacing
     // the actor's pre-existing Wait action. Facing therefore observes
     // Waiting while the recursive ReachPoint frame is still open.
-    ai.base.open_end_think_frames = 1;
     ai.gather_position_instructed = true;
     ai.gather_direction = 4;
     let ctx = AiContext {
@@ -3300,7 +3302,8 @@ fn group_synchronous_reachpoint_retained_waiting_uses_same_direction_shortcut() 
             None,
         ),
         StimulusType::EventReachPoint,
-    );
+    )
+    .unwrap();
 
     assert!(
         ai.base.outbox.actor.orders.is_empty(),
@@ -3336,7 +3339,8 @@ fn group_reachpoint_keeps_raw_wrapped_gather_direction_for_face_to() {
             None,
         ),
         StimulusType::EventReachPoint,
-    );
+    )
+    .unwrap();
 
     let [turn] = ai.base.outbox.actor.orders.as_slice() else {
         panic!("raw gather direction 29 must author one Turn against sector 13");
@@ -3415,7 +3419,8 @@ fn looting_requires_the_owner_entity_view() {
             None,
         ),
         StimulusType::EventDone,
-    );
+    )
+    .unwrap();
 }
 
 #[test]
@@ -3494,7 +3499,8 @@ fn advancing_shield_uses_live_target_sector_for_indexed_route() {
         ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventDone),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 
     let [order] = ai.base.outbox.actor.orders.as_slice() else {
         panic!("advancing shield must author exactly one approach movement");
@@ -3602,5 +3608,6 @@ fn advancing_shield_requires_live_primary_target_view() {
         ThinkEnv::new(&sim, &AiContext::test_fixture(), &tick, None),
         &Stimulus::new(StimulusType::EventDone),
         &mut AiGlobalState::default(),
-    );
+    )
+    .unwrap();
 }

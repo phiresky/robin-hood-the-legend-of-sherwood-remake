@@ -28,6 +28,16 @@ fn good_strike_lifecycle_debug_matches(ctx: &AiContext) -> bool {
 }
 
 impl EnemyAi {
+    pub(crate) fn finish_after_combat_injury(&mut self) {
+        if self.base.current_substate == Substate::AttackingSwordfight {
+            if self.pending_sword_strike_consideration {
+                self.pending_combat_insult_after_strike_consideration = true;
+            } else {
+                self.base.say(Remark::CombatInsult);
+            }
+        }
+    }
+
     /// Standard "I see the friend I was looking for" reaction.
     ///
     /// Three rank branches (officer / soldier / knight) inside
@@ -35,7 +45,11 @@ impl EnemyAi {
     /// kicks off a `DetectedCharly` wait, resumes a synchronised macro,
     /// or registers as a synchronising actor on the friend.  The rank
     /// branches can short-circuit the function before the tail ever runs.
-    fn event_sees_charly_standard_procedure(&mut self, env: ThinkEnv<'_>, charly: AiEntityHandle) {
+    fn event_sees_charly_standard_procedure(
+        &mut self,
+        env: ThinkEnv<'_>,
+        charly: AiEntityHandle,
+    ) -> AiFlow<()> {
         let ThinkEnv { sim, ctx, .. } = env;
         // the encountered soldier's metadata (rank, reported-to-officer, substate) comes
         // from the per-tick entity view.  If the view is missing we skip
@@ -57,13 +71,13 @@ impl EnemyAi {
                         Substate::SeekingOfficerWaitForCharly
                             | Substate::SeekingOfficerLectureCharly
                     ) {
-                        return;
+                        return Ok(());
                     }
                     // Ignore if charly already reported.
                     let already_reported =
                         charly_view.as_ref().is_some_and(|v| v.reported_to_officer);
                     if already_reported {
-                        return;
+                        return Ok(());
                     }
                     self.base.outbox.actor.queue_unalert_near_charly_seekers(
                         CharlySeekerTarget::Npc(charly),
@@ -93,7 +107,7 @@ impl EnemyAi {
                             10,
                             ctx,
                         );
-                        return;
+                        return Ok(());
                     }
                     // Fall through to reunion tail.
                 }
@@ -121,8 +135,7 @@ impl EnemyAi {
                             | Substate::SeekingCharlyGetLectureByOfficer
                             | Substate::SeekingCharlyGetLectureByOfficer2 => {
                                 // Already sent to officer.
-                                self.return_to_duty_default(env);
-                                return;
+                                return Err(DutyCall::new(DutyFlags::empty(), false));
                             }
                             _ => {
                                 // Send charly to officer ourselves.
@@ -153,7 +166,7 @@ impl EnemyAi {
                                         charly: charly.get(),
                                     },
                                 );
-                                return;
+                                return Ok(());
                             }
                         }
                     }
@@ -207,7 +220,7 @@ impl EnemyAi {
                     ctx,
                 );
             }
-            return;
+            return Ok(());
         }
 
         // synchronize_charly is in STATE_DEFAULT?
@@ -221,7 +234,7 @@ impl EnemyAi {
             // "Forget it" — drop back into macro flow.
             self.set_state(AiState::Default, Substate::DefaultInMacro);
             self.base.execute_next_macro_command(sim, ctx);
-            return;
+            return Ok(());
         }
 
         // Check whether the sync friend is already at the sync waypoint.
@@ -255,6 +268,7 @@ impl EnemyAi {
             );
             self.set_state_with_timer(AiState::Default, Substate::DefaultSynchronizing, 20, ctx);
         }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -266,7 +280,7 @@ impl EnemyAi {
         env: ThinkEnv<'_>,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-    ) -> bool {
+    ) -> AiFlow<bool> {
         let ThinkEnv { sim, ctx, tick, .. } = env;
         let stimulus_type = stimulus.stimulus_type;
 
@@ -281,16 +295,17 @@ impl EnemyAi {
                     (AiState::Seeking, Substate::SeekingCharly)
                 ) || self.seeking_charly;
                 if !already_seeking {
-                    self.search_charly(env, global);
+                    self.search_charly(env, global)
+                        .map_err(|call| call.with_think_result(true))?;
                 }
-                return true;
+                return Ok(true);
             }
             StimulusType::EventOutOfView => {
-                return self.on_unexpected_out_of_view(stimulus, global, env);
+                return Ok(self.on_unexpected_out_of_view(stimulus, global, env)?);
             }
 
             StimulusType::EventCouldntReachPoint => {
-                return self.on_unexpected_couldnt_reach_point(stimulus, global, env);
+                return Ok(self.on_unexpected_couldnt_reach_point(stimulus, global, env)?);
             }
 
             StimulusType::EventImpossible => {
@@ -302,12 +317,14 @@ impl EnemyAi {
                     self.get_battle_overview(0, env);
                 } else {
                     let done = Stimulus::new(StimulusType::EventDone);
-                    self.think(env, &done, global);
+                    let mut call = DutyCall::new(DutyFlags::empty(), false);
+                    call.tail = DutyTail::Think { stimulus: done };
+                    return Err(call);
                 }
             }
 
             StimulusType::EventFitAgain => {
-                return self.on_unexpected_fit_again(env);
+                return Ok(self.on_unexpected_fit_again(env)?);
             }
 
             StimulusType::EventQuitSwordfight => {
@@ -348,11 +365,11 @@ impl EnemyAi {
             }
 
             StimulusType::EventSeesSoldier => {
-                return self.on_unexpected_sees_soldier(stimulus, env);
+                return Ok(self.on_unexpected_sees_soldier(stimulus, env));
             }
 
             StimulusType::CallAlert => {
-                return self.on_unexpected_call_alert(stimulus, env);
+                return Ok(self.on_unexpected_call_alert(stimulus, env));
             }
 
             StimulusType::CallCombatAlert => {
@@ -365,31 +382,31 @@ impl EnemyAi {
                 match self.base.current_state {
                     AiState::Default | AiState::Wondering | AiState::Seeking => {
                         let StimulusInfo::Position(ref pos) = stimulus.info else {
-                            return false;
+                            return Ok(false);
                         };
                         self.call_combat_alert_standard_procedure(pos, ctx, tick);
-                        return true;
+                        return Ok(true);
                     }
-                    AiState::Attacking => return true,
-                    _ => return false,
+                    AiState::Attacking => return Ok(true),
+                    _ => return Ok(false),
                 }
             }
 
             StimulusType::CallGoToOfficer => {
                 let StimulusInfo::Human(officer) = stimulus.info else {
-                    return false;
+                    return Ok(false);
                 };
                 if self.base.current_state != AiState::Default
                     && self.base.current_substate != Substate::SleepingAwakening
                 {
-                    return false;
+                    return Ok(false);
                 }
                 self.base.antagonist = Some(officer);
                 self.set_state(AiState::Seeking, Substate::SeekingCharlySentToOfficer);
                 self.base.set_emoticon(EmoticonType::None);
                 self.base.launch_timer(30, ctx.frame);
                 self.reported_to_officer = true;
-                return true;
+                return Ok(true);
             }
 
             // Officer hails a soldier, never a civilian. CALL_HEY is only dispatched from
@@ -397,7 +414,7 @@ impl EnemyAi {
             // Soldier accepts the call only if the new task priority
             // outranks the current one.
             StimulusType::CallHey => {
-                return self.on_unexpected_call_hey(stimulus, env);
+                return Ok(self.on_unexpected_call_hey(stimulus, env));
             }
 
             StimulusType::EventWaspAway => {
@@ -425,14 +442,14 @@ impl EnemyAi {
 
             StimulusType::EventAdversaryWeak => {
                 if self.base.current_substate.is_any_swordfight() {
-                    self.reconsider_swordfight(env, true, global);
+                    self.reconsider_swordfight(env, true, global)?;
                 }
             }
 
             // Special-strike gloating remark. Original guards on the
             // observable special-strike substate.
             StimulusType::EventGoodStrike => {
-                return self.on_unexpected_good_strike(env);
+                return Ok(self.on_unexpected_good_strike(env));
             }
             // Kill remark.
             StimulusType::EventLethalStrike => {
@@ -447,7 +464,7 @@ impl EnemyAi {
             }
 
             StimulusType::EventSeesBeggar => {
-                return self.on_unexpected_sees_beggar(stimulus, env);
+                return Ok(self.on_unexpected_sees_beggar(stimulus, env));
             }
 
             StimulusType::EventEnemyNear => {
@@ -466,7 +483,7 @@ impl EnemyAi {
                         info = ?stimulus.info,
                         "EventEnemyNear received without a human target"
                     );
-                    return false;
+                    return Ok(false);
                 };
                 match self.base.current_substate {
                     Substate::AttackingReactiontimeTurning
@@ -488,7 +505,9 @@ impl EnemyAi {
             // continue from where the script left them rather than
             // restarting the patrol.
             StimulusType::EventAfterScriptGoOn => {
-                return self.on_unexpected_after_script_go_on(global, env);
+                // The engine drains buffered stimuli and resumes the path with
+                // each recursive decision completed before the next one starts.
+                return Ok(false);
             }
 
             StimulusType::EventObjectAway => {
@@ -507,7 +526,7 @@ impl EnemyAi {
                     if is_money_of_interest {
                         self.stolen_money_standard_procedure(thief.get(), ctx, tick);
                     } else {
-                        self.return_to_duty_default(env);
+                        return Err(DutyCall::new(DutyFlags::empty(), false));
                     }
                 }
             }
@@ -524,7 +543,7 @@ impl EnemyAi {
                     == Substate::WonderingSoldierLookingOfficerWhoFinishedBrawl
                 {
                     self.create_list_of_near_money_fight_victims(ctx, tick);
-                    self.awake_next_money_fight_victim_if_any(env);
+                    self.awake_next_money_fight_victim_if_any(env)?;
                 }
             }
 
@@ -537,7 +556,7 @@ impl EnemyAi {
                         || self.base.current_substate == Substate::DefaultLookingForCharly
                         || self.base.current_substate == Substate::DefaultLookingSidewardsForCharly;
                     if eligible {
-                        self.event_sees_charly_standard_procedure(env, charly);
+                        self.event_sees_charly_standard_procedure(env, charly)?;
                     }
                 }
             }
@@ -547,7 +566,7 @@ impl EnemyAi {
             // the PC-wait state and bumps an X-mark emoticon; if already
             // waiting for the PC we acknowledge silently.
             StimulusType::CallMrOfficerIAmBack => {
-                return self.on_unexpected_call_mr_officer_iam_back(stimulus, env);
+                return Ok(self.on_unexpected_call_mr_officer_iam_back(stimulus, env));
             }
 
             // A charly the chief was tracking just walked back into view.
@@ -555,7 +574,7 @@ impl EnemyAi {
             // eligible substate set the charly memory still gets cleared
             // (default arm).
             StimulusType::CallCharlyIsBack => {
-                return self.on_unexpected_call_charly_is_back(stimulus, env);
+                return Ok(self.on_unexpected_call_charly_is_back(stimulus, env));
             }
 
             // Officer notices a soldier in a brawl. Dispatched from the
@@ -564,10 +583,10 @@ impl EnemyAi {
             // pose.
             StimulusType::EventSeesBrawl => {
                 if self.base.current_state != AiState::Default {
-                    return false;
+                    return Ok(false);
                 }
                 let StimulusInfo::Human(friend) = stimulus.info else {
-                    return false;
+                    return Ok(false);
                 };
                 self.base.stop_all();
                 self.base.say(Remark::OfficerSeesBrawl);
@@ -588,10 +607,10 @@ impl EnemyAi {
             StimulusType::CallFinishBrawl => {
                 let s = self.base.current_substate;
                 if !(s.is_take_money() || s.is_fight_for_money()) {
-                    return false;
+                    return Ok(false);
                 }
                 let StimulusInfo::Human(officer) = stimulus.info else {
-                    return false;
+                    return Ok(false);
                 };
                 self.base.stop_all();
                 self.base.face_entity(officer, ctx);
@@ -614,14 +633,9 @@ impl EnemyAi {
             StimulusType::EventAfterCombatInjury => {
                 if self.base.current_substate.is_real_swordfight() {
                     self.base.stop_all();
-                    self.reconsider_swordfight(env, false, global);
-                    if self.base.current_substate == Substate::AttackingSwordfight {
-                        if self.pending_sword_strike_consideration {
-                            self.pending_combat_insult_after_strike_consideration = true;
-                        } else {
-                            self.base.say(Remark::CombatInsult);
-                        }
-                    }
+                    self.reconsider_swordfight(env, false, global)
+                        .map_err(|call| call.then(DutyTail::AfterCombatInjury))?;
+                    self.finish_after_combat_injury();
                 }
             }
 
@@ -633,7 +647,7 @@ impl EnemyAi {
                 );
             }
         }
-        false
+        Ok(false)
     }
 
     // -----------------------------------------------------------------------
@@ -645,26 +659,26 @@ impl EnemyAi {
         env: ThinkEnv<'_>,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-    ) -> bool {
+    ) -> AiFlow<bool> {
         let ThinkEnv { ctx, tick, .. } = env;
         let stimulus_type = stimulus.stimulus_type;
 
         match stimulus_type {
             StimulusType::EventView => {
-                return self.on_alerting_view(stimulus, global, env);
+                return Ok(self.on_alerting_view(stimulus, global, env)?);
             }
 
             StimulusType::EventSeesShadow => {
                 if let StimulusInfo::Position(ref pos) = stimulus.info
                     && self.base.current_state == AiState::Default
-                    && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)
+                    && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)?
                 {
                     self.event_sees_shadow_standard_procedure(pos, ctx);
                 }
             }
 
             StimulusType::EventArrowLaunched => {
-                return self.on_alerting_arrow_launched(stimulus, env);
+                return Ok(self.on_alerting_arrow_launched(stimulus, env));
             }
 
             StimulusType::EventHear => {
@@ -674,7 +688,7 @@ impl EnemyAi {
                     | AiState::Wondering
                     | AiState::Seeking => {
                         if let StimulusInfo::Noise(ref noise) = stimulus.info
-                            && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)
+                            && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)?
                         {
                             self.event_hear_standard_procedure(env, noise);
                         }
@@ -690,7 +704,7 @@ impl EnemyAi {
                     | AiState::Wondering
                     | AiState::Seeking => {
                         if let StimulusInfo::Position(ref pos) = stimulus.info
-                            && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)
+                            && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)?
                         {
                             self.event_get_arrow_standard_procedure(env, pos, global);
                         }
@@ -731,7 +745,7 @@ impl EnemyAi {
                     | AiState::Wondering
                     | AiState::Seeking => {
                         if let StimulusInfo::Human(body) = stimulus.info
-                            && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)
+                            && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)?
                         {
                             self.event_sees_body_standard_procedure(body.get(), env);
                         }
@@ -747,7 +761,7 @@ impl EnemyAi {
                     | AiState::Wondering
                     | AiState::Seeking => {
                         if let StimulusInfo::Object(obj) = stimulus.info
-                            && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)
+                            && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)?
                         {
                             self.event_sees_object_standard_procedure(obj.get(), ctx, tick);
                         }
@@ -762,7 +776,7 @@ impl EnemyAi {
                 // re-entrant work may change its state between selection and
                 // delivery, but the Original still runs the standard body.
                 if let StimulusInfo::Hint(ref hint) = stimulus.info
-                    && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)
+                    && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)?
                 {
                     self.call_look_there_standard_procedure(&hint.seek_point, ctx);
                 }
@@ -773,7 +787,7 @@ impl EnemyAi {
                     match self.base.current_state {
                         #[allow(clippy::collapsible_match)]
                         AiState::Default | AiState::Wondering => {
-                            if !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global) {
+                            if !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)? {
                                 self.call_tower_guard_alert_standard_procedure(hint, ctx);
                             }
                         }
@@ -794,11 +808,11 @@ impl EnemyAi {
             }
 
             StimulusType::EventGotHit => {
-                return self.on_alerting_got_hit(stimulus, env);
+                return Ok(self.on_alerting_got_hit(stimulus, env));
             }
 
             StimulusType::EventApple => {
-                return self.on_alerting_apple(stimulus, env);
+                return Ok(self.on_alerting_apple(stimulus, env));
             }
 
             StimulusType::EventStone => {
@@ -828,9 +842,9 @@ impl EnemyAi {
 
             StimulusType::EventStop => {
                 match self.base.current_state {
-                    AiState::Sleeping => return false,
+                    AiState::Sleeping => return Ok(false),
                     AiState::Attacking if self.base.current_substate.is_real_swordfight() => {
-                        return false;
+                        return Ok(false);
                     }
                     _ => {}
                 }
@@ -866,7 +880,7 @@ impl EnemyAi {
 
             StimulusType::EventPcShotAtMe => {
                 if let StimulusInfo::Human(enemy) = stimulus.info {
-                    self.event_view_standard_procedure(env, enemy.get(), global);
+                    self.event_view_standard_procedure(env, enemy.get(), global)?;
                 }
             }
 
@@ -878,7 +892,7 @@ impl EnemyAi {
                 );
             }
         }
-        false
+        Ok(false)
     }
 
     // -----------------------------------------------------------------------
@@ -891,7 +905,7 @@ impl EnemyAi {
         env: ThinkEnv<'_>,
         enemy: HumanHandle,
         global: &mut AiGlobalState,
-    ) {
+    ) -> AiFlow<()> {
         let ThinkEnv { ctx, tick, .. } = env;
         tracing::trace!(
             me = self.base.me,
@@ -903,7 +917,7 @@ impl EnemyAi {
             "event_view_standard_procedure: ENTRY"
         );
         if !self.answer_question(Question::HasTheNewTaskPriority, ctx) {
-            return;
+            return Ok(());
         }
         self.current_task_priority = self.new_task_priority;
         // Seeing a real enemy supersedes an in-flight curiosity route.
@@ -919,13 +933,13 @@ impl EnemyAi {
             && let Some(v) = enemy_view
             && (v.is_unconscious || v.posture == crate::element::Posture::Tied || v.is_carried)
         {
-            return;
+            return Ok(());
         }
         if let Some(v) = enemy_view
             && v.is_pc
             && v.guard.is_some()
         {
-            return;
+            return Ok(());
         }
         if ctx.is_player_aligned()
             && let Some(v) = enemy_view
@@ -933,7 +947,7 @@ impl EnemyAi {
             && v.is_soldier()
             && !v.is_archer
         {
-            return;
+            return Ok(());
         }
 
         self.base.outbox.detection.mark_alerted = true;
@@ -971,7 +985,7 @@ impl EnemyAi {
         // before doing anything else.
         if ctx.in_building {
             self.request_enemy_in_house_alert(ctx);
-            return;
+            return Ok(());
         }
 
         self.reinitialize_them_list(ctx);
@@ -990,9 +1004,10 @@ impl EnemyAi {
             LookThereContinuation::EventView { enemy, enemy_pos },
             ctx,
         ) {
-            return;
+            return Ok(());
         }
-        self.event_view_after_look_there(env, enemy, enemy_pos, global);
+        self.event_view_after_look_there(env, enemy, enemy_pos, global)?;
+        Ok(())
     }
 
     pub(super) fn event_view_after_look_there(
@@ -1001,7 +1016,7 @@ impl EnemyAi {
         enemy: HumanHandle,
         enemy_pos: Position,
         global: &mut AiGlobalState,
-    ) {
+    ) -> AiFlow<()> {
         let ThinkEnv { ctx, tick, .. } = env;
         // Already sprinting? Stay in MovingFast, just commit the target
         // and re-issue the run-to. Skips the stop-all/speech path entirely so
@@ -1050,7 +1065,7 @@ impl EnemyAi {
                 primary_target = ?self.base.primary_target,
                 "event_view_standard_procedure: EXIT (moving-fast)"
             );
-            return;
+            return Ok(());
         }
 
         // Stop and engage
@@ -1099,7 +1114,7 @@ impl EnemyAi {
             // (the broader sightings stay quiet).
             self.set_state(AiState::Attacking, Substate::AttackingReactiontime);
             self.i_am_in_trouble(enemy);
-            self.battle_decisions(env, global);
+            self.battle_decisions(env, global)?;
         } else if self.enemy_seen_below {
             // Archer saw enemy from a wall — no turn, just a short 5-tick
             // reaction to aim the bow.
@@ -1126,6 +1141,7 @@ impl EnemyAi {
             timer = self.base.when_does_timer_ring,
             "event_view_standard_procedure: EXIT"
         );
+        Ok(())
     }
 
     /// React to hearing a noise.
@@ -1816,7 +1832,7 @@ impl EnemyAi {
         &mut self,
         env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
-    ) {
+    ) -> AiFlow<()> {
         let ThinkEnv { ctx, .. } = env;
         use crate::element::Posture;
         // Busy-check preamble — lock AI BUSY, mark was_busy, re-fire
@@ -1837,7 +1853,7 @@ impl EnemyAi {
                 .reentrant
                 .self_stimuli
                 .push(StimulusType::EventCouldntReachPoint.into());
-            return;
+            return Ok(());
         }
 
         match self.base.current_state {
@@ -1848,7 +1864,7 @@ impl EnemyAi {
             | AiState::Wondering
             | AiState::Menacing
             | AiState::Fleeing => {
-                self.return_to_duty(env, DutyFlags::BECAUSE_COULDNT_REACHPOINT);
+                return Err(DutyCall::new(DutyFlags::BECAUSE_COULDNT_REACHPOINT, false));
             }
             // Dead-body sweep around the actor.
             AiState::Seeking => {
@@ -1876,7 +1892,7 @@ impl EnemyAi {
                     SeekFlags::empty(),
                     UNDEFINED_DIRECTION,
                     global,
-                );
+                )?;
             }
             // Stay in combat — swordfighters drop back into the
             // swordfight substate with a brief timer; everyone else
@@ -1894,6 +1910,7 @@ impl EnemyAi {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -1906,7 +1923,7 @@ impl EnemyAi {
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> AiFlow<bool> {
         let ThinkEnv { ctx, .. } = env;
         if self.base.current_state == AiState::Attacking
             && let StimulusInfo::Human(enemy) = stimulus.info
@@ -1941,18 +1958,18 @@ impl EnemyAi {
                     // below-target recovery consumes the event.
                     if self.enemy_seen_below {
                         self.reinitialize_them_list(ctx);
-                        return true;
+                        return Ok(true);
                     }
                     if out_of_view_is_primary && self.is_detecting_360_degrees(enemy.get(), ctx) {
-                        return false;
+                        return Ok(false);
                     }
                     // The swordfight labels in turn fall through the
                     // moving-combat stare-vector guard before the
                     // shared lost-enemy handler.
                     if self.enemy_is_behind_me(ctx) {
-                        return false;
+                        return Ok(false);
                     }
-                    self.out_of_view_seek_handler(env, enemy.get(), global);
+                    self.out_of_view_seek_handler(env, enemy.get(), global)?;
                 }
 
                 s if s.is_any_swordfight() => {
@@ -1977,7 +1994,7 @@ impl EnemyAi {
                     // distance gate directly avoids that aliasing.
                     if out_of_view_is_primary && self.is_detecting_360_degrees(enemy.get(), ctx) {
                         // Still close — stay in swordfight.
-                        return false;
+                        return Ok(false);
                     }
                     // The original game's any-swordfight-substate case has
                     // no break here. A failed 360-degree check falls
@@ -1986,9 +2003,9 @@ impl EnemyAi {
                     // ADVANCING_WITH_SHIELD before reaching the
                     // shared lost-enemy body.
                     if self.enemy_is_behind_me(ctx) {
-                        return false;
+                        return Ok(false);
                     }
-                    self.out_of_view_seek_handler(env, enemy.get(), global);
+                    self.out_of_view_seek_handler(env, enemy.get(), global)?;
                 }
 
                 // REACTIONTIME_RUNNING / APPROACH_TO_OBSERVE /
@@ -2005,11 +2022,11 @@ impl EnemyAi {
                     if self.enemy_is_behind_me(ctx) {
                         // Just out of view because we're looking
                         // the wrong way — ignore the OUTOFVIEW.
-                        return false;
+                        return Ok(false);
                     }
                     // Fall through to the seek handler below by
                     // invoking the shared helper directly.
-                    self.out_of_view_seek_handler(env, enemy.get(), global);
+                    self.out_of_view_seek_handler(env, enemy.get(), global)?;
                 }
 
                 // Stationary / combat-posture substates. On
@@ -2033,7 +2050,7 @@ impl EnemyAi {
                 | Substate::AttackingPhalanx
                 | Substate::AttackingTooProudToAttack
                 | Substate::AttackingTooProudToAttackApproach => {
-                    self.out_of_view_seek_handler(env, enemy.get(), global);
+                    self.out_of_view_seek_handler(env, enemy.get(), global)?;
                 }
 
                 // Do-nothing substates.
@@ -2058,7 +2075,7 @@ impl EnemyAi {
                             SeekFlags::empty(),
                             UNDEFINED_DIRECTION,
                             global,
-                        );
+                        )?;
                     } else {
                         self.get_battle_overview(0, env);
                     }
@@ -2070,7 +2087,7 @@ impl EnemyAi {
                 }
             }
         }
-        false
+        Ok(false)
     }
 
     fn on_unexpected_couldnt_reach_point(
@@ -2078,13 +2095,13 @@ impl EnemyAi {
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> AiFlow<bool> {
         let ThinkEnv { sim, ctx, tick, .. } = env;
         // Pathfinding failure.
         match self.base.current_substate {
             // Seek point unreachable → try next.
             Substate::SeekingSeekpoint => {
-                self.seek_next_point(env, global);
+                self.seek_next_point(env, global)?;
             }
             // Body unreachable → seek area.
             Substate::SeekingBody => {
@@ -2096,7 +2113,7 @@ impl EnemyAi {
                         SeekFlags::empty(),
                         UNDEFINED_DIRECTION,
                         global,
-                    );
+                    )?;
                 }
             }
             Substate::AttackingObserve => {
@@ -2215,7 +2232,7 @@ impl EnemyAi {
                     );
                     self.base.seek_position = target_position;
                 } else {
-                    self.couldnt_reachpoint_emergency_routine(env, global);
+                    self.couldnt_reachpoint_emergency_routine(env, global)?;
                 }
             }
             Substate::FleeingPanic => {
@@ -2225,16 +2242,16 @@ impl EnemyAi {
                 // a fleeing soldier to duty and discard the remaining
                 // panic runs.
                 self.base
-                    .think_expected_event_common_stuff(sim, stimulus, ctx);
+                    .think_expected_event_common_stuff(sim, stimulus, ctx)?;
             }
             _ => {
-                self.couldnt_reachpoint_emergency_routine(env, global);
+                self.couldnt_reachpoint_emergency_routine(env, global)?;
             }
         }
-        false
+        Ok(false)
     }
 
-    fn on_unexpected_fit_again(&mut self, env: ThinkEnv<'_>) -> bool {
+    fn on_unexpected_fit_again(&mut self, env: ThinkEnv<'_>) -> AiFlow<bool> {
         let ThinkEnv { ctx, .. } = env;
         // Recovered from unconsciousness.
         //
@@ -2248,7 +2265,7 @@ impl EnemyAi {
         if self.base.current_substate != Substate::SleepingUnconscious {
             // The dispatch only fires from SLEEPING_UNCONSCIOUS;
             // any other substate falls through as a no-op.
-            return false;
+            return Ok(false);
         }
 
         let knocked_out_in_money_fight = self.base.knocked_out_in_money_fight;
@@ -2266,7 +2283,7 @@ impl EnemyAi {
 
         if knocked_out_in_money_fight {
             self.base.knocked_out_in_money_fight = false;
-            self.return_to_duty_default(env);
+            return Err(DutyCall::new(DutyFlags::empty(), false));
         } else {
             self.set_state(AiState::Sleeping, Substate::SleepingAwakening);
             self.base
@@ -2285,7 +2302,7 @@ impl EnemyAi {
                     crate::element::EyeStatus::LookForward,
                 ));
         }
-        false
+        Ok(false)
     }
 
     fn on_unexpected_sees_soldier(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
@@ -2672,53 +2689,6 @@ impl EnemyAi {
         false
     }
 
-    fn on_unexpected_after_script_go_on(
-        &mut self,
-        global: &mut AiGlobalState,
-        env: ThinkEnv<'_>,
-    ) -> bool {
-        let ThinkEnv { ctx, .. } = env;
-        if self.base.outbox.reentrant.engine_drains_after_script_go_on {
-            return false;
-        }
-        while !self.base.stimulus_queue.is_empty() {
-            if !self.base.locks_flag_field.is_empty() || self.base.script_locked {
-                return false;
-            }
-            let queued = self.base.stimulus_queue.remove(0);
-            if queued.stimulus_type != StimulusType::EventAfterScriptGoOn {
-                self.think(env, &queued, global);
-            }
-        }
-
-        if self.base.current_state == AiState::Default {
-            let hiking_paths = &ctx.hiking_paths;
-            let advanced_dest = if let Some(ref mut path) = self.base.patrol_path {
-                path.advance();
-                path.current_waypoint(hiking_paths).map(|wp| Position {
-                    x: wp.x as f32,
-                    y: wp.y as f32,
-                    sector: ctx.hiking_waypoint_sector(
-                        usize::from(path.hiking_path_index),
-                        usize::from(path.current_waypoint_index),
-                        wp.sector,
-                    ),
-                    level: wp.level,
-                })
-            } else {
-                None
-            };
-            if let Some(dest) = advanced_dest {
-                let flags = self.base.default_path_walking_flags;
-                self.go_to(AiState::Default, Substate::DefaultEnroute, dest, flags, ctx);
-            } else {
-                self.return_to_duty_default(env);
-            }
-            return false;
-        }
-        false
-    }
-
     fn on_unexpected_call_mr_officer_iam_back(
         &mut self,
         stimulus: &Stimulus,
@@ -2808,19 +2778,19 @@ impl EnemyAi {
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> AiFlow<bool> {
         let ThinkEnv { ctx, tick, .. } = env;
         if let StimulusInfo::Human(enemy) = stimulus.info {
             match self.base.current_state {
                 AiState::Sleeping => {} // ignore (should not happen)
                 AiState::Wondering | AiState::Default | AiState::Seeking => {
-                    if !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global) {
-                        self.event_view_standard_procedure(env, enemy.get(), global);
+                    if !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)? {
+                        self.event_view_standard_procedure(env, enemy.get(), global)?;
                     }
                 }
                 AiState::Menacing => {
                     if Some(crate::entity_id::PcId(enemy.get())) != self.guarded_pc {
-                        self.event_view_standard_procedure(env, enemy.get(), global);
+                        self.event_view_standard_procedure(env, enemy.get(), global)?;
                     }
                 }
                 AiState::Fleeing => {
@@ -2888,7 +2858,7 @@ impl EnemyAi {
                                             .map(|view| view.detection_position_world)
                                     }),
                             );
-                            self.battle_decisions(env, global);
+                            self.battle_decisions(env, global)?;
                         }
 
                         Substate::AttackingApproachingSleepingEnemy
@@ -2902,7 +2872,7 @@ impl EnemyAi {
                                 .entity_view_logged(enemy, "newly seen enemy")
                                 .is_some_and(|v| v.is_unconscious);
                             if !target_unconscious {
-                                self.event_view_standard_procedure(env, enemy.get(), global);
+                                self.event_view_standard_procedure(env, enemy.get(), global)?;
                             }
                         }
 
@@ -2923,7 +2893,7 @@ impl EnemyAi {
                             // battle planning.
                             self.reinitialize_them_list(ctx);
                             if !self.maybe_make_rider_attack(env) {
-                                self.battle_decisions(env, global);
+                                self.battle_decisions(env, global)?;
                             }
                         }
 
@@ -2932,7 +2902,7 @@ impl EnemyAi {
                 }
             }
         }
-        false
+        Ok(false)
     }
 
     fn on_alerting_arrow_launched(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {

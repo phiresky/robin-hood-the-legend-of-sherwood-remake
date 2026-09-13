@@ -108,43 +108,6 @@ trace_event! {
 }
 
 trace_event! {
-    ConsiderreportMergeStart {
-        owner: Display,
-        incoming: Debug,
-        known_before: Debug;
-        frame: Display,
-        flags: Display
-    } => "CONSIDERREPORT {{\"stage\":\"merge_start\",\"frame\":{frame},\"owner\":{},\"flags\":{flags},\"incoming\":{:?},\"known_before\":{:?}}}"
-}
-
-trace_event! {
-    ConsiderreportBody {
-        owner: Display,
-        resolved_kind: Debug,
-        resolved_index: Display;
-        frame: Display,
-        body: Display
-    } => "CONSIDERREPORT {{\"stage\":\"body\",\"frame\":{frame},\"owner\":{},\"body\":{body},\"known\":false,\"resolved_kind\":{:?},\"resolved_index\":{},\"queued\":true}}"
-}
-
-trace_event! {
-    ConsiderreportBodyKnown {
-        owner: Display;
-        frame: Display,
-        body: Display
-    } => "CONSIDERREPORT {{\"stage\":\"body\",\"frame\":{frame},\"owner\":{},\"body\":{body},\"known\":true,\"resolved_kind\":null,\"resolved_index\":null,\"queued\":false}}"
-}
-
-trace_event! {
-    ConsiderreportMergeEnd {
-        owner: Display,
-        known_after: Debug,
-        queued_mutations: Debug;
-        frame: Display
-    } => "CONSIDERREPORT {{\"stage\":\"merge_end\",\"frame\":{frame},\"owner\":{},\"known_after\":{:?},\"queued_mutations\":{:?}}}"
-}
-
-trace_event! {
     AidecisionGotoEnter {
         frame: Display,
         owner: Display,

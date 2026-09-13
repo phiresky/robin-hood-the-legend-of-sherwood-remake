@@ -3,6 +3,14 @@
 use super::*;
 use crate::ai::*;
 
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct MacroOwner {
+    frame: u32,
+    original_creation_order: Option<u32>,
+    self_is_soldier: bool,
+    self_rank: crate::profiles::ProfileRank,
+}
+
 struct MacroExecution<'a> {
     engine: &'a mut EngineInner,
     owner: EntityId,
@@ -64,25 +72,43 @@ impl EngineInner {
 }
 
 impl MacroExecution<'_> {
+    fn owner_state(&self) -> MacroOwner {
+        let entity = self.engine.expect_entity(self.owner, "macro owner state");
+        MacroOwner {
+            frame: self.engine.control.frame_counter,
+            original_creation_order: Some(self.engine.world.original_creation_order(self.owner)),
+            self_is_soldier: entity.enemy_ai().is_some(),
+            self_rank: entity
+                .enemy_ai()
+                .map_or(crate::profiles::ProfileRank::None, |ai| {
+                    ai.soldier_profile_rank
+                }),
+        }
+    }
+
+    fn debug_macro_lifecycle(&self, owner: &MacroOwner, phase: &str, reason: impl std::fmt::Debug) {
+        self.debug_macro_lifecycle_at(owner.frame, owner.original_creation_order, phase, reason);
+    }
+
+    fn break_macro_debug(&mut self, owner: &MacroOwner, reason: &str) {
+        self.debug_macro_lifecycle(owner, "break_before", reason);
+        self.break_macro();
+        self.debug_macro_lifecycle(owner, "break_after", reason);
+    }
+
+    fn finish_patrol_macro_debug(&mut self, owner: &MacroOwner, reason: &str) {
+        self.debug_macro_lifecycle(owner, "finish_before", reason);
+        self.finish_patrol_macro();
+        self.debug_macro_lifecycle(owner, "finish_after", reason);
+    }
+
     fn run(&mut self) {
         self.execute_next_macro_command(self.sim);
     }
 
-    fn full_context(&self) -> AiContext {
-        // TODO: migrate friend-check visibility to live target/obstacle queries;
-        // the other opcodes require only owner fields and immutable path assets.
-        let scratch = self.engine.build_sim_scratch(self.assets);
-        self.engine.ai_context_for(
-            self.owner,
-            self.engine.control.frame_counter,
-            &scratch,
-            self.assets,
-        )
-    }
-
     fn settle(&mut self) {
         self.engine
-            .drain_direct_ai_owner_prefix_boundary(self.sim, self.owner, self.assets);
+            .drain_direct_ai_owner_boundary(self.sim, self.owner, self.assets);
     }
 
     fn set_macro_state(&mut self, substate: Substate) {
@@ -129,9 +155,21 @@ impl MacroExecution<'_> {
             self.number_of_remaining_macro_bytes.saturating_sub(2);
     }
 
-    fn assign_path(&mut self, assignment: PatrolAssignment, ctx: &AiContext) {
+    fn assign_path(&mut self, assignment: PatrolAssignment) {
         let before = self.outbox.reentrant.self_stimuli.len();
-        self.assign_new_patrol_path(assignment, ctx.position, ctx.direction, &ctx.hiking_paths);
+        let position = self.engine.live_ai_position(self.owner);
+        let direction = self
+            .engine
+            .expect_entity(self.owner, "macro path assignment")
+            .element_data()
+            .direction() as u16;
+        let assets = self.assets;
+        self.assign_new_patrol_path(
+            assignment,
+            position,
+            direction,
+            &assets.navigation.hiking_paths,
+        );
         if self.outbox.reentrant.self_stimuli.len() > before {
             let callback = self
                 .outbox
@@ -147,7 +185,7 @@ impl MacroExecution<'_> {
     fn execute_next_macro_command(&mut self, sim: &crate::sim_rng::SimulationContext) {
         let mut point_already_set = false;
         'vm: loop {
-            let entry_ctx = self.engine.ai_owner_context(self.owner, self.assets);
+            let entry_ctx = self.owner_state();
             self.debug_macro_lifecycle(&entry_ctx, "execute_enter", "execute_next_macro_command");
             // Loop iterations retain recursive entry semantics: even a repeated
             // civilian substate can synchronously notify its script.
@@ -155,7 +193,7 @@ impl MacroExecution<'_> {
                 self.set_macro_state(Substate::DefaultInMacro);
             }
             self.standing_around_timer = 0;
-            let ctx = &self.engine.ai_owner_context(self.owner, self.assets);
+            let ctx = &self.owner_state();
             if (self.number_of_remaining_macro_bytes as i16) > 0 {
                 let opcode_byte = match self.macro_command.get(self.macro_command_offset).copied() {
                     Some(b) => b,
@@ -211,12 +249,14 @@ impl MacroExecution<'_> {
                     }
 
                     self.set_macro_state(Substate::DefaultEnroute);
-                    let ctx = &self.engine.ai_owner_context(self.owner, self.assets);
-                    let hiking_paths = &ctx.hiking_paths;
-                    let will_stop = self.will_stop_at_next_waypoint_debug(
+                    let ctx = &self.owner_state();
+                    let assets = self.assets;
+                    let hiking_paths = &assets.navigation.hiking_paths;
+                    let will_stop = self.will_stop_at_next_waypoint_at(
                         sim,
                         hiking_paths,
-                        ctx,
+                        ctx.frame,
+                        ctx.original_creation_order,
                         WillStopCaller::MacroCompletion,
                     );
                     let mut walk_flags = self.default_path_walking_flags;
@@ -233,7 +273,7 @@ impl MacroExecution<'_> {
                         .map(|(path_index, waypoint_index, wp)| Position {
                             x: wp.x as f32,
                             y: wp.y as f32,
-                            sector: ctx.hiking_waypoint_sector(
+                            sector: assets.navigation.hiking_waypoint_sector(
                                 usize::from(path_index),
                                 usize::from(waypoint_index),
                                 wp.sector,
@@ -241,7 +281,8 @@ impl MacroExecution<'_> {
                             level: wp.level,
                         })
                     {
-                        self.go_to(next_wp, walk_flags, ctx);
+                        self.engine
+                            .duty_go_to(sim, self.assets, self.owner, next_wp, walk_flags);
                         // An already-reached waypoint can start another macro.
                         // Its deadline survives this invocation's cancellation.
                         self.settle();
@@ -268,7 +309,7 @@ impl MacroExecution<'_> {
         opcode: MacroOpcode,
         point_already_set: &mut bool,
         sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
+        ctx: &MacroOwner,
     ) -> std::ops::ControlFlow<()> {
         match opcode {
             MacroOpcode::ReversePath => {
@@ -309,8 +350,8 @@ impl MacroExecution<'_> {
                     self.break_macro_debug(ctx, "face_to_truncated");
                     return std::ops::ControlFlow::Break(());
                 };
-                let ctx = self.engine.ai_owner_context(self.owner, self.assets);
-                self.face_direction(direction, &ctx);
+                self.engine
+                    .duty_face_direction(sim, self.assets, self.owner, direction);
                 self.settle();
                 self.consume_macro_operand();
                 return std::ops::ControlFlow::Break(());
@@ -339,8 +380,14 @@ impl MacroExecution<'_> {
                 if !ctx.self_is_soldier {
                     tracing::warn!("NPC {}: CMD_CHECK_4 is illegal for civilians", self.me);
                 }
-                let full_ctx = self.full_context();
-                self.initialize_friend_check(sim, friend_id, frames, u16::MAX, &full_ctx);
+                self.engine.initialize_ai_friend_check(
+                    sim,
+                    self.assets,
+                    self.owner,
+                    friend_id,
+                    frames,
+                    u16::MAX,
+                );
                 self.settle();
                 self.macro_started_in_this_frame = false;
                 return std::ops::ControlFlow::Break(());
@@ -362,15 +409,21 @@ impl MacroExecution<'_> {
                 if !ctx.self_is_soldier {
                     tracing::warn!("NPC {}: CMD_CHECK_4_SYNC is illegal for civilians", self.me);
                 }
-                let full_ctx = self.full_context();
-                self.initialize_friend_check(sim, friend_id, frames, index, &full_ctx);
+                self.engine.initialize_ai_friend_check(
+                    sim,
+                    self.assets,
+                    self.owner,
+                    friend_id,
+                    frames,
+                    index,
+                );
                 self.settle();
                 self.macro_started_in_this_frame = false;
                 return std::ops::ControlFlow::Break(());
             }
 
             MacroOpcode::StayHere => {
-                self.assign_path(PatrolAssignment::ClearPath, ctx);
+                self.assign_path(PatrolAssignment::ClearPath);
                 return std::ops::ControlFlow::Break(());
             }
 
@@ -383,7 +436,7 @@ impl MacroExecution<'_> {
                     Some(pid) => PatrolAssignment::Index(pid),
                     None => PatrolAssignment::ClearPath,
                 };
-                self.assign_path(assignment, ctx);
+                self.assign_path(assignment);
                 // Assignment's nested decision finishes before this explicit
                 // second cancellation and actor-specific duty call.
                 self.break_macro();

@@ -49,20 +49,23 @@ pub(crate) use model::{
 };
 
 mod contexts;
+pub(crate) use contexts::ai_position_to_point_3d;
 pub use contexts::{
     AI_DOOR_RALLY_POINT_DISTANCE, AiContext, AiGlobalState, AiPerTickData, AntagonistInfo,
     DoorRallyPoint, FriendSwapCandidate, House, MyExitDoorInfo, PhalanxEnemySnapshot,
     PhalanxMemberThemList, ReconsiderSwordfightFriend, ReconsiderSwordfightObservationFighter,
-    ReinforcementDoorInfo, SleepingEnemyInfo,
+    ReinforcementDoorInfo,
 };
 
+mod duty;
 mod effects;
+pub(crate) use duty::{AiFlow, DutyCall, DutyTail};
 pub(crate) use effects::{AiActorCoreEffects, AiActorPreemptionEffects};
 pub use effects::{
     AiActorOutbox, AiDetectionOutbox, AiMusicOutbox, AiOutbox, AiOwnerWork, AiPatrolOutbox,
     AiRecoveryOutbox, AiReentrantOutbox, AiSpeechAttempt, AiStateChangeNotification,
     ArcheryReservationRelease, AttentiveModeEffect, DetectableMutation, GuardedPcEffect,
-    InitStateSideEffects, ReservedShootingPoint,
+    ReservedShootingPoint,
 };
 
 mod controller;
