@@ -940,7 +940,7 @@ pub(super) fn run_replay(
                 .parity_replay_setup()
                 .replay_legacy_additional_arrow_refreshes(additional_draws);
         }
-        print_debug_element("before", &engine, &frame);
+        print_debug_element("before", &engine, &frame)?;
         robin_engine::movement_diagnostics::begin_parity_movement_capture();
         let simulation_started = Instant::now();
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1031,7 +1031,7 @@ pub(super) fn run_replay(
         if debug_stage_timing {
             eprintln!("parity stage: completed Rust frame {}", frame.frame_after);
         }
-        print_debug_element("after", &engine, &frame);
+        print_debug_element("after", &engine, &frame)?;
         map.extend_runtime_entities(&engine, &frame)?;
         record_arrow_publication_before_compare(&engine, &frame, map)?;
         if debug_stage_timing {

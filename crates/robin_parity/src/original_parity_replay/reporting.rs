@@ -17,8 +17,8 @@ pub(super) fn structured_divergences(
 use super::{
     BTreeMap, BTreeSet, BufWriter, Engine, EntityId, EntityMap, File, PathBuf, Serialize,
     TRACE_SCHEMA_VERSION, TraceElement, TraceEntityId, TraceEntityKind, TraceFlightStep,
-    TraceFrame, TraceHeader, TraceMovementStep, TracePathEvent, TraceRngBatch, TraceRunResult,
-    TraceVisibilityQuery, VecDeque,
+    TraceFrame, TraceHeader, TraceMovementStep, TracePathEvent, TraceRngBatch, TraceRunError,
+    TraceRunResult, TraceVisibilityQuery, VecDeque,
 };
 use std::io::Write as _;
 
@@ -128,14 +128,14 @@ pub(super) fn write_engine_dump_frame(
                 .elements
                 .iter()
                 .find(|element| element.entity_id == *entity_id)
-                .unwrap_or_else(|| {
-                    panic!(
+                .ok_or_else(|| {
+                    TraceRunError::Input(format!(
                         "manual parity dump requested missing Original entity {entity_id:?} at frame {}",
                         frame.frame_after
-                    )
+                    ))
                 })
         })
-        .collect::<Vec<_>>();
+        .collect::<TraceRunResult<Vec<_>>>()?;
     write_engine_dump_snapshot_frame(
         writer,
         options,
@@ -377,41 +377,49 @@ pub(super) fn write_jsonl_record(writer: &mut BufWriter<File>, value: &serde_jso
 /// `pc`, `soldier` or `civilian` and index is the Rust entity index — the same
 /// pair the divergence report prints as `Pc(PcId(103))`. The window is
 /// `PARITY_DEBUG_FROM`..=`PARITY_DEBUG_UNTIL`.
-pub(super) fn print_debug_element(label: &str, engine: &Engine, frame: &TraceFrame) {
+pub(super) fn print_debug_element(
+    label: &str,
+    engine: &Engine,
+    frame: &TraceFrame,
+) -> TraceRunResult<()> {
     let Some(spec) = std::env::var_os("PARITY_DEBUG_ELEMENT") else {
-        return;
+        return Ok(());
     };
-    let frame_bound = |name: &str, fallback: u64| {
+    let frame_bound = |name: &str, fallback: u64| -> TraceRunResult<u64> {
         std::env::var(name)
             .map(|value| {
                 value
                     .parse::<u64>()
-                    .unwrap_or_else(|_| panic!("{name} must be a u64"))
+                    .map_err(|_| TraceRunError::Input(format!("{name} must be a u64")))
             })
-            .unwrap_or(fallback)
+            .unwrap_or(Ok(fallback))
     };
-    let from = frame_bound("PARITY_DEBUG_FROM", 0);
-    let until = frame_bound("PARITY_DEBUG_UNTIL", 10);
+    let from = frame_bound("PARITY_DEBUG_FROM", 0)?;
+    let until = frame_bound("PARITY_DEBUG_UNTIL", 10)?;
     if frame.frame_after < from || frame.frame_after > until {
-        return;
+        return Ok(());
     }
     let spec = spec.to_string_lossy().to_string();
-    let (kind, index) = spec
-        .split_once(':')
-        .expect("PARITY_DEBUG_ELEMENT must look like pc:342");
-    let index: u32 = index
-        .parse()
-        .expect("PARITY_DEBUG_ELEMENT index must be u32");
+    let (kind, index) = spec.split_once(':').ok_or_else(|| {
+        TraceRunError::Input("PARITY_DEBUG_ELEMENT must look like pc:342".to_owned())
+    })?;
+    let index: u32 = index.parse().map_err(|error| {
+        TraceRunError::Input(format!("PARITY_DEBUG_ELEMENT index must be u32: {error:?}"))
+    })?;
     let id = match kind {
         "pc" => EntityId::Pc(robin_engine::entity_id::PcId(index)),
         "soldier" => EntityId::Soldier(robin_engine::entity_id::SoldierId(index)),
         "civilian" => EntityId::Civilian(robin_engine::entity_id::CivilianId(index)),
-        other => panic!("unsupported PARITY_DEBUG_ELEMENT kind {other}"),
+        other => {
+            return Err(TraceRunError::Input(format!(
+                "unsupported PARITY_DEBUG_ELEMENT kind {other}"
+            )));
+        }
     };
     // The slot may not exist yet on early frames; stay quiet until it does
     // rather than aborting the whole replay.
     let Some(entity) = engine.get_entity(id) else {
-        return;
+        return Ok(());
     };
     let sprite = &entity.element_data().sprite;
     let actor = entity.actor_data().expect("debug element is an actor");
@@ -436,6 +444,7 @@ pub(super) fn print_debug_element(label: &str, engine: &Engine, frame: &TraceFra
         actor.execute_order_initialising,
         actor.last_execute_order_id,
     );
+    Ok(())
 }
 
 pub(super) fn print_startup_actors(
@@ -481,9 +490,9 @@ pub(super) fn print_startup_actors(
                     })
     }) {
         let id = entity_map.translate(expected.entity_id)?;
-        let actual = engine
-            .get_entity(id)
-            .unwrap_or_else(|| panic!("mapped startup actor {id:?} is missing"));
+        let actual = engine.get_entity(id).ok_or_else(|| {
+            TraceRunError::TraceContent(format!("mapped startup actor {id:?} is missing"))
+        })?;
         let ai_debug = actual.ai_controller().map(|ai| {
             (
                 ai.current_state,
