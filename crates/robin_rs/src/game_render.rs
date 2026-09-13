@@ -7,8 +7,6 @@
 
 use crate::gfx_types::Rect;
 use crate::host::HostDraw;
-use crate::hud_text::{self, HudFonts};
-use crate::ingame_menu::layout;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
 use crate::titbit_renderer::TitbitRenderer;
 use robin_engine::coordinates as engine_coordinates;
@@ -29,12 +27,12 @@ mod entities;
 mod fog;
 mod view_cones;
 pub(crate) use doors::render_door_overlays;
+use entities::render_character_masks_clipped;
 #[cfg(test)]
 use entities::uses_pixel_fog_visibility;
 pub(crate) use entities::{
     render_bg_animations_gpu, render_entities_gpu, render_selection_outlines_gpu,
 };
-use entities::{render_character_masks_clipped, render_text_with_shadow};
 pub(crate) use fog::{
     build_vector_fog_mask_rgba, fog_mask_cache_key, render_fog_of_war, vector_fog_mask_dimensions,
 };

@@ -92,13 +92,29 @@ pub(crate) fn render_entities_gpu(
     renderer: &mut Renderer,
     titbit_renderer: &mut TitbitRenderer,
 ) {
-    let view = presentation.view;
-    let zoom = presentation.zoom;
-    let screen_w = presentation.screen_size.x as i32;
-    let screen_h = presentation.screen_size.y as i32;
-    let shadow_color = presentation.shadow_color;
-    let global_shadow = host.frontend.resources.frame_holder().global_shadow();
-    let blip_shadow = host.frontend.resources.frame_holder().global_blip_shadow();
+    let ctx = EntityPassCtx {
+        host,
+        engine,
+        assets,
+        dev,
+        frame: EntityPassFrame {
+            view: presentation.view,
+            zoom: presentation.zoom,
+            screen_w: presentation.screen_size.x as i32,
+            screen_h: presentation.screen_size.y as i32,
+            shadow_color: presentation.shadow_color,
+            global_shadow: host.frontend.resources.frame_holder().global_shadow(),
+            blip_shadow: host.frontend.resources.frame_holder().global_blip_shadow(),
+        },
+    };
+    let EntityPassFrame {
+        view,
+        zoom,
+        screen_w,
+        screen_h,
+        shadow_color,
+        ..
+    } = ctx.frame;
     // When the player has disabled "Display Animations" in the graphics
     // options, unforced non-patched non-elevated non-masked FX should
     // not render.  The flag defaults to `true` so the live datadir is
@@ -180,293 +196,14 @@ pub(crate) fn render_entities_gpu(
             continue;
         };
 
-        // Blipped (undiscovered) NPCs render from the `blip00`
-        // alternate profile as a silhouette sprite; the alpha-keying
-        // pass uses the global blip shadow (60) for this branch vs the
-        // global shadow (40) for normal characters.
-        let mut shadow_level = if sprite.use_alternate_profile {
-            blip_shadow
-        } else {
-            global_shadow
-        };
-        // FX entities switch on `rendering_properties`: `NeedShadow`
-        // composites a shadow, `Blocky` doesn't.  Zero `shadow_level`
-        // for `Blocky` FX so the cached sprite key drops the shadow
-        // tint.
-        if matches!(entity.kind(), ElementKind::Fx)
-            && let Some(fx) = entity.fx_data()
-            && fx.rendering_properties == RenderingProperties::Blocky
-        {
-            shadow_level = 0;
-        }
-
-        if let Some((sw, sh)) = renderer.ensure_sprite_cached(
+        let shadow_level = entity_shadow_level(entity, &ctx.frame);
+        let Some(size) = renderer.ensure_sprite_cached(
             host.frontend.resources.frame_holder(),
             bank_id,
             variant,
             shadow_color,
             shadow_level,
-        ) {
-            // Sprite screen position:
-            //   sprite_pos  = floor(position_map - sprite.center)
-            //   blit_origin = sprite_pos + script_offset
-            //   screen_xy   = (blit_origin - view) * zoom
-            // The floor() in world space (before zoom) is critical for
-            // pixel-perfect alignment.
-            let placement = sprite_placement(
-                MapPoint::new(world_x, world_y),
-                sprite.center,
-                script.offsets[frame as usize],
-                view,
-                zoom,
-            );
-            let (dst_x, dst_y) = placement.screen_origin;
-
-            let dst_rect = zoomed_sprite_rect(dst_x, dst_y, sw, sh, zoom);
-            let kind = entity.kind();
-            let actor_layer = elem.layer();
-            let is_flying_human = elem.posture() == Posture::Flying;
-            let hidden_outline_rgb = if host.frontend.input.feedback.draw_hidden {
-                // Ground objects always use Hidden; actors retain their active
-                // targeting/parrying outline just like the original path.
-                let color_565 = if matches!(
-                    kind,
-                    robin_engine::element::ElementKind::ObjectBonus
-                        | robin_engine::element::ElementKind::ObjectOther
-                        | robin_engine::element::ElementKind::ObjectScroll
-                ) {
-                    elem.outline_colors[OutlineColorName::Hidden as usize]
-                } else {
-                    elem.active_outline_color()
-                };
-                (color_565 != 0).then(|| rgb565_to_rgb8(color_565))
-            } else {
-                None
-            };
-
-            // Cheat-teleport hulk-rebuild fade.  When
-            // `teleport_counter > 0`, the PC is rendered TWICE: first
-            // at `position_before_teleport` with alpha
-            // `100 * counter / max_counter` (the vanishing ghost),
-            // then at the current position with alpha
-            // `100 - 100 * counter / max_counter` (the appearing
-            // sprite).  As the counter ticks down 20→0 the ghost
-            // fades out and the new sprite fades in.  The per-frame
-            // decrement is done in `pre_render_engine_setup` via
-            // `EngineInner::tick_pc_teleport_fades`.
-            let teleport_fade = entity.pc_data().and_then(|pc| {
-                if pc.teleport_counter > 0 && pc.max_teleport_counter > 0 {
-                    let ratio = pc.teleport_counter as f32 / pc.max_teleport_counter as f32;
-                    let old_alpha_255 = (ratio * 255.0).round().clamp(0.0, 255.0) as u8;
-                    let new_alpha_255 = ((1.0 - ratio) * 255.0).round().clamp(0.0, 255.0) as u8;
-                    Some((pc.position_before_teleport, old_alpha_255, new_alpha_255))
-                } else {
-                    None
-                }
-            });
-
-            if let Some((before, old_alpha, _new_alpha)) = teleport_fade {
-                // Render the vanishing ghost at the pre-teleport
-                // position first, so the appearing sprite stacks on
-                // top.
-                let ghost = sprite_placement(
-                    before,
-                    sprite.center,
-                    script.offsets[frame as usize],
-                    view,
-                    zoom,
-                );
-                let (ghost_dst_x, ghost_dst_y) = ghost.screen_origin;
-                let ghost_x = ghost.world_origin.x;
-                let ghost_y = ghost.world_origin.y;
-                let ghost_rect = zoomed_sprite_rect(ghost_dst_x, ghost_dst_y, sw, sh, zoom);
-                let ghost_draw_checkpoint = renderer.draw_queue_checkpoint();
-                renderer.render_cached_sprite_alpha(
-                    bank_id,
-                    variant,
-                    shadow_color,
-                    shadow_level,
-                    ghost_rect,
-                    old_alpha,
-                );
-                let ghost_world_bbox = engine_coordinates::MapBBox::from_coords(
-                    ghost_x,
-                    ghost_y,
-                    ghost_x + sw as f32,
-                    ghost_y + sh as f32,
-                );
-                let current_world = elem.position();
-                let ghost_world = engine_coordinates::WorldPoint3D::new(
-                    before.x,
-                    before.y + current_world.z,
-                    current_world.z,
-                );
-                let ghost_mask_indices = applicable_sprite_masks(
-                    engine,
-                    assets,
-                    actor_layer,
-                    &ghost_world_bbox,
-                    before,
-                    ghost_world,
-                    is_flying_human,
-                    is_flying_human,
-                );
-                let ghost_screen_masks =
-                    sprite_screen_masks(engine, &ghost_mask_indices, view, zoom);
-                renderer.mask_queued_draws(ghost_draw_checkpoint, &ghost_screen_masks, ghost_rect);
-                if let Some(rgb) = hidden_outline_rgb {
-                    for &(mask_idx, mask_rect) in &ghost_screen_masks {
-                        let mask = &engine.fast_grid().level.masks[mask_idx as usize];
-                        renderer.render_hidden_mask_outline(
-                            host.frontend.resources.frame_holder(),
-                            bank_id,
-                            variant,
-                            shadow_color,
-                            &mask.bitmap,
-                            mask.width,
-                            mask.height,
-                            mask_rect,
-                            ghost_rect,
-                            rgb,
-                        );
-                    }
-                }
-            }
-
-            // The teleport ghost above is masked independently at its old
-            // position; this checkpoint applies current-position masks only
-            // to the appearing sprite.
-            let sprite_draw_checkpoint = renderer.draw_queue_checkpoint();
-
-            // When the GoldenEye cheat is on, every PC sprite is
-            // composited at 50% alpha (~128/255 in 8-bit).  Teleport
-            // fade takes precedence — these are `else if` siblings.
-            if let Some((_, _, new_alpha)) = teleport_fade {
-                renderer.render_cached_sprite_alpha(
-                    bank_id,
-                    variant,
-                    shadow_color,
-                    shadow_level,
-                    dst_rect,
-                    new_alpha,
-                );
-            } else if entity.is_pc() && engine.get_golden_eye_mode() {
-                renderer.render_cached_sprite_alpha(
-                    bank_id,
-                    variant,
-                    shadow_color,
-                    shadow_level,
-                    dst_rect,
-                    128,
-                );
-            } else {
-                renderer.render_cached_sprite(
-                    bank_id,
-                    variant,
-                    shadow_color,
-                    shadow_level,
-                    dst_rect,
-                );
-            }
-
-            // ── Sprite occlusion masks ──
-            //
-            // After drawing the sprite, ask the grid for any building
-            // masks that apply to this actor's position + layer, then
-            // blit each mask's pre-composed background texture on top
-            // of the sprite.  Where the mask is set the building
-            // pixels reappear in front of the actor; elsewhere the
-            // texture is transparent and the sprite stays visible.
-            let sprite_world_bbox = engine_coordinates::MapBBox::from_coords(
-                placement.world_origin.x,
-                placement.world_origin.y,
-                placement.world_origin.x + sw as f32,
-                placement.world_origin.y + sh as f32,
-            );
-            let actor_position = engine_coordinates::MapPoint::new(world_x, world_y);
-            // The mask lookup switches between
-            // `get_masks_applied_to_character` and
-            // `get_masks_applied_to_projectile` based on the masking
-            // category.  PCs override to flying-human masking when
-            // their posture is `Flying` so a PC mid-jump no longer
-            // gets clipped by the building it's soaring over.  Arrows,
-            // thrown bonuses and nets (`ElementKind::ObjectProjectile`
-            // / `ObjectNet`) use the projectile masking category so
-            // they route through the projectile polyline + 3D
-            // altitude test, not the character polyline.
-            // The mask pass is gated on `has_valid_box_for_masking`.
-            // FX / target overlays never set the flag, so they render
-            // without building-mask occlusion.  Flying humans use the
-            // original projectile/flying-human mask path.
-            if !kind.has_valid_box_for_masking() && !is_flying_human {
-                // Nothing more to do: sprite is drawn, no mask pass.
-                continue;
-            }
-            let use_projectile_path = is_flying_human || kind.is_projectile();
-            let projectile_mask_position =
-                transition_crenel_climb_up_mask_position(entity, engine, assets)
-                    .unwrap_or_else(|| elem.position());
-            let mask_indices = applicable_sprite_masks(
-                engine,
-                assets,
-                actor_layer,
-                &sprite_world_bbox,
-                actor_position,
-                projectile_mask_position,
-                use_projectile_path,
-                is_flying_human,
-            );
-            // When `draw_hidden` is on, the original mutates the
-            // temporary sprite surface per mask: masked pixels become
-            // transparent, except horizontal transparent/body edges
-            // become the actor's outline colour. Stencil rejection does the
-            // transparency part; the hidden outline pass restores those edge
-            // pixels.
-            let screen_masks = sprite_screen_masks(engine, &mask_indices, view, zoom);
-            if use_projectile_path {
-                renderer.mask_queued_draws(sprite_draw_checkpoint, &screen_masks, dst_rect);
-            } else {
-                renderer.mask_queued_draws_with_depth(
-                    sprite_draw_checkpoint,
-                    &screen_masks,
-                    dst_rect,
-                    view.x,
-                    view.y,
-                    zoom,
-                    projectile_mask_position.y,
-                );
-            }
-
-            for &(mask_idx, mask_rect) in &screen_masks {
-                let mask = &engine.fast_grid().level.masks[mask_idx as usize];
-                if let Some(rgb) = hidden_outline_rgb {
-                    renderer.render_hidden_mask_outline(
-                        host.frontend.resources.frame_holder(),
-                        bank_id,
-                        variant,
-                        shadow_color,
-                        &mask.bitmap,
-                        mask.width,
-                        mask.height,
-                        mask_rect,
-                        dst_rect,
-                        rgb,
-                    );
-                }
-            }
-            if dev.debug.sprite_masks_display {
-                render_sprite_mask_debug_overlay(
-                    host,
-                    engine,
-                    renderer,
-                    &sprite_world_bbox,
-                    actor_position,
-                    projectile_mask_position,
-                    use_projectile_path,
-                    &mask_indices,
-                );
-            }
-        } else {
+        ) else {
             render_entity_fallback(
                 renderer,
                 entity.kind(),
@@ -475,7 +212,409 @@ pub(crate) fn render_entities_gpu(
                 screen_w,
                 screen_h,
             );
+            continue;
+        };
+        render_cached_entity_sprite(
+            &ctx,
+            renderer,
+            &CachedEntitySprite {
+                entity,
+                script,
+                frame,
+                bank_id,
+                variant,
+                shadow_level,
+                size,
+                world: MapPoint::new(world_x, world_y),
+            },
+        );
+    }
+}
+
+/// Frame-wide inputs of the GPU entity pass, read once before the draw loop.
+#[derive(Clone, Copy)]
+struct EntityPassFrame {
+    view: MapPoint,
+    zoom: f32,
+    screen_w: i32,
+    screen_h: i32,
+    shadow_color: u16,
+    global_shadow: u16,
+    blip_shadow: u16,
+}
+
+/// Borrowed world/host state shared by the per-entity phases of the pass.
+struct EntityPassCtx<'a, 'h, 'e> {
+    host: &'a HostDraw<'h>,
+    engine: &'a PresentationView<'e>,
+    assets: &'a LevelAssets,
+    dev: &'a DevState,
+    frame: EntityPassFrame,
+}
+
+/// An entity whose current sprite frame is cached on the GPU.
+struct CachedEntitySprite<'a> {
+    entity: &'a Entity,
+    script: &'a robin_engine::sprite_script::SpriteScript,
+    frame: u16,
+    bank_id: u32,
+    variant: robin_engine::sprite_variant::SpriteVariant,
+    shadow_level: u16,
+    size: (u16, u16),
+    /// Visual map anchor from [`entity_visual_map_position`].
+    world: MapPoint,
+}
+
+/// Mask-relevant facts shared by the teleport ghost and the current sprite.
+#[derive(Clone, Copy)]
+struct EntityMaskFacts {
+    actor_layer: u16,
+    is_flying_human: bool,
+    hidden_outline_rgb: Option<(u8, u8, u8)>,
+}
+
+/// Blipped (undiscovered) NPCs render from the `blip00`
+/// alternate profile as a silhouette sprite; the alpha-keying
+/// pass uses the global blip shadow (60) for this branch vs the
+/// global shadow (40) for normal characters.
+///
+/// FX entities switch on `rendering_properties`: `NeedShadow`
+/// composites a shadow, `Blocky` doesn't.  Zero `shadow_level`
+/// for `Blocky` FX so the cached sprite key drops the shadow
+/// tint.
+fn entity_shadow_level(entity: &Entity, frame: &EntityPassFrame) -> u16 {
+    let mut shadow_level = if entity.element_data().sprite.use_alternate_profile {
+        frame.blip_shadow
+    } else {
+        frame.global_shadow
+    };
+    if matches!(entity.kind(), ElementKind::Fx)
+        && let Some(fx) = entity.fx_data()
+        && fx.rendering_properties == RenderingProperties::Blocky
+    {
+        shadow_level = 0;
+    }
+    shadow_level
+}
+
+/// Draw one GPU-cached entity sprite: the teleport ghost (if any), the
+/// sprite itself, then the building-occlusion mask pass.
+fn render_cached_entity_sprite(
+    ctx: &EntityPassCtx<'_, '_, '_>,
+    renderer: &mut Renderer,
+    cached: &CachedEntitySprite<'_>,
+) {
+    let EntityPassFrame {
+        view,
+        zoom,
+        shadow_color,
+        ..
+    } = ctx.frame;
+    let entity = cached.entity;
+    let elem = entity.element_data();
+    let (sw, sh) = cached.size;
+    // Sprite screen position:
+    //   sprite_pos  = floor(position_map - sprite.center)
+    //   blit_origin = sprite_pos + script_offset
+    //   screen_xy   = (blit_origin - view) * zoom
+    // The floor() in world space (before zoom) is critical for
+    // pixel-perfect alignment.
+    let placement = sprite_placement(
+        cached.world,
+        elem.sprite.center,
+        cached.script.offsets[cached.frame as usize],
+        view,
+        zoom,
+    );
+    let (dst_x, dst_y) = placement.screen_origin;
+
+    let dst_rect = zoomed_sprite_rect(dst_x, dst_y, sw, sh, zoom);
+    let kind = entity.kind();
+    let facts = EntityMaskFacts {
+        actor_layer: elem.layer(),
+        is_flying_human: elem.posture() == Posture::Flying,
+        hidden_outline_rgb: hidden_outline_rgb(ctx.host, entity),
+    };
+
+    let teleport_fade = teleport_fade(entity);
+    if let Some((before, old_alpha, _new_alpha)) = teleport_fade {
+        render_teleport_ghost(ctx, renderer, cached, facts, before, old_alpha);
+    }
+
+    // The teleport ghost above is masked independently at its old
+    // position; this checkpoint applies current-position masks only
+    // to the appearing sprite.
+    let sprite_draw_checkpoint = renderer.draw_queue_checkpoint();
+
+    // When the GoldenEye cheat is on, every PC sprite is
+    // composited at 50% alpha (~128/255 in 8-bit).  Teleport
+    // fade takes precedence — these are `else if` siblings.
+    let (bank_id, variant, shadow_level) = (cached.bank_id, cached.variant, cached.shadow_level);
+    if let Some((_, _, new_alpha)) = teleport_fade {
+        renderer.render_cached_sprite_alpha(
+            bank_id,
+            variant,
+            shadow_color,
+            shadow_level,
+            dst_rect,
+            new_alpha,
+        );
+    } else if entity.is_pc() && ctx.engine.get_golden_eye_mode() {
+        renderer.render_cached_sprite_alpha(
+            bank_id,
+            variant,
+            shadow_color,
+            shadow_level,
+            dst_rect,
+            128,
+        );
+    } else {
+        renderer.render_cached_sprite(bank_id, variant, shadow_color, shadow_level, dst_rect);
+    }
+
+    // ── Sprite occlusion masks ──
+    //
+    // After drawing the sprite, ask the grid for any building
+    // masks that apply to this actor's position + layer, then
+    // blit each mask's pre-composed background texture on top
+    // of the sprite.  Where the mask is set the building
+    // pixels reappear in front of the actor; elsewhere the
+    // texture is transparent and the sprite stays visible.
+    let sprite_world_bbox = engine_coordinates::MapBBox::from_coords(
+        placement.world_origin.x,
+        placement.world_origin.y,
+        placement.world_origin.x + sw as f32,
+        placement.world_origin.y + sh as f32,
+    );
+    // The mask pass is gated on `has_valid_box_for_masking`.
+    // FX / target overlays never set the flag, so they render
+    // without building-mask occlusion.  Flying humans use the
+    // original projectile/flying-human mask path.
+    if !kind.has_valid_box_for_masking() && !facts.is_flying_human {
+        // Nothing more to do: sprite is drawn, no mask pass.
+        return;
+    }
+    render_entity_sprite_masks(
+        ctx,
+        renderer,
+        cached,
+        facts,
+        sprite_draw_checkpoint,
+        dst_rect,
+        &sprite_world_bbox,
+    );
+}
+
+/// Outline colour restored on masked sprite edges while `draw_hidden` is on.
+fn hidden_outline_rgb(host: &HostDraw<'_>, entity: &Entity) -> Option<(u8, u8, u8)> {
+    if !host.frontend.input.feedback.draw_hidden {
+        return None;
+    }
+    let elem = entity.element_data();
+    // Ground objects always use Hidden; actors retain their active
+    // targeting/parrying outline just like the original path.
+    let color_565 = if matches!(
+        entity.kind(),
+        ElementKind::ObjectBonus | ElementKind::ObjectOther | ElementKind::ObjectScroll
+    ) {
+        elem.outline_colors[OutlineColorName::Hidden as usize]
+    } else {
+        elem.active_outline_color()
+    };
+    (color_565 != 0).then(|| rgb565_to_rgb8(color_565))
+}
+
+/// Cheat-teleport hulk-rebuild fade: `(position_before_teleport, ghost_alpha,
+/// sprite_alpha)`.
+///
+/// When `teleport_counter > 0`, the PC is rendered TWICE: first
+/// at `position_before_teleport` with alpha
+/// `100 * counter / max_counter` (the vanishing ghost),
+/// then at the current position with alpha
+/// `100 - 100 * counter / max_counter` (the appearing
+/// sprite).  As the counter ticks down 20→0 the ghost
+/// fades out and the new sprite fades in.  The per-frame
+/// decrement is done in `pre_render_engine_setup` via
+/// `EngineInner::tick_pc_teleport_fades`.
+fn teleport_fade(entity: &Entity) -> Option<(MapPoint, u8, u8)> {
+    entity.pc_data().and_then(|pc| {
+        if pc.teleport_counter > 0 && pc.max_teleport_counter > 0 {
+            let ratio = pc.teleport_counter as f32 / pc.max_teleport_counter as f32;
+            let old_alpha_255 = (ratio * 255.0).round().clamp(0.0, 255.0) as u8;
+            let new_alpha_255 = ((1.0 - ratio) * 255.0).round().clamp(0.0, 255.0) as u8;
+            Some((pc.position_before_teleport, old_alpha_255, new_alpha_255))
+        } else {
+            None
         }
+    })
+}
+
+/// Render the vanishing ghost at the pre-teleport position first, so the
+/// appearing sprite stacks on top. The ghost is masked at its own position.
+fn render_teleport_ghost(
+    ctx: &EntityPassCtx<'_, '_, '_>,
+    renderer: &mut Renderer,
+    cached: &CachedEntitySprite<'_>,
+    facts: EntityMaskFacts,
+    before: MapPoint,
+    old_alpha: u8,
+) {
+    let EntityPassFrame {
+        view,
+        zoom,
+        shadow_color,
+        ..
+    } = ctx.frame;
+    let elem = cached.entity.element_data();
+    let (sw, sh) = cached.size;
+    let ghost = sprite_placement(
+        before,
+        elem.sprite.center,
+        cached.script.offsets[cached.frame as usize],
+        view,
+        zoom,
+    );
+    let (ghost_dst_x, ghost_dst_y) = ghost.screen_origin;
+    let ghost_x = ghost.world_origin.x;
+    let ghost_y = ghost.world_origin.y;
+    let ghost_rect = zoomed_sprite_rect(ghost_dst_x, ghost_dst_y, sw, sh, zoom);
+    let ghost_draw_checkpoint = renderer.draw_queue_checkpoint();
+    renderer.render_cached_sprite_alpha(
+        cached.bank_id,
+        cached.variant,
+        shadow_color,
+        cached.shadow_level,
+        ghost_rect,
+        old_alpha,
+    );
+    let ghost_world_bbox = engine_coordinates::MapBBox::from_coords(
+        ghost_x,
+        ghost_y,
+        ghost_x + sw as f32,
+        ghost_y + sh as f32,
+    );
+    let current_world = elem.position();
+    let ghost_world = engine_coordinates::WorldPoint3D::new(
+        before.x,
+        before.y + current_world.z,
+        current_world.z,
+    );
+    let ghost_mask_indices = applicable_sprite_masks(
+        ctx.engine,
+        ctx.assets,
+        facts.actor_layer,
+        &ghost_world_bbox,
+        before,
+        ghost_world,
+        facts.is_flying_human,
+        facts.is_flying_human,
+    );
+    let ghost_screen_masks = sprite_screen_masks(ctx.engine, &ghost_mask_indices, view, zoom);
+    renderer.mask_queued_draws(ghost_draw_checkpoint, &ghost_screen_masks, ghost_rect);
+    if let Some(rgb) = facts.hidden_outline_rgb {
+        render_hidden_mask_outlines(ctx, renderer, cached, &ghost_screen_masks, ghost_rect, rgb);
+    }
+}
+
+/// Building-occlusion mask pass for the sprite at its current position.
+///
+/// The mask lookup switches between
+/// `get_masks_applied_to_character` and
+/// `get_masks_applied_to_projectile` based on the masking
+/// category.  PCs override to flying-human masking when
+/// their posture is `Flying` so a PC mid-jump no longer
+/// gets clipped by the building it's soaring over.  Arrows,
+/// thrown bonuses and nets (`ElementKind::ObjectProjectile`
+/// / `ObjectNet`) use the projectile masking category so
+/// they route through the projectile polyline + 3D
+/// altitude test, not the character polyline.
+fn render_entity_sprite_masks(
+    ctx: &EntityPassCtx<'_, '_, '_>,
+    renderer: &mut Renderer,
+    cached: &CachedEntitySprite<'_>,
+    facts: EntityMaskFacts,
+    sprite_draw_checkpoint: usize,
+    dst_rect: Rect,
+    sprite_world_bbox: &engine_coordinates::MapBBox,
+) {
+    let EntityPassFrame { view, zoom, .. } = ctx.frame;
+    let entity = cached.entity;
+    let actor_position = cached.world;
+    let use_projectile_path = facts.is_flying_human || entity.kind().is_projectile();
+    let projectile_mask_position =
+        transition_crenel_climb_up_mask_position(entity, ctx.engine, ctx.assets)
+            .unwrap_or_else(|| entity.element_data().position());
+    let mask_indices = applicable_sprite_masks(
+        ctx.engine,
+        ctx.assets,
+        facts.actor_layer,
+        sprite_world_bbox,
+        actor_position,
+        projectile_mask_position,
+        use_projectile_path,
+        facts.is_flying_human,
+    );
+    // When `draw_hidden` is on, the original mutates the
+    // temporary sprite surface per mask: masked pixels become
+    // transparent, except horizontal transparent/body edges
+    // become the actor's outline colour. Stencil rejection does the
+    // transparency part; the hidden outline pass restores those edge
+    // pixels.
+    let screen_masks = sprite_screen_masks(ctx.engine, &mask_indices, view, zoom);
+    if use_projectile_path {
+        renderer.mask_queued_draws(sprite_draw_checkpoint, &screen_masks, dst_rect);
+    } else {
+        renderer.mask_queued_draws_with_depth(
+            sprite_draw_checkpoint,
+            &screen_masks,
+            dst_rect,
+            view.x,
+            view.y,
+            zoom,
+            projectile_mask_position.y,
+        );
+    }
+
+    if let Some(rgb) = facts.hidden_outline_rgb {
+        render_hidden_mask_outlines(ctx, renderer, cached, &screen_masks, dst_rect, rgb);
+    }
+    if ctx.dev.debug.sprite_masks_display {
+        render_sprite_mask_debug_overlay(
+            ctx.host,
+            ctx.engine,
+            renderer,
+            sprite_world_bbox,
+            actor_position,
+            projectile_mask_position,
+            use_projectile_path,
+            &mask_indices,
+        );
+    }
+}
+
+/// Restore the `draw_hidden` outline pixels on every mask covering `sprite_rect`.
+fn render_hidden_mask_outlines(
+    ctx: &EntityPassCtx<'_, '_, '_>,
+    renderer: &mut Renderer,
+    cached: &CachedEntitySprite<'_>,
+    screen_masks: &[(u32, Rect)],
+    sprite_rect: Rect,
+    rgb: (u8, u8, u8),
+) {
+    for &(mask_idx, mask_rect) in screen_masks {
+        let mask = &ctx.engine.fast_grid().level.masks[mask_idx as usize];
+        renderer.render_hidden_mask_outline(
+            ctx.host.frontend.resources.frame_holder(),
+            cached.bank_id,
+            cached.variant,
+            ctx.frame.shadow_color,
+            &mask.bitmap,
+            mask.width,
+            mask.height,
+            mask_rect,
+            sprite_rect,
+            rgb,
+        );
     }
 }
 
@@ -571,13 +710,14 @@ pub(super) fn render_sprite_mask_debug_overlay(
     draw_map_cross(host, renderer, actor_position, 0x07e0);
     if use_projectile_path {
         let projectile_test_point = position_3d.to_map();
-        let actor_screen = map_to_screen(host, actor_position);
-        let projectile_screen = map_to_screen(host, projectile_test_point);
+        let viewport = host.viewport();
+        let actor_screen = viewport.map_to_screen_unclamped(actor_position);
+        let projectile_screen = viewport.map_to_screen_unclamped(projectile_test_point);
         renderer.draw_line_screen(
-            actor_screen.0,
-            actor_screen.1,
-            projectile_screen.0,
-            projectile_screen.1,
+            actor_screen.x.round() as i32,
+            actor_screen.y.round() as i32,
+            projectile_screen.x.round() as i32,
+            projectile_screen.y.round() as i32,
             0xfd20,
         );
         draw_map_cross(host, renderer, projectile_test_point, 0xfd20);
@@ -593,15 +733,22 @@ pub(super) fn draw_map_bbox_outline(
     if !bbox.is_somewhere() {
         return;
     }
-    let (x1, y1) = map_to_screen(
-        host,
-        engine_coordinates::MapPoint::new(bbox.x_min(), bbox.y_min()),
+    let viewport = host.viewport();
+    let min = viewport.map_to_screen_unclamped(engine_coordinates::MapPoint::new(
+        bbox.x_min(),
+        bbox.y_min(),
+    ));
+    let max = viewport.map_to_screen_unclamped(engine_coordinates::MapPoint::new(
+        bbox.x_max(),
+        bbox.y_max(),
+    ));
+    renderer.draw_rect_outline_screen(
+        min.x.round() as i32,
+        min.y.round() as i32,
+        max.x.round() as i32,
+        max.y.round() as i32,
+        color,
     );
-    let (x2, y2) = map_to_screen(
-        host,
-        engine_coordinates::MapPoint::new(bbox.x_max(), bbox.y_max()),
-    );
-    renderer.draw_rect_outline_screen(x1, y1, x2, y2, color);
 }
 
 pub(super) fn draw_map_cross(
@@ -610,17 +757,10 @@ pub(super) fn draw_map_cross(
     point: engine_coordinates::MapPoint,
     color: u16,
 ) {
-    let (x, y) = map_to_screen(host, point);
+    let screen = host.viewport().map_to_screen_unclamped(point);
+    let (x, y) = (screen.x.round() as i32, screen.y.round() as i32);
     renderer.draw_line_screen(x - 4, y, x + 4, y, color);
     renderer.draw_line_screen(x, y - 4, x, y + 4, color);
-}
-
-pub(super) fn map_to_screen(
-    host: &HostDraw<'_>,
-    point: engine_coordinates::MapPoint,
-) -> (i32, i32) {
-    let point = host.viewport().map_to_screen_unclamped(point);
-    (point.x.round() as i32, point.y.round() as i32)
 }
 
 // ─── GPU selection outline pass ──────────────────────────────────
@@ -913,27 +1053,4 @@ pub(super) fn render_fx_entities_gpu<I>(
             renderer.render_cached_sprite(bank_id, variant, shadow_color, shadow_level, dst_rect);
         }
     }
-}
-
-/// Renderer-path wrapper around [`crate::hud_text::render_text_background`]
-/// for the ransom/amulet overlay and dev noise labels.  Routes the
-/// shadow+foreground pass through the native/TrueType renderer instead of the
-/// old HUD surface-raster path.
-pub(super) fn render_text_with_shadow(
-    renderer: &mut Renderer,
-    fonts: &HudFonts,
-    text: &str,
-    x: i32,
-    y: i32,
-) {
-    hud_text::render_text_background(
-        &fonts.tooltip_font,
-        fonts.shadow_font.as_ref(),
-        text,
-        x,
-        y,
-        |f, t, fx, fy| {
-            layout::render_text_screen_font(renderer, f, t, fx, fy);
-        },
-    );
 }

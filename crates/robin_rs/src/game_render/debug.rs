@@ -1,8 +1,7 @@
 //! Developer rendering overlays.
 
-use super::render_text_with_shadow;
 use crate::host::HostDraw;
-use crate::hud_text::HudFonts;
+use crate::hud_text::{HudFonts, render_text_with_shadow_gpu};
 use crate::renderer::{Renderer, rgb565_to_rgb8};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
@@ -588,9 +587,10 @@ pub(crate) fn render_noise_display(
             };
             // Offset (+10, -40) from the centre, in screen space.
             let screen = host.draw_manager().map_to_screen(origin);
-            render_text_with_shadow(
+            render_text_with_shadow_gpu(
                 renderer,
-                fonts,
+                &fonts.tooltip_font,
+                fonts.shadow_font.as_ref(),
                 label,
                 screen.x as i32 + 10,
                 screen.y as i32 - 40,

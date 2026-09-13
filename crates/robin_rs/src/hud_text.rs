@@ -300,7 +300,10 @@ pub fn render_text_background<F>(
     render_at(foreground, text, x, y);
 }
 
-fn render_text_with_shadow_gpu(
+/// The single renderer-path shadow+foreground text draw: HUD text, the
+/// ransom/amulet overlay, countdown, item previews and dev noise labels all
+/// route through [`render_text_background`] into the GPU font atlas here.
+pub(crate) fn render_text_with_shadow_gpu(
     renderer: &mut Renderer,
     font: &Font,
     shadow: Option<&Font>,
