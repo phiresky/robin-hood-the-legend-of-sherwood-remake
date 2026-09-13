@@ -5440,31 +5440,16 @@ mod tests {
         set_projectile_trajectory_origin, soldier_piercing_protection, soldier_shield_dimensions,
     };
     use crate::element::{
-        ActionState, ActorData, ActorPc, ElementData, ElementKind, ElementProjectile, Entity,
-        EntityId, HumanData, ObjectData, Posture, ProjectileData,
+        ActionState, ElementData, ElementKind, ElementProjectile, Entity, EntityId, ObjectData,
+        Posture, ProjectileData,
     };
+    use crate::engine::test_support::actors::TestActor;
     use crate::engine::{EngineInner, LevelAssets};
     use crate::order::OrderType;
     use crate::profiles::{HtHWeaponProfile, ProfileManager, SoldierProfile, SoldierProfileIdx};
     use crate::sequence::{SequenceElementData, SequenceState};
     use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
     use std::sync::Arc;
-
-    fn make_pc(posture: Posture) -> Entity {
-        Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(posture);
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element
-            },
-            actor: ActorData {
-                action_state: ActionState::Waiting,
-                ..Default::default()
-            },
-            human: HumanData::default(),
-            pc: Default::default(),
-        })
-    }
 
     #[test]
     fn distraction_projectile_latch_survives_serialization_and_emits_once() {
@@ -5594,7 +5579,9 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = purse_publication_assets();
         let mut engine = EngineInner::new();
-        let mut thrower = make_pc(Posture::Upright);
+        let mut thrower = TestActor::pc(Posture::Upright)
+            .action_state(ActionState::Waiting)
+            .build();
         thrower
             .element_data_mut()
             .set_position_map(MapPoint::new(400.0, 500.0));
@@ -5652,7 +5639,9 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = purse_publication_assets();
         let mut engine = EngineInner::new();
-        let mut unplaced_thrower = make_pc(Posture::Upright);
+        let mut unplaced_thrower = TestActor::pc(Posture::Upright)
+            .action_state(ActionState::Waiting)
+            .build();
         unplaced_thrower.element_data_mut().clear_layer();
         unplaced_thrower.element_data_mut().set_sector(None);
         let thrower = engine.add_test_entity(unplaced_thrower);
@@ -5742,7 +5731,11 @@ mod tests {
             let sim = crate::sim_rng::test_context();
             let assets = purse_publication_assets();
             let mut engine = EngineInner::new();
-            let thrower = engine.add_test_entity(make_pc(Posture::Upright));
+            let thrower = engine.add_test_entity(
+                TestActor::pc(Posture::Upright)
+                    .action_state(ActionState::Waiting)
+                    .build(),
+            );
             let start = WorldPoint3D::new(20.0, 30.0, 10.0);
             let mut purse = crate::bow_shot::spawn_purse(thrower, start, start, 0, None);
             let Entity::Projectile(projectile) = &mut purse else {
@@ -5780,7 +5773,11 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = purse_publication_assets();
         let mut engine = EngineInner::new();
-        let thrower = engine.add_test_entity(make_pc(Posture::Upright));
+        let thrower = engine.add_test_entity(
+            TestActor::pc(Posture::Upright)
+                .action_state(ActionState::Waiting)
+                .build(),
+        );
         let mut holder = make_arrow_warning_soldier();
         holder
             .element_data_mut()
@@ -5902,7 +5899,9 @@ mod tests {
             target: Default::default(),
         }));
 
-        let mut shooter = make_pc(Posture::Upright);
+        let mut shooter = TestActor::pc(Posture::Upright)
+            .action_state(ActionState::Waiting)
+            .build();
         shooter.element_data_mut().active = true;
         shooter
             .element_data_mut()
@@ -6094,8 +6093,14 @@ mod tests {
         crate::element::EntityId,
     ) {
         let mut engine = EngineInner::new();
-        let target_id = engine.add_test_entity(make_pc(Posture::Carried));
-        let mut carrier = make_pc(Posture::CarryingCorpse);
+        let target_id = engine.add_test_entity(
+            TestActor::pc(Posture::Carried)
+                .action_state(ActionState::Waiting)
+                .build(),
+        );
+        let mut carrier = TestActor::pc(Posture::CarryingCorpse)
+            .action_state(ActionState::Waiting)
+            .build();
         attach_drop_test_sprite(&mut carrier);
         carrier.pc_data_mut().unwrap().carried = Some(target_id);
         carrier.element_data_mut().set_position_map(carrier_pos);
@@ -6255,7 +6260,9 @@ mod tests {
                 "freshly adopted carried bodies have no derived observer state"
             );
         }
-        let mut neighbour = make_pc(Posture::Tied);
+        let mut neighbour = TestActor::pc(Posture::Tied)
+            .action_state(ActionState::Waiting)
+            .build();
         neighbour
             .element_data_mut()
             .set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
@@ -6422,8 +6429,14 @@ mod tests {
         crate::element::EntityId,
     ) {
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_test_entity(make_pc(Posture::OnShoulders));
-        let mut carrier = make_pc(Posture::CarryingOnShoulders);
+        let victim_id = engine.add_test_entity(
+            TestActor::pc(Posture::OnShoulders)
+                .action_state(ActionState::Waiting)
+                .build(),
+        );
+        let mut carrier = TestActor::pc(Posture::CarryingOnShoulders)
+            .action_state(ActionState::Waiting)
+            .build();
         let Entity::Pc(carrier_pc) = &mut carrier else {
             unreachable!()
         };
@@ -6557,8 +6570,16 @@ mod tests {
     #[test]
     fn carry_done_applies_effect_without_releasing_selected_ability() {
         let mut engine = EngineInner::new();
-        let carrier = engine.add_test_entity(make_pc(Posture::CarryingCorpse));
-        let target = engine.add_test_entity(make_pc(Posture::Lying));
+        let carrier = engine.add_test_entity(
+            TestActor::pc(Posture::CarryingCorpse)
+                .action_state(ActionState::Waiting)
+                .build(),
+        );
+        let target = engine.add_test_entity(
+            TestActor::pc(Posture::Lying)
+                .action_state(ActionState::Waiting)
+                .build(),
+        );
         let selected = crate::movement::ActiveAbility {
             kind: Some(crate::movement::AbilityKind::Carry),
             sequence_id: Some(crate::sequence::SequenceId(91)),
@@ -6701,8 +6722,14 @@ mod tests {
     #[test]
     fn projectile_damage_waits_for_sequence_manager_dispatch() {
         let mut engine = EngineInner::new();
-        let shooter = engine.add_test_entity(make_pc(Posture::Upright));
-        let mut victim = make_pc(Posture::Upright);
+        let shooter = engine.add_test_entity(
+            TestActor::pc(Posture::Upright)
+                .action_state(ActionState::Waiting)
+                .build(),
+        );
+        let mut victim = TestActor::pc(Posture::Upright)
+            .action_state(ActionState::Waiting)
+            .build();
         let Entity::Pc(victim_pc) = &mut victim else {
             unreachable!()
         };

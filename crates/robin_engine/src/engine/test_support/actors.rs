@@ -31,6 +31,132 @@ pub(crate) fn unbound_pc(posture: crate::element::Posture) -> crate::element::Ac
     }
 }
 
+/// Explicit actor fixture builder over [`unbound_soldier`] / [`unbound_pc`].
+///
+/// Every deviation from the unbound defaults is spelled out at the call site
+/// (`TestActor::soldier(Posture::Upright).at(pos).life_points(50).build()`),
+/// so suites cannot silently construct subtly different actors. The builder
+/// supplies no pathfinder, profile or allegiance of its own.
+pub(crate) struct TestActor {
+    entity: Entity,
+}
+
+impl TestActor {
+    pub(crate) fn soldier(posture: crate::element::Posture) -> Self {
+        Self {
+            entity: Entity::Soldier(unbound_soldier(posture)),
+        }
+    }
+
+    pub(crate) fn pc(posture: crate::element::Posture) -> Self {
+        Self {
+            entity: Entity::Pc(unbound_pc(posture)),
+        }
+    }
+
+    /// Overwrite the element kind without changing the entity variant.
+    pub(crate) fn element_kind(mut self, kind: crate::element::ElementKind) -> Self {
+        self.entity.element_data_mut().kind = kind;
+        self
+    }
+
+    /// `set_position(pos)` followed by `set_position_map(from_world_xyz(pos))`.
+    pub(crate) fn at(mut self, pos: crate::coordinates::WorldPoint3D) -> Self {
+        let element = self.entity.element_data_mut();
+        element.set_position(pos);
+        element.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
+            pos.x, pos.y, pos.z,
+        ));
+        self
+    }
+
+    pub(crate) fn sector(mut self, sector: u16) -> Self {
+        self.entity
+            .element_data_mut()
+            .set_sector(crate::position_interface::SectorHandle::new(sector));
+        self
+    }
+
+    pub(crate) fn direction_instantly(mut self, direction: i16) -> Self {
+        self.entity
+            .element_data_mut()
+            .set_direction_instantly(direction);
+        self
+    }
+
+    pub(crate) fn action_state(mut self, action_state: crate::element::ActionState) -> Self {
+        self.actor_mut().action_state = action_state;
+        self
+    }
+
+    /// NPC or PC life points, depending on the actor variant.
+    pub(crate) fn life_points(mut self, life_points: i16) -> Self {
+        match &mut self.entity {
+            Entity::Soldier(soldier) => soldier.npc.life_points = life_points,
+            Entity::Pc(pc) => pc.pc.life_points = life_points,
+            other => unreachable!("TestActor holds only soldiers and PCs, got {other:?}"),
+        }
+        self
+    }
+
+    pub(crate) fn camp(mut self, camp: crate::element::Camp) -> Self {
+        self.soldier_mut().soldier.cached_camp = camp;
+        self
+    }
+
+    pub(crate) fn soldier_profile(mut self, index: u32) -> Self {
+        self.soldier_mut().soldier.soldier_profile_index =
+            crate::profiles::SoldierProfileIdx(index);
+        self
+    }
+
+    pub(crate) fn rider(mut self, rider: bool) -> Self {
+        self.soldier_mut().soldier.rider = rider;
+        self
+    }
+
+    pub(crate) fn enemy_ai(mut self, ai: crate::ai_enemy::EnemyAi) -> Self {
+        self.soldier_mut().npc.ai.ai_brain = crate::element::AiBrain::Enemy(Box::new(ai));
+        self
+    }
+
+    pub(crate) fn pc_profile(mut self, index: u32) -> Self {
+        let Entity::Pc(pc) = &mut self.entity else {
+            panic!("pc_profile on a non-PC TestActor");
+        };
+        pc.pc.profile_index = crate::profiles::CharacterProfileIdx(index);
+        self
+    }
+
+    pub(crate) fn build(self) -> Entity {
+        self.entity
+    }
+
+    fn actor_mut(&mut self) -> &mut crate::element::ActorData {
+        match &mut self.entity {
+            Entity::Soldier(soldier) => &mut soldier.actor,
+            Entity::Pc(pc) => &mut pc.actor,
+            other => unreachable!("TestActor holds only soldiers and PCs, got {other:?}"),
+        }
+    }
+
+    fn soldier_mut(&mut self) -> &mut crate::element::ActorSoldier {
+        let Entity::Soldier(soldier) = &mut self.entity else {
+            panic!("soldier-only setter on a non-soldier TestActor");
+        };
+        soldier
+    }
+}
+
+/// Run a scenario once with the first semantic actor created first and once
+/// with it created second, returning `[observe(true), observe(false)]` in
+/// that evaluation order.
+pub(crate) fn for_both_creation_orders<T>(mut observe: impl FnMut(bool) -> T) -> [T; 2] {
+    let first_created_first = observe(true);
+    let first_created_second = observe(false);
+    [first_created_first, first_created_second]
+}
+
 /// Return stable semantic roles while varying their publication order.
 pub(crate) fn add_pair_in_creation_order(
     engine: &mut crate::engine::EngineInner,

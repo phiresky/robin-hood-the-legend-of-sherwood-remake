@@ -708,11 +708,10 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coordinates::MapPoint;
     use crate::element::{
-        ActorData, ActorSoldier, ElementData, ElementKind, ElementProjectile, HumanData, NpcData,
-        ObjectData, Posture, ProjectileData, SoldierData,
+        ElementData, ElementKind, ElementProjectile, ObjectData, Posture, ProjectileData,
     };
+    use crate::engine::test_support::actors::TestActor;
     use crate::profiles::{ProfileManager, SoldierProfile};
 
     fn make_nest_at(engine: &mut EngineInner) -> EntityId {
@@ -752,31 +751,6 @@ mod tests {
             profile_manager: std::sync::Arc::new(pm),
             ..LevelAssets::default()
         }
-    }
-
-    fn make_soldier(pos: WorldPoint3D) -> Entity {
-        let mut element = {
-            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-            initial_element.kind = ElementKind::ActorSoldier;
-            initial_element.active = true;
-            initial_element
-        };
-        element.set_position(pos);
-        element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));
-        Entity::Soldier(ActorSoldier {
-            element,
-            actor: ActorData::default(),
-            human: HumanData::default(),
-            npc: NpcData {
-                life_points: 50,
-                ..NpcData::default()
-            },
-            soldier: SoldierData {
-                soldier_profile_index: crate::profiles::SoldierProfileIdx(0),
-                cached_camp: Camp::Lacklandists,
-                ..SoldierData::default()
-            },
-        })
     }
 
     /// A wasp nest whose trajectory is exhausted should burst into 20
@@ -939,7 +913,14 @@ mod tests {
                 y: 0.0,
                 z: 0.0,
             };
-            let soldier_id = engine.add_test_entity(make_soldier(soldier_pos));
+            let soldier_id = engine.add_test_entity(
+                TestActor::soldier(Posture::Upright)
+                    .at(soldier_pos)
+                    .life_points(50)
+                    .soldier_profile(0)
+                    .camp(Camp::Lacklandists)
+                    .build(),
+            );
 
             // Pre-burst nest (same pattern as the other tests).
             make_nest_at(&mut engine);

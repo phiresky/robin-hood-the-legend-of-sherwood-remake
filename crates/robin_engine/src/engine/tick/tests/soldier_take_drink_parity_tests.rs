@@ -1,47 +1,11 @@
 use super::*;
 use crate::coordinates::WorldPoint3D;
 use crate::element::{
-    ActorData, ActorSoldier, ElementBonus, ElementData, ElementKind, ElementProjectile, HumanData,
-    NpcData, ObjectData, ObjectType, Posture, ProjectileData, SoldierData,
+    ElementBonus, ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType, Posture,
+    ProjectileData,
 };
+use crate::engine::test_support::actors::TestActor;
 use crate::sequence::SequenceElement;
-
-fn make_soldier_at(x: f32, y: f32) -> Entity {
-    let mut element = {
-        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-        initial_element.kind = ElementKind::ActorSoldier;
-        initial_element.active = true;
-        initial_element
-    };
-    element.set_position(WorldPoint3D { x, y, z: 0.0 });
-    element.set_position_map(crate::coordinates::MapPoint { x, y });
-    element.set_direction_instantly(0);
-    Entity::Soldier(ActorSoldier {
-        element,
-        actor: ActorData::default(),
-        human: HumanData::default(),
-        npc: NpcData::default(),
-        soldier: SoldierData::default(),
-    })
-}
-
-fn make_pc_at(x: f32, y: f32) -> Entity {
-    let mut element = {
-        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-        initial_element.kind = ElementKind::ActorPc;
-        initial_element.active = true;
-        initial_element
-    };
-    element.set_position(WorldPoint3D { x, y, z: 0.0 });
-    element.set_position_map(crate::coordinates::MapPoint { x, y });
-    Entity::Soldier(ActorSoldier {
-        element,
-        actor: ActorData::default(),
-        human: HumanData::default(),
-        npc: NpcData::default(),
-        soldier: SoldierData::default(),
-    })
-}
 
 fn make_projectile_object_at(object_type: ObjectType, x: f32, y: f32) -> Entity {
     let mut element = {
@@ -121,7 +85,10 @@ fn launch_interaction_and_tick(
 fn soldier_taking_sets_goal_and_turns_toward_antagonist() {
     let (engine, actor_id) = launch_interaction_and_tick(
         Command::Take,
-        make_soldier_at(0.0, 0.0),
+        TestActor::soldier(Posture::Upright)
+            .at(WorldPoint3D::new(0.0, 0.0, 0.0))
+            .direction_instantly(0)
+            .build(),
         make_projectile_object_at(ObjectType::Purse, 10.0, 0.0),
     );
 
@@ -131,7 +98,10 @@ fn soldier_taking_sets_goal_and_turns_toward_antagonist() {
 
 #[test]
 fn soldier_drinking_ale_turns_toward_existing_goal() {
-    let mut soldier = make_soldier_at(0.0, 0.0);
+    let mut soldier = TestActor::soldier(Posture::Upright)
+        .at(WorldPoint3D::new(0.0, 0.0, 0.0))
+        .direction_instantly(0)
+        .build();
     soldier.element_data_mut().set_direction_goal(1);
     let (engine, actor_id) = launch_interaction_and_tick(
         Command::DrinkAle,
@@ -145,7 +115,13 @@ fn soldier_drinking_ale_turns_toward_existing_goal() {
 
 #[test]
 fn crouched_pc_take_uses_stamped_crouched_animation() {
-    let mut pc = make_pc_at(0.0, 0.0);
+    // TODO: this "PC" keeps the historical fixture shape — an
+    // `Entity::Soldier` variant tagged `ElementKind::ActorPc`. Decide whether
+    // the test should use a real `Entity::Pc`.
+    let mut pc = TestActor::soldier(Posture::Upright)
+        .element_kind(ElementKind::ActorPc)
+        .at(WorldPoint3D::new(0.0, 0.0, 0.0))
+        .build();
     pc.element_data_mut()
         .publish_order_posture(Posture::Crouched);
     let (engine, actor_id) = launch_interaction_and_tick(
@@ -172,7 +148,13 @@ fn crouched_pc_take_uses_stamped_crouched_animation() {
 fn nearby_pc_does_not_pick_up_bonus_without_take_command() {
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
-    engine.add_test_entity(make_pc_at(100.0, 100.0));
+    // TODO: soldier variant tagged `ActorPc`, as in the crouched-take test.
+    engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .element_kind(ElementKind::ActorPc)
+            .at(WorldPoint3D::new(100.0, 100.0, 0.0))
+            .build(),
+    );
     let bonus_id =
         engine.add_test_entity(make_bonus_object_at(ObjectType::BonusPurse, 100.0, 100.0));
 
