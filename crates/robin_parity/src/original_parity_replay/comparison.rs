@@ -1,5 +1,14 @@
 //! Comparison policy over admitted trace data and reconstructed identities.
-use super::*;
+use super::{
+    BTreeMap, Engine, Entity, EntityId, EntityLabel, EntityMap, LegacyBlockedBoxShadow,
+    LevelAssets, MapPoint, TraceElement, TraceEntityId, TraceEntityKind, TraceFloat, TraceFrame,
+    TracePathEvent, TracePoint, TraceSequenceLifecycleEvent, TraceVisibilityQuery,
+    active_pass_door_keys_match, canonicalize_legacy_blocked_box,
+    canonicalize_original_runtime_representation, command_from_stable_name,
+    original_motion_executor_order_id, original_reset_blocked_box_this_frame,
+    original_stoppable_current_motion_order, project_missing_draw_view_sprite_cache,
+    runtime_jump_line_bits, trace_jump_line_bits, trace_pass_door_key,
+};
 
 pub(super) fn trace_entity_kind_name(name: &str) -> Option<TraceEntityKind> {
     Some(match name {

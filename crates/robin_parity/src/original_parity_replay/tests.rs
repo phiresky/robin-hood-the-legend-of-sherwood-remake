@@ -35,8 +35,58 @@ fn cli_checks_modes_values_and_repeated_entity_filters() {
     }
 }
 use super::*;
+// Names only the unit tests use are imported from their owning modules rather
+// than widening the parent's shared surface.
+use super::comparison::{
+    collect_json_subset_differences, compare_float, original_actor_animation_is_logical,
+    original_actor_execution_telemetry_is_logical, original_motion_state_is_defined,
+    original_runtime_bonus_has_undefined_old_position,
+    project_runtime_projectile_constructor_storage,
+};
+use super::entity_map::pair_runtime_identities_by_persistent_rank;
+use super::native_storage::{
+    NativeReblockPreparation, classify_native_reblock_recovery_state,
+    cleanup_native_reblock_orphans, commit_verified_conversion_files, configure_cache_compression,
+    conversion_path_is_symlink, create_native_reblock_binding, digest_and_validate_native_trace,
+    expected_native_stream_bytes, is_obsolete_native_derivation, native_reblock_binding_path,
+    native_reblock_file_identity_matches, native_reblock_source_path,
+    native_reblock_temporary_prefix, native_stream_window_log, native_stream_window_log_capped,
+    prepare_native_reblock_source, read_binary_record, read_binary_trace_block_record,
+    read_binary_trace_header_record, recording_uncompressed_bytes,
+    restore_quarantined_recording_no_replace, update_native_semantic_digest,
+    validate_native_reblock_source_file_identity, write_binary_record, write_binary_trace_footer,
+    write_native_reblock_binding,
+};
+use super::reconstruction::{
+    preceding_interactive_session_path, reconstruct_unrecorded_maximal_visibility,
+    terminal_macro_waypoint_at, trace_sword_seek_distance,
+};
+use super::recorder_omissions::{
+    LegacyBlockedBoxTuple, LegacyBlockedBoxValidity, LegacyPresentationEntityState,
+    LegacyStoppableMotionOrder, RefreshOrientationSignature, is_legacy_retained_terminal_success,
+    legacy_blocked_box_revalidated_by_deviation, legacy_blocked_box_tuple,
+};
+use super::route_reconstruction::{
+    claim_delayed_drop_ale_route_ordinal, collect_current_delayed_drop_ale_routes_matching,
+    legacy_drop_ale_target_is_same_exact_sector, recorded_gate_path_from_event,
+    required_route_construction_ordinal,
+};
+use super::trace_admission::{
+    validate_human_jump_line_shape, validate_trace_frame, validate_trace_schema,
+};
+use super::trace_codec::{
+    absolute_trace_path_from, first_json_difference, normalize_trace_json_for_roundtrip,
+};
+use super::trace_model::{
+    TraceAi, TraceAlertEligibility, TraceDifficulty, TraceInitialSave, TracePoint3, TraceRouteGate,
+    TraceSaveSourceProfile, TraceSequenceElement, TraceSequenceMovement, TraceSimConfig,
+    TraceTargetLifecycleEvent, TraceTargetLifecyclePayload, missing_legacy_trace_json_value,
+};
 use base64::Engine as _;
 use bitcode_parity as bitcode;
+use robin_engine::profiles::Action;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt as _;
 
 #[test]
 fn deliberately_divergent_authoritative_fields_survive_comparison_and_reporting() {

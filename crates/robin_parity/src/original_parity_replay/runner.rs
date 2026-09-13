@@ -1,5 +1,39 @@
 //! Single runner entry: orchestrates admitted traces, reconstruction, comparison and reporting.
-use super::*;
+#[cfg(not(feature = "client"))]
+use super::initialize_headless_engine;
+use super::{
+    BTreeMap, BTreeSet, BinaryTraceReader, BinaryTraceRecord, BufWriter, Duration, EntityMap, File,
+    Instant, LAST_TRACE_SCHEMA_WITHOUT_DRAW_VIEW, LegacyRefreshOrientationProvenance,
+    MotionLineParity, Options, RollingDumpFrame, StorageContext, TRACE_SCHEMA_VERSION,
+    TraceCommand, TraceEntityId, TraceEntityKind, TraceStartState, TraceStorageResult,
+    TraceTimeline, VecDeque, advance_trace_qa_recording_state,
+    append_legacy_retained_terminal_success_repair, apply_initial_npc_transients,
+    apply_legacy_interactive_chain_macro_fallback, apply_legacy_segment_visibility_fallback,
+    bench_trace_encodings, canonicalize_trace_identity, collect_current_delayed_drop_ale_routes,
+    compare_frame, compare_path_events, compare_visibility_queries, convert_recording_to_native,
+    cross_post_initialize_frame, current_drop_ale_same_sector_goal,
+    decode_and_validate_initial_save, difference_field, ensure_native_binary_trace,
+    has_legacy_teleport_star_lifecycle, initial_legacy_blocked_box_shadows,
+    legacy_additional_arrow_refresh_draws, legacy_loaded_save_retains_process_transients,
+    legacy_presentation_entity_states, legacy_presentation_sprite_rng_burst,
+    missing_legacy_presentation_sprite_rng_draws, parse_options,
+    print_current_trace_actor_diagnostics, print_current_trace_events, print_debug_element,
+    print_startup_actors, push_rolling_window, read_all_rng_draws, read_binary_trace_footer,
+    read_binary_trace_header, reblock_native_trace, record_arrow_publication_before_compare,
+    register_language_data_paths_for_tool, replay_campaign_run_id, requested_native_trace_path,
+    resolve_current_drop_ale, resolve_current_group_move_route,
+    restore_legacy_route_construction_diagnostics, should_preload_complete_rng_stream,
+    simulation_rng_draws, split_refresh_owned_orientations, storage_ensure, structured_divergences,
+    trace_content_sha256, validate_native_trace, validate_standalone_native_trace,
+    validate_trace_frame_with_legacy_additive_omissions, validate_trace_header,
+    validate_trace_start, write_automatic_rolling_dump, write_engine_dump_frame,
+    write_jsonl_record,
+};
+#[cfg(feature = "client")]
+use super::{
+    HostDisplayState, RpcError, VisualReplay, drain_headless_http, frame_zero_screenshot_path,
+    initialize_engine, restore_campaign, serve_halted_http,
+};
 
 pub fn main() {
     std::process::exit(trace_exit_code(run_command()));

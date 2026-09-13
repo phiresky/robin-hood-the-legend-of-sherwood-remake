@@ -1,5 +1,25 @@
 //! Native trace storage, conversion transactions, reblocking and recovery.
-use super::*;
+use super::{
+    BinaryTraceFooter, BinaryTraceHeaderV68, BinaryTraceReader, BinaryTraceRecord, BufRead,
+    BufReader, BufWriter, Digest, Duration, File, Instant, NativeReblockBinding,
+    NativeStoragePolicy, OpenOptions, Path, PathBuf, Read, Seek, SeekFrom, Sha256,
+    TRACE_CONVERSION_QUARANTINE_SUFFIX, TRACE_NATIVE_BLOCK_RECORDS, TRACE_NATIVE_FOOTER_LEN,
+    TRACE_NATIVE_FOOTER_MAGIC, TRACE_NATIVE_LONG_DISTANCE_MATCHING,
+    TRACE_NATIVE_MAX_REBLOCK_WINDOW_LOG, TRACE_NATIVE_MIN_WINDOW_LOG, TRACE_NATIVE_SUFFIX,
+    TRACE_NATIVE_VERSION, TRACE_NATIVE_WINDOW_LOG, TRACE_NATIVE_ZSTD_LEVEL,
+    TRACE_REBLOCK_BINDING_SUFFIX, TRACE_REBLOCK_SOURCE_SUFFIX, TRACE_ZSTD_WINDOW_LOG_MAX,
+    TraceHeader, TraceRngBatch, TraceRngDomain, TraceRngOnly, TraceRngPrefix, TraceStartState,
+    TraceTimeline, VecDeque, VerifiedNativeReadback, Write, absolute_trace_path, bitcode,
+    join_roundtrip_audit_workers, native_binary_trace_path, open_jsonl_trace, parse_trace_frame,
+    sha256_hex, spawn_roundtrip_audit_workers, trace_content_sha256, trace_source_fingerprint,
+    validate_standalone_native_trace, validate_trace_frame_with_legacy_additive_omissions,
+    validate_trace_header, verify_trace_line_roundtrip,
+};
+use fs2::FileExt as _;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt as _;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt as _;
 
 /// Storage and trace-format failures retain their operation/path context until
 /// the command boundary. Conversion callers must not publish on an error.
