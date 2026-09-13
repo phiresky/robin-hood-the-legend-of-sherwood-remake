@@ -4,16 +4,15 @@
 //! prefix, serializes the human-actor portion in the middle, then writes
 //! its portrait and remaining PC state. [`read_pc_payload`] mirrors that call
 //! order by accepting callbacks for the shared Human payload and embedded
-//! quick-action sequences.
+//! quick-action sequences. Field declaration order is wire order.
 
 use super::read_helpers::DEFAULT_LIST_LIMIT;
-use super::read_helpers::{read_point2, read_point3};
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyRead, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
-use super::payload_base::{LegacyElementRef, LegacyPoint2, LegacyPoint3, read_element_ref};
+use super::payload_base::{LegacyElementRef, LegacyPoint2, LegacyPoint3};
 
 const PC_ACTION_COUNT: usize = 3;
 const QUICK_ACTION_MEMORY_COUNT: usize = 3;
@@ -90,8 +89,8 @@ pub fn read_pc_payload<HumanPayload, SequencePayload>(
             start_offset: reader.offset(),
             pre_human: LegacyPcPreHuman::read(reader, abi_profile, limits, &mut read_sequence)?,
             human: reader.scope("human", |reader| read_human(reader, abi_profile))?,
-            portrait: LegacyPortraitState::read(reader)?,
-            post_human: LegacyPcPostHuman::read(reader, limits)?,
+            portrait: LegacyPortraitState::read_field(reader, "portrait", &())?,
+            post_human: LegacyPcPostHuman::read_field(reader, "post_human", limits)?,
             end_offset: reader.offset(),
         })
     })
@@ -122,6 +121,8 @@ pub struct LegacyPcPreHuman<SequencePayload> {
     pub playable_interface: bool,
 }
 
+// Hand-written: the campaign description index is validated mid-stream and
+// the embedded quick-action sequences are decoded through a caller callback.
 impl<SequencePayload> LegacyPcPreHuman<SequencePayload> {
     fn read(
         reader: &mut LegacyReader<'_>,
@@ -164,12 +165,13 @@ impl<SequencePayload> LegacyPcPreHuman<SequencePayload> {
         let disabled_actions = read_bool3(reader, "disabled_actions")?;
         let disabled_actions_temp = read_bool3(reader, "disabled_actions_temp")?;
         let interface_displayed = reader.read_bool("interface_displayed")?;
-        let position_before_teleport = read_point2(reader, "position_before_teleport")?;
+        let position_before_teleport =
+            LegacyPoint2::read_field(reader, "position_before_teleport", &())?;
 
         let metadata = [
-            LegacyPcQuickActionMetadata::read(reader, 0)?,
-            LegacyPcQuickActionMetadata::read(reader, 1)?,
-            LegacyPcQuickActionMetadata::read(reader, 2)?,
+            read_quick_action_metadata(reader, 0)?,
+            read_quick_action_metadata(reader, 1)?,
+            read_quick_action_metadata(reader, 2)?,
         ];
         let sequences = [
             LegacyPcQuickActionSequences::read(reader, 0, abi_profile, read_sequence)?,
@@ -225,7 +227,7 @@ pub struct LegacyPcQuickAction<SequencePayload> {
     pub sequences: LegacyPcQuickActionSequences<SequencePayload>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyPcQuickActionMetadata {
     pub number_of_special_quick_actions: u16,
     pub quickito: u32,
@@ -234,21 +236,15 @@ pub struct LegacyPcQuickActionMetadata {
     pub interactor: LegacyElementRef,
 }
 
-impl LegacyPcQuickActionMetadata {
-    fn read(reader: &mut LegacyReader<'_>, index: usize) -> LegacyResult<Self> {
-        reader.scope_indexed("quick_actions", index, |reader| {
-            reader.scope("metadata", |reader| {
-                Ok(Self {
-                    number_of_special_quick_actions: reader
-                        .read_u16("number_of_special_quick_actions")?,
-                    quickito: reader.read_u32("quickito")?,
-                    titbit: reader.read_u32("titbit")?,
-                    button: reader.read_u16("button")?,
-                    interactor: read_element_ref(reader, "interactor")?,
-                })
-            })
-        })
-    }
+/// The original writes all metadata before all sequences, so each half is
+/// reported under its own `quick_actions[index]` scope.
+fn read_quick_action_metadata(
+    reader: &mut LegacyReader<'_>,
+    index: usize,
+) -> LegacyResult<LegacyPcQuickActionMetadata> {
+    reader.scope_indexed("quick_actions", index, |reader| {
+        LegacyPcQuickActionMetadata::read_field(reader, "metadata", &())
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -287,7 +283,11 @@ impl<SequencePayload> LegacyPcQuickActionSequences<SequencePayload> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    fingerprint = RH_WIDGET_PORTRAIT_FINGERPRINT,
+    expected = "portrait-widget fingerprint"
+)]
 pub struct LegacyPortraitState {
     pub quantities: [u16; 3],
     pub two_buttons_mode: bool,
@@ -299,54 +299,14 @@ pub struct LegacyPortraitState {
     pub quick_icons: [LegacyPortraitQuickIcon; QUICK_ACTION_MEMORY_COUNT],
 }
 
-impl LegacyPortraitState {
-    fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        reader.scope("portrait", |reader| {
-            reader.read_signature(
-                "fingerprint",
-                RH_WIDGET_PORTRAIT_FINGERPRINT,
-                "portrait-widget fingerprint",
-            )?;
-            Ok(Self {
-                quantities: [
-                    reader.read_u16("quantities[0]")?,
-                    reader.read_u16("quantities[1]")?,
-                    reader.read_u16("quantities[2]")?,
-                ],
-                two_buttons_mode: reader.read_bool("two_buttons_mode")?,
-                displayed: reader.read_bool("displayed")?,
-                burned: reader.read_bool("burned")?,
-                open: reader.read_bool("open")?,
-                life_level: reader.read_f32("life_level")?,
-                trumpet_enabled: reader.read_bool("trumpet_enabled")?,
-                quick_icons: [
-                    LegacyPortraitQuickIcon::read(reader, 0)?,
-                    LegacyPortraitQuickIcon::read(reader, 1)?,
-                    LegacyPortraitQuickIcon::read(reader, 2)?,
-                ],
-            })
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyPortraitQuickIcon {
     pub titbit_id: u32,
     pub running: bool,
 }
 
-impl LegacyPortraitQuickIcon {
-    fn read(reader: &mut LegacyReader<'_>, index: usize) -> LegacyResult<Self> {
-        reader.scope_indexed("quick_icons", index, |reader| {
-            Ok(Self {
-                titbit_id: reader.read_u32("titbit_id")?,
-                running: reader.read_bool("running")?,
-            })
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyActorLeafLimits)]
 pub struct LegacyPcPostHuman {
     pub carried: LegacyElementRef,
     pub carried_posture: u32,
@@ -362,71 +322,25 @@ pub struct LegacyPcPostHuman {
     pub last_dropping_direction: u8,
 }
 
-impl LegacyPcPostHuman {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyActorLeafLimits) -> LegacyResult<Self> {
-        reader.scope("post_human", |reader| {
-            Ok(Self {
-                carried: read_element_ref(reader, "carried")?,
-                carried_posture: reader.read_u32("carried_posture")?,
-                shield_danger_point: read_point3(reader, "shield_danger_point")?,
-                shield_protected: read_element_ref(reader, "shield_protected")?,
-                shield_protector: read_element_ref(reader, "shield_protector")?,
-                status: LegacyPcStatus::read(reader, limits)?,
-                guard: read_element_ref(reader, "guard")?,
-                time_until_reinforcement: reader.read_u32("time_until_reinforcement")?,
-                last_ammo_dropping_position: read_point2(reader, "last_ammo_dropping_position")?,
-                last_dropped_ammo: read_element_ref(reader, "last_dropped_ammo")?,
-                update_last_dropped_ammo: reader.read_bool("update_last_dropped_ammo")?,
-                last_dropping_direction: reader.read_u8("last_dropping_direction")?,
-            })
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(fingerprint = RH_HUMAN_STATUS_FINGERPRINT, expected = "human-status fingerprint")]
 pub struct LegacyHumanStatus {
     pub skills: [LegacyHumanSkill; HUMAN_SKILL_COUNT],
 }
 
-impl LegacyHumanStatus {
-    fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        reader.scope("human_status", |reader| {
-            reader.read_signature(
-                "fingerprint",
-                RH_HUMAN_STATUS_FINGERPRINT,
-                "human-status fingerprint",
-            )?;
-            Ok(Self {
-                skills: [
-                    LegacyHumanSkill::read(reader, 0)?,
-                    LegacyHumanSkill::read(reader, 1)?,
-                ],
-            })
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyHumanSkill {
     /// Serialized before experience despite the reverse declaration order.
     pub capacity: u32,
     pub experience: u32,
 }
 
-impl LegacyHumanSkill {
-    fn read(reader: &mut LegacyReader<'_>, index: usize) -> LegacyResult<Self> {
-        reader.scope_indexed("skills", index, |reader| {
-            Ok(Self {
-                capacity: reader.read_u32("capacity")?,
-                experience: reader.read_u32("experience")?,
-            })
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyActorLeafLimits)]
 pub struct LegacyPcStatus {
+    #[legacy(name = "human_status")]
     pub human: LegacyHumanStatus,
+    #[legacy(fingerprint = RH_PC_STATUS_FINGERPRINT, expected = "MD5(\"RHPCStatus\")")]
     pub life_points: i16,
     pub in_coma: bool,
     pub number_of_ales: u16,
@@ -439,36 +353,8 @@ pub struct LegacyPcStatus {
     pub number_of_stones: u16,
     pub number_of_wasp_nests: u16,
     pub beam_me_index_in_sherwood: i16,
+    #[legacy(read = reader.read_wide_string("name", ctx.pc_name_code_units))]
     pub name: String,
-}
-
-impl LegacyPcStatus {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyActorLeafLimits) -> LegacyResult<Self> {
-        reader.scope("status", |reader| {
-            let human = LegacyHumanStatus::read(reader)?;
-            reader.read_signature(
-                "fingerprint",
-                RH_PC_STATUS_FINGERPRINT,
-                "MD5(\"RHPCStatus\")",
-            )?;
-            Ok(Self {
-                human,
-                life_points: reader.read_i16("life_points")?,
-                in_coma: reader.read_bool("in_coma")?,
-                number_of_ales: reader.read_u16("number_of_ales")?,
-                number_of_apples: reader.read_u16("number_of_apples")?,
-                number_of_arrows: reader.read_u16("number_of_arrows")?,
-                number_of_nets: reader.read_u16("number_of_nets")?,
-                number_of_plants: reader.read_u16("number_of_plants")?,
-                number_of_purses: reader.read_u16("number_of_purses")?,
-                number_of_stoeckel_rations: reader.read_u16("number_of_stoeckel_rations")?,
-                number_of_stones: reader.read_u16("number_of_stones")?,
-                number_of_wasp_nests: reader.read_u16("number_of_wasp_nests")?,
-                beam_me_index_in_sherwood: reader.read_i16("beam_me_index_in_sherwood")?,
-                name: reader.read_wide_string("name", limits.pc_name_code_units)?,
-            })
-        })
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -480,10 +366,16 @@ pub struct LegacySoldierPayload<NpcPayload> {
     pub end_offset: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacySoldierLeaf {
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(
+        fingerprint = RH_ELEMENT_ACTOR_SOLDIER_FINGERPRINT,
+        expected = "soldier actor fingerprint"
+    )]
     pub apple_smell: u32,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
@@ -493,19 +385,7 @@ pub fn read_soldier_leaf(
     reader: &mut LegacyReader<'_>,
     _abi_profile: LegacySaveAbiProfile,
 ) -> LegacyResult<LegacySoldierLeaf> {
-    let start_offset = reader.offset();
-    reader.read_signature(
-        "fingerprint",
-        RH_ELEMENT_ACTOR_SOLDIER_FINGERPRINT,
-        "soldier actor fingerprint",
-    )?;
-    let apple_smell = reader.read_u32("apple_smell")?;
-    let end_offset = reader.offset();
-    Ok(LegacySoldierLeaf {
-        start_offset,
-        apple_smell,
-        end_offset,
-    })
+    LegacySoldierLeaf::read(reader, &())
 }
 
 pub fn read_soldier_payload<NpcPayload>(
@@ -533,10 +413,16 @@ pub struct LegacyCivilianPayload<NpcPayload> {
     pub end_offset: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyCivilianLeaf {
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(
+        fingerprint = RH_ELEMENT_ACTOR_CIVILIAN_FINGERPRINT,
+        expected = "civilian actor fingerprint"
+    )]
     pub current_scroll_set: u32,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
@@ -546,19 +432,7 @@ pub fn read_civilian_leaf(
     reader: &mut LegacyReader<'_>,
     _abi_profile: LegacySaveAbiProfile,
 ) -> LegacyResult<LegacyCivilianLeaf> {
-    let start_offset = reader.offset();
-    reader.read_signature(
-        "fingerprint",
-        RH_ELEMENT_ACTOR_CIVILIAN_FINGERPRINT,
-        "civilian actor fingerprint",
-    )?;
-    let current_scroll_set = reader.read_u32("current_scroll_set")?;
-    let end_offset = reader.offset();
-    Ok(LegacyCivilianLeaf {
-        start_offset,
-        current_scroll_set,
-        end_offset,
-    })
+    LegacyCivilianLeaf::read(reader, &())
 }
 
 pub fn read_civilian_payload<NpcPayload>(
@@ -577,17 +451,12 @@ pub fn read_civilian_payload<NpcPayload>(
     })
 }
 
+/// Reported as `field.[index]`.
 fn read_bool3(
     reader: &mut LegacyReader<'_>,
     field: &'static str,
 ) -> LegacyResult<[bool; PC_ACTION_COUNT]> {
-    reader.scope(field, |reader| {
-        Ok([
-            reader.read_bool("[0]")?,
-            reader.read_bool("[1]")?,
-            reader.read_bool("[2]")?,
-        ])
-    })
+    reader.scope(field, |reader| <[bool; PC_ACTION_COUNT]>::read(reader, &()))
 }
 
 #[cfg(test)]

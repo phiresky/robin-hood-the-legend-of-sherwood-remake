@@ -60,16 +60,6 @@ pub(super) fn reserve<T>(
         .map_err(|_| reader.allocation_error(offset, field, count))
 }
 
-pub(super) fn reserved<T>(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
-    count: usize,
-) -> LegacyResult<Vec<T>> {
-    let mut values = Vec::new();
-    reserve(reader, &mut values, count, field)?;
-    Ok(values)
-}
-
 #[cfg(test)]
 mod legacy_read_derive_tests {
     //! `#[derive(LegacyRead)]` must reproduce the hand-written reads it
