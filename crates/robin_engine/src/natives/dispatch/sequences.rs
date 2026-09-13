@@ -15,7 +15,7 @@ impl NativeContext<'_, '_> {
                         self.script_effects_mut()
                             .emit_engine(EngineCommand::ScrollCameraTo { x, y, speed: 2.0 });
                     } else {
-                        tracing::warn!(target: "script","Script error: ScrollCameraTo unresolved location {loc}");
+                        script_error!(native, "unresolved location {loc}");
                     }
                 }
                 0
@@ -28,9 +28,7 @@ impl NativeContext<'_, '_> {
                         self.script_effects_mut()
                             .emit_engine(EngineCommand::ScrollCameraTo { x, y, speed });
                     } else {
-                        tracing::warn!(target: "script",
-                            "Script error: ScrollCameraSlowlyTo unresolved location {loc}"
-                        );
+                        script_error!(native, "unresolved location {loc}");
                     }
                 }
                 0
@@ -42,7 +40,7 @@ impl NativeContext<'_, '_> {
                         self.script_effects_mut()
                             .emit_engine(EngineCommand::JumpCameraTo { x, y });
                     } else {
-                        tracing::warn!(target: "script","Script error: JumpCameraTo unresolved location {loc}");
+                        script_error!(native, "unresolved location {loc}");
                     }
                 }
                 0
@@ -51,7 +49,7 @@ impl NativeContext<'_, '_> {
                 let zoom_bits = stack.pop_i32();
                 let zoom = f32::from_bits(zoom_bits as u32);
                 if zoom != 0.5 && zoom != 1.0 && zoom != 2.0 {
-                    tracing::warn!(target: "script","Script error: SetZoomLevel with invalid zoom {zoom}");
+                    script_error!(native, "with invalid zoom {zoom}");
                 } else {
                     self.script_effects_mut()
                         .emit_engine(EngineCommand::SetZoomLevel { zoom });
@@ -79,7 +77,7 @@ impl NativeContext<'_, '_> {
                 let dot_type = stack.pop_i32();
                 let actor_handle = stack.pop_i32();
                 if actor_handle == 0 {
-                    tracing::warn!(target: "script","Script error: CustomizeMinimapDisplay called without an actor");
+                    script_error!(native, "called without an actor");
                 } else {
                     self.script_effects_mut()
                         .emit_engine(EngineCommand::CustomizeMinimapDisplay {
@@ -191,17 +189,13 @@ impl NativeContext<'_, '_> {
             RecordScrollCameraTo => {
                 let loc = stack.pop_i32();
                 if !self.is_script_point(loc) {
-                    tracing::warn!(target: "script",
-                        "Script error: RecordScrollCameraTo wrong kind of location (handle {loc})"
-                    );
+                    script_error!(native, "wrong kind of location (handle {loc})");
                     return 0;
                 }
                 let (x, y) = match self.resolve_location_pos(loc) {
                     Some(p) => p,
                     None => {
-                        tracing::warn!(target: "script",
-                            "Script error: RecordScrollCameraTo unresolved location {loc}"
-                        );
+                        script_error!(native, "unresolved location {loc}");
                         return 0;
                     }
                 };
@@ -217,17 +211,13 @@ impl NativeContext<'_, '_> {
             RecordJumpCameraTo => {
                 let loc = stack.pop_i32();
                 if !self.is_script_point(loc) {
-                    tracing::warn!(target: "script",
-                        "Script error: RecordJumpCameraTo wrong kind of location (handle {loc})"
-                    );
+                    script_error!(native, "wrong kind of location (handle {loc})");
                     return 0;
                 }
                 let (x, y) = match self.resolve_location_pos(loc) {
                     Some(p) => p,
                     None => {
-                        tracing::warn!(target: "script",
-                            "Script error: RecordJumpCameraTo unresolved location {loc}"
-                        );
+                        script_error!(native, "unresolved location {loc}");
                         return 0;
                     }
                 };
@@ -241,8 +231,9 @@ impl NativeContext<'_, '_> {
                 let zoom_f = f32::from_bits(zoom as u32);
                 // Reject anything but 0.5 / 1.0 / 2.0.
                 if zoom_f != 0.5 && zoom_f != 1.0 && zoom_f != 2.0 {
-                    tracing::warn!(target: "script",
-                        "Script error: Wanted zoom level is incorrect in RecordSetZoom (got {zoom_f})"
+                    script_error!(
+                        native,
+                        "Wanted zoom level is incorrect in RecordSetZoom (got {zoom_f})"
                     );
                     return 0;
                 }
@@ -262,17 +253,13 @@ impl NativeContext<'_, '_> {
                 let speed = stack.pop_i32();
                 let loc = stack.pop_i32();
                 if !self.is_script_point(loc) {
-                    tracing::warn!(target: "script",
-                        "Script error: RecordMoveCameraTo wrong kind of location (handle {loc})"
-                    );
+                    script_error!(native, "wrong kind of location (handle {loc})");
                     return 0;
                 }
                 let (x, y) = match self.resolve_location_pos(loc) {
                     Some(p) => p,
                     None => {
-                        tracing::warn!(target: "script",
-                            "Script error: RecordMoveCameraTo unresolved location {loc}"
-                        );
+                        script_error!(native, "unresolved location {loc}");
                         return 0;
                     }
                 };
@@ -288,9 +275,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Reject non-actor handles with a warning + return 0.
                 if !self.get_entity(actor).is_some_and(|e| e.is_actor()) {
-                    tracing::warn!(target: "script",
-                        "Script error: RecordLockCameraOn on illegal actor handle {actor}"
-                    );
+                    script_error!(native, "on illegal actor handle {actor}");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -332,9 +317,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Reject non-actor handles before recording.
                 if !self.get_entity(actor).is_some_and(|e| e.is_actor()) {
-                    tracing::warn!(target: "script",
-                        "Script error: RecordActionAvailable on illegal actor handle {actor}"
-                    );
+                    script_error!(native, "on illegal actor handle {actor}");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -352,9 +335,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Reject non-actor handles.
                 if !self.get_entity(actor).is_some_and(|e| e.is_actor()) {
-                    tracing::warn!(target: "script",
-                        "Script error: RecordCharacterAvailable on illegal actor handle {actor}"
-                    );
+                    script_error!(native, "on illegal actor handle {actor}");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -374,7 +355,7 @@ impl NativeContext<'_, '_> {
                 // Reject non-actor, non-null handles with a
                 // warning and no record.
                 if actor != 0 && !self.is_actor_handle(actor) {
-                    tracing::warn!(target: "script","Script error : trying to send a message to non actor object.");
+                    script_error!(native, "trying to send a message to non actor object.");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -392,7 +373,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Same actor-type guard as RecordSendMessage.
                 if actor != 0 && !self.is_actor_handle(actor) {
-                    tracing::warn!(target: "script","Script error : trying to send a message to non actor object.");
+                    script_error!(native, "trying to send a message to non actor object.");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -420,17 +401,18 @@ impl NativeContext<'_, '_> {
                 // Reject null actor, non-actor handle, null /
                 // non-Point location, and any style outside 0..=3.
                 if !self.is_actor_handle(actor) {
-                    tracing::warn!(target: "script", %native,"Script error in RecordMove: invalid actor handle {actor}");
+                    script_error!(native, "invalid actor handle {actor}");
                     return 0;
                 }
                 let Some((dx, dy)) = self.resolve_location_pos(loc) else {
-                    tracing::warn!(target: "script",
-                        "Script error in RecordMove: illegal location handle {loc} (null or not a Point)"
+                    script_error!(
+                        native,
+                        "illegal location handle {loc} (null or not a Point)"
                     );
                     return 0;
                 };
                 if !(0..=3).contains(&style) {
-                    tracing::warn!(target: "script","Script error in RecordMove: illegal movement style {style}");
+                    script_error!(native, "illegal movement style {style}");
                     return 0;
                 }
                 let dest_layer_sector = self.resolve_location_layer_sector_handle(loc);
@@ -445,7 +427,10 @@ impl NativeContext<'_, '_> {
                     .as_ref()
                     .map(|r| r.current_size())
                 else {
-                    tracing::warn!(target: "script", %native, "recorded movement requires an active Start/Thanx session");
+                    script_error!(
+                        native,
+                        "recorded movement requires an active Start/Thanx session"
+                    );
                     return 0;
                 };
                 // Expand the move into the sequence.
@@ -497,21 +482,18 @@ impl NativeContext<'_, '_> {
                 let loc = stack.pop_i32();
                 let actor = stack.pop_i32();
                 if !self.is_actor_handle(actor) {
-                    tracing::warn!(target: "script",
-                        "Script error in RecordMoveIntoBuilding: invalid actor handle {actor}"
-                    );
+                    script_error!(native, "invalid actor handle {actor}");
                     return 0;
                 }
                 let Some((lx, ly)) = self.resolve_location_pos(loc) else {
-                    tracing::warn!(target: "script",
-                        "Script error in RecordMoveIntoBuilding: illegal location handle {loc} (null or not a Point)"
+                    script_error!(
+                        native,
+                        "illegal location handle {loc} (null or not a Point)"
                     );
                     return 0;
                 };
                 if !(0..=3).contains(&style) {
-                    tracing::warn!(target: "script",
-                        "Script error in RecordMoveIntoBuilding: illegal movement style {style}"
-                    );
+                    script_error!(native, "illegal movement style {style}");
                     return 0;
                 }
 
@@ -540,9 +522,7 @@ impl NativeContext<'_, '_> {
                     }
                 }
                 let Some((_, ix, iy, door_layer, door_sector)) = best else {
-                    tracing::warn!(target: "script",
-                        "Script error in RecordMoveIntoBuilding: no door within 300px of ({lx}, {ly})"
-                    );
+                    script_error!(native, "no door within 300px of ({lx}, {ly})");
                     return 0;
                 };
 
@@ -564,7 +544,10 @@ impl NativeContext<'_, '_> {
                     .as_ref()
                     .map(|r| r.current_size())
                 else {
-                    tracing::warn!(target: "script", %native, "recorded movement requires an active Start/Thanx session");
+                    script_error!(
+                        native,
+                        "recorded movement requires an active Start/Thanx session"
+                    );
                     return 0;
                 };
                 // Drive the inner RecordMove tail call's
@@ -617,11 +600,11 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 if !self.actor_exists(actor) {
-                    tracing::warn!("RecordEnterGame: invalid actor handle {actor}");
+                    script_error!(native, "invalid actor handle {actor}");
                     return 0;
                 }
                 let Some((dx, dy)) = self.resolve_location_pos(loc) else {
-                    tracing::warn!("RecordEnterGame: illegal location handle {loc} (not a Point)");
+                    script_error!(native, "illegal location handle {loc} (not a Point)");
                     return 0;
                 };
                 // Read layer + sector from the destination point
@@ -686,7 +669,7 @@ impl NativeContext<'_, '_> {
                         }
                         ed.update_grid_cell();
                     } else {
-                        tracing::warn!("RecordEnterGame: invalid actor handle {actor}");
+                        script_error!(native, "invalid actor handle {actor}");
                         return 0;
                     }
                     self.script_effects_mut()
@@ -742,9 +725,9 @@ impl NativeContext<'_, '_> {
                     // dispatched.
                 }
                 if self.record_element(elem) == 0 {
-                    tracing::warn!(
-                        target: "script",
-                        "Script error: RecordEnterGame dropped its walk-in element (no active recording session)"
+                    script_error!(
+                        native,
+                        "dropped its walk-in element (no active recording session)"
                     );
                 }
                 // Returns `false` (0) unconditionally; scripts
@@ -766,11 +749,11 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 if !self.actor_exists(actor) {
-                    tracing::warn!("RecordLeaveGame: invalid actor handle {actor}");
+                    script_error!(native, "invalid actor handle {actor}");
                     return 0;
                 }
                 let Some((dx, dy)) = self.resolve_location_pos(loc) else {
-                    tracing::warn!("RecordLeaveGame: illegal location handle {loc} (not a Point)");
+                    script_error!(native, "illegal location handle {loc} (not a Point)");
                     return 0;
                 };
 
@@ -861,9 +844,9 @@ impl NativeContext<'_, '_> {
                     // when dispatched.
                 }
                 if self.record_element(elem2) == 0 {
-                    tracing::warn!(
-                        target: "script",
-                        "Script error: RecordLeaveGame dropped its off-map element (no active recording session)"
+                    script_error!(
+                        native,
+                        "dropped its off-map element (no active recording session)"
                     );
                 }
                 // Returns `true` (1) unconditionally; scripts
@@ -880,11 +863,11 @@ impl NativeContext<'_, '_> {
                 // either miss with `false` rather than stashing
                 // a raw integer under `CameraPoint`.
                 if !self.is_actor_handle(actor) {
-                    tracing::warn!("RecordTurnTo: illegal actor handle {actor}");
+                    script_error!(native, "illegal actor handle {actor}");
                     return 0;
                 }
                 let Some((x, y)) = self.resolve_location_pos(loc) else {
-                    tracing::warn!("RecordTurnTo: illegal location handle {loc}");
+                    script_error!(native, "illegal location handle {loc}");
                     return 0;
                 };
                 let level = self.recording_level();
@@ -901,9 +884,7 @@ impl NativeContext<'_, '_> {
                 // Reject null handles and anything that is
                 // neither an actor nor an FX target.
                 if actor == 0 || !self.is_actor_or_fx_target(actor) {
-                    tracing::warn!(
-                        "RecordPlayAnim: illegal actor handle {actor} (not actor/fx-target)"
-                    );
+                    script_error!(native, "illegal actor handle {actor} (not actor/fx-target)");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -922,7 +903,7 @@ impl NativeContext<'_, '_> {
                 // FX-target branch like its siblings) before
                 // constructing the element.
                 if actor == 0 || !self.actor_exists(actor) {
-                    tracing::warn!("RecordPlayAnimLoop: invalid actor handle {actor}");
+                    script_error!(native, "invalid actor handle {actor}");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -943,9 +924,7 @@ impl NativeContext<'_, '_> {
                 // Omits the null-handle check but still requires
                 // actor-or-FX-target.
                 if !self.is_actor_or_fx_target(actor) {
-                    tracing::warn!(
-                        "RecordPlayAnimFreeze: illegal actor handle {actor} (not actor/fx-target)"
-                    );
+                    script_error!(native, "illegal actor handle {actor} (not actor/fx-target)");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -966,7 +945,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Requires an existing actor.
                 if !self.is_actor_handle(actor) {
-                    tracing::warn!("RecordReplaceAnim: illegal actor handle {actor}");
+                    script_error!(native, "illegal actor handle {actor}");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -981,7 +960,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Requires an actor after the sequence-level check.
                 if !self.is_actor_handle(actor) {
-                    tracing::warn!("RecordRestoreAnim: illegal actor handle {actor}");
+                    script_error!(native, "illegal actor handle {actor}");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -998,7 +977,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 let is_fx = self.get_entity(actor).is_some_and(|e| e.is_fx());
                 if !self.actor_exists(actor) || !is_fx {
-                    tracing::warn!(target: "script","Script error (ResetAnim): invalid animation handle {actor}");
+                    script_error!(native, "invalid animation handle {actor}");
                     0
                 } else {
                     self.script_effects_mut()
@@ -1015,7 +994,7 @@ impl NativeContext<'_, '_> {
                 // `id < NUMBER_OF_REMARKS` before constructing the
                 // element.
                 if !self.get_entity(actor).is_some_and(|e| e.is_human()) {
-                    tracing::warn!("RecordSpeak: illegal actor {actor} (not human)");
+                    script_error!(native, "illegal actor {actor} (not human)");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -1042,7 +1021,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Requires a PC.
                 if !self.get_entity(actor).is_some_and(|e| e.is_pc()) {
-                    tracing::warn!("RecordSpeakPC: illegal actor {actor} (not PC)");
+                    script_error!(native, "illegal actor {actor} (not PC)");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -1058,7 +1037,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Requires an existing actor.
                 if !self.is_actor_handle(actor) {
-                    tracing::warn!("RecordLockAI: illegal actor handle {actor}");
+                    script_error!(native, "illegal actor handle {actor}");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -1069,7 +1048,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Requires an existing actor.
                 if !self.is_actor_handle(actor) {
-                    tracing::warn!("RecordUnlockAI: illegal actor handle {actor}");
+                    script_error!(native, "illegal actor handle {actor}");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -1139,7 +1118,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Rejects non-actor message-target handles.
                 if msg_actor != 0 && !self.is_actor_handle(msg_actor) {
-                    tracing::warn!("RecordSeekActorMessage: illegal msg_actor handle {msg_actor}");
+                    script_error!(native, "illegal msg_actor handle {msg_actor}");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -1185,15 +1164,11 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Rejects non-actor msg handles and `id < 1000`.
                 if msg_actor != 0 && !self.is_actor_handle(msg_actor) {
-                    tracing::warn!(
-                        "RecordSeekActorMessageWithArguments: illegal msg_actor handle {msg_actor}"
-                    );
+                    script_error!(native, "illegal msg_actor handle {msg_actor}");
                     return 0;
                 }
                 if msg_id < 1000 {
-                    tracing::warn!(
-                        "RecordSeekActorMessageWithArguments: ID for custom event is {msg_id}, must be >= 1000"
-                    );
+                    script_error!(native, "ID for custom event is {msg_id}, must be >= 1000");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -1239,7 +1214,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Requires an existing entity for the whole dispatch.
                 if !self.actor_exists(actor) {
-                    tracing::warn!("RecordAction: invalid actor handle {actor}");
+                    script_error!(native, "invalid actor handle {actor}");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -1293,7 +1268,7 @@ impl NativeContext<'_, '_> {
                     AIM_UP => SequenceElement::new(level, Command::RaiseBow, owner),
                     SHOOT => {
                         let Some(antagonist) = resolve_antagonist(number) else {
-                            tracing::warn!("RecordAction SHOOT: illegal antagonist index {number}");
+                            script_error!(native, "SHOOT: illegal antagonist index {number}");
                             return 0;
                         };
                         SequenceElement::new_interaction(
@@ -1305,9 +1280,7 @@ impl NativeContext<'_, '_> {
                     }
                     ENTER_SF => {
                         let Some(antagonist) = resolve_antagonist(number) else {
-                            tracing::warn!(
-                                "RecordAction ENTER_SF: illegal antagonist index {number}"
-                            );
+                            script_error!(native, "ENTER_SF: illegal antagonist index {number}");
                             return 0;
                         };
                         let mut e =
@@ -1344,9 +1317,7 @@ impl NativeContext<'_, '_> {
                             _ => Command::SwordstrikeThrustI,
                         };
                         let Some(antagonist) = resolve_antagonist(number) else {
-                            tracing::warn!(
-                                "RecordAction THRUST: illegal antagonist index {number}"
-                            );
+                            script_error!(native, "THRUST: illegal antagonist index {number}");
                             return 0;
                         };
                         SequenceElement::new_interaction(level, cmd, owner, antagonist)
@@ -1354,18 +1325,14 @@ impl NativeContext<'_, '_> {
                     LOOK_LEFT => {
                         // Rejects non-soldiers.
                         if !self.get_entity(actor).is_some_and(|e| e.is_soldier()) {
-                            tracing::warn!(
-                                "RecordAction LOOK_LEFT: actor {actor} is not a soldier"
-                            );
+                            script_error!(native, "LOOK_LEFT: actor {actor} is not a soldier");
                             return 0;
                         }
                         SequenceElement::new(level, Command::LookLeft, owner)
                     }
                     LOOK_RIGHT => {
                         if !self.get_entity(actor).is_some_and(|e| e.is_soldier()) {
-                            tracing::warn!(
-                                "RecordAction LOOK_RIGHT: actor {actor} is not a soldier"
-                            );
+                            script_error!(native, "LOOK_RIGHT: actor {actor} is not a soldier");
                             return 0;
                         }
                         SequenceElement::new(level, Command::LookRight, owner)
@@ -1373,7 +1340,7 @@ impl NativeContext<'_, '_> {
                     UNEQUIP_BOW => SequenceElement::new(level, Command::UnequipBow, owner),
                     CROUCH_DOWN => SequenceElement::new(level, Command::CrouchDown, owner),
                     _ => {
-                        tracing::warn!("RecordAction: unknown script command ID {action_id}");
+                        script_error!(native, "unknown script command ID {action_id}");
                         return 0;
                     }
                 };
@@ -1394,13 +1361,11 @@ impl NativeContext<'_, '_> {
                 // Gates on the taker being a PC with one of the
                 // carry actions, and the corpse being an actor.
                 if !self.is_pc_carrier(actor) {
-                    tracing::warn!(
-                        "RecordTakeCorpse: taker {actor} is not a PC with a carry action"
-                    );
+                    script_error!(native, "taker {actor} is not a PC with a carry action");
                     return 0;
                 }
                 if !self.is_actor_handle(corpse) {
-                    tracing::warn!("RecordTakeCorpse: corpse {corpse} is not an actor");
+                    script_error!(native, "corpse {corpse} is not an actor");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -1433,6 +1398,7 @@ impl NativeContext<'_, '_> {
                         crate::engine::command_action_distance_animation(Command::TakeCorpse)
                     else {
                         tracing::warn!(
+                            target: "script",
                             "RecordTakeCorpse: TakeCorpse has no action-distance animation"
                         );
                         return 0;
@@ -1473,9 +1439,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Requires a PC with Little John's or the farmer's carrying ability.
                 if !self.is_pc_carrier(actor) {
-                    tracing::warn!(
-                        "RecordLeaveCorpse: actor {actor} is not a PC with a carry action"
-                    );
+                    script_error!(native, "actor {actor} is not a PC with a carry action");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -1508,7 +1472,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Requires an existing actor.
                 if !self.is_actor_handle(actor) {
-                    tracing::warn!("RecordUnBlip: illegal actor handle {actor}");
+                    script_error!(native, "illegal actor handle {actor}");
                     return 0;
                 }
                 let level = self.recording_level();
