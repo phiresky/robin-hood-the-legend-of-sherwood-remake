@@ -353,7 +353,7 @@ async fn initialize_worker(
             .checked_mul(60 * 60)
             .ok_or_else(|| anyhow::anyhow!("campaign retention overflow"))?,
     );
-    notifier.status("Validating catalogs, authority, and raw Demo and Full content")?;
+    notifier.status("Validating catalogs, profiles, and source-tree manifests")?;
     let verifier_digest = worker.verifier_digest()?;
     let job_catalog = worker.load_job_catalog()?;
     validate_worker_authority_layout(
