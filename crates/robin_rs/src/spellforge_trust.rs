@@ -336,6 +336,11 @@ fn load_serialized(directory: &str) -> Result<Option<String>, String> {
 /// Native publication goes through `desktop_persistence` (staged write, file
 /// sync, atomic rename, directory sync); the parent directory is created.
 fn save_serialized(directory: &str, serialized: &str) -> Result<(), String> {
+    // Create the directory up front so its failure keeps the user-facing
+    // "create Spellforge trust directory" message profile recovery reports.
+    #[cfg(not(target_arch = "wasm32"))]
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("create Spellforge trust directory {directory}: {error}"))?;
     let key = SpellforgeTrustStore::store_path(directory);
     open_platform_store()
         .and_then(|store| store.write_text(&key, serialized))
