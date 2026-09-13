@@ -114,9 +114,11 @@ impl EnemyAi {
             if friend_handle == self.base.me {
                 continue;
             }
-            let Some(f) = self.find_fighter(friend_handle, tick) else {
-                panic!("friend {friend_handle} in list_us is absent from fighter snapshot");
-            };
+            let f = self.required_fighter(
+                friend_handle,
+                tick,
+                format_args!("friend {friend_handle} in list_us is absent from fighter snapshot"),
+            );
             // The original game queries the friend's point, using the AI position
             // helper rather than the raw element position. Door-passing
             // actors therefore contribute their committed gate endpoint.
@@ -142,9 +144,11 @@ impl EnemyAi {
             if friend_handle == self.base.me {
                 continue;
             }
-            let f = self.find_fighter(friend_handle, tick).unwrap_or_else(|| {
-                panic!("friend {friend_handle} in list_us is absent from fighter snapshot")
-            });
+            let f = self.required_fighter(
+                friend_handle,
+                tick,
+                format_args!("friend {friend_handle} in list_us is absent from fighter snapshot"),
+            );
             if !f.is_soldier {
                 continue;
             }
@@ -278,12 +282,14 @@ impl EnemyAi {
             .into_optional_ai_handle()
             .expect("archer proximity requires a primary target")
             .get();
-        let enemy = self.find_fighter(enemy_handle, tick).unwrap_or_else(|| {
-            panic!(
+        let enemy = self.required_fighter(
+            enemy_handle,
+            tick,
+            format_args!(
                 "archer {} requires missing primary-target fighter {}",
                 self.base.me, enemy_handle
-            )
-        });
+            ),
+        );
 
         // Vector from enemy to me (note the original name
         // subtracting the enemy position from our position gives the vector pointing

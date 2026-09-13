@@ -469,6 +469,20 @@ impl EnemyAi {
             .or_else(|| tick.fighter_registry.iter().find(|f| f.handle == handle))
     }
 
+    /// [`Self::find_fighter`] for a fighter the caller's precondition
+    /// guarantees is present; panics with `context` (at the caller's
+    /// location) when it is absent.
+    #[track_caller]
+    pub(super) fn required_fighter<'a>(
+        &self,
+        handle: impl IntoOptionalAiHandle,
+        tick: &'a AiPerTickData,
+        context: std::fmt::Arguments<'_>,
+    ) -> &'a FighterSnapshot {
+        self.find_fighter(handle, tick)
+            .unwrap_or_else(|| panic!("{context}"))
+    }
+
     /// Attack permission — VIP / mission rules.
     ///
     /// Pure VIP/Robin gate. Does NOT filter on friendliness or
@@ -1609,12 +1623,14 @@ impl EnemyAi {
         // endpoint; measuring from there moved a door-passing orphan archer
         // out of the 500-unit radius and silenced the shield-bearer
         // reaction.
-        let me_raw = self.find_fighter(self.base.me, tick).unwrap_or_else(|| {
-            panic!(
+        let me_raw = self.required_fighter(
+            self.base.me,
+            tick,
+            format_args!(
                 "nearby-archer protection count owner {} is absent from its own fighter snapshots",
                 self.base.me
-            )
-        });
+            ),
+        );
         let (me_position, me_elevation) = (me_raw.raw_position, me_raw.elevation);
         // Original walks the complete camp soldier registry. In particular it
         // does not check combat readiness/activity before counting an orphan
@@ -4280,14 +4296,15 @@ impl EnemyAi {
         // "no fake data" rule forbids silently substituting a default
         // position when the precondition is violated.
         let primary = self
-            .find_fighter(self.base.primary_target, tick)
-            .unwrap_or_else(|| {
-                panic!(
+            .required_fighter(
+                self.base.primary_target,
+                tick,
+                format_args!(
                     "propose_good_combat_position: primary_target ({:?}) not found in snapshot \
                      (caller must ensure mpMe->GetPrincipalOpponent() resolves to a live fighter)",
                     self.base.primary_target
-                )
-            })
+                ),
+            )
             .clone();
         assert!(
             !primary.is_friendly,

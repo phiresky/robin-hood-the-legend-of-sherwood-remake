@@ -3025,13 +3025,14 @@ impl EnemyAi {
                 let attacker_is_hostile = ctx.is_hostile_with(attacker_view.camp);
                 if attacker_is_hostile {
                     let already_opponent = self
-                        .find_fighter(self.base.me, tick)
-                        .unwrap_or_else(|| {
-                            panic!(
+                        .required_fighter(
+                            self.base.me,
+                            tick,
+                            format_args!(
                                 "soldier {} EVENT_GOTHIT requires self fighter snapshot",
                                 self.base.me
-                            )
-                        })
+                            ),
+                        )
                         .has_as_opponent(attacker.get());
                     if !already_opponent {
                         self.base.outbox.actor.enter_swordfight =

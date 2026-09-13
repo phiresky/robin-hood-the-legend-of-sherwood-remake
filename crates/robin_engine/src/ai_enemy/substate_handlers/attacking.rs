@@ -689,11 +689,13 @@ impl EnemyAi {
                 "a primary target",
                 "approaching a newly selected enemy",
             );
-            let target = self.find_fighter(target_handle, tick).unwrap_or_else(|| {
-                panic!(
+            let target = self.required_fighter(
+                target_handle,
+                tick,
+                format_args!(
                     "AttackingApproachingNewEnemy primary target {target_handle} is missing its required fighter snapshot"
-                )
-            });
+                ),
+            );
             if tick.primary_target_snapshot_handle != Some(target_handle) {
                 let snapshot_handle = tick
                     .primary_target_snapshot_handle
@@ -1243,14 +1245,15 @@ impl EnemyAi {
         // Stand in place with shield, timer-driven re-evaluation
         if stimulus_type == StimulusType::EventTimer {
             let my_action = self
-                .find_fighter(self.base.me, tick)
-                .map(|f| f.action_state)
-                .unwrap_or_else(|| {
-                    panic!(
+                .required_fighter(
+                    self.base.me,
+                    tick,
+                    format_args!(
                         "shield bearer {} is missing its required fighter snapshot",
                         self.base.me
-                    )
-                });
+                    ),
+                )
+                .action_state;
             if crate::ai_enemy::battle_decision_debug_enabled() {
                 crate::ai_enemy::parity_trace::shield_timer(
                     &(ctx.frame),
@@ -1269,19 +1272,19 @@ impl EnemyAi {
 
             if !my_action.is_shield() {
                 // Reestablish shield state
-                let (target_pos, target_elevation) = self
-                    .find_fighter(self.base.primary_target, tick)
-                    // The original game stores the primary target's position in
-                    // shield-danger point. This is the raw element
-                    // position, not the AI `Position()` helper that projects
-                    // actors passing a door onto the gate endpoint.
-                    .map(|f| (f.raw_position, f.elevation))
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "shield bearer {} requires primary target {:?} in the fighter registry",
-                            self.base.me, self.base.primary_target
-                        )
-                    });
+                let target = self.required_fighter(
+                    self.base.primary_target,
+                    tick,
+                    format_args!(
+                        "shield bearer {} requires primary target {:?} in the fighter registry",
+                        self.base.me, self.base.primary_target
+                    ),
+                );
+                // The original game stores the primary target's position in
+                // shield-danger point. This is the raw element
+                // position, not the AI `Position()` helper that projects
+                // actors passing a door onto the gate endpoint.
+                let (target_pos, target_elevation) = (target.raw_position, target.elevation);
                 self.base.raise_shield(target_pos, target_elevation);
                 self.base.launch_timer(20, ctx.frame);
             } else if self.left_combat_neighbour.is_some() || self.right_combat_neighbour.is_some()
@@ -1308,14 +1311,15 @@ impl EnemyAi {
                     return false;
                 }
                 let target_pos = self
-                    .find_fighter(self.base.primary_target, tick)
-                    .map(|f| f.position)
-                    .unwrap_or_else(|| {
-                        panic!(
+                    .required_fighter(
+                        self.base.primary_target,
+                        tick,
+                        format_args!(
                             "shield bearer {} requires primary target {:?} in the fighter registry",
                             self.base.me, self.base.primary_target
-                        )
-                    });
+                        ),
+                    )
+                    .position;
                 let dx = target_pos.x - ctx.position.x;
                 let dy = target_pos.y - ctx.position.y;
                 let dir = vec_to_sector(dx, dy);
@@ -1331,14 +1335,16 @@ impl EnemyAi {
                 };
                 if let Some(target) = target {
                     let target_is_bow = self
-                        .find_fighter(target, tick)
-                        .map(|f| f.action_state.is_bow())
-                        .unwrap_or_else(|| {
-                            panic!(
+                        .required_fighter(
+                            target,
+                            tick,
+                            format_args!(
                                 "shield bearer {} requires target {} in the fighter registry",
                                 self.base.me, target
-                            )
-                        });
+                            ),
+                        )
+                        .action_state
+                        .is_bow();
                     if target_is_bow {
                         // Still danger
                         if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::ShieldAdvance, 0..4)
@@ -1424,19 +1430,20 @@ impl EnemyAi {
                 if let Some(target) = target {
                     self.base.primary_target = Some(target);
                     self.set_state(AiState::Attacking, Substate::AttackingPhalanx);
-                    let (target_pos, target_elevation) = self
-                        .find_fighter(target, tick)
-                        // The shield-danger point stores the target
-                        // element's raw world position. The AI-facing
-                        // Position() may instead project an actor traversing
-                        // a door onto its gate endpoint.
-                        .map(|f| (f.raw_position, f.elevation))
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "phalanx runner {} requires target {} in the fighter registry",
-                                self.base.me, target
-                            )
-                        });
+                    let target_snapshot = self.required_fighter(
+                        target,
+                        tick,
+                        format_args!(
+                            "phalanx runner {} requires target {} in the fighter registry",
+                            self.base.me, target
+                        ),
+                    );
+                    // The shield-danger point stores the target
+                    // element's raw world position. The AI-facing
+                    // Position() may instead project an actor traversing
+                    // a door onto its gate endpoint.
+                    let (target_pos, target_elevation) =
+                        (target_snapshot.raw_position, target_snapshot.elevation);
                     self.base.raise_shield(target_pos, target_elevation);
                     // Original follows the RaiseShield launch with
                     // focus on the primary target, not an actor turn.
@@ -1461,14 +1468,15 @@ impl EnemyAi {
         match stimulus_type {
             StimulusType::EventTimer => {
                 let my_action = self
-                    .find_fighter(self.base.me, tick)
-                    .map(|f| f.action_state)
-                    .unwrap_or_else(|| {
-                        panic!(
+                    .required_fighter(
+                        self.base.me,
+                        tick,
+                        format_args!(
                             "phalanx soldier {} is missing its required fighter snapshot",
                             self.base.me
-                        )
-                    });
+                        ),
+                    )
+                    .action_state;
 
                 tracing::trace!(
                     target: "robin_engine::ai_enemy::phalanx",
@@ -1492,29 +1500,30 @@ impl EnemyAi {
                 }
                 if !my_action.is_shield() && self.base.primary_target.is_some() {
                     // Reestablish shield state
-                    let (target_pos, target_elevation) = self
-                        .find_fighter(self.base.primary_target, tick)
-                        .map(|f| (f.raw_position, f.elevation))
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "phalanx soldier {} requires primary target {:?} in the fighter registry",
-                                self.base.me, self.base.primary_target
-                            )
-                        });
+                    let target = self.required_fighter(
+                        self.base.primary_target,
+                        tick,
+                        format_args!(
+                            "phalanx soldier {} requires primary target {:?} in the fighter registry",
+                            self.base.me, self.base.primary_target
+                        ),
+                    );
+                    let (target_pos, target_elevation) = (target.raw_position, target.elevation);
                     self.base.raise_shield(target_pos, target_elevation);
                     self.base.launch_timer(20, ctx.frame);
                 } else if !self.reconsider_phalanx(env) {
                     if self.base.primary_target.is_some() {
                         // No phalanx correction — maybe correct direction
                         let target_pos = self
-                            .find_fighter(self.base.primary_target, tick)
-                            .map(|f| f.position)
-                            .unwrap_or_else(|| {
-                                panic!(
+                            .required_fighter(
+                                self.base.primary_target,
+                                tick,
+                                format_args!(
                                     "phalanx soldier {} requires primary target {:?} in the fighter registry",
                                     self.base.me, self.base.primary_target
-                                )
-                            });
+                                ),
+                            )
+                            .position;
                         let dx = target_pos.x - ctx.position.x;
                         let dy = target_pos.y - ctx.position.y;
                         let dir = vec_to_sector(dx, dy);
@@ -1556,20 +1565,21 @@ impl EnemyAi {
                 // Notify archer behind us to re-evaluate, but
                 // only if they're actively shooting/loading/aiming.
                 if let Some(archer_behind_me) = self.archer_behind_me {
-                    let archer_in_bow = self
-                        .find_fighter(archer_behind_me, tick)
-                        .map(|f| {
-                            let s = f.current_substate;
-                            s == Substate::AttackingBowShooting
-                                || s == Substate::AttackingBowLoading
-                                || s == Substate::AttackingBowAiming
-                        })
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "phalanx soldier {} requires protected archer {} in the fighter registry",
-                                self.base.me, archer_behind_me
+                    let archer_in_bow = {
+                        let s = self
+                            .required_fighter(
+                                archer_behind_me,
+                                tick,
+                                format_args!(
+                                    "phalanx soldier {} requires protected archer {} in the fighter registry",
+                                    self.base.me, archer_behind_me
+                                ),
                             )
-                        });
+                            .current_substate;
+                        s == Substate::AttackingBowShooting
+                            || s == Substate::AttackingBowLoading
+                            || s == Substate::AttackingBowAiming
+                    };
                     if archer_in_bow {
                         self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::SendStimulus {

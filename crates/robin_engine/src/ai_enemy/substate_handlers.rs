@@ -56,12 +56,14 @@ impl EnemyAi {
             let Some(neighbour) = neighbour else {
                 continue;
             };
-            let fighter = self.find_fighter(neighbour.get(), tick).unwrap_or_else(|| {
-                panic!(
+            let fighter = self.required_fighter(
+                neighbour.get(),
+                tick,
+                format_args!(
                     "combat neighbour {neighbour} missing from complete fighter registry for {}",
                     self.base.me
-                )
-            });
+                ),
+            );
             if fighter.is_soldier {
                 return Some(fighter.primary_target);
             }

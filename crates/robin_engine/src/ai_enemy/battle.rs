@@ -1986,13 +1986,14 @@ impl EnemyAi {
         // EnemyAi's compatibility cache: old replay/save snapshots can carry
         // a range written with the former zero-based weapon-id convention.
         let standard_sword_range = self
-            .find_fighter(self.base.me, tick)
-            .unwrap_or_else(|| {
-                panic!(
+            .required_fighter(
+                self.base.me,
+                tick,
+                format_args!(
                     "enemy-approach reconsideration owner {} missing from fighter registry",
                     self.base.me
-                )
-            })
+                ),
+            )
             .sword_range_default;
         // sword_range = standard sword range + 10.
         let sword_range: f32 = (standard_sword_range + 10) as f32;
@@ -2761,12 +2762,13 @@ impl EnemyAi {
         // publishing the seek position for the later rider-return facing step.
         let target = target.expect("successful rider charge search has no target");
         self.base.seek_position = self
-            .find_fighter(target.get(), tick)
-            .unwrap_or_else(|| {
-                panic!(
+            .required_fighter(
+                target.get(),
+                tick,
+                format_args!(
                     "selected rider charge target {target:?} disappeared from the fighter registry"
-                )
-            })
+                ),
+            )
             .position;
 
         // Original focuses the selected target before choosing between the
@@ -3650,9 +3652,13 @@ impl EnemyAi {
             .copied()
             .filter(|&friend_handle| friend_handle != self.base.me)
             .filter_map(|friend_handle| {
-                let friend = self.find_fighter(friend_handle, tick).unwrap_or_else(|| {
-                    panic!("friend {friend_handle} in list_us is absent from fighter snapshot")
-                });
+                let friend = self.required_fighter(
+                    friend_handle,
+                    tick,
+                    format_args!(
+                        "friend {friend_handle} in list_us is absent from fighter snapshot"
+                    ),
+                );
                 (friend.is_soldier
                     && matches!(
                         friend.current_substate,
