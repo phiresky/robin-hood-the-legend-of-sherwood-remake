@@ -4,6 +4,7 @@ dist/
 dist-inline/
 signer-dist/
 runtime-dist/
+datadir-dist/
 .leaderboard-test-dist/
 .vite/
 
