@@ -1478,21 +1478,20 @@ fn projectile_collision_debug_config() -> Option<&'static ProjectileCollisionDeb
         std::sync::OnceLock::new();
     CONFIG
         .get_or_init(|| {
-            std::env::var_os("PARITY_DEBUG_PROJECTILE_COLLISION_CANDIDATES")?;
-            let parse = |name: &str| {
-                let raw = std::env::var(name).unwrap_or_else(|_| {
-                    panic!("{name} is required when projectile collision debugging is enabled")
-                });
-                raw.parse::<u32>()
-                    .unwrap_or_else(|error| panic!("invalid {name}={raw:?}: {error}"))
-            };
-            Some(ProjectileCollisionDebugConfig {
-                frame: parse("PARITY_DEBUG_PROJECTILE_COLLISION_CANDIDATES_FRAME"),
-                shooter: parse("PARITY_DEBUG_PROJECTILE_COLLISION_CANDIDATES_SHOOTER"),
-                projectile_creation_order: parse(
+            let gate = crate::engine::diagnostics::ParityGate::from_env_required(
+                "PARITY_DEBUG_PROJECTILE_COLLISION_CANDIDATES",
+                [
+                    "PARITY_DEBUG_PROJECTILE_COLLISION_CANDIDATES_FRAME",
+                    "PARITY_DEBUG_PROJECTILE_COLLISION_CANDIDATES_SHOOTER",
                     "PARITY_DEBUG_PROJECTILE_COLLISION_CANDIDATES_PROJECTILE_CREATION_ORDER",
-                ),
-                projectile: parse("PARITY_DEBUG_PROJECTILE_COLLISION_CANDIDATES_PROJECTILE"),
+                    "PARITY_DEBUG_PROJECTILE_COLLISION_CANDIDATES_PROJECTILE",
+                ],
+            );
+            gate.enabled().then(|| ProjectileCollisionDebugConfig {
+                frame: gate.required(0),
+                shooter: gate.required(1),
+                projectile_creation_order: gate.required(2),
+                projectile: gate.required(3),
             })
         })
         .as_ref()

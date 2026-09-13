@@ -46,24 +46,17 @@ struct ViewRadiusCacheDebugConfig {
 fn view_radius_cache_debug_config() -> &'static ViewRadiusCacheDebugConfig {
     static CONFIG: std::sync::OnceLock<ViewRadiusCacheDebugConfig> = std::sync::OnceLock::new();
     CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_VIEW_RADIUS_CACHE").is_some();
-        let parse_frame = |name: &str, default| {
-            if !enabled {
-                return default;
-            }
-            std::env::var(name)
-                .ok()
-                .map(|value| {
-                    value
-                        .parse()
-                        .unwrap_or_else(|_| panic!("{name} must be a u32"))
-                })
-                .unwrap_or(default)
-        };
+        let gate = crate::engine::diagnostics::ParityGate::from_env(
+            "PARITY_DEBUG_VIEW_RADIUS_CACHE",
+            [
+                "PARITY_DEBUG_VIEW_RADIUS_CACHE_FROM",
+                "PARITY_DEBUG_VIEW_RADIUS_CACHE_THROUGH",
+            ],
+        );
         ViewRadiusCacheDebugConfig {
-            enabled,
-            from_frame: parse_frame("PARITY_DEBUG_VIEW_RADIUS_CACHE_FROM", 0),
-            through_frame: parse_frame("PARITY_DEBUG_VIEW_RADIUS_CACHE_THROUGH", u32::MAX),
+            enabled: gate.enabled(),
+            from_frame: gate.filter(0).unwrap_or(0),
+            through_frame: gate.filter(1).unwrap_or(u32::MAX),
         }
     })
 }

@@ -929,32 +929,22 @@ pub fn add_strike_tiredness(current_tiredness: u16, strike_energy: u16) -> u16 {
 /// frame-for-frame. Every `HumanData::tiredness` write and the
 /// swordfight evaluation threshold read prints one `RUST_TIREDNESS` line.
 pub fn tiredness_debug_enabled() -> bool {
-    tiredness_debug_filter().is_some()
+    tiredness_debug_gate().enabled()
 }
 
 pub fn tiredness_debug_matches(creation_order: u32) -> bool {
-    match tiredness_debug_filter() {
-        None => false,
-        Some(None) => true,
-        Some(Some(wanted)) => *wanted == creation_order,
-    }
+    tiredness_debug_gate().matches([Some(creation_order)])
 }
 
-/// `None` when the probe is off, `Some(None)` for every actor, `Some(Some(co))`
-/// for a single creation order. Resolved once so the per-entity, per-frame
-/// write sites do not pay for an environment scan.
-fn tiredness_debug_filter() -> &'static Option<Option<u32>> {
-    static FILTER: std::sync::OnceLock<Option<Option<u32>>> = std::sync::OnceLock::new();
-    FILTER.get_or_init(|| {
-        std::env::var_os("PARITY_DEBUG_TIREDNESS")?;
-        Some(
-            std::env::var("PARITY_DEBUG_TIREDNESS_CREATION_ORDER")
-                .ok()
-                .map(|raw| {
-                    raw.parse::<u32>().unwrap_or_else(|error| {
-                        panic!("invalid PARITY_DEBUG_TIREDNESS_CREATION_ORDER: {error}")
-                    })
-                }),
+/// Resolved once so the per-entity, per-frame write sites do not pay for an
+/// environment scan. An absent creation-order filter selects every actor.
+fn tiredness_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<1> {
+    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<1>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        crate::engine::diagnostics::ParityGate::from_env(
+            "PARITY_DEBUG_TIREDNESS",
+            ["PARITY_DEBUG_TIREDNESS_CREATION_ORDER"],
         )
     })
 }
