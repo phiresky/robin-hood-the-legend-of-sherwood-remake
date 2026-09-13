@@ -271,14 +271,8 @@ impl OptionsModalState {
             match id {
                 BUTTON_GRAPHICS => {
                     self.controller.enter_page(OptionsPage::Graphics);
-                    let (changed, _resolution_changed) = show_graphics(
-                        io.window,
-                        io.renderer,
-                        io.resources,
-                        io.cursor,
-                        &mut self.controller.graphic.working,
-                    )
-                    .await;
+                    let (changed, _resolution_changed) =
+                        show_graphics(io, &mut self.controller.graphic.working).await;
                     let effects = self.controller.accept_page(changed);
                     self.outcome.changed |= effects.profile_changed;
                     if effects.resolution_changed {
@@ -326,19 +320,11 @@ impl OptionsModalState {
                 }
                 BUTTON_SHORTCUTS => {
                     self.controller.enter_page(OptionsPage::Shortcuts);
-                    // TODO: pass `io` / `ScreenAudio` once the shortcuts
-                    // screen is migrated to the ScreenFrame API.
-                    let shortcut_audio = audio.reborrow();
                     let accepted = show_shortcuts(
-                        io.window,
-                        io.renderer,
-                        io.resources,
-                        io.cursor,
+                        io,
                         &mut self.controller.keys,
                         &mut self.controller.custom_keys,
-                        shortcut_audio.sound,
-                        shortcut_audio.backend,
-                        shortcut_audio.sample_loader,
+                        audio.reborrow(),
                     )
                     .await;
                     // Shortcut edits do not propagate to the outer
@@ -357,10 +343,7 @@ impl OptionsModalState {
                     self.controller.enter_page(OptionsPage::Gameplay);
                     let changed = show_gameplay(
                         application_context,
-                        io.window,
-                        io.renderer,
-                        io.resources,
-                        io.cursor,
+                        io,
                         &mut self.controller.gameplay,
                         sherwood_trading_editable,
                     )
