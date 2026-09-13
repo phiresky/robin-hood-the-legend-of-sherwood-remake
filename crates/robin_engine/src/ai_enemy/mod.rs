@@ -797,35 +797,38 @@ impl EnemyAi {
         // `battle_decisions`.
         let debug = them_lifecycle_debug_matches(ctx);
         if debug {
-            crate::ai_enemy::parity_trace::them_reinitialize_before(
-                &(ctx.frame),
-                &(ctx.original_creation_order),
-                &(self.base.me),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.list_them),
-                &(ctx.self_seen_enemy_handles),
-            );
+            crate::ai_enemy::parity_trace::ThemReinitializeBefore {
+                frame: &(ctx.frame),
+                co: &(ctx.original_creation_order),
+                me: &(self.base.me),
+                state: &(self.base.current_state),
+                substate: &(self.base.current_substate),
+                list: &(self.list_them),
+                seen: &(ctx.self_seen_enemy_handles),
+            }
+            .emit();
             for &handle in &ctx.self_seen_enemy_handles {
                 let Some(target) = ctx.entity_view(handle) else {
-                    crate::ai_enemy::parity_trace::them_reinitialize_input(
-                        &(ctx.frame),
-                        &(ctx.original_creation_order),
-                        &(self.base.me),
-                        &(handle),
-                    );
+                    crate::ai_enemy::parity_trace::ThemReinitializeInputMissing {
+                        frame: &(ctx.frame),
+                        co: &(ctx.original_creation_order),
+                        me: &(self.base.me),
+                        target: &(handle),
+                    }
+                    .emit();
                     continue;
                 };
-                crate::ai_enemy::parity_trace::them_reinitialize_input_2(
-                    &(ctx.frame),
-                    &(ctx.original_creation_order),
-                    &(self.base.me),
-                    &(handle),
-                    &(target.is_dead),
-                    &(target.is_unconscious),
-                    &(target.is_carried),
-                    &(target.is_able_to_fight),
-                );
+                crate::ai_enemy::parity_trace::ThemReinitializeInput {
+                    frame: &(ctx.frame),
+                    co: &(ctx.original_creation_order),
+                    me: &(self.base.me),
+                    target: &(handle),
+                    dead: &(target.is_dead),
+                    unconscious: &(target.is_unconscious),
+                    carried: &(target.is_carried),
+                    able: &(target.is_able_to_fight),
+                }
+                .emit();
             }
         }
         self.list_them.clear();
@@ -855,12 +858,13 @@ impl EnemyAi {
             "reinitialize_them_list"
         );
         if debug {
-            crate::ai_enemy::parity_trace::them_reinitialize_after(
-                &(ctx.frame),
-                &(ctx.original_creation_order),
-                &(self.base.me),
-                &(self.list_them),
-            );
+            crate::ai_enemy::parity_trace::ThemReinitializeAfter {
+                frame: &(ctx.frame),
+                co: &(ctx.original_creation_order),
+                me: &(self.base.me),
+                list: &(self.list_them),
+            }
+            .emit();
         }
     }
 
@@ -1642,18 +1646,19 @@ impl EnemyAi {
         let debug_decision_path = decision_path_debug_enabled()
             && decision_path_debug_matches(self.base.cached_frame, self.base.me);
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_set_state(
-                &(self.base.cached_frame),
-                &(self.base.me),
-                &(std::panic::Location::caller()),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.base.couldnt_reachpoint),
-                &(self.base.already_on_point),
-                &(self.base.outbox.reentrant.owner_work),
-                &(state),
-                &(substate),
-            );
+            crate::ai_enemy::parity_trace::AidecisionSetState {
+                frame: &(self.base.cached_frame),
+                owner: &(self.base.me),
+                caller: &(std::panic::Location::caller()),
+                from_state: &(self.base.current_state),
+                from_substate: &(self.base.current_substate),
+                couldnt: &(self.base.couldnt_reachpoint),
+                already: &(self.base.already_on_point),
+                owner_work_before: &(self.base.outbox.reentrant.owner_work),
+                state: &(state),
+                substate: &(substate),
+            }
+            .emit();
         }
         debug_assert_eq!(
             substate.ai_state_family(),
@@ -1958,15 +1963,16 @@ impl EnemyAi {
         self.set_alert_status(alert);
 
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_set_state_done(
-                &(self.base.cached_frame),
-                &(self.base.me),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.base.couldnt_reachpoint),
-                &(self.base.already_on_point),
-                &(self.base.outbox.reentrant.owner_work),
-            );
+            crate::ai_enemy::parity_trace::AidecisionSetStateDone {
+                frame: &(self.base.cached_frame),
+                owner: &(self.base.me),
+                state: &(self.base.current_state),
+                substate: &(self.base.current_substate),
+                couldnt: &(self.base.couldnt_reachpoint),
+                already: &(self.base.already_on_point),
+                owner_work_after: &(self.base.outbox.reentrant.owner_work),
+            }
+            .emit();
         }
 
         self.finish_set_state(substate)
@@ -2151,22 +2157,23 @@ impl EnemyAi {
         let debug_decision_path =
             decision_path_debug_enabled() && decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_think_enter(
-                &(ctx.frame),
-                &(self.base.me),
-                &(ctx.original_creation_order),
-                &(self.base.think_recursion_depth),
-                &(self.base.open_end_think_frames),
-                &(stimulus.stimulus_type),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.base.primary_target),
-                &(ctx.self_is_rider),
-                &(self.base.couldnt_reachpoint),
-                &(self.base.already_on_point),
-                &(self.list_them),
-                &(self.base.outbox.reentrant.owner_work),
-            );
+            crate::ai_enemy::parity_trace::AidecisionThinkEnter {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                co: &(ctx.original_creation_order),
+                depth: &(self.base.think_recursion_depth),
+                open: &(self.base.open_end_think_frames),
+                stimulus: &(stimulus.stimulus_type),
+                state: &(self.base.current_state),
+                substate: &(self.base.current_substate),
+                primary: &(self.base.primary_target),
+                rider: &(ctx.self_is_rider),
+                couldnt: &(self.base.couldnt_reachpoint),
+                already: &(self.base.already_on_point),
+                list_them: &(self.list_them),
+                owner_work: &(self.base.outbox.reentrant.owner_work),
+            }
+            .emit();
         }
 
         let stimulus_type = stimulus.stimulus_type;

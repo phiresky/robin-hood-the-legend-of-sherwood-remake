@@ -1234,21 +1234,22 @@ impl AiController {
             )
         };
         if debug {
-            crate::ai::parity_trace::bored_boundary_get_bored_time(
-                &(ctx.frame),
-                &(self.me),
-                &(self.current_state),
-                &(self.current_substate),
-                &(ctx.self_rank),
-                &(ctx.self_pride),
-                &(min),
-                &(delta),
-                &(self.timer_is_running),
-                &(self.when_does_timer_ring),
-                &(self.outbox.reentrant.self_stimuli.len()),
-                &(self.outbox.reentrant.owner_work.len()),
-                &(self.outbox.actor.orders.len()),
-            );
+            crate::ai::parity_trace::BoredBoundaryGetBoredTime {
+                frame: &(ctx.frame),
+                owner: &(self.me),
+                state: &(self.current_state),
+                substate: &(self.current_substate),
+                rank: &(ctx.self_rank),
+                pride: &(ctx.self_pride),
+                min: &(min),
+                delta: &(delta),
+                timer_running: &(self.timer_is_running),
+                timer_deadline: &(self.when_does_timer_ring),
+                self_stimuli: &(self.outbox.reentrant.self_stimuli.len()),
+                owner_work: &(self.outbox.reentrant.owner_work.len()),
+                orders: &(self.outbox.actor.orders.len()),
+            }
+            .emit();
         }
         // P_RECTANGLE ignores `lambda`; pass MAX_ATT_VALUE for the un-biased sample.
         min + (Self::random_value(
@@ -1513,25 +1514,26 @@ impl AiController {
         if !config.matches_required([Some(ctx.frame), ctx.original_creation_order]) {
             return;
         }
-        crate::ai::parity_trace::macrolife(
-            &(ctx.frame),
-            &(ctx.original_creation_order),
-            &(self.me),
-            &(self.current_state),
-            &(self.current_substate),
-            &(self.macro_in_progress),
-            &(self.macro_timer_is_running),
-            &(self.when_does_macro_timer_ring),
-            &(self.macro_started_in_this_frame),
-            &(self.macro_command_offset),
-            &(self.number_of_remaining_macro_bytes),
-            &(self.macro_command_waypoint),
-            &(self.outbox.reentrant.owner_work.len()),
-            &(self.outbox.reentrant.self_stimuli.len()),
-            &(self.outbox.reentrant.finish_macro_after_self_stimuli),
-            &(phase),
-            &(reason),
-        );
+        crate::ai::parity_trace::Macrolife {
+            frame: &(ctx.frame),
+            owner_creation_order: &(ctx.original_creation_order),
+            me: &(self.me),
+            state: &(self.current_state),
+            substate: &(self.current_substate),
+            in_progress: &(self.macro_in_progress),
+            timer_running: &(self.macro_timer_is_running),
+            timer_deadline: &(self.when_does_macro_timer_ring),
+            started_this_frame: &(self.macro_started_in_this_frame),
+            command_offset: &(self.macro_command_offset),
+            remaining_bytes: &(self.number_of_remaining_macro_bytes),
+            waypoint: &(self.macro_command_waypoint),
+            owner_work_len: &(self.outbox.reentrant.owner_work.len()),
+            self_stimuli_len: &(self.outbox.reentrant.self_stimuli.len()),
+            finish_after_stimuli: &(self.outbox.reentrant.finish_macro_after_self_stimuli),
+            phase: &(phase),
+            reason: &(reason),
+        }
+        .emit();
     }
 
     fn break_macro_debug(&mut self, ctx: &AiContext, reason: &str) {
@@ -1643,13 +1645,14 @@ impl AiController {
         let debug = frame.is_some_and(|frame| consider_report_debug_matches(frame, self.me));
         if debug {
             let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
-            crate::ai::parity_trace::considerreport_merge_start(
-                &(self.me),
-                &(other.seen_bodies),
-                &(self.my_reconnaissance_report.seen_bodies),
-                &(frame),
-                &(flags),
-            );
+            crate::ai::parity_trace::ConsiderreportMergeStart {
+                owner: &(self.me),
+                incoming: &(other.seen_bodies),
+                known_before: &(self.my_reconnaissance_report.seen_bodies),
+                frame: &(frame),
+                flags: &(flags),
+            }
+            .emit();
         }
 
         // Per-body merge and detectable removal.
@@ -1672,28 +1675,35 @@ impl AiController {
                     .delete_detectable_entity((body_id, DetectableType::Body));
                 if debug {
                     let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
-                    crate::ai::parity_trace::considerreport_body(
-                        &(self.me),
-                        &(body_id.kind()),
-                        &(body_id.index()),
-                        &(frame),
-                        &(body),
-                    );
+                    crate::ai::parity_trace::ConsiderreportBody {
+                        owner: &(self.me),
+                        resolved_kind: &(body_id.kind()),
+                        resolved_index: &(body_id.index()),
+                        frame: &(frame),
+                        body: &(body),
+                    }
+                    .emit();
                 }
             } else if debug {
                 let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
-                crate::ai::parity_trace::considerreport_body_2(&(self.me), &(frame), &(body));
+                crate::ai::parity_trace::ConsiderreportBodyKnown {
+                    owner: &(self.me),
+                    frame: &(frame),
+                    body: &(body),
+                }
+                .emit();
             }
         }
 
         if debug {
             let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
-            crate::ai::parity_trace::considerreport_merge_end(
-                &(self.me),
-                &(self.my_reconnaissance_report.seen_bodies),
-                &(self.outbox.actor.detectable_mutations),
-                &(frame),
-            );
+            crate::ai::parity_trace::ConsiderreportMergeEnd {
+                owner: &(self.me),
+                known_after: &(self.my_reconnaissance_report.seen_bodies),
+                queued_mutations: &(self.outbox.actor.detectable_mutations),
+                frame: &(frame),
+            }
+            .emit();
         }
 
         // Charly merge plus missed-friend detectable registration.
@@ -3268,23 +3278,24 @@ impl AiController {
         let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
             && crate::ai_enemy::decision_path_debug_matches(ctx.frame, self.me);
         if debug_decision_path {
-            crate::ai::parity_trace::aidecision_goto_enter(
-                &(ctx.frame),
-                &(self.me),
-                &(ctx.original_creation_order),
-                &(destination.x.to_bits()),
-                &(destination.y.to_bits()),
-                &(destination.sector),
-                &(destination.level),
-                &(ctx.position.x.to_bits()),
-                &(ctx.position.y.to_bits()),
-                &(ctx.position.sector),
-                &(ctx.position.level),
-                &(self.couldnt_reachpoint),
-                &(self.already_on_point),
-                &(self.outbox.reentrant.owner_work),
-                &(flags),
-            );
+            crate::ai::parity_trace::AidecisionGotoEnter {
+                frame: &(ctx.frame),
+                owner: &(self.me),
+                co: &(ctx.original_creation_order),
+                destination_x_bits: &(destination.x.to_bits()),
+                destination_y_bits: &(destination.y.to_bits()),
+                destination_sector: &(destination.sector),
+                destination_level: &(destination.level),
+                position_x_bits: &(ctx.position.x.to_bits()),
+                position_y_bits: &(ctx.position.y.to_bits()),
+                position_sector: &(ctx.position.sector),
+                position_level: &(ctx.position.level),
+                couldnt_before: &(self.couldnt_reachpoint),
+                already_before: &(self.already_on_point),
+                owner_work_before: &(self.outbox.reentrant.owner_work),
+                flags: &(flags),
+            }
+            .emit();
         }
         // Record the latest destination / flags so stuck-retry replays,
         // cancellation, and the EventReachPoint re-entry path can see
@@ -3355,13 +3366,14 @@ impl AiController {
         if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
             self.finish_already_on_point();
             if debug_decision_path {
-                crate::ai::parity_trace::aidecision_goto_result_already_on_point(
-                    &(ctx.frame),
-                    &(self.me),
-                    &(self.couldnt_reachpoint),
-                    &(self.already_on_point),
-                    &(self.outbox.reentrant.owner_work),
-                );
+                crate::ai::parity_trace::AidecisionGotoResultAlreadyOnPoint {
+                    frame: &(ctx.frame),
+                    owner: &(self.me),
+                    couldnt: &(self.couldnt_reachpoint),
+                    already: &(self.already_on_point),
+                    owner_work: &(self.outbox.reentrant.owner_work),
+                }
+                .emit();
             }
             return;
         }
@@ -3383,14 +3395,15 @@ impl AiController {
         {
             self.finish_already_on_point();
             if debug_decision_path {
-                crate::ai::parity_trace::aidecision_goto_result_already_near(
-                    &(ctx.frame),
-                    &(self.me),
-                    &(near_tolerance.to_bits()),
-                    &(self.couldnt_reachpoint),
-                    &(self.already_on_point),
-                    &(self.outbox.reentrant.owner_work),
-                );
+                crate::ai::parity_trace::AidecisionGotoResultAlreadyNear {
+                    frame: &(ctx.frame),
+                    owner: &(self.me),
+                    tolerance_bits: &(near_tolerance.to_bits()),
+                    couldnt: &(self.couldnt_reachpoint),
+                    already: &(self.already_on_point),
+                    owner_work: &(self.outbox.reentrant.owner_work),
+                }
+                .emit();
             }
             return;
         }
@@ -3403,10 +3416,11 @@ impl AiController {
         if destination.x <= 0.0 || destination.y <= 0.0 {
             self.couldnt_reachpoint = true;
             if debug_decision_path {
-                crate::ai::parity_trace::aidecision_goto_result_reject_nonpositive(
-                    &(ctx.frame),
-                    &(self.me),
-                );
+                crate::ai::parity_trace::AidecisionGotoResultRejectNonpositive {
+                    frame: &(ctx.frame),
+                    owner: &(self.me),
+                }
+                .emit();
             }
             return;
         }
@@ -3418,10 +3432,11 @@ impl AiController {
         if destination.sector.is_none() {
             self.couldnt_reachpoint = true;
             if debug_decision_path {
-                crate::ai::parity_trace::aidecision_goto_result_reject_null_sector(
-                    &(ctx.frame),
-                    &(self.me),
-                );
+                crate::ai::parity_trace::AidecisionGotoResultRejectNullSector {
+                    frame: &(ctx.frame),
+                    owner: &(self.me),
+                }
+                .emit();
             }
             return;
         }
@@ -3464,14 +3479,15 @@ impl AiController {
         order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
         if debug_decision_path {
-            crate::ai::parity_trace::aidecision_goto_result_queued(
-                &(ctx.frame),
-                &(self.me),
-                &(self.couldnt_reachpoint),
-                &(self.already_on_point),
-                &(self.outbox.actor.orders.len()),
-                &(self.outbox.reentrant.owner_work),
-            );
+            crate::ai::parity_trace::AidecisionGotoResultQueued {
+                frame: &(ctx.frame),
+                owner: &(self.me),
+                couldnt: &(self.couldnt_reachpoint),
+                already: &(self.already_on_point),
+                pending_orders: &(self.outbox.actor.orders.len()),
+                owner_work: &(self.outbox.reentrant.owner_work),
+            }
+            .emit();
         }
     }
 
@@ -3623,20 +3639,21 @@ impl AiController {
         let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
             && crate::ai_enemy::decision_path_debug_matches(ctx.frame, self.me);
         if debug_decision_path {
-            crate::ai::parity_trace::aidecision_go_near_enter(
-                &(ctx.frame),
-                &(self.me),
-                &(ctx.original_creation_order),
-                &(destination.x.to_bits()),
-                &(destination.y.to_bits()),
-                &(destination.sector),
-                &(destination.level),
-                &(distance),
-                &(self.think_recursion_depth),
-                &(self.couldnt_reachpoint),
-                &(self.already_on_point),
-                &(flags),
-            );
+            crate::ai::parity_trace::AidecisionGoNearEnter {
+                frame: &(ctx.frame),
+                owner: &(self.me),
+                co: &(ctx.original_creation_order),
+                destination_x_bits: &(destination.x.to_bits()),
+                destination_y_bits: &(destination.y.to_bits()),
+                destination_sector: &(destination.sector),
+                destination_level: &(destination.level),
+                distance: &(distance),
+                recursion_depth: &(self.think_recursion_depth),
+                couldnt_before: &(self.couldnt_reachpoint),
+                already_before: &(self.already_on_point),
+                flags: &(flags),
+            }
+            .emit();
         }
         // Deep recursion shrinks the stop-distance toward zero so the
         // actor doesn't loop on Think() recursion. Always applied — a
@@ -3687,13 +3704,14 @@ impl AiController {
         if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
             self.finish_already_on_point();
             if debug_decision_path {
-                crate::ai::parity_trace::aidecision_go_near_result_already_on_point(
-                    &(ctx.frame),
-                    &(self.me),
-                    &(effective_distance),
-                    &(self.couldnt_reachpoint),
-                    &(self.already_on_point),
-                );
+                crate::ai::parity_trace::AidecisionGoNearResultAlreadyOnPoint {
+                    frame: &(ctx.frame),
+                    owner: &(self.me),
+                    effective_distance: &(effective_distance),
+                    couldnt: &(self.couldnt_reachpoint),
+                    already: &(self.already_on_point),
+                }
+                .emit();
             }
             return;
         }
@@ -3706,13 +3724,14 @@ impl AiController {
         if same_layer && self.check_already_near(&destination, effective_distance as f32, ctx) {
             self.finish_already_on_point();
             if debug_decision_path {
-                crate::ai::parity_trace::aidecision_go_near_result_already_near(
-                    &(ctx.frame),
-                    &(self.me),
-                    &(effective_distance),
-                    &(self.couldnt_reachpoint),
-                    &(self.already_on_point),
-                );
+                crate::ai::parity_trace::AidecisionGoNearResultAlreadyNear {
+                    frame: &(ctx.frame),
+                    owner: &(self.me),
+                    effective_distance: &(effective_distance),
+                    couldnt: &(self.couldnt_reachpoint),
+                    already: &(self.already_on_point),
+                }
+                .emit();
             }
             return;
         }
@@ -3731,15 +3750,16 @@ impl AiController {
         order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
         if debug_decision_path {
-            crate::ai::parity_trace::aidecision_go_near_result_queued(
-                &(ctx.frame),
-                &(self.me),
-                &(effective_distance),
-                &(self.couldnt_reachpoint),
-                &(self.already_on_point),
-                &(self.outbox.actor.orders.len()),
-                &(self.outbox.reentrant.owner_work),
-            );
+            crate::ai::parity_trace::AidecisionGoNearResultQueued {
+                frame: &(ctx.frame),
+                owner: &(self.me),
+                effective_distance: &(effective_distance),
+                couldnt: &(self.couldnt_reachpoint),
+                already: &(self.already_on_point),
+                pending_orders: &(self.outbox.actor.orders.len()),
+                owner_work: &(self.outbox.reentrant.owner_work),
+            }
+            .emit();
         }
     }
 
@@ -4101,14 +4121,15 @@ impl AiController {
             target.y - me.y,
         );
         if point_to_debug_enabled() {
-            crate::ai::parity_trace::point_to(
-                &(ctx.frame),
-                &(owner),
-                &(pos),
-                &(target),
-                &(me),
-                &(direction),
-            );
+            crate::ai::parity_trace::PointTo {
+                frame: &(ctx.frame),
+                owner: &(owner),
+                pos: &(pos),
+                target: &(target),
+                me: &(me),
+                direction: &(direction),
+            }
+            .emit();
         }
         let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
         turn.set_property(Field::Direction, FieldValue::Integer(direction as u32));
@@ -4457,18 +4478,19 @@ impl AiController {
         });
         let result = self.will_stop_at_next_waypoint_inner(sim, hiking_paths);
         if let Some((forecasted_before, value_before, path, waypoint)) = before {
-            crate::ai::parity_trace::willstop(
-                &(ctx.frame),
-                &(ctx.original_creation_order),
-                &(self.next_macro_rand_forecasted),
-                &(self.next_macro_rand),
-                &(caller),
-                &(path),
-                &(waypoint),
-                &(forecasted_before),
-                &(value_before),
-                &(result),
-            );
+            crate::ai::parity_trace::Willstop {
+                frame: &(ctx.frame),
+                owner: &(ctx.original_creation_order),
+                forecast_after: &(self.next_macro_rand_forecasted),
+                value_after: &(self.next_macro_rand),
+                caller: &(caller),
+                path: &(path),
+                waypoint: &(waypoint),
+                forecasted_before: &(forecasted_before),
+                value_before: &(value_before),
+                result: &(result),
+            }
+            .emit();
         }
         result
     }
@@ -5495,11 +5517,12 @@ impl AiController {
         let stimulus_type = stimulus.stimulus_type;
         if stimulus_type == StimulusType::EventReachPoint {
             if panic_debug_matches(ctx.frame) {
-                crate::ai::parity_trace::aihide(
-                    &(ctx.frame),
-                    &(ctx.original_creation_order),
-                    &(self.current_substate),
-                );
+                crate::ai::parity_trace::Aihide {
+                    frame: &(ctx.frame),
+                    co: &(ctx.original_creation_order),
+                    substate: &(self.current_substate),
+                }
+                .emit();
             }
             self.set_ai_state(AiState::Fleeing);
             self.current_substate = Substate::FleeingHiding;
@@ -5544,15 +5567,16 @@ impl AiController {
             return false;
         }
         if panic_debug_matches(ctx.frame) {
-            crate::ai::parity_trace::aipanic(
-                &(ctx.frame),
-                &(self.me),
-                &(ctx.original_creation_order),
-                &(stimulus_type),
-                &(self.lasting_panic_runs),
-                &(self.directed_panic),
-                &(self.first_try),
-            );
+            crate::ai::parity_trace::Aipanic {
+                frame: &(ctx.frame),
+                me: &(self.me),
+                co: &(ctx.original_creation_order),
+                stimulus: &(stimulus_type),
+                runs: &(self.lasting_panic_runs),
+                directed: &(self.directed_panic),
+                first_try: &(self.first_try),
+            }
+            .emit();
         }
 
         if self.lasting_panic_runs == 0 {
@@ -5653,33 +5677,34 @@ impl AiController {
                     ctx.move_box.x_max(),
                     ctx.move_box.y_max(),
                 );
-                crate::ai::parity_trace::aipanic_geometry(
-                    &(ctx.frame),
-                    &(self.me),
-                    &(sector_index),
-                    &(segment.to_bits()),
-                    &(origin.x.to_bits()),
-                    &(origin.y.to_bits()),
-                    &(destination.x.to_bits()),
-                    &(destination.y.to_bits()),
-                    &(ctx.position.level),
-                    &(ctx.move_box),
-                    &(ctx
+                crate::ai::parity_trace::AipanicGeometry {
+                    frame: &(ctx.frame),
+                    me: &(self.me),
+                    sector: &(sector_index),
+                    distance_bits: &(segment.to_bits()),
+                    origin_x_bits: &(origin.x.to_bits()),
+                    origin_y_bits: &(origin.y.to_bits()),
+                    destination_x_bits: &(destination.x.to_bits()),
+                    destination_y_bits: &(destination.y.to_bits()),
+                    layer: &(ctx.position.level),
+                    move_box: &(ctx.move_box),
+                    position_authorized: &(ctx
                         .fast_grid
                         .is_position_authorized(&destination_box, ctx.position.level)),
-                    &(ctx.fast_grid.is_reachable_thick(
+                    reachable_thick: &(ctx.fast_grid.is_reachable_thick(
                         origin,
                         destination,
                         ctx.position.level,
                         half_diagonal,
                     )),
-                    &(ctx.fast_grid.is_straight_movement_authorized(
+                    straight_authorized: &(ctx.fast_grid.is_straight_movement_authorized(
                         origin,
                         destination,
                         ctx.position.level,
                         &ctx.move_box,
                     )),
-                );
+                }
+                .emit();
             }
 
             // Next time around we're no longer on the first try.

@@ -746,16 +746,17 @@ pub fn prepare_forecast_destination_for_ia(
     }
 
     if forecast_ia_debug_enabled() && grid_sector.is_some_and(|gs| gs.sector_type.is_lift()) {
-        crate::ai::parity_trace::forecast(
-            &(point.x),
-            &(point.y),
-            &(u16::from(sector)),
-            &(building_gates.len()),
-            &(input),
-            &(layer),
-            &(direction),
-            &(entry_gate),
-        );
+        crate::ai::parity_trace::Forecast {
+            out_x: &(point.x),
+            out_y: &(point.y),
+            sector: &(u16::from(sector)),
+            gates: &(building_gates.len()),
+            input: &(input),
+            layer: &(layer),
+            direction: &(direction),
+            entry_gate: &(entry_gate),
+        }
+        .emit();
     }
 
     PreparedForecastDestination {

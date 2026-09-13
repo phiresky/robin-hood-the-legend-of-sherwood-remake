@@ -1011,15 +1011,16 @@ impl EnemyAi {
                 me_snap.elevation,
             ) as u16;
             if crate::ai_enemy::battle_decision_debug_enabled() {
-                crate::ai_enemy::parity_trace::shield_bearer_candidate(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(f.handle),
-                    &(f.current_substate as u32),
-                    &(f.archer_behind_me),
-                    &(dist),
-                    &(min_distance),
-                );
+                crate::ai_enemy::parity_trace::ShieldBearerCandidate {
+                    frame: &(ctx.frame),
+                    me: &(self.base.me),
+                    candidate: &(f.handle),
+                    substate: &(f.current_substate as u32),
+                    archer_behind: &(f.archer_behind_me),
+                    dist: &(dist),
+                    min_distance: &(min_distance),
+                }
+                .emit();
             }
             if f32::from(dist) < best_distance {
                 best_distance = f32::from(dist);
@@ -1041,13 +1042,14 @@ impl EnemyAi {
                     )
                 })
                 .collect::<Vec<_>>();
-            crate::ai_enemy::parity_trace::shield_bearer_result(
-                &(ctx.frame),
-                &(self.base.me),
-                &(tick.fighter_registry.len()),
-                &(best),
-                &(shield_bearers),
-            );
+            crate::ai_enemy::parity_trace::ShieldBearerResult {
+                frame: &(ctx.frame),
+                me: &(self.base.me),
+                registry: &(tick.fighter_registry.len()),
+                best: &(best),
+                shield_bearers: &(shield_bearers),
+            }
+            .emit();
         }
         best
     }
@@ -1553,17 +1555,18 @@ impl EnemyAi {
             let ok =
                 g.is_straight_movement_authorized(bearer_pt, cover_pt, behind.level, &ctx.move_box);
             if crate::ai_enemy::battle_decision_debug_enabled() {
-                crate::ai_enemy::parity_trace::cover_pos(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(shield_bearer),
-                    &(snap.current_substate as u32),
-                    &(bearer_pos),
-                    &(snap.shield_bearer_direction),
-                    &(snap.position),
-                    &(behind),
-                    &(ok),
-                );
+                crate::ai_enemy::parity_trace::CoverPos {
+                    frame: &(ctx.frame),
+                    me: &(self.base.me),
+                    bearer: &(shield_bearer),
+                    sub: &(snap.current_substate as u32),
+                    bearer_pos: &(bearer_pos),
+                    bearer_dir: &(snap.shield_bearer_direction),
+                    bearer_raw: &(snap.position),
+                    behind: &(behind),
+                    ok: &(ok),
+                }
+                .emit();
             }
             if !ok {
                 return None;
@@ -1623,32 +1626,34 @@ impl EnemyAi {
         for f in &tick.fighter_registry {
             if !f.is_friendly {
                 if debug {
-                    crate::ai_enemy::parity_trace::archer_protection_scan(
-                        &(ctx.frame),
-                        &(self.base.me),
-                        &(f.handle),
-                    );
+                    crate::ai_enemy::parity_trace::ArcherProtectionScanNotFriendly {
+                        frame: &(ctx.frame),
+                        owner: &(self.base.me),
+                        cand: &(f.handle),
+                    }
+                    .emit();
                 }
                 continue;
             }
             let sq = ai_square_distance(&f.raw_position, f.elevation, &me_position, me_elevation);
             if debug {
-                crate::ai_enemy::parity_trace::archer_protection_scan_2(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(f.handle),
-                    &(sq),
-                    &(f.ai_state),
-                    &(f.current_substate as u32),
-                    &(f.is_archer_unit),
-                    &(f.is_tower_guard),
-                    &(f.shield_bearer_before_me),
-                    &(self.archer_behind_me),
-                    &(f.archer_behind_me),
-                    &(f.is_shield_bearer),
-                    &(f.position),
-                    &(f.elevation),
-                );
+                crate::ai_enemy::parity_trace::ArcherProtectionScan {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    cand: &(f.handle),
+                    sq: &(sq),
+                    state: &(f.ai_state),
+                    sub: &(f.current_substate as u32),
+                    archer: &(f.is_archer_unit),
+                    tower: &(f.is_tower_guard),
+                    sbb: &(f.shield_bearer_before_me),
+                    own_abm: &(self.archer_behind_me),
+                    abm: &(f.archer_behind_me),
+                    shield: &(f.is_shield_bearer),
+                    pos: &(f.position),
+                    elev: &(f.elevation),
+                }
+                .emit();
             }
             if sq >= consider_sq {
                 continue;
@@ -2055,15 +2060,16 @@ impl EnemyAi {
                 "reconsider_phalanx: attack-distance gate"
             );
             if crate::ai_enemy::battle_decision_debug_enabled() {
-                crate::ai_enemy::parity_trace::reconsider_phalanx(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(nearest.get()),
-                    &(sq),
-                    &(atk_dist * atk_dist),
-                    &(self.left_combat_neighbour),
-                    &(self.right_combat_neighbour),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderPhalanx {
+                    frame: &(ctx.frame),
+                    me: &(self.base.me),
+                    nearest: &(nearest.get()),
+                    sq: &(sq),
+                    thr: &(atk_dist * atk_dist),
+                    left: &(self.left_combat_neighbour),
+                    right: &(self.right_combat_neighbour),
+                }
+                .emit();
             }
             if sq < atk_dist * atk_dist {
                 self.break_phalanx(ctx, tick, None);
@@ -2411,23 +2417,25 @@ impl EnemyAi {
             Substate::AttackingAdvancingWithShield => {
                 if called_from_hourglass {
                     if debug {
-                        crate::ai_enemy::parity_trace::arrow_protection_reject_advancing_hourglass(
-                            &(ctx.frame),
-                            &(self.base.me),
-                            &(self.base.current_substate),
-                        );
+                        crate::ai_enemy::parity_trace::ArrowProtectionRejectAdvancingHourglass {
+                            frame: &(ctx.frame),
+                            owner: &(self.base.me),
+                            substate: &(self.base.current_substate),
+                        }
+                        .emit();
                     }
                     return false;
                 }
             }
             _ => {
                 if debug {
-                    crate::ai_enemy::parity_trace::arrow_protection_reject_substate(
-                        &(ctx.frame),
-                        &(self.base.me),
-                        &(self.base.current_substate as u32),
-                        &(called_from_hourglass),
-                    );
+                    crate::ai_enemy::parity_trace::ArrowProtectionRejectSubstate {
+                        frame: &(ctx.frame),
+                        owner: &(self.base.me),
+                        substate: &(self.base.current_substate as u32),
+                        from_hourglass: &(called_from_hourglass),
+                    }
+                    .emit();
                 }
                 return false;
             }
@@ -2437,12 +2445,13 @@ impl EnemyAi {
         let me_snap = self.find_fighter_logged(self.base.me, tick, "self shield-bearer flag");
         if !me_snap.is_some_and(|f| f.is_shield_bearer) {
             if debug {
-                crate::ai_enemy::parity_trace::arrow_protection_reject_shield_bearer(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(me_snap.is_some()),
-                    &(me_snap.map(|fighter| fighter.is_shield_bearer)),
-                );
+                crate::ai_enemy::parity_trace::ArrowProtectionRejectShieldBearer {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    owner_present: &(me_snap.is_some()),
+                    is_shield_bearer: &(me_snap.map(|fighter| fighter.is_shield_bearer)),
+                }
+                .emit();
             }
             return false;
         }
@@ -2460,11 +2469,12 @@ impl EnemyAi {
             self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
         let Some(nearest_enemy) = nearest_enemy else {
             if debug {
-                crate::ai_enemy::parity_trace::arrow_protection_reject_no_nearest_enemy(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(self.list_them),
-                );
+                crate::ai_enemy::parity_trace::ArrowProtectionRejectNoNearestEnemy {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    list_them: &(self.list_them),
+                }
+                .emit();
             }
             return false;
         };
@@ -2484,13 +2494,14 @@ impl EnemyAi {
         let enemy_square_distance = square_distance_to(nearest_enemy.get());
         if enemy_square_distance < atk_dist * atk_dist {
             if debug {
-                crate::ai_enemy::parity_trace::arrow_protection_reject_enemy_near(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(nearest_enemy.get()),
-                    &(enemy_square_distance.to_bits()),
-                    &(atk_dist * atk_dist),
-                );
+                crate::ai_enemy::parity_trace::ArrowProtectionRejectEnemyNear {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    nearest: &(nearest_enemy.get()),
+                    square_distance_bits: &(enemy_square_distance.to_bits()),
+                    threshold: &(atk_dist * atk_dist),
+                }
+                .emit();
             }
             return false;
         }
@@ -2516,11 +2527,12 @@ impl EnemyAi {
         // "unable to fight".
         let mut dangerous_enemy = None;
         if debug {
-            crate::ai_enemy::parity_trace::arrow_protection_seen(
-                &(ctx.frame),
-                &(self.base.me),
-                &(tick.seen_last_frame_enemies),
-            );
+            crate::ai_enemy::parity_trace::ArrowProtectionSeen {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                seen: &(tick.seen_last_frame_enemies),
+            }
+            .emit();
         }
         for &handle in &tick.seen_last_frame_enemies {
             let Some(view) = ctx.entity_view(handle) else {
@@ -2535,14 +2547,15 @@ impl EnemyAi {
             };
             let min_dist = archer::MIN_PROTECT_ARROW_DISTANCE as f32;
             if debug {
-                crate::ai_enemy::parity_trace::arrow_protection_enemy(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(handle),
-                    &(square_distance_to(handle)),
-                    &(view.action_state),
-                    &(view.action_state.is_bow()),
-                );
+                crate::ai_enemy::parity_trace::ArrowProtectionEnemy {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    cand: &(handle),
+                    sq: &(square_distance_to(handle)),
+                    action: &(view.action_state),
+                    bow: &(view.action_state.is_bow()),
+                }
+                .emit();
             }
             if square_distance_to(handle) < min_dist * min_dist {
                 continue;
@@ -2587,12 +2600,12 @@ impl EnemyAi {
             );
             if protectable <= 0 {
                 if debug {
-                    crate::ai_enemy::parity_trace::arrow_protection_reject_no_protection_target(
-                        &(ctx.frame),
-                        &(self.base.me),
-                        &(nearest_enemy.get()),
-                        &(protectable),
-                        &(tick
+                    crate::ai_enemy::parity_trace::ArrowProtectionRejectNoProtectionTarget {
+                        frame: &(ctx.frame),
+                        owner: &(self.base.me),
+                        nearest: &(nearest_enemy.get()),
+                        protectable: &(protectable),
+                        nearby: &(tick
                             .nearby_fighters
                             .iter()
                             .map(|fighter| {
@@ -2610,7 +2623,8 @@ impl EnemyAi {
                                 )
                             })
                             .collect::<Vec<_>>()),
-                    );
+                    }
+                    .emit();
                 }
                 return false;
             }
@@ -2654,18 +2668,19 @@ impl EnemyAi {
         )) = self.find_phalanx_place(env)
         {
             if debug {
-                crate::ai_enemy::parity_trace::arrow_protection_run_to_phalanx(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(nearest_enemy.get()),
-                    &(dangerous_enemy),
-                    &(self.base.primary_target),
-                    &(run_pos),
-                    &(direction),
-                    &(left_neighbour),
-                    &(right_neighbour),
-                    &(inherited_sector_identity_differs),
-                );
+                crate::ai_enemy::parity_trace::ArrowProtectionRunToPhalanx {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    nearest: &(nearest_enemy.get()),
+                    dangerous: &(dangerous_enemy),
+                    target: &(self.base.primary_target),
+                    run_pos: &(run_pos),
+                    direction: &(direction),
+                    left: &(left_neighbour),
+                    right: &(right_neighbour),
+                    inherited_sector_identity_differs: &(inherited_sector_identity_differs),
+                }
+                .emit();
             }
             self.base.say(Remark::ShieldBearersLineFormation);
             self.base.seek_position = run_pos;
@@ -2716,15 +2731,16 @@ impl EnemyAi {
             }
         } else {
             if debug {
-                crate::ai_enemy::parity_trace::arrow_protection_raise_shield(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(nearest_enemy.get()),
-                    &(dangerous_enemy),
-                    &(self.base.primary_target),
-                    &(target_pos),
-                    &(target_elevation.to_bits()),
-                );
+                crate::ai_enemy::parity_trace::ArrowProtectionRaiseShield {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    nearest: &(nearest_enemy.get()),
+                    dangerous: &(dangerous_enemy),
+                    target: &(self.base.primary_target),
+                    target_pos: &(target_pos),
+                    target_elevation_bits: &(target_elevation.to_bits()),
+                }
+                .emit();
             }
             // No phalanx slot — raise shield in place
             tracing::trace!(
@@ -2954,23 +2970,24 @@ impl EnemyAi {
         let ThinkEnv { sim, ctx, tick, .. } = env;
         if reconsider_debug {
             let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-            crate::ai_enemy::parity_trace::reconsider_entry_entry(
-                &(ctx.frame),
-                &(self.base.me),
-                &(ctx.original_creation_order),
-                &(rng_cursor),
-                &(self.base.current_substate as u32),
-                &(self.base.primary_target),
-                &(ctx.is_swordfighting),
-                &(ctx.enter_swordfight_pending),
-                &(ctx.position.x.to_bits()),
-                &(ctx.position.y.to_bits()),
-                &(ctx.elevation.to_bits()),
-                &(ctx.direction),
-                &(self.base.blood_alcohol),
-                &(global.stupid_soldiers_cheat),
-                &(self.combat_trainer),
-            );
+            crate::ai_enemy::parity_trace::ReconsiderEntryEntry {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                creation_order: &(ctx.original_creation_order),
+                rng: &(rng_cursor),
+                substate: &(self.base.current_substate as u32),
+                primary: &(self.base.primary_target),
+                swordfighting: &(ctx.is_swordfighting),
+                enter_pending: &(ctx.enter_swordfight_pending),
+                position_x_bits: &(ctx.position.x.to_bits()),
+                position_y_bits: &(ctx.position.y.to_bits()),
+                elevation_bits: &(ctx.elevation.to_bits()),
+                direction: &(ctx.direction),
+                blood: &(self.base.blood_alcohol),
+                cheat: &(global.stupid_soldiers_cheat),
+                trainer: &(self.combat_trainer),
+            }
+            .emit();
         }
         // Keep ourselves on a heartbeat while in swordfight.
         if self.base.current_substate == Substate::AttackingSwordfight {
@@ -2984,11 +3001,12 @@ impl EnemyAi {
         if ctx.enter_swordfight_pending {
             if reconsider_debug {
                 let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-                crate::ai_enemy::parity_trace::reconsider_entry_return_enter_pending(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(rng_cursor),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderEntryReturnEnterPending {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    rng: &(rng_cursor),
+                }
+                .emit();
             }
             return std::ops::ControlFlow::Break(());
         }
@@ -3000,11 +3018,12 @@ impl EnemyAi {
         if !ctx.is_swordfighting {
             if reconsider_debug {
                 let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-                crate::ai_enemy::parity_trace::reconsider_entry_return_not_swordfighting(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(rng_cursor),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderEntryReturnNotSwordfighting {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    rng: &(rng_cursor),
+                }
+                .emit();
             }
             let quit_stimulus = Stimulus::new(StimulusType::EventQuitSwordfight);
             if self.base.has_script_filter_override {
@@ -3027,12 +3046,13 @@ impl EnemyAi {
         }
         if reconsider_debug {
             let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-            crate::ai_enemy::parity_trace::reconsider_entry_principal(
-                &(ctx.frame),
-                &(self.base.me),
-                &(self.base.primary_target),
-                &(rng_cursor),
-            );
+            crate::ai_enemy::parity_trace::ReconsiderEntryPrincipal {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                primary: &(self.base.primary_target),
+                rng: &(rng_cursor),
+            }
+            .emit();
         }
 
         // Scotch: if we somehow ended up with a friendly target, bail
@@ -3054,12 +3074,13 @@ impl EnemyAi {
         if primary_is_friend {
             if reconsider_debug {
                 let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-                crate::ai_enemy::parity_trace::reconsider_entry_return_primary_friend(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(self.base.primary_target),
-                    &(rng_cursor),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderEntryReturnPrimaryFriend {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    primary: &(self.base.primary_target),
+                    rng: &(rng_cursor),
+                }
+                .emit();
             }
             self.end_swordfight(ctx);
             // The original game uses reciprocal neighbour updates here
@@ -3089,13 +3110,14 @@ impl EnemyAi {
         );
         if reconsider_debug {
             let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-            crate::ai_enemy::parity_trace::reconsider_entry_detection(
-                &(ctx.frame),
-                &(self.base.me),
-                &(self.base.primary_target),
-                &(detects_primary),
-                &(rng_cursor),
-            );
+            crate::ai_enemy::parity_trace::ReconsiderEntryDetection {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                primary: &(self.base.primary_target),
+                detected: &(detects_primary),
+                rng: &(rng_cursor),
+            }
+            .emit();
         }
         if !detects_primary {
             self.finish_swordfight_after_target_loss(env, global);
@@ -3114,12 +3136,13 @@ impl EnemyAi {
             );
             if reconsider_debug {
                 let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-                crate::ai_enemy::parity_trace::reconsider_entry_return_missing_primary_snapshot(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(self.base.primary_target),
-                    &(rng_cursor),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderEntryReturnMissingPrimarySnapshot {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    primary: &(self.base.primary_target),
+                    rng: &(rng_cursor),
+                }
+                .emit();
             }
             return std::ops::ControlFlow::Break(());
         };
@@ -3143,17 +3166,18 @@ impl EnemyAi {
         );
         if reconsider_debug {
             let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-            crate::ai_enemy::parity_trace::reconsider_entry_facing(
-                &(ctx.frame),
-                &(self.base.me),
-                &(self.base.primary_target),
-                &(facing_target_position.x.to_bits()),
-                &(facing_target_position.y.to_bits()),
-                &(primary.elevation.to_bits()),
-                &(ctx.direction),
-                &(facing_primary),
-                &(rng_cursor),
-            );
+            crate::ai_enemy::parity_trace::ReconsiderEntryFacing {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                primary: &(self.base.primary_target),
+                target_x_bits: &(facing_target_position.x.to_bits()),
+                target_y_bits: &(facing_target_position.y.to_bits()),
+                target_elevation_bits: &(primary.elevation.to_bits()),
+                direction: &(ctx.direction),
+                facing: &(facing_primary),
+                rng: &(rng_cursor),
+            }
+            .emit();
         }
         if !facing_primary {
             // Need to turn first; the engine will rotate us, then call back.
@@ -3207,15 +3231,16 @@ impl EnemyAi {
         let number_of_friends = self.base.list_us.len() as u16;
         if reconsider_debug {
             let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-            crate::ai_enemy::parity_trace::reconsider_entry_lists(
-                &(ctx.frame),
-                &(self.base.me),
-                &(self.base.list_us),
-                &(self.list_them),
-                &(number_of_swordfighting_enemies),
-                &(nearest_friend_solo),
-                &(rng_cursor),
-            );
+            crate::ai_enemy::parity_trace::ReconsiderEntryLists {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                us: &(self.base.list_us),
+                them: &(self.list_them),
+                swordfighting_enemies: &(number_of_swordfighting_enemies),
+                nearest_friend_solo: &(nearest_friend_solo),
+                rng: &(rng_cursor),
+            }
+            .emit();
         }
         SwordfightLists {
             nearest_friend_solo,
@@ -3245,11 +3270,12 @@ impl EnemyAi {
             // Flee!
             if reconsider_debug {
                 let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-                crate::ai_enemy::parity_trace::reconsider_entry_return_merry_archer_flee(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(rng_cursor),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderEntryReturnMerryArcherFlee {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    rng: &(rng_cursor),
+                }
+                .emit();
             }
             return std::ops::ControlFlow::Break(());
         }
@@ -3259,14 +3285,15 @@ impl EnemyAi {
         // nearest enemy.
         let primary_outnumbered = primary.number_of_opponents > 1;
         if reconsider_debug {
-            crate::ai_enemy::parity_trace::reconsider_entry_rebalance_gate(
-                &(ctx.frame),
-                &(self.base.me),
-                &(self.base.primary_target),
-                &(primary.number_of_opponents),
-                &(primary_outnumbered),
-                &(nearest_friend_solo),
-            );
+            crate::ai_enemy::parity_trace::ReconsiderEntryRebalanceGate {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                primary: &(self.base.primary_target),
+                primary_opponents: &(primary.number_of_opponents),
+                outnumbered: &(primary_outnumbered),
+                nearest_friend_solo: &(nearest_friend_solo),
+            }
+            .emit();
         }
         if primary_outnumbered && let Some(nearest_friend_solo) = nearest_friend_solo {
             let nearest_friend_solo = nearest_friend_solo.get();
@@ -3280,19 +3307,20 @@ impl EnemyAi {
                     .nearby_fighters
                     .iter()
                     .find(|f| f.handle == nearest_friend_solo);
-                crate::ai_enemy::parity_trace::reconsider_entry_rebalance_maurice(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(nearest_friend_solo),
-                    &(maurice.is_some()),
-                    &(maurice.map(|m| m.opponent_handles.clone())),
-                    &(tick
+                crate::ai_enemy::parity_trace::ReconsiderEntryRebalanceMaurice {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    maurice: &(nearest_friend_solo),
+                    present: &(maurice.is_some()),
+                    opponents: &(maurice.map(|m| m.opponent_handles.clone())),
+                    nearby: &(tick
                         .nearby_fighters
                         .iter()
                         .map(|f| f.handle)
                         .collect::<Vec<_>>()),
-                    &(nearest_enemy_of_solo),
-                );
+                    nearest_enemy_of_solo: &(nearest_enemy_of_solo),
+                }
+                .emit();
             }
             if let Some(nearest_enemy_of_solo) = nearest_enemy_of_solo {
                 let nearest_to_that_enemy = calculate_opponent_nearest_to_rene(
@@ -3308,13 +3336,14 @@ impl EnemyAi {
                 let i_should_take_him =
                     nearest_to_that_enemy == Some(AiEntityHandle::new(self.base.me));
                 if reconsider_debug {
-                    crate::ai_enemy::parity_trace::reconsider_entry_rebalance_pick(
-                        &(ctx.frame),
-                        &(self.base.me),
-                        &(nearest_enemy_of_solo.get()),
-                        &(nearest_to_that_enemy),
-                        &(i_should_take_him),
-                    );
+                    crate::ai_enemy::parity_trace::ReconsiderEntryRebalancePick {
+                        frame: &(ctx.frame),
+                        owner: &(self.base.me),
+                        nearest_enemy_of_solo: &(nearest_enemy_of_solo.get()),
+                        nearest_to_that_enemy: &(nearest_to_that_enemy),
+                        i_should_take_him: &(i_should_take_him),
+                    }
+                    .emit();
                 }
                 if i_should_take_him {
                     // The original game enters the human swordfight
@@ -3325,12 +3354,13 @@ impl EnemyAi {
                         Some(EnterSwordfightRequest::Rebalance(nearest_enemy_of_solo));
                     if reconsider_debug {
                         let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-                        crate::ai_enemy::parity_trace::reconsider_entry_return_rebalance(
-                            &(ctx.frame),
-                            &(self.base.me),
-                            &(nearest_enemy_of_solo.get()),
-                            &(rng_cursor),
-                        );
+                        crate::ai_enemy::parity_trace::ReconsiderEntryReturnRebalance {
+                            frame: &(ctx.frame),
+                            owner: &(self.base.me),
+                            target: &(nearest_enemy_of_solo.get()),
+                            rng: &(rng_cursor),
+                        }
+                        .emit();
                     }
                     return std::ops::ControlFlow::Break(());
                 }
@@ -3345,11 +3375,12 @@ impl EnemyAi {
         if global.stupid_soldiers_cheat {
             if reconsider_debug {
                 let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-                crate::ai_enemy::parity_trace::reconsider_entry_return_stupid_soldiers_cheat(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(rng_cursor),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderEntryReturnStupidSoldiersCheat {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    rng: &(rng_cursor),
+                }
+                .emit();
             }
             return std::ops::ControlFlow::Break(());
         }
@@ -3360,22 +3391,24 @@ impl EnemyAi {
         if drunk_combat_freezes(sim, self.base.blood_alcohol) {
             if reconsider_debug {
                 let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-                crate::ai_enemy::parity_trace::reconsider_entry_return_drunk_freeze(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(rng_cursor),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderEntryReturnDrunkFreeze {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    rng: &(rng_cursor),
+                }
+                .emit();
             }
             return std::ops::ControlFlow::Break(());
         }
         if reconsider_debug {
             let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-            crate::ai_enemy::parity_trace::reconsider_entry_after_drunk(
-                &(ctx.frame),
-                &(self.base.me),
-                &(self.base.blood_alcohol),
-                &(rng_cursor),
-            );
+            crate::ai_enemy::parity_trace::ReconsiderEntryAfterDrunk {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                blood: &(self.base.blood_alcohol),
+                rng: &(rng_cursor),
+            }
+            .emit();
         }
         std::ops::ControlFlow::Continue(())
     }
@@ -3393,12 +3426,13 @@ impl EnemyAi {
         let Some(primary) = self.find_fighter(self.base.primary_target, tick).cloned() else {
             if reconsider_debug {
                 let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-                crate::ai_enemy::parity_trace::reconsider_entry_return_missing_refreshed_primary(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(self.base.primary_target),
-                    &(rng_cursor),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderEntryReturnMissingRefreshedPrimary {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    primary: &(self.base.primary_target),
+                    rng: &(rng_cursor),
+                }
+                .emit();
             }
             return std::ops::ControlFlow::Break(());
         };
@@ -3441,16 +3475,17 @@ impl EnemyAi {
             .map(|f| f.fighting_ability)
             .unwrap_or(0);
         if reconsider_debug {
-            crate::ai_enemy::parity_trace::reconsider_entry_weak_charge_gate(
-                &(ctx.frame),
-                &(self.base.me),
-                &(enemy_weak),
-                &(self.get_rank()),
-                &(weak_charge_distance),
-                &(dist_to_target),
-                &(my_max_range),
-                &(my_fighting_ability),
-            );
+            crate::ai_enemy::parity_trace::ReconsiderEntryWeakChargeGate {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                enemy_weak: &(enemy_weak),
+                rank: &(self.get_rank()),
+                charge_dist: &(weak_charge_distance),
+                flat_dist: &(dist_to_target),
+                max_range: &(my_max_range),
+                ability: &(my_fighting_ability),
+            }
+            .emit();
         }
         if enemy_weak
             && self.get_rank() == ProfileRank::Soldier
@@ -3460,15 +3495,16 @@ impl EnemyAi {
             let target_pos = primary.position;
             if reconsider_debug {
                 let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
-                crate::ai_enemy::parity_trace::reconsider_entry_return_weak_enemy_charge(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(self.base.primary_target),
-                    &(dist_to_target),
-                    &(my_max_range),
-                    &(my_fighting_ability),
-                    &(rng_cursor),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderEntryReturnWeakEnemyCharge {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    target: &(self.base.primary_target),
+                    distance: &(dist_to_target),
+                    max_range: &(my_max_range),
+                    ability: &(my_fighting_ability),
+                    rng: &(rng_cursor),
+                }
+                .emit();
             }
             self.go_near(
                 AiState::Attacking,
@@ -3519,17 +3555,18 @@ impl EnemyAi {
             .then(|| crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CombatReposition, 0..3));
         let do_reposition = reposition_roll == Some(0);
         if reposition_debug {
-            crate::ai_enemy::parity_trace::reconsider_position(
-                &(ctx.frame),
-                &(self.base.me),
-                &(ctx.original_creation_order),
-                &(number_of_friends),
-                &(number_of_swordfighting_enemies),
-                &(self.combat_trainer),
-                &(reposition_eligible),
-                &(reposition_roll),
-                &(do_reposition),
-            );
+            crate::ai_enemy::parity_trace::ReconsiderPosition {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                creation_order: &(ctx.original_creation_order),
+                friends: &(number_of_friends),
+                swordfighting_enemies: &(number_of_swordfighting_enemies),
+                combat_trainer: &(self.combat_trainer),
+                eligible: &(reposition_eligible),
+                roll: &(reposition_roll),
+                do_reposition: &(do_reposition),
+            }
+            .emit();
         }
 
         if do_reposition {
@@ -3795,13 +3832,14 @@ impl EnemyAi {
             };
         let reconsider_debug = reconsider_observation_debug_matches(ctx.frame, self.base.me);
         if reconsider_debug {
-            crate::ai_enemy::parity_trace::reconsider_invoke(
-                &(ctx.frame),
-                &(self.base.me),
-                &(self.base.current_state),
-                &(self.base.current_substate as u32),
-                &(tick.reconsider_swordfight_observation_fighters.len()),
-            );
+            crate::ai_enemy::parity_trace::ReconsiderInvoke {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                state: &(self.base.current_state),
+                substate: &(self.base.current_substate as u32),
+                fighters: &(tick.reconsider_swordfight_observation_fighters.len()),
+            }
+            .emit();
         }
         let mut local_mult: std::collections::BTreeMap<HumanHandle, u32> =
             std::collections::BTreeMap::new();
@@ -3810,29 +3848,31 @@ impl EnemyAi {
                 if reconsider_debug {
                     let d = raw_max_norm_distance(f);
                     let rejection = if f.is_friendly { "friendly" } else { "unable" };
-                    crate::ai_enemy::parity_trace::reconsider_them_candidate(
-                        &(ctx.frame),
-                        &(self.base.me),
-                        &(f.handle),
-                        &(f.is_friendly),
-                        &(f.is_able_to_fight),
-                        &(d),
-                        &(rejection),
-                    );
+                    crate::ai_enemy::parity_trace::ReconsiderThemCandidate {
+                        frame: &(ctx.frame),
+                        owner: &(self.base.me),
+                        fighter: &(f.handle),
+                        friendly: &(f.is_friendly),
+                        able: &(f.is_able_to_fight),
+                        distance: &(d),
+                        result: &(rejection),
+                    }
+                    .emit();
                 }
                 continue;
             }
             let d = raw_max_norm_distance(f);
             if d >= max_radius {
                 if reconsider_debug {
-                    crate::ai_enemy::parity_trace::reconsider_them_candidate_2(
-                        &(ctx.frame),
-                        &(self.base.me),
-                        &(f.handle),
-                        &(f.is_friendly),
-                        &(f.is_able_to_fight),
-                        &(d),
-                    );
+                    crate::ai_enemy::parity_trace::ReconsiderThemCandidateRadius {
+                        frame: &(ctx.frame),
+                        owner: &(self.base.me),
+                        fighter: &(f.handle),
+                        friendly: &(f.is_friendly),
+                        able: &(f.is_able_to_fight),
+                        distance: &(d),
+                    }
+                    .emit();
                 }
                 continue;
             }
@@ -3843,15 +3883,16 @@ impl EnemyAi {
                 } else {
                     "not_detected_180"
                 };
-                crate::ai_enemy::parity_trace::reconsider_them_candidate(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(f.handle),
-                    &(f.is_friendly),
-                    &(f.is_able_to_fight),
-                    &(d),
-                    &(result),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderThemCandidate {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    fighter: &(f.handle),
+                    friendly: &(f.is_friendly),
+                    able: &(f.is_able_to_fight),
+                    distance: &(d),
+                    result: &(result),
+                }
+                .emit();
             }
             if !detected {
                 continue;
@@ -3878,15 +3919,16 @@ impl EnemyAi {
                     } else {
                         "unable"
                     };
-                    crate::ai_enemy::parity_trace::reconsider_us_candidate(
-                        &(ctx.frame),
-                        &(self.base.me),
-                        &(f.handle),
-                        &(f.is_friendly),
-                        &(f.is_able_to_fight),
-                        &(d),
-                        &(rejection),
-                    );
+                    crate::ai_enemy::parity_trace::ReconsiderJson::UsCandidate {
+                        frame: ctx.frame,
+                        owner: self.base.me,
+                        fighter: f.handle,
+                        friendly: f.is_friendly,
+                        able: f.is_able_to_fight,
+                        distance_uword: d,
+                        result: rejection,
+                    }
+                    .emit();
                 }
                 continue;
             }
@@ -3899,15 +3941,16 @@ impl EnemyAi {
                 } else {
                     "accepted"
                 };
-                crate::ai_enemy::parity_trace::reconsider_us_candidate(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(f.handle),
-                    &(f.is_friendly),
-                    &(f.is_able_to_fight),
-                    &(d),
-                    &(result),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderJson::UsCandidate {
+                    frame: ctx.frame,
+                    owner: self.base.me,
+                    fighter: f.handle,
+                    friendly: f.is_friendly,
+                    able: f.is_able_to_fight,
+                    distance_uword: d,
+                    result,
+                }
+                .emit();
             }
             if f32::from(d) >= max_radius {
                 continue;
@@ -4423,25 +4466,27 @@ impl EnemyAi {
                 iq,
             );
             if debug_reposition {
-                crate::ai_enemy::parity_trace::reconsider_position_2(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(idx),
-                    &(input.expect("enabled reposition diagnostic captured candidate input")),
-                    &(cp.attacker),
-                    &(cp.attacker_position),
-                    &(cp.target),
-                    &(cp.target_position),
-                    &(cp.target_direction),
-                    &(cp.change_adversary),
-                    &(cp.change_position),
-                    &(cp.line_position),
-                    &(cp.left_neighbour),
-                    &(cp.right_neighbour),
-                    &(cp.bonus),
-                    &(cp.line_jump),
-                    &(score),
-                );
+                crate::ai_enemy::parity_trace::ReconsiderPositionCandidate {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    candidate: &(idx),
+                    input: &(input
+                        .expect("enabled reposition diagnostic captured candidate input")),
+                    attacker: &(cp.attacker),
+                    attacker_position: &(cp.attacker_position),
+                    target: &(cp.target),
+                    target_position: &(cp.target_position),
+                    target_direction: &(cp.target_direction),
+                    change_adversary: &(cp.change_adversary),
+                    change_position: &(cp.change_position),
+                    line_position: &(cp.line_position),
+                    left: &(cp.left_neighbour),
+                    right: &(cp.right_neighbour),
+                    bonus: &(cp.bonus),
+                    line_jump: &(cp.line_jump),
+                    score: &(score),
+                }
+                .emit();
             }
             if score > best_score {
                 best_score = score;
@@ -4488,24 +4533,25 @@ impl EnemyAi {
             );
         }
         if debug_reposition {
-            crate::ai_enemy::parity_trace::reconsider_position_3(
-                &(ctx.frame),
-                &(self.base.me),
-                &(best_index),
-                &(best_score),
-                &(best.attacker),
-                &(best.attacker_position),
-                &(best.target),
-                &(best.target_position),
-                &(best.target_direction),
-                &(best.change_adversary),
-                &(best.change_position),
-                &(best.line_position),
-                &(best.left_neighbour),
-                &(best.right_neighbour),
-                &(best.bonus),
-                &(best.line_jump),
-            );
+            crate::ai_enemy::parity_trace::ReconsiderPositionChosen {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                chosen: &(best_index),
+                score: &(best_score),
+                attacker: &(best.attacker),
+                attacker_position: &(best.attacker_position),
+                target: &(best.target),
+                target_position: &(best.target_position),
+                target_direction: &(best.target_direction),
+                change_adversary: &(best.change_adversary),
+                change_position: &(best.change_position),
+                line_position: &(best.line_position),
+                left: &(best.left_neighbour),
+                right: &(best.right_neighbour),
+                bonus: &(best.bonus),
+                line_jump: &(best.line_jump),
+            }
+            .emit();
         }
 
         // Update neighbour cache from the chosen position. Eager direct

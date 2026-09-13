@@ -467,21 +467,22 @@ impl EnemyAi {
         let current_frame = ctx.frame;
         if seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order) {
             for (i, sp) in global.seek_points.iter().enumerate() {
-                crate::ai_enemy::parity_trace::seekarea_point_dump(
-                    &(ctx.frame),
-                    &(i),
-                    &(sp.id),
-                    &(sp.position.x),
-                    &(sp.position.y),
-                    &(sp.position.level),
-                    &(center.x),
-                    &(center.y),
-                    &(center.level),
-                    &(square_norms[i]),
-                    &(square_norms[i].to_bits()),
-                    &(near_sorted.contains(&i)),
-                    &(sp.frame_when_full_interest),
-                );
+                crate::ai_enemy::parity_trace::SeekareaPointDump {
+                    frame: &(ctx.frame),
+                    index: &(i),
+                    id: &(sp.id),
+                    x: &(sp.position.x),
+                    y: &(sp.position.y),
+                    level: &(sp.position.level),
+                    center_x: &(center.x),
+                    center_y: &(center.y),
+                    center_level: &(center.level),
+                    norm: &(square_norms[i]),
+                    norm_bits: &(square_norms[i].to_bits()),
+                    near: &(near_sorted.contains(&i)),
+                    frame_when_full_interest: &(sp.frame_when_full_interest),
+                }
+                .emit();
             }
         }
 
@@ -631,62 +632,65 @@ impl EnemyAi {
                 let optional_usize = |value: Option<usize>| {
                     value.map_or_else(|| "null".to_owned(), |value| value.to_string())
                 };
-                crate::ai_enemy::parity_trace::seekarea_phase4_candidate(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(optional_u32(ctx.original_creation_order)),
-                    &(phase4_attempts),
-                    &(global.seek_points[idx].id),
-                    &(idx),
-                    &(square_norms[idx]),
-                    &(square_norms[idx].to_bits()),
-                    &(global.seek_points[idx].frame_when_full_interest),
-                    &(interest),
-                    &(optional_u32(attempt_raw)),
-                    &(attempt),
-                    &(accepted),
-                    &(optional_u32(insertion_raw)),
-                    &(optional_usize(insertion_index)),
-                    &(accumulator_before_bits),
-                    &(count_f.to_bits()),
-                );
+                crate::ai_enemy::parity_trace::SeekareaPhase4Candidate {
+                    frame: &(ctx.frame),
+                    owner_handle: &(self.base.me),
+                    owner_creation_order: &(optional_u32(ctx.original_creation_order)),
+                    candidate_ordinal: &(phase4_attempts),
+                    point_id: &(global.seek_points[idx].id),
+                    point_index: &(idx),
+                    norm: &(square_norms[idx]),
+                    norm_bits: &(square_norms[idx].to_bits()),
+                    frame_when_full_interest: &(global.seek_points[idx].frame_when_full_interest),
+                    interest: &(interest),
+                    attempt_raw: &(optional_u32(attempt_raw)),
+                    attempt_mod: &(attempt),
+                    attempt_result: &(accepted),
+                    insertion_raw: &(optional_u32(insertion_raw)),
+                    insertion_index: &(optional_usize(insertion_index)),
+                    accumulator_before_bits: &(accumulator_before_bits),
+                    accumulator_after_bits: &(count_f.to_bits()),
+                }
+                .emit();
             }
         }
 
         if debug_selection {
-            crate::ai_enemy::parity_trace::seekarea_selection_summary(
-                &(ctx.frame),
-                &(self.base.me),
-                &(ctx.original_creation_order),
-                &(center.x),
-                &(center.y),
-                &(standard_radius),
-                &(near_sorted.len()),
-                &(expected_points_for_one),
-                &(tick.visible_seeking_friends),
-                &(tick.friend_seek_clears_help_flag),
-                &(expected_points_before_help_random),
-                &(expected_points),
-                &(phase4_attempts),
-                &(phase4_accepts),
-                &(preselection_rng_draws),
-                &(phase4_attempts + phase4_accepts),
-                &(preselection_rng_draws + phase4_attempts + phase4_accepts),
-                &(count_f),
-            );
-            crate::ai_enemy::parity_trace::seekarea_selection_extra(
-                &(ctx.frame),
-                &(ctx.original_creation_order),
-                &(flags.bits()),
-                &(seek_direction),
-                &(center.level),
-                &(obligatory_idx.map(|i| global.seek_points[i].id)),
-                &(obligatory2_idx.map(|i| global.seek_points[i].id)),
-                &(selected_random
+            crate::ai_enemy::parity_trace::SeekareaSelectionSummary {
+                frame: &(ctx.frame),
+                owner_handle: &(self.base.me),
+                owner_creation_order: &(ctx.original_creation_order),
+                center_x: &(center.x),
+                center_y: &(center.y),
+                standard_radius: &(standard_radius),
+                near_points: &(near_sorted.len()),
+                expected_for_one: &(expected_points_for_one),
+                visible_friends: &(tick.visible_seeking_friends),
+                clears_help: &(tick.friend_seek_clears_help_flag),
+                expected_before_help_random: &(expected_points_before_help_random),
+                expected_points: &(expected_points),
+                phase4_attempts: &(phase4_attempts),
+                phase4_accepts: &(phase4_accepts),
+                preselection_rng_draws: &(preselection_rng_draws),
+                phase4_rng_draws: &(phase4_attempts + phase4_accepts),
+                selection_rng_draws: &(preselection_rng_draws + phase4_attempts + phase4_accepts),
+                accepted_interest_sum: &(count_f),
+            }
+            .emit();
+            crate::ai_enemy::parity_trace::SeekareaSelectionExtra {
+                frame: &(ctx.frame),
+                owner_creation_order: &(ctx.original_creation_order),
+                flags: &(flags.bits()),
+                seek_direction: &(seek_direction),
+                center_level: &(center.level),
+                obligatory: &(obligatory_idx.map(|i| global.seek_points[i].id)),
+                obligatory2: &(obligatory2_idx.map(|i| global.seek_points[i].id)),
+                selected_random: &(selected_random
                     .iter()
                     .map(|&i| global.seek_points[i].id)
                     .collect::<Vec<_>>()),
-            );
+            }
+            .emit();
         }
 
         selected_random
@@ -708,36 +712,38 @@ impl EnemyAi {
 
         let debug_phase6 = seek_area_phase6_debug_matches(ctx.frame, ctx.original_creation_order);
         if debug_phase6 {
-            crate::ai_enemy::parity_trace::seekarea_phase6_before(
-                &(ctx.frame),
-                &(self.base.me),
-                &(ctx
+            crate::ai_enemy::parity_trace::SeekAreaPhase6::Phase6Before {
+                frame: ctx.frame,
+                owner_handle: self.base.me,
+                owner_creation_order: ctx
                     .original_creation_order
-                    .expect("phase6 diagnostic matched an owner without creation order")),
-                &(self.base.current_state as u32),
-                &(self.base.current_substate as u32),
-                &(flags.bits()),
-                &(seek_direction),
-                &(self.my_seek_points.len()),
-                &(self.my_seek_points.is_empty()),
-                &(flags.contains(SeekFlags::LOCATION_FIRST)),
-                &(flags.contains(SeekFlags::LOCATION_END)),
-                &(if !flags.contains(SeekFlags::LOCATION_FIRST) {
+                    .expect("phase6 diagnostic matched an owner without creation order"),
+                state: self.base.current_state as u32,
+                substate: self.base.current_substate as u32,
+                flags: flags.bits(),
+                seek_direction,
+                list_size: self.my_seek_points.len(),
+                list_empty: self.my_seek_points.is_empty(),
+                location_first: flags.contains(SeekFlags::LOCATION_FIRST),
+                location_end: flags.contains(SeekFlags::LOCATION_END),
+                personal1_constructor: if !flags.contains(SeekFlags::LOCATION_FIRST) {
                     "none"
                 } else if seek_direction == UNDEFINED_DIRECTION {
                     "position"
                 } else {
                     "direction"
-                }),
-            );
-            crate::ai_enemy::parity_trace::seekarea_phase6_center(
-                &(ctx.frame),
-                &(ctx.original_creation_order),
-                &(self.seek_center.x),
-                &(self.seek_center.y),
-                &(self.base.seek_position.x),
-                &(self.base.seek_position.y),
-            );
+                },
+            }
+            .emit();
+            crate::ai_enemy::parity_trace::SeekareaPhase6Center {
+                frame: &(ctx.frame),
+                owner_creation_order: &(ctx.original_creation_order),
+                center_x: &(self.seek_center.x),
+                center_y: &(self.seek_center.y),
+                seek_position_x: &(self.base.seek_position.x),
+                seek_position_y: &(self.base.seek_position.y),
+            }
+            .emit();
         }
 
         if flags.contains(SeekFlags::LOCATION_FIRST) {
@@ -768,18 +774,20 @@ impl EnemyAi {
             self.personal_seek_point_1 = Some(sp);
             self.my_seek_points.insert(0, 1111);
             if debug_phase6 {
-                crate::ai_enemy::parity_trace::seekarea_phase6_personal1(
-                    &(ctx.frame),
-                    &(ctx
+                crate::ai_enemy::parity_trace::SeekAreaPhase6::Phase6Personal1 {
+                    frame: ctx.frame,
+                    owner_creation_order: ctx
                         .original_creation_order
-                        .expect("phase6 diagnostic matched an owner without creation order")),
-                    &(if seek_direction == UNDEFINED_DIRECTION {
+                        .expect("phase6 diagnostic matched an owner without creation order"),
+                    constructor: if seek_direction == UNDEFINED_DIRECTION {
                         "position"
                     } else {
                         "direction"
-                    }),
-                    &(self.my_seek_points.len()),
-                );
+                    },
+                    inserted_id: 1111,
+                    list_size: self.my_seek_points.len(),
+                }
+                .emit();
             }
         }
 
@@ -794,15 +802,16 @@ impl EnemyAi {
             self.my_seek_points.push(2222);
         }
         if debug_phase6 {
-            crate::ai_enemy::parity_trace::seekarea_phase6_after(
-                &(ctx.frame),
-                &(ctx
+            crate::ai_enemy::parity_trace::SeekAreaPhase6::Phase6After {
+                frame: ctx.frame,
+                owner_creation_order: ctx
                     .original_creation_order
-                    .expect("phase6 diagnostic matched an owner without creation order")),
-                &(insert_personal2),
-                &(if insert_personal2 { "position" } else { "none" }),
-                &(self.my_seek_points.len()),
-            );
+                    .expect("phase6 diagnostic matched an owner without creation order"),
+                personal2_inserted: insert_personal2,
+                personal2_constructor: if insert_personal2 { "position" } else { "none" },
+                list_size: self.my_seek_points.len(),
+            }
+            .emit();
         }
     }
 
@@ -1010,12 +1019,13 @@ impl EnemyAi {
         // acceptance draw. The recursive entry still unlocks it above.
         if is_locked {
             if debug_next_point {
-                crate::ai_enemy::parity_trace::seekarea_next_point_locked(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(ctx.original_creation_order),
-                    &(next_id),
-                );
+                crate::ai_enemy::parity_trace::SeekareaNextPointLocked {
+                    frame: &(ctx.frame),
+                    owner_handle: &(self.base.me),
+                    owner_creation_order: &(ctx.original_creation_order),
+                    point_id: &(next_id),
+                }
+                .emit();
             }
             self.seek_next_point(env, global);
             return;
@@ -1034,16 +1044,17 @@ impl EnemyAi {
         let acceptance_roll =
             crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100);
         if debug_next_point {
-            crate::ai_enemy::parity_trace::seekarea_next_point_roll(
-                &(ctx.frame),
-                &(self.base.me),
-                &(ctx.original_creation_order),
-                &(next_id),
-                &(interest),
-                &(acceptance_roll),
-                &(acceptance_roll < interest),
-                &(self.my_seek_points),
-            );
+            crate::ai_enemy::parity_trace::SeekareaNextPointRoll {
+                frame: &(ctx.frame),
+                owner_handle: &(self.base.me),
+                owner_creation_order: &(ctx.original_creation_order),
+                point_id: &(next_id),
+                interest: &(interest),
+                roll: &(acceptance_roll),
+                accepted: &(acceptance_roll < interest),
+                remaining: &(self.my_seek_points),
+            }
+            .emit();
         }
         if acceptance_roll >= interest {
             // Skip this point — try the next one
