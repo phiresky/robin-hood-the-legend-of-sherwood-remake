@@ -45,6 +45,7 @@ use base64::Engine as _;
 use bytes::Bytes;
 use ed25519_dalek::Signer as _;
 use futures_util::stream;
+use robin_run_protocol::DomainSignedClaim as _;
 use robin_run_protocol::{
     AbuseReportAcceptedV1, AbuseReportCategoryV1, AbuseReportTargetV1, AbuseReportV1,
     AchievementSummaryV1, AnonymousParticipantPolicyV1, ArtifactRefV1, BoardCategoryV1,

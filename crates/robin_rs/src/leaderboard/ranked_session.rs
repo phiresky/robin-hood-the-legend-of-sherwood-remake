@@ -9,6 +9,7 @@
 use ed25519_dalek::{Signer, SigningKey};
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::replay::ReplayData;
+use robin_run_protocol::DomainSignedClaim as _;
 use robin_run_protocol::{
     ArtifactRefV1, BoardMetricV1, CampaignAggregationConsentV1, CampaignChainReceiptV1,
     CampaignChainStateV1, CampaignContinuationAuthorizationClaimV1,

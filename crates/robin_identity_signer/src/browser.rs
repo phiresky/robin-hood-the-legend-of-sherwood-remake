@@ -1,5 +1,6 @@
 //! Typed operations in the isolated signer document; never linked into the game.
 use crate::{LeaderboardSigningError, authorize_context, decode_json};
+use robin_run_protocol::DomainSignedClaim as _;
 use robin_run_protocol::LeaderboardCoSignPurposeV1;
 use robin_run_protocol::{
     CampaignContinuationAuthorizationClaimV1, CampaignContinuationAuthorizationV1,

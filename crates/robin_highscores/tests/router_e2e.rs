@@ -13,6 +13,7 @@ use robin_highscores::config::{
 use robin_highscores::verifier::build_verification_request;
 use robin_highscores::web::{AppState, ChallengeRateLimiter, router};
 use robin_highscores::{CampaignStore, Database, ReplayStore, ServerConfig};
+use robin_run_protocol::DomainSignedClaim as _;
 use robin_run_protocol::{
     AbuseReportAcceptedV1, AbuseReportCategoryV1, AbuseReportTargetV1, AbuseReportV1,
     ActiveTimeDefinitionV1, AnonymousParticipantPolicyV1, ArtifactRefV1, BoardCategoryV1,

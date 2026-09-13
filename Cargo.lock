@@ -6331,6 +6331,7 @@ dependencies = [
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "ed25519-dalek",
  "hex",
+ "robin_util",
  "semver",
  "serde",
  "serde_json",

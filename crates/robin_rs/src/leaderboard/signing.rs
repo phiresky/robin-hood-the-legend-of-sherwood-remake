@@ -8,6 +8,7 @@
 use crate::leaderboard_ranked_session::{OfficialRankedSessionSetupV1, RankedSessionHost};
 #[cfg(not(target_arch = "wasm32"))]
 use ed25519_dalek::{Signer, SigningKey};
+use robin_run_protocol::DomainSignedClaim as _;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 use robin_run_protocol::LeaderboardCoSignPurposeV1;
 use robin_run_protocol::{

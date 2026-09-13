@@ -823,6 +823,7 @@ mod tests {
     use robin_engine::engine::{SimConfig, SimulationFrameInput};
     use robin_engine::replay::{ReplayFile, ReplayFrame, ReplayHeader};
     use robin_engine::replay_rankability::ReplayRankability;
+    use robin_run_protocol::DomainSignedClaim as _;
     use robin_run_protocol::{
         ArtifactRefV1, CampaignChainReceiptV1, CampaignChainStateV1, CampaignRosterContinuityV1,
         ChallengeNonce32, Digest32, FreshRunPreflightGrantClaimV1, FreshRunPreflightGrantV1,

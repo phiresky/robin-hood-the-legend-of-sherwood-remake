@@ -371,6 +371,7 @@ mod tests {
     use robin_engine::multiplayer::LeaderboardCoSignResponse;
     use robin_engine::multiplayer::{NetEvent, NetOutbound};
     use robin_engine::player_command::PlayerId;
+    use robin_run_protocol::DomainSignedClaim as _;
     use robin_run_protocol::{
         ArtifactRefV1, CanonicalDocument as _, ChallengeNonce32, Digest32,
         FreshRunPreflightGrantClaimV1, FreshRunPreflightGrantV1, FreshRunPreflightRequestClaimV1,

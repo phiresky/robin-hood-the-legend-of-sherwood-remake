@@ -96,4 +96,59 @@ fn every_signature_domain_is_distinct_and_terminated() {
         assert_eq!(domain.last(), Some(&0));
         assert!(seen.insert(domain), "duplicate signature domain");
     }
+
+    // Every single-domain claim type binds exactly one of the named domains
+    // through the trait; the pairs pin the constant each type signs under.
+    let trait_domains: [(&'static str, &'static [u8], &'static [u8]); 7] = [
+        (
+            "CompetitionRunGrantRequestClaimV1",
+            <CompetitionRunGrantRequestClaimV1 as DomainSignedClaim>::DOMAIN,
+            crate::envelope::COMPETITION_RUN_GRANT_REQUEST_SIGNATURE_DOMAIN_V1,
+        ),
+        (
+            "CompetitionRunGrantClaimV1",
+            <CompetitionRunGrantClaimV1 as DomainSignedClaim>::DOMAIN,
+            crate::envelope::COMPETITION_RUN_GRANT_SIGNATURE_DOMAIN_V1,
+        ),
+        (
+            "FreshRunPreflightRequestClaimV1",
+            <FreshRunPreflightRequestClaimV1 as DomainSignedClaim>::DOMAIN,
+            crate::envelope::FRESH_RUN_PREFLIGHT_REQUEST_SIGNATURE_DOMAIN_V1,
+        ),
+        (
+            "FreshRunPreflightGrantClaimV1",
+            <FreshRunPreflightGrantClaimV1 as DomainSignedClaim>::DOMAIN,
+            crate::envelope::FRESH_RUN_PREFLIGHT_GRANT_SIGNATURE_DOMAIN_V1,
+        ),
+        (
+            "CampaignContinuationPreflightGrantClaimV1",
+            <CampaignContinuationPreflightGrantClaimV1 as DomainSignedClaim>::DOMAIN,
+            crate::envelope::CAMPAIGN_CONTINUATION_PREFLIGHT_GRANT_SIGNATURE_DOMAIN_V1,
+        ),
+        (
+            "ReplaySessionGenesisClaimV1",
+            <ReplaySessionGenesisClaimV1 as DomainSignedClaim>::DOMAIN,
+            crate::envelope::REPLAY_SESSION_GENESIS_SIGNATURE_DOMAIN_V1,
+        ),
+        (
+            "NamedSeatJoinClaimV1",
+            <NamedSeatJoinClaimV1 as DomainSignedClaim>::DOMAIN,
+            crate::envelope::NAMED_SEAT_JOIN_SIGNATURE_DOMAIN_V1,
+        ),
+    ];
+    let mut trait_seen = std::collections::BTreeSet::new();
+    for (name, trait_domain, expected) in trait_domains {
+        assert_eq!(
+            trait_domain, expected,
+            "{name} signs under the wrong domain"
+        );
+        assert!(
+            seen.contains(trait_domain),
+            "{name} domain is not in the list"
+        );
+        assert!(
+            trait_seen.insert(trait_domain),
+            "{name} shares a trait domain"
+        );
+    }
 }

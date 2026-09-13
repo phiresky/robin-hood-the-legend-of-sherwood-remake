@@ -29,7 +29,8 @@ pub use authentication::{SignatureVerificationError, verify_ed25519_strict};
 pub use offer_binding::validate_offer_binding;
 
 pub use canonical::{
-    CanonicalDocument, CanonicalDocumentError, CanonicalError, CanonicalValue, canonical_json_bytes,
+    CanonicalDocument, CanonicalDocumentError, CanonicalError, CanonicalValue, DomainSignedClaim,
+    canonical_json_bytes,
 };
 pub use digest::{
     ChallengeNonce32, Digest32, HexError, OpaqueId, PublicKey32, Signature64, SimulationSeed64,
