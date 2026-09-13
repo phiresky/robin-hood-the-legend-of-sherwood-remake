@@ -1206,6 +1206,33 @@ fn frame_api_matches_legacy_command_then_hourglass_boundary() {
 }
 
 #[test]
+fn unhashed_transactions_preserve_state_and_all_serialized_outputs() {
+    let (mut hashed, assets) = frame_api_fixture();
+    let mut unhashed = hashed.clone();
+    let inputs = [
+        SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
+            PlayerCommand::SetMenToBlazonConversionMode { on: true },
+        )]),
+        SimulationFrameInput::no_hourglass().with_post_initialize(true),
+        SimulationFrameInput::no_hourglass().with_post_commands(vec![SimCommand::host(
+            PlayerCommand::SetMenToBlazonConversionMode { on: false },
+        )]),
+        SimulationFrameInput::default(),
+    ];
+    for input in inputs {
+        let expected = hashed.advance_frame(&assets, input.clone()).unwrap();
+        let actual = unhashed.advance_frame_without_hash(&assets, input).unwrap();
+        assert_eq!(expected.state_hash, crate::replay::state_hash(&hashed));
+        assert_eq!(expected.state_hash, crate::replay::state_hash(&unhashed));
+        let mut expected = serde_json::to_value(expected).unwrap();
+        let mut actual = serde_json::to_value(actual).unwrap();
+        expected.as_object_mut().unwrap().remove("state_hash");
+        actual.as_object_mut().unwrap().remove("state_hash");
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
 fn recorded_drop_ale_facts_round_trip_and_reject_atomically() {
     let (mut engine, assets) = frame_api_fixture();
     let owner = EntityId::Pc(crate::entity_id::PcId(36));
