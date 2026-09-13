@@ -172,14 +172,6 @@ pub fn derive_static_element_topology(
     })
 }
 
-/// Derive phase-two element metadata.
-pub fn derive_element_payload_metadata(
-    engine: &EngineInner,
-    assets: &LevelAssets,
-) -> Result<LegacyMissionPayloadMetadata, LegacyAdoptError> {
-    Ok(derive_static_element_topology(engine, assets)?.payload_metadata)
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticElementSource {
     Entity(EntityId),

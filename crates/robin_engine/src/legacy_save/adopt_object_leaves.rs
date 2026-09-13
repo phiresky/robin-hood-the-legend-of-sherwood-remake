@@ -43,8 +43,9 @@ use super::{
 /// TODO: Original SetForce does not reset affects flags, concavity, or ID.
 /// If support for nondefault object repulsion metadata is needed, implement
 /// its live collision semantics rather than retaining another unread copy.
-pub const OVERWRITTEN_OR_UNUSED_OBJECT_FIELDS: &[&str] =
-    &["object register number", "object repulsive point"];
+//
+// Object fields covered above, decoded but deliberately not adopted: the
+// object register number and the object repulsive point.
 
 #[derive(Debug)]
 pub struct LegacyObjectLeafAdoptionPlan {

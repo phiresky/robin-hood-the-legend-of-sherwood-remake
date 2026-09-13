@@ -47,31 +47,18 @@ use super::{
     payload_objects::LegacyObjectItemPayload,
 };
 
-/// Authoritative serialized members which have no equivalent in the current
-/// Rust entity model and therefore remain for later adoption stages.
-///
-/// Keeping the list next to the conversion prevents a partially adopted save
-/// from looking complete. In particular, the sprite frame countdown drives
-/// projectile flight and must land before this plan is wired into replay.
-pub const REMAINING_COMMON_ELEMENT_FIELDS: &[&str] = &[
-    "actor sequence/order links and inline post-seek sequence",
-    "actor script member variables",
-];
-
-/// Serialized bytes which are intentionally not simulation state in Rust.
-///
-/// Original recomputes display order and the sprite bounding box during its
-/// normal render/position refreshes; the dummy is an uninitialized legacy
-/// compatibility slot. The already-decompressed flag describes a host-side sprite
-/// asset cache. None may influence authoritative replay comparison.
-pub const NON_AUTHORITATIVE_COMMON_ELEMENT_FIELDS: &[&str] = &[
-    "sprite already-decompressed flag",
-    "sprite display order",
-    "sprite display-order placeholder",
-    "sprite bounding box",
-    "AI log info/frame (Linux v48 serializes only the debug line type)",
-    "enemy AI duplicate pre-personal seek directions and first seek-flags/status copies (later serialized copies overwrite them during original-game load)",
-];
+// Serialized bytes which are intentionally not simulation state in Rust, and
+// so are decoded but never adopted:
+// - sprite already-decompressed flag (a host-side sprite asset cache)
+// - sprite display order and its display-order placeholder (Original
+//   recomputes display order during normal render refreshes; the dummy is an
+//   uninitialized legacy compatibility slot)
+// - sprite bounding box (recomputed by position refreshes)
+// - AI log info/frame (Linux v48 serializes only the debug line type)
+// - enemy AI duplicate pre-personal seek directions and first
+//   seek-flags/status copies (later serialized copies overwrite them during
+//   original-game load)
+// None may influence authoritative replay comparison.
 
 fn element_site(creation_order: u32) -> AdoptSite {
     AdoptSite::element("saved element", creation_order)

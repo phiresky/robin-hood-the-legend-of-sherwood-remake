@@ -8,13 +8,12 @@ use crate::{campaign::Campaign, engine::EngineInner, profiles::ProfileManager};
 
 use super::{
     adopt_common::{AdoptErrorKind, LegacyAdoptError},
-    campaign::{LegacyCampaignBootstrap, LegacyMissionIdentity, LegacySaveCampaigns},
+    campaign::{LegacyCampaignBootstrap, LegacySaveCampaigns},
 };
 
 #[derive(Clone, Debug)]
 pub struct LegacyCampaignAdoptionPlan {
     campaign: Campaign,
-    pub identity: LegacyMissionIdentity,
 }
 
 impl LegacyCampaignAdoptionPlan {
@@ -59,7 +58,7 @@ impl LegacyCampaignAdoptionPlan {
         campaign.pre_mission_rng_seed = None;
         campaign.pre_mission_sim_config = None;
         campaign.pre_mission_was_preselected = true;
-        Ok(Self { campaign, identity })
+        Ok(Self { campaign })
     }
 
     pub(crate) fn apply(self, engine: &mut EngineInner) {

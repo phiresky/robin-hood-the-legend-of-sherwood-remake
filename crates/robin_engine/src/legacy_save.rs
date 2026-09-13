@@ -14,52 +14,58 @@
 //! two consecutive, lengthless campaign streams which precede
 //! the engine state.
 
-pub mod adopt;
-pub mod adopt_actor_ownership;
-pub mod adopt_camera;
-pub mod adopt_campaign;
-pub mod adopt_common;
-pub mod adopt_dynamic_elements;
-pub mod adopt_elements;
+// External surface (robin_rs / robin_parity): decode a save, then adopt it.
 pub mod adopt_engine;
-pub mod adopt_grid;
-pub mod adopt_hiking_tail;
-pub mod adopt_mobile;
-pub mod adopt_object_leaves;
-pub mod adopt_paths;
-pub mod adopt_pc_human;
-pub mod adopt_post_load;
-pub mod adopt_preamble;
-pub mod adopt_preamble_services;
-pub mod adopt_sequences;
-pub mod adopt_simple;
-pub mod adopt_tail_basic;
-pub mod adopt_tail_runtime;
-pub mod adopt_vm_arena;
 pub mod body;
-pub mod campaign;
 pub mod elements;
-pub mod engine;
-pub mod gate_topology;
 pub mod initialized;
-pub mod payload_actors;
-pub mod payload_ai;
-pub mod payload_base;
-pub mod payload_context;
-pub mod payload_dispatch;
-pub mod payload_nonactors;
-pub mod payload_objects;
-pub mod payload_sequences;
-pub mod payload_vm;
-pub mod post_grid;
-pub mod post_hiking;
-pub mod post_sequence_manager;
-pub mod post_simple;
-pub mod post_tail;
+
+// Crate-internal consumers outside `legacy_save` (engine topology/tests).
+pub(crate) mod adopt_elements;
+pub(crate) mod gate_topology;
+pub(crate) mod topology_adapter;
+
+// Everything else is private to the save pipeline, so `dead_code` stays
+// meaningful for the decoded payload types.
+mod adopt;
+mod adopt_actor_ownership;
+mod adopt_camera;
+mod adopt_campaign;
+mod adopt_common;
+mod adopt_dynamic_elements;
+mod adopt_grid;
+mod adopt_hiking_tail;
+mod adopt_mobile;
+mod adopt_object_leaves;
+mod adopt_paths;
+mod adopt_pc_human;
+mod adopt_post_load;
+mod adopt_preamble;
+mod adopt_preamble_services;
+mod adopt_sequences;
+mod adopt_simple;
+mod adopt_tail_basic;
+mod adopt_tail_runtime;
+mod adopt_vm_arena;
+mod campaign;
+mod engine;
+mod payload_actors;
+mod payload_ai;
+mod payload_base;
+mod payload_context;
+mod payload_dispatch;
+mod payload_nonactors;
+mod payload_objects;
+mod payload_sequences;
+mod payload_vm;
+mod post_grid;
+mod post_hiking;
+mod post_sequence_manager;
+mod post_simple;
+mod post_tail;
 mod read_helpers;
 #[cfg(test)]
 mod test_support;
-pub mod topology_adapter;
 mod vm_schema;
 
 use serde::{Deserialize, Serialize};

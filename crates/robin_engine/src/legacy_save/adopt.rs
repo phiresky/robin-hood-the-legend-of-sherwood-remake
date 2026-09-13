@@ -24,16 +24,18 @@ use crate::{
 
 use super::{
     adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError, point2, point3, vector2, vector3},
-    body::LegacySaveBody,
-    elements::{LegacyElementClass, LegacyElementEnvelope, LegacyElementResolution},
     gate_topology::derive_legacy_gate_order,
     payload_base::{
         LegacyAiElementRef, LegacyBoundingBox2, LegacyElementRef, LegacyLineRef,
         LegacyPositionPayload,
     },
-    topology_adapter::{
-        LegacyMissingTopologyFact, LegacyStaticElementTopology, derive_static_element_topology,
-    },
+    topology_adapter::LegacyMissingTopologyFact,
+};
+// Used only by the test-only static fixup builder below.
+#[cfg(test)]
+use super::{
+    elements::{LegacyElementClass, LegacyElementEnvelope, LegacyElementResolution},
+    topology_adapter::LegacyStaticElementTopology,
 };
 
 const POSITION: AdoptSite = AdoptSite::new("saved position");
@@ -389,6 +391,10 @@ impl LegacyEntityFixups {
     /// returning a partial map would let later state conversion silently bind
     /// references to the wrong entity. Their exact constructors are added by
     /// subsequent adoption stages.
+    ///
+    /// Only unit tests use this static-only slice; production adoption builds
+    /// the complete map including dynamic elements.
+    #[cfg(test)]
     pub fn build(
         envelope: &LegacyElementEnvelope,
         topology: &LegacyStaticElementTopology,
@@ -510,17 +516,6 @@ impl LegacyEntityFixups {
 /// Error for a saved creation-order reference absent from the element map.
 pub(crate) fn missing_creation_order(creation_order: u32) -> LegacyAdoptError {
     AdoptErrorKind::MissingCreationOrderReference { creation_order }.into()
-}
-
-/// Derive and validate the complete entity-reference plan without mutating the
-/// initialized engine.
-pub fn preflight_initialized_v48_adoption(
-    engine: &EngineInner,
-    assets: &LevelAssets,
-    body: &LegacySaveBody,
-) -> Result<LegacyEntityFixups, LegacyAdoptError> {
-    let topology = derive_static_element_topology(engine, assets)?;
-    LegacyEntityFixups::build(&body.element_envelope, &topology)
 }
 
 /// Reconstruct the mission-created arrays used by position pointer fixups.
