@@ -40,6 +40,17 @@ use std::cell::RefCell;
 /// synchronous call boundaries. It cannot be detached from the owning
 /// `SimulationRng`; engine snapshot cloning and serialization operate on that
 /// owner, never on the capability.
+///
+/// Why `Arc<Mutex<_>>` rather than a plain owned `fastrand::Rng`: the context
+/// is an *alias* of the engine-owned stream (`SimulationRng::context` hands
+/// out an `Arc` clone), so every draw through it must advance the engine's
+/// state while engine methods hold `&mut` borrows of other fields. An owned
+/// `Rng` would fork the stream instead. `Rc<RefCell<_>>` is ruled out because
+/// `Engine` must stay `Send`: native game factories run on a dedicated thread
+/// and `robin_rs::rollback_checker` moves a cloned `Engine` into a worker
+/// thread. The lock is uncontended.
+// TODO: a borrowed `&RefCell<fastrand::Rng>` context (lifetime-parameterized)
+// would drop the lock, but touches every `&SimulationContext` signature.
 pub struct SimulationContext {
     rng: Arc<Mutex<fastrand::Rng>>,
     original_replay: Option<Arc<Mutex<OriginalRngReplay>>>,
