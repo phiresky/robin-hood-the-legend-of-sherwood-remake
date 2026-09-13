@@ -300,13 +300,18 @@ pub(crate) async fn show_main_menu(
     {
         if initial_direct_invite.is_some()
             && let Some(launch) = multiplayer_menu::show_multiplayer_menu(
-                window,
-                &mut renderer,
-                &menu_resources,
-                &mut cursor_renderer,
-                campaign,
-                profiles,
                 application_context,
+                &mut AnimatedScreenIo {
+                    window: &mut *window,
+                    renderer: &mut renderer,
+                    resources: &menu_resources,
+                    cursor: Some(&mut ModalCursor::new(
+                        &mut cursor_renderer,
+                        MOUSE_OPACITY_DEFAULT,
+                        0,
+                    )),
+                },
+                multiplayer_menu::MultiplayerMissionSources { campaign, profiles },
                 initial_direct_invite,
             )
             .await
@@ -892,13 +897,21 @@ async fn dispatch_click(
         }
         #[cfg(feature = "multiplayer")]
         ClickAction::Multiplayer => multiplayer_menu::show_multiplayer_menu(
-            io.window,
-            io.renderer,
-            io.resources,
-            io.cursor_renderer,
-            session.campaign,
-            session.profiles,
             application_context,
+            &mut AnimatedScreenIo {
+                window: &mut *io.window,
+                renderer: &mut *io.renderer,
+                resources: &*io.resources,
+                cursor: Some(&mut ModalCursor::new(
+                    io.cursor_renderer,
+                    MOUSE_OPACITY_DEFAULT,
+                    0,
+                )),
+            },
+            multiplayer_menu::MultiplayerMissionSources {
+                campaign: session.campaign,
+                profiles: session.profiles,
+            },
             None,
         )
         .await
