@@ -5,8 +5,6 @@
 use anyhow::{Context, Result, ensure};
 use robin_engine::replay::{ReplayData, ReplayHeader, ReplaySaveMarker};
 use serde::{Deserialize, Serialize};
-#[cfg(not(target_arch = "wasm32"))]
-use std::io::Read;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -56,10 +54,8 @@ pub(crate) struct MissionArchive {
     // A continuation is invisible to archive readers until its header and
     // complete first restore frame are durable. This is never serialized.
     pending: Option<Chunk>,
-    #[cfg(not(target_arch = "wasm32"))]
-    _lock: std::fs::File,
-    #[cfg(target_arch = "wasm32")]
-    _cache_lease: browser::DirectoryLease,
+    // Native exclusive lock file or browser cache pin; held, never read.
+    _lease: DirectoryLease,
 }
 
 impl MissionArchive {
@@ -71,10 +67,7 @@ impl MissionArchive {
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid archived ranked evidence: {error}"))?;
         let bytes = serde_json::to_vec(input)?;
-        #[cfg(not(target_arch = "wasm32"))]
-        crate::save_file::atomic_write(&self.directory.join("ranked.json"), &bytes)?;
-        #[cfg(target_arch = "wasm32")]
-        browser_write(&self.directory.join("ranked.json"), &bytes)?;
+        publish_file(&self.directory.join("ranked.json"), &bytes)?;
         Ok(())
     }
 
@@ -93,21 +86,10 @@ impl MissionArchive {
     }
 
     pub(crate) fn create(directory: &Path) -> Result<Self> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Some(parent) = directory.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            // Never truncate an earlier mission, including --record overrides.
-            std::fs::create_dir(directory)
-                .with_context(|| format!("create mission recording {}", directory.display()))?;
-        }
+        create_directory(directory)?;
         let directory = canonical_directory(directory)?;
         let mut archive = Self {
-            #[cfg(not(target_arch = "wasm32"))]
-            _lock: lock_directory(&directory)?,
-            #[cfg(target_arch = "wasm32")]
-            _cache_lease: browser::pin_directory(&directory)?,
+            _lease: lease_directory(&directory)?,
             directory,
             manifest: Manifest {
                 version: 1,
@@ -123,17 +105,12 @@ impl MissionArchive {
 
     pub(crate) fn open(directory: &Path) -> Result<Self> {
         let directory = canonical_directory(directory)?;
-        #[cfg(not(target_arch = "wasm32"))]
-        let lock = lock_directory(&directory)?;
-        let manifest = read_manifest(&directory)?;
+        let (lease, manifest) = lease_and_read_manifest(&directory)?;
         Ok(Self {
-            #[cfg(target_arch = "wasm32")]
-            _cache_lease: browser::pin_directory(&directory)?,
+            _lease: lease,
             directory,
             manifest,
             pending: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            _lock: lock,
         })
     }
 
@@ -269,14 +246,7 @@ impl MissionArchive {
     }
 
     pub(crate) fn sync_current(&self) -> Result<()> {
-        #[cfg(target_arch = "wasm32")]
-        browser::checkpoint()?;
-        #[cfg(not(target_arch = "wasm32"))]
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(self.directory.join(self.current_chunk()))?
-            .sync_data()?;
-        Ok(())
+        sync_chunk(&self.directory.join(self.current_chunk()))
     }
 
     /// Return the validated export prefix, parsed history, and exact construction
@@ -366,10 +336,7 @@ fn read_manifest(directory: &Path) -> Result<Manifest> {
 
 fn write_manifest(directory: &Path, manifest: &Manifest) -> Result<()> {
     let bytes = serde_json::to_vec(manifest)?;
-    #[cfg(not(target_arch = "wasm32"))]
-    crate::save_file::atomic_write(&directory.join(MANIFEST), &bytes)?;
-    #[cfg(target_arch = "wasm32")]
-    browser_write(&directory.join(MANIFEST), &bytes)?;
+    publish_file(&directory.join(MANIFEST), &bytes)?;
     Ok(())
 }
 
@@ -464,151 +431,12 @@ fn assemble_replay(
     ))
 }
 
-/// Freeze an earlier attempt's chronology at its immutable terminal chunk.
-/// Later loads append new files and cannot change this attempt's replay.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn load_through_chunk(path: &Path) -> Result<ReplayData> {
-    let directory = path
-        .parent()
-        .context("replay chunk requires its mission directory")?;
-    let filename = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("replay chunk filename is not UTF-8")?;
-    let mut manifest = read_manifest(directory)?;
-    let index = manifest
-        .chunks
-        .iter()
-        .position(|chunk| chunk.file == filename)
-        .context("file is not a chunk in this mission recording")?;
-    manifest.chunks.truncate(index + 1);
-    let (_, data, _) = assemble_replay(directory, &manifest)?;
-    Ok(data)
-}
-
 /// Assemble all chronological chunks into the same self-contained replay used
 /// by compact exports and verification. No dependency on original save files.
 pub fn load_directory(directory: &Path) -> Result<ReplayData> {
     let manifest = read_manifest(directory)?;
     let (_, data, _) = assemble_replay(directory, &manifest)?;
     Ok(data)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn canonical_directory(path: &Path) -> Result<PathBuf> {
-    let path = path.canonicalize()?;
-    ensure!(
-        path.to_str().is_some(),
-        "mission recording directory must be UTF-8"
-    );
-    Ok(path)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn lock_directory(directory: &Path) -> Result<std::fs::File> {
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(directory.join("recording.lock"))?;
-    fs2::FileExt::try_lock_exclusive(&file)
-        .context("mission recording is already open in another session")?;
-    Ok(file)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)?
-        .take(limit as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() <= limit,
-        "mission recording exceeds {MAX_BYTES} bytes"
-    );
-    Ok(bytes)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn reserve_unreferenced_chunk(path: &Path) -> Result<()> {
-    match create_chunk(path) {
-        Ok(()) => return Ok(()),
-        Err(error)
-            if error
-                .downcast_ref::<std::io::Error>()
-                .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists) => {}
-        Err(error) => return Err(error),
-    }
-    // Only reserve_next_chunk calls this, under the archive's exclusive lease
-    // and after proving the canonical name is absent from its manifest.
-    ensure!(
-        std::fs::symlink_metadata(path)?.file_type().is_file(),
-        "unpublished replay path {} is not a regular file; preserve it and repair manually",
-        path.display()
-    );
-    let parent = path.parent().context("replay chunk has no directory")?;
-    let quarantine = tempfile::Builder::new()
-        .prefix(".unpublished-replay-")
-        .tempdir_in(parent)?;
-    let retained = quarantine
-        .path()
-        .join(path.file_name().context("replay chunk has no filename")?);
-    std::fs::rename(path, &retained)
-        .with_context(|| format!("retain unpublished replay chunk {}", path.display()))?;
-    // From here onward the directory contains user history, not disposable
-    // scratch space. Preserve it even if durability or a later reserve fails.
-    let quarantine = quarantine.keep();
-    #[cfg(unix)]
-    {
-        std::fs::File::open(&quarantine)?.sync_all()?;
-        std::fs::File::open(parent)?.sync_all()?;
-    }
-    tracing::warn!(path = %retained.display(), "retained unpublished replay chunk before retry");
-    create_chunk(path).with_context(|| {
-        format!(
-            "reserve replay retry; previous bytes retained in {}",
-            quarantine.display()
-        )
-    })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn reserve_unreferenced_chunk(path: &Path) -> Result<()> {
-    // Browser storage errors retire the session. Unlike native storage there
-    // is no synchronous directory-recovery API: an existing staged child is
-    // retained and an attempted collision fails explicitly, never overwrites.
-    create_chunk(path)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn create_chunk(path: &Path) -> Result<()> {
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?
-        .sync_all()?;
-    Ok(())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn open_chunk_writer(path: &Path) -> Result<Box<dyn Write + Send>> {
-    Ok(Box::new(DurableChunk(
-        std::fs::OpenOptions::new().append(true).open(path)?,
-    )))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-struct DurableChunk(std::fs::File);
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Write for DurableChunk {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.write(bytes)
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.0.flush()
-    }
 }
 
 /// Local chunks carry their own links as well as the manifest's index. The
@@ -650,17 +478,18 @@ impl Write for ChunkHeaderWriter {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-fn canonical_directory(path: &Path) -> Result<PathBuf> {
-    Ok(path.to_owned())
-}
-
+#[cfg(not(target_arch = "wasm32"))]
+mod native;
+#[cfg(not(target_arch = "wasm32"))]
+use native as platform;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use native::load_through_chunk;
 #[cfg(target_arch = "wasm32")]
 mod browser;
 #[cfg(target_arch = "wasm32")]
-pub(crate) use browser::next_directory as browser_recording_directory;
+use browser as platform;
 #[cfg(target_arch = "wasm32")]
-use browser::{create_chunk, open_chunk_writer, read_bounded, write as browser_write};
+pub(crate) use browser::next_directory as browser_recording_directory;
 #[cfg(target_arch = "wasm32")]
 pub use browser::{
     flush_pending as flush_browser_storage, initialize as initialize_browser_storage,
@@ -668,6 +497,11 @@ pub use browser::{
 #[cfg(target_arch = "wasm32")]
 pub(crate) use browser::{
     prepare_directory as prepare_browser_directory, retire_mission as retire_browser_mission,
+};
+use platform::{
+    DirectoryLease, canonical_directory, create_directory, lease_and_read_manifest,
+    lease_directory, open_chunk_writer, read_bounded, reserve_unreferenced_chunk, sync_chunk,
+    write as publish_file,
 };
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

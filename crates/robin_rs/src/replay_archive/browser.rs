@@ -578,6 +578,32 @@ pub(super) fn write(path: &Path, bytes: &[u8]) -> Result<()> {
 pub(super) fn create_chunk(path: &Path) -> Result<()> {
     change(path, b"", false, true)
 }
+/// Browser directories are implicit key prefixes; `prepare_directory` owns
+/// their reservation, so there is nothing to create here.
+pub(super) fn create_directory(_directory: &Path) -> Result<()> {
+    Ok(())
+}
+/// Browser paths are already the canonical storage keys.
+pub(super) fn canonical_directory(path: &Path) -> Result<PathBuf> {
+    Ok(path.to_owned())
+}
+/// Pin cache blocks only once the committed manifest has been read.
+pub(super) fn lease_and_read_manifest(
+    directory: &Path,
+) -> Result<(DirectoryLease, super::Manifest)> {
+    let manifest = super::read_manifest(directory)?;
+    Ok((lease_directory(directory)?, manifest))
+}
+/// Chunk bytes live in the session; durability is one journal checkpoint.
+pub(super) fn sync_chunk(_path: &Path) -> Result<()> {
+    checkpoint()
+}
+pub(super) fn reserve_unreferenced_chunk(path: &Path) -> Result<()> {
+    // Browser storage errors retire the session. Unlike native storage there
+    // is no synchronous directory-recovery API: an existing staged child is
+    // retained and an attempted collision fails explicitly, never overwrites.
+    create_chunk(path)
+}
 pub(super) fn open_chunk_writer(path: &Path) -> Result<Box<dyn Write + Send>> {
     with_session(|s| {
         ensure!(s.files.contains_key(path), "missing replay chunk");
@@ -586,7 +612,7 @@ pub(super) fn open_chunk_writer(path: &Path) -> Result<Box<dyn Write + Send>> {
     let directory = path.parent().context("replay chunk has no directory")?;
     Ok(Box::new(BrowserChunk(
         path.into(),
-        pin_directory(directory)?,
+        lease_directory(directory)?,
     )))
 }
 #[derive(Serialize)]
@@ -744,7 +770,7 @@ impl<'de> Deserialize<'de> for DirectoryLease {
         ))
     }
 }
-pub(super) fn pin_directory(directory: &Path) -> Result<DirectoryLease> {
+pub(super) fn lease_directory(directory: &Path) -> Result<DirectoryLease> {
     with_session(|s| {
         *s.leases.entry(directory.into()).or_default() += 1;
         Ok(DirectoryLease {
@@ -802,7 +828,7 @@ pub async fn prepare_directory(directory: &Path) -> Result<()> {
     // A temporary lease also keeps concurrent preparation from evicting this
     // history while IndexedDB reads yield. Drop it before failure cleanup.
     release_unreferenced(Some(directory))?;
-    let lease = pin_directory(directory)?;
+    let lease = lease_directory(directory)?;
     let result = async {
         load_file(&directory.join(MANIFEST), true).await?;
         let manifest = super::read_manifest(directory)?;
