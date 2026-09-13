@@ -1344,7 +1344,7 @@ pub fn find_path_gates_with_sector_indices(
         GateSearchInputs {
             source,
             source_key,
-            goal: goal,
+            goal,
             search_goal: GateSearchGoal::Sector(goal_key),
             allow_leave_map,
         },
@@ -1354,7 +1354,7 @@ pub fn find_path_gates_with_sector_indices(
     )
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy)]
 enum GateSearchGoal {
     Sector(GateSectorKey),
     Door(DoorIndex),
@@ -1370,7 +1370,7 @@ impl GateSearchGoal {
 }
 
 /// Query-specific search policy; graph and authorization remain borrowed inputs.
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy)]
 struct GateSearchInputs {
     source: MapPoint,
     source_key: GateSectorKey,

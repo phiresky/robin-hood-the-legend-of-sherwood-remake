@@ -840,7 +840,7 @@ fn is_detecting(
 /// `compute_object_visibility` (object target), both of which check
 /// those short-circuits earlier in their own bodies.
 /// Shared viewer-side geometry; target policies retain their own early exits.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy)]
 struct ViewerContext {
     position: MapPoint,
     direction: i16,
