@@ -827,5 +827,19 @@ fn npc_base_and_subclasses_match_frozen_json_encoder() {
         } else {
             assert_eq!(actual["npc_ai"], expected);
         }
+        let brain_label = match &engine
+            .inner
+            .world
+            .entities
+            .get(id)
+            .and_then(|entity| entity.npc_data())
+            .expect("fixture NPC")
+            .ai_brain
+        {
+            AiBrain::None => "none",
+            AiBrain::Friendly(_) => "friendly",
+            AiBrain::Enemy(_) => "enemy",
+        };
+        golden::assert_golden(&format!("entity_npc_{brain_label}"), &actual);
     }
 }

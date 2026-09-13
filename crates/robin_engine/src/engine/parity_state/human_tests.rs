@@ -199,6 +199,14 @@ fn human_and_pc_records_match_frozen_encoder_with_populated_frontiers() {
         for entity_id in [opponent, id] {
             let expected = engine.original_human_frontier(entity_id, &assets);
             let actual = engine.parity_entity_runtime_state(entity_id, &assets);
+            golden::assert_golden(
+                &format!(
+                    "entity_human_{populated}_{:?}_{}",
+                    entity_id.kind(),
+                    entity_id.index()
+                ),
+                &actual,
+            );
             for key in COMPONENTS {
                 assert_eq!(
                     actual.get(key),

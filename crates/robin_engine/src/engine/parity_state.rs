@@ -23,6 +23,10 @@ mod projectile_tests;
 mod tests;
 
 #[cfg(test)]
+#[path = "parity_state/golden.rs"]
+mod golden;
+
+#[cfg(test)]
 #[path = "parity_state/npc_tests.rs"]
 mod npc_tests;
 
