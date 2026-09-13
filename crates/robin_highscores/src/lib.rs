@@ -15,7 +15,6 @@
 compile_error!("robin_highscores is Linux-only (openat2, statx, procfs, systemd)");
 
 mod authentication;
-pub mod backup;
 pub mod campaign_store;
 pub mod config;
 pub mod db;

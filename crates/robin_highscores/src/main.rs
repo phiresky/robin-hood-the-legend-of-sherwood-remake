@@ -211,7 +211,6 @@ async fn initialize_connected_api(
     notifier: &impl StartupStatusNotifier,
 ) -> anyhow::Result<ApiRuntime> {
     let cursor_hmac_key = config.load_cursor_key()?;
-    let backup_authority_hmac_key = config.load_backup_authority_hmac_key()?;
     let competition_run_grant_secret_key = if config.competitions.is_empty() {
         None
     } else {
@@ -266,7 +265,6 @@ async fn initialize_connected_api(
         replay_store: replay_store.clone(),
         campaign_store: campaign_store.clone(),
         cursor_hmac_key,
-        backup_authority_hmac_key,
         competition_run_grant_secret_key,
         run_preflight_grant_secret_key,
         challenge_rate_limiter: ChallengeRateLimiter::new(

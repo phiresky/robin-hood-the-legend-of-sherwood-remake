@@ -51,10 +51,6 @@ pub struct ServerConfig {
     /// canonical fresh starts and server-recognized campaign continuations,
     /// and must not be reused for competitions, cursors, or public identity.
     pub run_preflight_grant_secret_path: PathBuf,
-    /// Dedicated HMAC authority for authenticated backup readiness envelopes.
-    /// It is deliberately distinct from runtime pagination and signing keys,
-    /// and is never part of a backup restore payload.
-    pub backup_authority_hmac_secret_path: PathBuf,
     pub moderation_bearer_token_path: Option<PathBuf>,
     pub moderation_operator_id: String,
     #[serde(skip)]
@@ -99,11 +95,6 @@ pub struct ServerConfig {
     /// Free bytes which must remain after the full bounded admission plan.
     /// Production validation keeps this at or above one GiB.
     pub minimum_storage_free_bytes: u64,
-    pub backup_manifest_path: Option<PathBuf>,
-    /// Exact canonical manifest for the installed immutable release. Backup
-    /// status is ready only when it binds this release identity.
-    pub release_manifest_path: Option<PathBuf>,
-    pub maximum_backup_age_hours: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,7 +284,6 @@ impl Default for ServerConfig {
             cursor_secret_path: PathBuf::from("data/cursor-hmac.key"),
             competition_run_grant_secret_path: PathBuf::from("data/competition-run-grant.key"),
             run_preflight_grant_secret_path: PathBuf::from("data/run-preflight-grant.key"),
-            backup_authority_hmac_secret_path: PathBuf::from("data/backup-authority-hmac.key"),
             moderation_bearer_token_path: None,
             moderation_operator_id: "operator".to_owned(),
             moderation_bearer_token: None,
@@ -323,9 +313,6 @@ impl Default for ServerConfig {
             rejected_replay_retention_hours: 24,
             orphan_replay_retention_hours: 24,
             minimum_storage_free_bytes: 1024 * 1024 * 1024,
-            backup_manifest_path: None,
-            release_manifest_path: None,
-            maximum_backup_age_hours: None,
         }
     }
 }
@@ -343,18 +330,7 @@ impl ServerConfig {
     /// points distinct is a security boundary: parsing the shared public
     /// configuration must not grant the worker a chance to open API secrets.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        Self::load_with_secret_scope(path, ConfigSecretScope::Api, &BTreeMap::new())
-    }
-
-    /// Load server configuration for the offline backup process, allowing
-    /// systemd credential copies to stand in for API-owned mode-0400 files.
-    /// The configured restore path remains unchanged; only the inode read by
-    /// this process is substituted. Runtime services must use [`Self::load`].
-    pub fn load_with_backup_credentials(
-        path: &Path,
-        credential_sources: &BTreeMap<PathBuf, PathBuf>,
-    ) -> anyhow::Result<Self> {
-        Self::load_with_secret_scope(path, ConfigSecretScope::Api, credential_sources)
+        Self::load_with_secret_scope(path, ConfigSecretScope::Api)
     }
 
     /// Load the public/runtime subset needed by the verification worker.
@@ -365,14 +341,10 @@ impl ServerConfig {
     /// and run-preflight-grant keys are likewise opened only by their explicit
     /// API/admin methods.
     pub fn load_for_worker(path: &Path) -> anyhow::Result<Self> {
-        Self::load_with_secret_scope(path, ConfigSecretScope::Worker, &BTreeMap::new())
+        Self::load_with_secret_scope(path, ConfigSecretScope::Worker)
     }
 
-    fn load_with_secret_scope(
-        path: &Path,
-        scope: ConfigSecretScope,
-        credential_sources: &BTreeMap<PathBuf, PathBuf>,
-    ) -> anyhow::Result<Self> {
+    fn load_with_secret_scope(path: &Path, scope: ConfigSecretScope) -> anyhow::Result<Self> {
         let bytes = read_regular_file_no_symlinks(path, HARD_MAX_OPERATOR_DOCUMENT_BYTES)?;
         let mut config: Self = toml::from_str(std::str::from_utf8(&bytes)?)?;
         config.allow_test_fence_provisioning = false;
@@ -384,14 +356,7 @@ impl ServerConfig {
             ConfigSecretScope::Api => config
                 .moderation_bearer_token_path
                 .as_deref()
-                .map(|configured| {
-                    load_private_bearer_token(
-                        credential_sources
-                            .get(configured)
-                            .map(PathBuf::as_path)
-                            .unwrap_or(configured),
-                    )
-                })
+                .map(load_private_bearer_token)
                 .transpose()?
                 .map(std::sync::Arc::new),
             ConfigSecretScope::Worker => None,
@@ -405,7 +370,7 @@ impl ServerConfig {
     }
 
     fn validate_for_secret_scope(&self, scope: ConfigSecretScope) -> anyhow::Result<()> {
-        self.validate_limits_and_backup_paths()?;
+        self.validate_limits()?;
         self.validate_paths_and_secrets(scope)?;
         self.validate_cors_origins()?;
         self.validate_network_limits()?;
@@ -422,7 +387,7 @@ impl ServerConfig {
         self.validate_competitions(&profile_ids)
     }
 
-    fn validate_limits_and_backup_paths(&self) -> anyhow::Result<()> {
+    fn validate_limits(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.max_replay_bytes > 0,
             "max_replay_bytes must be positive"
@@ -448,28 +413,6 @@ impl ServerConfig {
                 >= crate::storage_admission::MINIMUM_STORAGE_RESERVE_BYTES,
             "minimum_storage_free_bytes must be at least 1 GiB"
         );
-        anyhow::ensure!(
-            self.backup_manifest_path.is_some() == self.maximum_backup_age_hours.is_some()
-                && self.backup_manifest_path.is_some() == self.release_manifest_path.is_some(),
-            "backup_manifest_path, release_manifest_path, and maximum_backup_age_hours must be configured together"
-        );
-        if let Some(hours) = self.maximum_backup_age_hours {
-            anyhow::ensure!(
-                hours == 32,
-                "maximum backup age must be 32 hours to cover the daily schedule, jitter, timeout, and margin"
-            );
-        }
-        if let Some(path) = &self.backup_manifest_path {
-            anyhow::ensure!(path.is_absolute(), "backup_manifest_path must be absolute");
-        }
-        if let Some(path) = &self.release_manifest_path {
-            anyhow::ensure!(path.is_absolute(), "release_manifest_path must be absolute");
-            anyhow::ensure!(
-                path.file_name().and_then(|name| name.to_str())
-                    == Some("vps-release-manifest-v2.json"),
-                "release_manifest_path must name vps-release-manifest-v2.json"
-            );
-        }
         anyhow::ensure!(
             self.max_replay_bytes <= HARD_MAX_REPLAY_BYTES,
             "max_replay_bytes exceeds the compiled safety limit of {HARD_MAX_REPLAY_BYTES}"
@@ -569,17 +512,6 @@ impl ServerConfig {
                 && self.run_preflight_grant_secret_path != self.cursor_secret_path
                 && self.run_preflight_grant_secret_path != self.competition_run_grant_secret_path,
             "run_preflight_grant_secret_path must name a distinct file"
-        );
-        anyhow::ensure!(
-            self.backup_authority_hmac_secret_path.file_name().is_some()
-                && self.backup_authority_hmac_secret_path != self.cursor_secret_path
-                && self.backup_authority_hmac_secret_path != self.competition_run_grant_secret_path
-                && self.backup_authority_hmac_secret_path != self.run_preflight_grant_secret_path
-                && self
-                    .moderation_bearer_token_path
-                    .as_ref()
-                    .is_none_or(|path| path != &self.backup_authority_hmac_secret_path),
-            "backup_authority_hmac_secret_path must name a distinct file"
         );
         anyhow::ensure!(
             !self.moderation_operator_id.is_empty() && self.moderation_operator_id.len() <= 128,
@@ -1152,28 +1084,6 @@ impl ServerConfig {
             "run preflight grant secret",
         )
     }
-
-    /// Exercise the legacy create-new primitive only in its focused unit
-    /// tests. Production initialization is transaction-bound in the admin
-    /// binary and this lower-level, non-resumable path must not be callable.
-    #[cfg(test)]
-    pub(crate) fn initialize_backup_authority_hmac_key(&self) -> anyhow::Result<[u8; 32]> {
-        backup_authority_key(
-            &self.backup_authority_hmac_secret_path,
-            true,
-            "backup authority HMAC secret",
-        )
-    }
-
-    /// Load the already initialized backup authority without creating or
-    /// repairing it. Every inode property is checked on the pinned descriptor.
-    pub fn load_backup_authority_hmac_key(&self) -> anyhow::Result<[u8; 32]> {
-        backup_authority_key(
-            &self.backup_authority_hmac_secret_path,
-            false,
-            "backup authority HMAC secret",
-        )
-    }
 }
 
 fn validate_current_ranked_build(
@@ -1566,168 +1476,6 @@ fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Res
     Ok(key)
 }
 
-fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::Result<[u8; 32]> {
-    use rustix::fs::{Mode, OFlags};
-    use std::io::{Read as _, Write as _};
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("{label} must have a parent directory"))?;
-    let filename = path
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("{label} must name a file"))?;
-    let parent_fd = crate::secure_fs::open_dir_no_symlinks(parent).map_err(|error| {
-        anyhow::anyhow!(
-            "{label} parent must pre-exist without symlinks ({}): {error}",
-            parent.display()
-        )
-    })?;
-    let parent_file = std::fs::File::from(parent_fd);
-    let parent_metadata = parent_file.metadata()?;
-    anyhow::ensure!(
-        parent_metadata.is_dir()
-            && parent_metadata.permissions().mode() & 0o777 == 0o700
-            && parent_metadata.uid() == rustix::process::geteuid().as_raw(),
-        "{label} parent must be an effective-user-owned directory mode 0700"
-    );
-
-    let flags = if create_new {
-        OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC
-    } else {
-        OFlags::RDONLY | OFlags::CLOEXEC
-    };
-    let fd = crate::secure_fs::create_beneath_no_symlinks(
-        &parent_file,
-        filename,
-        flags,
-        if create_new {
-            Mode::from_raw_mode(0o400)
-        } else {
-            Mode::empty()
-        },
-    )
-    .map_err(|error| {
-        if create_new {
-            anyhow::anyhow!(
-                "{label} initialization requires an absent destination ({}): {error}",
-                path.display()
-            )
-        } else {
-            anyhow::anyhow!(
-                "{label} is not initialized; use the transaction-bound VPS backup-authority initializer: {error}"
-            )
-        }
-    })?;
-    let mut file = std::fs::File::from(fd);
-
-    if create_new {
-        let metadata = file.metadata()?;
-        anyhow::ensure!(
-            metadata.is_file()
-                && metadata.len() == 0
-                && metadata.permissions().mode() & 0o777 == 0o400
-                && metadata.nlink() == 1
-                && metadata.uid() == rustix::process::geteuid().as_raw(),
-            "new {label} must be a private regular file mode 0400 with exactly one hard link"
-        );
-        let key = loop {
-            let candidate: [u8; 32] = rand::random();
-            if candidate != [0; 32] {
-                break candidate;
-            }
-        };
-        file.write_all(&key)?;
-        file.sync_all()?;
-        let metadata = file.metadata()?;
-        anyhow::ensure!(
-            metadata.is_file()
-                && metadata.len() == 32
-                && metadata.permissions().mode() & 0o777 == 0o400
-                && metadata.nlink() == 1
-                && metadata.uid() == rustix::process::geteuid().as_raw(),
-            "new {label} changed identity or permissions during initialization"
-        );
-        parent_file.sync_all()?;
-        revalidate_backup_authority_path(
-            parent,
-            filename,
-            &parent_metadata,
-            &metadata,
-            &key,
-            label,
-        )?;
-        return Ok(key);
-    }
-
-    let metadata = file.metadata()?;
-    anyhow::ensure!(
-        metadata.is_file()
-            && metadata.len() == 32
-            && metadata.permissions().mode() & 0o777 == 0o400
-            && metadata.nlink() == 1
-            && metadata.uid() == rustix::process::geteuid().as_raw(),
-        "{label} must be an exact 32-byte private regular file mode 0400 with exactly one hard link"
-    );
-    let mut key = [0; 32];
-    file.read_exact(&mut key)?;
-    let mut trailing = [0; 1];
-    anyhow::ensure!(file.read(&mut trailing)? == 0, "{label} must be 32 bytes");
-    anyhow::ensure!(key != [0; 32], "{label} must not be the all-zero key");
-    revalidate_backup_authority_path(parent, filename, &parent_metadata, &metadata, &key, label)?;
-    Ok(key)
-}
-
-fn revalidate_backup_authority_path(
-    parent: &Path,
-    filename: &std::ffi::OsStr,
-    expected_parent: &std::fs::Metadata,
-    expected_file: &std::fs::Metadata,
-    expected_key: &[u8; 32],
-    label: &str,
-) -> anyhow::Result<()> {
-    use rustix::fs::OFlags;
-    use std::io::Read as _;
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-    let parent_fd = crate::secure_fs::open_dir_no_symlinks(parent)?;
-    let parent_file = std::fs::File::from(parent_fd);
-    let parent_metadata = parent_file.metadata()?;
-    anyhow::ensure!(
-        parent_metadata.is_dir()
-            && parent_metadata.dev() == expected_parent.dev()
-            && parent_metadata.ino() == expected_parent.ino()
-            && parent_metadata.permissions().mode() & 0o777 == 0o700
-            && parent_metadata.uid() == rustix::process::geteuid().as_raw(),
-        "{label} parent path changed during access"
-    );
-    let file_fd = crate::secure_fs::open_beneath_no_symlinks(
-        &parent_file,
-        filename,
-        OFlags::RDONLY | OFlags::CLOEXEC,
-    )?;
-    let mut file = std::fs::File::from(file_fd);
-    let metadata = file.metadata()?;
-    anyhow::ensure!(
-        metadata.is_file()
-            && metadata.dev() == expected_file.dev()
-            && metadata.ino() == expected_file.ino()
-            && metadata.len() == 32
-            && metadata.permissions().mode() & 0o777 == 0o400
-            && metadata.nlink() == 1
-            && metadata.uid() == rustix::process::geteuid().as_raw(),
-        "{label} path changed during access"
-    );
-    let mut key = [0; 32];
-    file.read_exact(&mut key)?;
-    let mut trailing = [0; 1];
-    anyhow::ensure!(
-        file.read(&mut trailing)? == 0 && &key == expected_key,
-        "{label} contents changed during access"
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1928,67 +1676,6 @@ mod tests {
     }
 
     #[test]
-    fn backup_authority_is_create_new_and_rejects_aliases() {
-        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
-
-        let directory = tempfile::tempdir().unwrap();
-        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-        let authority = directory.path().join("backup-authority.key");
-        let mut config = ServerConfig {
-            backup_authority_hmac_secret_path: authority.clone(),
-            ..Default::default()
-        };
-
-        assert!(config.load_backup_authority_hmac_key().is_err());
-        let initialized = config.initialize_backup_authority_hmac_key().unwrap();
-        assert_eq!(
-            config.load_backup_authority_hmac_key().unwrap(),
-            initialized
-        );
-        assert!(config.initialize_backup_authority_hmac_key().is_err());
-
-        let metadata = std::fs::metadata(&authority).unwrap();
-        assert_eq!(metadata.len(), 32);
-        assert_eq!(metadata.permissions().mode() & 0o777, 0o400);
-        assert_eq!(metadata.nlink(), 1);
-        assert_eq!(metadata.uid(), rustix::process::geteuid().as_raw());
-
-        std::fs::set_permissions(&authority, std::fs::Permissions::from_mode(0o600)).unwrap();
-        std::fs::write(&authority, [0_u8; 32]).unwrap();
-        std::fs::set_permissions(&authority, std::fs::Permissions::from_mode(0o400)).unwrap();
-        assert!(config.load_backup_authority_hmac_key().is_err());
-        std::fs::set_permissions(&authority, std::fs::Permissions::from_mode(0o600)).unwrap();
-        std::fs::write(&authority, initialized).unwrap();
-        std::fs::set_permissions(&authority, std::fs::Permissions::from_mode(0o400)).unwrap();
-
-        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
-        assert!(config.load_backup_authority_hmac_key().is_err());
-        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(
-            config.load_backup_authority_hmac_key().unwrap(),
-            initialized
-        );
-
-        let hardlink = directory.path().join("backup-authority-hardlink.key");
-        std::fs::hard_link(&authority, &hardlink).unwrap();
-        assert!(config.load_backup_authority_hmac_key().is_err());
-        std::fs::remove_file(&hardlink).unwrap();
-        assert_eq!(
-            config.load_backup_authority_hmac_key().unwrap(),
-            initialized
-        );
-
-        let symlink_path = directory.path().join("backup-authority-symlink.key");
-        symlink(&authority, &symlink_path).unwrap();
-        config.backup_authority_hmac_secret_path = symlink_path;
-        assert!(config.load_backup_authority_hmac_key().is_err());
-
-        let mut duplicate = ServerConfig::default();
-        duplicate.backup_authority_hmac_secret_path = duplicate.cursor_secret_path.clone();
-        assert!(duplicate.validate().is_err());
-    }
-
-    #[test]
     fn operator_files_are_hashed_from_pinned_non_symlink_inodes() {
         use std::os::unix::fs::symlink;
 
@@ -2047,42 +1734,6 @@ mod tests {
     }
 
     #[test]
-    fn backup_config_load_uses_ephemeral_moderation_credential_only_for_reading() {
-        let directory = tempfile::tempdir().unwrap();
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
-                .unwrap();
-        }
-        let configured_token = directory.path().join("api-owned-token");
-        let credential = directory.path().join("credential-token");
-        std::fs::write(&credential, b"0123456789abcdef0123456789abcdef").unwrap();
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&credential, std::fs::Permissions::from_mode(0o400)).unwrap();
-        }
-
-        let original = ServerConfig {
-            moderation_bearer_token_path: Some(configured_token.clone()),
-            ..Default::default()
-        };
-        let config_path = directory.path().join("server.toml");
-        std::fs::write(&config_path, toml::to_string(&original).unwrap()).unwrap();
-        assert!(ServerConfig::load(&config_path).is_err());
-
-        let sources = BTreeMap::from([(configured_token.clone(), credential)]);
-        let loaded = ServerConfig::load_with_backup_credentials(&config_path, &sources).unwrap();
-        assert_eq!(
-            loaded.moderation_bearer_token_path.as_ref(),
-            Some(&configured_token)
-        );
-        assert_eq!(
-            loaded.moderation_bearer_token.as_deref().map(Vec::as_slice),
-            Some(b"0123456789abcdef0123456789abcdef".as_slice())
-        );
-    }
-
-    #[test]
     fn worker_config_load_never_opens_api_moderation_token() {
         let directory = tempfile::tempdir().unwrap();
         let missing_token = directory.path().join("api-only-token-does-not-exist");
@@ -2095,9 +1746,6 @@ mod tests {
             run_preflight_grant_secret_path: directory
                 .path()
                 .join("preflight-key-must-not-be-opened"),
-            backup_authority_hmac_secret_path: directory
-                .path()
-                .join("backup-authority-key-must-not-be-opened"),
             ..Default::default()
         };
         let config_path = directory.path().join("server.toml");
@@ -2118,17 +1766,15 @@ mod tests {
 
     #[test]
     fn shipped_user_units_cover_exact_runtime_paths_and_direct_launcher() {
-        let api = include_str!("../deploy/robin-highscores-api.service");
-        let worker = include_str!("../deploy/robin-highscores-worker.service");
-        let backup = include_str!("../deploy/robin-highscores-backup.service");
-        let timer = include_str!("../deploy/robin-highscores-backup.timer");
+        let api = include_str!("../ops/systemd/robin-highscores-api.service");
+        let worker = include_str!("../ops/systemd/robin-highscores-worker.service");
+        let backup = include_str!("../ops/systemd/robin-highscores-backup.service");
+        let timer = include_str!("../ops/systemd/robin-highscores-backup.timer");
         let server_config = include_str!("../highscores-server.example.toml");
         let worker_config = include_str!("../highscores-worker.example.toml");
         let nginx = include_str!("../deploy/nginx-robinhood-api.locations.conf");
         let api_environment = include_str!("../deploy/api.env.example");
         let worker_environment = include_str!("../deploy/worker.env.example");
-        let root_once = include_str!("../deploy/root-once.sh");
-        let install = include_str!("../README.md");
 
         assert_eq!(api_environment, "RUST_LOG=info\n");
         assert_eq!(worker_environment, "RUST_LOG=info\n");
@@ -2140,68 +1786,38 @@ mod tests {
             "/home/robinhood/.local/share/robin-highscores/api-secrets/cursor-hmac.key",
             "/home/robinhood/.local/share/robin-highscores/api-secrets/competition-run-grant.key",
             "/home/robinhood/.local/share/robin-highscores/api-secrets/run-preflight-grant.key",
-            "/home/robinhood/.local/share/robin-highscores/api-secrets/backup-authority-hmac.key",
             "/home/robinhood/.local/share/robin-highscores/api-secrets/moderation-bearer.token",
-            "/home/robinhood/.local/share/robin-highscores/status/backup-status.json",
         ] {
             assert!(
                 server_config.contains(path),
                 "example config omits runtime path {path}"
             );
         }
-        let state_root = "/home/robinhood/.local/share/robin-highscores";
+        assert!(api.contains(
+            "\nExecStart=%h/.local/opt/robin-highscores/current/bin/robin-highscores-server --config %h/.config/robin-highscores/server.toml\n"
+        ));
+        assert!(worker.contains(
+            "\nExecStart=%h/.local/opt/robin-highscores/current/bin/robin-highscores-worker --config %h/.config/robin-highscores/worker.toml\n"
+        ));
+        assert!(
+            backup.contains("\nExecStart=%h/.local/opt/robin-highscores/current/ops/backup.sh\n")
+        );
+        let state_root = "%h/.local/share/robin-highscores";
         for shared_path in ["database", "replays", "campaign-states"] {
             let shared_path = format!("{state_root}/{shared_path}");
             assert!(
-                api.contains(&format!("ReadWritePaths={shared_path}")),
+                api.contains(&format!("ReadWritePaths={shared_path}\n")),
                 "API unit cannot write required shared state {shared_path}"
             );
             assert!(
-                worker.contains(&format!("ReadWritePaths={shared_path}")),
+                worker.contains(&format!("ReadWritePaths={shared_path}\n")),
                 "worker unit cannot write required shared state {shared_path}"
             );
         }
-        assert!(
-            backup.contains("ReadWritePaths=/home/robinhood/.local/share/robin-highscores/backups")
-        );
-        assert!(
-            backup.contains("ReadWritePaths=/home/robinhood/.local/share/robin-highscores/status")
-        );
-        assert!(backup.contains(
-            "--status-path /home/robinhood/.local/share/robin-highscores/status/backup-status.json"
-        ));
-        assert!(backup.contains("backup-and-publish-status"));
-        assert!(backup.contains("--retain-complete 2"));
-        assert!(server_config.contains("maximum_backup_age_hours = 32"));
-        assert!(backup.contains("TimeoutStartSec=6h"));
-        assert!(timer.contains("RandomizedDelaySec=45m"));
-        assert!(backup.contains(
-            "--release-manifest-path /home/robinhood/.local/opt/robin-highscores/releases/@SOURCE_COMMIT@/vps-release-manifest-v2.json"
-        ));
-        assert!(!backup.contains("--configuration-root"));
-        assert!(
-            !backup.contains(
-                "--restore-source-map /home/robinhood/.local/opt/robin-highscores/releases"
-            )
-        );
-        assert_eq!(backup.matches("--restore-source-map ").count(), 9);
-        assert!(!backup.contains(
-            "--restore-source-map /home/robinhood/.config/systemd/user=/home/robinhood/.config/systemd/user"
-        ));
-        assert!(!backup.contains("ReadOnlyPaths=/home/robinhood/.config/systemd/user\n"));
-        for unit in [
-            "robin-highscores.target",
-            "robin-highscores-api.service",
-            "robin-highscores-worker.service",
-            "robin-highscores-backup.service",
-            "robin-highscores-backup.timer",
-        ] {
-            assert!(backup.contains(&format!(
-                "ReadOnlyPaths=/home/robinhood/.config/systemd/user/{unit}"
-            )));
-        }
-        assert!(backup.contains("RestrictAddressFamilies=AF_UNIX"));
-        for (name, service) in [("api", api), ("worker", worker), ("backup", backup)] {
+        // One writable mount: `cp -al` cannot hard-link across bind mounts.
+        assert!(backup.contains(&format!("\nReadWritePaths={state_root}\n")));
+        assert!(timer.contains("Persistent=true"));
+        for (name, service) in [("api", api), ("worker", worker)] {
             assert_eq!(
                 service.matches("\nPrivateUsers=yes\n").count(),
                 1,
@@ -2210,48 +1826,38 @@ mod tests {
             assert!(service.contains("\nCapabilityBoundingSet=\n"));
             assert!(service.contains("\nAmbientCapabilities=\n"));
             assert!(service.contains("\nNoNewPrivileges=yes\n"));
-            assert!(
-                !service.contains("\nRestrictSUIDSGID="),
-                "{name} must not combine RestrictSUIDSGID with PrivateUsers because the deployed unprivileged user manager returns ENOSYS for openat2 under that combination"
+            assert!(service.contains("\nType=notify\n"));
+            assert!(service.contains("\nNotifyAccess=main\n"));
+            // The deployed user manager returns ENOSYS for openat2 when
+            // RestrictSUIDSGID is combined with PrivateUsers.
+            assert_eq!(
+                service.matches("\nRestrictSUIDSGID=").count(),
+                service.matches("\nRestrictSUIDSGID=no\n").count(),
+                "{name} must leave RestrictSUIDSGID off"
             );
+            assert!(service.contains(&format!("InaccessiblePaths={state_root}/backups")));
         }
-        assert!(worker.contains("\nRestrictAddressFamilies=AF_UNIX AF_NETLINK\n"));
-        assert!(!worker.contains("\nRestrictAddressFamilies=AF_UNIX\n"));
-        assert!(timer.contains("Persistent=true"));
-        assert!(api.contains("\nType=notify\n"));
-        assert!(api.contains("\nNotifyAccess=main\n"));
-        assert!(api.contains("\nTimeoutStartSec=15min\n"));
-        assert!(!api.contains("\nType=exec\n"));
-        assert!(worker.contains("ReadOnlyPaths=/usr/bin/bwrap /usr/bin/prlimit"));
-        assert!(worker.contains("\nType=notify\n"));
-        assert!(worker.contains("\nNotifyAccess=main\n"));
-        assert!(worker.contains("\nTimeoutStartSec=15min\n"));
-        assert!(!worker.contains("\nType=exec\n"));
-        assert!(worker.contains(&format!("ReadOnlyPaths={state_root}/raw-content")));
-        assert!(worker.contains(&format!("InaccessiblePaths={state_root}/api-secrets")));
-        assert!(worker.contains(&format!("InaccessiblePaths={state_root}/backups")));
-        assert!(worker.contains(&format!("InaccessiblePaths={state_root}/status")));
-        assert!(api.contains(&format!("ReadOnlyPaths={state_root}/status")));
-        assert!(api.contains(&format!("ReadOnlyPaths={state_root}/runtime-fence")));
-        assert!(worker.contains(&format!("ReadOnlyPaths={state_root}/runtime-fence")));
-        assert!(backup.contains(&format!("ReadOnlyPaths={state_root}/runtime-fence")));
-        assert!(api.contains(&format!("InaccessiblePaths={state_root}/backups")));
-        assert!(!api.contains(&format!("ReadOnlyPaths={state_root}/backups")));
-        for unit in [api, worker, backup] {
+        for unit in [api, worker, backup, timer] {
             for obsolete in [
                 "\nUser=",
                 "\nGroup=",
                 "SupplementaryGroups=",
-                "verifier-broker",
-                "systemd-run",
-                "polkit",
-                "=/opt/robin-highscores",
-                "=/var/lib/robin-highscores",
-                "=/srv/robin-highscores",
+                "@SOURCE_COMMIT@",
+                "runtime-fence",
+                "/status",
+                "/releases/",
+                "/home/robinhood",
             ] {
                 assert!(!unit.contains(obsolete), "user unit contains {obsolete}");
             }
         }
+        assert!(api.contains("\nTimeoutStartSec=15min\n"));
+        assert!(worker.contains("\nRestrictAddressFamilies=AF_UNIX AF_NETLINK\n"));
+        assert!(
+            !worker.contains("\nRestrictNamespaces="),
+            "bubblewrap needs unprivileged user namespaces"
+        );
+        assert!(worker.contains(&format!("InaccessiblePaths={state_root}/api-secrets")));
         for contract in [
             "bwrap_program = \"/usr/bin/bwrap\"",
             "prlimit_program = \"/usr/bin/prlimit\"",
@@ -2277,9 +1883,6 @@ mod tests {
                 "worker config contains {obsolete}"
             );
         }
-        assert!(root_once.contains("[ \"$(id -u)\" -eq 0 ]"));
-        assert!(root_once.contains("loginctl enable-linger robinhood"));
-        assert!(install.contains("As `robinhood`, run exactly one release"));
         let worker_source = include_str!("bin/worker.rs");
         assert!(worker_source.contains("ServerConfig::load_for_worker"));
         assert!(!worker_source.contains(".load_cursor_key"));

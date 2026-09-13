@@ -1,24 +1,9 @@
 mod extract;
-mod readiness;
 
 #[cfg(test)]
 use extract::effective_client_ip;
 use extract::{ClientIp, ValidatedJson};
-#[cfg(test)]
-use readiness::backup_age_ms_with_active_release;
-use readiness::{backup_age_ms, ensure_backup_ready};
-#[cfg(test)]
-use readiness::{
-    pin_readiness_status_parent, read_bounded_from_pinned_status_parent, read_bounded_nofollow,
-};
 
-#[cfg(test)]
-use crate::backup::BackupStatusV4;
-#[cfg(test)]
-use crate::backup::{
-    BackupFileV4, BackupManifestProjectionV4, BackupRestoreSourceV4,
-    load_backup_release_identity_oob,
-};
 use crate::config::{AdmissionProfile, CompetitionConfig, ViewerContentRequirementConfig};
 use crate::db::{BoardComposition, BoardCursor, BoardRow};
 #[cfg(test)]
@@ -248,8 +233,6 @@ pub struct AppState {
     pub campaign_store: CampaignStore,
     /// Durable server-local secret used only to authenticate pagination state.
     pub cursor_hmac_key: [u8; 32],
-    /// Dedicated authority for compact backup status; never archived in a backup.
-    pub backup_authority_hmac_key: [u8; 32],
     /// Dedicated Ed25519 signing seed. Manifests pin its public key.
     pub competition_run_grant_secret_key: Option<[u8; 32]>,
     /// Dedicated Ed25519 seed pinned by every admitted immutable ruleset.
@@ -847,7 +830,6 @@ async fn readiness(State(state): State<AppState>) -> Result<Json<HealthResponse>
         &state.campaign_store,
     )
     .map_err(storage_admission_error)?;
-    ensure_backup_ready(&state).await?;
     Ok(Json(HealthResponse {
         status: "ready",
         schema_version: SCHEMA_VERSION_V1,
@@ -860,7 +842,6 @@ struct OperationalStatusResponse {
     database: crate::db::OperationalCounts,
     replay_storage_free_bytes: u64,
     campaign_storage_free_bytes: u64,
-    backup_age_ms: Option<u64>,
 }
 
 async fn operator_status(
@@ -884,13 +865,11 @@ async fn operator_status(
             tracing::error!(%error, "could not measure campaign storage capacity");
             ApiError::Unavailable
         })?;
-    let backup_age_ms = backup_age_ms(&state).await?;
     Ok(Json(OperationalStatusResponse {
         schema_version: SCHEMA_VERSION_V1,
         database: state.database.operational_counts().await?,
         replay_storage_free_bytes,
         campaign_storage_free_bytes,
-        backup_age_ms,
     }))
 }
 
@@ -901,9 +880,8 @@ async fn operator_metrics(
     authorize_operator(&state, &headers)?;
     let status = operator_status(State(state), headers).await?.0;
     let counts = status.database;
-    let backup_age = status.backup_age_ms.unwrap_or(0);
     let body = format!(
-        "# TYPE robin_highscores_submissions gauge\nrobin_highscores_submissions{{state=\"queued\"}} {}\nrobin_highscores_submissions{{state=\"rejected_retained\"}} {}\n# TYPE robin_highscores_upload_reservations gauge\nrobin_highscores_upload_reservations{{state=\"active\"}} {}\nrobin_highscores_upload_reservations{{state=\"abandoned\"}} {}\n# TYPE robin_highscores_accepted_runs gauge\nrobin_highscores_accepted_runs {}\n# TYPE robin_highscores_open_abuse_reports gauge\nrobin_highscores_open_abuse_reports {}\n# TYPE robin_highscores_replay_objects gauge\nrobin_highscores_replay_objects{{state=\"live\"}} {}\nrobin_highscores_replay_objects{{state=\"purging\"}} {}\n# TYPE robin_highscores_campaign_objects gauge\nrobin_highscores_campaign_objects{{state=\"live\"}} {}\nrobin_highscores_campaign_objects{{state=\"purging\"}} {}\n# TYPE robin_highscores_replay_storage_free_bytes gauge\nrobin_highscores_replay_storage_free_bytes {}\n# TYPE robin_highscores_campaign_storage_free_bytes gauge\nrobin_highscores_campaign_storage_free_bytes {}\n# TYPE robin_highscores_backup_age_milliseconds gauge\nrobin_highscores_backup_age_milliseconds {}\n",
+        "# TYPE robin_highscores_submissions gauge\nrobin_highscores_submissions{{state=\"queued\"}} {}\nrobin_highscores_submissions{{state=\"rejected_retained\"}} {}\n# TYPE robin_highscores_upload_reservations gauge\nrobin_highscores_upload_reservations{{state=\"active\"}} {}\nrobin_highscores_upload_reservations{{state=\"abandoned\"}} {}\n# TYPE robin_highscores_accepted_runs gauge\nrobin_highscores_accepted_runs {}\n# TYPE robin_highscores_open_abuse_reports gauge\nrobin_highscores_open_abuse_reports {}\n# TYPE robin_highscores_replay_objects gauge\nrobin_highscores_replay_objects{{state=\"live\"}} {}\nrobin_highscores_replay_objects{{state=\"purging\"}} {}\n# TYPE robin_highscores_campaign_objects gauge\nrobin_highscores_campaign_objects{{state=\"live\"}} {}\nrobin_highscores_campaign_objects{{state=\"purging\"}} {}\n# TYPE robin_highscores_replay_storage_free_bytes gauge\nrobin_highscores_replay_storage_free_bytes {}\n# TYPE robin_highscores_campaign_storage_free_bytes gauge\nrobin_highscores_campaign_storage_free_bytes {}\n",
         counts.queued_submissions,
         counts.rejected_retained_submissions,
         counts.active_upload_reservations,
@@ -916,7 +894,6 @@ async fn operator_metrics(
         counts.campaign_objects_purging,
         status.replay_storage_free_bytes,
         status.campaign_storage_free_bytes,
-        backup_age,
     );
     let mut response = Body::from(body).into_response();
     response.headers_mut().insert(
@@ -958,8 +935,7 @@ async fn ensure_offer_admission_ready(state: &AppState) -> Result<(), ApiError> 
         &state.replay_store,
         &state.campaign_store,
     )
-    .map_err(storage_admission_error)?;
-    ensure_backup_ready(state).await
+    .map_err(storage_admission_error)
 }
 
 async fn ensure_upload_admission_ready(
@@ -997,8 +973,7 @@ async fn ensure_upload_admission_ready(
         replay_bytes,
         campaign_bytes,
     )
-    .map_err(storage_admission_error)?;
-    ensure_backup_ready(state).await
+    .map_err(storage_admission_error)
 }
 
 fn storage_admission_error(error: StorageAdmissionError) -> ApiError {
@@ -4810,7 +4785,6 @@ mod tests {
                 .unwrap(),
             config,
             cursor_hmac_key: [1; 32],
-            backup_authority_hmac_key: [1; 32],
             competition_run_grant_secret_key: None,
             run_preflight_grant_secret_key: None,
             challenge_rate_limiter: ChallengeRateLimiter::new(10),
@@ -5638,7 +5612,6 @@ mod tests {
             campaign_store: campaign_store.clone(),
             config,
             cursor_hmac_key: [1; 32],
-            backup_authority_hmac_key: [1; 32],
             competition_run_grant_secret_key: None,
             run_preflight_grant_secret_key: None,
             challenge_rate_limiter: ChallengeRateLimiter::new(10),
@@ -5691,7 +5664,6 @@ mod tests {
                 .await
                 .unwrap(),
             cursor_hmac_key: [1; 32],
-            backup_authority_hmac_key: [1; 32],
             competition_run_grant_secret_key: None,
             run_preflight_grant_secret_key: None,
             challenge_rate_limiter: ChallengeRateLimiter::new(10),
@@ -6247,7 +6219,6 @@ mod tests {
                 .unwrap(),
             config,
             cursor_hmac_key: [1; 32],
-            backup_authority_hmac_key: [1; 32],
             competition_run_grant_secret_key: None,
             run_preflight_grant_secret_key: None,
             challenge_rate_limiter: ChallengeRateLimiter::new(20),
@@ -6521,7 +6492,6 @@ mod tests {
                 .await
                 .unwrap(),
             cursor_hmac_key: [9; 32],
-            backup_authority_hmac_key: [9; 32],
             competition_run_grant_secret_key: None,
             run_preflight_grant_secret_key: None,
             challenge_rate_limiter: ChallengeRateLimiter::new(10),
@@ -6597,7 +6567,6 @@ mod tests {
                 .unwrap(),
             config,
             cursor_hmac_key: [7; 32],
-            backup_authority_hmac_key: [7; 32],
             competition_run_grant_secret_key: None,
             run_preflight_grant_secret_key: None,
             challenge_rate_limiter: ChallengeRateLimiter::new(10),
@@ -6613,401 +6582,5 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn backup_status_reader_rejects_parent_symlinks_and_wrong_pinned_parent() {
-        use std::os::unix::fs::{PermissionsExt as _, symlink};
-
-        fn make_private_status_parent(path: &std::path::Path, marker: &str) {
-            std::fs::create_dir(path).unwrap();
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
-            let status = path.join("backup-status.json");
-            std::fs::write(&status, format!("{{\"marker\":\"{marker}\"}}")).unwrap();
-            std::fs::set_permissions(status, std::fs::Permissions::from_mode(0o400)).unwrap();
-        }
-
-        let directory = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
-        let real_parent = directory.path().join("real-status");
-        make_private_status_parent(&real_parent, "real");
-        let linked_parent = directory.path().join("linked-status");
-        symlink(&real_parent, &linked_parent).unwrap();
-        assert!(
-            read_bounded_nofollow(&linked_parent.join("backup-status.json"), 1024)
-                .await
-                .is_err(),
-            "a symlinked configured parent must not become readiness authority"
-        );
-
-        let other_parent = directory.path().join("other-status");
-        make_private_status_parent(&other_parent, "other");
-        let configured_path = real_parent.join("backup-status.json");
-        let pinned_other =
-            pin_readiness_status_parent(&other_parent.join("backup-status.json")).unwrap();
-        assert!(
-            read_bounded_from_pinned_status_parent(
-                &configured_path,
-                &pinned_other,
-                1024,
-                || Ok(())
-            )
-            .await
-            .is_err(),
-            "the same status basename in another parent must not satisfy the configured path"
-        );
-    }
-
-    #[tokio::test]
-    async fn backup_status_reader_rejects_parent_replacement_and_substitution() {
-        use std::os::unix::fs::{PermissionsExt as _, symlink};
-
-        fn make_private_status_parent(path: &std::path::Path, bytes: &[u8]) {
-            std::fs::create_dir(path).unwrap();
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
-            let status = path.join("backup-status.json");
-            std::fs::write(&status, bytes).unwrap();
-            std::fs::set_permissions(status, std::fs::Permissions::from_mode(0o400)).unwrap();
-        }
-
-        let directory = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
-        let bytes = br#"{"status":"authenticated"}"#;
-
-        let replaced_parent = directory.path().join("replaced-status");
-        make_private_status_parent(&replaced_parent, bytes);
-        let replaced_path = replaced_parent.join("backup-status.json");
-        let pinned_replaced = pin_readiness_status_parent(&replaced_path).unwrap();
-        let displaced_parent = directory.path().join("displaced-status");
-        assert!(
-            read_bounded_from_pinned_status_parent(&replaced_path, &pinned_replaced, 1024, || {
-                std::fs::rename(&replaced_parent, &displaced_parent)?;
-                make_private_status_parent(&replaced_parent, bytes);
-                Ok(())
-            })
-            .await
-            .is_err(),
-            "an identical replacement parent must fail final path identity closure"
-        );
-
-        let substituted_parent = directory.path().join("substituted-status");
-        make_private_status_parent(&substituted_parent, bytes);
-        let substituted_path = substituted_parent.join("backup-status.json");
-        let pinned_substituted = pin_readiness_status_parent(&substituted_path).unwrap();
-        let moved_parent = directory.path().join("moved-status");
-        let alternate_parent = directory.path().join("alternate-status");
-        make_private_status_parent(&alternate_parent, bytes);
-        assert!(
-            read_bounded_from_pinned_status_parent(
-                &substituted_path,
-                &pinned_substituted,
-                1024,
-                || {
-                    std::fs::rename(&substituted_parent, &moved_parent)?;
-                    symlink(&alternate_parent, &substituted_parent)?;
-                    Ok(())
-                }
-            )
-            .await
-            .is_err(),
-            "a substituted parent symlink must fail final path identity closure"
-        );
-    }
-
-    #[tokio::test]
-    async fn backup_status_requires_authentication_and_rejects_symlinks_and_future_timestamps() {
-        use std::os::unix::fs::{PermissionsExt as _, symlink};
-
-        async fn replace_status(path: &std::path::Path, bytes: &[u8]) {
-            let temporary = path.with_extension("replacement");
-            tokio::fs::write(&temporary, bytes).await.unwrap();
-            std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o400)).unwrap();
-            tokio::fs::rename(temporary, path).await.unwrap();
-        }
-
-        let directory = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
-        let state_root = directory.path().join("state");
-        let status_root = state_root.join("status");
-        tokio::fs::create_dir_all(&status_root).await.unwrap();
-        std::fs::set_permissions(&status_root, std::fs::Permissions::from_mode(0o700)).unwrap();
-        tokio::fs::create_dir(state_root.join("backups"))
-            .await
-            .unwrap();
-        let target = status_root.join("verified-backup.json");
-        let link = status_root.join("backup-status.json");
-        let release_manifest = directory.path().join("vps-release-manifest-v2.json");
-        let mut release_files = vec![serde_json::json!({
-            "artifact": {
-                "byte_length": 1,
-                "media_type": "application/octet-stream",
-                "sha256": "9a".repeat(32),
-            },
-            "path": "README.md",
-            "unix_mode": 0o440,
-        })];
-        for name in [
-            "robin-highscores-api.service",
-            "robin-highscores-backup.service",
-            "robin-highscores-backup.timer",
-            "robin-highscores-worker.service",
-            "robin-highscores.target",
-        ] {
-            let bytes = format!("fixture {name}\n");
-            release_files.push(serde_json::json!({
-                "artifact": {
-                    "byte_length": bytes.len(),
-                    "media_type": "text/plain",
-                    "sha256": robin_run_protocol::Digest32::digest_bytes(bytes.as_bytes()),
-                },
-                "path": format!("systemd/user/{name}"),
-                "unix_mode": 0o440,
-            }));
-        }
-        let release_document = serde_json::json!({
-            "database_schema_version": robin_run_protocol::HIGHSCORES_DATABASE_SCHEMA_VERSION,
-            "deployment": {
-                "current_link": "/home/robinhood/.local/opt/robin-highscores/current",
-                "home": "/home/robinhood",
-                "install_root": "/home/robinhood/.local/opt/robin-highscores",
-                "persistent_state_root": "/home/robinhood/.local/share/robin-highscores",
-                "user": "robinhood",
-            },
-            "files": release_files,
-            "publication_lock_sha256": "34".repeat(32),
-            "publication_manifest_sha256": "56".repeat(32),
-            "schema_version": 2,
-            "source_commit": "0123456789abcdef0123456789abcdef01234567",
-            "verifier_sha256": "78".repeat(32),
-        });
-        tokio::fs::write(
-            &release_manifest,
-            robin_run_protocol::canonical_json_bytes(&release_document).unwrap(),
-        )
-        .await
-        .unwrap();
-        let release_identity = load_backup_release_identity_oob(&release_manifest)
-            .await
-            .unwrap();
-        let key = [7; 32];
-        let created_at = u64::try_from(crate::model::now_epoch_ms().unwrap()).unwrap();
-        let mut restore_sources = [
-            "campaigns",
-            "highscores.sqlite3",
-            "replays",
-            "restore/state/competition-run-grant.key",
-            "restore/state/cursor-hmac.key",
-            "restore/state/moderation-bearer.token",
-            "restore/state/run-preflight-grant.key",
-            "restore/systemd/user/robin-highscores-api.service",
-            "restore/systemd/user/robin-highscores-backup.service",
-            "restore/systemd/user/robin-highscores-backup.timer",
-            "restore/systemd/user/robin-highscores-worker.service",
-            "restore/systemd/user/robin-highscores.target",
-        ]
-        .into_iter()
-        .map(|archive| BackupRestoreSourceV4 {
-            original_absolute_path: match archive {
-                "highscores.sqlite3" => {
-                    "/home/robinhood/.local/share/robin-highscores/database/highscores.sqlite3"
-                        .to_owned()
-                }
-                "replays" => "/home/robinhood/.local/share/robin-highscores/replays".to_owned(),
-                "campaigns" => {
-                    "/home/robinhood/.local/share/robin-highscores/campaign-states".to_owned()
-                }
-                archive if archive.starts_with("restore/state/") => format!(
-                    "/home/robinhood/.local/share/robin-highscores/api-secrets/{}",
-                    archive.trim_start_matches("restore/state/")
-                ),
-                archive if archive.starts_with("restore/systemd/user/") => format!(
-                    "/home/robinhood/.config/systemd/user/{}",
-                    archive.trim_start_matches("restore/systemd/user/")
-                ),
-                _ => unreachable!("fixture archive allowlist is exhaustive"),
-            },
-            archive_relative_path: archive.to_owned(),
-        })
-        .collect::<Vec<_>>();
-        restore_sources
-            .sort_by(|left, right| left.archive_relative_path.cmp(&right.archive_relative_path));
-        let mut files = [
-            "highscores.sqlite3",
-            "restore/state/competition-run-grant.key",
-            "restore/state/cursor-hmac.key",
-            "restore/state/moderation-bearer.token",
-            "restore/state/run-preflight-grant.key",
-            "restore/systemd/user/robin-highscores-api.service",
-            "restore/systemd/user/robin-highscores-backup.service",
-            "restore/systemd/user/robin-highscores-backup.timer",
-            "restore/systemd/user/robin-highscores-worker.service",
-            "restore/systemd/user/robin-highscores.target",
-        ]
-        .into_iter()
-        .map(|relative_path| BackupFileV4 {
-            relative_path: relative_path.to_owned(),
-            byte_length: if relative_path.starts_with("restore/systemd/user/") {
-                let bytes = format!(
-                    "fixture {}\n",
-                    relative_path.trim_start_matches("restore/systemd/user/")
-                );
-                u64::try_from(bytes.len()).unwrap()
-            } else if relative_path.ends_with(".key") {
-                32
-            } else {
-                1
-            },
-            sha256: if relative_path.starts_with("restore/systemd/user/") {
-                robin_run_protocol::Digest32::digest_bytes(
-                    format!(
-                        "fixture {}\n",
-                        relative_path.trim_start_matches("restore/systemd/user/")
-                    )
-                    .as_bytes(),
-                )
-                .to_string()
-            } else {
-                "9b".repeat(32)
-            },
-        })
-        .collect::<Vec<_>>();
-        files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-        let manifest = BackupManifestProjectionV4 {
-            schema_version: 4,
-            created_at_unix_ms: created_at,
-            database_schema_version: crate::db::CURRENT_SCHEMA_VERSION,
-            release_identity: release_identity.clone(),
-            root_unix_mode: 0o700,
-            restore_sources,
-            directories: crate::backup::canonical_backup_directories_v4(&files).unwrap(),
-            files,
-        };
-        let backup_id = format!("backup-v4-{created_at}-{}", "a".repeat(32));
-        let status = BackupStatusV4::new_authenticated(
-            backup_id.clone(),
-            state_root
-                .join("backups")
-                .join(&backup_id)
-                .to_string_lossy()
-                .into_owned(),
-            manifest.clone(),
-            &key,
-        )
-        .unwrap();
-        replace_status(
-            &target,
-            &robin_run_protocol::canonical_json_bytes(&status).unwrap(),
-        )
-        .await;
-        symlink(&target, &link).unwrap();
-
-        let mut config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            replay_directory: directory.path().join("replays"),
-            campaign_state_directory: directory.path().join("campaigns"),
-            backup_manifest_path: Some(link.clone()),
-            release_manifest_path: Some(release_manifest),
-            ..Default::default()
-        };
-        let state = AppState {
-            database: Database::migrate(&config).await.unwrap(),
-            replay_store: ReplayStore::create(config.replay_directory.clone(), 1024)
-                .await
-                .unwrap(),
-            campaign_store: CampaignStore::create(config.campaign_state_directory.clone(), 1024)
-                .await
-                .unwrap(),
-            config: config.clone(),
-            cursor_hmac_key: key,
-            backup_authority_hmac_key: key,
-            competition_run_grant_secret_key: None,
-            run_preflight_grant_secret_key: None,
-            challenge_rate_limiter: ChallengeRateLimiter::new(10),
-        };
-        assert!(matches!(
-            backup_age_ms_with_active_release(&state, &release_identity).await,
-            Err(ApiError::Unavailable)
-        ));
-
-        config.backup_manifest_path = Some(link.clone());
-        let mut future_manifest = manifest.clone();
-        future_manifest.created_at_unix_ms = u64::MAX;
-        let future_id = format!("backup-v4-{}-{}", u64::MAX, "b".repeat(32));
-        let future = BackupStatusV4::new_authenticated(
-            future_id.clone(),
-            state_root
-                .join("backups")
-                .join(&future_id)
-                .to_string_lossy()
-                .into_owned(),
-            future_manifest,
-            &key,
-        )
-        .unwrap();
-        replace_status(
-            &link,
-            &robin_run_protocol::canonical_json_bytes(&future).unwrap(),
-        )
-        .await;
-        let mut state = AppState { config, ..state };
-        assert!(matches!(
-            backup_age_ms_with_active_release(&state, &release_identity).await,
-            Err(ApiError::Unavailable)
-        ));
-
-        replace_status(
-            &link,
-            &robin_run_protocol::canonical_json_bytes(&status).unwrap(),
-        )
-        .await;
-        assert!(
-            backup_age_ms_with_active_release(&state, &release_identity)
-                .await
-                .unwrap()
-                .is_some()
-        );
-        let mut tampered = serde_json::to_value(&status).unwrap();
-        tampered["backup_manifest_sha256"] = serde_json::Value::String("cd".repeat(32));
-        replace_status(
-            &link,
-            &robin_run_protocol::canonical_json_bytes(&tampered).unwrap(),
-        )
-        .await;
-        assert!(matches!(
-            backup_age_ms_with_active_release(&state, &release_identity).await,
-            Err(ApiError::Unavailable)
-        ));
-        let mut wrong_manifest = manifest;
-        wrong_manifest
-            .release_identity
-            .source_commit
-            .replace_range(0..1, "f");
-        let mismatched = BackupStatusV4::new_authenticated(
-            format!("backup-v4-{created_at}-{}", "c".repeat(32)),
-            state_root
-                .join("backups")
-                .join(format!("backup-v4-{created_at}-{}", "c".repeat(32)))
-                .to_string_lossy()
-                .into_owned(),
-            wrong_manifest,
-            &key,
-        )
-        .unwrap();
-        replace_status(
-            &link,
-            &robin_run_protocol::canonical_json_bytes(&mismatched).unwrap(),
-        )
-        .await;
-        assert!(matches!(
-            backup_age_ms_with_active_release(&state, &release_identity).await,
-            Err(ApiError::Unavailable)
-        ));
-        replace_status(
-            &link,
-            &robin_run_protocol::canonical_json_bytes(&status).unwrap(),
-        )
-        .await;
-        state.backup_authority_hmac_key[0] ^= 1;
-        assert!(matches!(
-            backup_age_ms_with_active_release(&state, &release_identity).await,
-            Err(ApiError::Unavailable)
-        ));
     }
 }

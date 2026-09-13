@@ -6,7 +6,6 @@ campaign_state_directory = "/home/robinhood/.local/share/robin-highscores/campai
 cursor_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/cursor-hmac.key"
 competition_run_grant_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/competition-run-grant.key"
 run_preflight_grant_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/run-preflight-grant.key"
-backup_authority_hmac_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/backup-authority-hmac.key"
 # Optional. When configured, operator routes exist and require the exact
 # printable 32..128-byte token from this private regular file.
 moderation_bearer_token_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/moderation-bearer.token"
@@ -44,11 +43,6 @@ tombstone_retention_days = 30
 rejected_replay_retention_hours = 24
 orphan_replay_retention_hours = 24
 minimum_storage_free_bytes = 1073741824
-# The backup job atomically installs the most recent authenticated readiness envelope here.
-# Configure both fields or neither; readiness fails closed when it is stale.
-backup_manifest_path = "/home/robinhood/.local/share/robin-highscores/status/backup-status.json"
-release_manifest_path = "/home/robinhood/.local/opt/robin-highscores/releases/SOURCE_COMMIT/vps-release-manifest-v2.json"
-maximum_backup_age_hours = 32
 
 # Empty is intentionally fail-closed. Populate these from canonical immutable
 # operator manifests; never point a public deployment at mutable development

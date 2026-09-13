@@ -458,7 +458,6 @@ pub async fn app_state(
             .unwrap(),
         config,
         cursor_hmac_key: [1; 32],
-        backup_authority_hmac_key: [1; 32],
         competition_run_grant_secret_key: None,
         run_preflight_grant_secret_key: None,
         challenge_rate_limiter: crate::web::ChallengeRateLimiter::new(10),
