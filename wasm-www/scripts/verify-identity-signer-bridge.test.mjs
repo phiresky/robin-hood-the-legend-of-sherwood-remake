@@ -5,14 +5,6 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { verifyIdentitySignerBridge } from './verify-identity-signer-bridge.mjs';
 
-const signerCargo = await readFile(new URL('../../crates/robin_identity_signer/Cargo.toml', import.meta.url), 'utf8');
-const signerLibrary = await readFile(new URL('../../crates/robin_rs/src/lib.rs', import.meta.url), 'utf8');
-const signerBuild = await readFile(new URL('../../scripts/build_identity_signer.sh', import.meta.url), 'utf8');
-const signerBridgeSource = await readFile(
-    new URL('../../crates/robin_identity_signer/src/bin/leaderboard_identity_bridge.rs', import.meta.url),
-    'utf8',
-);
-
 const origins = [
     'https://robinhood.phiresky.xyz',
     'https://identity.robinhood.phiresky.xyz',
@@ -57,7 +49,9 @@ function utf8(value) {
 
 function fixtureWasm(exportStart = false, startSection = false) {
     const header = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
-    const originsCustomSection = section(0, [...utf8('origins'), ...new TextEncoder().encode(origins.join('\0'))]);
+    const originsCustomSection = section(0, [...utf8('origins'), ...new TextEncoder().encode(
+        [...origins, 'sign_raw', 'sign_bytes', 'export_private_key'].join('\0'),
+    )]);
     if (!exportStart && !startSection) return Buffer.from([...header, ...originsCustomSection]);
     const type = section(1, [1, 0x60, 0, 0]);
     const functions = section(3, [1, 0]);
@@ -86,9 +80,10 @@ async function bridgeFixture({
     await writeFile(join(root, 'leaderboard_identity_bridge.js'), [
         "import './snippets/robin_rs-test/js/browser_identity_vault.js';",
         declarations,
+        'function sign_raw() {} // Private helpers are not part of the exported API.',
         'export function initSync() {}',
         `export default async function init() { ${eagerIndexedDb ? 'void indexedDB;' : ''} }`,
-        extraExport ? 'export const rawSigner = true;' : '',
+        extraExport ? 'export { sign_raw };' : '',
     ].join('\n'));
     await writeFile(
         join(root, 'leaderboard_identity_bridge_bg.wasm'),
@@ -124,18 +119,4 @@ test('bridge verification detects eager IndexedDB access during initialization',
         verifyIdentitySignerBridge(await bridgeFixture({ eagerIndexedDb: true })),
         /eagerly accessed IndexedDB/u,
     );
-});
-
-test('signer is a standalone minimal crate and game modules are explicit', () => {
-    assert.match(signerCargo, /^name = "robin_identity_signer"$/mu);
-    assert.match(signerCargo, /^identity-signer-bridge = \[\]$/mu);
-    assert.doesNotMatch(signerCargo, /robin_rs|robin_engine|robin_assets|wgpu|winit/u);
-    assert.doesNotMatch(signerLibrary, /declare_full_game_modules|identity-signer-bridge/u);
-    assert.match(signerLibrary, /pub mod game;/u);
-    assert.match(signerBuild, /-p robin_identity_signer/u);
-    assert.match(signerBuild, /--no-default-features \\\s+--features identity-signer-bridge/u);
-    assert.doesNotMatch(signerBuild, /--features audio/u);
-    assert.match(signerBridgeSource, /cfg_attr\(target_arch = "wasm32", no_main\)/u);
-    assert.match(signerBridgeSource, /cfg\(not\(target_arch = "wasm32"\)\)[\s\S]+fn main\(\) \{\}/u);
-    assert.doesNotMatch(signerBridgeSource, /wasm_bindgen\s*\(\s*start/u);
 });

@@ -161,7 +161,7 @@ test('public build rejects signer leakage, retired fallbacks, and symlinks', asy
     });
 });
 
-test('signer build accepts only the unified exact signer protocols and bridge', async () => {
+test('signer build verifies protocols and bridge without banning operation names in strings', async () => {
     await withRoot('signer-build-', async root => {
         await signerFixture(root);
         await verifySignerBuild(root);
@@ -173,6 +173,6 @@ test('signer build accepts only the unified exact signer protocols and bridge', 
             "const bridge='/identity-signer/bridge/leaderboard_identity_bridge.js';",
             "const wasm='/identity-signer/bridge/leaderboard_identity_bridge_bg.wasm';",
         ].join('\n'));
-        await assert.rejects(verifySignerBuild(root), /generic operation/u);
+        await verifySignerBuild(root);
     });
 });

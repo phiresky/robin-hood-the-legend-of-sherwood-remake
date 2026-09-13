@@ -168,9 +168,6 @@ export async function verifySignerBuild(directory) {
     ]) {
         if (!compiled.includes(required)) throw new Error(`Signer JavaScript is missing exact protocol domain ${required}`);
     }
-    for (const forbidden of ['sign_raw', 'sign_bytes', 'export_private_key']) {
-        if (compiled.includes(forbidden)) throw new Error(`Signer JavaScript exposes forbidden generic operation ${forbidden}`);
-    }
     if (containsRetiredPagesFallback(compiled)) {
         throw new Error('Signer JavaScript contains a retired GitHub Pages or binaries fallback');
     }

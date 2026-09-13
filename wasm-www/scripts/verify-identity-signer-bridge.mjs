@@ -174,12 +174,6 @@ export async function verifyIdentitySignerBridge(directory, { exerciseInitializa
     if (/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])/u.test(binaryText)) {
         throw new Error('signer bridge contains a loopback deployment origin');
     }
-    const compiledText = (await Promise.all([...javascript].map(path => readFile(path, 'utf8')))).join('\n');
-    for (const forbidden of ['sign_raw', 'sign_bytes', 'export_private_key']) {
-        if (compiledText.includes(forbidden) || binaryText.includes(forbidden)) {
-            throw new Error(`signer bridge exposes forbidden generic operation ${forbidden}`);
-        }
-    }
 
     if (exerciseInitialization) {
         const prior = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB');

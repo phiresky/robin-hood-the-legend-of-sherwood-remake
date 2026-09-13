@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { cspDirectives } from './csp-test-utils.ts';
 import { startIdentitySigner, type InitializedBridge } from './identity-signer/startup.ts';
 
 const signerHtml = readFileSync(new URL('../identity-signer/index.html', import.meta.url), 'utf8');
@@ -42,8 +43,8 @@ test('module or wasm initialization failures leave both dispatchers unavailable'
 });
 
 test('signer document permits only same-origin code, WebAssembly, and storage', () => {
-    assert.match(signerHtml, /connect-src 'self';/u);
-    assert.match(signerHtml, /default-src 'none'/u);
-    assert.match(signerHtml, /script-src 'self' 'wasm-unsafe-eval'/u);
-    assert.doesNotMatch(signerHtml, /(?:^|\s)'unsafe-eval'(?:\s|;)|https:|wss:|blob:/u);
+    const policy = cspDirectives(signerHtml);
+    assert.deepEqual(policy.get('connect-src'), new Set(["'self'"]));
+    assert.deepEqual(policy.get('default-src'), new Set(["'none'"]));
+    assert.deepEqual(policy.get('script-src'), new Set(["'self'", "'wasm-unsafe-eval'"]));
 });

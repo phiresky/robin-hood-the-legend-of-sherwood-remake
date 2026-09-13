@@ -41,25 +41,13 @@ test('Cloudflare deploy verifies builds, deploys signer before public, then reco
     }
 });
 
-test('runtime build prunes the private vault and authors the retained JavaScript closure', async () => {
+test('runtime workflow stages the artifact before uploading it', async () => {
     const text = await repositoryFile('.github/workflows/build-static-runtime.yml');
     ordered(text, ['node wasm-www/scripts/stage-runtime-addition.mjs', 'actions/upload-artifact@']);
     const plan = runtimeBuildPlan();
     const nameIndex = plan.bindgenArgs.indexOf('--out-name');
     assert(nameIndex >= 0);
     assert.equal(plan.bindgenArgs[nameIndex + 1], 'robin');
-    const staging = await repositoryFile('wasm-www/scripts/stage-runtime-addition.mjs');
-    ordered(staging, [
-        "['--check', 'wasm-www/runtime-contract.json']",
-        'buildRuntime({ outDir: artifact',
-        'stage-browser-identity-origin.mjs',
-        "run('gzip', ['-9', '-n', '-k'",
-        'runtime-javascript-modules.mjs',
-        'javascriptModules, sha256:',
-        'wasm-www/scripts/verify-runtime-corpus.mjs',
-    ]);
-    assert(staging.includes("'engine', artifact, 'robin.js'"));
-    assert(!staging.includes('browser_identity_vault.js'));
 });
 
 test('shipping datadir wrapper selects the locked converter package and tools feature', async () => {

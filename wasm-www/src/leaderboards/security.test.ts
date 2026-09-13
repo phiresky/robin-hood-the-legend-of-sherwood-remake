@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
+import { cspDirectives } from '../csp-test-utils.js';
 import { element, link, replace } from './dom.js';
 import { participantView, aggregateParticipantView, appendAchievements, playerTables, campaignCompositionLabel } from './public-components.js';
 import { parsePlayerRunHistoryPage, parseRunDetail } from './public-response.js';
@@ -86,20 +87,22 @@ test('full campaign composition renders the public aggregate identity and ordere
 
 test('leaderboard CSP pins the dedicated signer and has no executable blob exception', () => {
     const html = readFileSync(new URL('../../leaderboards/index.html', import.meta.url), 'utf8');
-    assert.match(html, /script-src 'self';/u);
-    assert.match(html, /frame-src https:\/\/identity\.robinhood\.phiresky\.xyz;/u);
-    assert.match(html, /connect-src 'self';/u);
-    assert.doesNotMatch(html, /(?:script-src|frame-src|style-src|object-src)[^;]*(?:blob:|\*)/u);
+    const policy = cspDirectives(html);
+    assert.deepEqual(policy.get('script-src'), new Set(["'self'"]));
+    assert.deepEqual(policy.get('frame-src'), new Set(['https://identity.robinhood.phiresky.xyz']));
+    assert.deepEqual(policy.get('connect-src'), new Set(["'self'"]));
+    assert.deepEqual(policy.get('style-src'), new Set(["'self'"]));
+    assert.deepEqual(policy.get('object-src'), new Set(["'none'"]));
 });
 
 
 test('game-shell CSP confines executable sources and permits verified blob modules', () => {
     const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
-    assert.match(html, /script-src 'self' blob: 'wasm-unsafe-eval';/u);
-    assert.doesNotMatch(html, /github\.io/u);
-    assert.doesNotMatch(html, /script-src[^;]*\shttps:\s/u);
-    assert.doesNotMatch(html, /script-src[^;]*'unsafe-eval'/u);
-    assert.match(html, /connect-src 'self' https: wss:/u);
-    assert.match(html, /frame-src https:\/\/identity\.robinhood\.phiresky\.xyz;/u);
-    assert.match(html, /object-src 'none'/u);
+    const policy = cspDirectives(html);
+    assert.deepEqual(policy.get('script-src'), new Set(["'self'", 'blob:', "'wasm-unsafe-eval'"]));
+    assert.deepEqual(policy.get('connect-src'), new Set([
+        "'self'", 'https:', 'wss:', 'http://127.0.0.1:*', 'http://localhost:*',
+    ]));
+    assert.deepEqual(policy.get('frame-src'), new Set(['https://identity.robinhood.phiresky.xyz']));
+    assert.deepEqual(policy.get('object-src'), new Set(["'none'"]));
 });
