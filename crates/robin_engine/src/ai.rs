@@ -65,10 +65,12 @@ pub use effects::{
 
 mod controller;
 pub mod persisted;
+mod role;
 pub(crate) use controller::PatrolCoordinateAction;
 pub(crate) use controller::WillStopCaller;
 pub(crate) use controller::consider_report_debug_matches;
 pub use controller::{AiController, ConsiderationAccumulator};
+pub(crate) use role::AiRole;
 
 #[cfg(test)]
 mod tests;

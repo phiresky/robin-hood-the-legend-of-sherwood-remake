@@ -1254,13 +1254,7 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         panic!("periodic civilian {} has no friendly AI", npc_id.index())
                     })
-                    .the_16th_frame(
-                        frame_phase,
-                        &mut self.ai.global,
-                        &ctx,
-                        is_idle,
-                        sequence_null_about_to_launch,
-                    );
+                    .the_16th_frame(frame_phase, &ctx, is_idle, sequence_null_about_to_launch);
                 // `tick_data` is only used for enemies; civilians
                 // don't need it.
                 let _ = &tick_data;

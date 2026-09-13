@@ -426,6 +426,28 @@ pub struct EnemyAi {
     pub is_archer_unit: bool,
 }
 
+impl AiRole for EnemyAi {
+    fn base_mut(&mut self) -> &mut AiController {
+        &mut self.base
+    }
+
+    #[track_caller]
+    fn role_set_state(&mut self, state: AiState, substate: Substate) {
+        EnemyAi::set_state(self, state, substate);
+    }
+
+    /// Soldier alert setter: threads the forced-attentive view override.
+    fn role_set_alert_status(&mut self, level: AlertLevel) {
+        EnemyAi::set_alert_status(self, level);
+    }
+
+    /// Hold the patrol-coordinate movement behind the leave-attentive
+    /// element authored by the default-state transition.
+    fn after_patrol_move(&mut self, first_new_order: usize) {
+        self.hold_new_orders_behind_attentive(first_new_order);
+    }
+}
+
 impl EnemyAi {
     /// Unwrap a field the current substate requires to be set, panicking with
     /// the owner, the field (`what`, e.g. "an antagonist") and the substate
@@ -2077,103 +2099,13 @@ impl EnemyAi {
     // move without naming the new substate.
     // -----------------------------------------------------------------------
 
-    /// Transition to `(state, substate)` and queue a movement to `destination`.
-    /// See the section comment above for why state+substate are required.
-    #[track_caller]
-    pub fn go_to(
-        &mut self,
-        state: AiState,
-        substate: Substate,
-        destination: Position,
-        flags: crate::ai::GotoFlags,
-        ctx: &AiContext,
-    ) {
-        self.set_state(state, substate);
-        self.base.go_to(destination, flags, ctx);
-    }
-
-    /// Like [`EnemyAi::go_to`] but with a speed modifier.
-    #[track_caller]
-    pub fn go_to_speed(
-        &mut self,
-        state: AiState,
-        substate: Substate,
-        destination: Position,
-        flags: crate::ai::GotoFlags,
-        speed: f32,
-        ctx: &AiContext,
-    ) {
-        self.set_state(state, substate);
-        self.base.go_to_speed(destination, flags, speed, ctx);
-    }
-
-    /// Transition to `(state, substate)` and queue a "go near" movement
-    /// (stops within `distance` of the destination).
-    #[track_caller]
-    pub fn go_near(
-        &mut self,
-        state: AiState,
-        substate: Substate,
-        destination: Position,
-        distance: i32,
-        flags: crate::ai::GotoFlags,
-        ctx: &AiContext,
-    ) {
-        self.set_state(state, substate);
-        self.base.go_near(destination, distance, flags, ctx);
-    }
-
-    /// Apply common patrol geometry through enemy state changes.
-    /// Original's default-state transition clears alert and authors the
-    /// leave-attentive element before the following movement.
-    fn coordinate_patrol(
-        &mut self,
-        info: &StimulusInfo,
-        ctx: &AiContext,
-        patrol_chief_position: Position,
-    ) {
-        let Some(action) = self
-            .base
-            .prepare_patrol_coordinate(info, ctx, patrol_chief_position)
-        else {
-            return;
-        };
-
-        match action {
-            PatrolCoordinateAction::FaceChief { target } => {
-                self.base.face_position_with_ctx(target, ctx);
-            }
-            PatrolCoordinateAction::Walk {
-                target,
-                speed_factor,
-            } => {
-                let first_new_order = self.base.outbox.actor.orders.len();
-                let flags = GotoFlags::NO_HALT
-                    | GotoFlags::DONT_STOP
-                    | self.base.default_path_walking_flags;
-                self.go_to_speed(
-                    AiState::Default,
-                    Substate::DefaultPatrolEnroute,
-                    target,
-                    flags,
-                    speed_factor,
-                    ctx,
-                );
-                self.hold_new_orders_behind_attentive(first_new_order);
-            }
-            PatrolCoordinateAction::Run { target } => {
-                let first_new_order = self.base.outbox.actor.orders.len();
-                self.go_to(
-                    AiState::Default,
-                    Substate::DefaultPatrolEnrouteRunning,
-                    target,
-                    GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
-                    ctx,
-                );
-                self.hold_new_orders_behind_attentive(first_new_order);
-            }
-        }
-    }
+    // The wrappers themselves (`go_to`, `go_to_speed`, `go_near`) and
+    // `coordinate_patrol` are shared with the friendly role: see
+    // [`AiRole`] (`crate::ai::role`). The enemy-specific
+    // `hold_new_orders_behind_attentive` bracket runs through
+    // `AiRole::after_patrol_move`: Original's default-state transition
+    // clears alert and authors the leave-attentive element before the
+    // following movement.
 
     /// Entering the default state disables attentive mode before the
     /// following movement request. Only hold the movement when that call actually
@@ -2380,29 +2312,9 @@ impl EnemyAi {
         self.start_think_post_filter(stimulus, ctx, static_ai_frozen)
     }
 
-    /// Decision-tick admission work which precedes the script `FilterAIEvent` call.
-    /// Kept separate so script-native SetAIState can yield through the VM at
-    /// the exact callback boundary without aliasing the typed brain.
-    pub(crate) fn start_think_pre_filter(&mut self, stimulus: &Stimulus) {
-        let stimulus_type = stimulus.stimulus_type;
-
-        // Reset per-think flags
-        self.base.couldnt_reachpoint = false;
-        self.base.already_on_point = false;
-        self.base.already_turned = false;
-        self.base.old_state = self.base.current_state as i32;
-        self.base.think_recursion_depth += 1;
-
-        // Track stimulus actor
-        if let StimulusInfo::Human(h) = stimulus.info {
-            self.base.last_stimulus_actor = Some(h);
-        }
-
-        // LOSE_CONSCIOUSNESS always goes to green alert
-        if stimulus_type == StimulusType::EventLoseConsciousness {
-            self.set_alert_status(AlertLevel::Green);
-        }
-    }
+    // `start_think_pre_filter` is shared with the friendly role via
+    // [`AiRole`]; the enemy hook routes its LOSE_CONSCIOUSNESS green alert
+    // through `EnemyAi::set_alert_status` (forced-attentive view override).
 
     /// Decision-tick admission work after `FilterAIEvent`. The return value is the
     /// ordinary Think admission decision; SetAIState intentionally observes
@@ -2993,18 +2905,14 @@ impl EnemyAi {
         // common code has already advanced the live state to
         // Default/GotoRoute.
         if outgoing_substate != incoming_substate {
-            self.base
-                .outbox
-                .reentrant
-                .owner_work
-                .push(AiOwnerWork::StateChange(AiStateChangeNotification {
-                    outgoing_state,
-                    outgoing_substate,
-                    incoming_state,
-                    incoming_substate,
-                    source: AiStateChangeSource::SelfActor,
-                    actor_effects_before_callback: Default::default(),
-                }));
+            // Outgoing/incoming were captured around the common
+            // return-to-duty tail; no actor prefix rides this callback.
+            self.base.queue_state_transition(
+                (outgoing_state, outgoing_substate),
+                (incoming_state, incoming_substate),
+                AiStateChangeSource::SelfActor,
+                None,
+            );
         }
     }
 

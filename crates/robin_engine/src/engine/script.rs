@@ -4036,7 +4036,7 @@ impl EngineInner {
                         Some(self.script_domains.interactables.doors.as_slice()),
                     );
                 }
-                friendly.end_think(sim, ai_global, &fresh_ctx);
+                friendly.end_think(sim, &fresh_ctx);
             } else {
                 panic!(
                     "AfterScript owner has invalid kind {:?}",

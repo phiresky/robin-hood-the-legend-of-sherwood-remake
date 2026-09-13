@@ -2672,6 +2672,7 @@ impl EngineInner {
                         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
                             && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
                         {
+                            use crate::ai::AiRole;
                             let flags = if ctx.self_is_rider {
                                 crate::ai::GotoFlags::SWORD
                             } else {

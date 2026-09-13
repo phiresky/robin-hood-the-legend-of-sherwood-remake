@@ -5256,14 +5256,32 @@ impl AiController {
         source: AiStateChangeSource,
         actor_effects_before_callback: Option<AiActorOutbox>,
     ) {
+        self.queue_state_transition(
+            (self.current_state, self.current_substate),
+            (state, substate),
+            source,
+            actor_effects_before_callback,
+        );
+    }
+
+    /// Like [`AiController::queue_state_change`], for callers which have
+    /// already mutated the live state and captured the outgoing
+    /// `(state, substate)` beforehand.
+    pub(crate) fn queue_state_transition(
+        &mut self,
+        (outgoing_state, outgoing_substate): (AiState, Substate),
+        (incoming_state, incoming_substate): (AiState, Substate),
+        source: AiStateChangeSource,
+        actor_effects_before_callback: Option<AiActorOutbox>,
+    ) {
         self.outbox
             .reentrant
             .owner_work
             .push(AiOwnerWork::StateChange(AiStateChangeNotification {
-                outgoing_state: self.current_state,
-                outgoing_substate: self.current_substate,
-                incoming_state: state,
-                incoming_substate: substate,
+                outgoing_state,
+                outgoing_substate,
+                incoming_state,
+                incoming_substate,
                 source,
                 actor_effects_before_callback,
             }));

@@ -6047,6 +6047,7 @@ impl EngineInner {
 
     /// Enter the pre-filter half of typed no-event decision-tick admission.
     pub(super) fn start_script_ai_native_think_pre_filter(&mut self, npc_id: EntityId) {
+        use crate::ai::AiRole;
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::NoEvent);
         let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
             panic!(
@@ -6163,7 +6164,6 @@ impl EngineInner {
             "SetAIState decision-completion owner {} has no matching decision entry",
             npc_id.index()
         );
-        let global = &mut self.ai.global;
         let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
             panic!(
                 "SetAIState decision-completion owner {} disappeared",
@@ -6183,7 +6183,7 @@ impl EngineInner {
                 None,
             ));
         } else if let Some(friendly) = entity.friendly_ai_mut() {
-            friendly.end_think(sim, global, &ctx);
+            friendly.end_think(sim, &ctx);
         } else {
             panic!(
                 "SetAIState decision-completion owner {} has no typed AI for entity kind {:?}",
