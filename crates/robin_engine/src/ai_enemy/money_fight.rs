@@ -372,14 +372,10 @@ impl EnemyAi {
     /// Pops the next queued money-fight victim and approaches it;
     /// returns to duty when the queue drains.  Sets `detected_body`
     /// before going near.
-    pub(super) fn awake_next_money_fight_victim_if_any(
-        &mut self,
-        sim: &SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
+    pub(super) fn awake_next_money_fight_victim_if_any(&mut self, env: ThinkEnv<'_>) {
+        let ctx = env.ctx;
         if self.money_fight_victims.is_empty() {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
             return;
         }
         let next = self.money_fight_victims.remove(0);

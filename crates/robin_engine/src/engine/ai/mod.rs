@@ -6251,14 +6251,12 @@ impl EngineInner {
             );
         }
         enemy_ai.seek_area(
-            sim,
+            crate::ai_enemy::ThinkEnv::new(sim, ctx, tick, None),
             request.center,
             request.radius,
             crate::ai_enemy::SeekFlags::empty(),
             crate::ai_enemy::UNDEFINED_DIRECTION,
             &mut self.ai.global,
-            ctx,
-            tick,
         );
         // Area seeking's typed state-change callback is inside the decision-tick
         // scope and must finish before its later movement/order tail is

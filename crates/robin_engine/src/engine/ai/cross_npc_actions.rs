@@ -85,9 +85,10 @@ impl EngineInner {
                     )
                 });
                 match &mut npc.ai_brain {
-                    crate::element::AiBrain::Enemy(ai) => {
-                        ai.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx, &tick_data)
-                    }
+                    crate::element::AiBrain::Enemy(ai) => ai.return_to_duty(
+                        crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick_data, None),
+                        crate::ai::DutyFlags::empty(),
+                    ),
                     crate::element::AiBrain::Friendly(ai) => {
                         ai.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx)
                     }

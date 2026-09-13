@@ -231,11 +231,11 @@ impl EnemyAi {
 
             Substate::AttackingArcherWaitOnArcheryPath
             | Substate::AttackingArcherWaitOnArcheryPathBending => {
-                self.attacking_archer_wait_on_archery_path(sim, stimulus_type, ctx, tick)
+                self.attacking_archer_wait_on_archery_path(env, stimulus_type)
             }
 
             Substate::AttackingArcherWaitOnBendPoint => {
-                self.attacking_archer_wait_on_bend_point(sim, stimulus_type, ctx, tick)
+                self.attacking_archer_wait_on_bend_point(env, stimulus_type)
             }
 
             Substate::AttackingDummyBehaviour => self.attacking_dummy_behaviour(stimulus_type, ctx),
@@ -261,7 +261,7 @@ impl EnemyAi {
             }
 
             Substate::AttackingWaitForAvengerOnRoof => {
-                self.attacking_wait_for_avenger_on_roof(sim, stimulus_type, global, ctx, tick)
+                self.attacking_wait_for_avenger_on_roof(env, stimulus_type, global)
             }
 
             // No-op group — only substates that still genuinely have no
@@ -1596,7 +1596,7 @@ impl EnemyAi {
         env: ThinkEnv<'_>,
         stimulus_type: StimulusType,
     ) -> bool {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         match stimulus_type {
             StimulusType::EventReachPoint => {
                 self.base.face_entity(self.base.primary_target, ctx);
@@ -1663,7 +1663,7 @@ impl EnemyAi {
                     self.base.launch_timer(20, ctx.frame);
                 } else if target_is_pc && target_in_coma && target_guard.is_some() {
                     // PC already menaced by another guard — go home.
-                    self.return_to_duty_default(sim, ctx, tick);
+                    self.return_to_duty_default(env);
                 } else if let Some(p) = target_pos {
                     if tick.primary_target_snapshot_handle != self.base.primary_target {
                         panic!(
@@ -1841,21 +1841,19 @@ impl EnemyAi {
         global: &mut AiGlobalState,
         env: ThinkEnv<'_>,
     ) -> bool {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, .. } = env;
         if stimulus_type == StimulusType::EventTimer {
             self.reinitialize_them_list(ctx);
             if !self.list_them.is_empty() {
                 self.battle_decisions(env, global);
             } else {
                 self.seek_area(
-                    sim,
+                    env,
                     self.base.seek_position,
                     parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                     SeekFlags::LOCATION_FIRST,
                     UNDEFINED_DIRECTION,
                     global,
-                    ctx,
-                    tick,
                 );
             }
         }
@@ -2174,13 +2172,11 @@ impl EnemyAi {
 
     fn attacking_archer_wait_on_archery_path(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         stimulus_type: StimulusType,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
         }
         false
     }
@@ -2190,13 +2186,11 @@ impl EnemyAi {
 
     fn attacking_archer_wait_on_bend_point(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         stimulus_type: StimulusType,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
         }
         false
     }
@@ -2338,12 +2332,11 @@ impl EnemyAi {
 
     fn attacking_wait_for_avenger_on_roof(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) -> bool {
+        let ThinkEnv { ctx, .. } = env;
         if stimulus_type == StimulusType::EventTimer {
             // If the primary target is detected within 180 degrees, face it
             // again and start a 30-tick timer. Otherwise search from the actor's
@@ -2363,14 +2356,12 @@ impl EnemyAi {
                 self.base.launch_timer(30, ctx.frame);
             } else {
                 self.seek_area(
-                    sim,
+                    env,
                     ctx.position,
                     parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                     SeekFlags::empty(),
                     UNDEFINED_DIRECTION,
                     global,
-                    ctx,
-                    tick,
                 );
             }
         }

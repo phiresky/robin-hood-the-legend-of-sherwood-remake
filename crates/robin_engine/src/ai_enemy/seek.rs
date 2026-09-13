@@ -282,17 +282,16 @@ impl EnemyAi {
     /// Begin a search pattern around `center`. Selects seek points from
     /// the global array based on distance, interest, and direction, then
     /// visits them in an optimised order.
-    pub fn seek_area(
+    pub(crate) fn seek_area(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         center: Position,
         standard_radius: u16,
         flags: SeekFlags,
         seek_direction: u16,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { sim, ctx, .. } = env;
         let center = resolve_seek_area_center_sector(center, ctx);
         tracing::trace!(
             npc = self.base.me,
@@ -315,13 +314,13 @@ impl EnemyAi {
 
         // Royalists just return to duty.
         if ctx.is_player_aligned() {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
             return;
         }
 
         // Company 100 (combat trainer dummy) just returns to duty.
         if self.company_number == 100 {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
             return;
         }
 
@@ -339,7 +338,7 @@ impl EnemyAi {
         // the seek entirely and let `run_to_examine_body` drive the NPC
         // to the body. `examine_other_bodies` prunes recovered bodies
         // from the queue automatically.
-        if self.examine_other_bodies(ThinkEnv::new(sim, ctx, tick, None)) {
+        if self.examine_other_bodies(ThinkEnv { grid: None, ..env }) {
             return;
         }
 
@@ -364,7 +363,7 @@ impl EnemyAi {
         // trainers fall through to the `LOCATION_FIRST/END`
         // assert/personal-seek-point branch.
         if standard_radius > 0 && !self.combat_trainer {
-            self.append_global_area_seek_points(sim, spec, global, ctx, tick);
+            self.append_global_area_seek_points(env, spec, global);
         } else {
             // standard_radius == 0: only personal seek points
             debug_assert!(
@@ -393,7 +392,7 @@ impl EnemyAi {
         );
 
         if !ctx.in_building {
-            self.seek_next_point(sim, global, ctx, tick);
+            self.seek_next_point(env, global);
         } else {
             // Inside a building: delay before seeking.
             self.seek_point_view_directions.clear();
@@ -450,12 +449,11 @@ impl EnemyAi {
 
     fn append_global_area_seek_points(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         spec: SeekAreaSpec,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { ctx, .. } = env;
         let candidates = SeekAreaCandidates::new(spec, global);
         let square_norms = &candidates.square_norms;
         let near_sorted = &candidates.near_sorted;
@@ -489,8 +487,7 @@ impl EnemyAi {
             self.seek_flags &= !SeekFlags::LOOK_FOR_HELP_AFTER;
         }
 
-        let selected_random =
-            self.select_area_seek_points(sim, spec, &candidates, global, ctx, tick);
+        let selected_random = self.select_area_seek_points(env, spec, &candidates, global);
         // ── Phase 5: reorder for optimal travel path ──
         for &idx in &selected_random {
             self.add_to_seek_point_list(idx, global);
@@ -508,13 +505,12 @@ impl EnemyAi {
 
     fn select_area_seek_points(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         spec: SeekAreaSpec,
         candidates: &SeekAreaCandidates,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) -> Vec<usize> {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         let SeekAreaSpec {
             center,
             standard_radius,
@@ -881,13 +877,8 @@ impl EnemyAi {
     /// Advance to the next seek point, or return to duty if none remain.
     /// Checks interest and lock state, skipping uninteresting or locked
     /// points.
-    pub fn seek_next_point(
-        &mut self,
-        sim: &SimulationContext,
-        global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
+    pub(crate) fn seek_next_point(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
+        let ThinkEnv { sim, ctx, .. } = env;
         let current_frame = ctx.frame;
 
         // Unlock the previous seek point
@@ -960,7 +951,7 @@ impl EnemyAi {
 
         // No more seek points → return to duty
         if self.my_seek_points.is_empty() {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
 
             // Say "ends search" if nothing alarming was found.
             let quiet_report = self.base.my_reconnaissance_report.report_type <= ReportType::Noise;
@@ -1003,7 +994,7 @@ impl EnemyAi {
                 sp.locked
             } else {
                 // Invalid ID — skip
-                self.seek_next_point(sim, global, ctx, tick);
+                self.seek_next_point(env, global);
                 return;
             }
         };
@@ -1022,7 +1013,7 @@ impl EnemyAi {
                     &(next_id),
                 );
             }
-            self.seek_next_point(sim, global, ctx, tick);
+            self.seek_next_point(env, global);
             return;
         }
 
@@ -1052,7 +1043,7 @@ impl EnemyAi {
         }
         if acceptance_roll >= interest {
             // Skip this point — try the next one
-            self.seek_next_point(sim, global, ctx, tick);
+            self.seek_next_point(env, global);
             return;
         }
 
@@ -1197,7 +1188,7 @@ impl EnemyAi {
         flags: SeekFlags,
         global: &mut AiGlobalState,
     ) {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         // Preamble: record the report regardless of rank.
         self.base
             .my_reconnaissance_report
@@ -1220,7 +1211,7 @@ impl EnemyAi {
                     && self.base.antagonist.is_none()
                 {
                     self.seek_area(
-                        sim,
+                        env,
                         pos_center,
                         duty_radius,
                         SeekFlags::LOCATION_END
@@ -1228,13 +1219,11 @@ impl EnemyAi {
                             | SeekFlags::LOOK_FOR_HELP_AFTER,
                         UNDEFINED_DIRECTION,
                         global,
-                        ctx,
-                        tick,
                     );
                 } else {
                     let returns_to_instructed_group =
                         self.alert_officer_returns_to_instructed_group(tick);
-                    let alerted = self.alert_officer(sim, pos_center, flags.bits(), ctx, tick);
+                    let alerted = self.alert_officer(env, pos_center, flags.bits());
                     if alerted && !returns_to_instructed_group {
                         // Officer alerting requests an approach synchronously, and the original game
                         // inspects the unreachable-point flag before corpse-alert processing
@@ -1258,14 +1247,12 @@ impl EnemyAi {
                         );
                     } else if !alerted {
                         self.seek_area(
-                            sim,
+                            env,
                             pos_center,
                             duty_radius,
                             SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
                             UNDEFINED_DIRECTION,
                             global,
-                            ctx,
-                            tick,
                         );
                     }
                 }
@@ -1287,28 +1274,24 @@ impl EnemyAi {
                     },
                 ) {
                     self.seek_area(
-                        sim,
+                        env,
                         pos_center,
                         duty_radius,
                         SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
                         UNDEFINED_DIRECTION,
                         global,
-                        ctx,
-                        tick,
                     );
                 }
             }
             ProfileRank::Knight => {
                 // Knights search their own vicinity.
                 self.seek_area(
-                    sim,
+                    env,
                     ctx.position,
                     duty_radius,
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
                     UNDEFINED_DIRECTION,
                     global,
-                    ctx,
-                    tick,
                 );
             }
             _ => {}
@@ -1320,26 +1303,22 @@ impl EnemyAi {
     /// corpse search; a successful route has no further tail.
     pub(crate) fn resume_dead_body_alert_after_alert_officer(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         center: Position,
         radius: u16,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
         if !self.base.couldnt_reachpoint {
             return;
         }
         self.base.couldnt_reachpoint = false;
         self.seek_area(
-            sim,
+            env,
             center,
             radius,
             SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
             UNDEFINED_DIRECTION,
             global,
-            ctx,
-            tick,
         );
         // This fallback is the statement immediately following
         // the officer alert's synchronous approach inside the original enclosing
@@ -1461,7 +1440,7 @@ impl EnemyAi {
     /// Multi-waypoint sweeps run with `RUN | DONT_STOP` so the seeker
     /// chains waypoints without halting between them.
     pub(crate) fn search_charly(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, .. } = env;
         self.base.set_emoticon(EmoticonType::QuestionMark);
 
         // Officer arm.
@@ -1484,11 +1463,11 @@ impl EnemyAi {
 
         // No checkpoint → return to duty.
         if self.base.checkpoint_charly.is_none() {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
             return;
         }
         let Some(view) = ctx.entity_view(self.base.checkpoint_charly) else {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
             return;
         };
 
@@ -1559,7 +1538,7 @@ impl EnemyAi {
         };
 
         if waypoints.is_empty() {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
             return;
         }
 
@@ -1582,7 +1561,7 @@ impl EnemyAi {
     /// area search locally. The original game's target search invokes this synchronously
     /// for officers; completion of watching a checkpoint member is its other caller.
     pub(super) fn missed_charly_alert(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, .. } = env;
         self.base.say(Remark::DidntFindCharly);
         let my_pos = ctx.position;
         self.base.seek_position = my_pos;
@@ -1600,9 +1579,7 @@ impl EnemyAi {
         }
 
         let alert_handled = match self.get_rank() {
-            ProfileRank::Soldier => {
-                self.alert_officer(sim, my_pos, SeekFlags::CHARLY_SEEK.bits(), ctx, tick)
-            }
+            ProfileRank::Soldier => self.alert_officer(env, my_pos, SeekFlags::CHARLY_SEEK.bits()),
             ProfileRank::Officer => self.alert_soldiers(
                 my_pos,
                 SeekFlags::CHARLY_SEEK.bits(),
@@ -1627,14 +1604,12 @@ impl EnemyAi {
             parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS as u16
         };
         self.seek_area(
-            sim,
+            env,
             my_pos,
             radius,
             SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
             UNDEFINED_DIRECTION,
             global,
-            ctx,
-            tick,
         );
     }
 

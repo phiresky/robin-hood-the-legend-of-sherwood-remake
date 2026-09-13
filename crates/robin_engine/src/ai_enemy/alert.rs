@@ -13,7 +13,6 @@ use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 use super::util::{ai_max_norm_distance, iso_normalize, vec_to_sector, vec_to_sector_ar};
 use super::{CampSoldierInfo, EnemyAi, ProfileRank, SeekFlags, ThinkEnv, combat, task_priority};
 use crate::fast_find_grid::FastFindGrid;
-use crate::sim_rng::SimulationContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandSoldiersStart {
@@ -1077,14 +1076,13 @@ impl EnemyAi {
     // already alerting" suppression gate.
     // -----------------------------------------------------------------------
 
-    pub fn alert_officer(
+    pub(crate) fn alert_officer(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         _center: Position,
         _flags: u16,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) -> bool {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         debug_assert_eq!(self.get_rank(), ProfileRank::Soldier);
 
         // Drop any prior gaze lock so the

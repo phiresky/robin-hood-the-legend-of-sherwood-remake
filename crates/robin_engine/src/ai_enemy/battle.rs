@@ -293,11 +293,10 @@ impl EnemyAi {
     /// exact same tail end — only the source of the list differs.
     fn approach_sleeping_enemies(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         targets: &[crate::ai::SleepingEnemyInfo],
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { ctx, tick, .. } = env;
         // Fold the sleeping-enemy list into list_them so the later
         // combat selection code sees them.
         for se in targets {
@@ -331,7 +330,7 @@ impl EnemyAi {
             );
         } else {
             // No allowed target — stand down.
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
         }
     }
 
@@ -348,19 +347,15 @@ impl EnemyAi {
     /// `tick.nearby_sleeping_enemies`.  This method just performs
     /// the target selection + state transition that the reference
     /// runs after the inline fighter-count loop.
-    fn kill_nearby_sleeping_enemies(
-        &mut self,
-        sim: &SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
+    fn kill_nearby_sleeping_enemies(&mut self, env: ThinkEnv<'_>) {
+        let ctx = env.ctx;
         // Combat trainers and merry-man-forest fighters call
         // Return to duty first — note the quirk that the function then
         // *continues* and may still overwrite state with
         // `SUBSTATE_ATTACKING_APPROACHING_SLEEPING_ENEMY` below. We
         // mirror the behaviour exactly.
         if self.combat_trainer || self.is_merry_man_forest(ctx) {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
             // Return to duty suspends around engine-owned patrol initialization in
             // Rust. Keep the remaining statements behind that continuation,
             // just as they are behind the complete synchronous call in the
@@ -373,15 +368,14 @@ impl EnemyAi {
             return;
         }
 
-        self.resume_kill_nearby_sleeping_enemies_after_return_to_duty(sim, ctx, tick);
+        self.resume_kill_nearby_sleeping_enemies_after_return_to_duty(env);
     }
 
     pub(crate) fn resume_kill_nearby_sleeping_enemies_after_return_to_duty(
         &mut self,
-        sim: &SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
+        env: ThinkEnv<'_>,
     ) {
+        let ThinkEnv { ctx, tick, .. } = env;
         // The original game performs all-around detection here, after the
         // unconscious/not-carried gates and only when the final battle
         // fallback is reached. The engine snapshot carries ordered fighter
@@ -401,7 +395,7 @@ impl EnemyAi {
             .cloned()
             .collect::<Vec<_>>();
 
-        self.approach_sleeping_enemies(sim, &visible, ctx, tick);
+        self.approach_sleeping_enemies(env, &visible);
     }
 
     // -----------------------------------------------------------------------
@@ -493,12 +487,8 @@ impl EnemyAi {
     // Battle predecisions — offensive or defensive?
     // -----------------------------------------------------------------------
 
-    pub fn make_battle_predecisions(
-        &mut self,
-        sim: &SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> Decision {
+    pub(crate) fn make_battle_predecisions(&mut self, env: ThinkEnv<'_>) -> Decision {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         // Archers with no ammo or already swordfighting → defensive.
         if self.is_archer() && (ctx.remaining_arrows == 0 || ctx.is_swordfighting) {
             return Decision::PredecisionDefensive;
@@ -946,7 +936,7 @@ impl EnemyAi {
             //   on a bend point with friend-seen enemies should hold
             //   the firing position, not run away to seek.
             if self.combat_trainer {
-                self.return_to_duty_default(sim, ctx, tick);
+                self.return_to_duty_default(env);
             } else if self.my_shooting_point.is_some() {
                 // Archer has a shooting point — equip bow based on
                 // elevation relative to last-seen enemy.
@@ -1001,14 +991,12 @@ impl EnemyAi {
                     self.base.seek_position = pos;
                 }
                 self.seek_area(
-                    sim,
+                    env,
                     self.base.seek_position,
                     parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                     SeekFlags::LOCATION_FIRST,
                     UNDEFINED_DIRECTION,
                     global,
-                    ctx,
-                    tick,
                 );
             } else if self.pc_missed
                 && self.missed_pc.is_some()
@@ -1026,26 +1014,24 @@ impl EnemyAi {
                 // retaining an old seek position is not a valid fallback.
                 self.refresh_missed_pc_forecast(sim, tick);
                 self.seek_area(
-                    sim,
+                    env,
                     self.base.seek_position,
                     parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                     SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
                     self.pc_gone_away_in_this_direction,
                     global,
-                    ctx,
-                    tick,
                 );
             } else if !unconscious_enemies_from_them.is_empty() && !self.is_merry_man_forest(ctx) {
                 // Enemies removed from the persistent Them list above are
                 // unconscious and not carried — put them back, select one,
                 // and walk up to finish them off.
                 debug_assert!(self.list_them.is_empty());
-                self.approach_sleeping_enemies(sim, &unconscious_enemies_from_them, ctx, tick);
+                self.approach_sleeping_enemies(env, &unconscious_enemies_from_them);
             } else {
                 // Final "there is literally nothing going on" fallback —
                 // look for sleeping enemies anywhere within the 360°
                 // detection radius and walk over to one.
-                self.kill_nearby_sleeping_enemies(sim, ctx, tick);
+                self.kill_nearby_sleeping_enemies(env);
             }
             return;
         }
@@ -1099,7 +1085,7 @@ impl EnemyAi {
                 // best-effort recovery.
                 // Simulate "no forced decision" by jumping into the
                 // else block via a goto-style early flag.
-                let predecision = self.make_battle_predecisions(sim, ctx, tick);
+                let predecision = self.make_battle_predecisions(env);
                 decision = if self.combat_trainer || predecision == Decision::PredecisionDefensive {
                     Decision::Cassos
                 } else {
@@ -1108,7 +1094,7 @@ impl EnemyAi {
             }
         } else {
             // (1) Predecision: Offensive or defensive?
-            let predecision = self.make_battle_predecisions(sim, ctx, tick);
+            let predecision = self.make_battle_predecisions(env);
 
             // Use the aggregates computed by this decision's camp scan.
             let friends_with_lower_company = friends_lower_company;
@@ -1637,10 +1623,8 @@ impl EnemyAi {
     /// reconsidered enemy-approach route has settled.
     pub(crate) fn resume_battle_fight_after_reconsider(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
         if !self.base.couldnt_reachpoint {
             self.base
@@ -1678,7 +1662,7 @@ impl EnemyAi {
             })
             .collect::<std::collections::BTreeMap<_, _>>();
         let completed_inline = self.execute_battle_decision(
-            ThinkEnv::new(sim, ctx, tick, None),
+            ThinkEnv { grid: None, ..env },
             Decision::Observe,
             self.base.current_substate,
             0,
@@ -1738,11 +1722,10 @@ impl EnemyAi {
     /// `CASSOS`; it is not delivered as `EVENT_COULDNT_REACHPOINT`.
     pub(crate) fn resume_battle_look_for_help_after_alert_officer(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         if !self.base.couldnt_reachpoint {
             if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
                 self.base.say(Remark::Cassos);
@@ -3531,12 +3514,12 @@ impl EnemyAi {
         global: &mut AiGlobalState,
         env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         if ctx.remaining_arrows == 0 {
             return std::ops::ControlFlow::Continue(Decision::RunForNewArrows);
         }
         // Pick best shot target.
-        let target = self.propose_shot_target(sim, ctx, tick);
+        let target = self.propose_shot_target(env);
         // Shot-target selection uses the actors' shared multiplicity
         // scratch field: it resets every current Them entry, then
         // rebuilds claims from nearby friends in bow substates.
@@ -3617,7 +3600,7 @@ impl EnemyAi {
         &mut self,
         env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
         self.base.primary_target = target;
         self.base.friends_are_alerted = true;
@@ -3641,7 +3624,7 @@ impl EnemyAi {
                 .iter()
                 .map(|cs| (cs.handle, cs.ai_substate)),
         );
-        if alerting_soldier_near || !self.alert_officer(sim, center, 0, ctx, tick) {
+        if alerting_soldier_near || !self.alert_officer(env, center, 0) {
             return std::ops::ControlFlow::Continue(Decision::Cassos);
         } else {
             // Officer alerting requests an approach synchronously. Its route

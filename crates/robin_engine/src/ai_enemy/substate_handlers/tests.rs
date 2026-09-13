@@ -66,11 +66,17 @@ fn drinking_ale_completes_on_event_done_without_fabricated_timer() {
     let ctx = AiContext::test_fixture();
     let tick = AiPerTickData::stub();
 
-    ai.wondering_drinking_ale(&sim, StimulusType::EventTimer, &ctx, &tick);
+    ai.wondering_drinking_ale(
+        ThinkEnv::new(&sim, &ctx, &tick, None),
+        StimulusType::EventTimer,
+    );
     assert!(ai.base.outbox.reentrant.owner_work.is_empty());
     assert_eq!(ai.base.blood_alcohol, 17);
 
-    ai.wondering_drinking_ale(&sim, StimulusType::EventDone, &ctx, &tick);
+    ai.wondering_drinking_ale(
+        ThinkEnv::new(&sim, &ctx, &tick, None),
+        StimulusType::EventDone,
+    );
     assert!(matches!(
         ai.base.outbox.reentrant.owner_work.as_slice(),
         [crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
@@ -102,7 +108,10 @@ fn ale_reaction_uses_latched_position_after_bottle_becomes_inactive() {
 
     // No view for object 321: the bottle was consumed while React's timer
     // was pending. The original game still commits to the retained identity and position.
-    ai.wondering_ale_reactiontime(&sim, StimulusType::EventTimer, &ctx, &AiPerTickData::stub());
+    ai.wondering_ale_reactiontime(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        StimulusType::EventTimer,
+    );
 
     assert_eq!(ai.base.current_state, AiState::Wondering);
     assert_eq!(ai.base.current_substate, Substate::WonderingApproachingAle);
@@ -425,10 +434,13 @@ fn launched_hit_targets(ai: &EnemyAi) -> Vec<crate::element::EntityId> {
 fn brawl_reach_near_awake_friend_stops_and_launches_hit() {
     let (mut ai, ctx) = brawl_approach_fixture(AiState::Wondering, 20.0);
     ai.wondering_brawl_approaching(
-        &crate::sim_rng::test_context(),
+        ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        ),
         StimulusType::EventReachPoint,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(ai.base.current_substate, Substate::WonderingBrawlHitting);
@@ -444,10 +456,13 @@ fn brawl_reach_near_awake_friend_stops_and_launches_hit() {
 fn brawl_reach_far_awake_friend_retries_approach_without_hit() {
     let (mut ai, ctx) = brawl_approach_fixture(AiState::Wondering, 40.0);
     ai.wondering_brawl_approaching(
-        &crate::sim_rng::test_context(),
+        ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        ),
         StimulusType::EventReachPoint,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(
@@ -462,10 +477,13 @@ fn brawl_reach_far_awake_friend_retries_approach_without_hit() {
 fn brawl_reach_sleeping_friend_removes_target_and_queues_done() {
     let (mut ai, ctx) = brawl_approach_fixture(AiState::Sleeping, 20.0);
     ai.wondering_brawl_approaching(
-        &crate::sim_rng::test_context(),
+        ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        ),
         StimulusType::EventReachPoint,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(ai.base.current_substate, Substate::WonderingBrawlHitting);
@@ -484,10 +502,13 @@ fn brawl_reach_missing_friend_returns_to_duty_without_hit() {
     let (mut ai, ctx) = brawl_approach_fixture(AiState::Wondering, 20.0);
     ai.base.friend_in_trouble = None;
     ai.wondering_brawl_approaching(
-        &crate::sim_rng::test_context(),
+        ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        ),
         StimulusType::EventReachPoint,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert_ne!(ai.base.current_substate, Substate::WonderingBrawlHitting);
@@ -616,10 +637,8 @@ fn returning_soldier_with_far_civilian_antagonist_keeps_route_and_rearms_timer()
     };
 
     ai.seeking_soldier_return_to_officer(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         StimulusType::EventTimer,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(ai.base.current_state, AiState::Seeking);
@@ -656,11 +675,9 @@ fn civilian_report_alert_officer_route_failure_seeks_retained_report_position() 
     };
 
     ai.resume_civilian_report_after_alert_officer(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         report_position,
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert!(!ai.base.couldnt_reachpoint);
@@ -3159,10 +3176,13 @@ fn charly_defence_completion_relays_talk_to_officer() {
     );
 
     ai.seeking_charly_get_lecture_by_officer2(
-        &sim,
+        ThinkEnv::new(
+            &sim,
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None,
+        ),
         StimulusType::EventMyTalk1,
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
     );
     assert!(matches!(
         ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
@@ -3333,10 +3353,13 @@ fn group_synchronous_reachpoint_same_direction_still_authors_turn() {
     };
 
     ai.seeking_group_go_to_officer(
-        &crate::sim_rng::test_context(),
+        ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        ),
         StimulusType::EventReachPoint,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     let [turn] = ai.base.outbox.actor.orders.as_slice() else {
@@ -3363,10 +3386,13 @@ fn group_synchronous_reachpoint_retained_waiting_uses_same_direction_shortcut() 
     };
 
     ai.seeking_group_go_to_officer(
-        &crate::sim_rng::test_context(),
+        ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        ),
         StimulusType::EventReachPoint,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert!(
@@ -3396,10 +3422,13 @@ fn group_reachpoint_keeps_raw_wrapped_gather_direction_for_face_to() {
     };
 
     ai.seeking_group_go_to_officer(
-        &crate::sim_rng::test_context(),
+        ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        ),
         StimulusType::EventReachPoint,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     let [turn] = ai.base.outbox.actor.orders.as_slice() else {
@@ -3472,10 +3501,13 @@ fn charly_lecture_ignores_unrelated_stimulus() {
 fn looting_requires_the_owner_entity_view() {
     let mut ai = EnemyAi::new(55);
     ai.wondering_looting(
-        &crate::sim_rng::test_context(),
+        ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None,
+        ),
         StimulusType::EventDone,
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
     );
 }
 

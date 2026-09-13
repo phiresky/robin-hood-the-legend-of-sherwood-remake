@@ -3,6 +3,7 @@ use crate::ai_entity_view::{AiEntityView, AiEntityViewMap, EntityKind};
 use crate::element::{Camp, Posture};
 use crate::element_kinds::ObjectType;
 use crate::order::OrderType;
+use crate::sim_rng::SimulationContext;
 
 fn object_view(object_type: ObjectType) -> AiEntityView {
     AiEntityView {
@@ -489,10 +490,8 @@ fn found_charly_assigns_friend_only_after_speech_returns() {
     };
 
     ai.event_sees_charly_standard_procedure(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         AiEntityHandle::new(42),
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(ai.base.friend_in_trouble, None);
@@ -545,10 +544,8 @@ fn sync_reunion_uses_enroute_partners_last_waypoint() {
     };
 
     ai.event_sees_charly_standard_procedure(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         AiEntityHandle::new(96),
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(ai.base.current_substate, Substate::DefaultSynchronizing);
@@ -623,7 +620,7 @@ fn classic_apple_rule_keeps_a_swordfighter_engaged() {
         item_gameplay: crate::gameplay_config::ItemGameplayConfig::classic(),
         ..Default::default()
     };
-    let sim = crate::sim_rng::SimulationContext::with_seed_and_config(7, config);
+    let sim = SimulationContext::with_seed_and_config(7, config);
     let mut ai = EnemyAi::new(1);
     ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
     let ctx = AiContext {
@@ -649,7 +646,7 @@ fn rebalanced_apple_interrupts_then_owns_the_fighter_state() {
         ..Default::default()
     };
     config.item_gameplay.apple_combat_interrupt = true;
-    let sim = crate::sim_rng::SimulationContext::with_seed_and_config(7, config);
+    let sim = SimulationContext::with_seed_and_config(7, config);
     let mut ai = EnemyAi::new(1);
     ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
     let ctx = AiContext {
@@ -2010,7 +2007,10 @@ fn event_hear_faces_noise_position_projection_not_recorded_actor_elevation() {
         "the replaced scalar-elevation shortcut must select the adjacent sector"
     );
 
-    ai.event_hear_standard_procedure(&sim, &noise, &ctx, &AiPerTickData::stub());
+    ai.event_hear_standard_procedure(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        &noise,
+    );
 
     let turn = ai
         .base
@@ -2072,7 +2072,10 @@ fn event_hear_zonk_preserves_null_layer_impact_position() {
         ..AiContext::test_fixture()
     };
 
-    ai.event_hear_standard_procedure(&sim, &noise, &ctx, &AiPerTickData::stub());
+    ai.event_hear_standard_procedure(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        &noise,
+    );
 
     assert_eq!(ai.base.seek_position, noise.origin.legacy_position());
     assert_eq!(ai.base.seek_position.level, u16::MAX);
@@ -2116,7 +2119,10 @@ fn distraction_noise_records_the_impact_and_enters_investigation() {
         ..AiContext::test_fixture()
     };
 
-    ai.event_hear_standard_procedure(&sim, &noise, &ctx, &AiPerTickData::stub());
+    ai.event_hear_standard_procedure(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        &noise,
+    );
 
     assert!(ai.investigating_distraction);
     assert_eq!(ai.base.seek_position, origin);

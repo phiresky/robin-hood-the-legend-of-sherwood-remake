@@ -823,7 +823,7 @@ fn accepted_officer_report_enters_seen_and_arms_ten_frame_timer() {
     let mut ai = charly_heading_to_officer();
     let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
 
-    ai.resolve_charly_officer_report(sim, true, &ctx, &AiPerTickData::stub());
+    ai.resolve_charly_officer_report(ThinkEnv::new(sim, &ctx, &AiPerTickData::stub(), None), true);
 
     assert_eq!(
         ai.base.current_substate,
@@ -843,7 +843,10 @@ fn refused_officer_report_returns_charly_to_duty() {
     let mut ai = charly_heading_to_officer();
     let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
 
-    ai.resolve_charly_officer_report(sim, false, &ctx, &AiPerTickData::stub());
+    ai.resolve_charly_officer_report(
+        ThinkEnv::new(sim, &ctx, &AiPerTickData::stub(), None),
+        false,
+    );
 
     // The refused report enters return-to-duty handling, which suspends its common
     // tail at the owner boundary so the engine can run patrol initialization
@@ -1095,14 +1098,12 @@ fn run_find_door_authorization_case(
         crate::position_interface::vector_to_sector_0_to_15_iso(point_out.x, point_out.y) as u16;
 
     ai.seek_area(
-        sim,
+        ThinkEnv::new(sim, &ctx, &AiPerTickData::stub(), None),
         center,
         0,
         SeekFlags::HOUSE | SeekFlags::LOCATION_FIRST,
         seek_direction,
         &mut global,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     // The indoor caller must enter the three-frame watching delay after
@@ -1660,7 +1661,7 @@ fn return_to_duty_resets() {
     ai.current_task_priority = task_priority::ENEMY;
     let ctx = AiContext::test_fixture();
     let tick = AiPerTickData::stub();
-    ai.return_to_duty(sim, DutyFlags::empty(), &ctx, &tick);
+    ai.return_to_duty(ThinkEnv::new(sim, &ctx, &tick, None), DutyFlags::empty());
 
     assert_eq!(ai.base.current_state, AiState::Attacking);
     assert!(!ai.base.needs_patrol_reinit);
@@ -1717,10 +1718,13 @@ fn return_to_duty_deletes_beggars_added_earlier_in_same_dispatch() {
         .add_detectable((target, DetectableType::Enemy));
 
     ai.return_to_duty(
-        &sim,
+        ThinkEnv::new(
+            &sim,
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None,
+        ),
         DutyFlags::empty(),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(
@@ -1798,7 +1802,10 @@ fn high_recursion_return_to_duty_keeps_close_point_as_latch_after_deferred_resum
         ..AiContext::test_fixture()
     };
 
-    ai.return_to_duty(&sim, DutyFlags::empty(), &ctx, &AiPerTickData::stub());
+    ai.return_to_duty(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        DutyFlags::empty(),
+    );
     let (flags, high_recursion_failsafe) = std::mem::take(&mut ai.base.outbox.reentrant.owner_work)
         .into_iter()
         .find_map(|work| match work {
@@ -1982,7 +1989,10 @@ fn return_to_duty_remembered_ale_saves_patrol_return_point() {
     ai.base.current_substate = Substate::WonderingDrinkingAle;
     ai.other_seen_ale.push(ale);
 
-    ai.return_to_duty(&sim, DutyFlags::empty(), &ctx, &AiPerTickData::stub());
+    ai.return_to_duty(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        DutyFlags::empty(),
+    );
 
     assert_eq!(ai.base.current_state, AiState::Wondering);
     assert_eq!(ai.base.current_substate, Substate::WonderingApproachingAle);
@@ -2048,7 +2058,10 @@ fn one_point_enemy_path_dispatches_virtual_return_before_patrol_init_resume() {
         "the common controller must not skip the Enemy ReturnToDuty override"
     );
 
-    ai.return_to_duty(&sim, DutyFlags::empty(), &ctx, &AiPerTickData::stub());
+    ai.return_to_duty(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        DutyFlags::empty(),
+    );
 
     assert!(matches!(
         ai.base.outbox.reentrant.owner_work.as_slice(),
@@ -3099,7 +3112,7 @@ fn make_battle_predecisions_returns_valid() {
             ..AiContext::test_fixture()
         };
         let tick = AiPerTickData::stub();
-        let d = ai.make_battle_predecisions(sim, &ctx, &tick);
+        let d = ai.make_battle_predecisions(ThinkEnv::new(sim, &ctx, &tick, None));
         assert!(d == Decision::PredecisionOffensive || d == Decision::PredecisionDefensive);
     });
 }

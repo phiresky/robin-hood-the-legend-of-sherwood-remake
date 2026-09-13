@@ -628,7 +628,10 @@ impl EngineInner {
                         npc_id.index()
                     ),
                 )
-                .return_to_duty(sim, flags, &ctx, &tick);
+                .return_to_duty(
+                    crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None),
+                    flags,
+                );
         } else {
             self.world
                 .entities
@@ -1873,7 +1876,10 @@ impl EngineInner {
             )
         });
         if let Some(enemy) = entity.enemy_ai_mut() {
-            enemy.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx, &tick_data);
+            enemy.return_to_duty(
+                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick_data, None),
+                crate::ai::DutyFlags::empty(),
+            );
         } else if let Some(friendly) = entity.friendly_ai_mut() {
             friendly.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx);
         } else {

@@ -5,7 +5,7 @@ use crate::ai::*;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
 use super::util::{det2, dot2, pos_diff, sector_to_vector, square_norm, vec_to_sector_ar};
-use super::{EnemyAi, archer};
+use super::{EnemyAi, ThinkEnv, archer};
 
 /// The angle convention used by the original game.
 ///
@@ -86,12 +86,8 @@ impl EnemyAi {
     /// - Already-targeted penalty (10000 per existing attacker)
     /// - Minimum distance check (enemies < 100px get no random scatter)
     /// - Merry-man-forest randomisation
-    pub fn propose_shot_target(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> Option<AiEntityHandle> {
+    pub(crate) fn propose_shot_target(&mut self, env: ThinkEnv<'_>) -> Option<AiEntityHandle> {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         let my_pos = &ctx.position;
         // Nose direction vector (not Y-stretched).
         let nose = sector_to_vector(ctx.direction);
@@ -357,7 +353,7 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use crate::ai::{AiContext, AiEntityHandle, Position};
-    use crate::ai_enemy::{EnemyAi, FighterSnapshot, archer};
+    use crate::ai_enemy::{EnemyAi, FighterSnapshot, ThinkEnv, archer};
     use crate::ai_entity_view::{AiEntityViewMap, entity_view_from_entity, shared_entity_views};
     use crate::element::{ActionState, ActorPc, Entity};
     use crate::sim_rng::SimulationContext;
@@ -493,7 +489,12 @@ mod tests {
         });
 
         assert_eq!(
-            ai.propose_shot_target(&SimulationContext::with_seed(0), &ctx, &tick),
+            ai.propose_shot_target(ThinkEnv::new(
+                &SimulationContext::with_seed(0),
+                &ctx,
+                &tick,
+                None
+            )),
             Some(AiEntityHandle::new(target))
         );
     }

@@ -1419,14 +1419,12 @@ impl EnemyAi {
             if enemy_is_pc && self.answer_question(Question::ShallIFollowLostEnemy, ctx) {
                 self.base.say(Remark::HuntsEnemy);
                 self.seek_area(
-                    sim,
+                    env,
                     self.base.seek_position,
                     parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                     SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
                     self.pc_gone_away_in_this_direction,
                     global,
-                    ctx,
-                    tick,
                 );
             } else {
                 // The lost-enemy branch snaps toward the missed human's
@@ -2233,7 +2231,7 @@ impl EnemyAi {
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
     ) -> bool {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, .. } = env;
         // Cache engine state for say() / forbidden remarks
         self.base.cached_frame = ctx.frame;
         self.base.cached_in_building = ctx.in_building;
@@ -2369,7 +2367,7 @@ impl EnemyAi {
             | StimulusType::EventStop => self.think_alerting_event(env, stimulus, global),
 
             StimulusType::EventReturnToDuty => {
-                self.return_to_duty_default(sim, ctx, tick);
+                self.return_to_duty_default(env);
                 // This arm never assigns the return value, so it
                 // returns `false` (the default).  Callers test the
                 // bool to decide whether to re-dispatch / continue
@@ -2529,7 +2527,6 @@ impl EnemyAi {
     // -----------------------------------------------------------------------
 
     pub(crate) fn end_think(&mut self, env: ThinkEnv<'_>) {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
         // The original game's end-think phase dispatches this event here and runs the
         // script FilterAIEvent gate before dispatch. Queue these as
         // same-frame self-stimuli so the engine-side drain can apply
@@ -2551,7 +2548,7 @@ impl EnemyAi {
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty_default(sim, ctx, tick);
+                self.return_to_duty_default(env);
             }
         }
 
@@ -2568,7 +2565,7 @@ impl EnemyAi {
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty_default(sim, ctx, tick);
+                self.return_to_duty_default(env);
             }
         }
 
@@ -2585,7 +2582,7 @@ impl EnemyAi {
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty_default(sim, ctx, tick);
+                self.return_to_duty_default(env);
             }
         }
 
@@ -2680,13 +2677,8 @@ impl EnemyAi {
 
     /// Ordinary return with no special duty-transition flags.
     #[track_caller]
-    fn return_to_duty_default(
-        &mut self,
-        sim: &SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
-        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+    fn return_to_duty_default(&mut self, env: ThinkEnv<'_>) {
+        self.return_to_duty(env, DutyFlags::empty());
     }
 
     /// Change virtual enemy state before arming the incoming state's timer.
@@ -2702,13 +2694,8 @@ impl EnemyAi {
         self.base.launch_timer(frames, ctx.frame);
     }
 
-    pub fn return_to_duty(
-        &mut self,
-        sim: &SimulationContext,
-        flags: DutyFlags,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
+    pub(crate) fn return_to_duty(&mut self, env: ThinkEnv<'_>, flags: DutyFlags) {
+        let ThinkEnv { ctx, tick, .. } = env;
         self.investigating_distraction = false;
 
         // Removing all beggar detectables is synchronous in
@@ -2751,7 +2738,7 @@ impl EnemyAi {
         {
             self.seek_flags = SeekFlags::empty();
             if self.get_rank() == ProfileRank::Soldier
-                && self.alert_officer(sim, self.seek_center, 0, ctx, tick)
+                && self.alert_officer(env, self.seek_center, 0)
             {
                 return;
             }
@@ -3359,12 +3346,8 @@ impl EnemyAi {
     // -----------------------------------------------------------------------
 
     /// Initialize patrol membership, authored AI state, and initial duty.
-    pub fn init_one_ai(
-        &mut self,
-        sim: &SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> crate::ai::InitStateSideEffects {
+    pub(crate) fn init_one_ai(&mut self, env: ThinkEnv<'_>) -> crate::ai::InitStateSideEffects {
+        let ThinkEnv { sim, ctx, .. } = env;
         // Initialize the "old odds" accumulator used by the weighted
         // decision RNG (old_odds = 50).
         self.old_odds = 50;
@@ -3391,7 +3374,7 @@ impl EnemyAi {
             // the default `Substate::DefaultOnPost`.
             self.base.substate_at_last_timer_launch = self.base.current_substate;
             self.set_state(AiState::Default, Substate::DefaultEnroute);
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
         }
 
         // Movement setup checks `think_method_recursion_depth > 0` and

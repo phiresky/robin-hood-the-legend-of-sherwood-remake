@@ -218,13 +218,8 @@ impl EnemyAi {
     /// Complete the synchronous Charly-to-officer call after the engine
     /// has delivered `CALL_MR_OFFICER_I_AM_BACK` and obtained the
     /// officer's real `Think` return value.
-    pub(crate) fn resolve_charly_officer_report(
-        &mut self,
-        sim: &SimulationContext,
-        accepted: bool,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
+    pub(crate) fn resolve_charly_officer_report(&mut self, env: ThinkEnv<'_>, accepted: bool) {
+        let ctx = env.ctx;
         if accepted {
             self.set_state_with_timer(
                 AiState::Seeking,
@@ -233,24 +228,23 @@ impl EnemyAi {
                 ctx,
             );
         } else {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
         }
     }
 
     pub(crate) fn resolve_alert_request(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         accepted: bool,
         continuation: crate::ai::AlertContinuation,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { sim, ctx, .. } = env;
         assert!(matches!(
             continuation,
             crate::ai::AlertContinuation::SoldierSawOfficer
         ));
         if !accepted {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
             return;
         }
 
@@ -292,10 +286,7 @@ impl EnemyAi {
         global: &mut AiGlobalState,
     ) {
         let ThinkEnv {
-            sim,
-            ctx,
-            tick,
-            grid,
+            ctx, tick, grid, ..
         } = env;
         match continuation {
             ThinkResultContinuation::SoldierFinishedAlertReportStart => {
@@ -313,7 +304,7 @@ impl EnemyAi {
                     self.base.say(Remark::OfficerCallsSoldier);
                     self.base.launch_timer(20, ctx.frame);
                 } else {
-                    self.return_to_duty_default(sim, ctx, tick);
+                    self.return_to_duty_default(env);
                 }
             }
             ThinkResultContinuation::OfficerSentCharlyToOfficer => {
@@ -339,7 +330,7 @@ impl EnemyAi {
                     self.pending_group_instruction_seek_flags = 0;
                     self.pending_group_instruction_clear_location_after_accept = false;
                     if self.alerted_us.is_empty() {
-                        self.return_to_duty_default(sim, ctx, tick);
+                        self.return_to_duty_default(env);
                     } else {
                         self.set_state(
                             AiState::Seeking,
@@ -463,39 +454,34 @@ impl EnemyAi {
 
     pub(super) fn resume_failed_alert_soldiers(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         continuation: AlertSoldiersFailureContinuation,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { ctx, .. } = env;
         match continuation {
             AlertSoldiersFailureContinuation::None => {}
             AlertSoldiersFailureContinuation::ReturnToDuty => {
-                self.return_to_duty_default(sim, ctx, tick);
+                self.return_to_duty_default(env);
             }
             AlertSoldiersFailureContinuation::SeekBody { center, radius } => {
                 self.seek_area(
-                    sim,
+                    env,
                     center,
                     radius,
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
                     UNDEFINED_DIRECTION,
                     global,
-                    ctx,
-                    tick,
                 );
             }
             AlertSoldiersFailureContinuation::SeekMissingInstructedSoldier => {
                 self.seek_area(
-                    sim,
+                    env,
                     ctx.position,
                     parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
                     SeekFlags::LOCATION_FIRST | self.seek_flags,
                     UNDEFINED_DIRECTION,
                     global,
-                    ctx,
-                    tick,
                 );
             }
             AlertSoldiersFailureContinuation::SeekMissedCharly { center } => {
@@ -508,14 +494,12 @@ impl EnemyAi {
                     parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS as u16
                 };
                 self.seek_area(
-                    sim,
+                    env,
                     center,
                     radius,
                     SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
                     UNDEFINED_DIRECTION,
                     global,
-                    ctx,
-                    tick,
                 );
             }
             AlertSoldiersFailureContinuation::FleeingRunToDoor => {
@@ -531,7 +515,7 @@ impl EnemyAi {
         failure: AlertSoldiersFailureContinuation,
         global: &mut AiGlobalState,
     ) {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, .. } = env;
         // Missing-PC search is synchronous. The
         // DEFAULT_LOOKING_FOR_CHARLY timer handler calls it and then arms its
         // regular check timer, so that trailing 10-frame timer overwrites the
@@ -555,7 +539,7 @@ impl EnemyAi {
                     .wrapping_add(parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32);
         let first_new_order = self.base.outbox.actor.orders.len();
         if !self.finish_alert_soldiers(env) {
-            self.resume_failed_alert_soldiers(sim, failure, global, ctx, tick);
+            self.resume_failed_alert_soldiers(env, failure, global);
         }
         if resume_looking_for_charly_timer {
             self.base

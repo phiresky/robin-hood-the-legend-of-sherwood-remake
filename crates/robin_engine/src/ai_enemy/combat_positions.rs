@@ -3046,7 +3046,7 @@ impl EnemyAi {
             );
         }
         if !detects_primary {
-            self.finish_swordfight_after_target_loss(sim, global, ctx, tick);
+            self.finish_swordfight_after_target_loss(env, global);
             return;
         }
 
@@ -3643,7 +3643,7 @@ impl EnemyAi {
         env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
     ) {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         let mut deferred_defensive_panic = None;
 
         // (1) Arrow protection guard.
@@ -3864,7 +3864,7 @@ impl EnemyAi {
         //     panic flee. The reference deliberately does not return
         //     here; the attack-opportunity and observe-step blocks below
         //     may immediately override the defensive move.
-        if self.make_battle_predecisions(sim, ctx, tick) == Decision::PredecisionDefensive {
+        if self.make_battle_predecisions(env) == Decision::PredecisionDefensive {
             let enemy_pos = self
                 .find_fighter(new_primary, tick)
                 .map(|f| f.position)
@@ -4434,11 +4434,10 @@ impl EnemyAi {
     /// Close the lost-target branch before normal swordfight repositioning.
     fn finish_swordfight_after_target_loss(
         &mut self,
-        sim: &SimulationContext,
+        env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         // Lost sight: forecast their direction and abandon the fight.
         // `primary_target` may just have changed to the actor's principal
         // opponent. Never apply the tick's old primary-target forecast to
@@ -4486,14 +4485,12 @@ impl EnemyAi {
         if missed_is_pc && self.answer_question(Question::ShallIFollowLostEnemy, ctx) {
             self.base.say(Remark::HuntsEnemy);
             self.seek_area(
-                sim,
+                env,
                 self.base.seek_position,
                 parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                 SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
                 self.pc_gone_away_in_this_direction,
                 global,
-                ctx,
-                tick,
             );
         } else {
             // AI destination forecasting above only populates the retained
@@ -4512,7 +4509,7 @@ impl EnemyAi {
             let dy = missed_position.y - ctx.position.y;
             let dir = vec_to_sector(dx, dy);
             self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
-            self.get_battle_overview(0, ThinkEnv::new(sim, ctx, tick, None));
+            self.get_battle_overview(0, ThinkEnv { grid: None, ..env });
         }
         return;
     }

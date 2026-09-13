@@ -584,7 +584,11 @@ impl EngineInner {
                         source_id,
                         format_args!("soldier CALL_ALERT caller {caller} lost its EnemyAi"),
                     )
-                    .resolve_alert_request(sim, accepted, continuation, &source_ctx, &source_tick),
+                    .resolve_alert_request(
+                        crate::ai_enemy::ThinkEnv::new(sim, &source_ctx, &source_tick, None),
+                        accepted,
+                        continuation,
+                    ),
             }
         }
     }
@@ -699,7 +703,10 @@ impl EngineInner {
             let enemy = entity
                 .enemy_ai_mut()
                 .unwrap_or_else(|| panic!("reporting Charly {charly} requires enemy AI"));
-            enemy.resolve_charly_officer_report(sim, accepted, &charly_ctx, &charly_tick);
+            enemy.resolve_charly_officer_report(
+                crate::ai_enemy::ThinkEnv::new(sim, &charly_ctx, &charly_tick, None),
+                accepted,
+            );
         }
     }
 }

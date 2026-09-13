@@ -453,8 +453,8 @@ fn attack_enemy_retarget_uses_live_exact_sector_over_number_only_fighter_snapsho
     );
 }
 
-fn reconsider_approach_lift_grid() -> crate::fast_find_grid::FastFindGrid {
-    let mut grid = crate::fast_find_grid::FastFindGrid::new();
+fn reconsider_approach_lift_grid() -> FastFindGrid {
+    let mut grid = FastFindGrid::new();
     let lift_number = crate::sector::SectorNumber::new(42);
     let ordinary_number = crate::sector::SectorNumber::new(5);
     let level = std::sync::Arc::make_mut(&mut grid.level);
@@ -550,7 +550,10 @@ fn failed_look_for_help_route_is_consumed_before_event_fallback() {
     let mut global = AiGlobalState::default();
 
     let (_, draws) = crate::sim_rng::with_draw_trace(|| {
-        ai.resume_battle_look_for_help_after_alert_officer(&sim, &mut global, &ctx, &tick);
+        ai.resume_battle_look_for_help_after_alert_officer(
+            ThinkEnv::new(&sim, &ctx, &tick, None),
+            &mut global,
+        );
     });
 
     assert_eq!(draws, vec![crate::sim_rng::RngSite::BattlePanicRemark]);
@@ -674,10 +677,13 @@ fn successful_look_for_help_continuation_draws_remark_and_logs_once() {
 
     let (_, draws) = crate::sim_rng::with_draw_trace(|| {
         ai.resume_battle_look_for_help_after_alert_officer(
-            &sim,
+            ThinkEnv::new(
+                &sim,
+                &AiContext::test_fixture(),
+                &AiPerTickData::stub(),
+                None,
+            ),
             &mut global,
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
         );
     });
 
@@ -1020,7 +1026,7 @@ fn trainer_sleeping_enemy_scan_waits_for_return_to_duty_continuation() {
         is_vip: false,
     }];
 
-    ai.kill_nearby_sleeping_enemies(&sim, &ctx, &tick);
+    ai.kill_nearby_sleeping_enemies(ThinkEnv::new(&sim, &ctx, &tick, None));
 
     assert_eq!(
         ai.base.current_substate,
@@ -1035,7 +1041,9 @@ fn trainer_sleeping_enemy_scan_waits_for_return_to_duty_continuation() {
         ]
     ));
 
-    ai.resume_kill_nearby_sleeping_enemies_after_return_to_duty(&sim, &ctx, &tick);
+    ai.resume_kill_nearby_sleeping_enemies_after_return_to_duty(ThinkEnv::new(
+        &sim, &ctx, &tick, None,
+    ));
     assert_eq!(
         ai.base.current_substate,
         Substate::AttackingApproachingSleepingEnemy
@@ -1087,10 +1095,13 @@ fn sleeping_target_case(
     ];
     let mut ai = EnemyAi::new(139);
     ai.approach_sleeping_enemies(
-        &crate::sim_rng::test_context(),
+        ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        ),
         &targets,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(expected)));
@@ -2001,10 +2012,8 @@ fn failed_fight_approach_resumes_inline_observe_decision() {
     };
 
     ai.resume_battle_fight_after_reconsider(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert!(!ai.base.couldnt_reachpoint);
