@@ -1,48 +1,29 @@
 //! Runtime language selector for validated installed packs.
 
-use crate::gfx_types::{GameEvent, Keycode};
+use crate::application::require;
 use crate::host::ApplicationContext;
 use crate::localization::{LanguageChange, LanguageSelection, PortTextKey};
-use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
 
-use super::layout::{
-    MenuTransform, align_bottom_right, dim_screen, draw_screen_background, enter_modal_gpu_phase,
-    render_text_virt_font,
-};
-use super::resources::{IngameMenuResources, MT_BTN_CANCEL};
-use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
+use super::layout::{align_bottom_right, draw_screen_background, render_text_virt_font};
+use super::resources::MT_BTN_CANCEL;
+use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey};
 
 const ID_LANGUAGE_BASE: u32 = 4_000;
 const ID_APPLY: u32 = 4_100;
 const ID_CANCEL: u32 = 4_101;
+const SCREEN: &str = "Language screen";
 
 /// Select and commit a language. A failed commit stays on this screen and
 /// displays the concrete error; the old locale remains installed.
 pub async fn show_language(
     application_context: &ApplicationContext,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: Option<ModalCursor<'_>>,
+    io: &mut ModalScreenIo<'_, '_>,
 ) -> bool {
-    let Some(mut state) =
-        LanguageModalState::new(application_context, event_pump, renderer, resources)
-    else {
+    let Some(mut state) = LanguageModalState::new(application_context, io) else {
         return false;
     };
-    let mut io = ModalScreenIo {
-        window: event_pump,
-        renderer,
-        resources,
-        cursor: cursor.as_ref(),
-    };
-    loop {
-        if let Some(changed) = state.tick(application_context, &mut io) {
-            return changed;
-        }
-        crate::window::sleep_ui_frame().await;
-    }
+    widget_bridge::run_modal(io, |io| state.tick(application_context, io)).await
 }
 
 /// Language choices and transient errors live across frames, not in the IO bundle.
@@ -64,30 +45,24 @@ pub struct LanguageModalState {
 impl LanguageModalState {
     pub fn new(
         application_context: &ApplicationContext,
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
+        io: &ModalScreenIo<'_, '_>,
     ) -> Option<Self> {
-        let packs = application_context
-            .installed_languages()
-            .unwrap_or_else(|error| panic!("Language screen lost its ApplicationContext: {error}"));
+        let resources = io.resources;
+        let packs = require(application_context.installed_languages(), SCREEN);
         if packs.len() < 2 {
             tracing::warn!("Language screen opened without two validated language packs");
             return None;
         }
-        let preferences = application_context
-            .localization_preferences()
-            .unwrap_or_else(|error| panic!("Language screen lost its preferences: {error}"));
-        let active_locale = application_context
-            .active_locale()
-            .unwrap_or_else(|error| panic!("Language screen lost its active locale: {error}"));
+        let preferences = require(application_context.localization_preferences(), SCREEN);
+        let active_locale = require(application_context.active_locale(), SCREEN);
 
         let mut choices = Vec::with_capacity(packs.len() + 1);
         choices.push((
-            application_context
-                .port_text(PortTextKey::Automatic)
-                .unwrap_or_else(|error| panic!("Language screen lost localized text: {error}"))
-                .to_owned(),
+            require(
+                application_context.port_text(PortTextKey::Automatic),
+                SCREEN,
+            )
+            .to_owned(),
             LanguageSelection::Auto,
         ));
         choices.extend(packs.iter().map(|pack| {
@@ -107,17 +82,11 @@ impl LanguageModalState {
                 .unwrap_or(0),
         };
 
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
         let (btn_w, btn_h) = resources.button_dimensions();
         let row_h = btn_h.max(25);
         let rows_per_column = choices.len().div_ceil(2).max(1);
 
-        let apply_label = application_context
-            .port_text(PortTextKey::Apply)
-            .unwrap_or_else(|error| panic!("Language screen lost localized text: {error}"));
+        let apply_label = require(application_context.port_text(PortTextKey::Apply), SCREEN);
         let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
         let bottom =
             align_bottom_right(&[(apply_label, true), (&cancel_label, true)], btn_w, btn_h);
@@ -152,11 +121,9 @@ impl LanguageModalState {
             bottom[1].h,
         ));
 
-        let title = application_context
-            .port_text(PortTextKey::Language)
-            .unwrap_or_else(|error| panic!("Language screen lost localized text: {error}"));
+        let title = require(application_context.port_text(PortTextKey::Language), SCREEN);
         let error_message: Option<String> = None;
-        let input = ModalInputState::from_window(event_pump, transform);
+        let input = ModalInputState::for_screen(io.window, io.renderer);
 
         Some(Self {
             choices,
@@ -183,30 +150,18 @@ impl LanguageModalState {
         if self.result.is_some() {
             return self.result;
         }
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
         let mut apply = false;
         let mut cancel = false;
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            self.input.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => cancel = true,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return | Keycode::KpEnter,
-                    ..
-                } => apply = true,
-                _ => {}
+        let screen = ScreenFrame::begin(io, &mut self.input);
+        for key in screen.keys() {
+            match key {
+                ScreenKey::Quit | ScreenKey::Cancel => cancel = true,
+                ScreenKey::Confirm => apply = true,
+                ScreenKey::Next => {}
             }
         }
-        let events = self.input.process_frame(&mut self.frame);
-        if let Some(id) = widget_bridge::find_activated(&events) {
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input, &mut self.frame);
+        if let Some(id) = activated {
             match id {
                 ID_APPLY => apply = true,
                 ID_CANCEL => cancel = true,
@@ -231,8 +186,10 @@ impl LanguageModalState {
             }
         }
 
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let transform = screen.transform;
+        screen.begin_draw(renderer);
         if let Some(bg) = resources.menu_bg[2] {
             draw_screen_background(renderer, &bg);
         }
@@ -295,10 +252,7 @@ impl LanguageModalState {
                 widget_bridge::draw_widget_button(renderer, resources, transform, widget, false);
             }
         }
-        if let Some(cursor) = cursor {
-            cursor.draw(renderer, transform, &self.input);
-        }
-        renderer.present();
+        screen.finish(io, &self.input);
 
         None
     }

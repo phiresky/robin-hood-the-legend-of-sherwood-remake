@@ -48,6 +48,124 @@ pub struct ModalScreenIo<'frame, 'cursor> {
     pub cursor: Option<&'frame ModalCursor<'cursor>>,
 }
 
+/// Borrowed menu-sound services for screens that play widget noises.
+///
+/// Every field is optional because headless/test hosts run menus without
+/// audio; the noise helpers skip playback when any piece is missing.
+pub struct ScreenAudio<'a> {
+    pub sound: Option<&'a mut SoundManager>,
+    pub backend: Option<&'a mut dyn AudioBackend>,
+    pub sample_loader: Option<&'a SampleLoader>,
+}
+
+/// Standard modal keys shared by every menu screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenKey {
+    /// Window close request.
+    Quit,
+    /// `Escape`.
+    Cancel,
+    /// `Return` or numpad `Enter`.
+    Confirm,
+    /// `Tab`.
+    Next,
+}
+
+impl ScreenKey {
+    /// Classify one window event; non-standard events yield `None`.
+    pub fn from_event(event: &GameEvent) -> Option<Self> {
+        use crate::gfx_types::Keycode;
+        match event {
+            GameEvent::Quit => Some(Self::Quit),
+            GameEvent::KeyDown { keycode, .. } => match keycode {
+                Keycode::Escape => Some(Self::Cancel),
+                Keycode::Return | Keycode::KpEnter => Some(Self::Confirm),
+                Keycode::Tab => Some(Self::Next),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+/// The shared per-frame skeleton of a modal menu screen.
+///
+/// A screen `tick` runs `begin` (poll, resize sync, centred transform and
+/// input update), handles `events`/`keys`, calls `dispatch` for widget
+/// activation, then `begin_draw` (modal GPU phase + dim), draws its own
+/// content, and finally `finish` (cursor + present). Frame pacing stays in
+/// the async wrapper ([`run_modal`]).
+pub struct ScreenFrame {
+    pub events: Vec<GameEvent>,
+    pub transform: MenuTransform,
+}
+
+impl ScreenFrame {
+    /// Poll window events and feed every event into `input` in poll order.
+    ///
+    /// Equivalent to calling `poll_events_with_transform` and then
+    /// `input.update_from_event` per event before any screen-specific
+    /// handling; screens whose event handling reads the input state
+    /// mid-stream must keep the interleaved loop.
+    pub fn begin(io: &mut ModalScreenIo<'_, '_>, input: &mut ModalInputState) -> Self {
+        let frame = Self::poll(io);
+        for event in &frame.events {
+            input.update_from_event(event, frame.transform);
+        }
+        frame
+    }
+
+    /// Poll window events without an input state (transitions, busy screens).
+    pub fn poll(io: &mut ModalScreenIo<'_, '_>) -> Self {
+        let (events, transform) = super::layout::poll_events_with_transform(io.window, io.renderer);
+        Self { events, transform }
+    }
+
+    /// Standard keys in event order.
+    pub fn keys(&self) -> impl Iterator<Item = ScreenKey> + '_ {
+        self.events.iter().filter_map(ScreenKey::from_event)
+    }
+
+    /// Deliver this frame's input to `frame`; returns the widget events and
+    /// the first activated widget.
+    pub fn dispatch(
+        input: &mut ModalInputState,
+        frame: &mut FrameWnd,
+    ) -> (Vec<UiEvent>, Option<WidgetId>) {
+        let events = input.process_frame(frame);
+        let activated = find_activated(&events);
+        (events, activated)
+    }
+
+    /// Enter the modal GPU phase and dim the frozen scene behind the screen.
+    pub fn begin_draw(&self, renderer: &mut Renderer) {
+        super::layout::enter_modal_gpu_phase(renderer);
+        super::layout::dim_screen(renderer);
+    }
+
+    /// Draw the modal cursor (when present) and present the frame.
+    pub fn finish(&self, io: &mut ModalScreenIo<'_, '_>, input: &ModalInputState) {
+        if let Some(cursor) = io.cursor {
+            cursor.draw(io.renderer, self.transform, input);
+        }
+        io.renderer.present();
+    }
+}
+
+/// Drive a one-frame `tick` until it yields a result, pacing with
+/// [`crate::window::sleep_ui_frame`] between frames.
+pub async fn run_modal<T>(
+    io: &mut ModalScreenIo<'_, '_>,
+    mut tick: impl FnMut(&mut ModalScreenIo<'_, '_>) -> Option<T>,
+) -> T {
+    loop {
+        if let Some(result) = tick(io) {
+            return result;
+        }
+        crate::window::sleep_ui_frame().await;
+    }
+}
+
 /// Shared thumb geometry for the artwork renderer and scroll-view hit testing.
 /// The top is relative to the track; minimum-sized thumbs stay inside it.
 pub(crate) fn listbox_scrollbar_thumb(
@@ -446,6 +564,11 @@ impl ModalInputState {
         let mut input = Self::new();
         input.seed_mouse_from_window(event_pump, transform);
         input
+    }
+
+    /// [`from_window`](Self::from_window) with the renderer's centred menu transform.
+    pub fn for_screen(event_pump: &crate::window::GameWindow, renderer: &Renderer) -> Self {
+        Self::from_window(event_pump, MenuTransform::for_renderer(renderer))
     }
 
     /// Deliver one frame and consume its one-shot mouse/text input.

@@ -440,10 +440,12 @@ impl OptionsModalState {
                 BUTTON_LANGUAGE => {
                     if show_language(
                         application_context,
-                        event_pump,
-                        renderer,
-                        resources,
-                        cursor.as_mut().map(|c| c.reborrow()),
+                        &mut widget_bridge::ModalScreenIo {
+                            window: event_pump,
+                            renderer,
+                            resources,
+                            cursor: cursor.as_ref(),
+                        },
                     )
                     .await
                     {

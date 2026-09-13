@@ -131,6 +131,14 @@ impl MenuTransform {
         }
     }
 
+    /// Center the menu window inside the renderer's current logical screen.
+    pub fn for_renderer(renderer: &Renderer) -> Self {
+        Self::centered(
+            i32::from(renderer.screen_width()),
+            i32::from(renderer.screen_height()),
+        )
+    }
+
     pub fn to_screen(self, x: i32, y: i32) -> (i32, i32) {
         (self.origin_x + x, self.origin_y + y)
     }
@@ -153,11 +161,7 @@ pub fn poll_events_with_transform(
 ) -> (Vec<crate::gfx_types::GameEvent>, MenuTransform) {
     let events = event_pump.poll_events();
     renderer.sync_window_size(event_pump);
-    let transform = MenuTransform::centered(
-        i32::from(renderer.screen_width()),
-        i32::from(renderer.screen_height()),
-    );
-    (events, transform)
+    (events, MenuTransform::for_renderer(renderer))
 }
 
 // ═══════════════════════════════════════════════════════════════════
