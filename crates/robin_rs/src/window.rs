@@ -36,7 +36,7 @@ use winit::event::{
     ElementState, KeyEvent, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent,
 };
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
+use winit::keyboard::KeyCode;
 use winit::window::{Window, WindowId};
 
 use crate::gfx_types::{GameEvent, Keycode};
@@ -44,14 +44,26 @@ use crate::touch_input::{TouchClassifier, TouchOutput};
 use robin_engine::graphic_config::GraphicConfig;
 use robin_util::sync::lock;
 
+#[cfg(target_os = "android")]
+mod android;
+mod gpu;
+mod input_map;
+
+use gpu::{build_game_window_async, create_surface_any_thread};
+use input_map::{is_android_back_key, physical_key_to_key_code, physical_key_to_keycode};
+
 #[cfg(not(target_arch = "wasm32"))]
 // The unoptimized native async launch chain can consume nearly 8 MiB before
 // wgpu encodes the final loading-screen pass. That pass needs another ~44 KiB;
 // an 8 MiB thread hits its guard page (Fabri18 custom-mission crash, 2026-09-10).
 // Use 32 MiB, matching the wasm linker reserve in .cargo/config.toml, to leave
 // headroom for rendering as well as the simulation-only launch path.
-// TODO: reduce the large async poll frames in run_rust_game_active and mission
-// bootstrap so native debug builds need less stack.
+// TODO: shrink this back toward the 8 MiB default. The remaining constraint is
+// outside this module: `main_entry::run::run_rust_game_active` and the mission
+// bootstrap futures are polled as one nested state machine on this thread, so
+// their largest locals held across `.await` set the stack high-water mark in
+// unoptimized builds. Boxing those inner futures (or their large locals) would
+// lower it; nothing in `window` itself contributes a large frame.
 const GAME_THREAD_STACK_SIZE: usize = 32 * 1024 * 1024;
 
 static NATIVE_REFRESH_PRESENTATION: AtomicBool = AtomicBool::new(true);
@@ -312,27 +324,6 @@ enum HostMsg {
     LifecycleAutosave,
 }
 
-#[cfg(target_os = "android")]
-static ANDROID_BACK_TX: std::sync::Mutex<Option<async_channel::Sender<HostMsg>>> =
-    std::sync::Mutex::new(None);
-
-#[cfg(target_os = "android")]
-fn android_back_tx() -> &'static std::sync::Mutex<Option<async_channel::Sender<HostMsg>>> {
-    &ANDROID_BACK_TX
-}
-
-#[cfg(target_os = "android")]
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_phiresky_robinhood_RobinHoodActivity_nativeOnBackPressed(
-    _env: *mut std::ffi::c_void,
-    _this: *mut std::ffi::c_void,
-) {
-    tracing::info!("Android Back pressed");
-    if let Some(tx) = lock(android_back_tx()).as_ref() {
-        report_window_send(tx.try_send(HostMsg::Event(GameEvent::MenuToggleRequested)));
-    }
-}
-
 /// Process-wide handle on the live winit [`Window`].  Populated when
 /// the OS window is created so the game thread can reach the window
 /// for fire-and-forget calls like [`Window::reset_dead_keys`] without
@@ -340,21 +331,30 @@ pub extern "system" fn Java_io_github_phiresky_robinhood_RobinHoodActivity_nativ
 /// only drained at `about_to_wait`, which is too late for dead-key
 /// resets — by the time it runs, the next keypress has already been
 /// composed.
-static GAME_WINDOW: std::sync::Mutex<Option<Arc<Window>>> = std::sync::Mutex::new(None);
+///
+/// This stays a global (rather than a field on [`GameWindow`]) because
+/// [`start_text_input`] is called from game-session and menu code that
+/// holds no `GameWindow` handle.
+struct LiveWindowSlot(std::sync::Mutex<Option<Arc<Window>>>);
 
-fn game_window_slot() -> &'static std::sync::Mutex<Option<Arc<Window>>> {
-    &GAME_WINDOW
-}
+impl LiveWindowSlot {
+    const fn new() -> Self {
+        Self(std::sync::Mutex::new(None))
+    }
 
-fn set_game_window(window: Arc<Window>) {
-    *lock(game_window_slot()) = Some(window);
-}
+    fn set(&self, window: Arc<Window>) {
+        *lock(&self.0) = Some(window);
+    }
 
-fn with_game_window<F: FnOnce(&Window)>(f: F) {
-    if let Some(w) = lock(game_window_slot()).as_ref() {
-        f(w);
+    fn with<F: FnOnce(&Window)>(&self, f: F) {
+        match lock(&self.0).as_ref() {
+            Some(window) => f(window),
+            None => tracing::warn!("live window requested before the OS window was created"),
+        }
     }
 }
+
+static GAME_WINDOW: LiveWindowSlot = LiveWindowSlot::new();
 
 /// Commands flowing from the game out to the [`AppHandler`] / window.
 /// Picked up on the next `about_to_wait` / `new_events` callback.
@@ -684,53 +684,6 @@ impl GameWindow {
         }
     }
 
-    #[cfg(feature = "gamepad")]
-    fn drain_gamepad_events(&mut self, events: &mut Vec<GameEvent>) {
-        // Drain gilrs events to GameEvent::Gamepad{Added,Removed,Button,Axis}.
-        if let Some(gilrs) = &mut self.gamepads {
-            while let Some(gilrs::Event { id, event, .. }) = gilrs.next_event() {
-                let which = usize::from(id) as u32;
-                match event {
-                    gilrs::EventType::Connected => {
-                        events.push(GameEvent::GamepadAdded { which });
-                    }
-                    gilrs::EventType::Disconnected => {
-                        events.push(GameEvent::GamepadRemoved { which });
-                    }
-                    gilrs::EventType::ButtonPressed(btn, _) => {
-                        if let Some(b) = gilrs_button_to_index(btn) {
-                            events.push(GameEvent::GamepadButton {
-                                which,
-                                button: b,
-                                pressed: true,
-                            });
-                        }
-                    }
-                    gilrs::EventType::ButtonReleased(btn, _) => {
-                        if let Some(b) = gilrs_button_to_index(btn) {
-                            events.push(GameEvent::GamepadButton {
-                                which,
-                                button: b,
-                                pressed: false,
-                            });
-                        }
-                    }
-                    gilrs::EventType::AxisChanged(axis, value, _) => {
-                        if let Some(a) = gilrs_axis_to_index(axis) {
-                            let v = (value * 32767.0).clamp(-32768.0, 32767.0) as i16;
-                            events.push(GameEvent::GamepadAxis {
-                                which,
-                                axis: a,
-                                value: v,
-                            });
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
     pub fn grab_mouse(&mut self, grab: bool) {
         report_window_send(self.cmd_tx.try_send(HostCmd::GrabMouse(grab)));
     }
@@ -824,278 +777,13 @@ impl GameWindow {
 }
 
 #[cfg(test)]
-mod presentation_tests {
-    use super::PresentationRect;
-
-    fn assert_rect_close(actual: PresentationRect, expected: PresentationRect) {
-        for (actual, expected) in [
-            (actual.x, expected.x),
-            (actual.y, expected.y),
-            (actual.width, expected.width),
-            (actual.height, expected.height),
-        ] {
-            assert!(
-                (actual - expected).abs() < 0.01,
-                "presentation coordinate {actual} differs from {expected}"
-            );
-        }
-    }
-
-    #[test]
-    fn aspect_fit_letterboxes_wider_surfaces() {
-        let rect = PresentationRect::aspect_fit(1280, 720, 3440, 1440);
-        assert_rect_close(
-            rect,
-            PresentationRect {
-                x: 440.0,
-                y: 0.0,
-                width: 2560.0,
-                height: 1440.0,
-            },
-        );
-    }
-
-    #[test]
-    fn aspect_fit_letterboxes_taller_surfaces() {
-        let rect = PresentationRect::aspect_fit(1024, 768, 1920, 1080);
-        assert_rect_close(
-            rect,
-            PresentationRect {
-                x: 240.0,
-                y: 0.0,
-                width: 1440.0,
-                height: 1080.0,
-            },
-        );
-    }
-}
+mod presentation_tests;
 
 // ---------------------------------------------------------------------
 // AppHandler — winit ApplicationHandler driving the event channel.
 // ---------------------------------------------------------------------
 
 type WindowReadyFn = Box<dyn FnMut(Arc<Window>) + 'static>;
-
-/// Create a wgpu surface for `window` from the game thread.
-///
-/// On Windows, winit only hands out the window handle on the event-loop
-/// thread, so the plain `create_surface` fails there. Use winit's
-/// documented any-thread escape hatch and build the surface from the raw
-/// handles; the `Arc<Window>` held by `GameWindow` keeps them valid for
-/// the surface's lifetime.
-#[cfg(target_os = "windows")]
-fn create_surface_any_thread(
-    instance: &wgpu::Instance,
-    window: Arc<Window>,
-) -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError> {
-    use winit::platform::windows::WindowExtWindows;
-    unsafe {
-        let window_handle = match window.window_handle_any_thread() {
-            Ok(handle) => handle.as_raw(),
-            Err(e) => {
-                // The zero-window sentinel never occurs for a live window,
-                // and a dead window means we're shutting down anyway.
-                panic!("window_handle_any_thread failed: {e}");
-            }
-        };
-        instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-            raw_display_handle: Some(winit::raw_window_handle::RawDisplayHandle::Windows(
-                winit::raw_window_handle::WindowsDisplayHandle::new(),
-            )),
-            raw_window_handle: window_handle,
-        })
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn create_surface_any_thread(
-    instance: &wgpu::Instance,
-    window: Arc<Window>,
-) -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError> {
-    instance.create_surface(window)
-}
-
-/// Async wgpu bring-up: runs on the game side after `resumed()` ships
-/// us the bare winit window.  `request_adapter` and `request_device`
-/// genuinely yield on wasm, so they have to live on the async path
-/// (not behind `pollster::block_on`).
-async fn build_game_window_async(
-    window: Arc<Window>,
-    logical_w: u32,
-    logical_h: u32,
-    events_rx: async_channel::Receiver<HostMsg>,
-    cmd_tx: async_channel::Sender<HostCmd>,
-    lifecycle_autosave_requested: Arc<AtomicBool>,
-) -> Result<GameWindow, String> {
-    let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
-    // Native: PRIMARY (Vulkan / Metal / DX12).  Wasm: WebGPU + WebGL2
-    // — WebGL2 is the fallback when the browser doesn't expose WebGPU
-    // (most non-Chrome desktop browsers as of 2026).
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        instance_descriptor.backends = wgpu::Backends::PRIMARY;
-    }
-    // The statically linked DXC shader compiler only exists for MSVC
-    // targets, and DX12's FXC fallback cannot compile our binding_array
-    // shaders (they need shader model 5.1+). Windows-gnu builds (used for
-    // local Wine testing) therefore go through Vulkan instead of DX12.
-    #[cfg(all(windows, target_env = "gnu"))]
-    {
-        instance_descriptor.backends = wgpu::Backends::VULKAN | wgpu::Backends::GL;
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        // wgpu 30 has a bug where mixing BROWSER_WEBGPU + GL causes
-        // the WebGPU backend's `request_adapter` error to claim
-        // `supported_backends = BROWSER_WEBGPU` only — masking the
-        // GL backend even when wgpu-core/gles is compiled in (see
-        // `wgpu-30.0.0/src/backend/webgpu.rs:1022`, where upstream still
-        // notes that supported_backends should include compiled
-        // wgpu-core backends). Pin to GL (= WebGL2 on wasm) for now
-        // until that adapter-discovery path is fixed upstream.
-        instance_descriptor.backends = wgpu::Backends::GL;
-    }
-    let instance = wgpu::Instance::new(instance_descriptor);
-
-    let surface = create_surface_any_thread(&instance, window.clone())
-        .map_err(|e| format!("create_surface: {e}"))?;
-
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-            apply_limit_buckets: false,
-        })
-        .await
-        .map_err(|e| format!("request_adapter: {e}"))?;
-
-    let info = adapter.get_info();
-    tracing::info!(
-        "wgpu adapter: {:?} backend={:?} type={:?} driver={:?}",
-        info.name,
-        info.backend,
-        info.device_type,
-        info.driver,
-    );
-    if info.device_type == wgpu::DeviceType::Cpu {
-        tracing::warn!("wgpu picked a CPU (software) adapter — no real GPU acceleration");
-    }
-
-    // WebGL2 lacks compute shaders, storage buffers, etc., so the
-    // default `Limits` would fail `request_device` on the GL backend.
-    // Drop to the WebGL2 baseline.  Native runs with full
-    // `Limits::default()` and gets every feature the adapter
-    // advertises.
-    let required_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
-        wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
-    } else {
-        wgpu::Limits::default()
-    };
-
-    let mut required_features = wgpu::Features::empty();
-    if adapter.get_info().backend != wgpu::Backend::Gl {
-        let adapter_features = adapter.features();
-        for feature in [
-            wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER,
-            wgpu::Features::PIPELINE_CACHE,
-            wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
-            wgpu::Features::FLOAT32_FILTERABLE,
-        ] {
-            if adapter_features.contains(feature) {
-                required_features |= feature;
-            } else {
-                tracing::warn!(
-                    "wgpu adapter does not expose {feature:?}; some shader presets may fail"
-                );
-            }
-        }
-    }
-
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("robin device"),
-            required_features,
-            required_limits,
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            trace: wgpu::Trace::Off,
-        })
-        .await
-        .map_err(|e| format!("request_device: {e}"))?;
-
-    let surface_caps = surface.get_capabilities(&adapter);
-    let surface_format = surface_caps
-        .formats
-        .iter()
-        .copied()
-        .find(|f| f.is_srgb())
-        .unwrap_or(surface_caps.formats[0]);
-
-    let actual = window.inner_size();
-    let surface_config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: surface_format,
-        color_space: wgpu::SurfaceColorSpace::Auto,
-        width: actual.width.max(1),
-        height: actual.height.max(1),
-        present_mode: wgpu::PresentMode::Fifo,
-        desired_maximum_frame_latency: 2,
-        alpha_mode: wgpu::CompositeAlphaMode::Auto,
-        view_formats: vec![],
-    };
-    surface.configure(&device, &surface_config);
-
-    tracing::info!(
-        "window: requested={}x{} actual_inner={}x{} surface={}x{} format={:?}",
-        logical_w,
-        logical_h,
-        actual.width,
-        actual.height,
-        surface_config.width,
-        surface_config.height,
-        surface_format,
-    );
-
-    let gpu = GpuContext {
-        instance: Arc::new(instance),
-        adapter: Arc::new(adapter),
-        device: Arc::new(device),
-        queue: Arc::new(queue),
-        surface_format,
-    };
-
-    #[cfg(feature = "gamepad")]
-    let gamepads = match gilrs::Gilrs::new() {
-        Ok(g) => Some(g),
-        Err(e) => {
-            tracing::warn!("gilrs init failed: {e:?}; gamepad input disabled");
-            None
-        }
-    };
-
-    Ok(GameWindow {
-        width: logical_w,
-        height: logical_h,
-        gpu,
-        surface: SharedSurface::new(surface),
-        surface_config,
-        #[cfg(feature = "gamepad")]
-        gamepads,
-        gamepad_input: Default::default(),
-        close_requested: false,
-        cursor_x: 0,
-        cursor_y: 0,
-        logical_w,
-        logical_h,
-        logical_resolution_policy: None,
-        last_emitted_cursor: None,
-        events_rx,
-        cmd_tx,
-        lifecycle_autosave_requested,
-        deferred_event_batches: VecDeque::new(),
-    })
-}
 
 /// Wall-clock window for two presses to register as a double-click.
 /// 15 frames at ~60fps → ~250ms.  winit does not surface a multi-click
@@ -1133,6 +821,32 @@ fn touch_output_needs_deferred_up(output: &[TouchOutput]) -> bool {
 }
 
 impl AppHandler {
+    fn new(
+        title: &str,
+        width: u32,
+        height: u32,
+        visible: bool,
+        events_tx: async_channel::Sender<HostMsg>,
+        cmd_rx: async_channel::Receiver<HostCmd>,
+        on_window_ready: WindowReadyFn,
+    ) -> Self {
+        Self {
+            title: title.to_string(),
+            width,
+            height,
+            visible,
+            events_tx,
+            cmd_rx,
+            on_window_ready,
+            window: None,
+            last_cursor: (0, 0),
+            touch: TouchClassifier::default(),
+            #[cfg(target_os = "android")]
+            resize_refresh_frames: 0,
+            last_press: None,
+        }
+    }
+
     #[cfg(target_os = "android")]
     fn send_menu_toggle_request(&self) {
         report_window_send(
@@ -1246,6 +960,104 @@ impl AppHandler {
             }
         }
     }
+
+    fn handle_close_requested(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "android")]
+        {
+            let _ = event_loop;
+            self.send_menu_toggle_request();
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            // Keep servicing window commands while the game consumes
+            // Quit and finishes cleanup. Only completion may end the
+            // loop: returning here used to race exit-code publication.
+            if let Err(error) = request_window_close(&self.events_tx) {
+                tracing::error!("{error}");
+                event_loop.exit();
+            }
+        }
+    }
+
+    fn handle_keyboard_input(&mut self, event: KeyEvent) {
+        let KeyEvent {
+            physical_key,
+            logical_key,
+            state,
+            repeat,
+            text,
+            ..
+        } = event;
+        let (keycode, physical_key) = if is_android_back_key(&logical_key, physical_key) {
+            (Keycode::Escape, Some(KeyCode::Escape))
+        } else {
+            (
+                physical_key_to_keycode(physical_key),
+                physical_key_to_key_code(physical_key),
+            )
+        };
+        match state {
+            ElementState::Pressed => {
+                if !repeat {
+                    report_window_send(self.events_tx.try_send(HostMsg::Event(
+                        GameEvent::KeyDown {
+                            keycode,
+                            physical_key,
+                        },
+                    )));
+                }
+                if let Some(text) = text
+                    && !text.chars().any(|c| c.is_control())
+                {
+                    report_window_send(self.events_tx.try_send(HostMsg::Event(
+                        GameEvent::TextInput {
+                            text: text.to_string(),
+                        },
+                    )));
+                }
+            }
+            ElementState::Released => {
+                report_window_send(self.events_tx.try_send(HostMsg::Event(GameEvent::KeyUp {
+                    keycode,
+                    physical_key,
+                })));
+            }
+        }
+    }
+
+    fn handle_mouse_input(&mut self, state: ElementState, button: MouseButton) {
+        let (x, y) = self.last_cursor;
+        let btn = match button {
+            MouseButton::Left => 1,
+            MouseButton::Middle => 2,
+            MouseButton::Right => 3,
+            MouseButton::Back => 4,
+            MouseButton::Forward => 5,
+            MouseButton::Other(n) => n as u8,
+        };
+        let event = match state {
+            ElementState::Pressed => {
+                let now = web_time::Instant::now();
+                let clicks = match self.last_press {
+                    Some((prev_btn, prev_t))
+                        if prev_btn == btn
+                            && now.duration_since(prev_t).as_millis()
+                                <= DOUBLE_CLICK_INTERVAL_MS =>
+                    {
+                        self.last_press = None;
+                        2
+                    }
+                    _ => {
+                        self.last_press = Some((btn, now));
+                        1
+                    }
+                };
+                GameEvent::MouseDown(x, y, btn, clicks)
+            }
+            ElementState::Released => GameEvent::MouseUp(x, y, btn),
+        };
+        report_window_send(self.events_tx.try_send(HostMsg::Event(event)));
+    }
 }
 
 impl ApplicationHandler for AppHandler {
@@ -1321,7 +1133,7 @@ impl ApplicationHandler for AppHandler {
         let window = Arc::new(window);
         self.touch.set_scale_factor(window.scale_factor());
         self.window = Some(window.clone());
-        set_game_window(window.clone());
+        GAME_WINDOW.set(window.clone());
 
         // Hand the bare window to the game future.  All wgpu init
         // (`request_adapter`, `request_device`) happens *async* on the
@@ -1352,81 +1164,15 @@ impl ApplicationHandler for AppHandler {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        #[cfg(target_os = "android")]
-        let _ = event_loop;
         match event {
-            WindowEvent::CloseRequested => {
-                #[cfg(target_os = "android")]
-                {
-                    self.send_menu_toggle_request();
-                }
-                #[cfg(not(target_os = "android"))]
-                {
-                    // Keep servicing window commands while the game consumes
-                    // Quit and finishes cleanup. Only completion may end the
-                    // loop: returning here used to race exit-code publication.
-                    if let Err(error) = request_window_close(&self.events_tx) {
-                        tracing::error!("{error}");
-                        event_loop.exit();
-                    }
-                }
-            }
+            WindowEvent::CloseRequested => self.handle_close_requested(event_loop),
             WindowEvent::Resized(PhysicalSize { width, height }) => {
                 report_window_send(self.events_tx.try_send(HostMsg::Resized { width, height }));
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.touch.set_scale_factor(scale_factor);
             }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        physical_key,
-                        logical_key,
-                        state,
-                        repeat,
-                        text,
-                        ..
-                    },
-                ..
-            } => {
-                let (keycode, physical_key) = if is_android_back_key(&logical_key, physical_key) {
-                    (Keycode::Escape, Some(KeyCode::Escape))
-                } else {
-                    (
-                        physical_key_to_keycode(physical_key),
-                        physical_key_to_key_code(physical_key),
-                    )
-                };
-                match state {
-                    ElementState::Pressed => {
-                        if !repeat {
-                            report_window_send(self.events_tx.try_send(HostMsg::Event(
-                                GameEvent::KeyDown {
-                                    keycode,
-                                    physical_key,
-                                },
-                            )));
-                        }
-                        if let Some(text) = text
-                            && !text.chars().any(|c| c.is_control())
-                        {
-                            report_window_send(self.events_tx.try_send(HostMsg::Event(
-                                GameEvent::TextInput {
-                                    text: text.to_string(),
-                                },
-                            )));
-                        }
-                    }
-                    ElementState::Released => {
-                        report_window_send(self.events_tx.try_send(HostMsg::Event(
-                            GameEvent::KeyUp {
-                                keycode,
-                                physical_key,
-                            },
-                        )));
-                    }
-                }
-            }
+            WindowEvent::KeyboardInput { event, .. } => self.handle_keyboard_input(event),
             WindowEvent::CursorMoved { position, .. } => {
                 let x = position.x as i32;
                 let y = position.y as i32;
@@ -1443,37 +1189,7 @@ impl ApplicationHandler for AppHandler {
                 );
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                let (x, y) = self.last_cursor;
-                let btn = match button {
-                    MouseButton::Left => 1,
-                    MouseButton::Middle => 2,
-                    MouseButton::Right => 3,
-                    MouseButton::Back => 4,
-                    MouseButton::Forward => 5,
-                    MouseButton::Other(n) => n as u8,
-                };
-                let event = match state {
-                    ElementState::Pressed => {
-                        let now = web_time::Instant::now();
-                        let clicks = match self.last_press {
-                            Some((prev_btn, prev_t))
-                                if prev_btn == btn
-                                    && now.duration_since(prev_t).as_millis()
-                                        <= DOUBLE_CLICK_INTERVAL_MS =>
-                            {
-                                self.last_press = None;
-                                2
-                            }
-                            _ => {
-                                self.last_press = Some((btn, now));
-                                1
-                            }
-                        };
-                        GameEvent::MouseDown(x, y, btn, clicks)
-                    }
-                    ElementState::Released => GameEvent::MouseUp(x, y, btn),
-                };
-                report_window_send(self.events_tx.try_send(HostMsg::Event(event)));
+                self.handle_mouse_input(state, button);
             }
             WindowEvent::Touch(touch) => {
                 let x = touch.location.x;
@@ -1663,9 +1379,7 @@ where
     #[cfg(target_arch = "wasm32")]
     install_browser_lifecycle_autosave(lifecycle_autosave_requested.clone())?;
     #[cfg(target_os = "android")]
-    {
-        *lock(android_back_tx()) = Some(events_tx.clone());
-    }
+    android::install_back_sender(events_tx.clone());
 
     // The game future receives the bare winit window through this
     // oneshot-style channel.  All wgpu init (instance / surface /
@@ -1686,21 +1400,7 @@ where
     let lifecycle_for_game = lifecycle_autosave_requested.clone();
 
     #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
-    let mut handler = AppHandler {
-        title: title.to_string(),
-        width,
-        height,
-        visible,
-        events_tx,
-        cmd_rx,
-        on_window_ready: on_ready,
-        window: None,
-        last_cursor: (0, 0),
-        touch: TouchClassifier::default(),
-        #[cfg(target_os = "android")]
-        resize_refresh_frames: 0,
-        last_press: None,
-    };
+    let mut handler = AppHandler::new(title, width, height, visible, events_tx, cmd_rx, on_ready);
 
     // Spawn the game.
     //
@@ -1722,70 +1422,18 @@ where
         }),
     };
     spawn_game_runtime(move || async move {
-        #[cfg(target_os = "android")]
-        let game_window = loop {
-            let window = match window_rx.recv().await {
-                Ok(w) => w,
-                Err(_) => {
-                    tracing::error!("event loop exited before window was ready");
-                    completion.publish(1);
-                    return;
-                }
-            };
-            match build_game_window_async(
-                window,
-                logical_w,
-                logical_h,
-                events_rx_for_game.clone(),
-                cmd_tx_for_game.clone(),
-                lifecycle_for_game.clone(),
-            )
-            .await
-            {
-                Ok(gw) => break gw,
-                Err(e) if e.contains("underlying handle is not available") => {
-                    tracing::warn!(
-                        "Android native window vanished during wgpu init; waiting for resume"
-                    );
-                }
-                Err(e) => {
-                    tracing::error!("wgpu init failed: {e}");
-                    completion.publish(1);
-                    return;
-                }
-            }
-        };
-        #[cfg(not(target_os = "android"))]
-        let game_window = {
-            // Wait for `resumed()` to ship us the bare winit window.  On
-            // native this blocks the dedicated thread; on wasm this
-            // `.await`s on the channel, yielding back to the JS event loop
-            // until winit fires resumed().
-            let window = match window_rx.recv().await {
-                Ok(w) => w,
-                Err(_) => {
-                    tracing::error!("event loop exited before window was ready");
-                    completion.publish(1);
-                    return;
-                }
-            };
-            match build_game_window_async(
-                window,
-                logical_w,
-                logical_h,
-                events_rx_for_game,
-                cmd_tx_for_game,
-                lifecycle_for_game,
-            )
-            .await
-            {
-                Ok(gw) => gw,
-                Err(e) => {
-                    tracing::error!("wgpu init failed: {e}");
-                    completion.publish(1);
-                    return;
-                }
-            }
+        let Some(game_window) = await_game_window(
+            window_rx,
+            logical_w,
+            logical_h,
+            events_rx_for_game,
+            cmd_tx_for_game,
+            lifecycle_for_game,
+        )
+        .await
+        else {
+            completion.publish(1);
+            return;
         };
         let exit_code = game_main(game_window).await;
         tracing::info!("game future returned, exit_code={exit_code}");
@@ -1806,6 +1454,82 @@ where
         // spawn_app takes ownership and never returns on web.
         event_loop.spawn_app(handler);
         Ok(0)
+    }
+}
+
+/// Game-side startup: wait for `resumed()` to ship the bare winit window and
+/// bring up wgpu on it. Failures are logged here; `None` means the caller must
+/// publish a failing exit code.
+async fn await_game_window(
+    window_rx: async_channel::Receiver<Arc<Window>>,
+    logical_w: u32,
+    logical_h: u32,
+    events_rx: async_channel::Receiver<HostMsg>,
+    cmd_tx: async_channel::Sender<HostCmd>,
+    lifecycle_autosave_requested: Arc<AtomicBool>,
+) -> Option<GameWindow> {
+    #[cfg(target_os = "android")]
+    {
+        loop {
+            let window = match window_rx.recv().await {
+                Ok(w) => w,
+                Err(_) => {
+                    tracing::error!("event loop exited before window was ready");
+                    return None;
+                }
+            };
+            match build_game_window_async(
+                window,
+                logical_w,
+                logical_h,
+                events_rx.clone(),
+                cmd_tx.clone(),
+                lifecycle_autosave_requested.clone(),
+            )
+            .await
+            {
+                Ok(gw) => return Some(gw),
+                Err(e) if e.contains("underlying handle is not available") => {
+                    tracing::warn!(
+                        "Android native window vanished during wgpu init; waiting for resume"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("wgpu init failed: {e}");
+                    return None;
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        // Wait for `resumed()` to ship us the bare winit window.  On
+        // native this blocks the dedicated thread; on wasm this
+        // `.await`s on the channel, yielding back to the JS event loop
+        // until winit fires resumed().
+        let window = match window_rx.recv().await {
+            Ok(w) => w,
+            Err(_) => {
+                tracing::error!("event loop exited before window was ready");
+                return None;
+            }
+        };
+        match build_game_window_async(
+            window,
+            logical_w,
+            logical_h,
+            events_rx,
+            cmd_tx,
+            lifecycle_autosave_requested,
+        )
+        .await
+        {
+            Ok(gw) => Some(gw),
+            Err(e) => {
+                tracing::error!("wgpu init failed: {e}");
+                None
+            }
+        }
     }
 }
 
@@ -1860,10 +1584,10 @@ impl<F: FnOnce()> Drop for GameRuntimeCompletion<F> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn receive_game_exit_code(receiver: &std::sync::mpsc::Receiver<i32>) -> Result<i32, String> {
-    // Parity TODO: The original game runs its main and event
-    // loop in one `main` thread, so the Rust native split runtime has no
-    // Original thread-result analogue. Treat absence as a runtime failure,
-    // never as the successful process exit code zero.
+    // Parity note (settled, covered by the tests below): the original game
+    // runs its main and event loop in one thread, so the native split runtime
+    // has no original thread-result analogue. Absence of a published code is
+    // a runtime failure, never the successful process exit code zero.
     receiver.try_recv().map_err(|err| match err {
         std::sync::mpsc::TryRecvError::Empty => {
             "game event loop exited before the game thread published its exit code".to_owned()
@@ -1929,349 +1653,12 @@ where
 /// thread.  On Linux winit's implementation is just an atomic-flag
 /// store, safe from any thread.
 pub fn start_text_input() {
-    with_game_window(|w| w.reset_dead_keys());
+    GAME_WINDOW.with(|w| w.reset_dead_keys());
 }
 pub fn stop_text_input() {}
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests {
-    use super::{GameRuntimeCompletion, receive_game_exit_code, touch_output_needs_deferred_up};
-    use crate::touch_input::TouchOutput;
-
-    #[test]
-    fn failed_window_send_preserves_the_already_queued_message() {
-        let (sender, receiver) = async_channel::bounded(1);
-        super::report_window_send(sender.try_send(1));
-        super::report_window_send(sender.try_send(2));
-        assert_eq!(receiver.try_recv().unwrap(), 1);
-        assert!(receiver.try_recv().is_err());
-        receiver.close();
-        super::report_window_send(sender.try_send(3));
-        assert!(receiver.try_recv().is_err());
-    }
-
-    #[test]
-    fn game_exit_code_is_forwarded() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        tx.send(17).unwrap();
-
-        assert_eq!(receive_game_exit_code(&rx), Ok(17));
-    }
-
-    #[test]
-    fn missing_game_exit_code_is_an_error() {
-        let (_tx, rx) = std::sync::mpsc::channel();
-
-        assert_eq!(
-            receive_game_exit_code(&rx),
-            Err("game event loop exited before the game thread published its exit code".to_owned())
-        );
-    }
-
-    #[test]
-    fn disconnected_game_thread_is_an_error() {
-        let (tx, rx) = std::sync::mpsc::channel::<i32>();
-        drop(tx);
-
-        assert_eq!(
-            receive_game_exit_code(&rx),
-            Err("game thread terminated without publishing an exit code".to_owned())
-        );
-    }
-
-    #[test]
-    #[cfg(not(target_os = "android"))]
-    fn normal_close_delivers_quit_before_waiting_for_actual_success() {
-        let (events_tx, events_rx) = async_channel::unbounded();
-        let (exit_tx, exit_rx) = std::sync::mpsc::channel();
-        let (wake_tx, wake_rx) = std::sync::mpsc::channel();
-        let completion = GameRuntimeCompletion {
-            sender: Some(exit_tx),
-            wake: Some(move || wake_tx.send(receive_game_exit_code(&exit_rx)).unwrap()),
-        };
-
-        super::request_window_close(&events_tx).unwrap();
-        assert!(matches!(
-            events_rx.try_recv(),
-            Ok(super::HostMsg::Event(crate::gfx_types::GameEvent::Quit))
-        ));
-        // Queuing close is not completion, even if the game is still loading
-        // or unwinding a modal. The UI stays alive without blocking on it.
-        assert_eq!(
-            wake_rx.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Empty)
-        );
-        completion.publish(0);
-        assert_eq!(wake_rx.try_recv().unwrap(), Ok(0));
-    }
-
-    #[test]
-    fn startup_and_game_failures_are_published_before_waking_the_loop() {
-        for code in [1, 17] {
-            let (tx, rx) = std::sync::mpsc::channel();
-            let completion = GameRuntimeCompletion {
-                sender: Some(tx),
-                wake: Some(move || assert_eq!(receive_game_exit_code(&rx), Ok(code))),
-            };
-            completion.publish(code);
-        }
-    }
-
-    #[test]
-    fn abnormal_future_drop_disconnects_before_waking_the_loop() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let (wake_tx, wake_rx) = std::sync::mpsc::channel();
-        let completion = GameRuntimeCompletion {
-            sender: Some(tx),
-            wake: Some(move || wake_tx.send(receive_game_exit_code(&rx)).unwrap()),
-        };
-        drop(completion);
-        assert_eq!(
-            wake_rx.try_recv().unwrap(),
-            Err("game thread terminated without publishing an exit code".to_owned())
-        );
-    }
-
-    #[test]
-    #[ignore = "requires LLVM unwind support; see docs/TESTING.md"]
-    fn unwinding_panic_disconnects_before_waking_the_loop() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let (wake_tx, wake_rx) = std::sync::mpsc::channel();
-        let result = std::panic::catch_unwind(move || {
-            let _completion = GameRuntimeCompletion {
-                sender: Some(tx),
-                wake: Some(move || wake_tx.send(receive_game_exit_code(&rx)).unwrap()),
-            };
-            panic!("simulated game-thread failure");
-        });
-        assert!(result.is_err());
-        assert_eq!(
-            wake_rx.try_recv().unwrap(),
-            Err("game thread terminated without publishing an exit code".to_owned())
-        );
-    }
-
-    #[test]
-    fn game_thread_panic_fails_the_child_process() {
-        const CHILD: &str = "ROBIN_WINDOW_PANIC_PROBE";
-        if std::env::var_os(CHILD).is_some() {
-            // Cranelift may abort instead of unwinding this thread. Keep that
-            // real native behavior isolated from the main test process.
-            let _ = std::thread::spawn(|| panic!("simulated native game panic")).join();
-            std::process::exit(1);
-        }
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "window::tests::game_thread_panic_fails_the_child_process",
-            ])
-            .env(CHILD, "1")
-            .spawn()
-            .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                assert!(!status.success(), "a game panic must not become success");
-                break;
-            }
-            if std::time::Instant::now() >= deadline {
-                child.kill().unwrap();
-                child.wait().unwrap();
-                panic!("panic-probe child failed to terminate within ten seconds");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-
-    #[test]
-    fn unstarted_factory_and_never_polled_future_report_missing_exit_code() {
-        for create_future in [false, true] {
-            let (tx, rx) = std::sync::mpsc::channel();
-            let (wake_tx, wake_rx) = std::sync::mpsc::channel();
-            let completion = GameRuntimeCompletion {
-                sender: Some(tx),
-                wake: Some(move || wake_tx.send(receive_game_exit_code(&rx)).unwrap()),
-            };
-            let make_future = move || async move {
-                std::future::pending::<()>().await;
-                completion.publish(0);
-            };
-            if create_future {
-                drop(make_future());
-            } else {
-                drop(make_future);
-            }
-            assert_eq!(
-                wake_rx.try_recv().unwrap(),
-                Err("game thread terminated without publishing an exit code".to_owned())
-            );
-        }
-    }
-
-    #[test]
-    #[cfg(not(target_os = "android"))]
-    fn close_request_delivery_failure_is_explicit() {
-        let (tx, rx) = async_channel::unbounded();
-        drop(rx);
-        assert!(
-            super::request_window_close(&tx)
-                .unwrap_err()
-                .contains("could not deliver")
-        );
-    }
-
-    #[test]
-    fn close_survives_loading_and_nested_modal_event_drains() {
-        use crate::gfx_types::GameEvent;
-        let mut events = Vec::new();
-        super::preserve_close_request(false, &mut events);
-        assert!(events.is_empty());
-        for _ in 0..3 {
-            events.clear(); // A loading/modal loop consumed the previous batch.
-            super::preserve_close_request(true, &mut events);
-            super::preserve_close_request(true, &mut events);
-            assert!(matches!(events.as_slice(), [GameEvent::Quit]));
-        }
-    }
-
-    #[test]
-    fn only_release_classified_pointer_sequences_defer_their_up() {
-        assert!(touch_output_needs_deferred_up(&[
-            TouchOutput::PointerDown {
-                x: 10.0,
-                y: 20.0,
-                clicks: 1,
-            },
-            TouchOutput::PointerUp { x: 10.0, y: 20.0 },
-        ]));
-        assert!(!touch_output_needs_deferred_up(&[
-            TouchOutput::PointerMove { x: 30.0, y: 40.0 },
-            TouchOutput::PointerUp { x: 30.0, y: 40.0 },
-        ]));
-    }
-}
-
-// ---------------------------------------------------------------------
-// Key mapping (unchanged from the pump-events implementation).
-// ---------------------------------------------------------------------
-
-fn physical_key_to_key_code(key: PhysicalKey) -> Option<KeyCode> {
-    match key {
-        PhysicalKey::Code(c) => Some(c),
-        PhysicalKey::Unidentified(_) => None,
-    }
-}
-
-fn is_android_back_key(logical_key: &Key, physical_key: PhysicalKey) -> bool {
-    matches!(
-        logical_key,
-        Key::Named(NamedKey::BrowserBack | NamedKey::GoBack)
-    ) || matches!(physical_key, PhysicalKey::Code(KeyCode::BrowserBack))
-}
-
-fn physical_key_to_keycode(key: PhysicalKey) -> Keycode {
-    use Keycode as K;
-    let code = match key {
-        PhysicalKey::Code(c) => c,
-        PhysicalKey::Unidentified(_) => return K::Unknown,
-    };
-    match code {
-        KeyCode::Escape => K::Escape,
-        KeyCode::Enter => K::Return,
-        KeyCode::NumpadEnter => K::KpEnter,
-        KeyCode::Tab => K::Tab,
-        KeyCode::Space => K::Space,
-        KeyCode::Backspace => K::Backspace,
-        KeyCode::Delete => K::Delete,
-        KeyCode::Insert => K::Insert,
-        KeyCode::ArrowUp => K::Up,
-        KeyCode::ArrowDown => K::Down,
-        KeyCode::ArrowLeft => K::Left,
-        KeyCode::ArrowRight => K::Right,
-        KeyCode::Home => K::Home,
-        KeyCode::End => K::End,
-        KeyCode::PageUp => K::PageUp,
-        KeyCode::PageDown => K::PageDown,
-        KeyCode::F1 => K::F1,
-        KeyCode::F2 => K::F2,
-        KeyCode::F3 => K::F3,
-        KeyCode::F4 => K::F4,
-        KeyCode::F5 => K::F5,
-        KeyCode::F6 => K::F6,
-        KeyCode::F7 => K::F7,
-        KeyCode::F8 => K::F8,
-        KeyCode::F9 => K::F9,
-        KeyCode::F10 => K::F10,
-        KeyCode::F11 => K::F11,
-        KeyCode::F12 => K::F12,
-        KeyCode::ShiftLeft => K::LShift,
-        KeyCode::ShiftRight => K::RShift,
-        KeyCode::ControlLeft => K::LCtrl,
-        KeyCode::ControlRight => K::RCtrl,
-        KeyCode::AltLeft => K::LAlt,
-        KeyCode::AltRight => K::RAlt,
-        KeyCode::KeyA => K::Char(b'a'),
-        KeyCode::KeyB => K::Char(b'b'),
-        KeyCode::KeyC => K::Char(b'c'),
-        KeyCode::KeyD => K::Char(b'd'),
-        KeyCode::KeyE => K::Char(b'e'),
-        KeyCode::KeyF => K::Char(b'f'),
-        KeyCode::KeyG => K::Char(b'g'),
-        KeyCode::KeyH => K::Char(b'h'),
-        KeyCode::KeyI => K::Char(b'i'),
-        KeyCode::KeyJ => K::Char(b'j'),
-        KeyCode::KeyK => K::Char(b'k'),
-        KeyCode::KeyL => K::Char(b'l'),
-        KeyCode::KeyM => K::Char(b'm'),
-        KeyCode::KeyN => K::Char(b'n'),
-        KeyCode::KeyO => K::Char(b'o'),
-        KeyCode::KeyP => K::Char(b'p'),
-        KeyCode::KeyQ => K::Char(b'q'),
-        KeyCode::KeyR => K::Char(b'r'),
-        KeyCode::KeyS => K::Char(b's'),
-        KeyCode::KeyT => K::Char(b't'),
-        KeyCode::KeyU => K::Char(b'u'),
-        KeyCode::KeyV => K::Char(b'v'),
-        KeyCode::KeyW => K::Char(b'w'),
-        KeyCode::KeyX => K::Char(b'x'),
-        KeyCode::KeyY => K::Char(b'y'),
-        KeyCode::KeyZ => K::Char(b'z'),
-        KeyCode::Digit0 => K::Char(b'0'),
-        KeyCode::Digit1 => K::Char(b'1'),
-        KeyCode::Digit2 => K::Char(b'2'),
-        KeyCode::Digit3 => K::Char(b'3'),
-        KeyCode::Digit4 => K::Char(b'4'),
-        KeyCode::Digit5 => K::Char(b'5'),
-        KeyCode::Digit6 => K::Char(b'6'),
-        KeyCode::Digit7 => K::Char(b'7'),
-        KeyCode::Digit8 => K::Char(b'8'),
-        KeyCode::Digit9 => K::Char(b'9'),
-        _ => K::Unknown,
-    }
-}
-
-#[cfg(feature = "gamepad")]
-fn gilrs_button_to_index(b: gilrs::Button) -> Option<u8> {
-    use gilrs::Button as B;
-    Some(match b {
-        B::South => 0,
-        B::East => 1,
-        B::West => 2,
-        B::North => 3,
-        B::Select => 4,
-        B::Mode => 5,
-        B::Start => 6,
-        B::LeftThumb => 7,
-        B::RightThumb => 8,
-        B::LeftTrigger => 9,
-        B::RightTrigger => 10,
-        B::DPadUp => 11,
-        B::DPadDown => 12,
-        B::DPadLeft => 13,
-        B::DPadRight => 14,
-        _ => return None,
-    })
-}
+mod tests;
 
 /// Report fire-and-forget delivery failures without requiring message payloads
 /// (which can contain live windows) to implement Debug. Bounded wake queues
@@ -2288,18 +1675,4 @@ fn report_window_send<T>(result: Result<(), async_channel::TrySendError<T>>) {
             "window channel closed; message not enqueued"
         ),
     }
-}
-
-#[cfg(feature = "gamepad")]
-fn gilrs_axis_to_index(a: gilrs::Axis) -> Option<u8> {
-    use gilrs::Axis as A;
-    Some(match a {
-        A::LeftStickX => 0,
-        A::LeftStickY => 1,
-        A::RightStickX => 2,
-        A::RightStickY => 3,
-        A::LeftZ => 4,
-        A::RightZ => 5,
-        _ => return None,
-    })
 }
