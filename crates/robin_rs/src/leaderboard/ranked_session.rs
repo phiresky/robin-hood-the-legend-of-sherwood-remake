@@ -6,11 +6,16 @@
 //! dense replay ordinals. If any observation cannot be matched exactly to the
 //! authoritative replay, callers get an error and the run remains browse-only.
 
+// In-process signing (`public_key`/`signature`) exists only where a local key
+// signs: native builds, the multiplayer transport, and tests.
+#[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]
 use ed25519_dalek::{Signer, SigningKey};
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::replay::ReplayData;
 #[cfg(any(test, feature = "multiplayer"))]
 use robin_run_protocol::NamedSeatJoinClaimV1;
+#[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]
+use robin_run_protocol::SignatureAlgorithmV1;
 use robin_run_protocol::{
     ArtifactRefV1, BoardMetricV1, CampaignAggregationConsentV1, CampaignChainReceiptV1,
     CampaignChainStateV1, CampaignContinuationAuthorizationClaimV1,
@@ -21,8 +26,8 @@ use robin_run_protocol::{
     ParticipantClaimV1, ParticipantPublicDisclosureV1, PublicKey32, RANKED_CAMPAIGN_MEDIA_TYPE_V1,
     RankedSessionConfigV1, ReplaySeatLifecycleEventV1, ReplaySeatLifecycleKindV1,
     ReplaySessionGenesisClaimV1, ReplaySessionGenesisV1, ReplaySessionTranscriptV1,
-    SCHEMA_VERSION_V1, ScopeRequestV1, Signature64, SignatureAlgorithmV1, SubmissionArtifactsV1,
-    SubmissionEnvelopeV1, SubmissionOfferRequestV1, SubmissionOfferV1, Validate as _,
+    SCHEMA_VERSION_V1, ScopeRequestV1, Signature64, SubmissionArtifactsV1, SubmissionEnvelopeV1,
+    SubmissionOfferRequestV1, SubmissionOfferV1, Validate as _,
 };
 #[cfg(test)]
 use robin_run_protocol::{CompetitionRunGrantV1, InitialStateExpectationV1};
@@ -546,10 +551,14 @@ fn invalid_document(error: impl std::fmt::Display) -> RankedSessionError {
     RankedSessionError::InvalidDocument(error.to_string())
 }
 
+// Browser builds hold no in-process key: they sign through the isolated signer
+// origin unless the multiplayer transport's own key signs a seat claim.
+#[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]
 pub(crate) fn public_key(key: &SigningKey) -> PublicKey32 {
     PublicKey32::from_bytes(key.verifying_key().to_bytes())
 }
 
+#[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]
 pub(crate) fn signature(key: &SigningKey, bytes: &[u8]) -> Signature64 {
     Signature64::from_bytes(key.sign(bytes).to_bytes())
 }
@@ -976,7 +985,9 @@ impl RankedSessionLifecycle {
         }
     }
 
-    #[cfg(any(test, feature = "multiplayer"))]
+    // Only the native multiplayer host server installs a ranked session into
+    // an awaiting transport lifecycle.
+    #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
     pub fn install_ranked(&mut self, session: RankedSessionHost) -> Result<(), RankedSessionError> {
         if !matches!(self, Self::AwaitingPreparedInputs) {
             return Err(RankedSessionError::InvalidDocument(
@@ -1026,9 +1037,10 @@ impl RankedSessionLifecycle {
     }
 }
 
-// Transport mutations remain available to the default unit suite, without
-// admitting unused transport authority into a local-only production client.
-#[cfg(any(test, feature = "multiplayer"))]
+// Transport-only mutations and host queries. Their only callers are the
+// `multiplayer` transports, so local-only production builds and the default
+// unit suite (which never exercises them) do not compile them.
+#[cfg(feature = "multiplayer")]
 impl RankedSessionLifecycle {
     pub fn update_ranked_client_roster(
         &mut self,
@@ -1061,10 +1073,12 @@ impl RankedSessionLifecycle {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn is_awaiting_prepared_inputs(&self) -> bool {
         matches!(self, Self::AwaitingPreparedInputs)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn ranked_mut(&mut self) -> Option<&mut RankedSessionHost> {
         match self {
             Self::Ranked(session) => Some(session),
@@ -1239,6 +1253,8 @@ impl RankedSessionHost {
     /// Bootstrap a host only from explicit official-content eligibility. Game
     /// setup should use this entry point; `new` remains the lower-level signed
     /// document constructor used after this gate and by focused protocol tests.
+    /// Browser hosts sign the genesis through the isolated signer origin.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     pub fn new_official(
         host_key: &SigningKey,
         network_protocol_version: u32,
