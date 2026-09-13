@@ -230,6 +230,8 @@ pub(crate) struct CampaignMapModalState {
     scroll_views: [ScrollView; 5],
     selected_play: usize,
     replay_status: String,
+    /// Only native builds poll leaderboard submissions from the campaign map.
+    #[cfg(not(target_arch = "wasm32"))]
     application: ApplicationContext,
     mission_basenames: std::collections::HashMap<u32, String>,
     recording_index: std::sync::Arc<crate::mission_replays::RecordingIndex>,
@@ -312,6 +314,7 @@ impl CampaignMapModalState {
             details_open: false,
             selected_play: 0,
             replay_status: String::new(),
+            #[cfg(not(target_arch = "wasm32"))]
             application: application_context.clone(),
             mission_basenames: profiles
                 .missions
@@ -402,6 +405,7 @@ impl CampaignMapModalState {
             details_open: false,
             selected_play: 0,
             replay_status: String::new(),
+            #[cfg(not(target_arch = "wasm32"))]
             application: application_context.clone(),
             mission_basenames: profiles
                 .missions

@@ -636,7 +636,6 @@ impl EngineInner {
     /// Phase B sprite setup: frame info + alternate profile, PC kind and
     /// movement authorisations, initial action, move box, beam-me
     /// validation warnings and mission-start sprite priming.
-    #[allow(clippy::too_many_arguments)]
     fn build_beam_me_pc_sprite(
         &mut self,
         assets: &mut LevelAssets,

@@ -2810,7 +2810,6 @@ impl EngineInner {
     /// action stop and, for skilled victims of push-back strikes, the
     /// step-back dodge. `Break` means the step-back dodge was requested and
     /// the parade must not be launched.
-    #[allow(clippy::too_many_arguments)]
     fn parade_try_step_back(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
