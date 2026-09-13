@@ -59,6 +59,7 @@ pub(super) fn assemble_patrol<T>(
 }
 
 /// Reconstruct world Y only for paths whose observation is projected AI geometry.
+#[cfg(test)]
 pub(super) fn projected_patrol_world(position: Position, ground_z: f32) -> WorldPoint3D {
     WorldPoint3D::new(position.x, position.y + ground_z, ground_z)
 }

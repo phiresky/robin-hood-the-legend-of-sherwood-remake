@@ -1439,7 +1439,6 @@ pub enum CrossNpcAction {
     RequestAlert {
         target: NpcHandle,
         caller: NpcHandle,
-        continuation: AlertContinuation,
     },
     /// Synchronously deliver a direct `Think` call whose boolean controls a
     /// caller-side continuation. The recipient may re-enter and mutate the
@@ -1598,23 +1597,12 @@ pub enum CrossNpcAction {
     /// Money-fight looters set this as soon as they reserve a KO'd victim
     /// so other scanners skip the same body.
     SetLootedAfterMoneyFight { target: NpcHandle, looted: bool },
-    /// Legacy pending-work representation retained at its serialized ordinal.
-    /// New soldier-report processing must use [`Self::ConsiderReport`],
-    /// because Original also processes the shared report's body detectables.
-    UpdateReport {
-        target: NpcHandle,
-        report_type: ReportType,
-        seek_position: Position,
-    },
     /// Merge the officer's reconnaissance report into the target soldier's
     /// report. Broadcast inside `AlertSoldiers` so newly alerted soldiers
     /// pick up the officer's charly handle and report type before they run
     /// into the group.
     ConsiderReport {
         target: NpcHandle,
-        /// Cloned from the caller's own `ReconnaissanceReport` at the
-        /// time the alert was dispatched.
-        report: ReconnaissanceReport,
         /// Merge-mask passed to [`ReconnaissanceReport::consider_report`]
         /// (e.g. `UPDATE_CHARLY | UPDATE_TYPE = 2|4 = 6`).
         flags: u16,
@@ -1676,22 +1664,6 @@ pub enum CrossNpcAction {
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub enum AlertContinuation {
-    CivilianReachedSoldier,
-    CivilianSawSoldier,
-    SoldierSawOfficer,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
 pub enum AlertSoldiersFailureContinuation {
     None,
     ReturnToDuty,
@@ -1738,10 +1710,6 @@ pub enum LookThereContinuation {
     bitcode::Decode,
 )]
 pub enum ThinkResultContinuation {
-    /// Resume the reporting soldier only after the officer's direct
-    /// `CALL_YOURTALK_1` stack has closed. The officer may synchronously call
-    /// back while the soldier must still be in the report-start substate.
-    SoldierFinishedAlertReportStart,
     OfficerCalledSoldier,
     OfficerSentCharlyToOfficer,
     OfficerInstructedGroupSoldier {

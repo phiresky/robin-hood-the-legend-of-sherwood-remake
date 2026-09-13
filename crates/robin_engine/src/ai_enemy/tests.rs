@@ -73,10 +73,6 @@ fn soldier_view(pos: Position) -> AiEntityView {
         path_forward_movement: true,
         patrol_hiking_path_index: None,
         interesting_object: None,
-        report_type: ReportType::Nothing,
-        report_seek_position: pos,
-        report_seen_bodies: Vec::new(),
-        report_charly: None,
     }
 }
 
@@ -99,10 +95,6 @@ fn camp_soldier(handle: u32, position: Position) -> CampSoldierInfo {
         script_locked: false,
         ai_lock_frozen: false,
         layer: 0,
-        report_type: ReportType::Nothing,
-        report_seek_position: Position::default(),
-        report_seen_bodies: Vec::new(),
-        report_charly: None,
         alert_soldiers_point: Position::default(),
         patrol_chief: None,
         antagonist: None,
@@ -646,10 +638,6 @@ fn money_fight_enemy_rebuild_rechecks_current_unconscious_before_detection() {
         script_locked: false,
         ai_lock_frozen: false,
         layer: 0,
-        report_type: ReportType::Nothing,
-        report_seek_position: Position::default(),
-        report_seen_bodies: Vec::new(),
-        report_charly: None,
         alert_soldiers_point: Position::default(),
         patrol_chief: None,
         antagonist: None,
@@ -2045,8 +2033,7 @@ fn one_point_enemy_path_dispatches_virtual_return_before_patrol_init_resume() {
         virtual_requests.as_slice(),
         [AiOwnerWork::VirtualReturnToDuty {
             flags,
-            owner_boundary_positions
-        }] if flags.is_empty() && owner_boundary_positions.is_empty()
+        }] if flags.is_empty()
     ));
     assert!(
         !ai.base
@@ -2067,10 +2054,8 @@ fn one_point_enemy_path_dispatches_virtual_return_before_patrol_init_resume() {
         ai.base.outbox.reentrant.owner_work.as_slice(),
         [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
             flags,
-            owner_boundary_positions,
             ..
         }] if flags.is_empty()
-            && owner_boundary_positions.is_empty()
     ));
 }
 
@@ -2333,10 +2318,6 @@ fn officer_detection_uses_officer_facing() {
         script_locked: false,
         ai_lock_frozen: false,
         layer: 0,
-        report_type: ReportType::Nothing,
-        report_seek_position: Position::default(),
-        report_seen_bodies: Vec::new(),
-        report_charly: None,
         alert_soldiers_point: Position::default(),
         patrol_chief: None,
         antagonist: None,

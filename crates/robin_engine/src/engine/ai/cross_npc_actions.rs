@@ -699,42 +699,8 @@ impl EngineInner {
                         .looted_after_money_fight = looted;
                 }
 
-                // Legacy serialized pending work. Production no longer emits
-                // this incomplete shape, but retaining the arm preserves old
-                // save/checkpoint compatibility and later enum ordinals.
-                crate::ai::CrossNpcAction::UpdateReport {
-                    target,
-                    report_type,
-                    seek_position,
-                } => {
-                    self.required_cross_npc_enemy_mut(target, "update-report")
-                        .base
-                        .my_reconnaissance_report
-                        .update(report_type, seek_position);
-                }
-
-                crate::ai::CrossNpcAction::ConsiderReport {
-                    target,
-                    report,
-                    flags,
-                } => {
-                    let frame = self.control.frame_counter;
-                    // Use the AiController-level helper: it merges
-                    // the report AND queues the per-body
-                    // `delete_detectable(body, DETECTABLE_BODY)`
-                    // side effects.  The bare
-                    // `ReconnaissanceReport::consider_report`
-                    // skipped those side effects, leaving stale
-                    // body detectables on the NPC after a peer
-                    // report merge.
-                    self.required_cross_npc_enemy_mut(target, "consider-report")
-                        .base
-                        .consider_report_merged_at_frame(
-                            &report,
-                            flags,
-                            scratch.ai_entity_views.as_ref(),
-                            frame,
-                        );
+                crate::ai::CrossNpcAction::ConsiderReport { target, .. } => {
+                    panic!("report transfer to {target} escaped its owner boundary");
                 }
 
                 crate::ai::CrossNpcAction::RegisterSynchronizingActor { target, actor } => {
@@ -763,13 +729,13 @@ impl EngineInner {
     ///
     /// Returns `dispatch_filtered_stimulus`'s handled bool — unchanged
     /// by the drain pass.
-    pub(in crate::engine) fn dispatch_think_with_drain(
+    pub(in crate::engine) fn dispatch_think_with_drain<'tick>(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         stimulus: &crate::ai::Stimulus,
         ctx: &crate::ai::AiContext,
-        tick_data: &crate::ai::AiPerTickData,
+        tick_data: impl Into<Option<&'tick crate::ai::AiPerTickData>>,
         assets: &LevelAssets,
     ) -> bool {
         // The original game's cached view radius lives on the target surface, so a
@@ -790,7 +756,7 @@ impl EngineInner {
             npc_id,
             stimulus,
             ctx,
-            Some(tick_data),
+            tick_data.into(),
         );
         ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
 
@@ -1167,12 +1133,10 @@ impl EngineInner {
                             assets,
                         )
                     }
-                    crate::ai::CrossNpcAction::ConsiderReport {
-                        target,
-                        report,
-                        flags,
-                    } => {
-                        self.process_synchronous_consider_report(sim, target, report, flags, assets)
+                    crate::ai::CrossNpcAction::ConsiderReport { target, flags } => {
+                        let target_id =
+                            self.expect_human_id_for_ai_handle(target, "report transfer target");
+                        self.consider_live_ai_report(sim, assets, target_id, source_id, flags);
                     }
                     crate::ai::CrossNpcAction::FinalizeAlertSoldiers {
                         caller,
@@ -1618,33 +1582,6 @@ impl EngineInner {
         // piece of resumed original-game evaluation before returning to the
         // cross-NPC action dispatcher.
         self.drain_direct_ai_owner_boundary(sim, source_id, assets);
-    }
-
-    fn process_synchronous_consider_report(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        target: u32,
-        report: crate::ai::ReconnaissanceReport,
-        flags: u16,
-        assets: &LevelAssets,
-    ) {
-        let scratch = self.build_sim_scratch(assets);
-        let frame = self.control.frame_counter;
-        let target_id = self.expect_human_id_for_ai_handle(target, "ConsiderReport target");
-        self.world
-            .entities
-            .expect_enemy_ai_mut(
-                target_id,
-                format_args!("ConsiderReport target human {target} has no EnemyAi"),
-            )
-            .base
-            .consider_report_merged_at_frame(
-                &report,
-                flags,
-                scratch.ai_entity_views.as_ref(),
-                frame,
-            );
-        self.drain_direct_ai_owner_boundary(sim, target_id, assets);
     }
 
     fn process_synchronous_finalize_alert_soldiers(

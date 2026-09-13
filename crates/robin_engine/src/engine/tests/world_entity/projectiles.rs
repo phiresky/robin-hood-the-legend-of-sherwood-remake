@@ -147,8 +147,8 @@ fn speech_snapshot_roundtrip_and_hash_cover_fifo_live_identity_and_global_state(
 #[test]
 fn specialized_ai_continuation_snapshot_roundtrip_and_hash_cover_pending_barrier() {
     use crate::ai::{
-        AlertContinuation, AlertSoldiersFailureContinuation, CrossNpcAction, Position,
-        StimulusInfo, StimulusType, ThinkResultContinuation,
+        AlertSoldiersFailureContinuation, CrossNpcAction, Position, StimulusInfo, StimulusType,
+        ThinkResultContinuation,
     };
 
     let mut engine = EngineInner::new();
@@ -165,7 +165,6 @@ fn specialized_ai_continuation_snapshot_roundtrip_and_hash_cover_pending_barrier
             CrossNpcAction::RequestAlert {
                 target: target.index(),
                 caller: caller.index(),
-                continuation: AlertContinuation::SoldierSawOfficer,
             },
             CrossNpcAction::RequestThinkResult {
                 target: target.index(),

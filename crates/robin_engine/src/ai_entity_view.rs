@@ -287,19 +287,6 @@ pub struct AiEntityView {
     /// by the beer availability check to detect friends racing for the
     /// same bottle.
     pub interesting_object: Option<crate::ai::AiEntityHandle>,
-
-    /// AI brain's reconnaissance report classification (Nothing /
-    /// MissedCharly / Body / Enemy). Used by civilian-report processing
-    /// to read the civilian's report without touching the brain
-    /// mid-think.
-    pub report_type: crate::ai::ReportType,
-    pub report_seek_position: Position,
-    /// List of body handles the actor has logged in their report.
-    /// Used by `ConsiderReport` for body-list merging across actors.
-    pub report_seen_bodies: Vec<crate::ai::HumanHandle>,
-    /// Handle of the missing-friend (charly) the actor is tracking,
-    /// or `0` when none is set.
-    pub report_charly: Option<crate::ai::AiEntityHandle>,
 }
 
 /// Per-net info carried on [`AiEntityView::covering_nets`] for humans
@@ -597,10 +584,6 @@ pub fn entity_view_from_entity(
         looted_after_money_fight,
         current_money,
         interesting_object,
-        report_type,
-        report_seek_position,
-        report_seen_bodies,
-        report_charly,
         macro_in_progress,
         path_current_waypoint_index,
         path_last_waypoint_index,
@@ -688,10 +671,6 @@ pub fn entity_view_from_entity(
         path_forward_movement,
         patrol_hiking_path_index,
         interesting_object,
-        report_type,
-        report_seek_position,
-        report_seen_bodies,
-        report_charly,
     }
 }
 
@@ -912,10 +891,6 @@ struct AiViewFields {
     looted_after_money_fight: bool,
     current_money: u32,
     interesting_object: Option<crate::ai::AiEntityHandle>,
-    report_type: crate::ai::ReportType,
-    report_seek_position: Position,
-    report_seen_bodies: Vec<crate::ai::HumanHandle>,
-    report_charly: Option<crate::ai::AiEntityHandle>,
     macro_in_progress: bool,
     path_current_waypoint_index: u8,
     path_last_waypoint_index: u8,
@@ -993,27 +968,6 @@ fn ai_view_fields(entity: &Entity, position: Position) -> AiViewFields {
     // Read `interesting_object` off `AiController::base` for NPCs.
     let interesting_object = brain.and_then(|brain| brain.interesting_object);
 
-    // Read `my_reconnaissance_report` off `AiController` for any NPC
-    // (soldier or civilian).  Civilians need this exposed so an
-    // officer's civilian-report processing can merge bodies/charly
-    // without a second borrow on the civilian's AI brain mid-think.
-    let (report_type, report_seek_position, report_seen_bodies, report_charly) = brain
-        .map(|brain| {
-            let report = &brain.my_reconnaissance_report;
-            (
-                report.report_type,
-                report.seek_position,
-                report.seen_bodies.clone(),
-                report.charly,
-            )
-        })
-        .unwrap_or((
-            crate::ai::ReportType::Nothing,
-            Position::default(),
-            Vec::new(),
-            None,
-        ));
-
     // `macro_in_progress` + patrol-path waypoint indices — read off
     // `AiController::base` for NPCs.
     let (
@@ -1041,10 +995,6 @@ fn ai_view_fields(entity: &Entity, position: Position) -> AiViewFields {
         looted_after_money_fight,
         current_money,
         interesting_object,
-        report_type,
-        report_seek_position,
-        report_seen_bodies,
-        report_charly,
         macro_in_progress,
         path_current_waypoint_index,
         path_last_waypoint_index,

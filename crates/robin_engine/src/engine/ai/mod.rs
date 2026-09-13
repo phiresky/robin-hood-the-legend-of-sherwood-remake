@@ -10,9 +10,12 @@
 
 mod cross_npc_actions;
 mod detection;
+mod enemy_report_execution;
 mod event_dispatch;
 mod execution;
+mod friendly_execution;
 mod initialization;
+mod macro_execution;
 mod owner_scheduling;
 pub(in crate::engine) use owner_scheduling::CompletionBoundary;
 mod patrol_assembly;
@@ -3092,6 +3095,42 @@ mod seek_area_friend_position_tests {
 }
 
 impl EngineInner {
+    /// Read owner scalars for local movement operations that make no target
+    /// or sight queries. Position resolves the selected door side and carrier
+    /// directly; shared navigation assets do not require a world capture.
+    pub(in crate::engine) fn ai_owner_context(
+        &self,
+        owner: EntityId,
+        assets: &LevelAssets,
+    ) -> AiContext {
+        static EMPTY_VIEWS: std::sync::LazyLock<SharedAiEntityViews> =
+            std::sync::LazyLock::new(Default::default);
+        static EMPTY_SIGHT: std::sync::LazyLock<crate::sight_obstacle::SharedSightObstacles> =
+            std::sync::LazyLock::new(Default::default);
+        let entity = self.expect_entity(owner, "owner movement context");
+        let building_sector = self.entity_building_sector(entity.element_data().sector());
+        let mut ctx = build_ai_owner_scalars(
+            entity,
+            self.live_ai_position(owner),
+            Some(self.world.original_creation_order(owner)),
+            self.control.frame_counter,
+            building_sector,
+            self.world.weather.is_forest_level,
+            self.world.weather.ambiance,
+            self.ai.standard_view_polygon_radius,
+            &EMPTY_VIEWS,
+            &EMPTY_SIGHT,
+            &self.world.fast_grid,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
+            &self.ai.global.all_soldier_handles,
+            self.control.sim_config.difficulty,
+        );
+        self.refresh_selected_default_wait_identity(owner, &mut ctx);
+        ctx.in_uninterruptible_command = self.is_very_very_busy(owner);
+        ctx
+    }
+
     /// Build a dispatch context from the selected observation, preserving the
     /// caller's frame and building-sector boundary rather than resampling them.
     pub(in crate::engine) fn ai_context_from_entity(
@@ -3164,8 +3203,70 @@ pub(super) fn build_ai_context_from_entity(
     difficulty: crate::player_profile::DifficultyLevel,
 ) -> AiContext {
     let elem = entity.element_data();
+    let actor = entity.actor_data();
     let original_creation_order =
         context_original_creation_order(elem.index_in_elements_list as u32, entity_views);
+    // The actor's AI position uses the committed gate
+    // side while the sprite interpolates along a door rail. The shared view
+    // has already applied that override; raw sprite coordinates here made
+    // self-relative AI geometry disagree with target lookups during PassDoor.
+    let self_position = if actor.is_some_and(|actor| actor.active_door_pass.is_some()) {
+        entity_views
+            .get(&(elem.index_in_elements_list as u32))
+            .unwrap_or_else(|| {
+                panic!(
+                    "door-passing AI owner {} is missing its required entity view",
+                    elem.index_in_elements_list
+                )
+            })
+            .position
+    } else {
+        crate::ai::Position {
+            x: elem.position_map().x,
+            y: elem.position_map().y,
+            sector: elem.sector(),
+            level: elem.layer(),
+        }
+    };
+    build_ai_owner_scalars(
+        entity,
+        self_position,
+        original_creation_order,
+        frame,
+        building_sector,
+        is_forest_level,
+        ambiance,
+        standard_view_polygon_radius,
+        entity_views,
+        sight_obstacles,
+        fast_grid,
+        hiking_paths,
+        hiking_waypoint_sectors,
+        all_soldier_handles,
+        difficulty,
+    )
+}
+
+fn build_ai_owner_scalars(
+    entity: &Entity,
+    self_position: crate::ai::Position,
+    original_creation_order: Option<u32>,
+    frame: u32,
+    building_sector: Option<crate::position_interface::SectorHandle>,
+    is_forest_level: bool,
+    ambiance: crate::engine::types::Ambiance,
+    standard_view_polygon_radius: u16,
+    entity_views: &SharedAiEntityViews,
+    sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
+    fast_grid: &std::sync::Arc<crate::fast_find_grid::FastFindGrid>,
+    hiking_paths: &std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
+    hiking_waypoint_sectors: &Option<
+        std::sync::Arc<Vec<Vec<crate::position_interface::SectorHandle>>>,
+    >,
+    all_soldier_handles: &std::sync::Arc<Vec<u32>>,
+    difficulty: crate::player_profile::DifficultyLevel,
+) -> AiContext {
+    let elem = entity.element_data();
     let camp = entity.camp();
     let actor = entity.actor_data();
     // `is_swordfighting` is "opponents list is non-empty"; do not proxy
@@ -3340,28 +3441,6 @@ pub(super) fn build_ai_context_from_entity(
         .ai_actor_data()
         .map(|npc| npc.eye_status)
         .unwrap_or_default();
-    // The actor's AI position uses the committed gate
-    // side while the sprite interpolates along a door rail. The shared view
-    // has already applied that override; raw sprite coordinates here made
-    // self-relative AI geometry disagree with target lookups during PassDoor.
-    let self_position = if actor.is_some_and(|actor| actor.active_door_pass.is_some()) {
-        entity_views
-            .get(&(elem.index_in_elements_list as u32))
-            .unwrap_or_else(|| {
-                panic!(
-                    "door-passing AI owner {} is missing its required entity view",
-                    elem.index_in_elements_list
-                )
-            })
-            .position
-    } else {
-        crate::ai::Position {
-            x: elem.position_map().x,
-            y: elem.position_map().y,
-            sector: elem.sector(),
-            level: elem.layer(),
-        }
-    };
     AiContext {
         difficulty,
         original_creation_order,

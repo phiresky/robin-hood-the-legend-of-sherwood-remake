@@ -734,17 +734,6 @@ fn resumed_return_to_duty_uses_live_position_and_translates_its_goto() {
         .push(AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
             flags: DutyFlags::empty(),
             defer_clear_patrol_close_post: false,
-            owner_boundary_positions: vec![(
-                owner.index(),
-                crate::ai::Position {
-                    // A legacy capture says the owner already reached its post.
-                    // The live body is still at x=100 and must issue movement.
-                    x: 300.0,
-                    y: 100.0,
-                    sector,
-                    level: 0,
-                },
-            )],
         });
 
     engine.drain_ai_owner_work_for(&sim, &assets, owner);

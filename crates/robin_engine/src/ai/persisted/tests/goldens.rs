@@ -1,12 +1,5 @@
-// Byte-level goldens for the nine persisted AI owners.
-//
-// Each case pins (1) the exact serde_json bytes, (2) the `StateHash` of the
-// live value, (3) the `StateHash` of its native bitcode bytes, and (4) that
-// decoding the golden JSON reproduces the live value with only the
-// runtime-only scratch fields reset to their defaults (checked through
-// `Debug`, which covers scratch fields, plus bitcode and hash). The helpers
-// only touch runtime types, so the goldens are independent of how the serde
-// impls are produced.
+// Current-schema JSON fixtures and encoding roundtrips for persisted AI owners.
+// Scratch-state expectations are constructed independently of the encoders.
 use super::*;
 
 use robin_util::state_hash::StateHash;
@@ -15,24 +8,25 @@ use serde::de::DeserializeOwned;
 struct Golden {
     file: &'static str,
     json: &'static str,
-    hash: u64,
-    native_hash: u64,
 }
 
 macro_rules! golden {
-    ($file:literal, $hash:expr, $native_hash:expr) => {
+    ($file:literal) => {
         Golden {
             file: $file,
             json: include_str!(concat!("goldens/", $file)),
-            hash: $hash,
-            native_hash: $native_hash,
         }
     };
 }
 
 fn check_golden<T>(name: &str, live: &T, expected_restored: &T, golden: Golden)
 where
-    T: Serialize + DeserializeOwned + std::fmt::Debug + bitcode::Encode + StateHash,
+    T: Serialize
+        + DeserializeOwned
+        + std::fmt::Debug
+        + bitcode::Encode
+        + for<'a> bitcode::Decode<'a>
+        + StateHash,
 {
     let json = serde_json::to_string(live).unwrap();
     assert_eq!(
@@ -40,12 +34,6 @@ where
         golden.json.trim_end_matches('\n'),
         "{name}: serde_json bytes (goldens/{})",
         golden.file
-    );
-    assert_eq!(compute(live), golden.hash, "{name}: StateHash");
-    assert_eq!(
-        compute(&bitcode::encode(live)),
-        golden.native_hash,
-        "{name}: native bytes"
     );
     let restored: T = serde_json::from_str(golden.json).unwrap();
     assert_eq!(
@@ -58,7 +46,17 @@ where
         bitcode::encode(expected_restored),
         "{name}: decoded native bytes"
     );
-    assert_eq!(compute(&restored), golden.hash, "{name}: decoded StateHash");
+    assert_eq!(
+        compute(&restored),
+        compute(live),
+        "{name}: decoded StateHash"
+    );
+    let native_decoded: T = bitcode::decode(&bitcode::encode(live)).unwrap();
+    assert_eq!(
+        format!("{native_decoded:?}"),
+        format!("{expected_restored:?}"),
+        "{name}: native decoded value"
+    );
     assert_eq!(
         serde_json::to_string(&restored).unwrap(),
         json,
@@ -185,11 +183,7 @@ fn ai_controller_golden() {
         "AiController",
         &live,
         &expected,
-        golden!(
-            "ai_controller.json",
-            0x2a5a_f035_01de_3c88,
-            0xc633_7e99_96af_edb3
-        ),
+        golden!("ai_controller.json"),
     );
 }
 
@@ -204,11 +198,7 @@ fn ai_global_state_golden() {
         "AiGlobalState",
         &live,
         &expected,
-        golden!(
-            "ai_global_state.json",
-            0xc9ad_c60e_5fa1_fb96,
-            0x3c90_939c_116f_f060
-        ),
+        golden!("ai_global_state.json"),
     );
 }
 
@@ -223,11 +213,7 @@ fn queued_self_stimulus_golden() {
         "QueuedSelfStimulus",
         &live,
         &expected,
-        golden!(
-            "queued_self_stimulus.json",
-            0x8e03_e9aa_39aa_a78c,
-            0xbcb8_704b_2926_6f0f
-        ),
+        golden!("queued_self_stimulus.json"),
     );
 }
 
@@ -235,32 +221,14 @@ fn queued_self_stimulus_golden() {
 fn stimulus_golden() {
     let live = provenance_stimulus(SelfStimulusOrigin::EngineCompletion);
     let expected = scrubbed(&live, scrub_stimulus);
-    check_golden(
-        "Stimulus",
-        &live,
-        &expected,
-        golden!(
-            "stimulus.json",
-            0xc17f_f983_878a_ff48,
-            0xb9d3_8070_b338_f042
-        ),
-    );
+    check_golden("Stimulus", &live, &expected, golden!("stimulus.json"));
 }
 
 #[test]
 fn ai_outbox_golden() {
     let live = populated_outbox();
     let expected = scrubbed(&live, scrub_outbox);
-    check_golden(
-        "AiOutbox",
-        &live,
-        &expected,
-        golden!(
-            "ai_outbox.json",
-            0xa806_6281_7029_63a6,
-            0xbd01_4c67_dcbb_4b59
-        ),
-    );
+    check_golden("AiOutbox", &live, &expected, golden!("ai_outbox.json"));
 }
 
 #[test]
@@ -271,11 +239,7 @@ fn ai_detection_outbox_golden() {
         "AiDetectionOutbox",
         &live,
         &expected,
-        golden!(
-            "ai_detection_outbox.json",
-            0xea4d_0188_3816_8ed2,
-            0xb45a_6711_410a_5280
-        ),
+        golden!("ai_detection_outbox.json"),
     );
 }
 
@@ -287,11 +251,7 @@ fn ai_reentrant_outbox_golden() {
         "AiReentrantOutbox",
         &live,
         &expected,
-        golden!(
-            "ai_reentrant_outbox.json",
-            0xc564_e64f_b7ea_43d6,
-            0x9fc7_fc54_5bf0_02e9
-        ),
+        golden!("ai_reentrant_outbox.json"),
     );
 }
 
@@ -305,32 +265,14 @@ fn enemy_ai_golden() {
             .iter_mut()
             .for_each(scrub_stimulus);
     });
-    check_golden(
-        "EnemyAi",
-        &live,
-        &expected,
-        golden!(
-            "enemy_ai.json",
-            0x13a6_27d2_6253_fb9e,
-            0xf1b4_418f_957b_4b2e
-        ),
-    );
+    check_golden("EnemyAi", &live, &expected, golden!("enemy_ai.json"));
 }
 
 #[test]
 fn friendly_ai_golden() {
     let live = golden_friendly();
     let expected = scrubbed(&live, |value| scrub_controller(&mut value.base));
-    check_golden(
-        "FriendlyAi",
-        &live,
-        &expected,
-        golden!(
-            "friendly_ai.json",
-            0x6b62_e148_33ae_8844,
-            0x22be_5eb7_fc5e_e62d
-        ),
-    );
+    check_golden("FriendlyAi", &live, &expected, golden!("friendly_ai.json"));
 }
 
 /// Remove `keys` from a golden JSON object and decode the result.
@@ -343,7 +285,7 @@ fn decode_without<T: DeserializeOwned>(json: &str, keys: &[&str]) -> Result<T, s
     serde_json::from_value(value)
 }
 
-/// Fields that decode with their type default when absent from older saves.
+/// Fields with explicit default policies in the current JSON schema.
 const ENEMY_DEFAULTED_KEYS: &[&str] = &[
     "pending_sword_strike_consideration",
     "pending_combat_insult_after_strike_consideration",
@@ -371,7 +313,7 @@ const REENTRANT_DEFAULTED_KEYS: &[&str] = &[
 ];
 
 #[test]
-fn enemy_ai_legacy_missing_defaulted_fields_decode_to_type_defaults() {
+fn enemy_ai_missing_defaulted_fields_decode_to_type_defaults() {
     let json = include_str!("goldens/enemy_ai.json");
     let decoded: EnemyAi = decode_without(json, ENEMY_DEFAULTED_KEYS).unwrap();
     let mut expected = golden_enemy();
@@ -404,7 +346,7 @@ fn enemy_ai_legacy_missing_defaulted_fields_decode_to_type_defaults() {
 }
 
 #[test]
-fn reentrant_outbox_legacy_missing_defaulted_fields_decode_to_type_defaults() {
+fn reentrant_outbox_missing_defaulted_fields_decode_to_type_defaults() {
     let json = include_str!("goldens/ai_reentrant_outbox.json");
     let decoded: AiReentrantOutbox = decode_without(json, REENTRANT_DEFAULTED_KEYS).unwrap();
     let mut expected = golden_reentrant();

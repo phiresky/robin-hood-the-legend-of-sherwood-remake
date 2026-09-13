@@ -1309,10 +1309,6 @@ impl EngineInner {
                     .locks_flag_field
                     .contains(crate::ai::AiLockFlags::FREEZE),
                 layer: s.element.layer(),
-                report_type: enemy_ai.base.my_reconnaissance_report.report_type,
-                report_seek_position: enemy_ai.base.my_reconnaissance_report.seek_position,
-                report_seen_bodies: enemy_ai.base.my_reconnaissance_report.seen_bodies.clone(),
-                report_charly: enemy_ai.base.my_reconnaissance_report.charly,
                 alert_soldiers_point: enemy_ai.base.alert_soldiers_point,
                 patrol_chief: enemy_ai.base.patrol_chief,
                 antagonist: enemy_ai.base.antagonist,

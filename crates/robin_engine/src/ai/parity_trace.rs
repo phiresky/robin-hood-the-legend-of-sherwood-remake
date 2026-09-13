@@ -101,11 +101,10 @@ trace_event! {
         remaining_bytes: Display,
         waypoint: Debug,
         owner_work_len: Display,
-        self_stimuli_len: Display,
-        finish_after_stimuli: Display;
+        self_stimuli_len: Display;
         phase: Display,
         reason: Debug
-    } => "MACROLIFE frame={} owner={:?} me={} phase={phase} reason={reason:?} state={:?} substate={:?} in_progress={} timer_running={} timer_deadline={} started_this_frame={} command_offset={} remaining_bytes={} waypoint={:?} owner_work_len={} self_stimuli_len={} finish_after_stimuli={}"
+    } => "MACROLIFE frame={} owner={:?} me={} phase={phase} reason={reason:?} state={:?} substate={:?} in_progress={} timer_running={} timer_deadline={} started_this_frame={} command_offset={} remaining_bytes={} waypoint={:?} owner_work_len={} self_stimuli_len={}"
 }
 
 trace_event! {

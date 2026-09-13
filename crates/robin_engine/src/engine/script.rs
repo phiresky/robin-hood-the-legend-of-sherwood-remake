@@ -3802,6 +3802,7 @@ impl EngineInner {
         } else {
             self.execute_ai_think(
                 sim,
+                assets,
                 entity_id,
                 stimulus,
                 &live_ctx,
@@ -4165,23 +4166,6 @@ impl EngineInner {
                     self.owner_work_consider_to_begin_parade(sim, assets, owner, attacker);
                     continue;
                 }
-                crate::ai::AiOwnerWork::ResumeGotoRouteReachPoint { .. } => {
-                    panic!(
-                        "obsolete patrol-arrival continuation reached the synchronous engine; migrate the legacy snapshot"
-                    )
-                }
-                crate::ai::AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
-                    assignment_callback,
-                    ..
-                } => {
-                    self.owner_work_change_way_assignment_think_then_explicit_tail(
-                        sim,
-                        assets,
-                        owner,
-                        assignment_callback,
-                    );
-                    continue;
-                }
                 crate::ai::AiOwnerWork::VirtualReturnToDuty { flags, .. } => {
                     self.virtual_return_to_duty_for_npc(sim, owner, assets, flags);
                     continue;
@@ -4237,8 +4221,8 @@ impl EngineInner {
                     enemy.base.couldnt_reachpoint = false;
                     continue;
                 }
-                crate::ai::AiOwnerWork::ResumeMacroAfterPatrolInit { .. } => {
-                    self.resume_macro_after_patrol_init_for_npc(sim, owner, assets);
+                crate::ai::AiOwnerWork::RunMacro => {
+                    self.run_ai_macro(sim, assets, owner);
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeBattleObserveAfterGoNear {
@@ -4327,23 +4311,6 @@ impl EngineInner {
                             )
                         });
                     crate::ai_vision::set_view_status(ai_actor, status);
-                    continue;
-                }
-                crate::ai::AiOwnerWork::BeginSoldierGiveReport {
-                    officer,
-                    current_frame,
-                } => {
-                    self.owner_work_begin_soldier_give_report(
-                        sim,
-                        assets,
-                        owner,
-                        officer,
-                        current_frame,
-                    );
-                    continue;
-                }
-                crate::ai::AiOwnerWork::ResumeSoldierGiveReportAfterSpeech { current_frame } => {
-                    self.owner_work_resume_soldier_give_report_after_speech(owner, current_frame);
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeSendCharlyAfterSpeech { charly } => {
@@ -4838,79 +4805,6 @@ impl EngineInner {
         );
     }
 
-    fn owner_work_change_way_assignment_think_then_explicit_tail(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        assignment_callback: Option<crate::ai::StimulusType>,
-    ) {
-        // Isolate exactly patrol-path assignment's synchronous
-        // callback A. Pre-existing sibling stimuli and owner work
-        // belong after CMD_CHANGE_WAY's explicit tail B; work A
-        // creates remains visible and settles depth-first here.
-        let (later_self_stimuli, later_owner_work) = {
-            let ai = self
-                .world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!("ChangeWay continuation owner {} lost its AI", owner.index())
-                });
-            (
-                std::mem::take(&mut ai.outbox.reentrant.self_stimuli),
-                std::mem::take(&mut ai.outbox.reentrant.owner_work),
-            )
-        };
-        if let Some(callback) = assignment_callback {
-            self.world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| panic!("ChangeWay callback owner {} lost its AI", owner.index()))
-                .outbox
-                .reentrant
-                .self_stimuli
-                .push(callback.into());
-            self.drain_self_stimuli_for_npc(sim, owner, assets);
-        }
-
-        {
-            let ai = self
-                .world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "ChangeWay explicit tail owner {} lost its AI",
-                        owner.index()
-                    )
-                });
-            // Preserve the opcode's explicit second macro interruption
-            // after callback A, even though the assignment helper
-            // already performed the same call in its prologue.
-            ai.break_macro();
-        }
-        self.virtual_return_to_duty_for_npc(sim, owner, assets, crate::ai::DutyFlags::empty());
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
-
-        let ai = self
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "ChangeWay continuation owner {} vanished before tail restore",
-                    owner.index()
-                )
-            });
-        ai.outbox.reentrant.self_stimuli.extend(later_self_stimuli);
-        ai.outbox.reentrant.owner_work.extend(later_owner_work);
-    }
-
     fn owner_work_resume_return_to_duty_after_patrol_init(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -5292,7 +5186,7 @@ impl EngineInner {
         );
     }
 
-    fn owner_work_speech(
+    pub(in crate::engine) fn owner_work_speech(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -5325,96 +5219,6 @@ impl EngineInner {
             .reentrant
             .owner_work
             .extend(later_work);
-    }
-
-    fn owner_work_begin_soldier_give_report(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        officer: crate::ai::NpcHandle,
-        current_frame: u32,
-    ) {
-        let reporter = owner.index();
-        self.world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| panic!("give-report owner {} lost its AI", owner.index()))
-            .outbox
-            .reentrant
-            .cross_npc_actions
-            .insert(
-                0,
-                crate::ai::CrossNpcAction::SendStimulus {
-                    fallback_to_sender: None,
-                    to_whole_patrol: false,
-                    target: officer,
-                    stimulus_type: crate::ai::StimulusType::CallReport,
-                    info: crate::ai::StimulusInfo::Human(crate::ai::AiEntityHandle::new(reporter)),
-                },
-            );
-        self.process_synchronous_reentrant_actions_for(sim, owner, assets);
-        let ai = self
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "give-report owner {} vanished after CALL_REPORT",
-                    owner.index()
-                )
-            });
-        ai.outbox.reentrant.owner_work.splice(
-            0..0,
-            [
-                crate::ai::AiOwnerWork::Speech(crate::ai::AiSpeechAttempt {
-                    remark: crate::ai::Remark::TellsOfficerNothing,
-                    flags: crate::ai::SpeechFlags::MYTALK_1.bits(),
-                }),
-                crate::ai::AiOwnerWork::ResumeSoldierGiveReportAfterSpeech { current_frame },
-            ],
-        );
-    }
-
-    fn owner_work_resume_soldier_give_report_after_speech(
-        &mut self,
-        owner: EntityId,
-        current_frame: u32,
-    ) {
-        let later_work = self
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .map(|ai| std::mem::take(&mut ai.outbox.reentrant.owner_work))
-            .unwrap_or_else(|| panic!("give-report owner {} lost its AI", owner.index()));
-        let enemy = self
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "give-report continuation owner {} lost Enemy AI",
-                    owner.index()
-                )
-            });
-        enemy.set_state(
-            crate::ai::AiState::Seeking,
-            crate::ai::Substate::SeekingSoldierGiveReportToOfficer,
-        );
-        enemy
-            .base
-            .outbox
-            .reentrant
-            .owner_work
-            .push(crate::ai::AiOwnerWork::LaunchTimer {
-                frames: 100,
-                current_frame,
-            });
-        enemy.base.outbox.reentrant.owner_work.extend(later_work);
     }
 
     fn owner_work_resume_send_charly_after_speech(

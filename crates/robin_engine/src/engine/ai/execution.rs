@@ -4,9 +4,43 @@
 use super::*;
 
 impl EngineInner {
+    pub(in crate::engine) fn execute_ai_return_to_duty(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        flags: crate::ai::DutyFlags,
+    ) {
+        self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
+        self.virtual_return_to_duty_for_npc(sim, owner, assets, flags);
+        self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
+    }
+
+    /// Execute a nested actor decision to completion before its caller resumes.
+    pub(in crate::engine) fn execute_ai_callback(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        stimulus: &crate::ai::Stimulus,
+    ) -> bool {
+        let scratch = self.build_sim_scratch(assets);
+        let mut ctx = self.ai_context_for(owner, self.control.frame_counter, &scratch, assets);
+        ctx.in_uninterruptible_command = self.is_very_very_busy(owner);
+        let tick = self
+            .world
+            .entities
+            .expect_entity(owner, format_args!("nested Think owner"))
+            .enemy_ai()
+            .is_some()
+            .then(|| self.build_npc_tick_data(sim, owner, assets));
+        self.dispatch_think_with_drain(sim, owner, stimulus, &ctx, tick.as_ref(), assets)
+    }
+
     pub(in crate::engine) fn execute_ai_think(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
         ctx: &AiContext,
@@ -50,7 +84,15 @@ impl EngineInner {
             return true;
         }
 
-        let handled = {
+        let handled = if let Some(handled) =
+            self.execute_friendly_callback(sim, assets, owner, stimulus, ctx)
+        {
+            handled
+        } else if let Some(handled) =
+            self.execute_enemy_report_callback(sim, assets, owner, stimulus, ctx, enemy_tick)
+        {
+            handled
+        } else {
             let entity = self
                 .world
                 .entities
@@ -81,6 +123,26 @@ impl EngineInner {
                     )
             }
         };
+        // Macro entry is a synchronous statement inside Think. Settle its
+        // preceding notifications before execution, retaining completion latches
+        // for the enclosing EndThink below.
+        let has_macro_call = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("Think macro entry"))
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .any(|work| matches!(work, crate::ai::AiOwnerWork::RunMacro));
+        if has_macro_call {
+            self.drain_ai_owner_work_for_boundary(
+                sim,
+                assets,
+                owner,
+                super::CompletionBoundary::StatementPrefix,
+            );
+        }
         let suspended = stimulus.stimulus_type == StimulusType::EventAfterScriptGoOn
             && self
                 .world

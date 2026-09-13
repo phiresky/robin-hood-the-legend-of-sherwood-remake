@@ -5,6 +5,39 @@ fn native_round_trip(engine: &EngineInner) -> EngineInner {
     super::super::snapshot::decode_native_engine_inner(&bytes).expect("decode native engine")
 }
 
+#[test]
+fn native_snapshot_rejects_unversioned_and_truncated_bytes() {
+    let engine = engine_snapshot_fixture();
+    let bytes = super::super::snapshot::encode_native_engine_inner(&engine);
+    assert_eq!(&bytes[..8], b"RHNS\x01\x00\x00\x00");
+    let unversioned = super::super::snapshot::decode_native_engine_inner(&bytes[8..])
+        .err()
+        .expect("unversioned domain bytes must not be admitted");
+    assert_eq!(unversioned, "native snapshot has invalid magic");
+    for len in 0..8 {
+        let error = super::super::snapshot::decode_native_engine_inner(&bytes[..len])
+            .err()
+            .expect("incomplete snapshot header must fail");
+        assert_eq!(error, "native snapshot has a truncated header");
+    }
+}
+
+#[test]
+fn native_snapshot_rejects_version_before_decoding_domain_payloads() {
+    for version in [0_u32, 2] {
+        let mut bytes = b"RHNS".to_vec();
+        bytes.extend_from_slice(&version.to_le_bytes());
+        // The version error wins even though no domain payload follows.
+        let error = super::super::snapshot::decode_native_engine_inner(&bytes)
+            .err()
+            .expect("only the current native snapshot shape is supported");
+        assert_eq!(
+            error,
+            format!("unsupported native snapshot version {version}; expected 1")
+        );
+    }
+}
+
 fn engine_snapshot_fixture() -> EngineInner {
     let mut engine = EngineInner::new();
 

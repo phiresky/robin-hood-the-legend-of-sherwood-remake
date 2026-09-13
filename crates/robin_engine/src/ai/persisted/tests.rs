@@ -4,31 +4,21 @@ use crate::entity_id::PcId;
 use robin_util::state_hash::compute;
 mod field_guards;
 mod goldens;
-mod legacy;
-use legacy::LegacyWire;
-
-// The test-only legacy declarations are independent of the runtime derives.
-// Check field order, optional-handle tags, defaults, native layout and hash
-// semantics against them. The in-memory save projection (`persisted_clone`)
-// must equal a serde round trip, including the reset runtime-only state
-// (compared through `Debug`, which covers skipped fields).
+// Persistence must preserve current gameplay state while reconstructing transient
+// execution state. Check both encodings independently against persisted_clone.
 macro_rules! assert_projection_matches_wire {
     ($runtime:expr, $live:ty) => {{
         let runtime: $live = $runtime;
-        assert_eq!(compute(&runtime), runtime.legacy_hash());
-        assert_eq!(bitcode::encode(&runtime), runtime.legacy_native_bytes());
-        let json = runtime.legacy_json();
-        assert_eq!(serde_json::to_string(&runtime).unwrap(), json);
+        let json = serde_json::to_string(&runtime).unwrap();
+        let native = bitcode::encode(&runtime);
         let restored = runtime.persisted_clone();
-        let (legacy_bytes, legacy_hash) =
-            <$live as LegacyWire>::legacy_decoded_bytes_and_hash(&json);
-        assert_eq!(serde_json::to_string(&restored).unwrap(), json);
-        assert_eq!(bitcode::encode(&restored), legacy_bytes);
-        assert_eq!(bitcode::encode(&restored), bitcode::encode(&runtime));
-        assert_eq!(compute(&restored), legacy_hash);
         let decoded: $live = serde_json::from_str(&json).unwrap();
-        assert_eq!(bitcode::encode(&decoded), legacy_bytes);
+        let native_decoded: $live = bitcode::decode(&native).unwrap();
+        assert_eq!(serde_json::to_string(&restored).unwrap(), json);
+        assert_eq!(bitcode::encode(&restored), native);
+        assert_eq!(compute(&restored), compute(&runtime));
         assert_eq!(format!("{decoded:?}"), format!("{restored:?}"));
+        assert_eq!(format!("{native_decoded:?}"), format!("{restored:?}"));
         restored
     }};
 }
@@ -98,8 +88,7 @@ fn stored_enum_word_wire_matches_raw_i32() {
         assert_eq!(decoded.previous_substate.raw(), substate);
         // Debug stays the bare i32.
         assert_eq!(format!("{:?}", new.previous_state), format!("{state:?}"));
-        // (4) EnemyAi derived serde / persisted_clone against the legacy
-        // i32-shaped EnemyAi wire.
+        // (4) The containing actor preserves the same numeric words in both encodings.
         let enemy = EnemyAi {
             previous_state: StoredEnumWord::from_raw(state),
             previous_substate: StoredEnumWord::from_raw(substate),
@@ -358,12 +347,14 @@ fn populated_outbox() -> AiOutbox {
             SelfStimulusOrigin::EngineCompletion,
         ),
     ];
-    value.reentrant.finish_macro_after_self_stimuli = true;
     value.reentrant.battle_observe_completion_pending = true;
     value.reentrant.waypoint_script_reach_point = Some((PathId::new(7).unwrap(), 2));
     value.reentrant.owner_work = vec![
         AiOwnerWork::NearbyCiviliansPanic180,
-        AiOwnerWork::ResumeSoldierGiveReportAfterSpeech { current_frame: 198 },
+        AiOwnerWork::LaunchTimer {
+            frames: 17,
+            current_frame: 198,
+        },
         AiOwnerWork::NearbyCiviliansPanic,
     ];
     value.actor.orders = Vec::new();
@@ -442,7 +433,6 @@ fn outbox_projection_preserves_fifo_and_only_reconstructs_runtime_provenance() {
         SelfStimulusOrigin::EngineCompletion
     );
     assert!(!restored.reentrant.engine_drains_after_script_go_on);
-    assert!(restored.reentrant.finish_macro_after_self_stimuli);
     assert!(restored.reentrant.battle_observe_completion_pending);
     assert_eq!(
         restored.reentrant.self_stimuli[0].origin,
@@ -458,7 +448,10 @@ fn outbox_projection_preserves_fifo_and_only_reconstructs_runtime_provenance() {
     ));
     assert!(matches!(
         restored.reentrant.owner_work[1],
-        AiOwnerWork::ResumeSoldierGiveReportAfterSpeech { current_frame: 198 }
+        AiOwnerWork::LaunchTimer {
+            frames: 17,
+            current_frame: 198
+        }
     ));
 }
 

@@ -89,7 +89,9 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 40 removes duplicate royalist and
+/// On-disk replay schema version. Version 41 removes deferred AI continuation
+/// state and uses synchronous engine-owned decision execution.
+/// Version 40 removes duplicate royalist and
 /// lacklandist presence flags from AI snapshots and hashes, retaining the
 /// existing soldier-camp set as the initial authority.
 /// Version 39 removes the unused computed-location
@@ -147,7 +149,7 @@ pub struct ReplayHeader {
 /// second replay representation. There is deliberately no Rust-schema
 /// compatibility adapter; earlier incompatible layouts are rejected at the
 /// header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 40;
+pub const REPLAY_SCHEMA_VERSION: u32 = 41;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
@@ -856,8 +858,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_uses_canonical_initial_soldier_camps() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 40);
+    fn replay_schema_version_uses_synchronous_ai_execution() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 41);
     }
 
     #[test]

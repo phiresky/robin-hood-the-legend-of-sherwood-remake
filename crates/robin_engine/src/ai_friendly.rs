@@ -259,7 +259,7 @@ impl FriendlyAi {
     /// Panic fleeing from a specific point, tagged with the sector
     /// and level of its origin so the engine's door lookup can
     /// resolve multi-level flee paths correctly.
-    fn panic_from_point_at(&mut self, center: Position, runs: u8) {
+    pub(crate) fn panic_from_point_at(&mut self, center: Position, runs: u8) {
         // Capture the "new panic" flag before the state transition:
         // the drain's no-door arm uses this to suppress repeated
         // State-change / speech / reach-point self-fires when we're already
@@ -284,7 +284,7 @@ impl FriendlyAi {
     }
 
     /// Undirected panic.
-    fn panic_undirected(&mut self, runs: u8) {
+    pub(crate) fn panic_undirected(&mut self, runs: u8) {
         let was_already_fleeing = matches!(
             self.base.current_substate,
             Substate::FleeingPanic | Substate::FleeingRunToDoor
@@ -446,64 +446,6 @@ impl FriendlyAi {
                     stimulus_type
                 );
                 false
-            }
-        }
-    }
-
-    pub(crate) fn resolve_alert_request(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        accepted: bool,
-        continuation: AlertContinuation,
-        ctx: &AiContext,
-    ) {
-        if !accepted {
-            self.panic_undirected(AI_STANDARD_PANIC_RUNS as u8);
-            return;
-        }
-
-        if matches!(continuation, AlertContinuation::CivilianReachedSoldier) {
-            self.base
-                .outbox
-                .actor
-                .delete_detectable_type(crate::element::DetectableType::Friend);
-        }
-        self.set_state(
-            AiState::Seeking,
-            Substate::SeekingCivilianRunningToSoldierSeen,
-        );
-
-        match continuation {
-            AlertContinuation::CivilianReachedSoldier => self
-                .base
-                .outbox
-                .reentrant
-                .self_stimuli
-                .push(StimulusType::EventReachPoint.into()),
-            AlertContinuation::CivilianSawSoldier => {
-                self.base.say(Remark::CivCallsSoldier);
-                let target = self
-                    .base
-                    .antagonist
-                    .expect("accepted civilian alert requires a target soldier")
-                    .get();
-                let target_pos = ctx
-                    .entity_view(target)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "accepted civilian alert from {} requires target soldier {} view",
-                            self.base.me, target
-                        )
-                    })
-                    .forecasted_destination
-                    .resolve(sim)
-                    .position;
-                self.base
-                    .go_near(target_pos, AI_TALK_DISTANCE, GotoFlags::RUN, ctx);
-                self.base.launch_timer(20, ctx.frame);
-            }
-            AlertContinuation::SoldierSawOfficer => {
-                panic!("civilian alert resolver received soldier continuation")
             }
         }
     }
@@ -811,173 +753,6 @@ impl FriendlyAi {
             }
 
             // ############## S E E K I N G #####################
-
-            // -------- civilian alerts soldier: running to soldier --------
-            Substate::SeekingCivilianRunningToSoldier => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    let antagonist_handle = self
-                        .base
-                        .antagonist
-                        .expect("running-to-soldier state requires an antagonist")
-                        .get();
-                    let antagonist_view = ctx.entity_view(antagonist_handle).unwrap_or_else(|| {
-                        panic!(
-                            "civilian {} running to required antagonist {} has no entity view",
-                            self.base.me, antagonist_handle
-                        )
-                    });
-                    match antagonist_view.ai_state {
-                        AiState::Default => {
-                            // "You have not seen the officer!" — the
-                            // soldier is still on duty, so close the
-                            // last few steps and talk to them.  The
-                            // outer match arm already proves the
-                            // view is `Some(…)` here, so the unwrap
-                            // is infallible.
-                            let antag_view = antagonist_view;
-                            let antag_pos = antag_view.position;
-                            let dx = antag_pos.x - ctx.position.x;
-                            let dy = antag_pos.y - ctx.position.y;
-                            let sq_norm = dx * dx + dy * dy;
-                            let talk_sq = (AI_TALK_DISTANCE as f32) * (AI_TALK_DISTANCE as f32);
-                            if sq_norm > talk_sq {
-                                // Still too far — walk up to the
-                                // officer using their forecasted
-                                // destination, so the civilian heads
-                                // to where they'll be rather than
-                                // where they currently animate
-                                // (matters when the officer is mid-
-                                // door-pass / on a lift / mid-
-                                // building traversal).  The 20-frame
-                                // re-evaluation timer in the
-                                // SeekingCivilianRunningToSoldierSeen
-                                // arm catches up if the prediction
-                                // was wrong.
-                                self.base.go_near(
-                                    antag_view.forecasted_destination.resolve(sim).position,
-                                    AI_TALK_DISTANCE,
-                                    GotoFlags::RUN,
-                                    ctx,
-                                );
-                            } else {
-                                self.base.outbox.reentrant.cross_npc_actions.push(
-                                    CrossNpcAction::RequestAlert {
-                                        target: antagonist_handle,
-                                        caller: self.base.me,
-                                        continuation:
-                                            crate::ai::AlertContinuation::CivilianReachedSoldier,
-                                    },
-                                );
-                            }
-                        }
-                        _ => {
-                            // Officer is no longer in STATE_DEFAULT
-                            // (reassigned / knocked out / script
-                            // interrupted) — look for another soldier and,
-                            // on failure, fall back to returning to duty.
-                            let seek_pos = self.base.seek_position;
-                            if !self.alert_soldier(
-                                sim,
-                                seek_pos,
-                                0,
-                                AlertSoldierFailureContinuation::ReturnToDuty,
-                                ctx,
-                                grid,
-                                doors,
-                            ) {
-                                self.return_to_duty(sim, DutyFlags::empty(), ctx);
-                            }
-                        }
-                    }
-                }
-            }
-
-            Substate::SeekingCivilianRunningToSoldierSeen => {
-                let antag_substate = ctx.entity_view(self.base.antagonist).map(|v| v.ai_substate);
-                let waiting = antag_substate == Some(Substate::SeekingWaitForAlertingCivilian);
-                match stimulus_type {
-                    StimulusType::EventTimer => {
-                        if waiting {
-                            // Officer is still waiting — re-arm the
-                            // timer so we check again in 20 frames.
-                            self.base.launch_timer(20, ctx.frame);
-                        } else {
-                            // Something went wrong (officer got
-                            // reassigned / knocked out / script
-                            // interrupted) — forget it.
-                            self.return_to_duty(sim, DutyFlags::empty(), ctx);
-                        }
-                    }
-                    StimulusType::EventReachPoint => {
-                        if waiting {
-                            self.set_state(
-                                AiState::Seeking,
-                                Substate::SeekingCivilianGiveAlertingReportToSoldierStart,
-                            );
-                            self.base.launch_timer(10, ctx.frame);
-                        } else {
-                            self.return_to_duty(sim, DutyFlags::empty(), ctx);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            Substate::SeekingCivilianGiveAlertingReportToSoldierStart => {
-                if stimulus_type == StimulusType::EventTimer {
-                    self.set_state(
-                        AiState::Seeking,
-                        Substate::SeekingCivilianGiveAlertingReportToSoldierPoint,
-                    );
-                    // Hand the officer our recon report via the
-                    // synchronous inter-NPC Think boundary. We pass a
-                    // Hint carrying our seek point so the soldier's
-                    // CALL_REPORT handler can update its own report
-                    // without needing to reach back into the
-                    // civilian's AI state.  The return value is
-                    // ignored — it's fire-and-forget.
-                    self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::SendStimulus {
-                            target: self
-                                .base
-                                .antagonist
-                                .expect("civilian report requires its target soldier")
-                                .get(),
-                            stimulus_type: StimulusType::CallReport,
-                            info: StimulusInfo::Hint(Hint {
-                                seek_point: self.base.seek_position,
-                                seek_flags: 0,
-                                who_tells_me: AiEntityHandle::new(self.base.me),
-                            }),
-                            fallback_to_sender: None,
-                            to_whole_patrol: false,
-                        },
-                    );
-                    self.base.say(Remark::CivDenunciates);
-                    let seek_pos = self.base.seek_position;
-                    self.base.point_to(seek_pos, ctx);
-                }
-            }
-
-            Substate::SeekingCivilianGiveAlertingReportToSoldierPoint => {
-                if stimulus_type == StimulusType::EventDone {
-                    self.set_state(
-                        AiState::Seeking,
-                        Substate::SeekingCivilianGiveAlertingReportToSoldierEnd,
-                    );
-                    let antagonist = self.base.antagonist;
-                    self.base.face_entity(antagonist, ctx);
-                    self.base.launch_timer(30, ctx.frame);
-                }
-            }
-
-            Substate::SeekingCivilianGiveAlertingReportToSoldierEnd => {
-                if stimulus_type == StimulusType::EventTimer {
-                    let pos = self.base.seek_position;
-                    self.panic_from_point_at(pos, AI_STANDARD_PANIC_RUNS as u8);
-                }
-            }
-
             Substate::SeekingGotStopEvent => {
                 if stimulus_type == StimulusType::EventTimer {
                     self.return_to_duty(sim, DutyFlags::empty(), ctx);
@@ -1131,27 +906,6 @@ impl FriendlyAi {
         let stimulus_type = stimulus.stimulus_type;
 
         match stimulus_type {
-            StimulusType::EventSeesSoldier
-                if self.base.current_substate == Substate::SeekingCivilianRunningToSoldier =>
-            {
-                if let StimulusInfo::Human(soldier_handle) = stimulus.info {
-                    self.base.antagonist = Some(soldier_handle);
-                    // The original deletes friend detectables before the
-                    // direct CALL_ALERT, including when the soldier refuses.
-                    self.base
-                        .outbox
-                        .actor
-                        .delete_detectable_type(crate::element::DetectableType::Friend);
-                    self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::RequestAlert {
-                            target: soldier_handle.get(),
-                            caller: self.base.me,
-                            continuation: crate::ai::AlertContinuation::CivilianSawSoldier,
-                        },
-                    );
-                }
-            }
-
             StimulusType::CallPatrolCoordinate => {
                 self.coordinate_patrol(
                     &stimulus.info,

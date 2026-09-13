@@ -180,26 +180,6 @@ impl EngineInner {
             self.dispatch_condolations(sim, assets);
         }
 
-        let finish_macro = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .is_some_and(|ai| {
-                std::mem::take(&mut ai.outbox.reentrant.finish_macro_after_self_stimuli)
-            });
-        if finish_macro {
-            self.world
-                .entities
-                .expect_ai_controller_mut(
-                    npc_id,
-                    format_args!(
-                        "post-reentrant macro owner {} lost its AI controller",
-                        npc_id.index()
-                    ),
-                )
-                .finish_patrol_macro();
-        }
         launched_moves
     }
 
@@ -641,37 +621,6 @@ impl EngineInner {
                 ),
             )
             .resume_return_to_duty_after_patrol_init(sim, flags, &ctx, high_recursion_failsafe);
-    }
-
-    /// Run `CMD_PATROL_START`'s inline patrol rebuild, then continue the
-    /// waypoint macro at the same owner boundary.
-    pub(in crate::engine) fn resume_macro_after_patrol_init_for_npc(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
-        self.initialize_patrol_for_npc(assets, npc_id);
-        let scratch = self.build_sim_scratch(assets);
-
-        let frame = self.control.frame_counter;
-        let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-        let mut ctx = {
-            let entity = self.expect_entity(npc_id, "patrol-start macro owner");
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx =
-                self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
-            ctx.in_uninterruptible_command = in_uninterruptible_command;
-            ctx
-        };
-        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-        self.world
-            .entities
-            .expect_ai_controller_mut(
-                npc_id,
-                format_args!("patrol-start macro owner {} lost its AI", npc_id.index()),
-            )
-            .execute_next_macro_command(sim, &ctx);
     }
 
     /// Run the original game's patrol initialization at a captured owner boundary.
@@ -1420,32 +1369,12 @@ impl EngineInner {
             return;
         }
 
-        let scratch = self.build_sim_scratch(assets);
-
-        // Build the AI context before we take the mut AI borrow.
-        let building_sector = self
-            .world
+        self.world
             .entities
-            .get(npc_id)
-            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-            .unwrap_or_else(|| panic!("macro-timer NPC {} disappeared", npc_id.index()));
-        let entity = self.expect_entity(npc_id, "macro-timer NPC before execute");
-        let mut ctx =
-            self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
-        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-
-        // Stop the timer and resume the macro VM.  `execute_next_
-        // macro_command` may transition the substate (e.g. to
-        // `DefaultEnroute` when the byte stream ends) — we don't
-        // post-process beyond that; any downstream state changes
-        // ride the normal think dispatch.
-        let base = self
-            .world
-            .entities
-            .expect_ai_controller_mut(npc_id, format_args!("macro-timer NPC before execute"));
-        base.macro_timer_is_running = false;
+            .expect_ai_controller_mut(npc_id, format_args!("macro-timer NPC"))
+            .macro_timer_is_running = false;
         if execute {
-            base.execute_next_macro_command(sim, &ctx);
+            self.run_ai_macro(sim, assets, npc_id);
         }
         self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }

@@ -183,23 +183,6 @@ fn patrol_coordinate_same_substate_still_calls_friendly_state_without_stop_prefi
 }
 
 #[test]
-#[should_panic(expected = "civilian 1 running to required antagonist 42 has no entity view")]
-fn review_running_to_soldier_requires_the_live_antagonist_view() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = FriendlyAi::new(1);
-    ai.base.antagonist = Some(AiEntityHandle::new(42));
-    ai.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
-    ai.think_expected_event(
-        &sim,
-        &Stimulus::new(StimulusType::EventReachPoint),
-        &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
-        None,
-        None,
-    );
-}
-
-#[test]
 fn civilian_return_to_duty() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
@@ -615,10 +598,6 @@ fn hiding_timer_uses_virtual_return_before_fleeing_event_view_panics() {
             path_forward_movement: true,
             patrol_hiking_path_index: None,
             interesting_object: None,
-            report_type: crate::ai::ReportType::Nothing,
-            report_seek_position: enemy_pos,
-            report_seen_bodies: Vec::new(),
-            report_charly: None,
         },
     );
     let ctx = AiContext {
@@ -864,33 +843,6 @@ fn fleeing_child_chased_end_returns_to_duty() {
     assert_eq!(ai.base.current_state, AiState::Default);
 }
 
-#[test]
-fn seeking_report_point_done_transitions() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    let mut ai = FriendlyAi::new(1);
-    ai.set_state(
-        AiState::Seeking,
-        Substate::SeekingCivilianGiveAlertingReportToSoldierPoint,
-    );
-
-    let stimulus = Stimulus::new(StimulusType::EventDone);
-    ai.think_expected_event(
-        sim,
-        &stimulus,
-        &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
-        None,
-        None,
-    );
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::SeekingCivilianGiveAlertingReportToSoldierEnd,
-    );
-    assert!(ai.base.timer_is_running);
-}
-
 // ──────────────────────────────────────────────────────────
 // Soldier-alert body-level regression tests
 // ──────────────────────────────────────────────────────────
@@ -956,10 +908,6 @@ fn make_soldier_view(
         path_forward_movement: true,
         patrol_hiking_path_index: None,
         interesting_object: None,
-        report_type: crate::ai::ReportType::Nothing,
-        report_seek_position: pos,
-        report_seen_bodies: Vec::new(),
-        report_charly: None,
     }
 }
 

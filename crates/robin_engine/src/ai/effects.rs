@@ -130,11 +130,6 @@ pub struct AiReentrantOutbox {
     pub engine_drains_after_script_go_on: bool,
     pub cross_npc_actions: Vec<CrossNpcAction>,
     pub self_stimuli: Vec<QueuedSelfStimulus>,
-    /// Finish an outside-Think multi-point patrol macro after its synthetic
-    /// `EventReachPoint` recursion has settled. The nested reach-point path
-    /// may write a new macro deadline; the outer completion then clears only
-    /// the two running flags, matching original-game evaluation order.
-    pub finish_macro_after_self_stimuli: bool,
     /// Synchronous work produced while the AI owns its call stack.
     ///
     /// AI speech and enemy/friendly state changes are
@@ -228,12 +223,6 @@ pub enum AiOwnerWork {
     /// owner FIFO because callers can speak or change state immediately
     /// before/after it and those operations are observably ordered.
     NearbyCiviliansPanic,
-    /// Reserved legacy wire slot. Patrol arrival now executes synchronously.
-    /// TODO(codec): retire this variant with an explicit save/rollback format
-    /// migration; removing it shifts later bitcode tags and StateHash values.
-    ResumeGotoRouteReachPoint {
-        owner_boundary_positions: Vec<(u32, Position)>,
-    },
     /// Invoke actor-specific return-to-duty behavior requested by shared AI logic.
     ///
     /// The shared controller cannot borrow its containing Enemy AI to call
@@ -243,18 +232,6 @@ pub enum AiOwnerWork {
     /// patrol initialization.
     VirtualReturnToDuty {
         flags: DutyFlags,
-        /// Legacy wire field; emitted empty and ignored. Geometry is read live.
-        owner_boundary_positions: Vec<(u32, Position)>,
-    },
-    /// Finish `CMD_CHANGE_WAY` around the exact self callback emitted by
-    /// patrol-path assignment: optional callback A, explicit second
-    /// macro cancellation, then actor-specific return-to-duty phase B.
-    ChangeWayAssignmentThinkThenExplicitTail {
-        assignment_callback: Option<StimulusType>,
-        /// Legacy wire field; emitted as default and ignored.
-        owner_position_before_callback: Position,
-        /// Legacy wire field; emitted empty and ignored. Geometry is read live.
-        owner_boundary_positions: Vec<(u32, Position)>,
     },
     /// Continue enemy return-to-duty behavior after its synchronous
     /// patrol-initialization engine callback has completed.
@@ -263,13 +240,6 @@ pub enum AiOwnerWork {
         /// Patrol clearing's direct forced-return boundary does not
         /// recursively surface the close-post reach-point callback.
         defer_clear_patrol_close_post: bool,
-        /// Legacy wire field; emitted empty and ignored. Geometry is read live.
-        owner_boundary_positions: Vec<(u32, Position)>,
-    },
-    /// Continue `CMD_PATROL_START` after its inline patrol initialization.
-    ResumeMacroAfterPatrolInit {
-        /// Legacy wire field; emitted empty and ignored. Geometry is read live.
-        owner_boundary_positions: Vec<(u32, Position)>,
     },
     /// Continue enemy approach reconsideration after its synchronous movement
     /// construction has either succeeded or set the unreachable-point flag.
@@ -294,37 +264,20 @@ pub enum AiOwnerWork {
         current_frame: u32,
     },
     SetEyeStatus(crate::element::EyeStatus),
-    /// Execute the synchronous officer `CALL_REPORT`, then the inline
-    /// `Say(TELLS_OFFICER_NOTHING, MYTALK_1)`, from the reached-officer arm.
-    BeginSoldierGiveReport {
-        officer: NpcHandle,
-        current_frame: u32,
-    },
-    /// Continue `SOLDIER_RETURN_TO_OFFICER::EVENT_REACHPOINT` after the
-    /// inline `Say(TELLS_OFFICER_NOTHING, MYTALK_1)` call has returned.
-    /// A rejected line invokes MYTALK synchronously while the caller is
-    /// still in its old substate; only afterward does Original enter the
-    /// give-report substate and launch its 100-frame fallback timer.
-    ResumeSoldierGiveReportAfterSpeech {
-        current_frame: u32,
-    },
     /// Continue an admitted `EVENT_SWORDSTRIKE` at the engine boundary.
-    /// Appended to preserve the serialized discriminants of existing work.
     /// The Enemy AI owns the tick-admission/filter/lock gates, while the actual
     /// parade proposal needs live weapon, sprite, and sequence-manager data.
     ConsiderToBeginParade {
         attacker: HumanHandle,
     },
     /// Resume friendly soldier alerting after synchronous route construction.
-    /// Appended to preserve serialized discriminants of existing work.
     ResumeFriendlyAlertSoldierAfterGoNear {
         center: Position,
         check_door_path: bool,
         failure: crate::ai_friendly::AlertSoldierFailureContinuation,
     },
     /// Continue the soldier dead-body alert after officer alerting's
-    /// synchronous approach has settled. Appended to preserve existing
-    /// serialized discriminants.
+    /// synchronous approach has settled.
     ResumeDeadBodyAlertAfterAlertOfficer {
         center: Position,
         radius: u16,
@@ -337,52 +290,44 @@ pub enum AiOwnerWork {
     /// its avenger-on-the-roof fallback, which both leave the
     /// any-swordfight set. Rust runs those on this same owner FIFO, so the
     /// test has to be taken from this position rather than inline.
-    /// Appended to preserve existing serialized discriminants.
     TooProudOverviewFinallyFightRemark,
     /// Continue PC-sighting processing after its inline
     /// `Say(FOUND_CHARLY, MYTALK_1)` has returned. A rejected line invokes
     /// MYTALK synchronously before the following friend-in-trouble reference
     /// assignment and facing operation in the original game.
-    /// Appended to preserve existing serialized discriminants.
     ResumeSendCharlyAfterSpeech {
         charly: NpcHandle,
     },
     /// High-recursion counterpart of `ResumeReturnToDutyAfterPatrolInit`.
-    /// Appended separately to preserve the serialized layout of the older
-    /// continuation while retaining the original game's in-decision movement boundary.
+    /// Retains the in-decision movement boundary.
     ResumeHighRecursionReturnToDutyAfterPatrolInit {
         flags: DutyFlags,
-        /// Legacy wire field; emitted empty and ignored. Geometry is read live.
-        owner_boundary_positions: Vec<(u32, Position)>,
     },
     /// Finish the ignored-result officer-alert call made by
-    /// `CALL_TOWER_GUARD_CALLS_ME`. Appended to preserve serialized enum
-    /// discriminants; the only observable tail is consuming route failure.
+    /// `CALL_TOWER_GUARD_CALLS_ME`; its tail consumes route failure.
     ConsumeTowerGuardAlertOfficerRouteFailure,
     /// Continue the soldier branch of
     /// `SUBSTATE_SEEKING_GET_ALERTING_REPORT_FROM_CIVILIAN_LOOK` after
-    /// officer alerting's synchronous route construction. Appended to preserve
-    /// existing serialized discriminants.
+    /// officer alerting's synchronous route construction.
     ResumeCivilianReportAfterAlertOfficer {
         seek_position: Position,
     },
     /// The money-brawl hit completion has a separate, inline civilian sweep
     /// which uses forward-half-plane detection, unlike the shared
-    /// nearby-civilian panic callback's 360-degree detector. Appended to
-    /// preserve every existing serialized enum discriminant.
+    /// nearby-civilian panic callback's 360-degree detector.
     NearbyCiviliansPanic180,
     /// Finish `DECISION_FIGHT` only after enemy approach reconsideration has
     /// observed its synchronous movement result. A failed approach changes
     /// the local decision to `DECISION_OBSERVE` before battle planning logs
-    /// or returns. Appended to preserve every existing serialized enum
-    /// discriminant.
+    /// or returns.
     ResumeBattleFightAfterReconsider,
     /// Continue the nearby sleeping-enemy scan after the forest/trainer-only
     /// synchronous return-to-duty action. The original game deliberately continues
     /// scanning and may overwrite the duty state with a sleeping-enemy
-    /// approach. Appended to preserve every existing serialized enum
-    /// discriminant.
+    /// approach.
     ResumeKillNearbySleepingEnemiesAfterReturnToDuty,
+    /// Enter the engine-owned macro interpreter at this statement boundary.
+    RunMacro,
 }
 
 #[derive(

@@ -107,6 +107,7 @@ impl EngineInner {
             self.init_one_ai(
                 sim,
                 npc_id,
+                assets,
                 &hiking_paths,
                 &assets.navigation.hiking_waypoint_sectors,
                 &potential_detectables,
@@ -219,6 +220,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
+        assets: &LevelAssets,
         hiking_paths: &std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
         hiking_waypoint_sectors: &Option<
             std::sync::Arc<Vec<Vec<crate::position_interface::SectorHandle>>>,
@@ -277,6 +279,60 @@ impl EngineInner {
             return;
         }
 
+        let standard_view_radius = if self.ai.standard_view_polygon_radius > 0 {
+            self.ai.standard_view_polygon_radius
+        } else {
+            ai_vision::DEFAULT_VIEW_RADIUS
+        };
+        // Patrol admission observes live members before the chief's position
+        // correction and state initialization. Later NPCs must already know
+        // their chief when their own initialization begins.
+        {
+            let entity = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .expect("AI initialization owner");
+            let npc = entity.ai_actor_data_mut().expect("AI initialization actor");
+            npc.view_radius = standard_view_radius;
+            npc.view_radius_base = standard_view_radius;
+            npc.view_radius_goal = standard_view_radius;
+        }
+        if is_enemy {
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("patrol initialization owner"));
+            // Resolve patrol member IDs
+            // Runs exactly once at AI init from the enemy AI's
+            // `init_ai` before the first `initialize_patrol()`.
+            // The raw mission subordinate IDs live on LevelAssets,
+            // not on the serialized AI controller; runtime patrol
+            // rebuilds use `theoretical_patrol`.
+            if let Some(soldier_load_index) =
+                all_soldier_entity_ids.iter().position(|&eid| eid == npc_id)
+                && let Some(patrol_ids) = soldier_subordinate_ids.get(soldier_load_index)
+                && !patrol_ids.is_empty()
+            {
+                ai.patrol.clear();
+                ai.missed_patrol_members.clear();
+                ai.theoretical_patrol.clear();
+                for &id in patrol_ids {
+                    if let Some(&eid) = all_soldier_entity_ids.get(id as usize) {
+                        ai.theoretical_patrol.push(eid);
+                    } else {
+                        tracing::warn!(
+                            "NPC {} patrol ID {} out of range (max {})",
+                            npc_id.index(),
+                            id,
+                            all_soldier_entity_ids.len()
+                        );
+                    }
+                }
+            }
+            self.initialize_patrol_for_npc(assets, npc_id);
+        }
+
         // -- Phase 2: Stuck-in-obstacle correction (enemy only). --
         // If the NPC's move-box overlaps the playable area, attempt to
         // push it to an authorized position via `find_authorized_position`.
@@ -311,11 +367,6 @@ impl EngineInner {
 
         // -- Phase 4: Re-read entity (post-fix) and mutate all the
         //    per-NPC state fields in one shot. --
-        let standard_view_radius = if self.ai.standard_view_polygon_radius > 0 {
-            self.ai.standard_view_polygon_radius
-        } else {
-            ai_vision::DEFAULT_VIEW_RADIUS
-        };
         let is_forest_level = self.world.weather.is_forest_level;
 
         // `entity_building_sector` needs a `&self` borrow; compute it
@@ -364,13 +415,6 @@ impl EngineInner {
             if let Some(npc) = entity.ai_actor_data_mut() {
                 // `initialize_direction_offset_very_old`: seed from current body dir.
                 npc.direction_old = direction_final;
-
-                // `init_view_radius`: real radius + goal = standard view
-                // radius.  We also seed `view_radius_base` so subsequent
-                // alert/drunk modifiers scale off the correct baseline.
-                npc.view_radius = standard_view_radius;
-                npc.view_radius_base = standard_view_radius;
-                npc.view_radius_goal = standard_view_radius;
 
                 if is_merry_man_archer {
                     // Seed the bow ammo for forest-level Merry Man archers.
@@ -517,134 +561,6 @@ impl EngineInner {
                     ai.detach_patrol_path(None, false);
                     ai.has_patrol_path = false;
                 }
-
-                // Resolve patrol member IDs
-                // Runs exactly once at AI init from the enemy AI's
-                // `init_ai` before the first `initialize_patrol()`.
-                // The raw mission subordinate IDs live on LevelAssets,
-                // not on the serialized AI controller; runtime patrol
-                // rebuilds use `theoretical_patrol`.
-                if let Some(soldier_load_index) =
-                    all_soldier_entity_ids.iter().position(|&eid| eid == npc_id)
-                    && let Some(patrol_ids) = soldier_subordinate_ids.get(soldier_load_index)
-                    && !patrol_ids.is_empty()
-                {
-                    ai.patrol.clear();
-                    ai.missed_patrol_members.clear();
-                    ai.theoretical_patrol.clear();
-                    for &id in patrol_ids {
-                        if let Some(&eid) = all_soldier_entity_ids.get(id as usize) {
-                            ai.theoretical_patrol.push(eid);
-                        } else {
-                            tracing::warn!(
-                                "NPC {} patrol ID {} out of range (max {})",
-                                npc_id.index(),
-                                id,
-                                all_soldier_entity_ids.len()
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        // Original-game hostile AI initialization transforms a patrol
-        // chief's authored soldier IDs and immediately initializes the
-        // patrol before evaluating the chief's initial state.
-        // That synchronous pass also writes `patrol_chief` onto admitted
-        // minions.  Some of those minions occur later in the NPC creation
-        // order, so their own initialization must already see the chief and return
-        // to formation instead of independently starting their authored
-        // hiking path.
-        //
-        // Runtime patrol refresh remains owner-ticked, but mission bootstrap
-        // cannot defer this first pass: doing so changes returning to duty,
-        // consumes extra macro RNG draws, and starts the minion on the wrong
-        // route for its first simulation frame.
-        let theoretical_patrol = self
-            .world
-            .entities
-            .get(npc_id)
-            .and_then(|entity| entity.ai_controller())
-            .map(|ai| ai.theoretical_patrol.clone())
-            .unwrap_or_default();
-        if !theoretical_patrol.is_empty() {
-            let chief_view = entity_views.get(&npc_id.index()).unwrap_or_else(|| {
-                panic!(
-                    "patrol chief {} is absent from the AI initialization view map",
-                    npc_id.index()
-                )
-            });
-            let chief_position = chief_view.position;
-            let chief_ground_z = chief_view.elevation;
-            let obstacles = sight_obstacles.list();
-            let (sorted_patrol, missed) = patrol_assembly::assemble_patrol(
-                theoretical_patrol.iter().copied(),
-                |&member| {
-                    let member_view = entity_views.get(&member.index()).unwrap_or_else(|| {
-                        panic!(
-                            "patrol chief {} references missing authored member {}",
-                            npc_id.index(),
-                            member.index()
-                        )
-                    });
-                    // Bootstrap uses its captured initialization views and
-                    // gates state before LOS. Do not substitute the runtime
-                    // visibility-first predicate: that changes query timing.
-                    let admitted = member_view.active
-                        && !member_view.is_dead
-                        && member_view.ai_state == crate::ai::AiState::Default
-                        && (member_view.is_civilian() || member_view.is_able_to_fight)
-                        && crate::ai_enemy::soldier_detects_target_360(
-                            chief_position,
-                            chief_ground_z,
-                            chief_view.is_rider,
-                            standard_view_radius,
-                            chief_view.in_building,
-                            member_view.position,
-                            member_view.elevation,
-                            member_view.posture,
-                            member_view.is_rider,
-                            member_view.direction as i16,
-                            member_view.in_building,
-                            obstacles,
-                        );
-                    (admitted, !member_view.is_dead)
-                },
-                |&member| {
-                    let view = entity_views.get(&member.index()).unwrap_or_else(|| {
-                        panic!(
-                            "patrol member {} disappeared from the AI initialization view map",
-                            member.index()
-                        )
-                    });
-                    (
-                        patrol_assembly::projected_patrol_world(view.position, view.elevation),
-                        view.position,
-                    )
-                },
-                patrol_assembly::projected_patrol_world(chief_position, chief_ground_z),
-                chief_position,
-            );
-
-            {
-                let ai = self.world.entities.expect_ai_controller_mut(
-                    npc_id,
-                    format_args!("patrol chief during AI initialization"),
-                );
-                ai.patrol = sorted_patrol.clone();
-                ai.missed_patrol_members = missed;
-                ai.needs_patrol_reinit = false;
-            }
-            for member in sorted_patrol {
-                let ai = self.world.entities.expect_ai_controller_mut(
-                    member,
-                    format_args!(
-                        "patrol chief {} member during AI initialization",
-                        npc_id.index()
-                    ),
-                );
-                ai.patrol_chief = Some(npc_id);
             }
         }
 
@@ -679,9 +595,8 @@ impl EngineInner {
             .get_mut(npc_id)
             .and_then(|entity| entity.enemy_ai_mut())
         {
-            // Both patrol-initialization passes in the original game have
-            // completed synchronously above.  Do not repeat the bootstrap
-            // pass on the first owner tick.
+            // Bootstrap patrol assembly already completed synchronously.
+            // Do not repeat it on the first owner tick.
             enemy.base.needs_patrol_reinit = false;
         }
 

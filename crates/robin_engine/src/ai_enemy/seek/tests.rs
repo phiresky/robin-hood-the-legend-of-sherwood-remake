@@ -286,10 +286,6 @@ fn charly_view() -> crate::ai_entity_view::AiEntityView {
         path_forward_movement: true,
         patrol_hiking_path_index: None,
         interesting_object: None,
-        report_type: ReportType::Nothing,
-        report_seek_position: Position::default(),
-        report_seen_bodies: Vec::new(),
-        report_charly: None,
     }
 }
 
@@ -317,10 +313,6 @@ fn alert_test_officer(handle: u32, substate: Substate) -> CampSoldierInfo {
         script_locked: false,
         ai_lock_frozen: false,
         layer: 0,
-        report_type: ReportType::Nothing,
-        report_seek_position: Position::default(),
-        report_seen_bodies: Vec::new(),
-        report_charly: None,
         alert_soldiers_point: Position::default(),
         patrol_chief: None,
         antagonist: None,

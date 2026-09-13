@@ -370,12 +370,7 @@ impl EngineInner {
             .take_pending_alert_requests();
 
         for request in requests {
-            let crate::ai::CrossNpcAction::RequestAlert {
-                target,
-                caller,
-                continuation,
-            } = request
-            else {
+            let crate::ai::CrossNpcAction::RequestAlert { target, caller } = request else {
                 unreachable!("alert-request drain returned a deferred action")
             };
             assert_eq!(
@@ -439,30 +434,16 @@ impl EngineInner {
             };
             self.refresh_selected_default_wait_identity(source_id, &mut source_ctx);
             let source_tick = self.build_npc_tick_data(sim, source_id, assets);
-            match continuation {
-                crate::ai::AlertContinuation::CivilianReachedSoldier
-                | crate::ai::AlertContinuation::CivilianSawSoldier => self
-                    .world
-                    .entities
-                    .get_mut(source_id)
-                    .and_then(Entity::friendly_ai_mut)
-                    .unwrap_or_else(|| {
-                        panic!("civilian CALL_ALERT caller {caller} lost its FriendlyAi")
-                    })
-                    .resolve_alert_request(sim, accepted, continuation, &source_ctx),
-                crate::ai::AlertContinuation::SoldierSawOfficer => self
-                    .world
-                    .entities
-                    .expect_enemy_ai_mut(
-                        source_id,
-                        format_args!("soldier CALL_ALERT caller {caller} lost its EnemyAi"),
-                    )
-                    .resolve_alert_request(
-                        crate::ai_enemy::ThinkEnv::new(sim, &source_ctx, &source_tick, None),
-                        accepted,
-                        continuation,
-                    ),
-            }
+            self.world
+                .entities
+                .expect_enemy_ai_mut(
+                    source_id,
+                    format_args!("soldier CALL_ALERT caller {caller} lost its EnemyAi"),
+                )
+                .resolve_soldier_alert_request(
+                    crate::ai_enemy::ThinkEnv::new(sim, &source_ctx, &source_tick, None),
+                    accepted,
+                );
         }
     }
 

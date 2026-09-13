@@ -162,34 +162,6 @@ fn repeated_checkpoint_charly_calls_preserve_immediate_original_order() {
 }
 
 #[test]
-fn consider_report_charly_preserves_release_build_detectable_append() {
-    use crate::element::{DetectableType, EntityId};
-    use crate::entity_id::SoldierId;
-
-    let mut ai = AiController::new(17);
-    let report = ReconnaissanceReport {
-        charly: Some(AiEntityHandle::new(91)),
-        ..Default::default()
-    };
-
-    ai.consider_report_merged(
-        &report,
-        crate::ai_enemy::ReportUpdateFlags::UPDATE_CHARLY.bits(),
-        &crate::ai_entity_view::AiEntityViewMap::new(),
-    );
-
-    assert!(ai.outbox.actor.added_detectables().is_empty());
-    assert_eq!(
-        ai.outbox.actor.appended_detectables(),
-        vec![(
-            EntityId::Soldier(SoldierId(91)),
-            DetectableType::MissedFriend,
-        )],
-        "detectable insertion must append even if live storage already has Charly"
-    );
-}
-
-#[test]
 fn relative_synchronize_indices_narrow_like_original_uword() {
     assert_eq!(resolve_synchronize_index(7, 500), 500);
     assert_eq!(resolve_synchronize_index(3, 1002), 5);

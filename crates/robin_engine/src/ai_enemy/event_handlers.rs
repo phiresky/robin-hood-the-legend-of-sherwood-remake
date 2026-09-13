@@ -2331,7 +2331,6 @@ impl EnemyAi {
                     .push(CrossNpcAction::RequestAlert {
                         target: antagonist.get(),
                         caller: self.base.me,
-                        continuation: crate::ai::AlertContinuation::SoldierSawOfficer,
                     });
             }
             ProfileRank::Officer => {

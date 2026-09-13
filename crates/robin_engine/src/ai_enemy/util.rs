@@ -254,15 +254,6 @@ pub struct CampSoldierInfo {
     /// true, so bool-consuming call sites must dispatch instead of predicting.
     pub ai_lock_frozen: bool,
     pub layer: u16,
-    /// Reconnaissance report type (for soldier-report checks).
-    pub report_type: ReportType,
-    /// Seek position from the soldier's reconnaissance report.
-    pub report_seek_position: Position,
-    /// Seen bodies from the soldier's reconnaissance report.
-    /// Used by `ConsiderReport` for body/charly list merging.
-    pub report_seen_bodies: Vec<HumanHandle>,
-    /// Charly (missing friend) handle from the soldier's report.
-    pub report_charly: Option<AiEntityHandle>,
     /// The soldier's alert-soldiers point.
     pub alert_soldiers_point: Position,
     /// This soldier's patrol chief.
@@ -310,9 +301,7 @@ pub struct CampSoldierInfo {
     /// Soldier's own seek position (live AI field, not the
     /// reconnaissance-report seek position).  Used by
     /// nearby-officer noise matching to identify an
-    /// officer actively heading to the same noise.  Distinct from
-    /// [`Self::report_seek_position`], which only updates on report
-    /// merges.
+    /// officer actively heading to the same noise.
     pub seek_position: Position,
     /// Live current task priority from the soldier's AI brain.  Used
     /// by the officer's AlertSoldiers gate to predict whether the

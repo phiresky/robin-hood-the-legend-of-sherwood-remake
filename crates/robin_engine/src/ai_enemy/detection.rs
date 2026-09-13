@@ -241,17 +241,8 @@ impl EnemyAi {
         }
     }
 
-    pub(crate) fn resolve_alert_request(
-        &mut self,
-        env: ThinkEnv<'_>,
-        accepted: bool,
-        continuation: crate::ai::AlertContinuation,
-    ) {
+    pub(crate) fn resolve_soldier_alert_request(&mut self, env: ThinkEnv<'_>, accepted: bool) {
         let ThinkEnv { sim, ctx, .. } = env;
-        assert!(matches!(
-            continuation,
-            crate::ai::AlertContinuation::SoldierSawOfficer
-        ));
         if !accepted {
             self.return_to_duty_default(env);
             return;
@@ -298,14 +289,6 @@ impl EnemyAi {
             ctx, tick, grid, ..
         } = env;
         match continuation {
-            ThinkResultContinuation::SoldierFinishedAlertReportStart => {
-                self.set_state_with_timer(
-                    AiState::Seeking,
-                    Substate::SeekingSoldierGiveAlertingReportToOfficerPoint,
-                    100,
-                    ctx,
-                );
-            }
             ThinkResultContinuation::OfficerCalledSoldier => {
                 if accepted {
                     self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForSoldier);
@@ -361,7 +344,6 @@ impl EnemyAi {
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::ConsiderReport {
                             target,
-                            report: self.base.my_reconnaissance_report.clone(),
                             flags: ReportUpdateFlags::UPDATE_CHARLY.bits()
                                 | ReportUpdateFlags::UPDATE_TYPE.bits(),
                         },

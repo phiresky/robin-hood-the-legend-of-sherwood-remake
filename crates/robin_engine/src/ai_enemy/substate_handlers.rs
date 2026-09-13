@@ -2058,7 +2058,7 @@ impl EnemyAi {
                 .seeking_officer_wait_for_instructed_soldier(stimulus, stimulus_type, global, env),
 
             Substate::SeekingOfficerGetReportFromSoldier => {
-                self.seeking_officer_get_report_from_soldier(env, stimulus_type)
+                unreachable!("report conversation must execute through the engine")
             }
 
             Substate::SeekingSoldierCalledByOfficer => {
@@ -2074,11 +2074,11 @@ impl EnemyAi {
             }
 
             Substate::SeekingSoldierReturnToOfficer => {
-                self.seeking_soldier_return_to_officer(env, stimulus_type)
+                unreachable!("report conversation must execute through the engine")
             }
 
             Substate::SeekingSoldierGiveReportToOfficer => {
-                self.seeking_soldier_give_report_to_officer(env, stimulus_type)
+                unreachable!("report conversation must execute through the engine")
             }
 
             Substate::SeekingOfficerCallGroup => {
@@ -2126,19 +2126,19 @@ impl EnemyAi {
             }
 
             Substate::SeekingRunningToOfficerSeen => {
-                self.seeking_running_to_officer_seen(env, stimulus_type)
+                unreachable!("alert report conversation must execute through the engine")
             }
 
             Substate::SeekingSoldierGiveAlertingReportToOfficerStart => {
-                self.seeking_soldier_give_alerting_report_to_officer_start(stimulus_type, ctx, tick)
+                unreachable!("alert report conversation must execute through the engine")
             }
 
             Substate::SeekingSoldierGiveAlertingReportToOfficerPoint => {
-                self.seeking_soldier_give_alerting_report_to_officer_point(stimulus_type, ctx)
+                unreachable!("alert report conversation must execute through the engine")
             }
 
             Substate::SeekingSoldierGiveAlertingReportToOfficerEnd => {
-                self.seeking_soldier_give_alerting_report_to_officer_end(env, stimulus_type)
+                unreachable!("alert report conversation must execute through the engine")
             }
 
             Substate::SeekingOfficerWaitForAlertingSoldier => {
@@ -3226,7 +3226,7 @@ impl EnemyAi {
     fn seeking_wait_for_alerting_civilian(
         &mut self,
         env: ThinkEnv<'_>,
-        stimulus: &Stimulus,
+        _stimulus: &Stimulus,
         stimulus_type: StimulusType,
     ) -> bool {
         let ThinkEnv { ctx, .. } = env;
@@ -3254,72 +3254,7 @@ impl EnemyAi {
                 }
             }
             StimulusType::CallReport => {
-                // `get_report_from_civilian`: pull the
-                // civilian's `ReconnaissanceReport`, merge
-                // bodies/charly/type into ours (with the
-                // standard delete/add detectable side
-                // effects via `consider_report_merged`), then
-                // either transition to the alerting state or
-                // fall through to the non-alerting "listen
-                // and return-to-duty" timer.
-                if let StimulusInfo::Hint(ref hint) = stimulus.info {
-                    let my_old_report_type = self.base.my_reconnaissance_report.report_type;
-                    // Read the civilian's report off their
-                    // entity-view snapshot — we can't borrow the
-                    // brain mid-think.
-                    let civ_view = ctx.entity_view(hint.who_tells_me).unwrap_or_else(|| {
-                        panic!(
-                            "soldier {} receiving CALL_REPORT requires civilian {} view",
-                            self.base.me, hint.who_tells_me
-                        )
-                    });
-                    let civ_report = crate::ai::ReconnaissanceReport {
-                        report_type: civ_view.report_type,
-                        seek_position: civ_view.report_seek_position,
-                        seen_bodies: civ_view.report_seen_bodies.clone(),
-                        charly: civ_view.report_charly,
-                        charly_seen: civ_view.report_charly.is_some(),
-                    };
-                    // Merge with all three flags.
-                    self.base.consider_report_merged_at_frame(
-                        &civ_report,
-                        1 | 2 | 4,
-                        ctx.entity_views.as_ref(),
-                        ctx.frame,
-                    );
-
-                    // Alerting transition when the civilian's
-                    // report strictly out-ranks ours and is
-                    // at least Body.
-                    let alerting = civ_report.report_type > my_old_report_type
-                        && civ_report.report_type >= ReportType::Body;
-                    if alerting {
-                        // The original game's civilian-report handling performs
-                        // State change before facing / timer launch. The state change
-                        // cancels the previous substate's timer, so
-                        // launching first would silently discard this
-                        // talk deadline.
-                        self.set_state(
-                            AiState::Seeking,
-                            Substate::SeekingGetAlertingReportFromCivilian,
-                        );
-                        self.base.antagonist = Some(hint.who_tells_me);
-                        self.base.face_entity(hint.who_tells_me, ctx);
-                        self.base.seek_position = civ_report.seek_position;
-                        self.base
-                            .my_reconnaissance_report
-                            .update(civ_report.report_type, civ_report.seek_position);
-                    } else {
-                        // Non-alerting branch — wait out the
-                        // talk timer in
-                        // `SeekingGetReportFromCivilian` then
-                        // returning to duty.
-                        self.set_state(AiState::Seeking, Substate::SeekingGetReportFromCivilian);
-                        self.base.face_entity(self.base.antagonist, ctx);
-                    }
-                    self.base
-                        .launch_timer(combat::STANDARD_TALK_TIME as u32, ctx.frame);
-                }
+                unreachable!("civilian report handoff must execute through the engine")
             }
             _ => {}
         }
@@ -3614,7 +3549,7 @@ impl EnemyAi {
 
     fn seeking_officer_wait_for_instructed_soldier(
         &mut self,
-        stimulus: &Stimulus,
+        _stimulus: &Stimulus,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
         env: ThinkEnv<'_>,
@@ -3690,44 +3625,7 @@ impl EnemyAi {
                 }
             }
             StimulusType::CallReport => {
-                let soldier = match stimulus.info {
-                    StimulusInfo::Human(h) => h.get(),
-                    _ => self
-                        .required(
-                            self.base.antagonist,
-                            "an antagonist",
-                            "receiving an instructed soldier report",
-                        )
-                        .get(),
-                };
-                if !self.get_report_from_soldier(soldier, false, ctx, tick) {
-                    // Nothing special discovered
-                    self.set_state(
-                        AiState::Seeking,
-                        Substate::SeekingOfficerGetReportFromSoldier,
-                    );
-                    self.face_npc(self.base.antagonist, ctx);
-                    self.base.launch_timer(100, ctx.frame);
-                }
-            }
-            _ => {}
-        }
-        false
-    }
-
-    fn seeking_officer_get_report_from_soldier(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> bool {
-        // Officer received report, wrapping up
-        match stimulus_type {
-            StimulusType::CallYourTalk1 => {
-                self.base
-                    .say_with_flags(Remark::OfficerEndsConversation, SpeechFlags::MYTALK_1);
-            }
-            StimulusType::EventTimer | StimulusType::EventMyTalk1 => {
-                self.return_to_duty_default(env);
+                unreachable!("report handoff must execute through the engine")
             }
             _ => {}
         }
@@ -3986,117 +3884,6 @@ impl EnemyAi {
         false
     }
 
-    fn seeking_soldier_return_to_officer(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> bool {
-        let ThinkEnv { ctx, .. } = env;
-        // Soldier returning to officer after search
-        match stimulus_type {
-            StimulusType::EventTimer => {
-                // The original game uses the antagonist reference here. It is not
-                // necessarily a soldier: retained saves can carry a civilian
-                // antagonist while this soldier is returning to the last
-                // known officer position. `camp_soldiers` cannot distinguish
-                // that valid participant from a missing entity.
-                let ant_substate = ctx
-                    .expect_entity_view(
-                        self.base.antagonist,
-                        "soldier-return-to-officer antagonist",
-                    )
-                    .ai_substate;
-                match ant_substate {
-                    Substate::SeekingOfficerWaitForInstructedSoldier
-                    | Substate::SeekingOfficerWaitForInstructedGroup
-                    | Substate::SeekingDetectedCharly => {
-                        self.base.launch_timer(20, ctx.frame);
-                    }
-                    _ => {
-                        // Are we near the officer's last known position?
-                        let dx = ctx.position.x - self.officers_position.x;
-                        let dy = ctx.position.y - self.officers_position.y;
-                        let sq_dist = dx * dx + dy * dy;
-                        if sq_dist < ctx.sq_standard_view_radius {
-                            self.return_to_duty_default(env);
-                        } else {
-                            // Not near enough to know officer left
-                            self.base.launch_timer(20, ctx.frame);
-                        }
-                    }
-                }
-            }
-            StimulusType::EventReachPoint => {
-                let ant_substate = ctx
-                    .expect_entity_view(
-                        self.base.antagonist,
-                        "soldier-return-to-officer antagonist",
-                    )
-                    .ai_substate;
-                match ant_substate {
-                    Substate::SeekingOfficerWaitForInstructedSoldier
-                    | Substate::SeekingOfficerWaitForInstructedGroup => {
-                        let antagonist = self.required(
-                            self.base.antagonist,
-                            "an antagonist",
-                            "starting a report to an officer",
-                        );
-                        self.base.outbox.reentrant.owner_work.push(
-                            crate::ai::AiOwnerWork::BeginSoldierGiveReport {
-                                officer: antagonist.get(),
-                                current_frame: ctx.frame,
-                            },
-                        );
-                    }
-                    _ => {
-                        self.return_to_duty_default(env);
-                    }
-                }
-            }
-            _ => {}
-        }
-        false
-    }
-
-    fn seeking_soldier_give_report_to_officer(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> bool {
-        let ThinkEnv { ctx, .. } = env;
-        // Soldier gives report to officer
-        match stimulus_type {
-            StimulusType::EventMyTalk1 => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "giving a report to an officer",
-                );
-                self.base
-                    .outbox
-                    .reentrant
-                    .cross_npc_actions
-                    .push(CrossNpcAction::SendStimulus {
-                        // Original directly calls
-                        // asks the antagonist to process CALL_YOURTALK_1 with this actor;
-                        // it never retries on the reporting soldier.
-                        fallback_to_sender: None,
-                        to_whole_patrol: false,
-                        target: antagonist.get(),
-                        stimulus_type: StimulusType::CallYourTalk1,
-                        info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
-                    });
-                self.base.launch_timer(20, ctx.frame);
-            }
-            StimulusType::EventTimer => {
-                self.seek_flags = SeekFlags::empty();
-                self.return_to_duty_default(env);
-            }
-            _ => {}
-        }
-        false
-    }
-
     // -------- Officer calls a group --------
 
     fn seeking_officer_call_group(
@@ -4292,29 +4079,14 @@ impl EnemyAi {
     fn seeking_officer_wait_for_instructed_group(
         &mut self,
         env: ThinkEnv<'_>,
-        stimulus: &Stimulus,
+        _stimulus: &Stimulus,
         stimulus_type: StimulusType,
     ) -> bool {
-        let ThinkEnv { ctx, tick, .. } = env;
+        let ThinkEnv { ctx, .. } = env;
         // Officer waits for group to report back.
         match stimulus_type {
             StimulusType::CallReport => {
-                let soldier = match stimulus.info {
-                    StimulusInfo::Human(h) => h.get(),
-                    _ => self
-                        .required(
-                            self.base.antagonist,
-                            "an antagonist",
-                            "receiving an instructed group report",
-                        )
-                        .get(),
-                };
-                if !self.get_report_from_soldier(soldier, true, ctx, tick) {
-                    // Nothing special detected
-                    self.face_npc(soldier, ctx);
-                    self.base
-                        .launch_timer(combat::STANDARD_TALK_TIME as u32, ctx.frame);
-                }
+                unreachable!("report handoff must execute through the engine")
             }
             StimulusType::EventTimer => {
                 // Check if there are still seeking soldiers
@@ -4701,269 +4473,12 @@ impl EnemyAi {
         false
     }
 
-    fn seeking_running_to_officer_seen(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> bool {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Soldier reached officer, starting report
-        match stimulus_type {
-            StimulusType::EventMyTalk0 => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "starting an officer report",
-                );
-                // Forward talk to officer
-                let ant_substate = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get())
-                    .map(|cs| cs.ai_substate);
-                if matches!(
-                    ant_substate,
-                    Some(
-                        Substate::SeekingOfficerWaitForInstructedSoldier
-                            | Substate::SeekingOfficerWaitForAlertingSoldier
-                            | Substate::SeekingDetectedCharly
-                    )
-                ) {
-                    self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::SendStimulus {
-                            fallback_to_sender: None,
-                            to_whole_patrol: false,
-                            target: antagonist.get(),
-                            stimulus_type: StimulusType::CallYourTalk0,
-                            info: StimulusInfo::None,
-                        },
-                    );
-                }
-            }
-            StimulusType::EventTimer => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "waiting during an officer report",
-                );
-                let ant_substate = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get())
-                    .map(|cs| cs.ai_substate);
-                match ant_substate {
-                    Some(
-                        Substate::SeekingOfficerWaitForInstructedSoldier
-                        | Substate::SeekingOfficerWaitForAlertingSoldier
-                        | Substate::SeekingDetectedCharly,
-                    ) => {
-                        self.base.launch_timer(20, ctx.frame);
-                    }
-                    _ => {
-                        self.return_to_duty_default(env);
-                    }
-                }
-            }
-            StimulusType::EventReachPoint => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "reaching an officer to report",
-                );
-                let ant_substate = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get())
-                    .map(|cs| cs.ai_substate);
-                match ant_substate {
-                    Some(
-                        Substate::SeekingOfficerWaitForInstructedSoldier
-                        | Substate::SeekingOfficerWaitForAlertingSoldier
-                        | Substate::SeekingDetectedCharly,
-                    ) => {
-                        self.set_state(
-                            AiState::Seeking,
-                            Substate::SeekingSoldierGiveAlertingReportToOfficerStart,
-                        );
-                        // Say remark based on report type
-                        let speech = SpeechFlags::MYTALK_1 | SpeechFlags::EMERGENCY;
-                        match self.base.my_reconnaissance_report.report_type {
-                            ReportType::Body | ReportType::DeadBody => {
-                                self.base.say_with_flags(Remark::TellsOfficerBody, speech);
-                            }
-                            ReportType::Enemy => {
-                                self.base.say_with_flags(Remark::TellsOfficerEnemy, speech);
-                            }
-                            ReportType::MissedCharly => {
-                                self.base
-                                    .say_with_flags(Remark::TellsOfficerCharlyAway, speech);
-                            }
-                            _ => {
-                                self.base.say_with_flags(Remark::TellsOfficerOther, speech);
-                            }
-                        }
-                        // This launches a 150-tick timer *after* the emergency
-                        // first-talk speech above has fully returned.
-                        // When that speech is rejected -- the
-                        // common case here, because the reporting soldier is
-                        // still blipped
-                        // -- speech-completion notification re-enters the
-                        // first-talk decision tick on this same call stack.
-                        // That nested Think walks the report-start substate
-                        // into ..._POINT and launches its own 100-frame timer
-                        // and only then
-                        // does this statement overwrite it with 150. Rust
-                        // settles speech at the owner return boundary, so the
-                        // timer has to ride the same owner-work FIFO to land
-                        // behind the nested Think instead of ahead of it.
-                        self.base.outbox.reentrant.owner_work.push(
-                            crate::ai::AiOwnerWork::LaunchTimer {
-                                frames: 150,
-                                current_frame: ctx.frame,
-                            },
-                        );
-                    }
-                    _ => {
-                        self.return_to_duty_default(env);
-                    }
-                }
-            }
-            _ => {}
-        }
-        false
-    }
-
-    fn seeking_soldier_give_alerting_report_to_officer_start(
-        &mut self,
-        stimulus_type: StimulusType,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> bool {
-        // Start of alerting report to officer.
-        // Compare our report type vs officer's to decide whether
-        // to point direction (new info) or just end (redundant).
-        if matches!(
-            stimulus_type,
-            StimulusType::EventMyTalk1 | StimulusType::EventTimer
-        ) {
-            let antagonist = self.required(
-                self.base.antagonist,
-                "an antagonist",
-                "giving an alerting report",
-            );
-            let officer_report = tick
-                .camp_soldiers
-                .iter()
-                .find(|cs| cs.handle == antagonist.get())
-                .map(|cs| cs.report_type)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "reporting soldier {} requires officer {} in the camp snapshot",
-                        self.base.me, antagonist
-                    )
-                });
-
-            let point_direction = match self.base.my_reconnaissance_report.report_type {
-                ReportType::Nothing => false,
-                ReportType::Noise => officer_report == ReportType::Nothing,
-                ReportType::Body | ReportType::DeadBody => officer_report <= ReportType::Noise,
-                ReportType::Enemy => officer_report <= ReportType::DeadBody,
-                ReportType::MissedCharly => officer_report == ReportType::Nothing,
-            };
-
-            if point_direction {
-                self.base
-                    .outbox
-                    .reentrant
-                    .cross_npc_actions
-                    .push(CrossNpcAction::SendStimulus {
-                        fallback_to_sender: None,
-                        to_whole_patrol: false,
-                        target: antagonist.get(),
-                        stimulus_type: StimulusType::CallReport,
-                        info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
-                    });
-                // The original game invokes both recipient AI updates before
-                // changing the caller's substate. The officer's
-                // CALL_YOURTALK_1 handling can synchronously call this
-                // soldier back, and that callback must still observe
-                // the report-start substate.
-                self.base.outbox.reentrant.cross_npc_actions.push(
-                    CrossNpcAction::RequestThinkResult {
-                        target: antagonist.get(),
-                        caller: self.base.me,
-                        stimulus_type: StimulusType::CallYourTalk1,
-                        info: StimulusInfo::None,
-                        continuation: ThinkResultContinuation::SoldierFinishedAlertReportStart,
-                    },
-                );
-            } else {
-                self.set_state(
-                    AiState::Seeking,
-                    Substate::SeekingSoldierGiveAlertingReportToOfficerEnd,
-                );
-                self.base
-                    .outbox
-                    .reentrant
-                    .cross_npc_actions
-                    .push(CrossNpcAction::SendStimulus {
-                        fallback_to_sender: None,
-                        to_whole_patrol: false,
-                        target: antagonist.get(),
-                        stimulus_type: StimulusType::CallReport,
-                        info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
-                    });
-                self.base
-                    .launch_timer(combat::STANDARD_TALK_TIME as u32, ctx.frame);
-            }
-        }
-        false
-    }
-
-    fn seeking_soldier_give_alerting_report_to_officer_point(
-        &mut self,
-        stimulus_type: StimulusType,
-        ctx: &AiContext,
-    ) -> bool {
-        // Soldier points to location
-        match stimulus_type {
-            StimulusType::CallYourTalk1 | StimulusType::EventTimer => {
-                self.base.say(Remark::TellsOfficerWhere);
-                self.base.point_to(self.base.seek_position, ctx);
-            }
-            StimulusType::EventDone => {
-                self.set_state(
-                    AiState::Seeking,
-                    Substate::SeekingSoldierGiveAlertingReportToOfficerEnd,
-                );
-                self.face_npc(self.base.antagonist, ctx);
-                self.base
-                    .launch_timer(combat::STANDARD_TALK_TIME as u32, ctx.frame);
-            }
-            _ => {}
-        }
-        false
-    }
-
-    fn seeking_soldier_give_alerting_report_to_officer_end(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> bool {
-        // End of alerting report
-        if stimulus_type == StimulusType::EventTimer {
-            self.seek_flags = SeekFlags::empty();
-            self.return_to_duty_default(env);
-        }
-        false
-    }
-
     // -------- Officer is alerted by soldier --------
 
     fn seeking_officer_wait_for_alerting_soldier(
         &mut self,
         env: ThinkEnv<'_>,
-        stimulus: &Stimulus,
+        _stimulus: &Stimulus,
         stimulus_type: StimulusType,
     ) -> bool {
         let ThinkEnv { ctx, tick, .. } = env;
@@ -4998,26 +4513,7 @@ impl EnemyAi {
                 }
             }
             StimulusType::CallReport => {
-                let soldier = match stimulus.info {
-                    StimulusInfo::Human(h) => h.get(),
-                    _ => self
-                        .required(
-                            self.base.antagonist,
-                            "an antagonist",
-                            "receiving an alerting soldier report",
-                        )
-                        .get(),
-                };
-                if !self.get_report_from_soldier(soldier, false, ctx, tick) {
-                    // Nothing really alerting
-                    self.set_state(
-                        AiState::Seeking,
-                        Substate::SeekingOfficerGetReportFromSoldier,
-                    );
-                    self.face_npc(self.base.antagonist, ctx);
-                    self.base
-                        .launch_timer(combat::STANDARD_TALK_TIME as u32, ctx.frame);
-                }
+                unreachable!("report handoff must execute through the engine")
             }
             _ => {}
         }
@@ -5032,28 +4528,10 @@ impl EnemyAi {
         // Officer processes alerting report
         match stimulus_type {
             StimulusType::CallYourTalk1 => {
-                self.base.say_with_flags(
-                    Remark::OfficerAsksWhere,
-                    SpeechFlags::MYTALK_1 | SpeechFlags::EMERGENCY,
-                );
+                unreachable!("alert report reply must execute through the engine")
             }
             StimulusType::EventMyTalk1 => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "answering an alerting soldier",
-                );
-                self.base
-                    .outbox
-                    .reentrant
-                    .cross_npc_actions
-                    .push(CrossNpcAction::SendStimulus {
-                        fallback_to_sender: None,
-                        to_whole_patrol: false,
-                        target: antagonist.get(),
-                        stimulus_type: StimulusType::CallYourTalk1,
-                        info: StimulusInfo::None,
-                    });
+                unreachable!("alert report reply must execute through the engine")
             }
             StimulusType::EventTimer
                 if !self.alert_soldiers(

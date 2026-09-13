@@ -67,10 +67,6 @@ fn object_view(object_type: ObjectType) -> AiEntityView {
         path_forward_movement: true,
         patrol_hiking_path_index: None,
         interesting_object: None,
-        report_type: ReportType::Nothing,
-        report_seek_position: Position::default(),
-        report_seen_bodies: Vec::new(),
-        report_charly: None,
     }
 }
 

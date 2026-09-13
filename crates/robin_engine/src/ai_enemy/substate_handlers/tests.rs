@@ -600,59 +600,6 @@ fn brawl_hitting_stages_panic_then_officer_then_tail() {
 }
 
 #[test]
-fn returning_soldier_with_far_civilian_antagonist_keeps_route_and_rearms_timer() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(195);
-    ai.base.current_state = AiState::Seeking;
-    ai.base.current_substate = Substate::SeekingSoldierReturnToOfficer;
-    ai.base.antagonist = Some(AiEntityHandle::new(85));
-    ai.officers_position = Position {
-        x: 1_503.635_1,
-        y: 1_097.013_8,
-        ..Position::default()
-    };
-
-    let mut antagonist = civilian_view(
-        85,
-        Position {
-            x: 2_100.0,
-            y: 1_800.0,
-            ..Position::default()
-        },
-    );
-    antagonist.ai_state = AiState::Fleeing;
-    antagonist.ai_substate = Substate::FleeingHiding;
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(85, antagonist);
-    let ctx = AiContext {
-        frame: 14_748,
-        position: Position {
-            x: 2_006.434_9,
-            y: 1_735.375_2,
-            ..Position::default()
-        },
-        sq_standard_view_radius: 300.0 * 300.0,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    ai.seeking_soldier_return_to_officer(
-        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-        StimulusType::EventTimer,
-    );
-
-    assert_eq!(ai.base.current_state, AiState::Seeking);
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::SeekingSoldierReturnToOfficer
-    );
-    assert!(ai.base.timer_is_running);
-    assert_eq!(ai.base.when_does_timer_ring, 14_768);
-    assert!(ai.base.outbox.actor.orders.is_empty());
-    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
-}
-
-#[test]
 fn civilian_report_alert_officer_route_failure_seeks_retained_report_position() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(243);
@@ -1651,10 +1598,6 @@ fn officer_wait_missed_soldier_does_not_relaunch_timer() {
         script_locked: false,
         ai_lock_frozen: false,
         layer: 0,
-        report_type: ReportType::Nothing,
-        report_seek_position: Position::default(),
-        report_seen_bodies: Vec::new(),
-        report_charly: None,
         alert_soldiers_point: Position::default(),
         patrol_chief: None,
         antagonist: Some(AiEntityHandle::new(1)),
@@ -2057,10 +2000,6 @@ fn reaching_near_officer_redispatches_reachpoint_synchronously() {
         script_locked: false,
         ai_lock_frozen: false,
         layer: 0,
-        report_type: ReportType::Nothing,
-        report_seek_position: Position::default(),
-        report_seen_bodies: Vec::new(),
-        report_charly: None,
         alert_soldiers_point: Position::default(),
         patrol_chief: None,
         antagonist: None,
@@ -2228,10 +2167,6 @@ fn alert_candidate(handle: u32, position: Position) -> crate::ai_enemy::CampSold
         script_locked: false,
         ai_lock_frozen: false,
         layer: 0,
-        report_type: ReportType::Nothing,
-        report_seek_position: Position::default(),
-        report_seen_bodies: Vec::new(),
-        report_charly: None,
         alert_soldiers_point: Position::default(),
         patrol_chief: None,
         antagonist: None,
@@ -2638,10 +2573,6 @@ fn instructed_soldier_adds_officers_selected_body_after_speech() {
         script_locked: false,
         ai_lock_frozen: false,
         layer: 0,
-        report_type: ReportType::Nothing,
-        report_seek_position: Position::default(),
-        report_seen_bodies: Vec::new(),
-        report_charly: None,
         alert_soldiers_point: alert_point,
         patrol_chief: None,
         antagonist: Some(AiEntityHandle::new(89)),
@@ -3113,30 +3044,6 @@ fn shooting_path_final_sprint_requires_its_reserved_point() {
             None,
         ),
         &Stimulus::new(StimulusType::EventReachPoint),
-        &mut AiGlobalState::default(),
-    );
-}
-
-#[test]
-#[should_panic(expected = "receiving CALL_REPORT requires civilian 42 view")]
-fn civilian_report_does_not_fabricate_enemy_data_when_sender_is_missing() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(1);
-    ai.set_state(AiState::Seeking, Substate::SeekingWaitForAlertingCivilian);
-    let mut stimulus = Stimulus::new(StimulusType::CallReport);
-    stimulus.info = StimulusInfo::Hint(Hint {
-        seek_point: Position::default(),
-        seek_flags: 0,
-        who_tells_me: AiEntityHandle::new(42),
-    });
-    ai.think_expected_event(
-        ThinkEnv::new(
-            &sim,
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
-        ),
-        &stimulus,
         &mut AiGlobalState::default(),
     );
 }

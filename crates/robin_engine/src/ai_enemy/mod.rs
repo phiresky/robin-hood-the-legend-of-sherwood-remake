@@ -2816,17 +2816,12 @@ impl EnemyAi {
         // hoisted: the early returns above never reach the common tail and
         // must leave the report standing.
         self.base.my_reconnaissance_report.reset();
-        let owner_boundary_positions = Vec::new();
         let continuation = if (100..111).contains(&self.base.think_recursion_depth) {
-            AiOwnerWork::ResumeHighRecursionReturnToDutyAfterPatrolInit {
-                flags,
-                owner_boundary_positions,
-            }
+            AiOwnerWork::ResumeHighRecursionReturnToDutyAfterPatrolInit { flags }
         } else {
             AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
                 flags,
                 defer_clear_patrol_close_post: false,
-                owner_boundary_positions,
             }
         };
         self.base.outbox.reentrant.owner_work.push(continuation);

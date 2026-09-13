@@ -14,6 +14,10 @@ use super::{
     },
 };
 
+const NATIVE_SNAPSHOT_MAGIC: &[u8; 4] = b"RHNS";
+const NATIVE_SNAPSHOT_VERSION: u32 = 1;
+const NATIVE_SNAPSHOT_HEADER_BYTES: usize = 8;
+
 /// Native codec form of the current nested [`EngineInner`] snapshot.
 ///
 /// This remains separate from the persisted-save projection because native
@@ -237,7 +241,7 @@ pub(super) fn encode_native_engine_inner(inner: &EngineInner) -> Vec<u8> {
     let scripts = bitcode::encode(&inner.scripts);
     let players = bitcode::encode(&inner.players);
     let feedback = bitcode::encode(&inner.feedback);
-    bitcode::encode(&NativeEngineSnapshot {
+    let snapshot = NativeEngineSnapshot {
         mission_domain,
         control,
         ai,
@@ -247,7 +251,14 @@ pub(super) fn encode_native_engine_inner(inner: &EngineInner) -> Vec<u8> {
         scripts,
         players,
         feedback,
-    })
+    };
+    let mut buffer = bitcode::Buffer::new();
+    let payload = buffer.encode(&snapshot);
+    let mut bytes = Vec::with_capacity(NATIVE_SNAPSHOT_HEADER_BYTES + payload.len());
+    bytes.extend_from_slice(NATIVE_SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&NATIVE_SNAPSHOT_VERSION.to_le_bytes());
+    bytes.extend_from_slice(payload);
+    bytes
 }
 
 fn encode_native_world(world: &WorldState) -> Vec<u8> {
@@ -294,7 +305,24 @@ fn encode_native_entity(entity: &crate::element::Entity) -> NativeEntitySnapshot
 
 /// Decode the chunked native wire layout without implementing
 /// `bitcode::Decode` for the public read-only projection.
-pub(super) fn decode_native_engine_inner(bytes: &[u8]) -> Result<EngineInner, bitcode::Error> {
+pub(super) fn decode_native_engine_inner(bytes: &[u8]) -> Result<EngineInner, String> {
+    let header = bytes
+        .get(..NATIVE_SNAPSHOT_HEADER_BYTES)
+        .ok_or("native snapshot has a truncated header")?;
+    if &header[..4] != NATIVE_SNAPSHOT_MAGIC {
+        return Err("native snapshot has invalid magic".into());
+    }
+    let version = u32::from_le_bytes(header[4..8].try_into().expect("fixed version field"));
+    if version != NATIVE_SNAPSHOT_VERSION {
+        return Err(format!(
+            "unsupported native snapshot version {version}; expected {NATIVE_SNAPSHOT_VERSION}"
+        ));
+    }
+    decode_native_engine_payload(&bytes[NATIVE_SNAPSHOT_HEADER_BYTES..])
+        .map_err(|error| error.to_string())
+}
+
+fn decode_native_engine_payload(bytes: &[u8]) -> Result<EngineInner, bitcode::Error> {
     let snapshot = bitcode::decode::<NativeEngineSnapshot>(bytes)?;
     Ok(FlatEngineSnapshot {
         mission_domain: bitcode::decode(&snapshot.mission_domain)?,

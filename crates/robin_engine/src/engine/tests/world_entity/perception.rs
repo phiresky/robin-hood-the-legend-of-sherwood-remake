@@ -2803,20 +2803,21 @@ fn review2_alert_result_and_report_finish_before_next_soldier_call() {
                 failure: AlertSoldiersFailureContinuation::None,
             },
         });
-    engine
+    let second = engine
         .get_entity_mut(second_id)
         .and_then(Entity::ai_controller_mut)
-        .expect("review2 second alerted soldier retains AI")
+        .expect("review2 second alerted soldier retains AI");
+    second.my_reconnaissance_report = ReconnaissanceReport {
+        report_type: ReportType::Enemy,
+        seek_position: sibling_position,
+        ..Default::default()
+    };
+    second
         .outbox
         .reentrant
         .cross_npc_actions
         .push(CrossNpcAction::ConsiderReport {
             target: soldier_id.index(),
-            report: ReconnaissanceReport {
-                report_type: ReportType::Enemy,
-                seek_position: sibling_position,
-                ..Default::default()
-            },
             flags: crate::ai_enemy::ReportUpdateFlags::UPDATE_TYPE.bits(),
         });
 

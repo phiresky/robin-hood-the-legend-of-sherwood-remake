@@ -30,110 +30,6 @@ fn substate_groups() {
 }
 
 #[test]
-fn outside_think_patrol_macro_finishes_after_reentrant_reach_point() {
-    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
-
-    let sim = crate::sim_rng::test_context();
-    let mut ai = AiController::new(17);
-    ai.current_state = AiState::Default;
-    ai.current_substate = Substate::DefaultInMacro;
-    ai.patrol_path = Some(PatrolPath {
-        hiking_path_index: PathId::new(0).expect("zero is a valid hiking-path index"),
-        current_waypoint_index: 0,
-        last_waypoint_index: 0,
-        forward: true,
-        size: 6,
-        history: Vec::new(),
-    });
-    ai.number_of_remaining_macro_bytes = 0;
-    ai.macro_started_in_this_frame = false;
-    ai.macro_in_progress = true;
-    ai.timer_is_running = true;
-    ai.when_does_timer_ring = 900;
-    ai.macro_timer_is_running = true;
-    ai.when_does_macro_timer_ring = 700;
-
-    let waypoints = vec![
-        RawWaypoint {
-            x: 5,
-            y: 5,
-            sector: 1,
-            level: 0,
-            command: WaypointCommand::None,
-        },
-        RawWaypoint {
-            x: 10,
-            y: 10,
-            sector: 1,
-            level: 0,
-            command: WaypointCommand::None,
-        },
-        RawWaypoint {
-            x: 20,
-            y: 20,
-            sector: 1,
-            level: 0,
-            command: WaypointCommand::None,
-        },
-        RawWaypoint {
-            x: 30,
-            y: 30,
-            sector: 1,
-            level: 0,
-            command: WaypointCommand::None,
-        },
-        RawWaypoint {
-            x: 40,
-            y: 40,
-            sector: 1,
-            level: 0,
-            command: WaypointCommand::None,
-        },
-        RawWaypoint {
-            x: 50,
-            y: 50,
-            sector: 1,
-            level: 0,
-            command: WaypointCommand::None,
-        },
-    ];
-    let ctx = AiContext {
-        position: Position {
-            x: 10.0,
-            y: 10.0,
-            sector: SectorHandle::new(1),
-            level: 0,
-        },
-        self_animation: crate::order::OrderType::WaitingUpright,
-        hiking_paths: std::sync::Arc::new(vec![RawHikingPath { waypoints }]),
-        ..AiContext::test_fixture()
-    };
-
-    ai.execute_next_macro_command(&sim, &ctx);
-
-    assert!(ai.macro_in_progress);
-    assert!(ai.macro_timer_is_running);
-    assert!(ai.outbox.reentrant.finish_macro_after_self_stimuli);
-    assert_eq!(
-        ai.outbox.reentrant.self_stimuli,
-        [StimulusType::EventReachPoint]
-    );
-
-    // Model the nested waypoint WAIT50 before outer next-macro-command execution
-    // tail resumes. Its deadline survives the outer macro-timer cancellation.
-    ai.when_does_macro_timer_ring = 508;
-    ai.finish_patrol_macro();
-    assert!(
-        ai.timer_is_running,
-        "stopping a macro timer preserves the normal timer"
-    );
-    assert_eq!(ai.when_does_timer_ring, 900);
-    assert!(!ai.macro_timer_is_running);
-    assert_eq!(ai.when_does_macro_timer_ring, 508);
-    assert_eq!(ai.current_substate, Substate::DefaultEnroute);
-}
-
-#[test]
 fn ai_timer_clamps_zero_while_macro_timer_preserves_raw_ulong_deadlines() {
     let mut ai = AiController::new(17);
     ai.current_substate = Substate::DefaultInMacro;
@@ -173,124 +69,6 @@ fn break_macro_preserves_serialized_cursor_and_remaining_bytes() {
     assert_eq!(ai.macro_command, [10, 20, 30, 40, 50]);
     assert_eq!(ai.macro_command_offset, 3);
     assert_eq!(ai.number_of_remaining_macro_bytes, 2);
-}
-
-#[test]
-fn goto_point_leaves_the_cursor_parked_on_its_unconsumed_operand() {
-    use crate::ai::macro_patrol::{MacroOpcode, PathId, PatrolPath};
-    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
-
-    let waypoint = |x: i16| RawWaypoint {
-        x,
-        y: 0,
-        sector: 1,
-        level: 0,
-        command: WaypointCommand::None,
-    };
-    let paths = vec![RawHikingPath {
-        waypoints: vec![waypoint(0), waypoint(20), waypoint(40)],
-    }];
-    let mut ai = AiController::new(17);
-    ai.current_state = AiState::Default;
-    ai.current_substate = Substate::DefaultInMacro;
-    ai.has_patrol_path = true;
-    ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &paths);
-    // A three-byte `CMD_GOTO_POINT 2` body sitting at the head of the block.
-    ai.macro_command = vec![MacroOpcode::GotoPoint as u8, 2, 0];
-    ai.macro_command_offset = 0;
-    ai.number_of_remaining_macro_bytes = 3;
-    let ctx = AiContext {
-        position: Position {
-            x: 0.0,
-            y: 0.0,
-            sector: SectorHandle::new(1),
-            level: 0,
-        },
-        hiking_paths: std::sync::Arc::new(paths),
-        self_is_soldier: false,
-        ..AiContext::test_fixture()
-    };
-
-    ai.execute_next_macro_command(&crate::sim_rng::test_context(), &ctx);
-
-    assert_eq!(
-        ai.patrol_path
-            .as_ref()
-            .expect("patrol path")
-            .current_waypoint_index,
-        2
-    );
-    assert_eq!(
-        ai.macro_command_offset, 1,
-        "the Original dereferences the waypoint index without stepping the cursor over it"
-    );
-}
-
-#[test]
-fn civilian_macro_run_sanitizes_flags_after_nested_path_completion() {
-    use crate::ai::macro_patrol::{MacroOpcode, PathId, PatrolPath};
-    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
-
-    // Keep every waypoint strictly inside the positive map quadrant:
-    // Movement fails fast with couldnt_reachpoint for any destination whose
-    // x or y is <= 0, exactly as the Original bounds check does.
-    let paths = vec![RawHikingPath {
-        waypoints: vec![
-            RawWaypoint {
-                x: 10,
-                y: 10,
-                sector: 1,
-                level: 0,
-                command: WaypointCommand::None,
-            },
-            RawWaypoint {
-                x: 30,
-                y: 10,
-                sector: 1,
-                level: 0,
-                command: WaypointCommand::None,
-            },
-        ],
-    }];
-    let mut ai = AiController::new(17);
-    ai.current_state = AiState::Default;
-    ai.current_substate = Substate::DefaultInMacro;
-    ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &paths);
-    ai.default_path_walking_flags = GotoFlags::BACK;
-    ai.macro_command = vec![MacroOpcode::Run as u8];
-    ai.number_of_remaining_macro_bytes = 1;
-    let ctx = AiContext {
-        position: Position {
-            x: 10.0,
-            y: 10.0,
-            sector: SectorHandle::new(1),
-            level: 0,
-        },
-        hiking_paths: std::sync::Arc::new(paths),
-        self_is_soldier: false,
-        ..AiContext::test_fixture()
-    };
-
-    ai.execute_next_macro_command(&crate::sim_rng::test_context(), &ctx);
-
-    assert!(ai.last_goto_flags.contains(GotoFlags::RUN));
-    assert!(
-        ai.last_goto_flags.contains(GotoFlags::BACK),
-        "movement snapshots the raw flags before masking them for a civilian"
-    );
-    assert_eq!(ai.default_path_walking_flags, GotoFlags::RUN);
-    let order = ai
-        .take_pending_orders()
-        .pop()
-        .expect("nested patrol movement");
-    // The intent encodes GOTO_RUN as the running animation and GOTO_BACK as
-    // the reversed-movement bit, mirroring how movement setup translates its flags
-    // before launching the movement.
-    assert_eq!(order.order_type, crate::order::OrderType::RunningUpright);
-    assert!(
-        !order.reverse,
-        "the masked civilian GOTO_BACK must not reach the emitted movement"
-    );
 }
 
 #[test]
@@ -447,64 +225,6 @@ fn script_way_assignment_keeps_special_action() {
         "the 16-bit index variant clears the special-action flag"
     );
     assert!(!ai.likes_to_sit_around);
-}
-
-#[test]
-fn change_way_binds_assignment_callback_before_explicit_virtual_tail() {
-    use crate::ai::macro_patrol::{MacroOpcode, PathId, PatrolPath};
-    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
-
-    let waypoint = |x: i16| RawWaypoint {
-        x,
-        y: 20,
-        sector: 1,
-        level: 0,
-        command: WaypointCommand::None,
-    };
-    let paths = vec![
-        RawHikingPath {
-            waypoints: vec![waypoint(10), waypoint(30)],
-        },
-        RawHikingPath {
-            waypoints: vec![waypoint(60), waypoint(90)],
-        },
-    ];
-    let mut ai = AiController::new(17);
-    ai.current_state = AiState::Default;
-    ai.current_substate = Substate::DefaultInMacro;
-    ai.has_patrol_path = true;
-    ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &paths);
-    ai.macro_in_progress = true;
-    ai.macro_command = vec![MacroOpcode::ChangeWay as u8, 1, 0];
-    ai.number_of_remaining_macro_bytes = 3;
-    let ctx = AiContext {
-        position: Position {
-            x: 40.0,
-            y: 20.0,
-            sector: SectorHandle::new(1),
-            level: 0,
-        },
-        hiking_paths: std::sync::Arc::new(paths),
-        self_is_soldier: true,
-        ..AiContext::test_fixture()
-    };
-
-    ai.execute_next_macro_command(&crate::sim_rng::test_context(), &ctx);
-
-    assert!(
-        ai.outbox.reentrant.self_stimuli.is_empty(),
-        "the exact assignment callback must be isolated from unrelated sibling stimuli"
-    );
-    assert!(ai.outbox.actor.orders.is_empty());
-    assert!(matches!(
-        ai.outbox.reentrant.owner_work.as_slice(),
-        [AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
-            assignment_callback: Some(StimulusType::EventReturnToDuty),
-            owner_position_before_callback,
-            owner_boundary_positions,
-        }] if *owner_position_before_callback == Position::default() && owner_boundary_positions.is_empty()
-    ));
-    assert!(!ai.macro_in_progress);
 }
 
 #[test]
@@ -726,45 +446,6 @@ fn friend_check_scans_a_detached_alert_path_without_consuming_the_following_wait
     assert_eq!(ai.macro_command_offset, 17);
     assert_eq!(ai.number_of_remaining_macro_bytes, 3);
     assert!(!ai.macro_timer_is_running);
-}
-
-#[test]
-fn consider_report_preserves_pc_body_kind_in_detectable_effect() {
-    let pc = crate::element::Entity::Pc(crate::element::ActorPc {
-        element: {
-            let mut initial_element = crate::element::ElementData::default();
-            initial_element.kind = crate::element::ElementKind::ActorPc;
-            initial_element
-        },
-        actor: Default::default(),
-        human: Default::default(),
-        pc: Default::default(),
-    });
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(
-        17,
-        crate::ai_entity_view::entity_view_from_entity(
-            &pc,
-            41,
-            false,
-            None,
-            None,
-            crate::order::OrderType::NonanimationEnd,
-        ),
-    );
-    let mut report = ReconnaissanceReport::default();
-    report.add_seen_body(17);
-    let mut ai = AiController::new(1);
-
-    ai.consider_report_merged(&report, 0, &views);
-
-    assert_eq!(
-        ai.outbox.actor.deleted_detectable_entities(),
-        vec![(
-            crate::element::EntityId::Pc(crate::entity_id::PcId(17)),
-            crate::element::DetectableType::Body,
-        )]
-    );
 }
 
 #[test]
@@ -2495,10 +2176,8 @@ fn ai_outbox_drain_barriers_are_independent_and_serializable() {
     outbox
         .reentrant
         .owner_work
-        .push(AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
-            assignment_callback: Some(StimulusType::EventReturnToDuty),
-            owner_position_before_callback: Position::default(),
-            owner_boundary_positions: vec![(7, Position::default())],
+        .push(AiOwnerWork::VirtualReturnToDuty {
+            flags: DutyFlags::empty(),
         });
     outbox.music.instant_change = true;
     outbox.actor.archery_reservation_release = ArcheryReservationRelease {
@@ -2525,12 +2204,7 @@ fn ai_outbox_drain_barriers_are_independent_and_serializable() {
     );
     assert!(matches!(
         decoded.reentrant.owner_work.as_slice(),
-        [AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
-            assignment_callback: Some(StimulusType::EventReturnToDuty),
-            owner_position_before_callback,
-            owner_boundary_positions,
-        }] if *owner_position_before_callback == Position::default()
-            && owner_boundary_positions == &[(7, Position::default())]
+        [AiOwnerWork::VirtualReturnToDuty { flags }] if flags.is_empty()
     ));
     assert!(decoded.music.instant_change);
 

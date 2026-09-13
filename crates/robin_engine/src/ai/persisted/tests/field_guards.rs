@@ -242,7 +242,6 @@ fn classify_ai_reentrant_outbox(value: &AiReentrantOutbox) {
                 cross_npc_actions,
                 // Persisted; nested `QueuedSelfStimulus::origin` is skipped.
                 self_stimuli,
-                finish_macro_after_self_stimuli,
                 owner_work,
                 reconsider_approach_completion_pending,
                 reconsider_approach_replaced_path_waiter,

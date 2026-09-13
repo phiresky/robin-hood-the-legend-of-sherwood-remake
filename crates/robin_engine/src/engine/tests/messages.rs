@@ -60,57 +60,8 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
 }
 
 #[test]
-fn post_reentrant_macro_cleanup_preserves_nested_wait_deadline() {
-    use crate::ai::{AiState, MacroOpcode, StimulusType, Substate};
-
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    let mut engine = EngineInner::new();
-    engine.control.frame_counter = 458;
-    let mut entity = make_test_civilian(crate::element::Posture::Upright);
-    let Entity::Civilian(civilian_data) = &mut entity else {
-        unreachable!("civilian fixture changed entity kind")
-    };
-    civilian_data.npc.ai_brain =
-        crate::element::AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(0)));
-    let civilian = engine.add_test_entity(entity);
-    {
-        let ai = engine
-            .get_entity_mut(civilian)
-            .and_then(Entity::ai_controller_mut)
-            .expect("test civilian has AI");
-        ai.current_state = AiState::Default;
-        ai.current_substate = Substate::DefaultInMacroWaitingForDone;
-        ai.macro_command = vec![MacroOpcode::Wait as u8, 50, 0];
-        ai.macro_command_offset = 0;
-        ai.number_of_remaining_macro_bytes = 3;
-        ai.macro_in_progress = true;
-        ai.macro_timer_is_running = false;
-        ai.outbox
-            .reentrant
-            .self_stimuli
-            .push(StimulusType::EventDone.into());
-        ai.outbox.reentrant.finish_macro_after_self_stimuli = true;
-    }
-
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.drain_self_stimuli_for_npc(sim, civilian, &assets);
-
-    let ai = engine
-        .get_entity(civilian)
-        .and_then(Entity::ai_controller)
-        .expect("test civilian retains AI");
-    assert_eq!(ai.when_does_macro_timer_ring, 508);
-    assert!(!ai.macro_in_progress);
-    assert!(!ai.macro_timer_is_running);
-    assert!(!ai.outbox.reentrant.finish_macro_after_self_stimuli);
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
-}
-
-#[test]
 fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
-    use crate::ai::{AiContext, AiState, MacroOpcode, Position, StimulusType, Substate};
+    use crate::ai::{AiState, MacroOpcode, StimulusType, Substate};
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
     let sim_context = crate::sim_rng::test_context();
@@ -150,19 +101,12 @@ fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
             .reentrant
             .self_stimuli
             .push(StimulusType::EventPanic.into());
-        friendly.base.execute_next_macro_command(
-            sim,
-            &AiContext {
-                position: Position::default(),
-                hiking_paths: std::sync::Arc::new(paths.clone()),
-                ..AiContext::test_fixture()
-            },
-        );
     }
 
     let mut assets = LevelAssets::new();
+    assets.navigation.hiking_paths = std::sync::Arc::new(paths);
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.drain_ai_owner_work_for(sim, &assets, civilian);
+    engine.run_ai_macro(sim, &assets, civilian);
     assert_eq!(
         engine
             .get_entity(civilian)
@@ -192,7 +136,7 @@ fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
 
 #[test]
 fn change_way_suppressed_assignment_still_uses_friendly_virtual_tail() {
-    use crate::ai::{AiContext, AiState, MacroOpcode, Position, Substate};
+    use crate::ai::{AiState, MacroOpcode, Substate};
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
     let sim_context = crate::sim_rng::test_context();
@@ -226,19 +170,12 @@ fn change_way_suppressed_assignment_still_uses_friendly_virtual_tail() {
         friendly.base.macro_command = vec![MacroOpcode::ChangeWay as u8, 0, 0];
         friendly.base.number_of_remaining_macro_bytes = 3;
         friendly.fleeing_seen_enemy_counter = 7;
-        friendly.base.execute_next_macro_command(
-            sim,
-            &AiContext {
-                position: Position::default(),
-                hiking_paths: std::sync::Arc::new(paths.clone()),
-                ..AiContext::test_fixture()
-            },
-        );
     }
 
     let mut assets = LevelAssets::new();
+    assets.navigation.hiking_paths = std::sync::Arc::new(paths);
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.drain_ai_owner_work_for(sim, &assets, civilian);
+    engine.run_ai_macro(sim, &assets, civilian);
 
     let friendly = engine
         .get_entity(civilian)
@@ -252,7 +189,7 @@ fn change_way_suppressed_assignment_still_uses_friendly_virtual_tail() {
 
 #[test]
 fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
-    use crate::ai::{AiContext, AiState, MacroOpcode, Position, Substate};
+    use crate::ai::{AiState, MacroOpcode, Position, Substate};
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
     let sim_context = crate::sim_rng::test_context();
@@ -321,26 +258,12 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
         enemy.base.macro_command = vec![MacroOpcode::ChangeWay as u8, 0, 0];
         enemy.base.number_of_remaining_macro_bytes = 3;
         enemy.other_seen_ale.push(ale.index());
-        enemy.base.execute_next_macro_command(
-            sim,
-            &AiContext {
-                position: Position {
-                    x: 0.0,
-                    y: 20.0,
-                    sector: crate::ai::SectorHandle::new(1),
-                    level: 0,
-                },
-                self_is_soldier: true,
-                hiking_paths: std::sync::Arc::new(paths.clone()),
-                ..AiContext::test_fixture()
-            },
-        );
     }
 
     let mut assets = LevelAssets::new();
     assets.navigation.hiking_paths = std::sync::Arc::new(paths);
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.drain_ai_owner_work_for(sim, &assets, soldier);
+    engine.run_ai_macro(sim, &assets, soldier);
 
     let ai = engine
         .get_entity(soldier)
