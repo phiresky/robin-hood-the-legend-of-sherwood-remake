@@ -95,6 +95,14 @@ struct LiftPreflight {
 
 use crate::gate::lift_endpoint_door_indices;
 
+/// Light-sector registration facts consumed by the shadow-centroid pass of
+/// `register_motion_sectors`.
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct MotionLightSectors {
+    light_added: usize,
+    runtime_switchable: bool,
+}
+
 #[derive(
     Clone, Debug, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
 )]
@@ -2745,6 +2753,47 @@ impl EngineInner {
         // sector in the grid, and each obstacle becomes MOTION (without
         // AREA). This enables map-space and screen-space sector queries.
         {
+            let (sector_number, area_flat_idx) =
+                self.register_motion_area_and_obstacle_sectors(assets, motion_data);
+            self.apply_motion_lift_types(lifts);
+            let sector_number =
+                self.register_building_and_out_of_map_sectors(staging, sector_number);
+            let (sector_number, lights) =
+                self.register_light_shadow_sectors(assets, staging, sector_number);
+            self.initialize_shadow_centroids(assets, lights);
+
+            tracing::info!(
+                "Registered {} grid sectors ({} motion areas + obstacles, {} area-only)",
+                self.world.fast_grid.level.sectors.len(),
+                i16::from(sector_number),
+                area_flat_idx,
+            );
+        }
+
+        tracing::info!(
+            "Motion initialized: {} layers, {} grid lines, {} path nodes, {} path links, {} pf sectors",
+            motion_data.layers.len(),
+            self.world.fast_grid.level.lines.len(),
+            assets.navigation.pathfinder_graph.nodes.len(),
+            assets.navigation.pathfinder_graph.static_data.links.len(),
+            assets
+                .navigation
+                .pathfinder_graph
+                .static_data
+                .sector_conversion
+                .len(),
+        );
+    }
+
+    /// Register every motion-area polygon and its obstacles as fast-grid
+    /// sectors and bind the obstacles to the pathfinder. Returns the next
+    /// free sector number and the area-only count.
+    fn register_motion_area_and_obstacle_sectors(
+        &mut self,
+        assets: &LevelAssets,
+        motion_data: &crate::level_data::RawMotionData,
+    ) -> (crate::sector::SectorNumber, u16) {
+        {
             use crate::sector::SectorType;
 
             let mut sector_number = crate::sector::SectorNumber::new(0);
@@ -2865,6 +2914,14 @@ impl EngineInner {
                 assets.navigation.pathfinder_graph.as_ref(),
                 std::sync::Arc::make_mut(&mut self.world.fast_grid),
             );
+            (sector_number, area_flat_idx)
+        }
+    }
+
+    /// Apply `RawLift` lift types to the registered motion-area sectors.
+    fn apply_motion_lift_types(&mut self, lifts: &[crate::level_data::RawLift]) {
+        {
+            use crate::sector::SectorType;
 
             // ── Apply lift_type from RawLift data to grid sectors ──
             //
@@ -2925,6 +2982,18 @@ impl EngineInner {
                     }
                 }
             }
+        }
+    }
+
+    /// Register the building sectors and the out-of-map reinforcement-gate
+    /// sector. Returns the next free sector number.
+    fn register_building_and_out_of_map_sectors(
+        &mut self,
+        staging: &mut LevelLoadStaging,
+        mut sector_number: crate::sector::SectorNumber,
+    ) -> crate::sector::SectorNumber {
+        {
+            use crate::sector::SectorType;
 
             // ── Building sectors ──
             //
@@ -3009,6 +3078,20 @@ impl EngineInner {
                 },
                 special_layer,
             );
+            sector_number
+        }
+    }
+
+    /// Register raw light sectors as SHADOW grid sectors. Returns the next
+    /// free sector number and the facts the shadow-centroid pass needs.
+    fn register_light_shadow_sectors(
+        &mut self,
+        assets: &mut LevelAssets,
+        staging: &mut LevelLoadStaging,
+        mut sector_number: crate::sector::SectorNumber,
+    ) -> (crate::sector::SectorNumber, MotionLightSectors) {
+        {
+            use crate::sector::SectorType;
 
             // ── Light / shadow sectors ──
             //
@@ -3149,7 +3232,24 @@ impl EngineInner {
                     runtime_switchable,
                 );
             }
+            (
+                sector_number,
+                MotionLightSectors {
+                    light_added,
+                    runtime_switchable,
+                },
+            )
+        }
+    }
 
+    /// Shadow centroid + radius data for runtime-switchable or NIGHT/FOG
+    /// ambience.
+    fn initialize_shadow_centroids(&mut self, assets: &LevelAssets, lights: MotionLightSectors) {
+        let MotionLightSectors {
+            light_added,
+            runtime_switchable,
+        } = lights;
+        {
             // ── Shadow centroid + radius post-load (NIGHT/FOG only) ──
             //
             // For each SHADOW sector, when ambience is NIGHT or FOG,
@@ -3223,28 +3323,7 @@ impl EngineInner {
                     self.world.fast_grid.level.shadow_data.len(),
                 );
             }
-
-            tracing::info!(
-                "Registered {} grid sectors ({} motion areas + obstacles, {} area-only)",
-                self.world.fast_grid.level.sectors.len(),
-                i16::from(sector_number),
-                area_flat_idx,
-            );
         }
-
-        tracing::info!(
-            "Motion initialized: {} layers, {} grid lines, {} path nodes, {} path links, {} pf sectors",
-            motion_data.layers.len(),
-            self.world.fast_grid.level.lines.len(),
-            assets.navigation.pathfinder_graph.nodes.len(),
-            assets.navigation.pathfinder_graph.static_data.links.len(),
-            assets
-                .navigation
-                .pathfinder_graph
-                .static_data
-                .sector_conversion
-                .len(),
-        );
     }
 
     fn initialize_motion_jump_zones(&mut self, staging: &mut LevelLoadStaging) {
