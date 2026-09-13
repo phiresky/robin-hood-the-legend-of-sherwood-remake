@@ -1,0 +1,20 @@
+[package]
+name = "robin_legacy_save"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+robin_data_io.workspace = true
+robin_script_types.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
+num_enum = "0.7"
+
+[dev-dependencies]
+tempfile.workspace = true
+robin_test_support.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

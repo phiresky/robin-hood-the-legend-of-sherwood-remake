@@ -5988,6 +5988,7 @@ dependencies = [
  "robin_content",
  "robin_data_io",
  "robin_engine_types",
+ "robin_legacy_save",
  "robin_run_protocol",
  "robin_script_types",
  "robin_state_hash_derive",
@@ -6083,6 +6084,20 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "robin_legacy_save"
+version = "0.0.0"
+dependencies = [
+ "num_enum",
+ "robin_data_io",
+ "robin_script_types",
+ "robin_test_support",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

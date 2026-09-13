@@ -18,6 +18,7 @@ test-helpers = []
 original-parity = []
 
 [dependencies]
+robin_legacy_save.workspace = true
 robin_script_types.workspace = true
 robin_engine_types.workspace = true
 robin_content = { workspace = true, features = ["simulation-codecs"] }

@@ -1,10 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Default resource policy for imported globals and new native allocations.
-/// This is not an Original array-size or file-format constraint. Imports may
-/// explicitly choose a larger limit; native writes to existing slots remain
-/// valid, but `InitGlobal` cannot request an unbounded new allocation.
-pub const DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT: usize = 65_535;
+pub use robin_script_types::natives::DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT;
 
 use crate::sequence::RecordingSession;
 
