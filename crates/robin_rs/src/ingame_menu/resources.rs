@@ -415,10 +415,8 @@ pub(crate) fn substitute_integer(template: &str, value: i64) -> String {
 impl MenuText {
     /// Build a new table, trying the three known table ids in turn.
     ///
-    /// The text tables usually live in `Data/Interface/Start.sxt` or
-    /// `Data/Text/Level.res` depending on the build.  The caller supplies
-    /// the [`ResourceManager`] that already has whichever file is
-    /// available attached.
+    /// The text tables live in `Data/Text/Level.res`. The caller supplies
+    /// the [`ResourceManager`] with that archive already attached.
     pub fn load(res: &mut ResourceManager, locale: Option<String>) -> Self {
         let strings = match robin_assets::original_text::load_menu_strings(res) {
             Ok(strings) => strings,
@@ -494,10 +492,8 @@ fn default_fallbacks() -> &'static HashMap<usize, &'static str> {
 }
 
 fn build_default_fallbacks() -> HashMap<usize, &'static str> {
-    // Hardcoded English strings match `1033/Data/Interface/Start.sxt` from
-    // the international release.  Used when no `.sxt` file is available
-    // so the Rust port is still usable on developer machines without the
-    // localised text bundle.
+    // English menu fallbacks keep the Rust port usable when the localized
+    // Level.res text table is unavailable.
     const ENGLISH: &[(usize, &str)] = &[
         (MT_BTN_START_GAME, "Start Game"),
         (MT_BTN_SELECT_PLAYER, "Select Player"),
@@ -771,8 +767,7 @@ fn build_default_fallbacks() -> HashMap<usize, &'static str> {
         (MT_INFOBULLE_QG_BEGIN_MISSION, "Begin mission"),
         (MT_INFOBULLE_QG_BACKTOMAP, "Return to the campaign map"),
         // Scancode → key-name fallbacks for the shortcut rebind list.  These
-        // mirror the names in `1033/Data/Interface/Start.sxt` so the rebind
-        // screen stays readable when the localised `.sxt` is missing.
+        // keep the screen readable when localized Level.res text is missing.
         (MT_STR_KEY_UP, "Up"),
         (MT_STR_KEY_DOWN, "Down"),
         (MT_STR_KEY_LEFT, "Left"),
@@ -1138,7 +1133,7 @@ impl IngameMenuResources {
 
     /// Build the shared menu resources from an already-attached (ideally
     /// eagerly pre-decoded) `DEFAULT.RES` manager. `shipping` is still
-    /// needed for the menu text tables (`Level.res` / `Start.sxt`).
+    /// needed for the menu text tables (`Level.res`).
     pub fn from_manager(
         renderer: &mut Renderer,
         shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
@@ -1158,27 +1153,12 @@ impl IngameMenuResources {
         // table.  Attach it here on a scratch manager if it's missing so
         // `MenuText::load` has a table to read.
         let mut text_res = ResourceManager::with_files(files.clone());
-        for path in ["Data/Text/Level.res", "Data/Interface/Start.sxt"] {
-            if let Err(error) = text_res.try_attach_or_from_shipping(path, shipping) {
-                // Original demo editions use this filename for the loading
-                // picture, not a text archive. Validate that alternate format
-                // rather than treating every failed archive as optional text.
-                if path == "Data/Interface/Start.sxt"
-                    && matches!(
-                        error,
-                        robin_assets::resource_manager::ResourceAttachmentError::Malformed(_)
-                    )
-                    && files.read_shared(path).is_ok_and(|bytes| {
-                        !bytes.starts_with(b"SRES")
-                            && robin_assets::picture::Picture::load_sixteen_from_bytes(&bytes)
-                                .is_ok()
-                    })
-                {
-                    continue;
-                }
-                tracing::warn!("Cannot load menu text archive {path}: {error:#}");
-                return None;
-            }
+        // Original launcher.cpp attaches Level.res for text and displays
+        // Start.sxt separately through Toolbox::DisplayPicture.
+        let path = "Data/Text/Level.res";
+        if let Err(error) = text_res.try_attach_or_from_shipping(path, shipping) {
+            tracing::warn!("Cannot load menu text archive {path}: {error:#}");
+            return None;
         }
         let menu_text = MenuText::load(&mut text_res, files.presentation_locale());
         timer.step("menu text");
