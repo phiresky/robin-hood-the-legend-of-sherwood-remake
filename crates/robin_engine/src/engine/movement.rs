@@ -3606,11 +3606,7 @@ impl EngineInner {
                     origin.y - 20.0 * forward.1 + 80.0 * sidewards.1,
                 ),
             ];
-            let obstacles = crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                static_active: &self.world.static_sight_obstacle_active,
-            };
+            let obstacles = self.world.sight_obstacles(assets);
             let mut pending_victims = Vec::new();
             for (victim_id, victim) in self.world.entities.humans() {
                 let victim_id: EntityId = victim_id.into();

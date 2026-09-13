@@ -286,20 +286,13 @@ impl EngineInner {
             .set_sprite_data(half_w, half_h, frame_sizes, per_frame_offsets);
     }
 
-    /// Combined static + dynamic sight obstacles. Static come from
-    /// `LevelAssets::static_sight_obstacles` (Arc-shared, populated at
-    /// level load); dynamic are this frame's shields. Returns a
-    /// `ObstacleList` view that exposes the flat global indexing used
-    /// by patches and per-actor obstacle references.
+    /// Combined static + dynamic sight obstacles; see
+    /// [`WorldState::sight_obstacles`](super::state::WorldState::sight_obstacles).
     pub fn sight_obstacles<'a>(
         &'a self,
         assets: &'a LevelAssets,
     ) -> crate::sight_obstacle::ObstacleList<'a> {
-        crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        }
+        self.world.sight_obstacles(assets)
     }
 
     /// Mutator for the runtime active flag on a static sight obstacle.

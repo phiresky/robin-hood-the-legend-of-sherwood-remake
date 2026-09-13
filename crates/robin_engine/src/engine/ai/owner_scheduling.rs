@@ -955,11 +955,7 @@ impl EngineInner {
             member.soldier_data().is_some_and(|soldier| soldier.rider),
             member_element.direction(),
             self.entity_data_in_building_sector(member_element),
-            crate::sight_obstacle::ObstacleList {
-                static_obstacles: &assets.environment.static_sight_obstacles,
-                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                static_active: &self.world.static_sight_obstacle_active,
-            },
+            self.world.sight_obstacles(assets),
         )
     }
 
@@ -1600,18 +1596,10 @@ impl EngineInner {
         });
         let ctx = self.ambush_point_context(npc_id);
 
-        // Build the obstacle view from individual disjoint fields
-        // so the borrow checker can split it from the mut borrow
-        // on `self.world.entities` below.
-        let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
         let ambush_points = self.ai.global.ambush_points.as_slice();
+        let (entities, sight_obstacles, _) = self.world.entities_mut_with_sight(assets);
 
-        self.world
-            .entities
+        entities
             .expect_enemy_ai_mut(npc_id, format_args!("ambush-refresh NPC before apply"))
             .refresh_ambush_points(&ctx, eyes, ambush_points, sight_obstacles);
         self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);

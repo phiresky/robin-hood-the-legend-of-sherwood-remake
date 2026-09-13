@@ -1115,17 +1115,14 @@ impl EngineInner {
     /// when a PC/Soldier is hit but not hurtable (same-camp friendly fire
     /// or a successful piercing-protection roll).
     fn start_arrow_ricochet(&mut self, assets: &LevelAssets, arrow_id: EntityId) {
-        let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
+        let (entities, sight_obstacles, fast_find_grid) =
+            self.world.entities_mut_with_sight(assets);
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
-            fast_find_grid: &self.world.fast_grid,
+            fast_find_grid,
             sight_obstacles,
             water_zones: Some(&assets.environment.water_zones),
         };
-        let Some(entity) = self.world.entities.get_mut(arrow_id) else {
+        let Some(entity) = entities.get_mut(arrow_id) else {
             return;
         };
         let Entity::Projectile(proj) = entity else {
@@ -2357,19 +2354,16 @@ impl EngineInner {
         assets: &LevelAssets,
         projectile_id: EntityId,
     ) {
-        let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
+        let actor_order = self.world.actor_registry_order();
+        let (entities, sight_obstacles, fast_find_grid) =
+            self.world.entities_mut_with_sight(assets);
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
-            fast_find_grid: &self.world.fast_grid,
+            fast_find_grid,
             sight_obstacles,
             water_zones: Some(&assets.environment.water_zones),
         };
-        let actor_order = self.world.actor_registry_order();
         let results = bow_shot::tick_existing_projectile_in_actor_order(
-            &mut self.world.entities,
+            entities,
             sight_obstacles,
             Some(&obstacle_check),
             projectile_id,
@@ -2385,19 +2379,16 @@ impl EngineInner {
         assets: &LevelAssets,
         arrow_id: EntityId,
     ) {
-        let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
+        let actor_order = self.world.actor_registry_order();
+        let (entities, sight_obstacles, fast_find_grid) =
+            self.world.entities_mut_with_sight(assets);
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
-            fast_find_grid: &self.world.fast_grid,
+            fast_find_grid,
             sight_obstacles,
             water_zones: Some(&assets.environment.water_zones),
         };
-        let actor_order = self.world.actor_registry_order();
         let results = bow_shot::tick_arrow_in_actor_order_with_diplomacy(
-            &mut self.world.entities,
+            entities,
             sight_obstacles,
             Some(&obstacle_check),
             arrow_id,

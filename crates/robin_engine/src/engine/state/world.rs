@@ -188,6 +188,50 @@ impl WorldState {
         &self.original_pc_registry_ids
     }
 
+    /// Combined static + dynamic sight obstacles. Static come from
+    /// `LevelAssets::static_sight_obstacles` (Arc-shared, populated at
+    /// level load); dynamic are this frame's shields. Returns a
+    /// `ObstacleList` view that exposes the flat global indexing used
+    /// by patches and per-actor obstacle references.
+    pub(crate) fn sight_obstacles<'a>(
+        &'a self,
+        assets: &'a LevelAssets,
+    ) -> crate::sight_obstacle::ObstacleList<'a> {
+        crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.dynamic_sight_obstacles,
+            static_active: &self.static_sight_obstacle_active,
+        }
+    }
+
+    /// The mutable entity table beside the read-only sight-obstacle view and
+    /// spatial grid, for systems that ray-cast while mutating an entity.
+    pub(crate) fn entities_mut_with_sight<'a>(
+        &'a mut self,
+        assets: &'a LevelAssets,
+    ) -> (
+        &'a mut Entities,
+        crate::sight_obstacle::ObstacleList<'a>,
+        &'a std::sync::Arc<FastFindGrid>,
+    ) {
+        let Self {
+            entities,
+            fast_grid,
+            dynamic_sight_obstacles,
+            static_sight_obstacle_active,
+            ..
+        } = self;
+        (
+            entities,
+            crate::sight_obstacle::ObstacleList {
+                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
+                dynamic_obstacles: dynamic_sight_obstacles,
+                static_active: static_sight_obstacle_active,
+            },
+            fast_grid,
+        )
+    }
+
     /// The projectile helper plus thirty Original object masters are
     /// constructed before the first mission element.
     pub(crate) const FIRST_MISSION_CREATION_ORDER: u32 = 31;
