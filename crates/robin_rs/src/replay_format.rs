@@ -66,10 +66,9 @@ pub fn decode_compact(
 pub fn decode_compact_for_admission(
     text: &str,
 ) -> Result<(String, robin_engine::replay::ReplayData), robin_replay_format::FormatError> {
-    let decoded = robin_replay_format::decode_compact_for_build(
+    let decoded = robin_replay_format::decode_compact_bounded(
         text,
         &robin_replay_format::DEFAULT_REPLAY_ADMISSION_LIMITS,
-        robin_replay_format::ENGINE_VERSION_HASH,
     )?;
     validate_spellforge_runtime_package(&decoded.1)?;
     Ok(decoded)
@@ -79,10 +78,9 @@ pub fn decode_compact_for_admission(
 pub fn decode_compact_for_local_playback(
     text: &str,
 ) -> Result<(String, robin_engine::replay::ReplayData), robin_replay_format::FormatError> {
-    let decoded = robin_replay_format::decode_compact_for_build(
+    let decoded = robin_replay_format::decode_compact_bounded(
         text,
         &robin_replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
-        robin_replay_format::ENGINE_VERSION_HASH,
     )?;
     validate_spellforge_runtime_package(&decoded.1)?;
     Ok(decoded)

@@ -55,6 +55,16 @@ pub(super) use admission::{
     PreparedRankedAdmission, RankedPreFramePlan, fetch_single_player_authority,
 };
 
+/// Whether this client can submit to `build` as its verifier: replay schema
+/// and network protocol versions must match; source commit and save-format
+/// identities are artifact provenance, not compatibility gates.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn verifier_build_matches_runtime(
+    build: &robin_run_protocol::VersionedBuildManifest,
+) -> Result<bool, String> {
+    admission::build_matches_runtime(build).map_err(|error| error.to_string())
+}
+
 /// Authority fixed before the first simulation frame.
 ///
 /// `BrowseOnly` is a deliberate state, not a failed attempt to invent the

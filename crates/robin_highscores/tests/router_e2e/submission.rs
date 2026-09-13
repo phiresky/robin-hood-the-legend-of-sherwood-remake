@@ -517,7 +517,12 @@ async fn submission_ingress_accepts_only_the_exact_compact_transport_before_rese
     rig.rename(&owner, "Compact Robin", Ipv4Addr::new(127, 0, 2, 0))
         .await;
 
-    let valid_replay = compact_replay_fixture("run-72");
+    // The compact source prefix is provenance: a recording from another
+    // commit is admitted when replay and network versions match.
+    let valid_replay = String::from_utf8(compact_replay_fixture("run-72"))
+        .unwrap()
+        .replacen(robin_replay_format::ENGINE_VERSION_HASH, "0123456789ab", 1)
+        .into_bytes();
     let valid_offer = rig
         .issue_offer(&owner, rig.offer_request(&owner, 72), 72)
         .await;
@@ -581,8 +586,8 @@ async fn submission_ingress_accepts_only_the_exact_compact_transport_before_rese
         ),
         (
             78,
-            "wrong build prefix",
-            b"rhrec-000000000000-YWJj".to_vec(),
+            "malformed source prefix",
+            b"rhrec-not-a-commit-YWJj".to_vec(),
         ),
         (
             79,

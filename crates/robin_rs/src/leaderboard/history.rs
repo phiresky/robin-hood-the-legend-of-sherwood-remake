@@ -412,10 +412,11 @@ mod native {
         let response = pollster::block_on(task.take()).map_err(|e| e.to_string())?;
         let build = super::super::service::decode_build_manifest(Ok(response), build_digest)
             .map_err(|e| e.to_string())?;
-        let build = build.backend_visible_v1().map_err(|e| e.to_string())?;
-        if build.source_commit != robin_replay_format::ENGINE_VERSION_HASH {
+        // Replay/network versions, not source commits, decide whether this
+        // client can hand the recording to the session's verifier build.
+        if !crate::game_session::leaderboard_runtime::verifier_build_matches_runtime(&build)? {
             return Err(
-                "This recording was made by another engine build and cannot be submitted here."
+                "This recording's replay or network version is not supported by its verifier build."
                     .into(),
             );
         }

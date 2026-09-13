@@ -929,7 +929,7 @@ async fn authorize_multiplayer_host_proposal(
     validate_multiplayer_host_documents(proposed, &scope_request, &content, &rules, &published)?;
     if !build_matches_runtime(&build)? {
         return Err(RankedError::rejected(
-            "host-selected verifier build does not match this runtime",
+            "host-selected verifier build does not match this replay and network version",
         ));
     }
     if let Some(campaign_digest) = proposed.campaign_content_manifest_sha256 {
@@ -1875,16 +1875,79 @@ async fn select_current_build(
         }
     }
     Err(RankedError::unavailable(
-        "no allowlisted verifier build matches this engine and protocol version",
+        "no allowlisted verifier build matches this replay and network version",
     ))
 }
 
-fn build_matches_runtime(build: &VersionedBuildManifest) -> Result<bool, RankedError> {
+// Source and save-format identities describe artifacts; replay/network versions
+// define client compatibility with an approved verifier.
+pub(super) fn build_matches_runtime(build: &VersionedBuildManifest) -> Result<bool, RankedError> {
     let build = build.backend_visible_v1()?;
     Ok(
-        build.source_commit == robin_replay_format::ENGINE_VERSION_HASH
-            && build.replay_schema_version == robin_engine::replay::REPLAY_SCHEMA_VERSION
-            && build.save_schema_version == crate::save_file::SAVE_FORMAT_VERSION
+        build.replay_schema_version == robin_engine::replay::REPLAY_SCHEMA_VERSION
             && build.network_protocol_version == robin_engine::multiplayer::NET_PROTOCOL_VERSION,
     )
+}
+
+#[cfg(test)]
+mod build_compatibility_tests {
+    use super::*;
+    use robin_run_protocol::{
+        ArtifactRefV1, BuildManifestV1, NamedArtifactV1, ViewerArtifactRoleV1,
+    };
+
+    fn published_build() -> BuildManifestV1 {
+        let artifact = |media: &str| ArtifactRefV1 {
+            sha256: Digest32::from_bytes([1; 32]),
+            byte_length: 1,
+            media_type: media.into(),
+        };
+        BuildManifestV1 {
+            schema_version: 1,
+            // Deliberately not this client's source commit.
+            source_commit: "a".repeat(40),
+            cargo_lock_sha256: Digest32::from_bytes([2; 32]),
+            target_triple: "wasm32-unknown-unknown".into(),
+            cargo_profile: "wasm-release".into(),
+            cargo_features: vec![],
+            replay_schema_version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
+            save_schema_version: crate::save_file::SAVE_FORMAT_VERSION + 1,
+            network_protocol_version: robin_engine::multiplayer::NET_PROTOCOL_VERSION,
+            verifier: artifact("application/x-executable"),
+            viewer_artifacts: vec![
+                NamedArtifactV1 {
+                    path: "robin.js".into(),
+                    role: ViewerArtifactRoleV1::EntryJavaScript,
+                    artifact: artifact("text/javascript"),
+                },
+                NamedArtifactV1 {
+                    path: "robin.wasm".into(),
+                    role: ViewerArtifactRoleV1::WebAssembly,
+                    artifact: artifact("application/wasm"),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn compatible_versions_admit_other_commits_and_save_versions() {
+        assert!(build_matches_runtime(&VersionedBuildManifest::V1(published_build())).unwrap());
+    }
+
+    #[test]
+    fn replay_and_network_versions_must_both_match() {
+        let mut replay = published_build();
+        replay.replay_schema_version += 1;
+        assert!(!build_matches_runtime(&VersionedBuildManifest::V1(replay)).unwrap());
+        let mut network = published_build();
+        network.network_protocol_version += 1;
+        assert!(!build_matches_runtime(&VersionedBuildManifest::V1(network)).unwrap());
+    }
+
+    #[test]
+    fn invalid_build_authority_still_errors() {
+        let mut build = published_build();
+        build.cargo_lock_sha256 = Digest32::from_bytes([0; 32]);
+        assert!(build_matches_runtime(&VersionedBuildManifest::V1(build)).is_err());
+    }
 }

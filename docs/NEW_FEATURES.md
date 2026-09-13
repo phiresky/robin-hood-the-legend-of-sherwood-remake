@@ -4,6 +4,13 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Replay compatibility across commits.** Ranked admission selects an approved
+  verifier using replay and network versions, without matching client source
+  commits or save-format versions. Upload, verification, download, and playback
+  preserve the recording's source metadata without requiring it to match the
+  verifier. Compact replay links use the current browser runtime. Content,
+  signatures, resource bounds, and deterministic replay checks remain enforced.
+
 - **Campaign leaderboard and replay submission links.** Campaign Manager and
   Hall of Deeds open the selected mission's campaign board or the full-campaign
   board in the browser. Previous Plays shows submission information and offers
