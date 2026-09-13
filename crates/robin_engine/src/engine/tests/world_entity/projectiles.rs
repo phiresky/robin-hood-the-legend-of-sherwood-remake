@@ -664,6 +664,10 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
     use crate::sequence::{SequenceElement, SequenceElementData};
 
     let mut engine = EngineInner::new();
+    // Live AI views expose the installed door registry only for a mission.
+    engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+        "fighter_gate_position_test.scs",
+    ));
     let self_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
 
@@ -954,7 +958,7 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
 }
 
 #[test]
-fn closure_review_alert_soldiers_keeps_inactive_soldier_in_both_camp_snapshots() {
+fn closure_review_alert_soldiers_keeps_inactive_soldier_in_live_camp_scan() {
     use crate::ai::{AlertSoldiersFailureContinuation, CrossNpcAction, Position};
 
     let sim = crate::sim_rng::test_context();
@@ -966,14 +970,6 @@ fn closure_review_alert_soldiers_keeps_inactive_soldier_in_both_camp_snapshots()
         panic!("inactive help recipient changed kind")
     };
     soldier.element.active = false;
-
-    let (snapshot_able_to_fight, snapshot_able_to_help) =
-        engine.test_soldier_snapshot_abilities(&assets, soldier_id);
-    assert!(!snapshot_able_to_fight);
-    assert!(
-        snapshot_able_to_help,
-        "full-tick camp population must use help eligibility's alive/conscious gate"
-    );
 
     let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
     let candidate = tick

@@ -892,7 +892,7 @@ pub struct AntagonistInfo {
 ///  * `nearby_sleeping_enemies` — ordered unconscious, non-carried fighter
 ///    candidates. The final nearby sleeping-enemy fallback performs its
 ///    360°-range and LOS query lazily at the original-game decision point.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SleepingEnemyInfo {
     pub handle: HumanHandle,
     pub position: Position,

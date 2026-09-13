@@ -100,7 +100,7 @@ impl EngineInner {
             self.ai.global.primary_target_multiplicity_initialized = true;
         }
         PreparedNpcOwnerPass {
-            world: None,
+            detection: None,
             entity_views: PreparedAiEntityViewCache::default(),
         }
     }
@@ -129,13 +129,13 @@ impl EngineInner {
             return;
         }
 
-        if prepared.world.is_none() {
-            prepared.world = Some(self.tick_enemy_ai_build_world_view(assets));
+        if prepared.detection.is_none() {
+            prepared.detection = Some(self.capture_detection_frame_state(assets));
         }
         let world = prepared
-            .world
+            .detection
             .as_ref()
-            .expect("prepared NPC owner pass lost its tactical world view");
+            .expect("prepared NPC owner pass lost its detection capture");
         self.tick_inform_my_friends_for_npc(npc_id);
         self.refresh_npc_view_for_npc(npc_id);
         self.tick_enemy_ai_refresh_detection(
@@ -181,10 +181,9 @@ impl EngineInner {
             self.ai.global.primary_target_multiplicity_initialized = true;
         }
 
-        // ── 1. Build one immutable per-tick AI world view. ────────
-        // Snapshot construction does not dispatch behavior. The phase calls
-        // below remain in the original game's soldier/NPC update order.
-        let world = self.tick_enemy_ai_build_world_view(assets);
+        // Capture detection inputs at the same point as the production owner
+        // pass. Tactical data is built live at each subsequent Think.
+        let world = self.capture_detection_frame_state(assets);
 
         // ── 2a. Listen/object blip work. ────────────────────────
         // NPC-owned SeesBlip remains inside its creation-ordered

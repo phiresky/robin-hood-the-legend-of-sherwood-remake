@@ -2580,14 +2580,6 @@ fn closure_review_alert_soldiers_keeps_tied_and_carried_able_to_help() {
             soldier.element.publish_order_posture(Posture::Tied);
         }
 
-        let (snapshot_able_to_fight, snapshot_able_to_help) =
-            engine.test_soldier_snapshot_abilities(&assets, soldier_id);
-        assert!(!snapshot_able_to_fight);
-        assert!(
-            snapshot_able_to_help,
-            "help eligibility does not include the tied/carried fight gate"
-        );
-
         let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
         let candidate = tick
             .camp_soldiers

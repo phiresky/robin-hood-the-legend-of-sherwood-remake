@@ -193,7 +193,7 @@ const NOT_YET_COMPUTED: i16 = 6666;
 /// absent from [`CampSoldierInfo`], which skips unconscious entries, so
 /// the money-fight scans merge the two lists by handle to walk the camp
 /// registry in its natural order.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CampUnconsciousSoldierInfo {
     pub handle: NpcHandle,
     pub knocked_out_in_money_fight: bool,

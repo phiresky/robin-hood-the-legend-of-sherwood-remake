@@ -1,14 +1,10 @@
-//! Per-tick scratch types and snapshot-builder phases for `tick_enemy_ai`.
-//!
-//! Each phase here builds a read-only view (or, in P2, clears a flag) at
-//! the top of the AI tick.  The orchestrator passes references to the
-//! resulting Vec/Map into the per-NPC inner loops in [`super::detection`]
-//! and [`super::post_detection`] so those passes can iterate the
-//! snapshots without re-borrowing `self.world.entities`.
+//! Detection capture and per-observer optical inputs.
+//! Tactical decisions query live state; only inputs with an explicit detection
+//! capture lifetime are retained here.
 
 use super::*;
 use crate::coordinates::{GroundPoint, MapPoint};
-use crate::element::{Camp, Entity, EntityId, Human};
+use crate::element::{Camp, Entity, EntityId};
 use serde::{Deserialize, Serialize};
 
 /// Enemy archer detection is exactly whether a bow is present.
@@ -17,280 +13,23 @@ pub(super) fn is_archer_from_bow(bow: Option<&crate::profiles::BowProfile>) -> b
     bow.is_some()
 }
 
-// ── Per-tick scratch types for `tick_enemy_ai`. ─────────────────────
-//
-// These structs are private read-only views built once per detection
-// tick and consumed by every per-NPC inner loop.  They were originally
-// defined inline at the top of `tick_enemy_ai` but live at module scope
-// now so the per-phase methods (extracted progressively in this module)
-// can share them without nesting type definitions.
-
+/// PC inputs retained until the next PC noise-refresh invalidation.
+/// Combat fields are read live at each Think, not copied into this capture.
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub(super) struct PcSnapshot {
+pub(super) struct PcDetectionState {
     pub(super) id: EntityId,
-    /// Raw element-active analogue. Living inactive PCs stay in
-    /// this snapshot because Enemy detectables are only cleaned up when the
-    /// target dies, and an inactive PC in the viewer's building remains
-    /// optically visible through the original same-sector short-circuit.
-    pub(super) active: bool,
-    /// Script-controlled PC participation flag. Non-playable PCs remain
-    /// optical targets but cannot reveal an NPC blip through `SeesBlip`.
-    pub(super) playable: bool,
     pub(super) position: MapPoint,
-    /// The same boundary position in stored 3D world coordinates, which is
-    /// what detection-point calculation builds on.
-    pub(super) position_world: crate::coordinates::WorldPoint3D,
-    /// PC viewer eye-point XY. Differs from feet position for
-    /// LeaningOut and lying/dead postures, matching the original game
-    /// eye-point calculation in blip / bonus discovery.
-    pub(super) eye_position: MapPoint,
     pub(super) layer: u16,
-    pub(super) posture: crate::element::Posture,
-    pub(super) action_state: crate::element::ActionState,
-    /// Currently-running animation (top of the order queue).
-    /// Used by `pc_noise_volume` for the per-animation noise
-    /// lookup during the produced-noise refresh.
-    pub(super) order_type: crate::order::OrderType,
-    /// `Some(sector_idx)` when the PC is currently inside a
-    /// BUILDING sector.
-    pub(super) building_sector: Option<crate::position_interface::SectorHandle>,
-    /// Per-PC visual-detection-speed multiplier (percentage)
-    /// from the character profile.  Used to scale visibility
-    /// during detection refresh — a low-profile hero (e.g. a
-    /// scout) is slower to spot, a loud hero faster.
     pub(super) detection_speed_in_forest: u16,
-    /// Per-PC visual-detection-speed multiplier for city (non-
-    /// forest) levels.
     pub(super) detection_speed_in_city: u16,
-    // -- Combat-context fields (for FighterSnapshot) --
-    pub(super) direction: u16,
-    pub(super) able_to_fight: bool,
-    pub(super) sword_range_default: u16,
-    pub(super) sword_range_maximal: u16,
-    pub(super) sword_range_uber: u16,
-    pub(super) fighting_ability: u16,
-    pub(super) in_recovery: bool,
-    /// HtH weapon profile id, used at snapshot build time to clone
-    /// the full profile into a FighterSnapshot for damage estimation.
-    pub(super) hth_weapon_id: u32,
-    /// VIP flag from character profile — VIPs are main heroes.
     pub(super) is_vip: bool,
-    /// Whether this PC is Robin Hood.
     pub(super) is_robin: bool,
-    /// Eye-point Z coordinate (elevation + posture offset).
-    /// Used by the 3D sphere/cone detection check —
-    /// this is the PC-as-viewer position.
-    pub(super) eye_z: f32,
-    /// Exact ground Z used to reconstruct Original world-horizontal Y from
-    /// the projected map point during cross-elevation visibility checks.
-    pub(super) ground_z: f32,
-    /// PC's current melee target for FighterSnapshot.
-    pub(super) melee_target: Option<EntityId>,
-    /// Active swordfight principal opponent, i.e. first entry of the
-    /// human opponent list.
-    pub(super) principal_opponent: Option<crate::ai::AiEntityHandle>,
-    /// Active swordfight opponents in the same order as the live human
-    /// opponent list.
-    pub(super) opponent_handles: Vec<u32>,
-    /// True when the PC is unconscious.  Unconscious PCs still
-    /// flow through the detection pipeline (so NPCs can see
-    /// bodies / sleeping heroes), but are split off from
-    /// `list_them` into the `unconscious_enemies` tick-data
-    /// list so the "approach sleeping enemy" branch in
-    /// `battle_decisions` can pick them up.
     pub(super) unconscious: bool,
-    /// True when the PC is being carried by another entity.
-    /// Carried PCs are skipped from the sleeping-enemy
-    /// list — you can't walk up and finish off someone slung
-    /// over a buddy's shoulder.
     pub(super) carried: bool,
-    /// True when the PC is mid-`Command::PassDoor` — i.e.
-    /// `active_door_pass.is_some()`.  Used by visibility
-    /// computation to short-circuit same-building sight to 0.0
-    /// while the target is transitioning through a door.
-    pub(super) passing_door: bool,
-    /// Produced-noise volume for this PC this frame.  Computed
-    /// once per PC during the produced-noise refresh, then
-    /// sampled by every hearing NPC.  Caching on the snapshot
-    /// avoids recomputing per (NPC, PC) pair and lets the
-    /// shadow-stage carry-over work (`pc_noise_volume` reads
-    /// the stored prev-frame value from `actor.last_noise_volume`).
-    pub(super) noise_volume: u16,
-    /// Persistent heard-noise bounds sampled at this creation boundary.
-    /// It can intentionally lag behind `produced_noise`: some noise updates
-    /// leave the existing bounds unchanged.
+    /// Persistent bounds can intentionally differ from the produced-noise origin.
     pub(super) hear_noise_box: crate::coordinates::MapBBox,
-    /// Full owner-local noise record, including the position metadata from
-    /// the PC's most recently visited human update slot.
     pub(super) produced_noise: crate::ai::Noise,
-    /// PC's current sector number (0 if unknown).  Fed into the
-    /// `Noise.origin.sector` produced by the noise-refresh pass,
-    /// which the hearing AI uses for sector-aware investigation
-    /// pathing.
-    pub(super) sector_num: u16,
-    /// PC's ground elevation — note this is ground elevation,
-    /// not the eye-point Z used for visual checks.
-    pub(super) ground_elevation: u16,
-    /// True when the PC has any active melee opponent
-    /// (`opponents` list non-empty).  Used by hearing
-    /// classification to mark the generated noise as ZINGZING
-    /// (swordfight) or TAPTAPTAP (footsteps etc.).
     pub(super) is_swordfighting: bool,
-    /// `pc.guard.is_some()`.  Set when an enemy soldier takes
-    /// the PC into custody.  Used by predetection handling to
-    /// suppress shadow events for already-guarded PCs.
-    pub(super) guarded: bool,
-    /// The projection-obstacle the PC is currently standing on
-    /// (e.g. a roof, ledge, or tree platform), if any.
-    /// Threaded into per-target `compute_view_radius` calls so
-    /// detection radius accounts for the target's elevation in
-    /// night/fog.
-    pub(super) obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub(super) struct SoldierSnapshot {
-    pub(super) id: EntityId,
-    /// Raw element activity. Inactive soldiers remain in this snapshot for
-    /// alert propagation and assistance checks, while combat and visibility users
-    /// retain their original active gates through `able_to_fight`.
-    pub(super) active: bool,
-    pub(super) position: MapPoint,
-    /// The same boundary position in stored 3D world coordinates.
-    pub(super) position_world: crate::coordinates::WorldPoint3D,
-    pub(super) layer: u16,
-    pub(super) camp: Camp,
-    pub(super) ai_state: crate::ai::AiState,
-    pub(super) ai_substate: crate::ai::Substate,
-    pub(super) posture: crate::element::Posture,
-    pub(super) rank: crate::profiles::ProfileRank,
-    pub(super) company_number: u16,
-    pub(super) pride: u16,
-    pub(super) primary_target: Option<crate::ai::AiEntityHandle>,
-    /// Active swordfight principal opponent, i.e. first entry of the
-    /// human opponent list.
-    pub(super) principal_opponent: Option<crate::ai::AiEntityHandle>,
-    /// Active swordfight opponents in the same order as the live human
-    /// opponent list.
-    pub(super) opponent_handles: Vec<u32>,
-    pub(super) able_to_fight: bool,
-    /// human death state — life points exhausted. Kept
-    /// separate from `able_to_fight`, which folds in several further
-    /// conditions; the money-fight scans gate on death alone.
-    pub(super) is_dead: bool,
-    pub(super) knocked_out_in_money_fight: bool,
-    pub(super) able_to_help: bool,
-    /// Current music alert level.  Used by seek-area friend
-    /// coordination to count friends in alert > Green.
-    pub(super) alert_status: crate::ai::AlertLevel,
-    /// Whether this soldier's seek has the
-    /// `LOOK_FOR_HELP_AFTER_SEEKING` flag set. Used by seek-area
-    /// friend coordination to clear our local flag if a friend is
-    /// already going to ask for help.
-    pub(super) seek_flag_look_for_help: bool,
-    // -- Combat-context fields (for FighterSnapshot) --
-    pub(super) direction: u16,
-    pub(super) action_state: crate::element::ActionState,
-    /// True when the soldier has any active melee opponent
-    /// (`opponents` list non-empty).
-    pub(super) is_swordfighting: bool,
-    pub(super) sword_range_default: u16,
-    pub(super) sword_range_maximal: u16,
-    pub(super) sword_range_uber: u16,
-    pub(super) fighting_ability: u16,
-    pub(super) has_formation: bool,
-    pub(super) is_shield_bearer: bool,
-    pub(super) is_archer_unit: bool,
-    pub(super) left_combat_neighbour: Option<crate::ai::AiEntityHandle>,
-    pub(super) right_combat_neighbour: Option<crate::ai::AiEntityHandle>,
-    pub(super) in_recovery: bool,
-    /// HtH weapon profile id, used to clone the full profile into
-    /// a FighterSnapshot for damage estimation.
-    pub(super) hth_weapon_id: u32,
-    /// VIP flag from soldier profile — VIPs can only attack Robin.
-    pub(super) is_vip: bool,
-    /// Tower guard flag from level data.
-    pub(super) is_tower_guard: bool,
-    /// AI's seek_position — where the soldier is heading. Used by
-    /// `propose_good_combat_position` friend scoring.
-    pub(super) seek_position: MapPoint,
-    /// Handle of the shield bearer this archer is hiding behind (0 = none).
-    pub(super) shield_bearer_before_me: Option<crate::ai::AiEntityHandle>,
-    /// Handle of the archer hiding behind this shield bearer (0 = none).
-    /// Derived from a reverse scan of `shield_bearer_before_me` links
-    /// after all snapshots are built so the filter in
-    /// `get_nearest_free_shield_bearer` is always consistent.
-    pub(super) archer_behind_me: Option<crate::ai::AiEntityHandle>,
-    /// Shield bearer facing direction (stored when running to phalanx).
-    pub(super) shield_bearer_direction: u16,
-    /// Bow max range from the bow profile.
-    pub(super) bow_max_range: u16,
-    /// Whether this soldier's AI is script-locked.
-    pub(super) script_locked: bool,
-    pub(super) ai_lock_frozen: bool,
-    /// Reconnaissance report type from the soldier's AI brain.
-    pub(super) report_type: crate::ai::ReportType,
-    /// Seek position from the soldier's reconnaissance report.
-    pub(super) report_seek_position: crate::ai::Position,
-    /// Seen bodies from the soldier's reconnaissance report.
-    pub(super) report_seen_bodies: Vec<u32>,
-    /// Charly handle from the soldier's reconnaissance report.
-    pub(super) report_charly: Option<crate::ai::AiEntityHandle>,
-    /// The soldier's alert_soldiers_point.
-    pub(super) alert_soldiers_point: crate::ai::Position,
-    /// Ground-plane elevation (`element.position.z`).
-    pub(super) elevation: u16,
-    /// Exact render-space ground Z used by visibility geometry.
-    pub(super) ground_z: f32,
-    /// Soldier's patrol chief, if any.
-    pub(super) patrol_chief: Option<EntityId>,
-    /// Soldier's current antagonist handle.
-    pub(super) antagonist: Option<crate::ai::AiEntityHandle>,
-    /// Body currently selected by the soldier's AI brain.
-    pub(super) detected_body: Option<crate::ai::AiEntityHandle>,
-    /// Current blood-alcohol debility used by alert eligibility.
-    pub(super) blood_alcohol: u8,
-    /// Soldier profile duty flag — part of the
-    /// "shall I stay on my post" decision.
-    pub(super) duty_flag: bool,
-    /// Whether this soldier is currently inside a building sector.
-    /// Used by `alert_officer` to gate the layer-change penalty.
-    pub(super) in_building: bool,
-    /// Forecasted destination for this soldier (from
-    /// `forecast_destination_for_ia`).  Used by `alert_officer`
-    /// so the running soldier homes on where the officer will be,
-    /// not where the officer is right now.
-    pub(super) forecast_destination: Option<crate::ai::PreparedForecastDestination>,
-    /// Body handles still on this soldier's body-detectable list —
-    /// corpses they have *not yet* reacted to.  Mirror of the live
-    /// `detectable_lists[DetectableType::Body]`.  Consumed by
-    /// `near_officer_who_is_informed_about_this_body`.
-    pub(super) detectable_bodies: Vec<u32>,
-    /// Soldier's own AI seek position — distinct from
-    /// `report_seek_position`.  Consumed by
-    /// `near_officer_who_is_wondering_about_the_same_noise`.
-    pub(super) ai_seek_position: crate::ai::Position,
-    /// Live `current_task_priority` / `minimal_task_priority` —
-    /// consumed by the officer's alert-soldiers gate to implement
-    /// the "has the new task priority" check.
-    pub(super) current_task_priority: u16,
-    pub(super) minimal_task_priority: u16,
-    /// View direction post-view-refresh — unit forward.
-    /// Plumbed onto `CampSoldierInfo` for the officer-side cone+LOS
-    /// gate in `maybe_officer_sees_me_fighting`'s ≥350² band.
-    pub(super) view_direction: [f32; 2],
-    /// View radius post-view-refresh.
-    pub(super) view_radius: u16,
-    /// View half-aperture post-view-refresh.
-    pub(super) real_half_aperture: f32,
-    /// Whether the soldier's eyes are blind (EYES_CLOSED /
-    /// EYES_DIE_OR_GET_UNCONSCIOUS).
-    pub(super) eye_blind: bool,
-    /// Building containing this soldier, if any.
-    pub(super) building_sector: Option<crate::position_interface::SectorHandle>,
-    pub(super) is_rider: bool,
-    pub(super) passing_door: bool,
-    pub(super) obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
 }
 
 /// Per-tick read-only snapshot of a human-typed detection target —
@@ -374,291 +113,89 @@ fn object_detection_world_position(
     crate::coordinates::WorldPoint3D::new(position.x, position.y, position.z + 1.0)
 }
 
-/// Immutable start-of-tick PC and combat view consumed by AI phases.
-///
-/// Target identities remain stable throughout one actor's NPC detection
-/// refresh. PC data is captured once because
-/// building it also updates produced-noise state. Volatile NPC human/object
-/// target data is intentionally rebuilt at each NPC creation slot.
+/// Inputs retained across NPC detection refreshes until a PC publishes noise.
+/// This is not a tactical world projection: each Think builds its live inputs.
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub(super) struct AiWorldView {
-    pub(super) pcs: Vec<PcSnapshot>,
-    /// AI position resolved at this owner
-    /// boundary, including the door-first / carried-PC rules.
-    pub(super) ai_positions: std::collections::HashMap<EntityId, crate::ai::Position>,
-    /// Current live swordfight occupancy used only by detection's
-    /// optical best-visible-target aggregate. Tactical target selectors use
-    /// the owner-ordered shared 16-bit scratch value instead.
+pub(super) struct DetectionFrameState {
+    pub(super) pcs: Vec<PcDetectionState>,
+    /// Optical target selection uses this captured occupancy; tactical target
+    /// selectors use Original's separately ordered 16-bit scratch counters.
     pub(super) detection_target_multiplicity: std::collections::BTreeMap<EntityId, u32>,
-    pub(super) npc_jump_lines: std::collections::HashMap<EntityId, Option<u32>>,
-    pub(super) soldiers: Vec<SoldierSnapshot>,
     pub(super) unconscious_soldiers: Vec<(EntityId, Camp, bool)>,
 }
 
 impl EngineInner {
-    pub(super) fn live_ai_position(&self, target_id: EntityId) -> crate::ai::Position {
-        super::resolve_ai_position_with(
-            &self.world.entities,
-            self.script_domains.interactables.doors.as_slice(),
-            &self.orders.sequence_manager,
-            target_id,
-            |position_id| {
-                let position_entity = self.expect_entity(position_id, "AI position owner");
-                let stored_map = position_entity.element_data().position_map();
-                crate::ai::Position {
-                    x: stored_map.x,
-                    y: stored_map.y,
-                    sector: super::ai_view_position_sector(self, position_entity.element_data()),
-                    level: position_entity.element_data().layer(),
-                }
-            },
-        )
-        .effective
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_soldier_snapshot_abilities(
+    /// Preserve the established capture/invalidation cadence while retaining
+    /// only data consumed by detection and its queued sleeping-enemy lists.
+    pub(super) fn capture_detection_frame_state(
         &mut self,
         assets: &LevelAssets,
-        soldier_id: EntityId,
-    ) -> (bool, bool) {
-        let snapshots = self.tick_enemy_ai_build_soldier_snapshots(assets);
-        let snapshot = snapshots
-            .iter()
-            .find(|snapshot| snapshot.id == soldier_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "soldier {} is missing from AI snapshots",
-                    soldier_id.index()
-                )
-            });
-        (snapshot.able_to_fight, snapshot.able_to_help)
-    }
-
-    /// Build the single immutable AI world view for this tick.
-    ///
-    /// The soldier update checks nearby enemies during attack reaction time
-    /// before the NPC update refreshes the view and then detection.
-    /// This method does not invoke detection or AI decisions; the
-    /// orchestrator below retains that behavioral phase order when consuming
-    /// the captured view.
-    pub(super) fn tick_enemy_ai_build_world_view(&mut self, assets: &LevelAssets) -> AiWorldView {
+    ) -> DetectionFrameState {
         let _detail = super::super::tick::entity_system_detail_guard(
             super::super::tick::EntitySystemDetail::BuildWorldView,
         );
-        let human_ids: Vec<EntityId> = self
-            .world
-            .entities
-            .humans()
-            .map(|(id, _)| id.into())
-            .collect();
-        let ai_positions = human_ids
-            .into_iter()
-            .map(|id| (id, self.live_ai_position(id)))
-            .collect();
-        let pcs = self.tick_enemy_ai_build_pc_snapshots(assets);
+        let pcs = self.capture_pc_detection_state(assets);
         let detection_target_multiplicity = self.tick_enemy_ai_build_primary_target_multiplicity();
-        let npc_jump_lines = self.tick_enemy_ai_build_jump_lines(assets);
-        let soldiers = self.tick_enemy_ai_build_soldier_snapshots(assets);
+        self.refresh_archer_shield_links();
         let unconscious_soldiers = self.tick_enemy_ai_build_unconscious_soldiers();
-        AiWorldView {
+        DetectionFrameState {
             pcs,
-            ai_positions,
             detection_target_multiplicity,
-            npc_jump_lines,
-            soldiers,
             unconscious_soldiers,
         }
     }
 
-    /// P1 — snapshot every alive PC for the per-tick detection pass.
-    ///
-    /// Produced noise is refreshed by the PC's live owner envelope before a
-    /// later NPC snapshots it here.
-    pub(super) fn tick_enemy_ai_build_pc_snapshots(
-        &mut self,
-        assets: &LevelAssets,
-    ) -> Vec<PcSnapshot> {
-        use crate::element::Posture;
-
-        let mut pc_snapshots: Vec<PcSnapshot> =
-            Vec::with_capacity(self.world.original_pc_registry().len());
-        // The original game builds every AI-facing player scan from the player and
-        // royalist-fighter collections, whose order is element insertion
-        // registration order. `world.pc_ids` is deliberately re-sorted by
-        // portrait priority after loading and therefore is not an AI registry.
-        // Save adoption restores serialized creation-order fields without
-        // rebuilding this nonserialized live registry, matching Original.
-        for &pc_id in self.world.original_pc_registry() {
-            let Some(Entity::Pc(pc)) = self.world.entities.get(pc_id) else {
-                continue;
-            };
-            // `is_able_to_fight` requires alive, but unconscious PCs are
-            // still detectable — they drop out as unable-to-fight in the
-            // cleanup path of `battle_decisions`, not here.  Filtering them
-            // at snapshot-build time would make NPCs blind to sleeping
-            // heroes entirely, breaking the "approach sleeping enemy" +
-            // "kill nearby sleeping enemies" branches.
-            let element_active = pc.element.active;
-            let is_unconscious = pc.human.unconscious;
-            let is_carried = pc.human.carrier.is_some();
-            let is_passing_door = pc.actor.active_door_pass.is_some();
-            // Eye-point XY: shift the eye 40 units forward along the
-            // facing vector for LeaningOut.  Every other posture uses
-            // the feet position — the Z offset is layered on below.
-            let stored_map = (&pc.element).position_map();
-            let stored_world = (&pc.element).position();
-            let pos = {
-                let mut p = stored_map;
-                if pc.element.posture() == Posture::LeaningOut {
+    /// Capture the PC registry in its insertion order, independently of portrait
+    /// sorting. Noise was already produced by the PC's human-update tail.
+    pub(super) fn capture_pc_detection_state(&self, assets: &LevelAssets) -> Vec<PcDetectionState> {
+        self.world
+            .original_pc_registry()
+            .iter()
+            .map(|&id| {
+                let Entity::Pc(pc) = self.expect_entity(id, "PC detection registry") else {
+                    panic!("non-PC {id:?} in PC detection registry");
+                };
+                let character = assets
+                    .profile_manager
+                    .get_character(pc.pc.profile_index)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "PC {} requires missing character profile {}",
+                            id.index(),
+                            u32::from(pc.pc.profile_index)
+                        )
+                    });
+                let mut position = pc.element.position_map();
+                // Preserve the captured sleeping-candidate geometry. Optical
+                // detection separately reads the body's stored world coordinates.
+                if pc.element.posture() == crate::element::Posture::LeaningOut {
                     let (dx, dy) = crate::element::direction_vector_16(pc.element.direction());
-                    p.x += 40.0 * dx;
-                    p.y += 40.0 * dy;
+                    position.x += 40.0 * dx;
+                    position.y += 40.0 * dy;
                 }
-                p
-            };
-            let layer = pc.element.layer();
-            let building_sector = self.entity_building_sector(pc.element.sector());
-            // Dead and unconscious PCs remain in the snapshot so their
-            // produced-noise metadata is not stranded, but they are not able
-            // to fight and combat scoring treats them as non-combatants.
-            let alive = pc.pc.life_points > 0 && !is_unconscious;
-            // Look up the PC's HtH weapon profile for combat ranges and
-            // fighting ability.
-            // Player-character initialization requires a valid character profile
-            // and initializes weapons from it. A live PC cannot have a synthetic
-            // profile or weapon.
-            let character = assets
-                .profile_manager
-                .get_character(pc.pc.profile_index)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "PC {} requires missing character profile {}",
-                        pc_id.index(),
-                        u32::from(pc.pc.profile_index)
-                    )
-                });
-            let hth_weapon_id = character.hth_weapon_id;
-            let fighting_ability = character.fighting;
-            // Per-PC detection-speed multipliers — scale the
-            // visibility of this PC when an enemy NPC refreshes its
-            // detection. They come from the required character profile
-            // above; missing profile data is an initialization error.
-            let detection_speed_in_forest = character.detection_speed_in_forest;
-            let detection_speed_in_city = character.detection_speed_in_city;
-            // Currently-running animation — front order of the PC's
-            // current in-progress sequence element.  `Invalid` is the
-            // enum default and behaves as "no animation running"
-            // (silent) in the noise lookup table.
-            let order_type = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(pc_id)
-                .map(|(_, _, o)| o.order_type)
-                .unwrap_or(crate::order::OrderType::Invalid);
-            let weapon = assets
-                .profile_manager
-                .get_hth_weapon(hth_weapon_id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "PC {} requires missing HtH weapon profile {}",
-                        pc_id.index(),
-                        hth_weapon_id
-                    )
-                });
-            let (sword_range_default, sword_range_maximal, sword_range_uber) = (
-                weapon.distance[crate::weapons::WeaponDistance::Default as usize],
-                weapon.distance[crate::weapons::WeaponDistance::Maximal as usize],
-                weapon.distance[crate::weapons::WeaponDistance::Uber as usize],
-            );
-            // Honour check: a man of honour does not strike an
-            // opponent in any of these animations.
-            let in_recovery = !alive || self.actor_is_in_sword_recovery(pc_id);
-            // Compute eye-point Z for the 3D blip-sight check (PC as
-            // viewer) and detection-point Z for `VisibilityQuery`
-            // (PC as target).  PCs are never riders in the current
-            // data model, so pass `false`.
-            let pc_ground_z = pc.element.position().z;
-            let emergency_lying = pc
-                .element
-                .sprite
-                .position_iface
-                .is_using_emergency_lying_box();
-            let eye_position = crate::stealth::eye_point_xy(
-                pos,
-                pc.element.posture(),
-                pc.element.direction(),
-                emergency_lying,
-            )
-            .to_geo()
-            .into();
-            let eye_z =
-                pc_ground_z + crate::stealth::eye_z_for_posture(pc.element.posture(), false);
-            let produced_noise = pc.actor.produced_noise.unwrap_or_else(|| {
-                panic!(
-                    "PC {} has no initialized produced-noise record",
-                    pc_id.index()
-                )
-            });
-            let noise_volume = produced_noise.volume;
-            pc_snapshots.push(PcSnapshot {
-                id: pc_id,
-                active: element_active,
-                playable: pc.pc.playable,
-                position: pos,
-                position_world: stored_world,
-                eye_position,
-                layer,
-                posture: pc.element.posture(),
-                action_state: pc.actor.action_state,
-                order_type,
-                building_sector,
-                detection_speed_in_forest,
-                detection_speed_in_city,
-                direction: pc.element.direction() as u16,
-                // PC `is_able_to_fight`: life > 0,
-                // active, not unconscious, and not
-                // in a disguised posture (Tree/Spy).
-                able_to_fight: element_active
-                    && alive
-                    && !matches!(pc.element.posture(), Posture::Tree | Posture::Spy),
-                sword_range_default,
-                sword_range_maximal,
-                sword_range_uber,
-                fighting_ability,
-                in_recovery,
-                hth_weapon_id,
-                is_vip: character.vip,
-                is_robin: pc.pc.robin,
-                eye_z,
-                ground_z: pc_ground_z,
-                melee_target: pc.pc.melee_target,
-                principal_opponent: pc
-                    .human
-                    .opponents
-                    .first()
-                    .map(|id| crate::ai::AiEntityHandle::new(id.index())),
-                opponent_handles: pc.human.opponents.iter().map(|id| id.index()).collect(),
-                unconscious: is_unconscious,
-                carried: is_carried,
-                passing_door: is_passing_door,
-                noise_volume,
-                hear_noise_box: pc.actor.hear_noise_box,
-                produced_noise,
-                sector_num: pc.element.sector().map(u16::from).unwrap_or(0),
-                ground_elevation: pc.element.sprite.position_iface.get_elevation() as u16,
-                is_swordfighting: !pc.human.opponents.is_empty(),
-                guarded: pc.pc.guard.is_some(),
-                obstacle_idx: pc.element.obstacle_index(),
-            });
-        }
-
-        pc_snapshots
+                PcDetectionState {
+                    id,
+                    position,
+                    layer: pc.element.layer(),
+                    detection_speed_in_forest: character.detection_speed_in_forest,
+                    detection_speed_in_city: character.detection_speed_in_city,
+                    is_vip: character.vip,
+                    is_robin: pc.pc.robin,
+                    unconscious: pc.human.unconscious,
+                    carried: pc.human.carrier.is_some(),
+                    hear_noise_box: pc.actor.hear_noise_box,
+                    produced_noise: pc.actor.produced_noise.unwrap_or_else(|| {
+                        panic!("PC {} has no initialized produced-noise record", id.index())
+                    }),
+                    is_swordfighting: !pc.human.opponents.is_empty(),
+                }
+            })
+            .collect()
     }
 
     #[cfg(test)]
     pub(crate) fn ai_pc_snapshot_ids_for_test(&mut self, assets: &LevelAssets) -> Vec<EntityId> {
-        self.tick_enemy_ai_build_pc_snapshots(assets)
+        self.capture_pc_detection_state(assets)
             .into_iter()
             .map(|snapshot| snapshot.id)
             .collect()
@@ -687,340 +224,69 @@ impl EngineInner {
         primary_target_multiplicity
     }
 
-    /// P2c-pre — for each NPC with a primary target, precompute whether
-    /// a table swordfight (cross-sector via jump-line pair) is needed.
-    /// Stored so the AI can build `Move + EnterSwordfight` sequences.
-    pub(super) fn tick_enemy_ai_build_jump_lines(
-        &self,
-        assets: &LevelAssets,
-    ) -> std::collections::HashMap<EntityId, Option<u32>> {
-        let mut npc_jump_lines: std::collections::HashMap<EntityId, Option<u32>> =
-            std::collections::HashMap::with_capacity(self.world.entities.soldiers().count());
-        for (npc_id, s) in self.world.entities.soldiers() {
-            if let Some(ai) = s.npc.ai_brain.enemy()
-                && let Some(primary_target) = ai.base.primary_target
-                // Raw element slot — the occupant can be a soldier as well
-                // as a PC, so resolve it rather than assuming a PC index.
-                && let Some(target_id) = self
-                    .world
-                    .entities
-                    .id_at_legacy_slot(primary_target.get())
-            {
-                let jl = crate::engine::melee::is_table_swordfight_needed(
-                    &self.world.entities,
-                    &self.world.fast_grid,
-                    &assets.profile_manager,
-                    npc_id,
-                    target_id,
-                );
-                npc_jump_lines.insert(npc_id.into(), jl);
-            }
-        }
-        npc_jump_lines
-    }
-
-    /// P2c — snapshot every conscious soldier's AI-relevant state.
-    ///
-    /// `battle_decisions` iterates all fighters to build the us-list;
-    /// the snapshot lets each per-NPC inner loop walk this immutable
-    /// Vec instead of re-borrowing `self.world.entities`.  Also derives
-    /// `archer_behind_me` from the reverse of `shield_bearer_before_me`
-    /// links and writes it back onto each soldier's stored `EnemyAi`
-    /// so direct self-reads stay consistent with the snapshot view.
-    pub(super) fn tick_enemy_ai_build_soldier_snapshots(
-        &mut self,
-        assets: &LevelAssets,
-    ) -> Vec<SoldierSnapshot> {
-        let mut soldier_snapshots: Vec<SoldierSnapshot> =
-            Vec::with_capacity(self.world.entities.soldiers().count());
-        for (npc_id, s) in self.world.entities.soldiers() {
-            if s.human.unconscious {
+    /// Publish reverse archer links at the established detection-capture point.
+    /// Read every claimant before writing: inactive reciprocal links refer to
+    /// the pre-refresh state, and the last eligible claimant in registry order wins.
+    fn refresh_archer_shield_links(&mut self) {
+        let mut reverse = std::collections::HashMap::new();
+        let mut active_owners = Vec::new();
+        for (archer_id, archer) in self.world.entities.soldiers() {
+            if archer.human.unconscious {
                 continue;
             }
-            let able_to_fight = s.is_able_to_fight();
-            let is_dead = s.npc.life_points <= 0;
-            // In the original game every soldier actor owns
-            // hostile AI state; its update calls soldier-only AI
-            // methods unconditionally. A soldier without EnemyAi is an
-            // invalid partially-initialized entity.
-            let enemy_ai = s.npc.ai_brain.enemy().unwrap_or_else(|| {
-                panic!(
-                    "soldier {} has no EnemyAi brain while building AI snapshots",
-                    EntityId::from(npc_id).index()
-                )
+            let ai = archer.npc.ai_brain.enemy().unwrap_or_else(|| {
+                panic!("conscious soldier {archer_id:?} has no EnemyAi during shield-link refresh")
             });
-            let rank = enemy_ai.soldier_profile_rank;
-            let company_number = enemy_ai.company_number;
-            let pride = enemy_ai.soldier_profile_pride;
-            let primary_target = enemy_ai.base.primary_target;
-            let hth_weapon_id = enemy_ai.hth_weapon_id;
-            let alert_status = enemy_ai.base.current_music_alert_status;
-            let seek_flag_look_for_help = enemy_ai
-                .seek_flags
-                .contains(crate::ai_enemy::SeekFlags::LOOK_FOR_HELP_AFTER);
-            let left_combat_neighbour = enemy_ai.left_combat_neighbour;
-            let right_combat_neighbour = enemy_ai.right_combat_neighbour;
-            let shield_bearer_before_me = enemy_ai.shield_bearer_before_me;
-            let archer_behind_me = enemy_ai.archer_behind_me;
-            let shield_bearer_direction = enemy_ai.shield_bearer_direction;
-            let script_locked = enemy_ai.base.script_locked;
-            let ai_lock_frozen = enemy_ai
-                .base
-                .locks_flag_field
-                .contains(crate::ai::AiLockFlags::FREEZE);
-            let report_type = enemy_ai.base.my_reconnaissance_report.report_type;
-            let report_seek_position = enemy_ai.base.my_reconnaissance_report.seek_position;
-            let report_seen_bodies = enemy_ai.base.my_reconnaissance_report.seen_bodies.clone();
-            let report_charly = enemy_ai.base.my_reconnaissance_report.charly;
-            let alert_soldiers_point = enemy_ai.base.alert_soldiers_point;
-            let is_tower_guard = enemy_ai.tower_guard;
-            let patrol_chief = enemy_ai.base.patrol_chief;
-            let antagonist = enemy_ai.base.antagonist;
-            let detected_body = enemy_ai.base.detected_body;
-            let ai_seek_position = enemy_ai.base.seek_position;
-            let current_task_priority = enemy_ai.current_task_priority;
-            let minimal_task_priority = enemy_ai.minimal_task_priority;
-            // Snapshot the body-detectable list — corpses this
-            // soldier has not yet reacted to.  See
-            // `near_officer_who_is_informed_about_this_body`.
-            let detectable_bodies = {
-                let idx = crate::element::DetectableType::Body as usize;
-                s.npc
-                    .detectable_lists
-                    .get(idx)
-                    .map(|list| {
-                        let mut bodies = Vec::with_capacity(list.len());
-                        bodies.extend(list.iter().filter_map(|d| d.element.map(|e| e.index())));
-                        bodies
-                    })
-                    .unwrap_or_default()
+            if archer.element.active {
+                active_owners.push(EntityId::from(archer_id));
+            }
+            let Some(shield_handle) = ai.shield_bearer_before_me else {
+                continue;
             };
-            // Soldier weapon profile lookup for combat ranges and
-            // formation flag.
-            // Original-game soldier-profile lookup and
-            // hand-to-hand profile index bounds. Preserve that invariant
-            // instead of substituting generic rank/fighting/ranges.
-            let (soldier_profile, fighting_ability, bow_profile) =
-                self.soldier_profile_facts(assets, s, EntityId::from(npc_id));
-            let has_formation = soldier_profile.formation;
-            let is_archer_unit = is_archer_from_bow(bow_profile);
-            let bow_max_range = bow_profile
-                .map(|bow| {
-                    if bow.has_long_shoot {
-                        bow.long_shoot.range
-                    } else {
-                        bow.normal_shoot.range
-                    }
-                })
-                .unwrap_or(0);
-            let hth_profile = assets
-                .profile_manager
-                .get_hth_weapon(hth_weapon_id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "soldier {} requires missing HtH weapon profile {}",
-                        EntityId::from(npc_id).index(),
-                        hth_weapon_id
-                    )
-                });
-            let (sword_range_default, sword_range_maximal, sword_range_uber) = (
-                hth_profile.distance[crate::weapons::WeaponDistance::Default as usize],
-                hth_profile.distance[crate::weapons::WeaponDistance::Maximal as usize],
-                hth_profile.distance[crate::weapons::WeaponDistance::Uber as usize],
-            );
-            // Shield-bearer check: both the HtH weapon must be a
-            // shield AND the sprite must have the WAITING_SHIELD
-            // animation row.  We exercise the sprite's `has_animation`
-            // (parsing the same conversion table the engine uses) so
-            // soldiers whose sprite lacks the WAITING_SHIELD row no
-            // longer falsely qualify just because their HtH weapon
-            // flag is set.
-            let weapon_is_shield = hth_profile.shield;
-            let has_shield_anim = s
-                .element
-                .sprite
-                .has_animation(crate::order::OrderType::WaitingShield);
-            let is_shield_bearer = weapon_is_shield && has_shield_anim;
-            let seek_position =
-                MapPoint::new(enemy_ai.base.seek_position.x, enemy_ai.base.seek_position.y);
-            // Honour check.
-            let in_recovery = !able_to_fight || self.actor_is_in_sword_recovery(npc_id.into());
-            // Whether the soldier's sector is a building, for the
-            // `alert_officer` layer-penalty gate and the fighter scans that
-            // build the them/us lists. A soldier still on a door rail counts
-            // as outdoors here.
-            let in_building = self.entity_data_in_building_sector(&s.element);
-            // Filled only when the current NPC owner has queued Think work.
-            let forecast_destination = None;
-            // Assistance has its own early gate: dead/unconscious only.
-            // Do not use combat readiness, which additionally rejects
-            // tied, carried, inactive, menacing, fleeing, and hit-stun.
-            let alive_and_conscious = s.npc.life_points > 0 && !s.human.unconscious;
-            let able_to_help = crate::ai_enemy::soldier_is_able_to_help_state(
-                alive_and_conscious,
-                s.npc.ai_state(),
-                s.npc.ai_substate(),
-            );
-
-            let stored_map = (&s.element).position_map();
-            let stored_world = (&s.element).position();
-
-            soldier_snapshots.push(SoldierSnapshot {
-                id: npc_id.into(),
-                active: s.element.active,
-                position: stored_map,
-                position_world: stored_world,
-                layer: s.element.layer(),
-                camp: s.soldier.cached_camp,
-                ai_state: s.npc.ai_state(),
-                ai_substate: s.npc.ai_substate(),
-                posture: s.element.posture(),
-                rank,
-                company_number,
-                pride,
-                primary_target,
-                principal_opponent: s
-                    .human
-                    .opponents
-                    .first()
-                    .map(|id| crate::ai::AiEntityHandle::new(id.index())),
-                opponent_handles: s.human.opponents.iter().map(|id| id.index()).collect(),
-                able_to_fight,
-                is_dead,
-                knocked_out_in_money_fight: enemy_ai.base.knocked_out_in_money_fight,
-                able_to_help,
-                alert_status,
-                seek_flag_look_for_help,
-                direction: s.element.direction() as u16,
-                action_state: s.actor.action_state,
-                is_swordfighting: !s.human.opponents.is_empty(),
-                sword_range_default,
-                sword_range_maximal,
-                sword_range_uber,
-                fighting_ability,
-                has_formation,
-                is_shield_bearer,
-                is_archer_unit,
-                left_combat_neighbour,
-                right_combat_neighbour,
-                in_recovery,
-                hth_weapon_id,
-                is_vip: soldier_profile.vip,
-                is_tower_guard,
-                seek_position,
-                shield_bearer_before_me,
-                archer_behind_me,
-                shield_bearer_direction,
-                bow_max_range,
-                script_locked,
-                ai_lock_frozen,
-                report_type,
-                report_seek_position,
-                report_seen_bodies,
-                report_charly,
-                alert_soldiers_point,
-                elevation: s.element.position().z as u16,
-                ground_z: s.element.position().z,
-                patrol_chief,
-                antagonist,
-                detected_body,
-                blood_alcohol: enemy_ai.base.blood_alcohol,
-                duty_flag: soldier_profile.duty,
-                in_building,
-                forecast_destination,
-                detectable_bodies,
-                ai_seek_position,
-                current_task_priority,
-                minimal_task_priority,
-                view_direction: s.npc.view_direction,
-                view_radius: s.npc.view_radius,
-                real_half_aperture: s.npc.real_half_aperture,
-                eye_blind: s.npc.eye_status.is_blind(),
-                building_sector: self.entity_building_sector(s.element.sector()),
-                is_rider: s.soldier.rider,
-                passing_door: s.actor.active_door_pass.is_some(),
-                obstacle_idx: s.element.obstacle_index(),
-            });
-        }
-
-        // Derive `archer_behind_me` from the reverse of
-        // `shield_bearer_before_me` links so the filter in
-        // `get_nearest_free_shield_bearer` prevents double-claiming.
-        // Relationship pointers in Original remain valid while either
-        // soldier is inactive, so a mutually linked inactive archer must
-        // participate even though combat scans ignore it. A one-sided
-        // inactive archer link can be stale, however: require the serialized
-        // shield-side pointer to agree before retaining it. Active archers
-        // keep the existing reverse-reconstruction behavior because their
-        // reciprocal action may have been queued during this tick.
-        // Also propagate back to the stored EnemyAi field for consistency
-        // with direct self-reads.
-        {
-            let stored_archers: std::collections::HashMap<u32, Option<crate::ai::AiEntityHandle>> =
-                soldier_snapshots
-                    .iter()
-                    .map(|snapshot| (snapshot.id.index(), snapshot.archer_behind_me))
-                    .collect();
-            for snapshot in &mut soldier_snapshots {
-                snapshot.archer_behind_me = None;
-            }
-            // Collect (archer_handle, shield_bearer_handle) pairs.
-            let mut pairs: Vec<(u32, u32, bool)> = Vec::with_capacity(soldier_snapshots.len());
-            pairs.extend(soldier_snapshots.iter().filter_map(|s| {
-                s.shield_bearer_before_me
-                    .map(|shield| (s.id.index(), shield.get(), s.active))
-            }));
-            for (archer_handle, sb_handle, archer_active) in &pairs {
-                if let Some(sb) = soldier_snapshots
-                    .iter_mut()
-                    .find(|s| s.id.index() == *sb_handle)
-                {
-                    let stored_archer =
-                        stored_archers.get(sb_handle).copied().unwrap_or_else(|| {
-                            panic!(
-                                "shield-bearer snapshot {} lost its stored relationship entry",
-                                sb_handle
-                            )
-                        });
-                    if *archer_active
-                        || stored_archer == Some(crate::ai::AiEntityHandle::new(*archer_handle))
-                    {
-                        sb.archer_behind_me = Some(crate::ai::AiEntityHandle::new(*archer_handle));
-                    } else {
-                        tracing::warn!(
-                            archer = *archer_handle,
-                            shield_bearer = *sb_handle,
-                            ?stored_archer,
-                            "ignoring stale one-sided inactive archer relationship"
-                        );
-                    }
-                } else {
-                    tracing::warn!(
-                        archer = *archer_handle,
-                        shield_bearer = *sb_handle,
-                        "shield-bearer relationship points outside the conscious soldier snapshot"
-                    );
-                }
-            }
-            // Write back to stored EnemyAi fields so direct self-reads
-            // (outside snapshots) stay fresh.
-            for snap in soldier_snapshots.iter().filter(|snap| snap.active) {
-                let npc_id = snap.id;
-                if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-                    && let Some(enemy_ai) = s.npc.ai_brain.enemy_mut()
-                {
-                    enemy_ai.archer_behind_me = snap.archer_behind_me;
-                }
+            let shield = self
+                .world
+                .entities
+                .id_at_legacy_slot(shield_handle.get())
+                .and_then(|id| self.world.entities.get(id));
+            let Some(Entity::Soldier(shield)) = shield.filter(|entity| !entity.is_unconscious())
+            else {
+                tracing::warn!(
+                    archer = EntityId::from(archer_id).index(),
+                    shield_bearer = shield_handle.get(),
+                    "shield-bearer relationship points outside the conscious soldier registry"
+                );
+                continue;
+            };
+            let stored_archer = shield
+                .npc
+                .ai_brain
+                .enemy()
+                .expect("conscious shield bearer requires EnemyAi")
+                .archer_behind_me;
+            let archer_handle = crate::ai::AiEntityHandle::new(EntityId::from(archer_id).index());
+            if archer.element.active || stored_archer == Some(archer_handle) {
+                reverse.insert(shield_handle, archer_handle);
+            } else {
+                tracing::warn!(
+                    archer = archer_handle.get(),
+                    shield_bearer = shield_handle.get(),
+                    ?stored_archer,
+                    "ignoring stale one-sided inactive archer relationship"
+                );
             }
         }
-
-        soldier_snapshots
+        for id in active_owners {
+            self.world
+                .entities
+                .expect_entity_mut(id, format_args!("shield-link owner"))
+                .enemy_ai_mut()
+                .expect("active conscious soldier requires EnemyAi")
+                .archer_behind_me = reverse.remove(&crate::ai::AiEntityHandle::new(id.index()));
+        }
     }
 
-    /// P2d — collect unconscious-but-alive soldiers.  `SoldierSnapshot`
-    /// filters out unconscious soldiers, but the money-fight scans walk
-    /// the whole camp registry including sleepers, so this parallel list
-    /// carries them.  The `knocked_out_in_money_fight` flag rides along
+    /// Capture active, unconscious-but-alive soldiers for money-fight scans.
+    /// The `knocked_out_in_money_fight` flag rides along
     /// because only the victim scan filters on it; the morale scan
     /// merely classifies with it.
     pub(super) fn tick_enemy_ai_build_unconscious_soldiers(&self) -> Vec<(EntityId, Camp, bool)> {
@@ -1256,6 +522,114 @@ mod tests {
     use super::{is_archer_from_bow, object_detection_world_position};
 
     #[test]
+    fn shield_link_refresh_preserves_claim_order_and_inactive_reciprocity() {
+        use crate::ai::AiEntityHandle;
+        use crate::element::Camp;
+        use crate::engine::test_support::actors::make_test_ai_soldier;
+
+        // (first active, last active, last unconscious, shield active,
+        //  shield unconscious, stored claimant, expected claimant).
+        let cases = [
+            (
+                "last active claimant wins",
+                (true, true, false, true, false, None, Some(1)),
+            ),
+            (
+                "reciprocal inactive claimant wins",
+                (true, false, false, true, false, Some(1), Some(1)),
+            ),
+            (
+                "stale inactive claimant cannot displace first",
+                (true, false, false, true, false, Some(0), Some(0)),
+            ),
+            (
+                "inactive one-sided links are cleared",
+                (false, false, false, true, false, None, None),
+            ),
+            (
+                "inactive shield is not overwritten",
+                (true, true, false, false, false, Some(0), Some(0)),
+            ),
+            (
+                "unconscious claimant is excluded",
+                (true, true, true, true, false, Some(1), Some(0)),
+            ),
+            (
+                "unconscious shield is not overwritten",
+                (true, true, false, true, true, Some(0), Some(0)),
+            ),
+        ];
+        for (
+            name,
+            (
+                first_active,
+                last_active,
+                last_unconscious,
+                shield_active,
+                shield_unconscious,
+                stored,
+                expected,
+            ),
+        ) in cases
+        {
+            let mut engine = crate::engine::EngineInner::new();
+            let shield = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+            let first = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+            let last = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+            let handles = [
+                AiEntityHandle::new(first.index()),
+                AiEntityHandle::new(last.index()),
+            ];
+            for (id, active, unconscious) in [
+                (shield, shield_active, shield_unconscious),
+                (first, first_active, false),
+                (last, last_active, last_unconscious),
+            ] {
+                let entity = engine.get_entity_mut(id).unwrap();
+                entity.element_data_mut().active = active;
+                entity.human_data_mut().unwrap().unconscious = unconscious;
+            }
+            for id in [first, last] {
+                engine
+                    .get_entity_mut(id)
+                    .unwrap()
+                    .enemy_ai_mut()
+                    .unwrap()
+                    .shield_bearer_before_me = Some(AiEntityHandle::new(shield.index()));
+            }
+            engine
+                .get_entity_mut(shield)
+                .unwrap()
+                .enemy_ai_mut()
+                .unwrap()
+                .archer_behind_me = stored.map(|index: usize| handles[index]);
+
+            engine.refresh_archer_shield_links();
+
+            assert_eq!(
+                engine
+                    .get_entity(shield)
+                    .unwrap()
+                    .enemy_ai()
+                    .unwrap()
+                    .archer_behind_me,
+                expected.map(|index| handles[index]),
+                "{name}"
+            );
+            assert_eq!(
+                engine
+                    .get_entity(first)
+                    .unwrap()
+                    .enemy_ai()
+                    .unwrap()
+                    .shield_bearer_before_me,
+                Some(AiEntityHandle::new(shield.index())),
+                "refresh must preserve forward links: {name}"
+            );
+        }
+    }
+
+    #[test]
     fn owner_boundary_ai_position_recovers_duplicate_public_sector_identity() {
         use crate::coordinates::{MapBBox, MapPoint};
         use crate::fast_find_grid::{GridSector, SectorIndex};
@@ -1318,7 +692,10 @@ mod tests {
         element.set_layer(2);
         element.set_sector(crate::position_interface::SectorHandle::new(88));
 
-        let position = engine.live_ai_position(target);
+        let position = super::super::build_entity_views_without_forecast(&engine)
+            .get(&target.index())
+            .expect("target requires live AI view")
+            .position;
         assert_eq!(
             position.sector.and_then(|sector| sector.arena_index()),
             SectorIndex::new(exact)
