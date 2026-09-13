@@ -15,11 +15,11 @@ use crate::widget::FrameWnd;
 use robin_run_protocol::BoardMetricValueV1;
 
 use super::layout::{
-    MENU_W, MenuTransform, TextAlign, VAlign, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, render_clipped_text_in_box_font, render_text_virt_font,
+    MENU_W, MenuTransform, TextAlign, VAlign, draw_screen_background,
+    render_clipped_text_in_box_font, render_text_virt_font,
 };
 use super::resources::IngameMenuResources;
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{self, ModalInputState, ScreenFrame, ScreenKey};
 
 const TAB_ID_BASE: u32 = 100;
 const SUBMIT_ID: u32 = 200;
@@ -76,44 +76,42 @@ impl MissionEndLeaderboardScreen {
     /// Advance and render exactly one UI frame. A returned event is consumed
     /// by the outer cooperative task; `None` keeps the overlay alive.
     pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<MissionEndLeaderboardEvent> {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
         self.controller.poll();
         self.sync_widget_enabled();
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        let screen = ScreenFrame::begin(io, &mut self.input);
         let mut outcome = None;
-        for event in events {
-            self.input.update_from_event(&event, transform);
-            let action = match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => Some(MissionEndLeaderboardAction::Close),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Left,
-                    ..
-                } => self.adjacent_tab(-1),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Right,
-                    ..
-                } => self.adjacent_tab(1),
-                _ => None,
+        // Actions apply in event order: a tab switch reads the tab selected
+        // by the previous event.
+        for event in &screen.events {
+            let action = match ScreenKey::from_event(event) {
+                Some(ScreenKey::Quit | ScreenKey::Cancel) => {
+                    Some(MissionEndLeaderboardAction::Close)
+                }
+                Some(ScreenKey::Confirm | ScreenKey::Next) => None,
+                None => match event {
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Left,
+                        ..
+                    } => self.adjacent_tab(-1),
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Right,
+                        ..
+                    } => self.adjacent_tab(1),
+                    _ => None,
+                },
             };
             if let Some(action) = action {
                 outcome = self.apply(action).or(outcome);
             }
         }
-        let widget_events = self.input.process_frame(&mut self.frame);
-        if let Some(id) = widget_bridge::find_activated(&widget_events)
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input, &mut self.frame);
+        if let Some(id) = activated
             && let Some(action) = self.widget_action(id)
         {
             outcome = self.apply(action).or(outcome);
         }
 
-        self.render(renderer, resources, transform, cursor);
+        self.render(io, &screen);
         outcome
     }
 
@@ -238,15 +236,11 @@ impl MissionEndLeaderboardScreen {
         }
     }
 
-    fn render(
-        &self,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        transform: MenuTransform,
-        cursor: Option<&ModalCursor<'_>>,
-    ) {
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+    fn render(&self, io: &mut ModalScreenIo<'_, '_>, screen: &ScreenFrame) {
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let transform = screen.transform;
+        screen.begin_draw(renderer);
         if let Some(background) = resources.menu_bg[0] {
             draw_screen_background(renderer, &background);
         }
@@ -310,10 +304,7 @@ impl MissionEndLeaderboardScreen {
                 VAlign::Top,
             );
         }
-        if let Some(cursor) = cursor {
-            cursor.draw(renderer, transform, &self.input);
-        }
-        renderer.present();
+        screen.finish(io, &self.input);
     }
 
     fn render_board(
