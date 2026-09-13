@@ -44,7 +44,9 @@ i_overlay = "8.1.1"
 robin_util.workspace = true
 robin_data_io.workspace = true
 robin_state_hash_derive.workspace = true
-robin_run_protocol.workspace = true
+# Plain run-identity types only; the signed leaderboard protocol
+# (robin_run_protocol) must stay out of the simulation dependency graph.
+robin_run_types.workspace = true
 sha2.workspace = true
 nonmax = { workspace = true, features = ["serde"] }
 bitcode.workspace = true

@@ -18,7 +18,7 @@ hex.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 semver = "1"
-robin_display_text.workspace = true
+robin_run_types.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 

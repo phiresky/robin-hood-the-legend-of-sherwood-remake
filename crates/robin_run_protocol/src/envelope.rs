@@ -6,17 +6,23 @@ use crate::{
     AnonymousParticipantPolicyV1, ArtifactRefV1, BoardMetricV1, CampaignContentManifestV1,
     CampaignRosterContinuityV1, CanonicalDocument as _, CanonicalValue, ChallengeNonce32, Digest32,
     DomainSignedClaim, OfficialContentEditionV1, OfficialContentSubjectV1, OpaqueId, PublicKey32,
-    PublishedRulesetV1, ResourceLocaleRootV1, RulesetBoardScopeV1, RunMetricsV1, Signature64,
-    SimulationSeed64, Validate, ValidationError,
+    PublishedRulesetV1, RulesetBoardScopeV1, RunMetricsV1, Signature64, Validate, ValidationError,
 };
 #[cfg(test)]
-use crate::{ContentManifestV1, SimulationSpeechTimingSourceV1};
+use crate::{
+    ContentManifestV1, ResourceLocaleRootV1, SimulationSeed64, SimulationSpeechTimingSourceV1,
+};
+
+// The prepared-input seal and co-sign request are consumed by the deterministic
+// engine, so they live in the `robin_run_types` leaf; module paths are unchanged.
+pub use robin_run_types::{
+    LEADERBOARD_CO_SIGN_PAYLOAD_DOMAIN_V1, LEADERBOARD_CO_SIGN_PAYLOAD_LENGTH_V1,
+    LeaderboardCoSignInstanceV1, LeaderboardCoSignPurposeV1, LeaderboardCoSignRequestV1,
+    MAX_PARTICIPANT_INSTANCES_V1, MAX_REPLAY_SEATS_V1, PreparedMissionInputsSealV1,
+    RANKED_CAMPAIGN_MEDIA_TYPE_V1,
+};
 
 pub const SUBMISSION_SIGNATURE_DOMAIN_V1: &[u8] = b"robinhood/leaderboards/1/submission\0";
-/// Domain for the one fixed-size payload accepted by the leaderboard identity
-/// key for participant and campaign-controller co-signatures.
-pub const LEADERBOARD_CO_SIGN_PAYLOAD_DOMAIN_V1: &[u8] =
-    b"robinhood/leaderboards/1/co-sign-payload\0";
 pub const USERNAME_UPDATE_SIGNATURE_DOMAIN_V1: &[u8] =
     b"robinhood/leaderboards/1/username-update\0";
 pub const REPLAY_SESSION_GENESIS_SIGNATURE_DOMAIN_V1: &[u8] =
@@ -25,11 +31,6 @@ pub const NAMED_SEAT_JOIN_SIGNATURE_DOMAIN_V1: &[u8] =
     b"robinhood/multiplayer/1/join-attestation\0";
 pub const CAMPAIGN_CONTINUATION_SIGNATURE_DOMAIN_V1: &[u8] =
     b"robinhood/leaderboards/1/campaign-continuation\0";
-/// The payload consists of this domain, a one-byte purpose tag, the replay
-/// session digest, the authoritative submission-offer digest, and the exact
-/// purpose-specific document digest.
-pub const LEADERBOARD_CO_SIGN_PAYLOAD_LENGTH_V1: usize =
-    LEADERBOARD_CO_SIGN_PAYLOAD_DOMAIN_V1.len() + 1 + Digest32::LENGTH * 3;
 pub const COMPETITION_RUN_GRANT_REQUEST_SIGNATURE_DOMAIN_V1: &[u8] =
     b"robinhood/leaderboards/1/competition-run-grant-request\0";
 pub const COMPETITION_RUN_GRANT_SIGNATURE_DOMAIN_V1: &[u8] =
@@ -44,12 +45,7 @@ pub const CAMPAIGN_CONTINUATION_PREFLIGHT_CONTROLLER_SIGNATURE_DOMAIN_V1: &[u8] 
     b"robinhood/leaderboards/1/campaign-continuation-preflight-controller\0";
 pub const CAMPAIGN_CONTINUATION_PREFLIGHT_GRANT_SIGNATURE_DOMAIN_V1: &[u8] =
     b"robinhood/leaderboards/1/campaign-continuation-preflight-grant\0";
-pub const MAX_REPLAY_SEATS_V1: u16 = 4;
-pub const MAX_PARTICIPANT_INSTANCES_V1: u16 = 1_024;
 pub const MAX_CAMPAIGN_SESSIONS_V1: u32 = 4_096;
-/// Exact media type for the bitcode campaign artifact consumed by the ranked
-/// Engine.
-pub const RANKED_CAMPAIGN_MEDIA_TYPE_V1: &str = "application/x-robin-campaign+bitcode";
 /// The one wire/storage format accepted by the current ranked schema. JSONL and older
 /// Rust replay containers are local developer formats, not protocol lanes.
 pub const RANKED_REPLAY_MEDIA_TYPE_V1: &str = "application/x-robin-rhrec+compact";
@@ -130,32 +126,6 @@ pub use session::{
     ReplaySeatLifecycleEventV1, ReplaySeatLifecycleKindV1, ReplaySessionGenesisClaimV1,
     ReplaySessionGenesisV1, ReplaySessionTranscriptV1, SpeechTimingAuthorityV1,
 };
-/// Canonical seal over the exact run-specific inputs consumed by the engine.
-/// The static content manifest is prepublished; `prepared_inputs_projection`
-/// additionally binds the mutable team/inventory/reinforcement closure
-/// derived from the starting campaign. Ranked verification recomputes this
-/// document before consuming the engine's single-use prepared capability.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PreparedMissionInputsSealV1 {
-    pub schema_version: u32,
-    pub prepared_inputs_projection_sha256: Digest32,
-    pub content_manifest_sha256: Digest32,
-    pub content_edition: OfficialContentEditionV1,
-    pub content_subject: OfficialContentSubjectV1,
-    pub starting_campaign_sha256: Digest32,
-    pub starting_campaign_byte_length: u64,
-    pub simulation_seed: SimulationSeed64,
-    pub rules_config_sha256: Digest32,
-    pub resource_locale_root: ResourceLocaleRootV1,
-    pub speech_timing: SpeechTimingAuthorityV1,
-    /// Reserved for explicitly unranked Spellforge simulations. Official
-    /// ranked seals reject it until immutable policy semantics exist.
-    pub spellforge_content_sha256: Option<Digest32>,
-    /// Original-parity RNG streams are replay inputs, not ranked RNG. Their
-    /// presence makes the seal unrankable.
-    pub original_rng_replay_sha256: Option<Digest32>,
-}
 
 /// Host-authored request frozen before the first ranked simulation frame.
 /// The random request nonce makes retries explicit; the remaining fields bind
@@ -797,47 +767,6 @@ impl Validate for CampaignContinuationPreflightGrantV1 {
     }
 }
 
-impl Validate for PreparedMissionInputsSealV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("PreparedMissionInputsSealV1", self.schema_version)?;
-        self.content_subject.validate()?;
-        if [
-            self.prepared_inputs_projection_sha256,
-            self.content_manifest_sha256,
-            self.starting_campaign_sha256,
-            self.rules_config_sha256,
-        ]
-        .into_iter()
-        .any(|digest| digest.is_zero())
-            || self.starting_campaign_byte_length == 0
-            || self
-                .spellforge_content_sha256
-                .is_some_and(|digest| digest.is_zero())
-            || self
-                .original_rng_replay_sha256
-                .is_some_and(|digest| digest.is_zero())
-        {
-            return Err(ValidationError::Zero {
-                field: "prepared_mission_inputs_seal.identity_digest",
-            });
-        }
-        self.resource_locale_root.validate()?;
-        self.speech_timing.validate()
-    }
-}
-
-impl PreparedMissionInputsSealV1 {
-    pub fn validate_rankable(&self) -> Result<(), ValidationError> {
-        self.validate()?;
-        if self.spellforge_content_sha256.is_some() || self.original_rng_replay_sha256.is_some() {
-            return Err(ValidationError::ClaimMismatch {
-                field: "prepared_mission_inputs_seal.unranked_input_mode",
-            });
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ParticipantClaimV1 {
@@ -867,129 +796,17 @@ pub struct ParticipantSignatureV1 {
     pub signature: Signature64,
 }
 
-/// Closed purpose set for the only leaderboard co-signing payload accepted by
-/// the durable game identity. The numeric tag is part of the fixed signature
-/// contract; new purposes require a new contract version rather than reusing a
-/// tag.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum LeaderboardCoSignPurposeV1 {
-    CampaignContinuation,
-    Submission,
-}
-
-impl LeaderboardCoSignPurposeV1 {
-    const fn signing_tag(self) -> u8 {
-        match self {
-            Self::CampaignContinuation => 1,
-            Self::Submission => 2,
-        }
-    }
-}
-
-/// Deterministic, server-reconstructible identity for one co-sign operation.
-///
-/// The replay session prevents cross-session use while the digest of the exact
-/// server-issued offer binds its one-use upload challenge and nonce. Callers
-/// must derive this value from an authoritative validated offer; it is never a
-/// client-selected sequence number.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-#[serde(deny_unknown_fields)]
-pub struct LeaderboardCoSignInstanceV1 {
-    pub purpose: LeaderboardCoSignPurposeV1,
-    pub replay_session_id: Digest32,
-    pub submission_offer_sha256: Digest32,
-}
-
-impl LeaderboardCoSignInstanceV1 {
-    pub fn from_offer(
-        purpose: LeaderboardCoSignPurposeV1,
-        offer: &SubmissionOfferV1,
-    ) -> Result<Self, crate::canonical::CanonicalDocumentError> {
-        Ok(Self {
-            purpose,
-            replay_session_id: offer.session_genesis.claim.replay_session_id,
-            submission_offer_sha256: offer.canonical_digest()?,
-        })
-    }
-}
-
-impl Validate for LeaderboardCoSignInstanceV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if self.replay_session_id.is_zero() || self.submission_offer_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "leaderboard_co_sign.instance",
-            });
-        }
-        Ok(())
-    }
-}
-
-/// The exact request signed by a local player or a remote multiplayer
-/// participant. `signing_bytes` is deliberately fixed-size and is the sole
-/// co-signature payload; neither native nor browser identities expose a raw
-/// signing operation.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
-)]
-#[serde(deny_unknown_fields)]
-pub struct LeaderboardCoSignRequestV1 {
-    pub instance: LeaderboardCoSignInstanceV1,
-    pub run_digest: Digest32,
-}
-
-impl LeaderboardCoSignRequestV1 {
-    pub fn signing_bytes(
-        &self,
-    ) -> Result<[u8; LEADERBOARD_CO_SIGN_PAYLOAD_LENGTH_V1], ValidationError> {
-        self.validate()?;
-        let mut bytes = [0_u8; LEADERBOARD_CO_SIGN_PAYLOAD_LENGTH_V1];
-        let mut offset = 0;
-        let mut append = |part: &[u8]| {
-            let end = offset + part.len();
-            bytes[offset..end].copy_from_slice(part);
-            offset = end;
-        };
-        append(LEADERBOARD_CO_SIGN_PAYLOAD_DOMAIN_V1);
-        append(&[self.instance.purpose.signing_tag()]);
-        append(self.instance.replay_session_id.as_bytes());
-        append(self.instance.submission_offer_sha256.as_bytes());
-        append(self.run_digest.as_bytes());
-        debug_assert_eq!(offset, LEADERBOARD_CO_SIGN_PAYLOAD_LENGTH_V1);
-        Ok(bytes)
-    }
-}
-
-impl Validate for LeaderboardCoSignRequestV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        self.instance.validate()?;
-        crate::validation::nonzero("leaderboard_co_sign.run_digest", &self.run_digest)?;
-        Ok(())
-    }
+/// Deterministic, server-reconstructible co-sign identity derived from an
+/// authoritative validated offer; it is never a client-selected sequence number.
+fn co_sign_instance_from_offer(
+    purpose: LeaderboardCoSignPurposeV1,
+    offer: &SubmissionOfferV1,
+) -> Result<LeaderboardCoSignInstanceV1, crate::canonical::CanonicalDocumentError> {
+    Ok(LeaderboardCoSignInstanceV1 {
+        purpose,
+        replay_session_id: offer.session_genesis.claim.replay_session_id,
+        submission_offer_sha256: offer.canonical_digest()?,
+    })
 }
 
 fn validate_participants(
@@ -1913,7 +1730,7 @@ impl CampaignContinuationAuthorizationClaimV1 {
             self,
         )?;
         Ok(LeaderboardCoSignRequestV1 {
-            instance: LeaderboardCoSignInstanceV1::from_offer(
+            instance: co_sign_instance_from_offer(
                 LeaderboardCoSignPurposeV1::CampaignContinuation,
                 offer,
             )?,
@@ -2020,7 +1837,7 @@ impl SubmissionEnvelopeV1 {
         let digest_input =
             crate::canonical::domain_separated_bytes(SUBMISSION_SIGNATURE_DOMAIN_V1, self)?;
         Ok(LeaderboardCoSignRequestV1 {
-            instance: LeaderboardCoSignInstanceV1::from_offer(
+            instance: co_sign_instance_from_offer(
                 LeaderboardCoSignPurposeV1::Submission,
                 &self.offer,
             )?,

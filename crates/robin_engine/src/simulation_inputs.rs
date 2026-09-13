@@ -12,12 +12,12 @@
 
 use std::collections::BTreeMap;
 
-use robin_run_protocol::{
+use robin_run_types::{
     CanonicalDocument, ContentClosureKindV1, ContentManifestV1, Digest32, OfficialContentEditionV1,
     OfficialContentSubjectV1, PreparedMissionInputsSealV1, RulesConfigIdentityV1, SimulationSeed64,
     SpeechTimingAuthorityV1, Validate, canonical_json_bytes,
 };
-pub use robin_run_protocol::{
+pub use robin_run_types::{
     CanonicalValue as CanonicalSimulationValue, SimulationContentComponentDocumentV1,
     SimulationContentComponentKindV1,
 };
@@ -91,9 +91,7 @@ pub fn custom_rules_config_v1(
     config: SimConfig,
 ) -> Result<RulesConfigIdentityV1, ProjectionError> {
     use crate::player_profile::DifficultyLevel;
-    use robin_run_protocol::{
-        RankedSimulationDifficultyV1 as Difficulty, RankedSimulationPresetV1,
-    };
+    use robin_run_types::{RankedSimulationDifficultyV1 as Difficulty, RankedSimulationPresetV1};
     let mut rules = baseline.clone();
     rules.ranked_simulation_policy.preset = RankedSimulationPresetV1::Custom;
     rules.ranked_simulation_policy.difficulty = match config.difficulty {
@@ -117,7 +115,7 @@ pub fn custom_rules_config_v1(
 pub fn canonical_fresh_campaign_artifact_v1(
     rules: &RulesConfigIdentityV1,
     profiles_document: &SimulationContentComponentDocumentV1,
-) -> Result<robin_run_protocol::ArtifactRefV1, ProjectionError> {
+) -> Result<robin_run_types::ArtifactRefV1, ProjectionError> {
     let profiles = profile_manager_from_component_document_v1(profiles_document)?;
     if profiles.characters.len() < 2 || profiles.missions.is_empty() {
         return Err(ProjectionError::InvalidRankedSimulationPolicy(
@@ -135,10 +133,10 @@ pub fn canonical_fresh_campaign_artifact_v1(
             "fresh campaign exceeds verifier artifact limit".into(),
         ));
     }
-    Ok(robin_run_protocol::ArtifactRefV1 {
+    Ok(robin_run_types::ArtifactRefV1 {
         sha256: Digest32::digest_bytes(&bytes),
         byte_length: bytes.len() as u64,
-        media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.into(),
+        media_type: robin_run_types::RANKED_CAMPAIGN_MEDIA_TYPE_V1.into(),
     })
 }
 
@@ -151,7 +149,7 @@ pub fn validate_canonical_mission_start_v1(
     edition: OfficialContentEditionV1,
     subject: &OfficialContentSubjectV1,
     simulation_seed: u64,
-    expected: &robin_run_protocol::ArtifactRefV1,
+    expected: &robin_run_types::ArtifactRefV1,
     files: &crate::sbfile::SbFileSystem,
 ) -> Result<(), ProjectionError> {
     let profiles = profile_manager_from_component_document_v1(profiles_document)?;
@@ -230,8 +228,7 @@ pub fn validate_canonical_mission_start_v1(
             }
         }
         OfficialContentEditionV1::Full => {
-            if subject.mission_id()
-                == robin_run_protocol::OFFICIAL_FULL_CAMPAIGN_GENESIS_MISSION_ID_V1
+            if subject.mission_id() == robin_run_types::OFFICIAL_FULL_CAMPAIGN_GENESIS_MISSION_ID_V1
             {
                 // A new campaign begins with the application-owned seed zero.
                 // Mission selection may advance it; both checkpoints must agree.
@@ -997,7 +994,7 @@ impl PreparedMissionRunProjectionV1 {
     }
 
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, ProjectionError> {
-        use robin_run_protocol::bitcode_value::BitcodeValueRef;
+        use robin_run_types::bitcode_value::BitcodeValueRef;
         let static_components = self
             .static_components
             .iter()
@@ -1221,7 +1218,7 @@ pub struct PreparedMissionSealBindingsV1 {
     pub content_edition: OfficialContentEditionV1,
     pub content_subject: OfficialContentSubjectV1,
     pub rules_config_sha256: Digest32,
-    pub resource_locale_root: robin_run_protocol::ResourceLocaleRootV1,
+    pub resource_locale_root: robin_run_types::ResourceLocaleRootV1,
     pub speech_timing: SpeechTimingAuthorityV1,
     pub spellforge_content_sha256: Option<Digest32>,
 }
@@ -1323,15 +1320,15 @@ pub enum ProjectionError {
     #[error("serialize simulation projection: {0}")]
     Serialize(String),
     #[error(transparent)]
-    Bitcode(#[from] robin_run_protocol::bitcode_value::ProjectionBitcodeError),
+    Bitcode(#[from] robin_run_types::bitcode_value::ProjectionBitcodeError),
     #[error("serialize deterministic input projection: {0}")]
     SerdeValue(#[from] serde_value::SerializerError),
     #[error(transparent)]
-    Canonical(#[from] robin_run_protocol::CanonicalError),
+    Canonical(#[from] robin_run_types::CanonicalError),
     #[error(transparent)]
-    CanonicalDocument(#[from] robin_run_protocol::CanonicalDocumentError),
+    CanonicalDocument(#[from] robin_run_types::CanonicalDocumentError),
     #[error(transparent)]
-    Validation(#[from] robin_run_protocol::ValidationError),
+    Validation(#[from] robin_run_types::ValidationError),
     #[error("deterministic input map contains two keys with the same canonical identity")]
     DuplicateCanonicalMapKey,
     #[error("ranked preparation has missing speech or sound-source duration metadata")]
@@ -1590,7 +1587,7 @@ fn canonicalize_projected_map(
     for (key, value) in values {
         let key = canonicalize_serde_value(key)?;
         let sort_key =
-            bitcode::encode(&robin_run_protocol::bitcode_value::BitcodeValueRef::from_value(&key)?);
+            bitcode::encode(&robin_run_types::bitcode_value::BitcodeValueRef::from_value(&key)?);
         entries.push((sort_key, key, value));
     }
     entries.sort_by(|left, right| left.0.cmp(&right.0));
@@ -1617,7 +1614,7 @@ mod tests {
     use super::*;
 
     fn assert_reference_projection(value: &(impl Serialize + ?Sized)) -> CanonicalSimulationValue {
-        use robin_run_protocol::bitcode_value::{BitcodeValue, BitcodeValueRef};
+        use robin_run_types::bitcode_value::{BitcodeValue, BitcodeValueRef};
         let reference = canonicalize_serde_value(serde_value::to_value(value).unwrap()).unwrap();
         let projected = canonical_from_serializable(value).unwrap();
         assert_eq!(projected, reference, "public diagnostic representation");
@@ -1759,7 +1756,7 @@ mod tests {
 
     #[test]
     fn borrowed_run_projection_matches_owned_reference_bytes_and_hash() {
-        use robin_run_protocol::bitcode_value::BitcodeValue;
+        use robin_run_types::bitcode_value::BitcodeValue;
         let campaign = assert_reference_projection(&Campaign::default());
         let config = assert_reference_projection(&SimConfig::default());
         let assets = assert_reference_projection(&projection_profiles());
@@ -2072,10 +2069,10 @@ mod tests {
         };
         let artifact = |campaign: &Campaign| {
             let bytes = bitcode::encode(campaign);
-            robin_run_protocol::ArtifactRefV1 {
+            robin_run_types::ArtifactRefV1 {
                 sha256: Digest32::digest_bytes(&bytes),
                 byte_length: bytes.len() as u64,
-                media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.into(),
+                media_type: robin_run_types::RANKED_CAMPAIGN_MEDIA_TYPE_V1.into(),
             }
         };
         let mut campaign = Campaign::from_profiles(&profiles, config.difficulty);
@@ -2144,7 +2141,7 @@ mod tests {
 
     #[test]
     fn six_ranked_rules_config_digests_are_stable() {
-        use robin_run_protocol::CanonicalDocument as _;
+        use robin_run_types::CanonicalDocument as _;
 
         let policies = [
             RankedSimulationPolicy::standard_easy(),

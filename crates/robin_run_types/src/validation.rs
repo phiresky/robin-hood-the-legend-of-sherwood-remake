@@ -3,12 +3,12 @@ pub trait Validate {
     fn validate(&self) -> Result<(), ValidationError>;
 }
 
-pub(crate) trait IsZero {
+pub trait IsZero {
     fn is_zero(&self) -> bool;
 }
 
 /// Keep the field-specific error identical for numeric and fixed digest values.
-pub(crate) fn nonzero(field: &'static str, value: &impl IsZero) -> Result<(), ValidationError> {
+pub fn nonzero(field: &'static str, value: &impl IsZero) -> Result<(), ValidationError> {
     if value.is_zero() {
         Err(ValidationError::Zero { field })
     } else {
@@ -90,11 +90,11 @@ pub enum ValidationError {
     InvalidOriginalScore,
 }
 
-pub(crate) fn schema(document: &'static str, actual: u32) -> Result<(), ValidationError> {
+pub fn schema(document: &'static str, actual: u32) -> Result<(), ValidationError> {
     schema_exact(document, crate::SCHEMA_VERSION_V1, actual)
 }
 
-pub(crate) fn schema_exact(
+pub fn schema_exact(
     document: &'static str,
     expected: u32,
     actual: u32,
@@ -110,11 +110,7 @@ pub(crate) fn schema_exact(
     }
 }
 
-pub(crate) fn text(
-    field: &'static str,
-    value: &str,
-    maximum: usize,
-) -> Result<(), ValidationError> {
+pub fn text(field: &'static str, value: &str, maximum: usize) -> Result<(), ValidationError> {
     if value.is_empty() {
         return Err(ValidationError::Empty { field });
     }
@@ -141,10 +137,7 @@ pub(crate) fn text(
 /// The deliberately small unescaped ASCII grammar makes both filesystem joins
 /// and WHATWG URL resolution stay below the configured base path. Callers must
 /// not percent-decode or otherwise reinterpret this value before validation.
-pub(crate) fn artifact_relative_url_path(
-    field: &'static str,
-    value: &str,
-) -> Result<(), ValidationError> {
+pub fn artifact_relative_url_path(field: &'static str, value: &str) -> Result<(), ValidationError> {
     canonical_relative_path(field, value)?;
     if value.starts_with("//")
         || !value
@@ -159,10 +152,7 @@ pub(crate) fn artifact_relative_url_path(
     Ok(())
 }
 
-pub(crate) fn canonical_relative_path(
-    field: &'static str,
-    value: &str,
-) -> Result<(), ValidationError> {
+pub fn canonical_relative_path(field: &'static str, value: &str) -> Result<(), ValidationError> {
     text(field, value, 1024)?;
     if value.starts_with('/') {
         return Err(ValidationError::InvalidRelativePath {
@@ -188,7 +178,7 @@ pub(crate) fn canonical_relative_path(
     Ok(())
 }
 
-pub(crate) fn strictly_sorted<T: Ord>(values: &[T]) -> bool {
+pub fn strictly_sorted<T: Ord>(values: &[T]) -> bool {
     values.windows(2).all(|pair| pair[0] < pair[1])
 }
 

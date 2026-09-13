@@ -79,7 +79,7 @@ impl ReplayData {
 
     pub fn validate_ranked_command_admission(
         &self,
-        transcript: &robin_run_protocol::ReplaySessionTranscriptV1,
+        transcript: &robin_run_types::ReplaySessionTranscriptV1,
     ) -> Result<(), String> {
         self.validate_ranked_command_admission_inner(Some(transcript))
     }
@@ -90,10 +90,10 @@ impl ReplayData {
 
     fn validate_ranked_command_admission_inner(
         &self,
-        transcript: Option<&robin_run_protocol::ReplaySessionTranscriptV1>,
+        transcript: Option<&robin_run_types::ReplaySessionTranscriptV1>,
     ) -> Result<(), String> {
         use crate::player_command::{PlayerCommand, PlayerId};
-        use robin_run_protocol::{MAX_REPLAY_SEATS_V1, ReplaySeatLifecycleKindV1, Validate as _};
+        use robin_run_types::{MAX_REPLAY_SEATS_V1, ReplaySeatLifecycleKindV1, Validate as _};
 
         let host_seat = u16::from(PlayerId::HOST.0);
         let mut occupied = BTreeSet::from([host_seat]);

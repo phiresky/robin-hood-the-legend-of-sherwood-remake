@@ -7,9 +7,6 @@
 
 #[cfg(feature = "authentication")]
 pub mod authentication;
-pub mod bitcode_value;
-pub mod canonical;
-pub mod digest;
 pub mod envelope;
 pub mod manifest;
 pub mod moderation;
@@ -17,19 +14,23 @@ pub mod offer_binding;
 pub mod query;
 pub mod rejection_code;
 pub mod strict_json;
-pub mod validation;
 pub mod verification_result;
 pub mod verifier_job;
 
 #[cfg(test)]
 mod test_fixtures;
 
+// Plain run-identity modules live in the `robin_run_types` leaf so the
+// deterministic engine can use them without depending on this crate. Module
+// paths and item names are re-exported unchanged.
+pub use robin_run_types::{bitcode_value, canonical, digest, validation};
+
 // Root re-exports are grouped per submodule below. Downstream crates import
 // almost every document type through the crate root, so the flat surface is
 // kept as-is; new module-scoped items should stay module-scoped unless they
 // are used across several consumers.
 // TODO: shrink the per-module groups to ubiquitous types once callers in
-// robin_rs / robin_engine import module paths (13/F16).
+// robin_rs imports module paths (13/F16).
 
 // Ed25519 verification (feature-gated; simulation consumers stay wire-only).
 #[cfg(feature = "authentication")]
@@ -169,7 +170,7 @@ pub use verifier_job::{
 };
 
 /// Every explicitly named `V1` document carries this value on the wire.
-pub const SCHEMA_VERSION_V1: u32 = 1;
+pub use robin_run_types::SCHEMA_VERSION_V1;
 /// Exact SQLx migration level shared by release manifests, backup identities,
 /// and the high-score runtime.
 pub const HIGHSCORES_DATABASE_SCHEMA_VERSION: i64 = 2;
