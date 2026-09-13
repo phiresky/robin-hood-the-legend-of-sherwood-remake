@@ -1,6 +1,7 @@
 //! `setup_multiplayer_session` without the `multiplayer` feature: a launch
 //! that asks for multiplayer fails instead of silently starting a local game.
 
+use super::SessionSetupFailure;
 use crate::host::Host;
 
 pub(super) async fn establish(
@@ -10,12 +11,11 @@ pub(super) async fn establish(
     _authoritative_rng_seed: u64,
     _authoritative_sim_config: robin_engine::engine::SimConfig,
     _campaign: &crate::multiplayer::MultiplayerCampaignSession,
-) -> Result<(), String> {
+) -> Result<(), SessionSetupFailure> {
     if args.server || args.connect.is_some() || args.join.is_some() {
-        return Err(
-            "multiplayer was requested but is unavailable in this build; rebuild with `--features multiplayer`"
-                .to_string(),
-        );
+        return Err(SessionSetupFailure::Unavailable(
+            "multiplayer was requested but is unavailable in this build; rebuild with `--features multiplayer`",
+        ));
     }
     Ok(())
 }

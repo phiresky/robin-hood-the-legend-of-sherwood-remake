@@ -1,5 +1,7 @@
 //! Ordered multiplayer admission, independent of timeline and history owners.
-use crate::game_session::multiplayer::{MultiplayerAdmissionEvent, MultiplayerSessionError};
+use crate::game_session::multiplayer::{
+    MultiplayerAdmissionEvent, MultiplayerSessionError, SessionProtocolFailure,
+};
 use serde::{Deserialize, Serialize};
 
 /// The transport owns handshakes and wire delivery; this state machine owns
@@ -69,9 +71,7 @@ impl MultiplayerAdmission {
                 start_epoch_ms,
             },
             (state, event) => {
-                return Err(MultiplayerSessionError::Protocol(format!(
-                    "invalid multiplayer admission ordering: state {state:?}, event {event:?}"
-                )));
+                return Err(SessionProtocolFailure::AdmissionOrdering { state, event }.into());
             }
         };
         Ok(())

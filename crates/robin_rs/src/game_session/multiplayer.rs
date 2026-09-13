@@ -26,18 +26,171 @@ fn canonicalize_player_input_order(inputs: &mut Vec<PlayerInput>) {
     inputs.sort_by_key(|input| input.player_id.0);
 }
 
-#[derive(Debug, thiserror::Error, Serialize, Deserialize)]
+/// Why an authoritative multiplayer mission session failed.
+///
+/// Not serde: carries the transport's `NetFatal` and source errors.
+#[derive(Debug, thiserror::Error)]
 pub(super) enum MultiplayerSessionError {
+    /// The running session broke a protocol, transport or snapshot rule.
     #[error("multiplayer protocol failure: {0}")]
-    Protocol(String),
+    Protocol(#[from] SessionProtocolFailure),
+    /// The session could not be established before Engine construction.
+    #[error(transparent)]
+    Setup(#[from] SessionSetupFailure),
 }
 
-fn require_protocol(condition: bool, message: &str) -> Result<(), MultiplayerSessionError> {
+/// Payload of [`MultiplayerSessionError::Protocol`]. Each `Display` is the
+/// text that followed "multiplayer protocol failure: " before these errors
+/// were typed.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum SessionProtocolFailure {
+    #[error("fatal multiplayer session error: transport worker closed its event channel")]
+    TransportClosed,
+    #[error("fatal multiplayer session error: {0}")]
+    TransportFatal(#[source] robin_engine::multiplayer::NetFatal),
+    #[error(
+        "fatal multiplayer session error: Welcome/reconnect mission construction state changed"
+    )]
+    MissionConfigChanged,
+    #[error(
+        "fatal multiplayer session error: host offered distributed mod {} after gameplay admission",
+        robin_engine::spellforge::hex_hash(.full_mod_sha256)
+    )]
+    LateContentOffer { full_mod_sha256: [u8; 32] },
+    #[error(
+        "fatal multiplayer session error: host sent distributed-mod chunk {} at offset {offset} after gameplay admission",
+        robin_engine::spellforge::hex_hash(.full_mod_sha256)
+    )]
+    LateContentChunk {
+        full_mod_sha256: [u8; 32],
+        offset: u64,
+    },
+    /// A session invariant the host must uphold was violated.
+    #[error("{0}")]
+    Invariant(&'static str),
+    /// An engine channel operation failed; the engine reports it as text.
+    #[error("{context}: {detail}")]
+    Channel {
+        context: &'static str,
+        detail: String,
+    },
+    /// The engine snapshot codec reports decode failures as text.
+    #[error("multiplayer: failed to deserialize frame-0 host snapshot: {0}")]
+    InitialSnapshotDecode(String),
+    #[error("multiplayer: failed to deserialize host snapshot at frame {frame}: {detail}")]
+    SnapshotDecode { frame: u32, detail: String },
+    #[error("multiplayer: failed to attach frame-0 Spellforge runtime: {0}")]
+    InitialSpellforgeAttach(String),
+    #[error("multiplayer: failed to attach Spellforge runtime at frame {frame}: {detail}")]
+    SpellforgeAttach { frame: u32, detail: String },
+    #[error("multiplayer: rejected incompatible frame-0 host snapshot: {0}")]
+    InitialSnapshotIncompatible(#[source] robin_engine::engine::SnapshotRestoreError),
+    #[error("multiplayer: rejected incompatible host snapshot at frame {frame}: {source}")]
+    SnapshotIncompatible {
+        frame: u32,
+        #[source]
+        source: robin_engine::engine::SnapshotRestoreError,
+    },
+    #[error("multiplayer snapshot transition payload is invalid: {0}")]
+    TransitionPayload(#[source] serde_json::Error),
+    /// anyhow keeps its context chain only in the alternate format.
+    #[error("multiplayer snapshot transition current schema is invalid: {0:#}")]
+    TransitionSchema(anyhow::Error),
+    #[error("multiplayer snapshot transition could not be re-encoded: {0}")]
+    TransitionReencode(#[source] serde_json::Error),
+    #[error("multiplayer campaign snapshot is invalid: {0}")]
+    CampaignSnapshotDecode(String),
+    #[error("multiplayer campaign snapshot cannot be adopted: {0}")]
+    CampaignSnapshotAdopt(#[source] robin_engine::engine::SnapshotRestoreError),
+    /// The host transport reports a rejected commit as text.
+    #[error("{0}")]
+    TransitionCommit(String),
+    #[error("invalid multiplayer admission ordering: state {state:?}, event {event:?}")]
+    AdmissionOrdering {
+        state: super::runtime::MultiplayerAdmission,
+        event: MultiplayerAdmissionEvent,
+    },
+}
+
+/// Why a multiplayer session could not be established. Each `Display` is
+/// the exact text the setup path reported before these errors were typed.
+#[cfg_attr(
+    not(all(feature = "multiplayer", not(target_arch = "wasm32"))),
+    allow(
+        dead_code,
+        reason = "browser builds never host and builds without multiplayer only refuse"
+    )
+)]
+#[derive(Debug, thiserror::Error)]
+pub(super) enum SessionSetupFailure {
+    /// The launch requests an impossible multiplayer combination.
+    #[error("{0}")]
+    InvalidLaunch(std::borrow::Cow<'static, str>),
+    /// This build or platform cannot provide the requested role.
+    #[cfg_attr(
+        all(feature = "multiplayer", not(target_arch = "wasm32")),
+        allow(
+            dead_code,
+            reason = "only browser builds and builds without multiplayer refuse a role"
+        )
+    )]
+    #[error("{0}")]
+    Unavailable(&'static str),
+    /// The multiplayer transport refused the operation.
+    #[error(transparent)]
+    Multiplayer(#[from] crate::multiplayer::MultiplayerError),
+    #[error("multiplayer: {context}: {source}")]
+    Transport {
+        context: &'static str,
+        #[source]
+        source: crate::multiplayer::MultiplayerError,
+    },
+    /// Starting or connecting the transport failed.
+    #[error("multiplayer: {context}: {source}")]
+    Io {
+        context: std::borrow::Cow<'static, str>,
+        #[source]
+        source: std::io::Error,
+    },
+    /// A local collaborator (application context, engine channels,
+    /// distributed-mod admission) reported its failure as text.
+    #[error("multiplayer: {context}: {detail}")]
+    Local {
+        context: &'static str,
+        detail: String,
+    },
+    /// The engine channel refused the session identity; it reports text.
+    #[error("multiplayer: {0}")]
+    SessionIdentity(String),
+    /// The launch's preparation file system is unavailable.
+    #[error("{0}")]
+    Preparation(String),
+    /// Offered or preflighted host content does not match.
+    #[error("multiplayer: {0}")]
+    Content(std::borrow::Cow<'static, str>),
+    #[error("multiplayer: {0}")]
+    WelcomeTimeout(&'static str),
+    #[error("multiplayer: authoritative Welcome is not available")]
+    WelcomeUnavailable,
+    #[error("multiplayer: host mission `{host}` does not match requested mission `{requested}`")]
+    MissionMismatch { host: String, requested: String },
+    #[error(
+        "multiplayer: host requires voice pack `{0}` for deterministic speech timing, but that validated pack is not installed"
+    )]
+    MissingVoicePack(String),
+}
+
+fn require_protocol(condition: bool, message: &'static str) -> Result<(), MultiplayerSessionError> {
     if condition {
         Ok(())
     } else {
-        Err(MultiplayerSessionError::Protocol(message.to_owned()))
+        Err(SessionProtocolFailure::Invariant(message).into())
     }
+}
+
+/// An engine channel call failed with text `detail`.
+fn channel_failure(context: &'static str, detail: String) -> MultiplayerSessionError {
+    SessionProtocolFailure::Channel { context, detail }.into()
 }
 
 pub(crate) struct NetDrainResult {
@@ -176,9 +329,7 @@ pub(super) fn drain_net_inputs(
             Ok(event) => event,
             Err(std::sync::mpsc::TryRecvError::Empty) => break,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                return Err(MultiplayerSessionError::Protocol(format!(
-                    "fatal multiplayer session error: transport worker closed its event channel"
-                )));
+                return Err(SessionProtocolFailure::TransportClosed.into());
             }
         };
         match event {
@@ -255,31 +406,28 @@ pub(super) fn drain_net_inputs(
                     || host.transport.mission_sim_config() != Some(sim_config)
                     || host.transport.speech_timing_locale() != speech_timing_locale.as_deref()
                 {
-                    return Err(MultiplayerSessionError::Protocol(format!(
-                        "fatal multiplayer session error: Welcome/reconnect mission construction state changed"
-                    )));
+                    return Err(SessionProtocolFailure::MissionConfigChanged.into());
                 }
             }
             NetEvent::ContentOffer(offer) => {
-                return Err(MultiplayerSessionError::Protocol(format!(
-                    "fatal multiplayer session error: host offered distributed mod {} after gameplay admission",
-                    robin_engine::spellforge::hex_hash(&offer.full_mod_sha256)
-                )));
+                return Err(SessionProtocolFailure::LateContentOffer {
+                    full_mod_sha256: offer.full_mod_sha256,
+                }
+                .into());
             }
             NetEvent::ContentChunk {
                 full_mod_sha256,
                 offset,
                 ..
             } => {
-                return Err(MultiplayerSessionError::Protocol(format!(
-                    "fatal multiplayer session error: host sent distributed-mod chunk {} at offset {offset} after gameplay admission",
-                    robin_engine::spellforge::hex_hash(&full_mod_sha256)
-                )));
+                return Err(SessionProtocolFailure::LateContentChunk {
+                    full_mod_sha256,
+                    offset,
+                }
+                .into());
             }
-            NetEvent::Fatal(message) => {
-                return Err(MultiplayerSessionError::Protocol(format!(
-                    "fatal multiplayer session error: {message}"
-                )));
+            NetEvent::Fatal(fatal) => {
+                return Err(SessionProtocolFailure::TransportFatal(fatal).into());
             }
             NetEvent::InitialSnapshot {
                 frame,
@@ -315,7 +463,12 @@ pub(super) fn drain_net_inputs(
                                      local engine already matches host"
                                 );
                                 if let Some(net) = host.transport.net() {
-                                    net.send_ready_to_sim(frame).map_err(|error| MultiplayerSessionError::Protocol(format!("fatal multiplayer readiness publication failure: {error}")))?;
+                                    net.send_ready_to_sim(frame).map_err(|error| {
+                                        channel_failure(
+                                            "fatal multiplayer readiness publication failure",
+                                            error,
+                                        )
+                                    })?;
                                 }
                                 if replacing_prediction_future {
                                     *rewind_buffer = RewindBuffer::new();
@@ -331,9 +484,10 @@ pub(super) fn drain_net_inputs(
                                         })
                                     })
                                 {
-                                    return Err(MultiplayerSessionError::Protocol(format!(
-                                        "multiplayer: failed to attach frame-0 Spellforge runtime: {error}"
-                                    )));
+                                    return Err(SessionProtocolFailure::InitialSpellforgeAttach(
+                                        error,
+                                    )
+                                    .into());
                                 }
                                 match Engine::adopt_authoritative_snapshot(
                                     snapshot,
@@ -363,21 +517,27 @@ pub(super) fn drain_net_inputs(
                                         );
                                         rewrote_sim_state = true;
                                         if let Some(net) = host.transport.net() {
-                                            net.send_ready_to_sim(frame).map_err(|error| MultiplayerSessionError::Protocol(format!("fatal multiplayer readiness publication failure: {error}")))?;
+                                            net.send_ready_to_sim(frame).map_err(|error| {
+                                        channel_failure(
+                                            "fatal multiplayer readiness publication failure",
+                                            error,
+                                        )
+                                    })?;
                                         }
                                     }
                                     Err(error) => {
-                                        return Err(MultiplayerSessionError::Protocol(format!(
-                                            "multiplayer: rejected incompatible frame-0 host snapshot: {error}"
-                                        )));
+                                        return Err(
+                                            SessionProtocolFailure::InitialSnapshotIncompatible(
+                                                error,
+                                            )
+                                            .into(),
+                                        );
                                     }
                                 }
                             }
                         }
                         Err(e) => {
-                            return Err(MultiplayerSessionError::Protocol(format!(
-                                "multiplayer: failed to deserialize frame-0 host snapshot: {e}"
-                            )));
+                            return Err(SessionProtocolFailure::InitialSnapshotDecode(e).into());
                         }
                     }
                     continue;
@@ -395,9 +555,11 @@ pub(super) fn drain_net_inputs(
                                 })
                             })
                         {
-                            return Err(MultiplayerSessionError::Protocol(format!(
-                                "multiplayer: failed to attach Spellforge runtime at frame {frame}: {error}"
-                            )));
+                            return Err(SessionProtocolFailure::SpellforgeAttach {
+                                frame,
+                                detail: error,
+                            }
+                            .into());
                         }
                         match Engine::adopt_authoritative_snapshot(snapshot, assets.as_ref()) {
                             Ok(adopted_engine) => {
@@ -416,7 +578,12 @@ pub(super) fn drain_net_inputs(
                                 );
                                 effective_frame = frame;
                                 if let Some(net) = host.transport.net() {
-                                    net.send_ready_to_sim(frame).map_err(|error| MultiplayerSessionError::Protocol(format!("fatal multiplayer readiness publication failure: {error}")))?;
+                                    net.send_ready_to_sim(frame).map_err(|error| {
+                                        channel_failure(
+                                            "fatal multiplayer readiness publication failure",
+                                            error,
+                                        )
+                                    })?;
                                 }
                                 *rewind_buffer = RewindBuffer::new();
                                 rewind_buffer.seed_initial_anchor(frame, &manager.engine);
@@ -427,16 +594,18 @@ pub(super) fn drain_net_inputs(
                                 rewrote_sim_state = true;
                             }
                             Err(error) => {
-                                return Err(MultiplayerSessionError::Protocol(format!(
-                                    "multiplayer: rejected incompatible host snapshot at frame {frame}: {error}"
-                                )));
+                                return Err(SessionProtocolFailure::SnapshotIncompatible {
+                                    frame,
+                                    source: error,
+                                }
+                                .into());
                             }
                         }
                     }
                     Err(e) => {
-                        return Err(MultiplayerSessionError::Protocol(format!(
-                            "multiplayer: failed to deserialize host snapshot at frame {frame}: {e}"
-                        )));
+                        return Err(
+                            SessionProtocolFailure::SnapshotDecode { frame, detail: e }.into()
+                        );
                     }
                 }
             }
@@ -490,9 +659,10 @@ pub(super) fn drain_net_inputs(
                             .expect("admitted session retains its channels")
                             .session_id()
                             .map_err(|error| {
-                                MultiplayerSessionError::Protocol(format!(
-                                    "snapshot transition is missing session identity: {error}"
-                                ))
+                                channel_failure(
+                                    "snapshot transition is missing session identity",
+                                    error,
+                                )
                             })?,
                     "snapshot transition prepare belongs to another session",
                 )?;
@@ -506,14 +676,10 @@ pub(super) fn drain_net_inputs(
                         save_bytes,
                     } => {
                         let save: crate::save_file::GameSaveFile =
-                            serde_json::from_slice(&save_bytes).map_err(|error| {
-                                MultiplayerSessionError::Protocol(format!(
-                                    "multiplayer snapshot transition payload is invalid: {error}"
-                                ))
-                            })?;
-                        save.validate_current_schema().map_err(|error| MultiplayerSessionError::Protocol(format!(
-                                "multiplayer snapshot transition current schema is invalid: {error:#}"
-                            )))?;
+                            serde_json::from_slice(&save_bytes)
+                                .map_err(SessionProtocolFailure::TransitionPayload)?;
+                        save.validate_current_schema()
+                            .map_err(SessionProtocolFailure::TransitionSchema)?;
                         require_protocol(
                             save.header.mission_id == mission_id,
                             "snapshot transition wire mission differs from its exact payload",
@@ -523,11 +689,8 @@ pub(super) fn drain_net_inputs(
                         // session exits, drops its old mount, restores the
                         // exact descriptor, and only then validates/rebuilds
                         // the saved profile before constructing an Engine.
-                        let reencoded = serde_json::to_vec(&save).map_err(|error| {
-                            MultiplayerSessionError::Protocol(format!(
-                                "multiplayer snapshot transition could not be re-encoded: {error}"
-                            ))
-                        })?;
+                        let reencoded = serde_json::to_vec(&save)
+                            .map_err(SessionProtocolFailure::TransitionReencode)?;
                         require_protocol(
                             reencoded == save_bytes,
                             "snapshot transition bytes changed during validation",
@@ -544,18 +707,10 @@ pub(super) fn drain_net_inputs(
                             exit_code == robin_engine::game_operation::GameCode::LevelInterrupted,
                             "campaign transition may only launch the selected mission",
                         )?;
-                        let decoded =
-                            Engine::decode_native_snapshot(&engine_bytes).map_err(|error| {
-                                MultiplayerSessionError::Protocol(format!(
-                                    "multiplayer campaign snapshot is invalid: {error}"
-                                ))
-                            })?;
+                        let decoded = Engine::decode_native_snapshot(&engine_bytes)
+                            .map_err(SessionProtocolFailure::CampaignSnapshotDecode)?;
                         let adopted = Engine::adopt_authoritative_snapshot(decoded, assets)
-                            .map_err(|error| {
-                                MultiplayerSessionError::Protocol(format!(
-                                    "multiplayer campaign snapshot cannot be adopted: {error}"
-                                ))
-                            })?;
+                            .map_err(SessionProtocolFailure::CampaignSnapshotAdopt)?;
                         require_protocol(
                             adopted.encode_native_snapshot() == engine_bytes,
                             "campaign transition bytes changed during validation",
@@ -574,15 +729,16 @@ pub(super) fn drain_net_inputs(
                     .expect("prepared transition retains session")
                     .acknowledge_snapshot_transition(id)
                     .map_err(|error| {
-                        MultiplayerSessionError::Protocol(format!(
-                            "failed to acknowledge multiplayer snapshot transition: {error}"
-                        ))
+                        channel_failure(
+                            "failed to acknowledge multiplayer snapshot transition",
+                            error,
+                        )
                     })?;
             }
             NetEvent::CommitSnapshotTransition { id } => {
                 host.transport
                     .commit_snapshot_transition(id)
-                    .map_err(MultiplayerSessionError::Protocol)?;
+                    .map_err(SessionProtocolFailure::TransitionCommit)?;
             }
             event @ (NetEvent::ModalProposal { .. } | NetEvent::ModalDecision { .. }) => {
                 host.transport
@@ -590,9 +746,7 @@ pub(super) fn drain_net_inputs(
                     .expect("admitted session retains its channels")
                     .defer_modal_event(event)
                     .map_err(|error| {
-                        MultiplayerSessionError::Protocol(format!(
-                            "fatal multiplayer modal routing error: {error}"
-                        ))
+                        channel_failure("fatal multiplayer modal routing error", error)
                     })?;
             }
             event @ (NetEvent::RankedCoSignContext(_)
@@ -609,9 +763,10 @@ pub(super) fn drain_net_inputs(
                     .expect("admitted session retains its channels")
                     .defer_leaderboard_cosign_event(event)
                     .map_err(|error| {
-                        MultiplayerSessionError::Protocol(format!(
-                            "fatal multiplayer leaderboard co-sign routing error: {error}"
-                        ))
+                        channel_failure(
+                            "fatal multiplayer leaderboard co-sign routing error",
+                            error,
+                        )
                     })?;
             }
             NetEvent::RankedJoinChallenge(_)
@@ -691,9 +846,7 @@ pub(super) fn drain_net_inputs(
                 .expect("admitted session retains its channels")
                 .reconnect_for_snapshot(host.transport.local_seat(), reason.clone())
                 .map_err(|error| {
-                    MultiplayerSessionError::Protocol(format!(
-                        "failed to request multiplayer snapshot reconnect: {error}"
-                    ))
+                    channel_failure("failed to request multiplayer snapshot reconnect", error)
                 })?;
             host.transport.await_authoritative_snapshot();
             network.discard_pending_inputs();
@@ -787,9 +940,7 @@ pub(super) fn drain_net_inputs(
                 .expect("admitted session retains its channels")
                 .reconnect_all_for_snapshot(reason)
                 .map_err(|error| {
-                    MultiplayerSessionError::Protocol(format!(
-                        "failed to require multiplayer snapshot reconnect: {error}"
-                    ))
+                    channel_failure("failed to require multiplayer snapshot reconnect", error)
                 })?;
             // ReconnectAll resets host readiness as well as peer readiness.
             // Publish this exact held boundary into the replacement barrier.
@@ -798,9 +949,7 @@ pub(super) fn drain_net_inputs(
                 .expect("admitted session retains its channels")
                 .send_ready_to_sim(effective_frame)
                 .map_err(|error| {
-                    MultiplayerSessionError::Protocol(format!(
-                        "fatal multiplayer readiness publication failure: {error}"
-                    ))
+                    channel_failure("fatal multiplayer readiness publication failure", error)
                 })?;
             host.transport.await_authoritative_snapshot();
             network.discard_pending_inputs();
@@ -969,7 +1118,7 @@ pub(super) async fn setup_multiplayer_session(
     authoritative_rng_seed: u64,
     authoritative_sim_config: robin_engine::engine::SimConfig,
     campaign: &crate::multiplayer::MultiplayerCampaignSession,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerSessionError> {
     session_setup::establish(
         host,
         args,
@@ -979,6 +1128,7 @@ pub(super) async fn setup_multiplayer_session(
         campaign,
     )
     .await
+    .map_err(MultiplayerSessionError::Setup)
 }
 
 // Transport bring-up behind `setup_multiplayer_session`; without the feature
@@ -996,25 +1146,32 @@ fn resolve_publication_preference(cli_override: Option<bool>, saved: bool) -> bo
 }
 
 #[cfg(any(test, feature = "multiplayer"))]
-fn validate_multiplayer_launch_args(args: &crate::main_entry::MissionLaunch) -> Result<(), String> {
+fn validate_multiplayer_launch_args(
+    args: &crate::main_entry::MissionLaunch,
+) -> Result<(), SessionSetupFailure> {
     if args.server && args.connect.is_some() {
-        return Err("multiplayer host and client modes are mutually exclusive".to_string());
+        return Err(SessionSetupFailure::InvalidLaunch(
+            "multiplayer host and client modes are mutually exclusive".into(),
+        ));
     }
     if let Some(expected) = args.mp_expected_players
         && !(1..=crate::multiplayer::MAX_MULTIPLAYER_PLAYERS).contains(&expected)
     {
-        return Err(format!(
-            "multiplayer expected player count must be between 1 and {}",
-            crate::multiplayer::MAX_MULTIPLAYER_PLAYERS
+        return Err(SessionSetupFailure::InvalidLaunch(
+            format!(
+                "multiplayer expected player count must be between 1 and {}",
+                crate::multiplayer::MAX_MULTIPLAYER_PLAYERS
+            )
+            .into(),
         ));
     }
     let multiplayer = args.server || args.connect.is_some();
     let replay = args.replay.is_some() || args.replay_data.is_some();
     if multiplayer && replay {
-        return Err(
+        return Err(SessionSetupFailure::InvalidLaunch(
             "multiplayer cannot be combined with replay playback; Welcome mission/seed/SimConfig must be the sole frame-0 authority"
-                .to_string(),
-        );
+                .into(),
+        ));
     }
     Ok(())
 }
@@ -1023,42 +1180,43 @@ fn validate_multiplayer_launch_args(args: &crate::main_entry::MissionLaunch) -> 
 fn validate_preflighted_content(
     expected_bytes: Option<&[u8]>,
     offered: Option<&robin_engine::multiplayer::DistributedModOffer>,
-) -> Result<(), String> {
+) -> Result<(), SessionSetupFailure> {
+    let content = |message: String| SessionSetupFailure::Content(message.into());
     match (expected_bytes, offered) {
         (Some(expected_bytes), Some(offered)) => {
             let expected = crate::distributed_mod::DistributedModPackage::decode(expected_bytes)
                 .map_err(|error| {
-                    format!("multiplayer: prepared full-mod package is invalid: {error}")
+                    content(format!("prepared full-mod package is invalid: {error}"))
                 })?;
             let expected_offer = crate::distributed_mod::make_distributed_mod_offer(
                 &expected,
                 expected_bytes.len() as u64,
                 offered.host_endpoint_id.clone(),
             )
-            .map_err(|error| format!("multiplayer: derive prepared content offer: {error}"))?;
+            .map_err(|error| content(format!("derive prepared content offer: {error}")))?;
             if offered != &expected_offer {
-                return Err(format!(
-                    "multiplayer: host content changed after preflight from {} to {}",
+                return Err(content(format!(
+                    "host content changed after preflight from {} to {}",
                     robin_engine::spellforge::hex_hash(&expected_offer.full_mod_sha256),
                     robin_engine::spellforge::hex_hash(&offered.full_mod_sha256)
-                ));
+                )));
             }
             Ok(())
         }
         (Some(expected_bytes), None) => {
             let expected = crate::distributed_mod::DistributedModPackage::decode(expected_bytes)
                 .map_err(|error| {
-                    format!("multiplayer: prepared full-mod package is invalid: {error}")
+                    content(format!("prepared full-mod package is invalid: {error}"))
                 })?;
-            Err(format!(
-                "multiplayer: host omitted preflighted content {} on reconnect",
+            Err(content(format!(
+                "host omitted preflighted content {} on reconnect",
                 robin_engine::spellforge::hex_hash(&expected.package.manifest.full_mod_sha256)
-            ))
+            )))
         }
-        (None, Some(offered)) => Err(format!(
-            "multiplayer: host introduced un-preflighted content {}",
+        (None, Some(offered)) => Err(content(format!(
+            "host introduced un-preflighted content {}",
             robin_engine::spellforge::hex_hash(&offered.full_mod_sha256)
-        )),
+        ))),
         (None, None) => Ok(()),
     }
 }

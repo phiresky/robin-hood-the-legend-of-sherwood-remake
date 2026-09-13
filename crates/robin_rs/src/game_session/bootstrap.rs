@@ -819,7 +819,9 @@ impl InteractiveLoadStage {
                 sim_config,
                 multiplayer_campaign,
             )
-            .await,
+            .await
+            // The launch result reported by the mission owner is text.
+            .map_err(|error| error.to_string()),
         )? {
             loading.status("Multiplayer connection failed", 1.0);
             if let Some(renderer) = loading.renderer.as_mut() {
@@ -1182,7 +1184,9 @@ impl HeadlessLoadStage {
                 sim_config,
                 multiplayer_campaign,
             )
-            .await,
+            .await
+            // The launch result reported by the mission owner is text.
+            .map_err(|error| error.to_string()),
         )?;
         debug_assert!(
             setup_exit.is_none(),

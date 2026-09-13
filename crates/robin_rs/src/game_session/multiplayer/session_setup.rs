@@ -3,7 +3,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::resolve_publication_preference;
-use super::{validate_multiplayer_launch_args, validate_preflighted_content};
+use super::{SessionSetupFailure, validate_multiplayer_launch_args, validate_preflighted_content};
 use crate::host::Host;
 
 #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
@@ -14,7 +14,7 @@ pub(super) async fn establish(
     authoritative_rng_seed: u64,
     authoritative_sim_config: robin_engine::engine::SimConfig,
     campaign: &crate::multiplayer::MultiplayerCampaignSession,
-) -> Result<(), String> {
+) -> Result<(), SessionSetupFailure> {
     use crate::multiplayer::NetChannels;
     #[cfg(not(target_arch = "wasm32"))]
     use crate::multiplayer::NetEvent;
@@ -35,31 +35,33 @@ pub(super) async fn establish(
 
     if args.server {
         #[cfg(target_arch = "wasm32")]
-        return Err(
-            "multiplayer: browser builds cannot host; connect to a native host".to_string(),
-        );
+        return Err(SessionSetupFailure::Unavailable(
+            "multiplayer: browser builds cannot host; connect to a native host",
+        ));
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             if !args.mp_continue_session {
-                campaign
-                    .discard_host_continuation()
-                    .map_err(|error| error.to_string())?;
+                campaign.discard_host_continuation()?;
             }
             let publish_browser_links = resolve_browser_join_publication(args)?;
             let speech_timing_locale = host
                 .application_context()
                 .canonical_speech_timing_locale()
-                .map_err(|error| {
-                    format!("multiplayer: cannot select authoritative speech timing: {error}")
+                .map_err(|detail| SessionSetupFailure::Local {
+                    context: "cannot select authoritative speech timing",
+                    detail,
                 })?;
             let (mut channels, server_channels) = NetChannels::new_server();
             let content = args
                 .pending_distributed_mod
                 .as_ref()
                 .map(|encoded| {
-                    HostedModContent::from_encoded(encoded.to_vec()).map_err(|error| {
-                        format!("multiplayer: invalid hosted full-mod package: {error}")
+                    HostedModContent::from_encoded(encoded.to_vec()).map_err(|source| {
+                        SessionSetupFailure::Transport {
+                            context: "invalid hosted full-mod package",
+                            source,
+                        }
                     })
                 })
                 .transpose()?;
@@ -81,7 +83,7 @@ pub(super) async fn establish(
                 Ok(handle) => {
                     channels
                         .install_session_id(handle.session_id())
-                        .map_err(|error| format!("multiplayer: {error}"))?;
+                        .map_err(SessionSetupFailure::SessionIdentity)?;
                     if publish_browser_links {
                         let content_edition = if crate::main_entry::detect_demo_mode_with_context(
                             &args.global_options,
@@ -92,13 +94,20 @@ pub(super) async fn establish(
                         } else {
                             crate::multiplayer::join_ticket::BrowserContentEdition::Full
                         };
+                        let preparation_files = args
+                            .global_options
+                            .preparation_files()
+                            .map_err(SessionSetupFailure::Preparation)?;
                         let content_identity_sha256 =
-                            crate::multiplayer::content_identity::active_content_identity(args.global_options.preparation_files()?)
-                                .map_err(|error| {
-                                    format!(
-                                        "multiplayer: cannot publish an exact browser content invitation: {error}"
-                                    )
-                                })?;
+                            crate::multiplayer::content_identity::active_content_identity(
+                                preparation_files,
+                            )
+                            .map_err(|source| {
+                                SessionSetupFailure::Transport {
+                                    context: "cannot publish an exact browser content invitation",
+                                    source,
+                                }
+                            })?;
                         let ticket = handle
                             .browser_join_ticket(
                                 content_edition,
@@ -106,15 +115,19 @@ pub(super) async fn establish(
                                 args.mp_mission_profile_id,
                                 args.mp_expected_players.unwrap_or(1),
                             )
-                            .map_err(|error| {
-                                format!("multiplayer: browser invitation unavailable: {error}")
+                            .map_err(|source| SessionSetupFailure::Transport {
+                                context: "browser invitation unavailable",
+                                source,
                             })?;
                         let browser_base =
                             std::env::var("ROBINHOOD_BROWSER_URL").unwrap_or_else(|_| {
                                 crate::multiplayer::join_ticket::DEFAULT_BROWSER_URL.to_string()
                             });
-                        let share_url = ticket.share_url(&browser_base).map_err(|error| {
-                            format!("multiplayer: browser share URL unavailable: {error}")
+                        let share_url = ticket.share_url(&browser_base).map_err(|source| {
+                            SessionSetupFailure::Transport {
+                                context: "browser share URL unavailable",
+                                source,
+                            }
                         })?;
                         tracing::info!(
                             browser_join_code = %ticket.encode(),
@@ -157,7 +170,10 @@ pub(super) async fn establish(
                     );
                 }
                 Err(e) => {
-                    return Err(format!("multiplayer: failed to start server: {e}"));
+                    return Err(SessionSetupFailure::Io {
+                        context: "failed to start server".into(),
+                        source: e,
+                    });
                 }
             }
         }
@@ -185,10 +201,9 @@ pub(super) async fn establish(
                         crate::window::sleep_ms(10).await;
                     }
                     if handle.content_offer().is_none() && handle.session_metadata().is_none() {
-                        return Err(
-                            "multiplayer: timed out awaiting browser Welcome/content offer"
-                                .to_owned(),
-                        );
+                        return Err(SessionSetupFailure::WelcomeTimeout(
+                            "timed out awaiting browser Welcome/content offer",
+                        ));
                     }
                     handle.content_offer()
                 };
@@ -212,8 +227,9 @@ pub(super) async fn establish(
                         crate::distributed_mod_admission::DistributedModAdmissionPurpose::JoinSession,
                     )
                     .await
-                    .map_err(|error| {
-                        format!("multiplayer: host-content admission failed: {error}")
+                    .map_err(|detail| SessionSetupFailure::Local {
+                        context: "host-content admission failed",
+                        detail,
                     })?;
                     host.transport.retain_distributed_mod(admitted);
                     let deadline = web_time::Instant::now() + std::time::Duration::from_secs(15);
@@ -222,16 +238,15 @@ pub(super) async fn establish(
                         crate::window::sleep_ms(10).await;
                     }
                     if handle.session_metadata().is_none() {
-                        return Err(
-                            "multiplayer: timed out awaiting Welcome after verified host-content admission"
-                                .to_owned(),
-                        );
+                        return Err(SessionSetupFailure::WelcomeTimeout(
+                            "timed out awaiting Welcome after verified host-content admission",
+                        ));
                     }
                     if offer.mission_basename != authoritative_mission_id {
-                        return Err(format!(
-                            "multiplayer: offered mod mission `{}` does not match requested mission `{authoritative_mission_id}`",
+                        return Err(SessionSetupFailure::Content(format!(
+                            "offered mod mission `{}` does not match requested mission `{authoritative_mission_id}`",
                             offer.mission_basename
-                        ));
+                        ).into()));
                     }
                 }
                 #[cfg(target_arch = "wasm32")]
@@ -239,50 +254,53 @@ pub(super) async fn establish(
                     let deadline = web_time::Instant::now() + std::time::Duration::from_secs(10);
                     while handle.session_metadata().is_none() && web_time::Instant::now() < deadline
                     {
-                        if let Some(error) = handle.startup_error() {
-                            return Err(format!(
-                                "multiplayer: browser relay startup failed: {error}"
-                            ));
+                        if let Some(source) = handle.startup_error() {
+                            return Err(SessionSetupFailure::Transport {
+                                context: "browser relay startup failed",
+                                source,
+                            });
                         }
                         crate::window::sleep_ms(10).await;
                     }
-                    if let Some(error) = handle.startup_error() {
-                        return Err(format!(
-                            "multiplayer: browser relay startup failed: {error}"
-                        ));
+                    if let Some(source) = handle.startup_error() {
+                        return Err(SessionSetupFailure::Transport {
+                            context: "browser relay startup failed",
+                            source,
+                        });
                     }
                     if handle.session_metadata().is_none() {
-                        return Err(
-                            "multiplayer: timed out awaiting authoritative Welcome before Engine construction"
-                                .to_string(),
-                        );
+                        return Err(SessionSetupFailure::WelcomeTimeout(
+                            "timed out awaiting authoritative Welcome before Engine construction",
+                        ));
                     }
                 }
-                let session = handle.session_metadata().ok_or_else(|| {
-                    "multiplayer: authoritative Welcome is not available".to_string()
-                })?;
+                let session = handle
+                    .session_metadata()
+                    .ok_or(SessionSetupFailure::WelcomeUnavailable)?;
                 channels
                     .install_session_id(session.session_id)
-                    .map_err(|error| format!("multiplayer: {error}"))?;
+                    .map_err(SessionSetupFailure::SessionIdentity)?;
                 let welcomed_mission = session.mission_id;
                 if welcomed_mission != authoritative_mission_id {
-                    return Err(format!(
-                        "multiplayer: host mission `{welcomed_mission}` does not match requested mission `{authoritative_mission_id}`"
-                    ));
+                    return Err(SessionSetupFailure::MissionMismatch {
+                        host: welcomed_mission,
+                        requested: authoritative_mission_id.to_owned(),
+                    });
                 }
                 let speech_timing_locale = session.speech_timing_locale;
                 if let Some(authoritative_locale) = speech_timing_locale.as_deref() {
                     let has_timing_pack = host
                         .application_context()
                         .installed_languages()
-                        .map_err(|error| {
-                            format!("multiplayer: cannot inspect installed voice packs: {error}")
+                        .map_err(|detail| SessionSetupFailure::Local {
+                            context: "cannot inspect installed voice packs",
+                            detail,
                         })?
                         .into_iter()
                         .any(|pack| pack.locale == authoritative_locale && pack.has_voice);
                     if !has_timing_pack {
-                        return Err(format!(
-                            "multiplayer: host requires voice pack `{authoritative_locale}` for deterministic speech timing, but that validated pack is not installed"
+                        return Err(SessionSetupFailure::MissingVoicePack(
+                            authoritative_locale.to_owned(),
                         ));
                     }
                 }
@@ -331,7 +349,10 @@ pub(super) async fn establish(
                 );
             }
             Err(e) => {
-                return Err(format!("multiplayer: failed to connect to {addr}: {e}"));
+                return Err(SessionSetupFailure::Io {
+                    context: format!("failed to connect to {addr}").into(),
+                    source: e,
+                });
             }
         }
     }
@@ -341,12 +362,13 @@ pub(super) async fn establish(
 #[cfg(not(target_arch = "wasm32"))]
 fn resolve_browser_join_publication(
     args: &crate::main_entry::MissionLaunch,
-) -> Result<bool, String> {
+) -> Result<bool, SessionSetupFailure> {
     let saved = args
         .global_options
         .with_active_profile(|profile| profile.multiplayer_config.publish_browser_join_links)
-        .map_err(|error| {
-            format!("multiplayer: cannot read browser publication preference: {error}")
+        .map_err(|detail| SessionSetupFailure::Local {
+            context: "cannot read browser publication preference",
+            detail,
         })?;
     Ok(resolve_publication_preference(
         args.mp_browser_join_links,
