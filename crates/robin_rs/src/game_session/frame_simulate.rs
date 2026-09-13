@@ -122,6 +122,241 @@ struct SimulationModalState {
     history_commit_pending: bool,
 }
 
+/// Borrows a finished pause-side UI task outcome is applied to, split out of
+/// `InteractiveFrameSimulation::drive_pause_ui_tasks`.
+///
+/// Not serde: a frame-scoped bundle of borrowed process resources.
+struct UiTaskOutcomeTarget<'a> {
+    window: &'a mut GameWindow,
+    callbacks: &'a mut RustCallbacks,
+    host: &'a mut Host,
+    game: &'a mut Game,
+    input: &'a mut super::interactive::MissionInput,
+    audio: &'a mut super::interactive::MissionAudio,
+    hud: &'a mut super::interactive::MissionHud,
+    ui: &'a mut super::interactive::MissionUi,
+    presentation: &'a mut MissionPresentation,
+    frame: &'a mut MissionFrame,
+}
+
+impl UiTaskOutcomeTarget<'_> {
+    /// Apply one task outcome; returns whether the task requested a mission
+    /// exit.
+    fn apply(self, outcome: UiTaskOutcome) -> bool {
+        match outcome {
+            UiTaskOutcome::ReturnToPause => {
+                let Self {
+                    window,
+                    host,
+                    input,
+                    ui,
+                    presentation,
+                    ..
+                } = self;
+                if let Some(menu) = ui.pause_menu.as_mut() {
+                    menu.reset_after_side_menu();
+                    menu.seed_mouse_from_window(
+                        window,
+                        presentation.renderer.screen_width() as i32,
+                        presentation.renderer.screen_height() as i32,
+                    );
+                }
+                input.reset_after_modal(host);
+            }
+            UiTaskOutcome::OptionsAccepted(result) => self.apply_options_accepted(result),
+            UiTaskOutcome::SaveLoadSelected {
+                mode,
+                filename,
+                mission_id,
+            } => {
+                let Self {
+                    callbacks,
+                    host,
+                    input,
+                    ui,
+                    presentation,
+                    ..
+                } = self;
+                let slot = callbacks
+                    .save_manager
+                    .find_by_filename(&filename)
+                    .ok_or_else(|| anyhow::anyhow!("selected save slot '{filename}' disappeared"))
+                    .and_then(|index| callbacks.save_manager.slot_handle(index));
+                match slot {
+                    Ok(slot) => callbacks.queue_operation(match mode {
+                        SaveLoadMode::Save => SaveLoadRequest::Save {
+                            slot: Some(slot),
+                            mission_id,
+                        },
+                        SaveLoadMode::Load => SaveLoadRequest::Load {
+                            slot: Some(slot),
+                            mission_id,
+                        },
+                    }),
+                    Err(error) => {
+                        tracing::error!("Save/load selection rejected: {error:#}")
+                    }
+                }
+                ui.pause_menu = None;
+                presentation.renderer.clear_frozen_scene();
+                input.reset_after_modal(host);
+                callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+            }
+            UiTaskOutcome::QuickLoadAccepted { load } => {
+                self.callbacks
+                    .queue_operation(SaveLoadRequest::ApplyLoad(load));
+                self.input.reset_after_modal(self.host);
+            }
+            UiTaskOutcome::QuickLoadCancelled => {
+                self.input.reset_after_modal(self.host);
+            }
+            UiTaskOutcome::QuitMissionRequested | UiTaskOutcome::ExitRequested => {
+                self.callbacks
+                    .emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                return true;
+            }
+            UiTaskOutcome::MissionEndLeaderboardFinished(controller) => {
+                if let Some(controller) = controller {
+                    self.callbacks.detach_leaderboard_submission(controller);
+                }
+            }
+        }
+        false
+    }
+
+    /// Accepted pause-side Options: persist, apply frontend preferences and
+    /// enqueue the authorized simulation-setting commands.
+    fn apply_options_accepted(self, result: super::ui_task_state::OptionsTaskResult) {
+        let Self {
+            window,
+            host,
+            game,
+            input,
+            audio,
+            hud,
+            ui,
+            presentation,
+            frame,
+            ..
+        } = self;
+        if result.changed {
+            host.application_context()
+                .update_and_retain_player_profiles(|manager| {
+                    let profile = manager
+                        .profiles
+                        .iter_mut()
+                        .find(|profile| profile.id == result.profile_id)
+                        .expect("Options profile disappeared while side task was open");
+                    profile.graphic_config = result.graphic_config.clone();
+                    profile.gameplay_config = result.profile_gameplay_config;
+                    profile.multiplayer_config = result.multiplayer_config;
+                    profile.sound_config = result.profile_sound_config;
+                })
+                .unwrap_or_else(|error| panic!("Options profile update failed: {error}"))
+                .log_persistence_error("Options: failed to save profile manager");
+        }
+
+        let effects = crate::host::FrontendPreferences::new(
+            result.key_config.clone(),
+            result.custom_key_config.clone(),
+            result.profile_gameplay_config,
+            &result.graphic_config,
+        )
+        .apply(&mut host.frontend);
+        // Preserve live side-effect order: cancel planning, update
+        // window/renderer presentation, release tactical control,
+        // then enqueue authorized simulation-setting commands.
+        if effects.cancel_planned_action {
+            dispatch_local_command(
+                &host.transport,
+                &mut frame.stage_post_commands(),
+                &PlayerCommand::CancelPlannedAction,
+            );
+        }
+        window.set_native_refresh_presentation(effects.native_refresh_presentation);
+        presentation.renderer.configure_native_refresh_presentation(
+            effects.native_refresh_presentation,
+            window.surface_config.width,
+            window.surface_config.height,
+        );
+        if effects.release_tactical_control {
+            dispatch_local_command(
+                &host.transport,
+                &mut frame.stage_post_commands(),
+                &PlayerCommand::ReleaseTacticalControl,
+            );
+        }
+        InteractiveFrameSimulation::dispatch_options_simulation_changes(&result, host, frame);
+
+        presentation
+            .renderer
+            .apply_upscale_config(&result.graphic_config);
+        if let Some(backend) = audio.backend.as_mut() {
+            host.audio.sound.apply_sound_settings(
+                false,
+                backend,
+                &result.profile_sound_config,
+                None,
+            );
+        } else {
+            host.audio.sound.apply_volumes(&result.profile_sound_config);
+        }
+
+        if result.resolution_changed {
+            window.set_logical_resolution_policy(&result.graphic_config);
+            presentation.renderer.sync_window_size(window);
+            let (logical_width, logical_height) = window.logical_size();
+            let width = logical_width as f32;
+            let height = logical_height as f32;
+            let width_u16 = logical_width as u16;
+            let height_u16 = logical_height as u16;
+            host.frontend.viewport.set_screen_size(width, height);
+            game.set_resolution(width_u16, height_u16);
+            input.resize(logical_width, logical_height);
+            hud.resize(logical_width, logical_height);
+            if host.frontend.resources.mission_surfaces.corner_size().x > 0.0 {
+                dispatch_local_command(
+                    &host.transport,
+                    &mut frame.stage_post_commands(),
+                    &PlayerCommand::MinimapResize {
+                        base: engine_coordinates::ScreenPoint::new(width - 83.0, 38.0),
+                        corner_size: host.frontend.resources.mission_surfaces.corner_size(),
+                    },
+                );
+            }
+            game.reshow_campaign_map();
+        }
+        if result.key_config_changed {
+            input
+                .translator
+                .load_bindings_from_keyconfig(&result.key_config);
+        }
+
+        if result.key_config_changed {
+            host.application_context()
+                .with_key_configs_mut(|store| {
+                    let entry = store.entry_or_default(result.profile_id);
+                    entry.active = result.key_config.clone();
+                    entry.custom = result.custom_key_config.clone();
+                    if let Err(error) = store.save() {
+                        tracing::error!("Options: failed to save key configs: {error:#}");
+                    }
+                })
+                .unwrap_or_else(|error| panic!("Options key-config update failed: {error}"));
+            host.frontend.minimap_fast_key = input.translator.get_binding(GameKey::DisplayMap);
+        }
+        if let Some(menu) = ui.pause_menu.as_mut() {
+            menu.reset_after_side_menu();
+            menu.seed_mouse_from_window(
+                window,
+                presentation.renderer.screen_width() as i32,
+                presentation.renderer.screen_height() as i32,
+            );
+        }
+        input.reset_after_modal(host);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum UiTaskModalAdmission {
     Run,
@@ -979,200 +1214,19 @@ impl InteractiveFrameSimulation {
 
             if let Some(outcome) = task_outcome {
                 task.cleanup();
-                match outcome {
-                    UiTaskOutcome::ReturnToPause => {
-                        if let Some(menu) = ui.pause_menu.as_mut() {
-                            menu.reset_after_side_menu();
-                            menu.seed_mouse_from_window(
-                                window,
-                                presentation.renderer.screen_width() as i32,
-                                presentation.renderer.screen_height() as i32,
-                            );
-                        }
-                        input.reset_after_modal(host);
-                    }
-                    UiTaskOutcome::OptionsAccepted(result) => {
-                        if result.changed {
-                            host.application_context()
-                                .update_and_retain_player_profiles(|manager| {
-                                    let profile = manager
-                                        .profiles
-                                        .iter_mut()
-                                        .find(|profile| profile.id == result.profile_id)
-                                        .expect(
-                                            "Options profile disappeared while side task was open",
-                                        );
-                                    profile.graphic_config = result.graphic_config.clone();
-                                    profile.gameplay_config = result.profile_gameplay_config;
-                                    profile.multiplayer_config = result.multiplayer_config;
-                                    profile.sound_config = result.profile_sound_config;
-                                })
-                                .unwrap_or_else(|error| {
-                                    panic!("Options profile update failed: {error}")
-                                })
-                                .log_persistence_error("Options: failed to save profile manager");
-                        }
-
-                        let effects = crate::host::FrontendPreferences::new(
-                            result.key_config.clone(),
-                            result.custom_key_config.clone(),
-                            result.profile_gameplay_config,
-                            &result.graphic_config,
-                        )
-                        .apply(&mut host.frontend);
-                        // Preserve live side-effect order: cancel planning, update
-                        // window/renderer presentation, release tactical control,
-                        // then enqueue authorized simulation-setting commands.
-                        if effects.cancel_planned_action {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::CancelPlannedAction,
-                            );
-                        }
-                        window.set_native_refresh_presentation(effects.native_refresh_presentation);
-                        presentation.renderer.configure_native_refresh_presentation(
-                            effects.native_refresh_presentation,
-                            window.surface_config.width,
-                            window.surface_config.height,
-                        );
-                        if effects.release_tactical_control {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::ReleaseTacticalControl,
-                            );
-                        }
-                        Self::dispatch_options_simulation_changes(&result, host, frame);
-
-                        presentation
-                            .renderer
-                            .apply_upscale_config(&result.graphic_config);
-                        if let Some(backend) = audio.backend.as_mut() {
-                            host.audio.sound.apply_sound_settings(
-                                false,
-                                backend,
-                                &result.profile_sound_config,
-                                None,
-                            );
-                        } else {
-                            host.audio.sound.apply_volumes(&result.profile_sound_config);
-                        }
-
-                        if result.resolution_changed {
-                            window.set_logical_resolution_policy(&result.graphic_config);
-                            presentation.renderer.sync_window_size(window);
-                            let (logical_width, logical_height) = window.logical_size();
-                            let width = logical_width as f32;
-                            let height = logical_height as f32;
-                            let width_u16 = logical_width as u16;
-                            let height_u16 = logical_height as u16;
-                            host.frontend.viewport.set_screen_size(width, height);
-                            game.set_resolution(width_u16, height_u16);
-                            input.resize(logical_width, logical_height);
-                            hud.resize(logical_width, logical_height);
-                            if host.frontend.resources.mission_surfaces.corner_size().x > 0.0 {
-                                dispatch_local_command(
-                                    &host.transport,
-                                    &mut frame.stage_post_commands(),
-                                    &PlayerCommand::MinimapResize {
-                                        base: engine_coordinates::ScreenPoint::new(
-                                            width - 83.0,
-                                            38.0,
-                                        ),
-                                        corner_size: host
-                                            .frontend
-                                            .resources
-                                            .mission_surfaces
-                                            .corner_size(),
-                                    },
-                                );
-                            }
-                            game.reshow_campaign_map();
-                        }
-                        if result.key_config_changed {
-                            input
-                                .translator
-                                .load_bindings_from_keyconfig(&result.key_config);
-                        }
-
-                        if result.key_config_changed {
-                            host.application_context()
-                                .with_key_configs_mut(|store| {
-                                    let entry = store.entry_or_default(result.profile_id);
-                                    entry.active = result.key_config.clone();
-                                    entry.custom = result.custom_key_config.clone();
-                                    if let Err(error) = store.save() {
-                                        tracing::error!(
-                                            "Options: failed to save key configs: {error:#}"
-                                        );
-                                    }
-                                })
-                                .unwrap_or_else(|error| {
-                                    panic!("Options key-config update failed: {error}")
-                                });
-                            host.frontend.minimap_fast_key =
-                                input.translator.get_binding(GameKey::DisplayMap);
-                        }
-                        if let Some(menu) = ui.pause_menu.as_mut() {
-                            menu.reset_after_side_menu();
-                            menu.seed_mouse_from_window(
-                                window,
-                                presentation.renderer.screen_width() as i32,
-                                presentation.renderer.screen_height() as i32,
-                            );
-                        }
-                        input.reset_after_modal(host);
-                    }
-                    UiTaskOutcome::SaveLoadSelected {
-                        mode,
-                        filename,
-                        mission_id,
-                    } => {
-                        let slot = callbacks
-                            .save_manager
-                            .find_by_filename(&filename)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("selected save slot '{filename}' disappeared")
-                            })
-                            .and_then(|index| callbacks.save_manager.slot_handle(index));
-                        match slot {
-                            Ok(slot) => callbacks.queue_operation(match mode {
-                                SaveLoadMode::Save => SaveLoadRequest::Save {
-                                    slot: Some(slot),
-                                    mission_id,
-                                },
-                                SaveLoadMode::Load => SaveLoadRequest::Load {
-                                    slot: Some(slot),
-                                    mission_id,
-                                },
-                            }),
-                            Err(error) => {
-                                tracing::error!("Save/load selection rejected: {error:#}")
-                            }
-                        }
-                        ui.pause_menu = None;
-                        presentation.renderer.clear_frozen_scene();
-                        input.reset_after_modal(host);
-                        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                    }
-                    UiTaskOutcome::QuickLoadAccepted { load } => {
-                        callbacks.queue_operation(SaveLoadRequest::ApplyLoad(load));
-                        input.reset_after_modal(host);
-                    }
-                    UiTaskOutcome::QuickLoadCancelled => {
-                        input.reset_after_modal(host);
-                    }
-                    UiTaskOutcome::QuitMissionRequested | UiTaskOutcome::ExitRequested => {
-                        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                        ui_task_exit_requested = true;
-                    }
-                    UiTaskOutcome::MissionEndLeaderboardFinished(controller) => {
-                        if let Some(controller) = controller {
-                            callbacks.detach_leaderboard_submission(controller);
-                        }
-                    }
+                ui_task_exit_requested = UiTaskOutcomeTarget {
+                    window,
+                    callbacks,
+                    host,
+                    game,
+                    input,
+                    audio,
+                    hud,
+                    ui,
+                    presentation,
+                    frame,
                 }
+                .apply(outcome);
             } else {
                 ui.active_ui_task = Some(task);
             }

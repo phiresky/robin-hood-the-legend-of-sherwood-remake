@@ -295,8 +295,6 @@ pub(super) fn drain_net_inputs(
     assets: &mut Arc<LevelAssets>,
     rewind_buffer: &mut RewindBuffer,
 ) -> Result<NetDrainResult, MultiplayerSessionError> {
-    use crate::multiplayer::NetEvent;
-
     if host.transport.net().is_none() {
         // Not in a session — drain anything sitting in pending and
         // return.  Pending should be empty in single-player but is
@@ -313,14 +311,22 @@ pub(super) fn drain_net_inputs(
     }
 
     // 1. Drain transport into "future" and "late" buckets.
-    let mut late_inputs: Vec<(u32, PlayerInput)> = Vec::new();
-    let mut rewrote_sim_state = false;
-    let mut admission_events = Vec::new();
-    let mut latest_host_clock_sample: Option<(u32, u32)> = None;
-    let mut rollback_telemetry = None;
-    let mut effective_frame = current_frame;
+    let mut drain = NetDrain {
+        host,
+        manager,
+        network,
+        assets,
+        rewind_buffer,
+        late_inputs: Vec::new(),
+        rewrote_sim_state: false,
+        admission_events: Vec::new(),
+        latest_host_clock_sample: None,
+        rollback_telemetry: None,
+        effective_frame: current_frame,
+    };
     loop {
-        let event = match host
+        let event = match drain
+            .host
             .transport
             .net()
             .expect("session channel remains installed during event drain")
@@ -332,6 +338,73 @@ pub(super) fn drain_net_inputs(
                 return Err(SessionProtocolFailure::TransportClosed.into());
             }
         };
+        drain.handle_event(event)?;
+    }
+
+    // 2. Late-input rollback.  Splice every late input into the
+    //    rewind buffer's command log at its target frame, then
+    //    reconstruct the engine state at `sim_frame` once.  Multiple
+    //    splices share one rewind because `rewind_to` replays from
+    //    snapshot through the entire log.
+    if !drain.late_inputs.is_empty() {
+        drain.rollback_late_inputs()?;
+    }
+
+    // 3. Return inputs scheduled for this frame.  The caller applies
+    //    them to the live engine and folds them into `frame_cmds` so
+    //    the recorder + rewind buffer capture them.
+    let NetDrain {
+        network,
+        rewrote_sim_state,
+        admission_events,
+        latest_host_clock_sample,
+        rollback_telemetry,
+        effective_frame,
+        ..
+    } = drain;
+    let mut due_inputs = network.take_inputs(TimelineFrame::from_wire(effective_frame));
+    canonicalize_player_input_order(&mut due_inputs);
+
+    Ok(NetDrainResult {
+        inputs: due_inputs,
+        rewrote_sim_state,
+        admission_events,
+        pause_simulation: false,
+        latest_host_clock_sample,
+        rollback: rollback_telemetry,
+        adopted_frame: (effective_frame != current_frame).then_some(effective_frame),
+    })
+}
+
+/// One [`drain_net_inputs`] pass inside an admitted session: the borrowed
+/// simulation owners plus the accumulators its phases share. Every method
+/// runs statements in the order the single inline function ran them; an
+/// `Err` return ends the drain at the same point.
+///
+/// Not serde: a call-scoped bundle of borrowed process resources.
+struct NetDrain<'a> {
+    host: &'a mut Host,
+    manager: &'a mut engine_manager_api::EngineManager,
+    network: &'a mut super::runtime::reconciliation::NetworkReconciliation,
+    assets: &'a mut Arc<LevelAssets>,
+    rewind_buffer: &'a mut RewindBuffer,
+    late_inputs: Vec<(u32, PlayerInput)>,
+    rewrote_sim_state: bool,
+    admission_events: Vec<MultiplayerAdmissionEvent>,
+    latest_host_clock_sample: Option<(u32, u32)>,
+    rollback_telemetry: Option<MultiplayerRollbackTelemetry>,
+    /// Local timeline cursor; snapshot adoption and `BeginSim` move it.
+    effective_frame: u32,
+}
+
+impl NetDrain<'_> {
+    /// Phase 1: fold one drained transport event.
+    fn handle_event(
+        &mut self,
+        event: crate::multiplayer::NetEvent,
+    ) -> Result<(), MultiplayerSessionError> {
+        use crate::multiplayer::NetEvent;
+
         match event {
             NetEvent::Input {
                 server_frame,
@@ -339,8 +412,8 @@ pub(super) fn drain_net_inputs(
                 target_frame,
                 input,
             } => {
-                if host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST
-                    && host.transport.reconnecting()
+                if self.host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST
+                    && self.host.transport.reconnecting()
                 {
                     // The replacement snapshot is already published. Events
                     // queued before the outbound disconnect must not mutate
@@ -350,10 +423,12 @@ pub(super) fn drain_net_inputs(
                         origin_frame,
                         "multiplayer: discarded input from abandoned host prediction during snapshot resynchronization"
                     );
-                    continue;
+                    return Ok(());
                 }
+                let effective_frame = self.effective_frame;
                 if target_frame >= effective_frame {
-                    network.queue_input(TimelineFrame::from_wire(target_frame), input);
+                    self.network
+                        .queue_input(TimelineFrame::from_wire(target_frame), input);
                 } else {
                     tracing::info!(
                         local_frame = effective_frame,
@@ -365,12 +440,12 @@ pub(super) fn drain_net_inputs(
                         local_minus_origin = effective_frame as i64 - origin_frame as i64,
                         "multiplayer late input received"
                     );
-                    late_inputs.push((target_frame, input));
+                    self.late_inputs.push((target_frame, input));
                 }
             }
             NetEvent::AssignedLocalSeat(seat) => {
                 tracing::info!(?seat, "multiplayer: local seat assigned (late)");
-                host.transport.confirm_local_seat(seat);
+                self.host.transport.confirm_local_seat(seat);
             }
             NetEvent::Note(s) => tracing::info!(note = %s, "multiplayer: note"),
             NetEvent::Disconnected => {
@@ -378,17 +453,18 @@ pub(super) fn drain_net_inputs(
                     "multiplayer: peer disconnected — transport will auto-reconnect; \
                      simulation is held until an authoritative snapshot arrives"
                 );
-                host.transport.await_authoritative_snapshot();
-                admission_events.push(MultiplayerAdmissionEvent::Disconnected);
+                self.host.transport.await_authoritative_snapshot();
+                self.admission_events
+                    .push(MultiplayerAdmissionEvent::Disconnected);
                 // Everything derived from the disconnected process's future
                 // is invalid. Events already drained from that generation
                 // occur before Disconnected and are removed here; events from
                 // the replacement stream arrive afterward.
-                late_inputs.clear();
-                network.abandon_prediction();
-                *rewind_buffer = RewindBuffer::new();
-                latest_host_clock_sample = None;
-                rewrote_sim_state = true;
+                self.late_inputs.clear();
+                self.network.abandon_prediction();
+                *self.rewind_buffer = RewindBuffer::new();
+                self.latest_host_clock_sample = None;
+                self.rewrote_sim_state = true;
             }
             NetEvent::Reconnected => {
                 tracing::info!("multiplayer: transport reconnected; awaiting host snapshot");
@@ -399,6 +475,7 @@ pub(super) fn drain_net_inputs(
                 sim_config,
                 speech_timing_locale,
             } => {
+                let host = &*self.host;
                 // Welcome is awaited before Engine construction; retain the
                 // event copy for diagnostics and reconnect validation.
                 if host.transport.mission_id() != Some(mission_id.as_str())
@@ -432,183 +509,7 @@ pub(super) fn drain_net_inputs(
             NetEvent::InitialSnapshot {
                 frame,
                 engine_bytes,
-            } => {
-                let replacing_prediction_future = host.transport.reconnecting();
-                if frame < effective_frame && !replacing_prediction_future {
-                    tracing::debug!(
-                        frame,
-                        local_timeline_frame = effective_frame,
-                        "multiplayer: ignoring stale host engine snapshot"
-                    );
-                    continue;
-                }
-                // Frame-0 fast path: if local init already matches the
-                // host, avoid replacing the just-loaded engine. If it
-                // differs, adopt the host snapshot before simulation
-                // begins; decoded snapshots now reattach LevelAssets
-                // cleanly, so this is the same path as mid-mission
-                // rejoin without advancing the frame cursor.
-                if frame == 0 && effective_frame == 0 {
-                    let local_hash = robin_engine::replay::state_hash(&manager.engine);
-                    match Engine::decode_native_snapshot(&engine_bytes) {
-                        Ok(snapshot) => {
-                            let snap_hash = robin_engine::replay::state_hash(&snapshot);
-                            if local_hash == snap_hash {
-                                admission_events.push(
-                                    MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame },
-                                );
-                                tracing::info!(
-                                    hash = format!("{local_hash:016x}"),
-                                    "multiplayer: skipping frame-0 snapshot adopt; \
-                                     local engine already matches host"
-                                );
-                                if let Some(net) = host.transport.net() {
-                                    net.send_ready_to_sim(frame).map_err(|error| {
-                                        channel_failure(
-                                            "fatal multiplayer readiness publication failure",
-                                            error,
-                                        )
-                                    })?;
-                                }
-                                if replacing_prediction_future {
-                                    *rewind_buffer = RewindBuffer::new();
-                                    rewind_buffer.seed_initial_anchor(frame, &manager.engine);
-                                    network.abandon_prediction();
-                                    rewrote_sim_state = true;
-                                }
-                            } else {
-                                if let Err(error) =
-                                    attach_snapshot_spellforge_runtime(&snapshot, assets, || {
-                                        host.application_context().with_active_profile(|profile| {
-                                            profile.gameplay_config.enable_spellforge_missions
-                                        })
-                                    })
-                                {
-                                    return Err(SessionProtocolFailure::InitialSpellforgeAttach(
-                                        error,
-                                    )
-                                    .into());
-                                }
-                                match Engine::adopt_authoritative_snapshot(
-                                    snapshot,
-                                    assets.as_ref(),
-                                ) {
-                                    Ok(adopted) => {
-                                        manager.engine = adopted;
-                                        admission_events.push(
-                                            MultiplayerAdmissionEvent::InitialSnapshotAdopted {
-                                                frame,
-                                            },
-                                        );
-                                        let adopted_hash =
-                                            robin_engine::replay::state_hash(&manager.engine);
-                                        tracing::info!(
-                                            local = format!("{local_hash:016x}"),
-                                            snap = format!("{snap_hash:016x}"),
-                                            adopted = format!("{adopted_hash:016x}"),
-                                            "multiplayer: adopted frame-0 host snapshot after \
-                                             local init diverged"
-                                        );
-                                        *rewind_buffer = RewindBuffer::new();
-                                        rewind_buffer.seed_initial_anchor(frame, &manager.engine);
-                                        network.adopt_snapshot(
-                                            TimelineFrame::from_wire(frame),
-                                            replacing_prediction_future,
-                                        );
-                                        rewrote_sim_state = true;
-                                        if let Some(net) = host.transport.net() {
-                                            net.send_ready_to_sim(frame).map_err(|error| {
-                                        channel_failure(
-                                            "fatal multiplayer readiness publication failure",
-                                            error,
-                                        )
-                                    })?;
-                                        }
-                                    }
-                                    Err(error) => {
-                                        return Err(
-                                            SessionProtocolFailure::InitialSnapshotIncompatible(
-                                                error,
-                                            )
-                                            .into(),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            return Err(SessionProtocolFailure::InitialSnapshotDecode(e).into());
-                        }
-                    }
-                    continue;
-                }
-
-                // Mid-mission rejoin (frame > 0): atomically adopt the host's
-                // snapshot after attaching immutable script/grid/sprite data
-                // once from the locally loaded LevelAssets.
-                match Engine::decode_native_snapshot(&engine_bytes) {
-                    Ok(snapshot) => {
-                        if let Err(error) =
-                            attach_snapshot_spellforge_runtime(&snapshot, assets, || {
-                                host.application_context().with_active_profile(|profile| {
-                                    profile.gameplay_config.enable_spellforge_missions
-                                })
-                            })
-                        {
-                            return Err(SessionProtocolFailure::SpellforgeAttach {
-                                frame,
-                                detail: error,
-                            }
-                            .into());
-                        }
-                        match Engine::adopt_authoritative_snapshot(snapshot, assets.as_ref()) {
-                            Ok(adopted_engine) => {
-                                manager.engine = adopted_engine;
-                                admission_events.push(
-                                    MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame },
-                                );
-                                let adopted_hash =
-                                    robin_engine::replay::state_hash(&manager.engine);
-                                tracing::info!(
-                                    frame,
-                                    local_timeline_frame = effective_frame,
-                                    bytes = engine_bytes.len(),
-                                    adopted_hash = format!("{adopted_hash:016x}"),
-                                    "multiplayer: adopting host's engine snapshot"
-                                );
-                                effective_frame = frame;
-                                if let Some(net) = host.transport.net() {
-                                    net.send_ready_to_sim(frame).map_err(|error| {
-                                        channel_failure(
-                                            "fatal multiplayer readiness publication failure",
-                                            error,
-                                        )
-                                    })?;
-                                }
-                                *rewind_buffer = RewindBuffer::new();
-                                rewind_buffer.seed_initial_anchor(frame, &manager.engine);
-                                network.adopt_snapshot(
-                                    TimelineFrame::from_wire(frame),
-                                    replacing_prediction_future,
-                                );
-                                rewrote_sim_state = true;
-                            }
-                            Err(error) => {
-                                return Err(SessionProtocolFailure::SnapshotIncompatible {
-                                    frame,
-                                    source: error,
-                                }
-                                .into());
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        return Err(
-                            SessionProtocolFailure::SnapshotDecode { frame, detail: e }.into()
-                        );
-                    }
-                }
-            }
+            } => self.on_initial_snapshot(frame, engine_bytes)?,
             NetEvent::PeerStateHash {
                 frame,
                 hash,
@@ -616,132 +517,49 @@ pub(super) fn drain_net_inputs(
                 ms_until_next_frame,
             } => {
                 if let Some(hash) = hash {
-                    network.admit_remote_hash(frame, hash);
+                    self.network.admit_remote_hash(frame, hash);
                 }
                 if let (Some(clock_frame), Some(ms_until_next_frame)) =
                     (clock_frame, ms_until_next_frame)
                 {
-                    latest_host_clock_sample = Some((clock_frame, ms_until_next_frame));
+                    self.latest_host_clock_sample = Some((clock_frame, ms_until_next_frame));
                 }
             }
             NetEvent::BeginSim {
                 frame,
                 start_epoch_ms,
             } => {
-                host.transport.begin_simulation();
+                self.host.transport.begin_simulation();
                 tracing::info!(
                     frame,
                     start_epoch_ms,
                     "multiplayer: begin-sim barrier released"
                 );
-                if effective_frame != frame {
-                    effective_frame = frame;
+                if self.effective_frame != frame {
+                    self.effective_frame = frame;
                     let adopted = TimelineFrame::from_wire(frame);
-                    network.adopt_snapshot(adopted, false);
-                    rewind_buffer.clear_recent_checkpoints();
-                    rewrote_sim_state = true;
+                    self.network.adopt_snapshot(adopted, false);
+                    self.rewind_buffer.clear_recent_checkpoints();
+                    self.rewrote_sim_state = true;
                 }
-                admission_events.push(MultiplayerAdmissionEvent::BeginSim {
-                    frame,
-                    start_epoch_ms,
-                });
+                self.admission_events
+                    .push(MultiplayerAdmissionEvent::BeginSim {
+                        frame,
+                        start_epoch_ms,
+                    });
             }
             NetEvent::PrepareSnapshotTransition { id, payload } => {
-                require_protocol(
-                    host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST,
-                    "authoritative host received its own snapshot transition prepare",
-                )?;
-                require_protocol(
-                    id.session_id
-                        == host
-                            .transport
-                            .net()
-                            .expect("admitted session retains its channels")
-                            .session_id()
-                            .map_err(|error| {
-                                channel_failure(
-                                    "snapshot transition is missing session identity",
-                                    error,
-                                )
-                            })?,
-                    "snapshot transition prepare belongs to another session",
-                )?;
-                require_protocol(
-                    !host.transport.has_snapshot_transition(),
-                    "received a second snapshot transition while one is pending",
-                )?;
-                let payload = match payload {
-                    robin_engine::multiplayer::SnapshotTransitionPayload::Save {
-                        mission_id,
-                        save_bytes,
-                    } => {
-                        let save: crate::save_file::GameSaveFile =
-                            serde_json::from_slice(&save_bytes)
-                                .map_err(SessionProtocolFailure::TransitionPayload)?;
-                        save.validate_current_schema()
-                            .map_err(SessionProtocolFailure::TransitionSchema)?;
-                        require_protocol(
-                            save.header.mission_id == mission_id,
-                            "snapshot transition wire mission differs from its exact payload",
-                        )?;
-                        // Do not consult the active mission's profile graph at
-                        // this network boundary. Once every peer commits, the
-                        // session exits, drops its old mount, restores the
-                        // exact descriptor, and only then validates/rebuilds
-                        // the saved profile before constructing an Engine.
-                        let reencoded = serde_json::to_vec(&save)
-                            .map_err(SessionProtocolFailure::TransitionReencode)?;
-                        require_protocol(
-                            reencoded == save_bytes,
-                            "snapshot transition bytes changed during validation",
-                        )?;
-                        crate::host::PendingSnapshotTransitionPayload::Save {
-                            load: crate::host::SnapshotSave::Remote(Box::new(save)),
-                        }
-                    }
-                    robin_engine::multiplayer::SnapshotTransitionPayload::CampaignExit {
-                        exit_code,
-                        engine_bytes,
-                    } => {
-                        require_protocol(
-                            exit_code == robin_engine::game_operation::GameCode::LevelInterrupted,
-                            "campaign transition may only launch the selected mission",
-                        )?;
-                        let decoded = Engine::decode_native_snapshot(&engine_bytes)
-                            .map_err(SessionProtocolFailure::CampaignSnapshotDecode)?;
-                        let adopted = Engine::adopt_authoritative_snapshot(decoded, assets)
-                            .map_err(SessionProtocolFailure::CampaignSnapshotAdopt)?;
-                        require_protocol(
-                            adopted.encode_native_snapshot() == engine_bytes,
-                            "campaign transition bytes changed during validation",
-                        )?;
-                        crate::host::PendingSnapshotTransitionPayload::CampaignExit {
-                            exit_code,
-                            engine: Some(Box::new(adopted)),
-                        }
-                    }
-                };
-                host.transport.prepare_snapshot_transition(
-                    crate::host::PendingSnapshotTransition::new(id, payload),
-                );
-                host.transport
-                    .net()
-                    .expect("prepared transition retains session")
-                    .acknowledge_snapshot_transition(id)
-                    .map_err(|error| {
-                        channel_failure(
-                            "failed to acknowledge multiplayer snapshot transition",
-                            error,
-                        )
-                    })?;
+                self.on_prepare_snapshot_transition(id, payload)?;
             }
             NetEvent::CommitSnapshotTransition { id } => {
-                host.transport
+                self.host
+                    .transport
                     .commit_snapshot_transition(id)
                     .map_err(SessionProtocolFailure::TransitionCommit)?;
             }
             event @ (NetEvent::ModalProposal { .. } | NetEvent::ModalDecision { .. }) => {
-                host.transport
+                self.host
+                    .transport
                     .net()
                     .expect("admitted session retains its channels")
                     .defer_modal_event(event)
@@ -758,7 +576,8 @@ pub(super) fn drain_net_inputs(
             | NetEvent::RankedContinuationPreflightSignature { .. }
             | NetEvent::LeaderboardCoSignRequest(_)
             | NetEvent::LeaderboardCoSignResponse { .. }) => {
-                host.transport
+                self.host
+                    .transport
                     .net()
                     .expect("admitted session retains its channels")
                     .defer_leaderboard_cosign_event(event)
@@ -781,14 +600,296 @@ pub(super) fn drain_net_inputs(
                 tracing::debug!("multiplayer: consumed transport-owned ranked admission status");
             }
         }
+        Ok(())
     }
 
-    // 2. Late-input rollback.  Splice every late input into the
-    //    rewind buffer's command log at its target frame, then
-    //    reconstruct the engine state at `sim_frame` once.  Multiple
-    //    splices share one rewind because `rewind_to` replays from
-    //    snapshot through the entire log.
-    if !late_inputs.is_empty() {
+    /// Phase 1, `InitialSnapshot`: adopt (or confirm) the host's engine
+    /// snapshot. Returning `Ok` early matches the inline loop's `continue`.
+    fn on_initial_snapshot(
+        &mut self,
+        frame: u32,
+        engine_bytes: Vec<u8>,
+    ) -> Result<(), MultiplayerSessionError> {
+        let effective_frame = self.effective_frame;
+        let replacing_prediction_future = self.host.transport.reconnecting();
+        if frame < effective_frame && !replacing_prediction_future {
+            tracing::debug!(
+                frame,
+                local_timeline_frame = effective_frame,
+                "multiplayer: ignoring stale host engine snapshot"
+            );
+            return Ok(());
+        }
+        // Frame-0 fast path: if local init already matches the
+        // host, avoid replacing the just-loaded engine. If it
+        // differs, adopt the host snapshot before simulation
+        // begins; decoded snapshots now reattach LevelAssets
+        // cleanly, so this is the same path as mid-mission
+        // rejoin without advancing the frame cursor.
+        if frame == 0 && effective_frame == 0 {
+            return self.on_frame_zero_snapshot(frame, &engine_bytes, replacing_prediction_future);
+        }
+
+        // Mid-mission rejoin (frame > 0): atomically adopt the host's
+        // snapshot after attaching immutable script/grid/sprite data
+        // once from the locally loaded LevelAssets.
+        match Engine::decode_native_snapshot(&engine_bytes) {
+            Ok(snapshot) => {
+                let host = &*self.host;
+                if let Err(error) =
+                    attach_snapshot_spellforge_runtime(&snapshot, self.assets, || {
+                        host.application_context().with_active_profile(|profile| {
+                            profile.gameplay_config.enable_spellforge_missions
+                        })
+                    })
+                {
+                    return Err(SessionProtocolFailure::SpellforgeAttach {
+                        frame,
+                        detail: error,
+                    }
+                    .into());
+                }
+                match Engine::adopt_authoritative_snapshot(snapshot, self.assets.as_ref()) {
+                    Ok(adopted_engine) => {
+                        self.manager.engine = adopted_engine;
+                        self.admission_events
+                            .push(MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame });
+                        let adopted_hash = robin_engine::replay::state_hash(&self.manager.engine);
+                        tracing::info!(
+                            frame,
+                            local_timeline_frame = effective_frame,
+                            bytes = engine_bytes.len(),
+                            adopted_hash = format!("{adopted_hash:016x}"),
+                            "multiplayer: adopting host's engine snapshot"
+                        );
+                        self.effective_frame = frame;
+                        if let Some(net) = self.host.transport.net() {
+                            net.send_ready_to_sim(frame).map_err(|error| {
+                                channel_failure(
+                                    "fatal multiplayer readiness publication failure",
+                                    error,
+                                )
+                            })?;
+                        }
+                        *self.rewind_buffer = RewindBuffer::new();
+                        self.rewind_buffer
+                            .seed_initial_anchor(frame, &self.manager.engine);
+                        self.network.adopt_snapshot(
+                            TimelineFrame::from_wire(frame),
+                            replacing_prediction_future,
+                        );
+                        self.rewrote_sim_state = true;
+                    }
+                    Err(error) => {
+                        return Err(SessionProtocolFailure::SnapshotIncompatible {
+                            frame,
+                            source: error,
+                        }
+                        .into());
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(SessionProtocolFailure::SnapshotDecode { frame, detail: e }.into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Frame-0 branch of [`Self::on_initial_snapshot`].
+    fn on_frame_zero_snapshot(
+        &mut self,
+        frame: u32,
+        engine_bytes: &[u8],
+        replacing_prediction_future: bool,
+    ) -> Result<(), MultiplayerSessionError> {
+        let local_hash = robin_engine::replay::state_hash(&self.manager.engine);
+        match Engine::decode_native_snapshot(engine_bytes) {
+            Ok(snapshot) => {
+                let snap_hash = robin_engine::replay::state_hash(&snapshot);
+                if local_hash == snap_hash {
+                    self.admission_events
+                        .push(MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame });
+                    tracing::info!(
+                        hash = format!("{local_hash:016x}"),
+                        "multiplayer: skipping frame-0 snapshot adopt; \
+                         local engine already matches host"
+                    );
+                    if let Some(net) = self.host.transport.net() {
+                        net.send_ready_to_sim(frame).map_err(|error| {
+                            channel_failure(
+                                "fatal multiplayer readiness publication failure",
+                                error,
+                            )
+                        })?;
+                    }
+                    if replacing_prediction_future {
+                        *self.rewind_buffer = RewindBuffer::new();
+                        self.rewind_buffer
+                            .seed_initial_anchor(frame, &self.manager.engine);
+                        self.network.abandon_prediction();
+                        self.rewrote_sim_state = true;
+                    }
+                } else {
+                    let host = &*self.host;
+                    if let Err(error) =
+                        attach_snapshot_spellforge_runtime(&snapshot, self.assets, || {
+                            host.application_context().with_active_profile(|profile| {
+                                profile.gameplay_config.enable_spellforge_missions
+                            })
+                        })
+                    {
+                        return Err(SessionProtocolFailure::InitialSpellforgeAttach(error).into());
+                    }
+                    match Engine::adopt_authoritative_snapshot(snapshot, self.assets.as_ref()) {
+                        Ok(adopted) => {
+                            self.manager.engine = adopted;
+                            self.admission_events
+                                .push(MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame });
+                            let adopted_hash =
+                                robin_engine::replay::state_hash(&self.manager.engine);
+                            tracing::info!(
+                                local = format!("{local_hash:016x}"),
+                                snap = format!("{snap_hash:016x}"),
+                                adopted = format!("{adopted_hash:016x}"),
+                                "multiplayer: adopted frame-0 host snapshot after \
+                                 local init diverged"
+                            );
+                            *self.rewind_buffer = RewindBuffer::new();
+                            self.rewind_buffer
+                                .seed_initial_anchor(frame, &self.manager.engine);
+                            self.network.adopt_snapshot(
+                                TimelineFrame::from_wire(frame),
+                                replacing_prediction_future,
+                            );
+                            self.rewrote_sim_state = true;
+                            if let Some(net) = self.host.transport.net() {
+                                net.send_ready_to_sim(frame).map_err(|error| {
+                                    channel_failure(
+                                        "fatal multiplayer readiness publication failure",
+                                        error,
+                                    )
+                                })?;
+                            }
+                        }
+                        Err(error) => {
+                            return Err(
+                                SessionProtocolFailure::InitialSnapshotIncompatible(error).into()
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(SessionProtocolFailure::InitialSnapshotDecode(e).into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Phase 1, `PrepareSnapshotTransition`: validate the exact transition
+    /// payload, park it on the transport and acknowledge it.
+    fn on_prepare_snapshot_transition(
+        &mut self,
+        id: robin_engine::multiplayer::SnapshotTransitionId,
+        payload: robin_engine::multiplayer::SnapshotTransitionPayload,
+    ) -> Result<(), MultiplayerSessionError> {
+        let host = &mut *self.host;
+        let assets = &*self.assets;
+        require_protocol(
+            host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST,
+            "authoritative host received its own snapshot transition prepare",
+        )?;
+        require_protocol(
+            id.session_id
+                == host
+                    .transport
+                    .net()
+                    .expect("admitted session retains its channels")
+                    .session_id()
+                    .map_err(|error| {
+                        channel_failure("snapshot transition is missing session identity", error)
+                    })?,
+            "snapshot transition prepare belongs to another session",
+        )?;
+        require_protocol(
+            !host.transport.has_snapshot_transition(),
+            "received a second snapshot transition while one is pending",
+        )?;
+        let payload = match payload {
+            robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                mission_id,
+                save_bytes,
+            } => {
+                let save: crate::save_file::GameSaveFile = serde_json::from_slice(&save_bytes)
+                    .map_err(SessionProtocolFailure::TransitionPayload)?;
+                save.validate_current_schema()
+                    .map_err(SessionProtocolFailure::TransitionSchema)?;
+                require_protocol(
+                    save.header.mission_id == mission_id,
+                    "snapshot transition wire mission differs from its exact payload",
+                )?;
+                // Do not consult the active mission's profile graph at
+                // this network boundary. Once every peer commits, the
+                // session exits, drops its old mount, restores the
+                // exact descriptor, and only then validates/rebuilds
+                // the saved profile before constructing an Engine.
+                let reencoded = serde_json::to_vec(&save)
+                    .map_err(SessionProtocolFailure::TransitionReencode)?;
+                require_protocol(
+                    reencoded == save_bytes,
+                    "snapshot transition bytes changed during validation",
+                )?;
+                crate::host::PendingSnapshotTransitionPayload::Save {
+                    load: crate::host::SnapshotSave::Remote(Box::new(save)),
+                }
+            }
+            robin_engine::multiplayer::SnapshotTransitionPayload::CampaignExit {
+                exit_code,
+                engine_bytes,
+            } => {
+                require_protocol(
+                    exit_code == robin_engine::game_operation::GameCode::LevelInterrupted,
+                    "campaign transition may only launch the selected mission",
+                )?;
+                let decoded = Engine::decode_native_snapshot(&engine_bytes)
+                    .map_err(SessionProtocolFailure::CampaignSnapshotDecode)?;
+                let adopted = Engine::adopt_authoritative_snapshot(decoded, assets)
+                    .map_err(SessionProtocolFailure::CampaignSnapshotAdopt)?;
+                require_protocol(
+                    adopted.encode_native_snapshot() == engine_bytes,
+                    "campaign transition bytes changed during validation",
+                )?;
+                crate::host::PendingSnapshotTransitionPayload::CampaignExit {
+                    exit_code,
+                    engine: Some(Box::new(adopted)),
+                }
+            }
+        };
+        host.transport
+            .prepare_snapshot_transition(crate::host::PendingSnapshotTransition::new(id, payload));
+        host.transport
+            .net()
+            .expect("prepared transition retains session")
+            .acknowledge_snapshot_transition(id)
+            .map_err(|error| {
+                channel_failure(
+                    "failed to acknowledge multiplayer snapshot transition",
+                    error,
+                )
+            })?;
+        Ok(())
+    }
+
+    /// Phase 2: late-input rollback over the collected `late_inputs`.
+    fn rollback_late_inputs(&mut self) -> Result<(), MultiplayerSessionError> {
+        let effective_frame = self.effective_frame;
+        let host = &mut *self.host;
+        let manager = &mut *self.manager;
+        let network = &mut *self.network;
+        let assets = &*self.assets;
+        let rewind_buffer = &mut *self.rewind_buffer;
+        let mut late_inputs = std::mem::take(&mut self.late_inputs);
         let mut indexed: Vec<(usize, (u32, PlayerInput))> =
             late_inputs.drain(..).enumerate().collect();
         indexed.sort_by(|(a_idx, (a_frame, a_input)), (b_idx, (b_frame, b_input))| {
@@ -850,7 +951,8 @@ pub(super) fn drain_net_inputs(
                 })?;
             host.transport.await_authoritative_snapshot();
             network.discard_pending_inputs();
-            admission_events.push(MultiplayerAdmissionEvent::Disconnected);
+            self.admission_events
+                .push(MultiplayerAdmissionEvent::Disconnected);
             tracing::warn!(
                 %reason,
                 "multiplayer: client suspended until complete disconnect/reconnect and host snapshot adoption"
@@ -886,8 +988,8 @@ pub(super) fn drain_net_inputs(
                     "multiplayer rollback timing"
                 );
                 manager.engine = new_engine;
-                rollback_telemetry = Some(telemetry);
-                rewrote_sim_state = true;
+                self.rollback_telemetry = Some(telemetry);
+                self.rewrote_sim_state = true;
             } else if let Some(new_engine) = rewind_buffer.rewind_to(assets, effective_frame) {
                 let telemetry = MultiplayerRollbackTelemetry {
                     path: "rewind-buffer",
@@ -914,8 +1016,8 @@ pub(super) fn drain_net_inputs(
                 );
                 manager.engine = new_engine;
                 rewind_buffer.truncate_recent_after(earliest);
-                rollback_telemetry = Some(telemetry);
-                rewrote_sim_state = true;
+                self.rollback_telemetry = Some(telemetry);
+                self.rewrote_sim_state = true;
             } else {
                 panic!(
                     "multiplayer rollback failed: canonical journal accepted {late_input_count} late input(s) from frame {earliest}, but no retained snapshot can reconstruct authoritative frame {effective_frame}"
@@ -928,9 +1030,10 @@ pub(super) fn drain_net_inputs(
             // An earlier ingress batch may already have reset the barrier.
             // Queued obsolete inputs from that abandoned prediction must not
             // start another generation while replacement peers are joining.
-            admission_events.push(MultiplayerAdmissionEvent::HostResynchronizing {
-                frame: effective_frame,
-            });
+            self.admission_events
+                .push(MultiplayerAdmissionEvent::HostResynchronizing {
+                    frame: effective_frame,
+                });
             host.transport
                 .net()
                 .expect("admitted session retains its channels")
@@ -954,23 +1057,8 @@ pub(super) fn drain_net_inputs(
             host.transport.await_authoritative_snapshot();
             network.discard_pending_inputs();
         }
+        Ok(())
     }
-
-    // 3. Return inputs scheduled for this frame.  The caller applies
-    //    them to the live engine and folds them into `frame_cmds` so
-    //    the recorder + rewind buffer capture them.
-    let mut due_inputs = network.take_inputs(TimelineFrame::from_wire(effective_frame));
-    canonicalize_player_input_order(&mut due_inputs);
-
-    Ok(NetDrainResult {
-        inputs: due_inputs,
-        rewrote_sim_state,
-        admission_events,
-        pause_simulation: false,
-        latest_host_clock_sample,
-        rollback: rollback_telemetry,
-        adopted_frame: (effective_frame != current_frame).then_some(effective_frame),
-    })
 }
 
 /// Drain one deterministic multiplayer ingress boundary and fold its
