@@ -213,12 +213,9 @@ impl EngineInner {
                         format_args!("patrol chief {chief} lost its EnemyAi"),
                     )
                     .dispatch_stimulus_to_whole_patrol(
-                        sim,
+                        crate::ai_enemy::ThinkEnv::new(sim, &chief_ctx, &chief_tick, Some(grid)),
                         &stimulus,
                         global,
-                        &chief_ctx,
-                        &chief_tick,
-                        Some(grid),
                     )
             };
             chief_ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
@@ -420,14 +417,11 @@ impl EngineInner {
                     format_args!("Think-result caller {caller} lost its EnemyAi"),
                 )
                 .resolve_think_result(
-                    sim,
+                    crate::ai_enemy::ThinkEnv::new(sim, &source_ctx, &source_tick, Some(grid)),
                     accepted,
                     target,
                     continuation,
                     global,
-                    Some(grid),
-                    &source_ctx,
-                    &source_tick,
                 );
 
             // The continuation is the caller's original-game stack frame resuming

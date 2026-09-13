@@ -71,7 +71,12 @@ fn reconsider_phalanx_attack_gate_uses_literal_body_positions() {
         ..FighterSnapshot::default()
     });
 
-    assert!(!ai.reconsider_phalanx(&SimulationContext::with_seed(0), &ctx, &tick, None));
+    assert!(!ai.reconsider_phalanx(ThinkEnv::new(
+        &SimulationContext::with_seed(0),
+        &ctx,
+        &tick,
+        None
+    )));
     assert_eq!(ai.base.current_substate, Substate::AttackingPhalanx);
     assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
 }
@@ -244,7 +249,12 @@ fn nescafe_phalanx_uses_raw_body_distance_then_ai_facing_chain_anchors() {
 
     assert_eq!(ai.get_nearest_free_shield_bearer(&ctx, &tick), Some(129));
     let (slot, _, left, right, crosses_sector) = ai
-        .find_phalanx_place(&ctx, &tick, None)
+        .find_phalanx_place(ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &tick,
+            None,
+        ))
         .expect("nearby protecting shield bearer provides a slot");
 
     assert_eq!(slot.sector, Some(sector_0));
@@ -1217,12 +1227,9 @@ fn swordfight_step_in_uses_live_exact_target_sector() {
     ai.base.primary_target = Some(AiEntityHandle::new(TARGET));
     ai.sword_range = 50;
     ai.reconsider_swordfight(
-        &SimulationContext::with_seed(seed),
+        ThinkEnv::new(&SimulationContext::with_seed(seed), &ctx, &tick, None),
         false,
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(
@@ -1306,12 +1313,9 @@ fn lost_enemy_overview_faces_live_target_not_forecast_destination() {
     let (mut ai, ctx, tick) = lost_enemy_reconsider_fixture(100);
     let sim = SimulationContext::with_seed(0);
     ai.reconsider_swordfight(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         false,
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(ai.base.seek_position, position(0.0, 100.0));
@@ -1349,12 +1353,9 @@ fn lost_enemy_follow_path_keeps_forecast_as_seek_center_without_direction_snap()
     let (mut ai, ctx, tick) = lost_enemy_reconsider_fixture(0);
     let sim = SimulationContext::with_seed(0);
     ai.reconsider_swordfight(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         false,
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(ai.base.outbox.actor.set_direction_instantly, None);
@@ -1392,12 +1393,9 @@ fn lost_enemy_refreshes_forecast_with_swordfight_principal() {
 
     let sim = SimulationContext::with_seed(0);
     ai.reconsider_swordfight(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         false,
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(NEW_PRINCIPAL)));

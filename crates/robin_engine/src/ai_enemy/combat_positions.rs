@@ -9,6 +9,7 @@
 use crate::ai::*;
 use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
+use crate::sim_rng::SimulationContext;
 
 use super::util::{
     FighterView, ai_max_norm_distance, ai_square_distance, ai_square_distance_world,
@@ -20,7 +21,7 @@ use super::util::{
 };
 use super::{
     CombatPosition, EnemyAi, FighterSnapshot, PrimaryTargetFlags, ProfileRank, Question, SeekFlags,
-    UNDEFINED_DIRECTION, archer, combat, propose_good_step_back_goal,
+    ThinkEnv, UNDEFINED_DIRECTION, archer, combat, propose_good_step_back_goal,
 };
 
 fn reconsider_observation_debug_matches(frame: u32, owner: u32) -> bool {
@@ -500,12 +501,7 @@ impl EnemyAi {
 
     /// Left-neighbour eligibility: only soldiers count, must look the same way
     /// as me, and must lie to my left when projected through my facing.
-    fn can_be_left_neighbour(
-        &self,
-        neighbour: &FighterSnapshot,
-        ctx: &AiContext,
-        _tick: &AiPerTickData,
-    ) -> bool {
+    fn can_be_left_neighbour(&self, neighbour: &FighterSnapshot, ctx: &AiContext) -> bool {
         if neighbour.is_pc || neighbour.rank != ProfileRank::Soldier {
             return false;
         }
@@ -520,12 +516,7 @@ impl EnemyAi {
     }
 
     /// Right-neighbour eligibility.
-    fn can_be_right_neighbour(
-        &self,
-        neighbour: &FighterSnapshot,
-        ctx: &AiContext,
-        _tick: &AiPerTickData,
-    ) -> bool {
+    fn can_be_right_neighbour(&self, neighbour: &FighterSnapshot, ctx: &AiContext) -> bool {
         if neighbour.is_pc || neighbour.rank != ProfileRank::Soldier {
             return false;
         }
@@ -555,9 +546,9 @@ impl EnemyAi {
                     && let Some(snap) = self.find_fighter(cached, tick)
                 {
                     let ok = if side_left {
-                        self.can_be_left_neighbour(snap, ctx, tick)
+                        self.can_be_left_neighbour(snap, ctx)
                     } else {
-                        self.can_be_right_neighbour(snap, ctx, tick)
+                        self.can_be_right_neighbour(snap, ctx)
                     };
                     if ok {
                         return Some(cached);
@@ -573,9 +564,9 @@ impl EnemyAi {
                         continue;
                     };
                     let ok = if side_left {
-                        self.can_be_left_neighbour(snap, ctx, tick)
+                        self.can_be_left_neighbour(snap, ctx)
                     } else {
-                        self.can_be_right_neighbour(snap, ctx, tick)
+                        self.can_be_right_neighbour(snap, ctx)
                     };
                     if !ok {
                         continue;
@@ -617,10 +608,11 @@ impl EnemyAi {
         direction: (f32, f32),
         left_neighbour: Option<AiEntityHandle>,
         right_neighbour: Option<AiEntityHandle>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: ThinkEnv<'_>,
     ) {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
         // Early return if the proposed line position is not reachable in
         // a straight line.
         if let Some(grid) = grid {
@@ -674,10 +666,9 @@ impl EnemyAi {
         &self,
         list: &mut Vec<CombatPosition>,
         right_neighbour_handle: HumanHandle,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: ThinkEnv<'_>,
     ) {
+        let ThinkEnv { ctx, tick, .. } = env;
         let Some(right) = self.find_fighter(right_neighbour_handle, tick) else {
             return;
         };
@@ -706,9 +697,7 @@ impl EnemyAi {
             nose_friend,
             None,
             Some(AiEntityHandle::new(right_neighbour_handle)),
-            ctx,
-            tick,
-            grid,
+            env,
         );
     }
 
@@ -717,10 +706,9 @@ impl EnemyAi {
         &self,
         list: &mut Vec<CombatPosition>,
         left_neighbour_handle: HumanHandle,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: ThinkEnv<'_>,
     ) {
+        let ThinkEnv { ctx, tick, .. } = env;
         let Some(left) = self.find_fighter(left_neighbour_handle, tick) else {
             return;
         };
@@ -749,9 +737,7 @@ impl EnemyAi {
             nose_friend,
             Some(AiEntityHandle::new(left_neighbour_handle)),
             None,
-            ctx,
-            tick,
-            grid,
+            env,
         );
     }
 
@@ -761,10 +747,9 @@ impl EnemyAi {
         list: &mut Vec<CombatPosition>,
         left_handle: HumanHandle,
         right_handle: HumanHandle,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: ThinkEnv<'_>,
     ) {
+        let ThinkEnv { ctx, tick, .. } = env;
         let Some(left) = self.find_fighter(left_handle, tick) else {
             return;
         };
@@ -790,9 +775,7 @@ impl EnemyAi {
             direction,
             Some(AiEntityHandle::new(left_handle)),
             Some(AiEntityHandle::new(right_handle)),
-            ctx,
-            tick,
-            grid,
+            env,
         );
     }
 
@@ -803,10 +786,11 @@ impl EnemyAi {
         &self,
         list: &mut Vec<CombatPosition>,
         enemy_handle: HumanHandle,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: ThinkEnv<'_>,
     ) {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
         let Some(enemy) = self.find_fighter(enemy_handle, tick) else {
             return;
         };
@@ -1305,7 +1289,6 @@ impl EnemyAi {
         &self,
         start: HumanHandle,
         go_left: bool,
-        _ctx: &AiContext,
         tick: &AiPerTickData,
     ) -> HumanHandle {
         let mut current = start;
@@ -1343,9 +1326,7 @@ impl EnemyAi {
     /// Phalanx placement search.
     fn find_phalanx_place(
         &self,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: ThinkEnv<'_>,
     ) -> Option<(
         Position,
         u16,
@@ -1353,14 +1334,17 @@ impl EnemyAi {
         Option<AiEntityHandle>,
         bool,
     )> {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
         if self.phalanx_aborted {
             return None;
         }
         let nearest = self.get_nearest_free_shield_bearer(ctx, tick)?;
 
         // Walk left/right to find the end-of-phalanx anchors.
-        let left_guy = self.walk_phalanx_end(nearest, true, ctx, tick);
-        let right_guy = self.walk_phalanx_end(nearest, false, ctx, tick);
+        let left_guy = self.walk_phalanx_end(nearest, true, tick);
+        let right_guy = self.walk_phalanx_end(nearest, false, tick);
 
         // Use shield-bearer positioning semantics: when the anchor is running
         // to a phalanx slot, use their future seek position + shield bearing
@@ -1537,13 +1521,14 @@ impl EnemyAi {
     /// the shield-bearer positioning behavior. Returns `None` if the
     /// cover line crosses geometry (straight-movement authorization
     /// failure).
-    pub fn compute_position_behind_shield_bearer(
+    pub(crate) fn compute_position_behind_shield_bearer(
         &self,
         shield_bearer: HumanHandle,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: ThinkEnv<'_>,
     ) -> Option<Position> {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
         let snap = self.find_fighter(shield_bearer, tick)?;
         let bearer_pos = if snap.current_substate == Substate::AttackingRunningToPhalanx {
             snap.shield_bearer_seek_position
@@ -1888,15 +1873,12 @@ impl EnemyAi {
     /// again; it performs exactly the per-member tail of that recursion.
     pub(crate) fn break_phalanx_from_neighbour(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
         self.clear_combat_neighbours();
         self.phalanx_aborted = true;
-        self.battle_decisions(sim, global, ctx, tick, grid);
+        self.battle_decisions(env, global);
     }
 
     /// Rebuild the shared enemy list for
@@ -2019,13 +2001,13 @@ impl EnemyAi {
     /// to re-evaluate formation: pivot when enemies attack from the
     /// side, advance when enemies are dead-ahead, break when encircled.
     /// Returns `true` if the substate was changed.
-    pub(super) fn reconsider_phalanx(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) -> bool {
+    pub(super) fn reconsider_phalanx(&mut self, env: ThinkEnv<'_>) -> bool {
+        let ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         tracing::trace!(
             target: "robin_engine::ai_enemy::phalanx",
             me = self.base.me,
@@ -2096,7 +2078,7 @@ impl EnemyAi {
             // ), so the FAST_OVERVIEW branch
             // that pulls in nearby-fighter collection is deliberately
             // skipped.
-            self.get_battle_overview(0, ctx, tick);
+            self.get_battle_overview(0, env);
             return true;
         }
 
@@ -2388,13 +2370,12 @@ impl EnemyAi {
     /// either runs to a phalanx slot or raises shield in place.
     ///
     /// Returns `true` if a shield-bearing action was taken.
-    pub fn refresh_arrow_protection(
+    pub(crate) fn refresh_arrow_protection(
         &mut self,
         called_from_hourglass: bool,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: ThinkEnv<'_>,
     ) -> bool {
+        let ThinkEnv { ctx, tick, .. } = env;
         let debug = arrow_protection_debug_matches(|| ctx.frame, || self.base.me);
         // Check if we're in the right substate
         match self.base.current_substate {
@@ -2658,7 +2639,7 @@ impl EnemyAi {
             left_neighbour,
             right_neighbour,
             inherited_sector_identity_differs,
-        )) = self.find_phalanx_place(ctx, tick, grid)
+        )) = self.find_phalanx_place(env)
         {
             if debug {
                 crate::ai_enemy::parity_trace::arrow_protection_run_to_phalanx(
@@ -2768,13 +2749,8 @@ impl EnemyAi {
     }
 
     /// Propose combat positions.
-    fn propose_combat_positions(
-        &self,
-        list: &mut Vec<CombatPosition>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    fn propose_combat_positions(&self, list: &mut Vec<CombatPosition>, env: ThinkEnv<'_>) {
+        let ThinkEnv { ctx, tick, .. } = env;
         if self.base.blood_alcohol > 0 {
             return;
         }
@@ -2788,27 +2764,20 @@ impl EnemyAi {
         if i_am_a_formation_soldier {
             let (left, right) = self.propose_left_and_right_neighbour(ctx, tick);
             if let (Some(left), Some(right)) = (left, right) {
-                self.propose_combat_positions_between(
-                    list,
-                    left.get(),
-                    right.get(),
-                    ctx,
-                    tick,
-                    grid,
-                );
+                self.propose_combat_positions_between(list, left.get(), right.get(), env);
                 try_to_surround = false;
             } else if let Some(left) = left {
-                self.propose_combat_positions_right_of(list, left.get(), ctx, tick, grid);
+                self.propose_combat_positions_right_of(list, left.get(), env);
                 try_to_surround = false;
             } else if let Some(right) = right {
-                self.propose_combat_positions_left_of(list, right.get(), ctx, tick, grid);
+                self.propose_combat_positions_left_of(list, right.get(), env);
                 try_to_surround = false;
             }
         }
 
         if try_to_surround {
             for &enemy_handle in &self.list_them {
-                self.propose_combat_positions_around(list, enemy_handle, ctx, tick, grid);
+                self.propose_combat_positions_around(list, enemy_handle, env);
             }
         }
 
@@ -2919,15 +2888,13 @@ impl EnemyAi {
     // Reconsider the swordfight
     // -----------------------------------------------------------------------
 
-    pub fn reconsider_swordfight(
+    pub(crate) fn reconsider_swordfight(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         enemy_weak: bool,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         let reconsider_debug = reconsider_position_debug_matches(
             || ctx.frame,
             || ctx.original_creation_order,
@@ -2998,7 +2965,7 @@ impl EnemyAi {
                      behavior"
                 );
             }
-            self.think(sim, &quit_stimulus, global, ctx, tick, grid);
+            self.think(env, &quit_stimulus, global);
             return;
         }
 
@@ -3042,7 +3009,7 @@ impl EnemyAi {
                     &(rng_cursor),
                 );
             }
-            self.end_swordfight(ctx, tick);
+            self.end_swordfight(ctx);
             // The original game uses reciprocal neighbour updates here
             // to keep both links consistent.
             self.clear_combat_neighbours();
@@ -3451,7 +3418,7 @@ impl EnemyAi {
 
         if do_reposition {
             let new_combat_position =
-                self.propose_good_combat_position_inner(global, ctx, tick, grid, reposition_debug);
+                self.propose_good_combat_position_inner(global, env, reposition_debug);
             self.base.seek_position = new_combat_position.attacker_position;
             self.my_line_jump = new_combat_position.line_jump;
 
@@ -3571,22 +3538,21 @@ impl EnemyAi {
 
     /// Compute a retreat position away from `pos_enemy`.
     /// Delegates to the free function [`propose_good_step_back_goal`].
-    pub fn propose_good_step_back_goal(
+    pub(crate) fn propose_good_step_back_goal(
         &self,
         pos_enemy: Position,
         good_distance: u16,
         min_distance: u16,
-        ctx: &AiContext,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: ThinkEnv<'_>,
         aspect_ratio: f32,
     ) -> Option<Position> {
         propose_good_step_back_goal(
-            ctx.position,
-            &ctx.move_box,
+            env.ctx.position,
+            &env.ctx.move_box,
             pos_enemy,
             good_distance,
             min_distance,
-            grid,
+            env.grid,
             aspect_ratio,
         )
     }
@@ -3674,16 +3640,14 @@ impl EnemyAi {
     ///   10. fall through to `observe_and_step` for repositioning
     pub(super) fn reconsider_swordfight_observation(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         let mut deferred_defensive_panic = None;
 
         // (1) Arrow protection guard.
-        if self.refresh_arrow_protection(false, ctx, tick, grid) {
+        if self.refresh_arrow_protection(false, env) {
             return;
         }
 
@@ -3876,7 +3840,7 @@ impl EnemyAi {
 
         // (6) No target → battle overview.
         if new_primary.is_none() {
-            self.get_battle_overview(0, ctx, tick);
+            self.get_battle_overview(0, env);
             return;
         }
 
@@ -3910,8 +3874,7 @@ impl EnemyAi {
                 enemy_pos,
                 parameters_ai::ARCHER_GOOD_DISTANCE,
                 parameters_ai::ARCHER_MIN_DISTANCE,
-                ctx,
-                grid,
+                env,
                 ASPECT_RATIO,
             ) {
                 self.go_to(
@@ -3945,37 +3908,30 @@ impl EnemyAi {
         //       - distance < 30
         //     gated by no same-camp soldier already approaching this target
         //     in WALKING/RUNNING/CHARGING.
-        if self.try_observation_attack(new_primary, ctx, tick, grid) {
+        if self.try_observation_attack(new_primary, env) {
             return;
         }
 
-        self.observe_and_step(sim, ctx, tick, grid);
+        self.observe_and_step(env);
     }
 
     /// Run the statements following a defensive Panic in
     /// swordfight observation reconsideration. The engine invokes this after
     /// Panic's recursive reach-point Think has closed, preserving both the
     /// panic movement sequence and any later enemy-attack sequence.
-    pub(crate) fn observe_after_synchronous_panic(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    pub(crate) fn observe_after_synchronous_panic(&mut self, env: ThinkEnv<'_>) {
         let primary = self.base.primary_target;
-        if !self.try_observation_attack(primary, ctx, tick, grid) {
-            self.observe_and_step(sim, ctx, tick, grid);
+        if !self.try_observation_attack(primary, env) {
+            self.observe_and_step(env);
         }
     }
 
     fn try_observation_attack(
         &mut self,
         new_primary: Option<AiEntityHandle>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: ThinkEnv<'_>,
     ) -> bool {
+        let ThinkEnv { ctx, tick, .. } = env;
         let me_pos = ctx.position;
         if let Some(primary) = self.find_fighter(new_primary, tick).cloned() {
             let pos_fighter = primary.position;
@@ -4034,9 +3990,7 @@ impl EnemyAi {
                         new_primary
                             .expect("observation attack requires a primary target")
                             .get(),
-                        ctx,
-                        tick,
-                        grid,
+                        env,
                     );
                     return true;
                 }
@@ -4053,13 +4007,13 @@ impl EnemyAi {
     /// Reposition while observing a swordfight: step forward, back, or sideways
     /// to maintain an ideal distance from the fight. Called when
     /// `battle_decisions` didn't produce a state change.
-    fn observe_and_step(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    fn observe_and_step(&mut self, env: ThinkEnv<'_>) {
+        let ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         let Some(primary) = self.find_fighter(self.base.primary_target, tick).cloned() else {
             return;
         };
@@ -4187,24 +4141,15 @@ impl EnemyAi {
     // Choose a combat position
     // -----------------------------------------------------------------------
 
-    pub fn propose_good_combat_position(
-        &mut self,
-        global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) -> CombatPosition {
-        self.propose_good_combat_position_inner(global, ctx, tick, grid, false)
-    }
-
     fn propose_good_combat_position_inner(
         &mut self,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: ThinkEnv<'_>,
         debug_reposition: bool,
     ) -> CombatPosition {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
         debug_assert!(ctx.is_swordfighting);
 
         // Re-anchor primary target on the snapshot.
@@ -4245,7 +4190,7 @@ impl EnemyAi {
             ..CombatPosition::default()
         });
         // Add alternatives.
-        self.propose_combat_positions(&mut possible, ctx, tick, grid);
+        self.propose_combat_positions(&mut possible, env);
 
         // Build the enemies' positions list.
         let mut enemies_positions: Vec<CombatPosition> = Vec::new();
@@ -4475,7 +4420,7 @@ impl EnemyAi {
     }
 }
 
-fn drunk_combat_freezes(sim: &crate::sim_rng::SimulationContext, blood_alcohol: u8) -> bool {
+fn drunk_combat_freezes(sim: &SimulationContext, blood_alcohol: u8) -> bool {
     crate::sim_rng::u16(sim, crate::sim_rng::RngSite::DrunkCombatFreeze, 0..100)
         <= blood_alcohol as u16
         || crate::sim_rng::u16(sim, crate::sim_rng::RngSite::DrunkCombatFreeze, 0..100)
@@ -4489,7 +4434,7 @@ impl EnemyAi {
     /// Close the lost-target branch before normal swordfight repositioning.
     fn finish_swordfight_after_target_loss(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -4523,7 +4468,7 @@ impl EnemyAi {
         self.pc_gone_away_in_this_direction = forecast.direction;
         self.missed_pc = self.base.primary_target;
         self.pc_missed = true;
-        self.end_swordfight(ctx, tick);
+        self.end_swordfight(ctx);
 
         // Clear the target lock.
         self.base.outbox.actor.set_unfocus();
@@ -4567,7 +4512,7 @@ impl EnemyAi {
             let dy = missed_position.y - ctx.position.y;
             let dir = vec_to_sector(dx, dy);
             self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
-            self.get_battle_overview(0, ctx, tick);
+            self.get_battle_overview(0, ThinkEnv::new(sim, ctx, tick, None));
         }
         return;
     }

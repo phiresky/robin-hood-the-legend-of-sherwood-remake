@@ -83,12 +83,14 @@ fn failed_fleeing_panic_move_uses_panic_seek_fallback() {
     ai.base.set_alert_status(crate::ai::AlertLevel::Red);
 
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(
+            &sim,
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None,
+        ),
         &Stimulus::new(StimulusType::EventCouldntReachPoint),
         &mut AiGlobalState::default(),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(ai.base.current_state, AiState::Fleeing);
@@ -133,7 +135,11 @@ fn event_view_uses_owner_boundary_position_instead_of_stale_live_map() {
     ));
     assert!(tick.enemy_detectable_live_world_positions.is_empty());
 
-    ai.event_view_standard_procedure(&sim, 12, &mut AiGlobalState::default(), &ctx, &tick, None);
+    ai.event_view_standard_procedure(
+        ThinkEnv::new(&sim, &ctx, &tick, None),
+        12,
+        &mut AiGlobalState::default(),
+    );
 
     assert_eq!(ai.base.current_state, AiState::Attacking);
     assert!(
@@ -189,7 +195,11 @@ fn moving_fast_event_view_distance_uses_literal_owner_position_during_door_pass(
     });
     tick.enemy_detectable_positions.push((342, enemy_position));
 
-    ai.event_view_standard_procedure(&sim, 342, &mut AiGlobalState::default(), &ctx, &tick, None);
+    ai.event_view_standard_procedure(
+        ThinkEnv::new(&sim, &ctx, &tick, None),
+        342,
+        &mut AiGlobalState::default(),
+    );
 
     assert_eq!(
         ai.base.current_substate,
@@ -249,7 +259,11 @@ fn moving_fast_event_view_distance_uses_stretched_world_3d_positions() {
     tick.owner_live_position = Some(ctx.position);
     tick.enemy_detectable_positions.push((132, enemy_position));
 
-    ai.event_view_standard_procedure(&sim, 132, &mut AiGlobalState::default(), &ctx, &tick, None);
+    ai.event_view_standard_procedure(
+        ThinkEnv::new(&sim, &ctx, &tick, None),
+        132,
+        &mut AiGlobalState::default(),
+    );
 
     assert_eq!(
         ai.base
@@ -315,7 +329,11 @@ fn event_view_near_gate_uses_world_y_and_elevation() {
         },
     ));
 
-    ai.event_view_standard_procedure(&sim, 12, &mut AiGlobalState::default(), &ctx, &tick, None);
+    ai.event_view_standard_procedure(
+        ThinkEnv::new(&sim, &ctx, &tick, None),
+        12,
+        &mut AiGlobalState::default(),
+    );
 
     // Raw map Y differs by 61 (and would take the turn branch), while
     // Original world Y differs by only 16 after adding elevation.  The
@@ -378,7 +396,11 @@ fn event_view_near_gate_uses_literal_target_position_during_door_pass() {
         },
     ));
 
-    ai.event_view_standard_procedure(&sim, 170, &mut AiGlobalState::default(), &ctx, &tick, None);
+    ai.event_view_standard_procedure(
+        ThinkEnv::new(&sim, &ctx, &tick, None),
+        170,
+        &mut AiGlobalState::default(),
+    );
 
     assert_eq!(
         ai.base.current_substate,
@@ -395,12 +417,14 @@ fn review_officer_sees_soldier_requires_target_in_live_soldier_roster() {
     ai.soldier_profile_rank = ProfileRank::Officer;
     ai.set_state(AiState::Default, Substate::DefaultOnPost);
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(
+            &sim,
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None,
+        ),
         &Stimulus::with_human(StimulusType::EventSeesSoldier, 42),
         &mut AiGlobalState::default(),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
-        None,
     );
 }
 
@@ -412,12 +436,14 @@ fn review_call_go_to_officer_preserves_original_boolean_gate() {
     let mut available = EnemyAi::new(1);
     available.soldier_profile_rank = ProfileRank::Soldier;
     assert!(available.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(
+            &sim,
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None
+        ),
         &stimulus,
-        &mut AiGlobalState::default(),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
-        None,
+        &mut AiGlobalState::default()
     ));
     assert_eq!(
         available.base.current_substate,
@@ -430,12 +456,14 @@ fn review_call_go_to_officer_preserves_original_boolean_gate() {
     busy.soldier_profile_rank = ProfileRank::Soldier;
     busy.set_state(AiState::Attacking, Substate::AttackingSwordfight);
     assert!(!busy.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(
+            &sim,
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None
+        ),
         &stimulus,
-        &mut AiGlobalState::default(),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
-        None,
+        &mut AiGlobalState::default()
     ));
 }
 
@@ -562,12 +590,9 @@ fn got_hit_uses_live_swordfight_relationship_not_stale_ai_substate() {
         });
 
     ai.think_alerting_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::with_human(StimulusType::EventGotHit, 2),
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert!(
@@ -608,12 +633,9 @@ fn classic_apple_rule_keeps_a_swordfighter_engaged() {
     };
 
     ai.think_alerting_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::with_position(StimulusType::EventApple, Position::default()),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
@@ -637,12 +659,9 @@ fn rebalanced_apple_interrupts_then_owns_the_fighter_state() {
     };
 
     ai.think_alerting_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::with_position(StimulusType::EventApple, Position::default()),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(ai.base.current_state, AiState::Wondering);
@@ -697,12 +716,9 @@ fn got_hit_while_swordfighting_requests_direct_entry_against_new_attacker() {
         });
 
     ai.think_alerting_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::with_human(StimulusType::EventGotHit, 2),
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(
@@ -742,12 +758,9 @@ fn got_hit_while_menacing_sets_hit_animation_direction_goal_without_turn_order()
     };
 
     ai.think_alerting_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::with_human(StimulusType::EventGotHit, 2),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(
@@ -789,12 +802,9 @@ fn got_hit_while_swordfighting_ignores_existing_opponent() {
         });
 
     ai.think_alerting_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::with_human(StimulusType::EventGotHit, 2),
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
@@ -817,12 +827,9 @@ fn got_hit_while_swordfighting_requires_attacker_entity_view() {
         });
 
     ai.think_alerting_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::with_human(StimulusType::EventGotHit, 2),
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 }
 
@@ -843,12 +850,9 @@ fn got_hit_by_friend_does_not_require_fighter_snapshot() {
     };
 
     ai.think_alerting_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::with_human(StimulusType::EventGotHit, 2),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
@@ -872,12 +876,9 @@ fn got_hit_while_swordfighting_requires_self_fighter_snapshot() {
     };
 
     ai.think_alerting_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::with_human(StimulusType::EventGotHit, 2),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 }
 
@@ -907,12 +908,9 @@ fn got_hit_can_begin_close_swordfight_from_default_state() {
         });
 
     ai.think_alerting_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::with_human(StimulusType::EventGotHit, 2),
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     let engage = ai.base.outbox.actor.enter_swordfight.or_else(|| {
@@ -953,7 +951,6 @@ fn seeing_shadow_raises_music_alert_without_accelerating_view_refresh() {
             level: 0,
         },
         &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(ai.base.current_music_alert_status, AlertLevel::Yellow);
@@ -1051,12 +1048,9 @@ fn event_sees_civilian_beggar_preserves_the_legacy_slots_entity_kind() {
     };
 
     ai.think_unexpected_event(
-        &sim_context,
+        ThinkEnv::new(&sim_context, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::with_human(StimulusType::EventSeesBeggar, 17),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(
@@ -1086,12 +1080,9 @@ fn event_sees_current_beggar_does_not_requeue_but_still_requests_global_scrub() 
     };
 
     ai.think_unexpected_event(
-        &sim_context,
+        ThinkEnv::new(&sim_context, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::with_human(StimulusType::EventSeesBeggar, 17),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert!(ai.beggars_to_control.is_empty());
@@ -1123,12 +1114,14 @@ fn event_enemy_near_assigns_stimulus_target_and_begins_swordfight() {
 
         let stimulus = Stimulus::with_human(StimulusType::EventEnemyNear, 77);
         ai.think_unexpected_event(
-            sim,
+            ThinkEnv::new(
+                sim,
+                &AiContext::test_fixture(),
+                &AiPerTickData::stub(),
+                None,
+            ),
             &stimulus,
             &mut AiGlobalState::default(),
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
         );
 
         assert_eq!(
@@ -1173,12 +1166,14 @@ fn event_enemy_near_is_ignored_outside_original_substates() {
 
     let stimulus = Stimulus::with_human(StimulusType::EventEnemyNear, 77);
     ai.think_unexpected_event(
-        sim,
+        ThinkEnv::new(
+            sim,
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None,
+        ),
         &stimulus,
         &mut AiGlobalState::default(),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(12)));
@@ -1217,12 +1212,9 @@ fn officer_call_alert_halts_actor_without_breaking_running_macro() {
     };
 
     let accepted = ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::with_human(StimulusType::CallAlert, 91),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert!(accepted);
@@ -1275,12 +1267,9 @@ fn civilian_call_alert_halts_actor_without_breaking_running_macro() {
     };
 
     let accepted = ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::with_human(StimulusType::CallAlert, 91),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert!(accepted);
@@ -1327,12 +1316,9 @@ fn rejected_civilian_call_alert_still_replaces_antagonist() {
     };
 
     let accepted = ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::with_human(StimulusType::CallAlert, 91),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert!(!accepted);
@@ -1370,12 +1356,9 @@ fn soldier_call_alert_halts_officer_without_breaking_running_macro() {
     };
 
     let accepted = ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::with_human(StimulusType::CallAlert, 91),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert!(accepted);
@@ -1409,12 +1392,14 @@ fn couldnt_reach_running_enemy_enters_battle_overview() {
     ai.base.list_us = vec![1, 2];
 
     ai.think_unexpected_event(
-        &sim_context,
+        ThinkEnv::new(
+            &sim_context,
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None,
+        ),
         &Stimulus::new(StimulusType::EventCouldntReachPoint),
         &mut AiGlobalState::default(),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(
@@ -1475,12 +1460,9 @@ fn same_frame_observe_move_failure_resumes_inline_roof_fallback() {
     let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
     stimulus.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &stimulus,
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(
@@ -1534,12 +1516,9 @@ fn same_frame_fight_lift_failure_preserves_inline_roof_fallback() {
     let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
     stimulus.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &stimulus,
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(
@@ -1576,15 +1555,17 @@ fn same_frame_roof_fallback_failure_uses_generic_overview() {
     ai.base.list_us = vec![64, 79];
 
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(
+            &sim,
+            &AiContext {
+                frame: 7_938,
+                ..AiContext::test_fixture()
+            },
+            &AiPerTickData::stub(),
+            None,
+        ),
         &Stimulus::new(StimulusType::EventCouldntReachPoint),
         &mut AiGlobalState::default(),
-        &AiContext {
-            frame: 7_938,
-            ..AiContext::test_fixture()
-        },
-        &AiPerTickData::stub(),
-        None,
     );
     assert_eq!(
         ai.base.current_substate,
@@ -1611,15 +1592,17 @@ fn same_frame_ladder_condolation_uses_generic_overview() {
     let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
     stimulus.self_origin = crate::ai::SelfStimulusOrigin::Condolation;
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(
+            &sim,
+            &AiContext {
+                frame: 7_938,
+                ..AiContext::test_fixture()
+            },
+            &AiPerTickData::stub(),
+            None,
+        ),
         &stimulus,
         &mut AiGlobalState::default(),
-        &AiContext {
-            frame: 7_938,
-            ..AiContext::test_fixture()
-        },
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(
@@ -1653,12 +1636,9 @@ fn later_ladder_failure_still_uses_generic_emergency_routine() {
     let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
     stimulus.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &stimulus,
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(
@@ -1705,12 +1685,9 @@ fn same_frame_fight_lift_failure_without_roof_wait_resumes_observe_then_overview
     let mut engine_completion = Stimulus::new(StimulusType::EventCouldntReachPoint);
     engine_completion.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &engine_completion,
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(
@@ -1726,12 +1703,9 @@ fn same_frame_fight_lift_failure_without_roof_wait_resumes_observe_then_overview
     );
 
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::new(StimulusType::EventCouldntReachPoint),
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(
@@ -1757,12 +1731,9 @@ fn later_roof_failure_still_uses_generic_emergency_routine() {
         ..AiContext::test_fixture()
     };
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventCouldntReachPoint),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(
@@ -1811,12 +1782,9 @@ fn couldnt_reach_seeking_body_examines_queued_body_before_starting_seek_area() {
     };
 
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventCouldntReachPoint),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(ai.base.detected_body, Some(AiEntityHandle::new(207)));
@@ -1874,7 +1842,12 @@ fn examine_other_bodies_prunes_recovered_civilian_that_cannot_fight() {
         ..AiContext::test_fixture()
     };
 
-    assert!(ai.examine_other_bodies(&ctx, &AiPerTickData::stub()));
+    assert!(ai.examine_other_bodies(ThinkEnv::new(
+        &crate::sim_rng::test_context(),
+        &ctx,
+        &AiPerTickData::stub(),
+        None
+    )));
     assert_eq!(
         ai.base.detected_body,
         Some(AiEntityHandle::new(208)),
@@ -1972,12 +1945,9 @@ fn couldnt_reach_seeking_body_centers_fallback_on_actor_not_stale_body() {
     };
 
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventCouldntReachPoint),
         &mut global,
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(ai.seek_center, actor_position);
@@ -2215,12 +2185,9 @@ fn avenger_roof_out_of_view_seeks_from_live_owner_position() {
     };
 
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::with_human(StimulusType::EventOutOfView, 42),
         &mut global,
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(ai.seek_center, live_position);

@@ -62,7 +62,7 @@ impl EnemyAi {
     ///
     /// Stops current actions and sets a pending flag for the engine to launch
     /// a `Command::ShootBow` sequence element on the next post-think drain.
-    pub fn shoot_arrow_at(&mut self, enemy: HumanHandle, ctx: &AiContext, _tick: &AiPerTickData) {
+    pub fn shoot_arrow_at(&mut self, enemy: HumanHandle, ctx: &AiContext) {
         // Asserts: is_archer() && remaining_arrows > 0.
         debug_assert!(self.is_archer_unit, "shoot_arrow_at called on non-archer");
         debug_assert!(

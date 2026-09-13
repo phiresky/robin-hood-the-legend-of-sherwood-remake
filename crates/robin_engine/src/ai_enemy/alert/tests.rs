@@ -140,11 +140,8 @@ fn alert_soldiers_radius_uses_door_resolved_ai_position() {
     assert!(!ai.alert_soldiers(
         Position::default(),
         0,
-        &AiGlobalState::default(),
-        None,
-        &ctx,
-        &tick,
-        AlertSoldiersFailureContinuation::None,
+        ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
+        AlertSoldiersFailureContinuation::None
     ));
     assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
 }
@@ -254,11 +251,8 @@ fn patrol_chief_can_alert_drunk_soldier_despite_stay_on_post_answer() {
     assert!(!unrelated_officer.alert_soldiers(
         Position::default(),
         0,
-        &AiGlobalState::default(),
-        None,
-        &ctx,
-        &tick,
-        AlertSoldiersFailureContinuation::None,
+        ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
+        AlertSoldiersFailureContinuation::None
     ));
 
     tick.camp_soldiers[0].patrol_chief = Some(crate::element::EntityId::Soldier(
@@ -269,11 +263,8 @@ fn patrol_chief_can_alert_drunk_soldier_despite_stay_on_post_answer() {
     assert!(patrol_chief.alert_soldiers(
         Position::default(),
         0,
-        &AiGlobalState::default(),
-        None,
-        &ctx,
-        &tick,
-        AlertSoldiersFailureContinuation::None,
+        ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
+        AlertSoldiersFailureContinuation::None
     ));
     assert_eq!(
         patrol_chief.base.outbox.reentrant.cross_npc_actions.len(),

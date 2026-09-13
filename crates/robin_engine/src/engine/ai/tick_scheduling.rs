@@ -1604,7 +1604,12 @@ impl EngineInner {
                     npc_id,
                     format_args!("panic continuation owner {npc_id:?} has no enemy AI"),
                 )
-                .observe_after_synchronous_panic(sim, &ctx, &tick, Some(grid));
+                .observe_after_synchronous_panic(crate::ai_enemy::ThinkEnv::new(
+                    sim,
+                    &ctx,
+                    &tick,
+                    Some(grid),
+                ));
             // The resumed tail contains state changes, focusing, and movement.
             // Close their owner-local callbacks and actor effects before the
             // enclosing synchronous Panic continuation returns.
@@ -1703,7 +1708,7 @@ impl EngineInner {
                     npc_id,
                     format_args!("lost-enemy overview owner {npc_id:?} has no enemy AI"),
                 )
-                .get_battle_overview(0, &ctx, &tick);
+                .get_battle_overview(0, crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None));
             self.drain_pending_for_npc_mode(sim, npc_id, assets, policy);
         }
     }

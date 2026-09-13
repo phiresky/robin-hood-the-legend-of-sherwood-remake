@@ -220,7 +220,7 @@ impl EnemyAi {
     /// officer's real `Think` return value.
     pub(crate) fn resolve_charly_officer_report(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         accepted: bool,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -239,7 +239,7 @@ impl EnemyAi {
 
     pub(crate) fn resolve_alert_request(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         accepted: bool,
         continuation: crate::ai::AlertContinuation,
         ctx: &AiContext,
@@ -285,15 +285,18 @@ impl EnemyAi {
 
     pub(crate) fn resolve_think_result(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         accepted: bool,
         target: NpcHandle,
         continuation: ThinkResultContinuation,
         global: &mut AiGlobalState,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         match continuation {
             ThinkResultContinuation::SoldierFinishedAlertReportStart => {
                 self.set_state(
@@ -402,30 +405,28 @@ impl EnemyAi {
                     } else {
                         // A refused final call has no ConsiderReport boundary.
                         self.finalize_alert_soldiers(
-                            sim,
+                            ThinkEnv {
+                                grid: grid.filter(|_| use_formation),
+                                ..env
+                            },
                             failure,
                             global,
-                            grid.filter(|_| use_formation),
-                            ctx,
-                            tick,
                         );
                     }
                 }
             }
             ThinkResultContinuation::OfficerCombatAlertedSoldier {
                 last,
-                use_formation,
+                // TODO: `use_formation` only ever fed the (unused) grid
+                // placeholder of `finish_command_soldiers_to_attack`; check
+                // whether the formation layout should honour it.
+                use_formation: _,
             } => {
                 if accepted {
                     self.alerted_us.push(target);
                 }
                 if last {
-                    if self.finish_command_soldiers_to_attack(
-                        global,
-                        grid.filter(|_| use_formation),
-                        ctx,
-                        tick,
-                    ) {
+                    if self.finish_command_soldiers_to_attack(ctx) {
                         self.base.say(Remark::OfficerGivesAttackOrder);
                     } else {
                         self.enter_battle_reserve(ctx, tick);
@@ -462,7 +463,7 @@ impl EnemyAi {
 
     pub(super) fn resume_failed_alert_soldiers(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         continuation: AlertSoldiersFailureContinuation,
         global: &mut AiGlobalState,
         ctx: &AiContext,
@@ -526,13 +527,11 @@ impl EnemyAi {
 
     pub(crate) fn finalize_alert_soldiers(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         failure: AlertSoldiersFailureContinuation,
         global: &mut AiGlobalState,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         // Missing-PC search is synchronous. The
         // DEFAULT_LOOKING_FOR_CHARLY timer handler calls it and then arms its
         // regular check timer, so that trailing 10-frame timer overwrites the
@@ -555,7 +554,7 @@ impl EnemyAi {
                     .frame
                     .wrapping_add(parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32);
         let first_new_order = self.base.outbox.actor.orders.len();
-        if !self.finish_alert_soldiers(global, grid, ctx, tick) {
+        if !self.finish_alert_soldiers(env) {
             self.resume_failed_alert_soldiers(sim, failure, global, ctx, tick);
         }
         if resume_looking_for_charly_timer {

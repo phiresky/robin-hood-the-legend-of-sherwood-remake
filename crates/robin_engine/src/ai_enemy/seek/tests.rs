@@ -80,13 +80,7 @@ fn enemy_behind_door_uses_exact_outside_sector_identity() {
     let direction = vec_to_sector(10.0, 0.0);
 
     let mut exact_center = center;
-    ai.find_door_enemy_could_be_behind(
-        &mut exact_center,
-        direction,
-        &global,
-        &ctx,
-        &AiPerTickData::stub(),
-    );
+    ai.find_door_enemy_could_be_behind(&mut exact_center, direction, &global, &ctx);
     assert_eq!(exact_center, correct_inside);
 
     // Explicitly number-only compatibility data cannot distinguish the
@@ -95,13 +89,7 @@ fn enemy_behind_door_uses_exact_outside_sector_identity() {
         sector: SectorHandle::new(88),
         ..center
     };
-    ai.find_door_enemy_could_be_behind(
-        &mut numeric_center,
-        direction,
-        &global,
-        &ctx,
-        &AiPerTickData::stub(),
-    );
+    ai.find_door_enemy_could_be_behind(&mut numeric_center, direction, &global, &ctx);
     assert_eq!(numeric_center, wrong_inside);
 }
 
@@ -137,7 +125,6 @@ fn enemy_behind_door_rejects_missing_exact_outside_identity() {
         vec_to_sector(1.0, 0.0),
         &global,
         &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
     );
 }
 
@@ -388,7 +375,10 @@ fn officer_search_charly_preserves_check_for_macro_into_inline_seek_area() {
         id: 0,
     });
 
-    ai.search_charly(&sim, &mut global, &ctx, &AiPerTickData::stub(), None);
+    ai.search_charly(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        &mut global,
+    );
 
     assert!(ai.base.macro_in_progress);
     assert_eq!(ai.base.macro_command_offset, 23);
@@ -431,11 +421,8 @@ fn soldier_search_charly_preserves_authored_waypoint_sector() {
     };
 
     ai.search_charly(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(
@@ -476,13 +463,10 @@ fn dead_body_alert_with_officer_queues_actor_prefix_then_typed_resume() {
         .push(alert_test_officer(7, Substate::DefaultGotoPost));
 
     ai.dead_body_alert(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         center,
         SeekFlags::empty(),
         &mut AiGlobalState::default(),
-        None,
-        &ctx,
-        &tick,
     );
 
     assert!(ai.base.outbox.reentrant.dead_body_alert_completion_pending);
@@ -543,13 +527,10 @@ fn dead_body_alert_instructed_group_route_never_queues_fallback() {
     ));
 
     ai.dead_body_alert(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         Position::default(),
         SeekFlags::empty(),
         &mut AiGlobalState::default(),
-        None,
-        &ctx,
-        &tick,
     );
 
     // Route construction reports failure only after the AI borrow is
@@ -663,13 +644,10 @@ fn dead_body_alert_without_officer_falls_back_immediately() {
     };
 
     ai.dead_body_alert(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         center,
         SeekFlags::empty(),
         &mut AiGlobalState::default(),
-        None,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(

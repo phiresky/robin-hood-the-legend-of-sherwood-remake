@@ -6171,9 +6171,8 @@ impl EngineInner {
             )
         });
         if let Some(enemy) = entity.enemy_ai_mut() {
-            enemy.end_think(
+            enemy.end_think(crate::ai_enemy::ThinkEnv::new(
                 sim,
-                global,
                 &ctx,
                 enemy_tick.as_ref().unwrap_or_else(|| {
                     panic!(
@@ -6182,7 +6181,7 @@ impl EngineInner {
                     )
                 }),
                 None,
-            );
+            ));
         } else if let Some(friendly) = entity.friendly_ai_mut() {
             friendly.end_think(sim, global, &ctx);
         } else {

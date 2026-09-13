@@ -3851,17 +3851,19 @@ impl EngineInner {
             };
             if let Some(enemy_ai) = entity.enemy_ai_mut() {
                 enemy_ai.think(
-                    sim,
+                    crate::ai_enemy::ThinkEnv::new(
+                        sim,
+                        &live_ctx,
+                        live_enemy_tick.as_ref().unwrap_or_else(|| {
+                            panic!(
+                                "filtered Enemy AI stimulus for owner {} requires typed enemy tick data",
+                                entity_id.index()
+                            )
+                        }),
+                        Some(&self.world.fast_grid),
+                    ),
                     stimulus,
                     ai_global,
-                    &live_ctx,
-                    live_enemy_tick.as_ref().unwrap_or_else(|| {
-                        panic!(
-                            "filtered Enemy AI stimulus for owner {} requires typed enemy tick data",
-                            entity_id.index()
-                        )
-                    }),
-                    Some(&self.world.fast_grid),
                 )
             } else if let Some(friendly_ai) = entity.friendly_ai_mut() {
                 friendly_ai.think(
@@ -3992,25 +3994,26 @@ impl EngineInner {
                 enemy.base.outbox.reentrant.engine_drains_after_script_go_on = false;
                 if completed {
                     enemy.think_unexpected_event(
-                        sim,
+                        crate::ai_enemy::ThinkEnv::new(
+                            sim,
+                            &fresh_ctx,
+                            fresh_enemy_tick
+                                .as_ref()
+                                .expect("AfterScript Enemy tick data"),
+                            Some(&self.world.fast_grid),
+                        ),
                         stimulus,
                         ai_global,
-                        &fresh_ctx,
-                        fresh_enemy_tick
-                            .as_ref()
-                            .expect("AfterScript Enemy tick data"),
-                        Some(&self.world.fast_grid),
                     );
                 }
-                enemy.end_think(
+                enemy.end_think(crate::ai_enemy::ThinkEnv::new(
                     sim,
-                    ai_global,
                     &fresh_ctx,
                     fresh_enemy_tick
                         .as_ref()
                         .expect("AfterScript Enemy tick data"),
                     Some(&self.world.fast_grid),
-                );
+                ));
             } else if let Some(friendly) = entity.friendly_ai_mut() {
                 friendly
                     .base

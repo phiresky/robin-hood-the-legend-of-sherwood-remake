@@ -1222,12 +1222,14 @@ impl EngineInner {
                         panic!("periodic soldier {} has no enemy AI", npc_id.index())
                     })
                     .the_16th_frame_before_stuck(
-                        sim,
+                        crate::ai_enemy::ThinkEnv::new(
+                            sim,
+                            &ctx,
+                            &tick_data,
+                            Some(&self.world.fast_grid),
+                        ),
                         frame_phase,
-                        &ctx,
                         &self.ai.global,
-                        &tick_data,
-                        Some(&self.world.fast_grid),
                         is_idle,
                         receiving_wasp_sting,
                     );

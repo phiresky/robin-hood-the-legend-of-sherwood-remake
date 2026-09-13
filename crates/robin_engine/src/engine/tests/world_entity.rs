@@ -664,7 +664,6 @@ fn start_review_command_soldiers(
     use crate::ai::Position;
 
     let (ctx, tick) = review2_context_and_tick(engine, sim, assets, officer_id);
-    let global = engine.ai.global.clone();
     let start = engine
         .get_entity_mut(officer_id)
         .and_then(Entity::enemy_ai_mut)
@@ -674,10 +673,7 @@ fn start_review_command_soldiers(
                 x: 300.0,
                 ..Default::default()
             },
-            &global,
-            None,
-            &ctx,
-            &tick,
+            crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
         );
     (start, tick)
 }

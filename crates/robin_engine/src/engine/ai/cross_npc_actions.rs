@@ -1672,7 +1672,10 @@ impl EngineInner {
             let enemy_ai = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
                 panic!("cross-NPC break-phalanx target soldier {target} has no enemy AI")
             });
-            enemy_ai.break_phalanx_from_neighbour(sim, ai_global, &ctx, &tick_data, Some(grid));
+            enemy_ai.break_phalanx_from_neighbour(
+                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick_data, Some(grid)),
+                ai_global,
+            );
         }
         ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
         if owns_end_think {
@@ -1780,7 +1783,10 @@ impl EngineInner {
                 source_id,
                 format_args!("tower-guard caller {caller} lost its EnemyAi"),
             )
-            .battle_decisions(sim, global, &ctx, &tick, Some(grid));
+            .battle_decisions(
+                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, Some(grid)),
+                global,
+            );
         self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
         end_suspended_tower_guard_alert_think(self.world.entities.expect_ai_controller_mut(
             source_id,
@@ -1864,7 +1870,11 @@ impl EngineInner {
                 source_id,
                 format_args!("AlertSoldiers caller {caller} lost its EnemyAi"),
             )
-            .finalize_alert_soldiers(sim, failure, global, grid, &ctx, &tick);
+            .finalize_alert_soldiers(
+                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, grid),
+                failure,
+                global,
+            );
         self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
     }
 
@@ -2027,7 +2037,11 @@ impl EngineInner {
                 source_id,
                 format_args!("look-there caller {caller} lost its EnemyAi"),
             )
-            .resume_after_look_there(sim, continuation, global, Some(grid), &ctx, &tick);
+            .resume_after_look_there(
+                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, Some(grid)),
+                continuation,
+                global,
+            );
         self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
     }
 

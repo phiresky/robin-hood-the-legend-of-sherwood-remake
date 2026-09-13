@@ -24,16 +24,34 @@ pub use util::*;
 
 use crate::ai::*;
 use crate::entity_id::PcId;
+use crate::fast_find_grid::FastFindGrid;
 use crate::parameters_ai;
+use crate::sim_rng::SimulationContext;
 
 /// Borrowed decision inputs. Mutable global AI state remains a separate owner.
 /// This is an ephemeral call context, never a save or rollback projection.
 #[derive(Clone, Copy)]
-struct ThinkEnv<'a> {
-    sim: &'a crate::sim_rng::SimulationContext,
-    ctx: &'a AiContext,
-    tick: &'a AiPerTickData,
-    grid: Option<&'a crate::fast_find_grid::FastFindGrid>,
+pub(crate) struct ThinkEnv<'a> {
+    pub(crate) sim: &'a SimulationContext,
+    pub(crate) ctx: &'a AiContext,
+    pub(crate) tick: &'a AiPerTickData,
+    pub(crate) grid: Option<&'a FastFindGrid>,
+}
+
+impl<'a> ThinkEnv<'a> {
+    pub(crate) fn new(
+        sim: &'a SimulationContext,
+        ctx: &'a AiContext,
+        tick: &'a AiPerTickData,
+        grid: Option<&'a FastFindGrid>,
+    ) -> Self {
+        Self {
+            sim,
+            ctx,
+            tick,
+            grid,
+        }
+    }
 }
 
 /// Master switch for the opt-in AI decision/path diagnostic used by the
@@ -718,11 +736,7 @@ impl EnemyAi {
     ///     currently silent (the `current_remark == TheSoundOfSilence`
     ///     guard).  The silence guard is also enforced by `say_impl`
     ///     itself, but we keep the explicit check for clarity.
-    pub fn make_special_action_remark(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        is_shield_bearer: bool,
-    ) {
+    pub fn make_special_action_remark(&mut self, sim: &SimulationContext, is_shield_bearer: bool) {
         if is_shield_bearer {
             self.base
                 .say_with_flags(Remark::SpecialAction, crate::ai::SpeechFlags::ALWAYS);
@@ -768,7 +782,7 @@ impl EnemyAi {
     }
 
     /// Reinitialize the Them list with all currently visible enemies.
-    fn reinitialize_them_list(&mut self, ctx: &AiContext, _tick: &AiPerTickData) {
+    fn reinitialize_them_list(&mut self, ctx: &AiContext) {
         // The original game rebuilds the enemy list. The
         // original deletes the old list and rebuilds it only from enemies
         // whose current enemy-seen flag is set and who are not dead. It
@@ -862,13 +876,11 @@ impl EnemyAi {
     /// (caller should NOT process the stimulus itself).
     pub(crate) fn dispatch_stimulus_to_whole_patrol(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        let ThinkEnv { ctx, .. } = env;
         tracing::trace!(
             target: "patrol_relay",
             frame = ctx.frame,
@@ -994,7 +1006,7 @@ impl EnemyAi {
                  dispatch); scripted actor may see divergent behavior"
             );
         }
-        self.think(sim, &forwarded_stimulus, global, ctx, tick, grid);
+        self.think(env, &forwarded_stimulus, global);
 
         // Forward to patrol members that are soldiers and within 360°
         // detection range. Queue the walk as one action rather than resolving
@@ -1343,13 +1355,11 @@ impl EnemyAi {
     /// battle overview.
     fn out_of_view_seek_handler(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         enemy: HumanHandle,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         tracing::trace!(
             npc = self.base.me,
             frame = ctx.frame,
@@ -1388,12 +1398,12 @@ impl EnemyAi {
 
         self.missed_pc = Some(AiEntityHandle::new(enemy));
         self.pc_missed = true;
-        self.reinitialize_them_list(ctx, tick);
+        self.reinitialize_them_list(ctx);
 
         if self.list_them.is_empty() {
             let defer_overview_until_after_quit = ctx.is_swordfighting;
             if defer_overview_until_after_quit {
-                self.end_swordfight(ctx, tick);
+                self.end_swordfight(ctx);
             }
             self.base.outbox.actor.set_unfocus();
 
@@ -1443,7 +1453,7 @@ impl EnemyAi {
                     // into battle-overview evaluation.
                     self.base.outbox.actor.lost_enemy_overview_after_quit = true;
                 } else {
-                    self.get_battle_overview(0, ctx, tick);
+                    self.get_battle_overview(0, env);
                 }
             }
         }
@@ -1507,13 +1517,11 @@ impl EnemyAi {
 
     pub(crate) fn resume_after_look_there(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         continuation: LookThereContinuation,
         global: &mut AiGlobalState,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { ctx, tick, .. } = env;
         tracing::trace!(
             target: "look_there",
             me = self.base.me,
@@ -1524,7 +1532,7 @@ impl EnemyAi {
         );
         match continuation {
             LookThereContinuation::EventView { enemy, enemy_pos } => {
-                self.event_view_after_look_there(sim, enemy, enemy_pos, global, ctx, tick, grid);
+                self.event_view_after_look_there(env, enemy, enemy_pos, global);
             }
             LookThereContinuation::EventSeesBody {
                 body,
@@ -1557,7 +1565,7 @@ impl EnemyAi {
     /// handler.
     fn default_bored_standard_procedure(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         ctx: &AiContext,
     ) -> bool {
         // Also gate on `self_animation != WaitingUprightBoredRandom`:
@@ -2219,15 +2227,13 @@ impl EnemyAi {
 
     /// Main entry point for stimulus processing. Routes the stimulus
     /// to the appropriate Think sub-method based on its type.
-    pub fn think(
+    pub(crate) fn think(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         // Cache engine state for say() / forbidden remarks
         self.base.cached_frame = ctx.frame;
         self.base.cached_in_building = ctx.in_building;
@@ -2274,7 +2280,7 @@ impl EnemyAi {
             if stimulus_type == StimulusType::EventAfterScriptGoOn {
                 self.base.outbox.reentrant.engine_drains_after_script_go_on = false;
             }
-            self.end_think(sim, global, ctx, tick, grid);
+            self.end_think(env);
             self.base
                 .debug_macro_lifecycle(ctx, "think_rejected_return", stimulus_type);
             return true;
@@ -2308,9 +2314,7 @@ impl EnemyAi {
             | StimulusType::CallYourTalk0
             | StimulusType::CallYourTalk1
             | StimulusType::CallYourTalk2
-            | StimulusType::CallYourTalk3 => {
-                self.think_expected_event(sim, stimulus, global, ctx, tick, grid)
-            }
+            | StimulusType::CallYourTalk3 => self.think_expected_event(env, stimulus, global),
 
             // Unexpected events — may interrupt current behavior
             StimulusType::EventOutOfView
@@ -2341,9 +2345,7 @@ impl EnemyAi {
             | StimulusType::EventAfterCombatInjury
             | StimulusType::EventGoodStrike
             | StimulusType::EventLethalStrike
-            | StimulusType::EventEnemyNear => {
-                self.think_unexpected_event(sim, stimulus, global, ctx, tick, grid)
-            }
+            | StimulusType::EventEnemyNear => self.think_unexpected_event(env, stimulus, global),
 
             // Alerting events — high-priority perception
             StimulusType::EventView
@@ -2364,9 +2366,7 @@ impl EnemyAi {
             | StimulusType::EventDoorCombat
             | StimulusType::EventSeesShadow
             | StimulusType::EventArrowLaunched
-            | StimulusType::EventStop => {
-                self.think_alerting_event(sim, stimulus, global, ctx, tick, grid)
-            }
+            | StimulusType::EventStop => self.think_alerting_event(env, stimulus, global),
 
             StimulusType::EventReturnToDuty => {
                 self.return_to_duty_default(sim, ctx, tick);
@@ -2389,7 +2389,7 @@ impl EnemyAi {
         if !(stimulus_type == StimulusType::EventAfterScriptGoOn
             && self.base.outbox.reentrant.engine_drains_after_script_go_on)
         {
-            self.end_think(sim, global, ctx, tick, grid);
+            self.end_think(env);
         }
         self.base
             .debug_macro_lifecycle(ctx, "think_return", stimulus_type);
@@ -2528,14 +2528,8 @@ impl EnemyAi {
     // Decision-tick completion — post-tick event dispatch
     // -----------------------------------------------------------------------
 
-    pub(crate) fn end_think(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        _global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    pub(crate) fn end_think(&mut self, env: ThinkEnv<'_>) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         // The original game's end-think phase dispatches this event here and runs the
         // script FilterAIEvent gate before dispatch. Queue these as
         // same-frame self-stimuli so the engine-side drain can apply
@@ -2688,7 +2682,7 @@ impl EnemyAi {
     #[track_caller]
     fn return_to_duty_default(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
@@ -2710,7 +2704,7 @@ impl EnemyAi {
 
     pub fn return_to_duty(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         flags: DutyFlags,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -2913,7 +2907,7 @@ impl EnemyAi {
     /// inline patrol initialization has returned.
     pub fn resume_return_to_duty_after_patrol_init(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         flags: DutyFlags,
         ctx: &AiContext,
         high_recursion_failsafe: bool,
@@ -3367,7 +3361,7 @@ impl EnemyAi {
     /// Initialize patrol membership, authored AI state, and initial duty.
     pub fn init_one_ai(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) -> crate::ai::InitStateSideEffects {

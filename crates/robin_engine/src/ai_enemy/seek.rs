@@ -6,6 +6,9 @@
 use crate::ai::*;
 use crate::parameters_ai;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
+use crate::sim_rng::SimulationContext;
+
+use super::ThinkEnv;
 
 fn seek_area_selection_debug_matches(frame: u32, creation_order: Option<u32>) -> bool {
     use crate::engine::diagnostics::ParityGate;
@@ -224,13 +227,7 @@ impl EnemyAi {
     // Flee
     // -----------------------------------------------------------------------
 
-    pub fn flee(
-        &mut self,
-        danger_pos: &Position,
-        ctx: &AiContext,
-        _tick: &AiPerTickData,
-        global: &AiGlobalState,
-    ) {
+    pub fn flee(&mut self, danger_pos: &Position, ctx: &AiContext, global: &AiGlobalState) {
         self.base.say(Remark::Panic);
 
         // Flee AWAY from danger. Iterate global seek points and find
@@ -287,7 +284,7 @@ impl EnemyAi {
     /// visits them in an optimised order.
     pub fn seek_area(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         center: Position,
         standard_radius: u16,
         flags: SeekFlags,
@@ -342,7 +339,7 @@ impl EnemyAi {
         // the seek entirely and let `run_to_examine_body` drive the NPC
         // to the body. `examine_other_bodies` prunes recovered bodies
         // from the queue automatically.
-        if self.examine_other_bodies(ctx, tick) {
+        if self.examine_other_bodies(ThinkEnv::new(sim, ctx, tick, None)) {
             return;
         }
 
@@ -376,7 +373,7 @@ impl EnemyAi {
             );
         }
 
-        self.append_personal_area_seek_points(sim, spec, global, ctx, tick);
+        self.append_personal_area_seek_points(sim, spec, global, ctx);
 
         tracing::trace!(
             npc = self.base.me,
@@ -453,7 +450,7 @@ impl EnemyAi {
 
     fn append_global_area_seek_points(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         spec: SeekAreaSpec,
         global: &mut AiGlobalState,
         ctx: &AiContext,
@@ -511,7 +508,7 @@ impl EnemyAi {
 
     fn select_area_seek_points(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         spec: SeekAreaSpec,
         candidates: &SeekAreaCandidates,
         global: &mut AiGlobalState,
@@ -696,11 +693,10 @@ impl EnemyAi {
 
     fn append_personal_area_seek_points(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         spec: SeekAreaSpec,
         global: &mut AiGlobalState,
         ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
         let SeekAreaSpec {
             flags,
@@ -751,13 +747,7 @@ impl EnemyAi {
             // below) sees the door-adjusted position.
             if flags.contains(SeekFlags::HOUSE) {
                 let mut adjusted = self.seek_center;
-                self.find_door_enemy_could_be_behind(
-                    &mut adjusted,
-                    seek_direction,
-                    global,
-                    ctx,
-                    tick,
-                );
+                self.find_door_enemy_could_be_behind(&mut adjusted, seek_direction, global, ctx);
                 self.seek_center = adjusted;
             }
 
@@ -893,7 +883,7 @@ impl EnemyAi {
     /// points.
     pub fn seek_next_point(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -1120,7 +1110,6 @@ impl EnemyAi {
         seek_direction: u16,
         global: &AiGlobalState,
         ctx: &AiContext,
-        _tick: &AiPerTickData,
     ) {
         let mut min_distance = parameters_ai::MAX_SEARCH_ENEMY_BEHIND_DOOR_DISTANCE;
         let mut nearest_door: Option<&DoorSeekInfo> = None;
@@ -1201,16 +1190,14 @@ impl EnemyAi {
     // Corpse-discovery alert flow.
     // -----------------------------------------------------------------------
 
-    pub fn dead_body_alert(
+    pub(crate) fn dead_body_alert(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         pos_center: Position,
         flags: SeekFlags,
         global: &mut AiGlobalState,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         // Preamble: record the report regardless of rank.
         self.base
             .my_reconnaissance_report
@@ -1293,10 +1280,7 @@ impl EnemyAi {
                 if !self.alert_soldiers(
                     ctx.position,
                     SeekFlags::BODY_SEEK.bits(),
-                    global,
-                    grid,
-                    ctx,
-                    tick,
+                    env,
                     AlertSoldiersFailureContinuation::SeekBody {
                         center: pos_center,
                         radius: duty_radius,
@@ -1336,7 +1320,7 @@ impl EnemyAi {
     /// corpse search; a successful route has no further tail.
     pub(crate) fn resume_dead_body_alert_after_alert_officer(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         center: Position,
         radius: u16,
         global: &mut AiGlobalState,
@@ -1381,12 +1365,8 @@ impl EnemyAi {
     /// right net), and routes either to the net (reachable) or to the
     /// victim (emergency fallback) depending on whether straight movement
     /// is allowed.
-    pub fn run_to_free_net_victim(
-        &mut self,
-        victim: HumanHandle,
-        ctx: &AiContext,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    pub(crate) fn run_to_free_net_victim(&mut self, victim: HumanHandle, env: ThinkEnv<'_>) {
+        let ThinkEnv { ctx, grid, .. } = env;
         let Some(view) = ctx.entity_view(victim) else {
             tracing::warn!(
                 me = self.base.me,
@@ -1480,14 +1460,8 @@ impl EnemyAi {
     ///
     /// Multi-waypoint sweeps run with `RUN | DONT_STOP` so the seeker
     /// chains waypoints without halting between them.
-    pub fn search_charly(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    pub(crate) fn search_charly(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         self.base.set_emoticon(EmoticonType::QuestionMark);
 
         // Officer arm.
@@ -1497,7 +1471,7 @@ impl EnemyAi {
             // observable: stopping actions for an area search preserves a macro
             // in the two checkpoint-look substates. Do not insert a synthetic
             // SEEKING_CHARLY_WATCHING/EventDone boundary here.
-            self.missed_charly_alert(sim, global, ctx, tick, grid);
+            self.missed_charly_alert(env, global);
             return;
         }
 
@@ -1607,14 +1581,8 @@ impl EnemyAi {
     /// Report a failed checkpoint search and either delegate it or begin the
     /// area search locally. The original game's target search invokes this synchronously
     /// for officers; completion of watching a checkpoint member is its other caller.
-    pub(super) fn missed_charly_alert(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    pub(super) fn missed_charly_alert(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         self.base.say(Remark::DidntFindCharly);
         let my_pos = ctx.position;
         self.base.seek_position = my_pos;
@@ -1638,10 +1606,7 @@ impl EnemyAi {
             ProfileRank::Officer => self.alert_soldiers(
                 my_pos,
                 SeekFlags::CHARLY_SEEK.bits(),
-                global,
-                grid,
-                ctx,
-                tick,
+                env,
                 AlertSoldiersFailureContinuation::SeekMissedCharly { center: my_pos },
             ),
             ProfileRank::Knight | ProfileRank::None => false,
@@ -1673,13 +1638,8 @@ impl EnemyAi {
         );
     }
 
-    pub fn run_to_examine_body(
-        &mut self,
-        body: HumanHandle,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    pub(crate) fn run_to_examine_body(&mut self, body: HumanHandle, env: ThinkEnv<'_>) {
+        let ThinkEnv { ctx, tick, .. } = env;
         // Body examination: if stuck under a net, delegate to net-victim
         // rescue; otherwise focus, mark X
         // emoticon, and run up to the body.
@@ -1687,7 +1647,7 @@ impl EnemyAi {
         let stuck = view.map(|v| v.stuck_under_net).unwrap_or(false);
         if stuck {
             // Run to free the net victim.
-            self.run_to_free_net_victim(body, ctx, grid);
+            self.run_to_free_net_victim(body, env);
             return;
         }
 
@@ -1727,7 +1687,8 @@ impl EnemyAi {
     /// Otherwise clear the queue (bodies that recovered get skipped)
     /// and return `false`.
     /// Legacy examine-other-bodies behavior.
-    pub fn examine_other_bodies(&mut self, ctx: &AiContext, tick: &AiPerTickData) -> bool {
+    pub(crate) fn examine_other_bodies(&mut self, env: ThinkEnv<'_>) -> bool {
+        let ctx = env.ctx;
         // Prune from the front while the first body has recovered or woken up.
         while let Some(&first) = self.other_bodies_to_examine.first() {
             // Body queues deliberately contain out-of-order humans. The
@@ -1757,7 +1718,7 @@ impl EnemyAi {
             return false;
         };
         self.other_bodies_to_examine.remove(0);
-        self.run_to_examine_body(body, ctx, tick, None);
+        self.run_to_examine_body(body, ThinkEnv { grid: None, ..env });
         true
     }
 }
