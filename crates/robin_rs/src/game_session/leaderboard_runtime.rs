@@ -47,6 +47,9 @@ use crate::ingame_menu::widget_bridge::ModalCursor;
 use crate::ingame_menu::{IngameMenuResources, MissionEndLeaderboardScreen};
 use crate::renderer::Renderer;
 
+mod error;
+use error::RankedError;
+
 mod admission;
 pub(super) use admission::{
     PreparedRankedAdmission, RankedPreFramePlan, fetch_single_player_authority,
@@ -77,7 +80,7 @@ impl RankedMissionAdmission {
     pub(crate) fn archive_input(
         &self,
         replay: &robin_engine::replay::ReplayData,
-    ) -> Result<Option<MissionEndSubmissionInput>, String> {
+    ) -> Result<Option<MissionEndSubmissionInput>, RankedError> {
         let mut copy = self.clone();
         copy.materialize_terminal_from_replay(
             &replay.header().mission_id,
@@ -87,7 +90,9 @@ impl RankedMissionAdmission {
         match copy {
             Self::Authorized(input) => Ok(Some(input)),
             Self::BrowseOnly { .. } => Ok(None),
-            Self::Signed(_) => Err("ranked evidence remained unresolved".into()),
+            Self::Signed(_) => Err(RankedError::lifecycle(
+                "ranked evidence remained unresolved",
+            )),
         }
     }
 
@@ -102,11 +107,16 @@ impl RankedMissionAdmission {
         mission_id: &str,
         starting_campaign_bytes: Arc<[u8]>,
         replay_exports: &crate::replay_service::ReplayExports,
-    ) -> Result<(), String> {
+    ) -> Result<(), RankedError> {
         if !matches!(self, Self::Signed(_)) {
             return Ok(());
         }
-        let replay = replay_exports.snapshot()?.parse_sync()?;
+        // TODO(10/F11): leaf returns String (replay exports).
+        let replay = replay_exports
+            .snapshot()
+            .map_err(RankedError::evidence)?
+            .parse_sync()
+            .map_err(RankedError::evidence)?;
         self.materialize_terminal_from_replay(mission_id, starting_campaign_bytes, &replay)
     }
 
@@ -115,30 +125,33 @@ impl RankedMissionAdmission {
         mission_id: &str,
         starting_campaign_bytes: Arc<[u8]>,
         replay: &robin_engine::replay::ReplayData,
-    ) -> Result<(), String> {
+    ) -> Result<(), RankedError> {
         let Self::Signed(signed) = self else {
             return Ok(());
         };
         let evidence = signed
             .lifecycle
             .lock()
-            .map_err(|_| "ranked session lifecycle lock was poisoned".to_owned())?
-            .evidence_for_replay(replay)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "ranked session was downgraded before terminal evidence".to_owned())?;
+            .map_err(|_| RankedError::lifecycle("ranked session lifecycle lock was poisoned"))?
+            .evidence_for_replay(replay)?
+            .ok_or_else(|| {
+                RankedError::lifecycle("ranked session was downgraded before terminal evidence")
+            })?;
         if evidence.session_genesis.claim.ranked_session.mission_id != mission_id {
-            return Err("ranked session evidence names a different mission".to_owned());
+            return Err(RankedError::rejected(
+                "ranked session evidence names a different mission",
+            ));
         }
-        let claim_count = u16::try_from(evidence.participant_claims.len())
-            .map_err(|_| "ranked participant roster exceeds protocol bounds".to_owned())?;
+        let claim_count = u16::try_from(evidence.participant_claims.len()).map_err(|_| {
+            RankedError::rejected("ranked participant roster exceeds protocol bounds")
+        })?;
         let (participant_instance_count, max_concurrent_players) = evidence
             .replay_session_transcript
-            .validate_and_derive_counts()
-            .map_err(|error| error.to_string())?;
+            .validate_and_derive_counts()?;
         if claim_count != participant_instance_count {
-            return Err(format!(
+            return Err(RankedError::rejected(format!(
                 "ranked participant claim count {claim_count} differs from authenticated transcript count {participant_instance_count}"
-            ));
+            )));
         }
         let ruleset_manifest_sha256 = evidence
             .session_genesis
@@ -161,9 +174,7 @@ impl RankedMissionAdmission {
             ruleset_manifest_sha256,
             competition_manifest_sha256,
         };
-        offer_request
-            .validate()
-            .map_err(|error| error.to_string())?;
+        offer_request.validate()?;
         let input = MissionEndSubmissionInput {
             offer_request,
             replay_session_transcript: evidence.replay_session_transcript,
@@ -180,7 +191,7 @@ impl RankedMissionAdmission {
             eligible_submission: Some(input.clone()),
             submission_unavailable_reason: None,
         };
-        probe.validate().map_err(|error| error.to_string())?;
+        probe.validate()?;
         *self = Self::Authorized(input);
         Ok(())
     }
@@ -191,30 +202,30 @@ impl RankedMissionAdmission {
 fn validate_archived_ranked_input(
     input: &MissionEndSubmissionInput,
     replay: &robin_engine::replay::ReplayData,
-) -> Result<(), String> {
-    input.validate().map_err(|error| error.to_string())?;
+) -> Result<(), RankedError> {
+    input.validate()?;
     if input.starting_campaign_bytes.as_ref() != replay.header().campaign.as_slice()
         || input.offer_request.mission_id != replay.header().mission_id
     {
-        return Err("archived ranked admission does not match the mission recording root".into());
+        return Err(RankedError::rejected(
+            "archived ranked admission does not match the mission recording root",
+        ));
     }
     let genesis = &input.offer_request.session_genesis;
     crate::leaderboard_ranked_session::validate_session_genesis(
         genesis,
         *genesis.claim.host_public_key.as_bytes(),
         &genesis.claim.ranked_session,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     crate::leaderboard_ranked_session::validate_transcript_against_local_replay(
         replay,
         genesis,
         &input.offer_request.participant_claims,
         &input.replay_session_transcript,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     replay
         .ranked_submission_verdict()
-        .map_err(|error| format!("mission replay is ineligible: {error:?}"))
+        .map_err(|error| RankedError::evidence(format!("mission replay is ineligible: {error:?}")))
 }
 
 enum MetadataLoad {
@@ -309,11 +320,10 @@ impl MissionLeaderboardRuntime {
     pub(super) fn capture_terminal(
         &mut self,
         outcome: MissionEndOutcome,
-    ) -> Result<MissionEndPreparation, String> {
-        let mut preparation = self
-            .preparation
-            .take()
-            .ok_or_else(|| "mission-end leaderboard was captured more than once".to_owned())?;
+    ) -> Result<MissionEndPreparation, RankedError> {
+        let mut preparation = self.preparation.take().ok_or_else(|| {
+            RankedError::lifecycle("mission-end leaderboard was captured more than once")
+        })?;
         preparation.outcome = Some(outcome);
         Ok(preparation)
     }
@@ -341,10 +351,15 @@ impl MissionEndPreparation {
     pub(super) fn poll_bundle(
         &mut self,
         replay_exports: &crate::replay_service::ReplayExports,
-    ) -> Option<Result<MissionEndRunBundle, String>> {
+    ) -> Option<Result<MissionEndRunBundle, RankedError>> {
         if let Some(restored) = replay_exports.restored_ranked_input() {
-            match restored.and_then(|input| {
-                let replay = replay_exports.snapshot()?.parse_sync()?;
+            // TODO(10/F11): leaf returns String (replay exports).
+            match restored.map_err(RankedError::evidence).and_then(|input| {
+                let replay = replay_exports
+                    .snapshot()
+                    .map_err(RankedError::evidence)?
+                    .parse_sync()
+                    .map_err(RankedError::evidence)?;
                 validate_archived_ranked_input(&input, &replay)?;
                 Ok(input)
             }) {
@@ -353,7 +368,8 @@ impl MissionEndPreparation {
                     self.admission = RankedMissionAdmission::Authorized(input);
                 }
                 Err(error) => {
-                    self.admission = RankedMissionAdmission::browse_only(error);
+                    // The browse-only reason is retained admission data.
+                    self.admission = RankedMissionAdmission::browse_only(error.to_string());
                 }
             }
         }
@@ -421,7 +437,7 @@ impl MissionEndPreparation {
 
 fn poll_metadata_once(
     metadata: &mut MetadataLoad,
-) -> Result<Option<LeaderboardMetadataV1>, String> {
+) -> Result<Option<LeaderboardMetadataV1>, RankedError> {
     match metadata {
         MetadataLoad::Loading(browser) => match browser.poll() {
             None => Ok(None),
@@ -429,10 +445,12 @@ fn poll_metadata_once(
                 *metadata = MetadataLoad::Ready(loaded.clone());
                 Ok(Some(loaded))
             }
-            Some(Err(error)) => Err(error.to_string()),
+            Some(Err(error)) => Err(error.into()),
         },
         MetadataLoad::Ready(metadata) => Ok(Some(metadata.clone())),
-        MetadataLoad::Failed(error) => Err(error.clone()),
+        // The failure reason was rendered once when metadata loading could
+        // not start; every later poll reports that same stored reason.
+        MetadataLoad::Failed(error) => Err(RankedError::unavailable(error.clone())),
     }
 }
 
@@ -450,25 +468,24 @@ fn build_bundle(
     admission: &RankedMissionAdmission,
     preferences: &LeaderboardPreferences,
     metadata: Option<&LeaderboardMetadataV1>,
-) -> Result<MissionEndRunBundle, String> {
+) -> Result<MissionEndRunBundle, RankedError> {
     if let Some(metadata) = metadata {
         metadata
             .validate()
-            .map_err(|error| format!("leaderboard metadata is invalid: {error}"))?;
+            .map_err(|error| RankedError::from(error).context("leaderboard metadata is invalid"))?;
     }
     let (boards, eligible_submission, unavailable_reason) = match admission {
         RankedMissionAdmission::Authorized(input) => {
             if input.offer_request.mission_id != mission_id {
-                return Err(format!(
+                return Err(RankedError::rejected(format!(
                     "ranked admission mission `{}` does not match loaded mission `{mission_id}`",
                     input.offer_request.mission_id
-                ));
+                )));
             }
             if input.starting_campaign_bytes.as_ref() != starting_campaign_bytes.as_ref() {
-                return Err(
-                    "ranked admission starting campaign differs from the exact engine input"
-                        .to_owned(),
-                );
+                return Err(RankedError::rejected(
+                    "ranked admission starting campaign differs from the exact engine input",
+                ));
             }
             let boards = authorized_boards(input, metadata)?;
             if outcome.can_submit() {
@@ -483,8 +500,9 @@ fn build_bundle(
         }
         RankedMissionAdmission::BrowseOnly { reason } => {
             let metadata = metadata.ok_or_else(|| {
-                "leaderboard metadata is required to browse a run without ranked admission"
-                    .to_owned()
+                RankedError::unavailable(
+                    "leaderboard metadata is required to browse a run without ranked admission",
+                )
             })?;
             (
                 browse_boards(mission_id, multiplayer, preferences, metadata)?,
@@ -510,12 +528,12 @@ fn build_bundle(
         eligible_submission,
         submission_unavailable_reason: unavailable_reason,
     };
-    bundle.validate().map_err(|error| error.to_string())?;
+    bundle.validate()?;
     // Cross-check the immutable campaign bytes even for browse-only sessions.
     // This catches accidental replacement of the bootstrap capture before a
     // future admission implementation can make the run eligible.
     if starting_campaign_bytes.is_empty() {
-        return Err("captured starting campaign is empty".to_owned());
+        return Err(RankedError::evidence("captured starting campaign is empty"));
     }
     Ok(bundle)
 }
@@ -523,22 +541,28 @@ fn build_bundle(
 fn signed_admission_boards(
     mission_id: &str,
     signed: &SignedRankedMissionAdmission,
-) -> Result<Vec<MissionEndBoard>, String> {
+) -> Result<Vec<MissionEndBoard>, RankedError> {
     let lifecycle = signed
         .lifecycle
         .lock()
-        .map_err(|_| "ranked multiplayer lifecycle lock is poisoned".to_owned())?;
+        .map_err(|_| RankedError::lifecycle("ranked multiplayer lifecycle lock is poisoned"))?;
     let config = if let Some(host) = lifecycle.ranked_session() {
         &host.genesis().claim.ranked_session
     } else if let Some(client) = lifecycle.ranked_client() {
         &client.session_genesis.claim.ranked_session
     } else if let Some(reason) = lifecycle.browse_only_reason() {
-        return Err(format!("ranked multiplayer was downgraded: {reason}"));
+        return Err(RankedError::lifecycle(format!(
+            "ranked multiplayer was downgraded: {reason}"
+        )));
     } else {
-        return Err("ranked multiplayer admission is unresolved at mission end".to_owned());
+        return Err(RankedError::lifecycle(
+            "ranked multiplayer admission is unresolved at mission end",
+        ));
     };
     if config.mission_id != mission_id {
-        return Err("ranked multiplayer config names another mission".to_owned());
+        return Err(RankedError::rejected(
+            "ranked multiplayer config names another mission",
+        ));
     }
     let category = match signed.scope_request {
         ScopeRequestV1::IndividualLevel => BoardCategoryV1::IndividualLevel,
@@ -558,7 +582,9 @@ fn signed_admission_boards(
         &signed.requested_metrics,
     );
     if boards.is_empty() {
-        return Err("ranked multiplayer admission exposes no supported board metrics".to_owned());
+        return Err(RankedError::unavailable(
+            "ranked multiplayer admission exposes no supported board metrics",
+        ));
     }
     Ok(boards)
 }
@@ -568,19 +594,23 @@ fn browse_boards(
     multiplayer: bool,
     preferences: &LeaderboardPreferences,
     metadata: &LeaderboardMetadataV1,
-) -> Result<Vec<MissionEndBoard>, String> {
+) -> Result<Vec<MissionEndBoard>, RankedError> {
     let mission = metadata
         .missions
         .iter()
         .find(|mission| mission.mission_id == mission_id)
-        .ok_or_else(|| format!("mission `{mission_id}` is not published for leaderboards"))?;
+        .ok_or_else(|| {
+            RankedError::unavailable(format!(
+                "mission `{mission_id}` is not published for leaderboards"
+            ))
+        })?;
     let category = match preferences.preferred_scope {
         LeaderboardScope::IndividualLevel => BoardCategoryV1::IndividualLevel,
         LeaderboardScope::Campaign => BoardCategoryV1::Campaign,
         LeaderboardScope::FullCampaign => {
-            return Err(
-                "full-campaign boards require a verified campaign-chain context".to_owned(),
-            );
+            return Err(RankedError::unavailable(
+                "full-campaign boards require a verified campaign-chain context",
+            ));
         }
     };
     let ruleset = metadata
@@ -603,10 +633,10 @@ fn browse_boards(
         })
         .min_by_key(|ruleset| ruleset.ruleset_manifest_sha256)
         .ok_or_else(|| {
-            format!(
+            RankedError::unavailable(format!(
                 "no published {:?} ruleset matches mission `{mission_id}` and the selected board facets",
                 preferences.preferred_scope
-            )
+            ))
         })?;
     // The current transport does not expose an authenticated final roster to
     // this layer. A multiplayer browse query therefore leaves player count
@@ -654,7 +684,9 @@ fn browse_boards(
         });
     }
     if boards.is_empty() {
-        return Err("selected ruleset publishes no score or time boards".to_owned());
+        return Err(RankedError::unavailable(
+            "selected ruleset publishes no score or time boards",
+        ));
     }
     Ok(boards)
 }
@@ -662,7 +694,7 @@ fn browse_boards(
 fn authorized_boards(
     input: &MissionEndSubmissionInput,
     metadata: Option<&LeaderboardMetadataV1>,
-) -> Result<Vec<MissionEndBoard>, String> {
+) -> Result<Vec<MissionEndBoard>, RankedError> {
     let request = &input.offer_request;
     let ranked = &request.session_genesis.claim.ranked_session;
     let category = match request.scope_request {
@@ -711,7 +743,9 @@ fn authorized_boards(
         }
     }
     if boards.is_empty() {
-        return Err("ranked admission requested no supported board metrics".to_owned());
+        return Err(RankedError::unavailable(
+            "ranked admission requested no supported board metrics",
+        ));
     }
     Ok(boards)
 }
@@ -1451,7 +1485,8 @@ mod tests {
             &LeaderboardPreferences::default(),
             Some(&metadata()),
         )
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("not published"), "{error}");
     }
 }

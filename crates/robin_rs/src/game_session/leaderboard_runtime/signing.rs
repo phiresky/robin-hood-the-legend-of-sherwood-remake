@@ -13,13 +13,15 @@ pub(super) struct MultiplayerHostSubmissionAuthorizer {
 }
 
 impl MultiplayerHostSubmissionAuthorizer {
-    pub(super) fn new(port: crate::multiplayer::RankedMultiplayerPort) -> Result<Self, String> {
+    pub(super) fn new(
+        port: crate::multiplayer::RankedMultiplayerPort,
+    ) -> Result<Self, RankedError> {
         if port.role() != crate::multiplayer::RankedMultiplayerRole::Host
             || port.local_seat() != robin_engine::player_command::PlayerId::HOST
         {
-            return Err(
-                "multiplayer submission authorizer requires the authenticated host port".to_owned(),
-            );
+            return Err(RankedError::rejected(
+                "multiplayer submission authorizer requires the authenticated host port",
+            ));
         }
         Ok(Self {
             port,
@@ -28,14 +30,16 @@ impl MultiplayerHostSubmissionAuthorizer {
         })
     }
 
-    fn host_public_key(&self) -> Result<robin_run_protocol::PublicKey32, String> {
+    fn host_public_key(&self) -> Result<robin_run_protocol::PublicKey32, RankedError> {
         let lifecycle = self.port.lifecycle();
         Ok(lifecycle
             .lock()
-            .map_err(|_| "ranked host lifecycle lock is poisoned".to_owned())?
+            .map_err(|_| RankedError::lifecycle("ranked host lifecycle lock is poisoned"))?
             .ranked_session()
             .ok_or_else(|| {
-                "ranked host lifecycle ended before submission acknowledgement".to_owned()
+                RankedError::lifecycle(
+                    "ranked host lifecycle ended before submission acknowledgement",
+                )
             })?
             .genesis()
             .claim
@@ -48,7 +52,9 @@ impl MissionEndSubmissionAuthorizer for MultiplayerHostSubmissionAuthorizer {
         &mut self,
         request: SubmissionAuthorizationRequest,
     ) -> Result<Box<dyn SubmissionAuthorizationTask>, String> {
-        let host_key = self.host_public_key()?;
+        // `MissionEndSubmissionAuthorizer` reports text to the mission-end
+        // controller; typed errors are rendered at this trait boundary.
+        let host_key = self.host_public_key().map_err(|error| error.to_string())?;
         self.notification_participants = request
             .offer_request
             .participant_claims
@@ -66,10 +72,10 @@ impl MissionEndSubmissionAuthorizer for MultiplayerHostSubmissionAuthorizer {
                 .map(|claim| claim.public_key),
             ScopeRequestV1::CampaignContinuation { .. } => request.campaign_controller_public_key,
         };
-        Ok(Box::new(MultiplayerHostAuthorizationTask::begin(
-            self.port.clone(),
-            request,
-        )?))
+        Ok(Box::new(
+            MultiplayerHostAuthorizationTask::begin(self.port.clone(), request)
+                .map_err(|error| error.to_string())?,
+        ))
     }
 
     fn submission_accepted(
@@ -78,7 +84,8 @@ impl MissionEndSubmissionAuthorizer for MultiplayerHostSubmissionAuthorizer {
     ) -> Result<(), String> {
         for participant in self.notification_participants.iter().copied() {
             self.port
-                .host_publish_submission_accepted(participant, accepted.clone())?;
+                .host_publish_submission_accepted(participant, accepted.clone())
+                .map_err(|error| error.to_string())?;
         }
         Ok(())
     }
@@ -86,7 +93,9 @@ impl MissionEndSubmissionAuthorizer for MultiplayerHostSubmissionAuthorizer {
     fn owns_receipt_watch(&self) -> Result<bool, String> {
         match self.campaign_controller {
             None => Ok(true),
-            Some(controller) => Ok(controller == self.host_public_key()?),
+            Some(controller) => {
+                Ok(controller == self.host_public_key().map_err(|error| error.to_string())?)
+            }
         }
     }
 }
@@ -106,16 +115,17 @@ fn accept_submission_response(
     signatures: &mut BTreeMap<robin_run_protocol::PublicKey32, ParticipantSignatureV1>,
     from: robin_engine::player_command::PlayerId,
     response: robin_engine::multiplayer::LeaderboardCoSignResponse,
-) -> Result<(), String> {
+) -> Result<(), RankedError> {
     let key = robin_run_protocol::PublicKey32::from_bytes(response.signer_public_key);
     let Some((expected_seat, expected_instance)) = pending.get(&key).copied() else {
-        return Err("unexpected or duplicate ranked participant co-sign response".to_owned());
+        return Err(RankedError::rejected(
+            "unexpected or duplicate ranked participant co-sign response",
+        ));
     };
     if from != expected_seat || response.instance != expected_instance {
-        return Err(
-            "ranked participant co-sign response changed its authenticated seat or request"
-                .to_owned(),
-        );
+        return Err(RankedError::rejected(
+            "ranked participant co-sign response changed its authenticated seat or request",
+        ));
     }
     pending.remove(&key);
     signatures.insert(
@@ -175,15 +185,17 @@ impl HostAuthorizationPort {
         &self,
         seat: robin_engine::player_command::PlayerId,
         context: &crate::leaderboard_ranked_session::RankedCoSignContextV1,
-    ) -> Result<robin_run_protocol::LeaderboardCoSignRequestV1, String> {
+    ) -> Result<robin_run_protocol::LeaderboardCoSignRequestV1, RankedError> {
         match self {
-            Self::Transport(port) => port.host_publish_co_sign_operation(seat, context),
+            Self::Transport(port) => port
+                .host_publish_co_sign_operation(seat, context)
+                .map_err(RankedError::from),
             #[cfg(test)]
             Self::Fixture(io) => {
                 let mut io = io.borrow_mut();
                 io.publications.push(seat);
                 if io.fail_publication == Some(io.publications.len()) {
-                    return Err("injected publication failure".to_owned());
+                    return Err(RankedError::task("injected publication failure"));
                 }
                 Ok(io
                     .published_request
@@ -194,9 +206,11 @@ impl HostAuthorizationPort {
 
     fn try_recv_authorization_event(
         &self,
-    ) -> Result<Option<crate::multiplayer::RankedAuthorizationEvent>, String> {
+    ) -> Result<Option<crate::multiplayer::RankedAuthorizationEvent>, RankedError> {
         match self {
-            Self::Transport(port) => port.try_recv_authorization_event(),
+            Self::Transport(port) => port
+                .try_recv_authorization_event()
+                .map_err(RankedError::from),
             #[cfg(test)]
             Self::Fixture(io) => {
                 let mut io = io.borrow_mut();
@@ -211,25 +225,27 @@ impl MultiplayerHostAuthorizationTask {
     fn begin(
         port: crate::multiplayer::RankedMultiplayerPort,
         request: SubmissionAuthorizationRequest,
-    ) -> Result<Self, String> {
-        request
-            .validate_exact_context()
-            .map_err(|error| error.to_string())?;
+    ) -> Result<Self, RankedError> {
+        request.validate_exact_context()?;
         let expected = request.expected_participants();
         let host_key = {
             let shared_lifecycle = port.lifecycle();
             let lifecycle = shared_lifecycle
                 .lock()
-                .map_err(|_| "ranked session lifecycle lock is poisoned".to_owned())?;
+                .map_err(|_| RankedError::lifecycle("ranked session lifecycle lock is poisoned"))?;
             lifecycle
                 .ranked_session()
-                .ok_or_else(|| "ranked host lifecycle is no longer eligible".to_owned())?
+                .ok_or_else(|| {
+                    RankedError::lifecycle("ranked host lifecycle is no longer eligible")
+                })?
                 .genesis()
                 .claim
                 .host_public_key
         };
         if expected.binary_search(&host_key).is_err() {
-            return Err("ranked host identity is absent from the final participant set".to_owned());
+            return Err(RankedError::rejected(
+                "ranked host identity is absent from the final participant set",
+            ));
         }
         let mut task = Self {
             port: HostAuthorizationPort::Transport(port),
@@ -237,11 +253,7 @@ impl MultiplayerHostAuthorizationTask {
             expected,
             phase: MultiplayerHostAuthorizationPhase::Finished { signed: Vec::new() },
         };
-        match task
-            .request
-            .continuation_claim()
-            .map_err(|error| error.to_string())?
-        {
+        match task.request.continuation_claim()? {
             Some(claim) if claim.campaign_controller_public_key == host_key => {
                 task.phase = MultiplayerHostAuthorizationPhase::AwaitingLocalContinuation {
                     task: start_host_continuation_signature_task(
@@ -278,31 +290,34 @@ impl MultiplayerHostAuthorizationTask {
     fn participant_seat(
         &self,
         key: robin_run_protocol::PublicKey32,
-    ) -> Result<robin_engine::player_command::PlayerId, String> {
+    ) -> Result<robin_engine::player_command::PlayerId, RankedError> {
         let mut claims = self
             .request
             .offer_request
             .participant_claims
             .iter()
             .filter(|claim| claim.public_key == key);
-        let claim = claims
-            .next()
-            .ok_or_else(|| "co-sign identity is absent from the authenticated roster".to_owned())?;
+        let claim = claims.next().ok_or_else(|| {
+            RankedError::rejected("co-sign identity is absent from the authenticated roster")
+        })?;
         if claims.next().is_some() {
-            return Err("co-sign identity owns multiple authenticated seats".to_owned());
+            return Err(RankedError::rejected(
+                "co-sign identity owns multiple authenticated seats",
+            ));
         }
         Ok(robin_engine::player_command::PlayerId(
-            u8::try_from(claim.seat)
-                .map_err(|_| "ranked participant seat exceeds the game wire range".to_owned())?,
+            u8::try_from(claim.seat).map_err(|_| {
+                RankedError::rejected("ranked participant seat exceeds the game wire range")
+            })?,
         ))
     }
 
     fn begin_submission(
         &mut self,
         continuation: Option<CampaignContinuationAuthorizationV1>,
-    ) -> Result<(), String> {
+    ) -> Result<(), RankedError> {
         let envelope = self.request.envelope(continuation);
-        envelope.validate().map_err(|error| error.to_string())?;
+        envelope.validate()?;
         let task = start_host_submission_signature_task(envelope.clone())?;
         self.phase = MultiplayerHostAuthorizationPhase::AwaitingLocalSubmission { task, envelope };
         Ok(())
@@ -312,7 +327,7 @@ impl MultiplayerHostAuthorizationTask {
         &mut self,
         envelope: robin_run_protocol::SubmissionEnvelopeV1,
         local: ParticipantSignatureV1,
-    ) -> Result<(), String> {
+    ) -> Result<(), RankedError> {
         let signatures = BTreeMap::from([(local.public_key, local)]);
         let context = crate::leaderboard_ranked_session::RankedCoSignContextV1::Submission(
             crate::leaderboard_ranked_session::RankedSubmissionContextV1 {
@@ -333,11 +348,13 @@ impl MultiplayerHostAuthorizationTask {
         for (key, seat) in remote {
             let seat =
                 robin_engine::player_command::PlayerId(u8::try_from(seat).map_err(|_| {
-                    "ranked participant seat exceeds the game wire range".to_owned()
+                    RankedError::rejected("ranked participant seat exceeds the game wire range")
                 })?);
             let request = self.port.host_publish_co_sign_operation(seat, &context)?;
             if pending.insert(key, (seat, request.instance)).is_some() {
-                return Err("ranked participant identity appears more than once".to_owned());
+                return Err(RankedError::rejected(
+                    "ranked participant identity appears more than once",
+                ));
             }
         }
         self.phase = MultiplayerHostAuthorizationPhase::AwaitingSubmission {
@@ -348,7 +365,7 @@ impl MultiplayerHostAuthorizationTask {
         self.finish_if_complete()
     }
 
-    fn poll_local_signature(&mut self) -> Result<(), String> {
+    fn poll_local_signature(&mut self) -> Result<(), RankedError> {
         let result = match &mut self.phase {
             MultiplayerHostAuthorizationPhase::AwaitingLocalContinuation { task }
             | MultiplayerHostAuthorizationPhase::AwaitingLocalSubmission { task, .. } => {
@@ -364,7 +381,8 @@ impl MultiplayerHostAuthorizationTask {
                 &mut self.phase,
                 MultiplayerHostAuthorizationPhase::Finished { signed: Vec::new() },
             ),
-            result?,
+            // The signer task reports text through `MissionEndTask`.
+            result.map_err(RankedError::task)?,
         ) {
             (
                 MultiplayerHostAuthorizationPhase::AwaitingLocalContinuation { .. },
@@ -374,11 +392,13 @@ impl MultiplayerHostAuthorizationTask {
                 MultiplayerHostAuthorizationPhase::AwaitingLocalSubmission { envelope, .. },
                 HostLocalSignature::Submission(signature),
             ) => self.publish_submission(envelope, signature),
-            _ => Err("durable host signer returned the wrong closed ranked operation".to_owned()),
+            _ => Err(RankedError::rejected(
+                "durable host signer returned the wrong closed ranked operation",
+            )),
         }
     }
 
-    fn finish_if_complete(&mut self) -> Result<(), String> {
+    fn finish_if_complete(&mut self) -> Result<(), RankedError> {
         let MultiplayerHostAuthorizationPhase::AwaitingSubmission {
             envelope,
             pending,
@@ -396,8 +416,7 @@ impl MultiplayerHostAuthorizationTask {
             algorithm: SignatureAlgorithmV1::Ed25519,
             participant_signatures: signatures.values().cloned().collect(),
         };
-        crate::leaderboard_mission_end::validate_authorized_submission(&self.request, &signed)
-            .map_err(|error| error.to_string())?;
+        crate::leaderboard_mission_end::validate_authorized_submission(&self.request, &signed)?;
         self.phase = MultiplayerHostAuthorizationPhase::Complete { result: signed };
         Ok(())
     }
@@ -406,7 +425,7 @@ impl MultiplayerHostAuthorizationTask {
         &mut self,
         from: robin_engine::player_command::PlayerId,
         response: robin_engine::multiplayer::LeaderboardCoSignResponse,
-    ) -> Result<(), String> {
+    ) -> Result<(), RankedError> {
         let key = robin_run_protocol::PublicKey32::from_bytes(response.signer_public_key);
         let continuation_seat = match &self.phase {
             MultiplayerHostAuthorizationPhase::AwaitingContinuation { controller_key, .. } => {
@@ -424,7 +443,9 @@ impl MultiplayerHostAuthorizationTask {
                     || key != *controller_key
                     || response.instance != *request_instance
                 {
-                    return Err("campaign continuation co-sign response changed its authenticated target or request".to_owned());
+                    return Err(RankedError::rejected(
+                        "campaign continuation co-sign response changed its authenticated target or request",
+                    ));
                 }
                 let authorization = CampaignContinuationAuthorizationV1 {
                     claim: claim.clone(),
@@ -442,14 +463,15 @@ impl MultiplayerHostAuthorizationTask {
                 self.finish_if_complete()
             }
             MultiplayerHostAuthorizationPhase::AwaitingLocalContinuation { .. }
-            | MultiplayerHostAuthorizationPhase::AwaitingLocalSubmission { .. } => Err(
-                "ranked co-sign response arrived while the durable host signer was active"
-                    .to_owned(),
-            ),
-            MultiplayerHostAuthorizationPhase::Complete { .. }
-            | MultiplayerHostAuthorizationPhase::Finished { .. } => {
-                Err("ranked co-sign response arrived after authorization completed".to_owned())
+            | MultiplayerHostAuthorizationPhase::AwaitingLocalSubmission { .. } => {
+                Err(RankedError::rejected(
+                    "ranked co-sign response arrived while the durable host signer was active",
+                ))
             }
+            MultiplayerHostAuthorizationPhase::Complete { .. }
+            | MultiplayerHostAuthorizationPhase::Finished { .. } => Err(RankedError::rejected(
+                "ranked co-sign response arrived after authorization completed",
+            )),
         }
     }
 }
@@ -512,19 +534,20 @@ impl MissionEndTask<SignedSubmissionV1> for MultiplayerHostAuthorizationTask {
         if let Some(result) = self.take_completed() {
             return Some(Ok(result));
         }
+        // `MissionEndTask` reports text; typed errors are rendered here.
         if let Err(error) = self.poll_local_signature() {
-            return self.fail(error);
+            return self.fail(error.to_string());
         }
         for _ in 0..64 {
             let event = match self.port.try_recv_authorization_event() {
                 Ok(Some(event)) => event,
                 Ok(None) => break,
-                Err(error) => return self.fail(error),
+                Err(error) => return self.fail(error.to_string()),
             };
             match event {
                 crate::multiplayer::RankedAuthorizationEvent::CoSignResponse { from, response } => {
                     if let Err(error) = self.accept_response(from, response) {
-                        return self.fail(error);
+                        return self.fail(error.to_string());
                     }
                 }
                 _ => {
@@ -565,7 +588,7 @@ impl MissionEndTask<HostLocalSignature> for ImmediateHostSignatureTask {
 fn start_host_continuation_signature_task(
     offer: robin_run_protocol::SubmissionOfferV1,
     claim: robin_run_protocol::CampaignContinuationAuthorizationClaimV1,
-) -> Result<Box<dyn MissionEndTask<HostLocalSignature>>, String> {
+) -> Result<Box<dyn MissionEndTask<HostLocalSignature>>, RankedError> {
     Ok(Box::new(ImmediateHostSignatureTask(Some(
         crate::leaderboard_signing::sign_campaign_continuation(&offer, claim)
             .map(HostLocalSignature::Continuation)
@@ -576,7 +599,7 @@ fn start_host_continuation_signature_task(
 #[cfg(not(target_arch = "wasm32"))]
 fn start_host_submission_signature_task(
     envelope: robin_run_protocol::SubmissionEnvelopeV1,
-) -> Result<Box<dyn MissionEndTask<HostLocalSignature>>, String> {
+) -> Result<Box<dyn MissionEndTask<HostLocalSignature>>, RankedError> {
     Ok(Box::new(ImmediateHostSignatureTask(Some(
         crate::leaderboard_signing::sign_submission_claim(&envelope)
             .map(HostLocalSignature::Submission)
@@ -604,7 +627,7 @@ impl MissionEndTask<HostLocalSignature> for BrowserHostSignatureTask {
 fn start_host_continuation_signature_task(
     offer: robin_run_protocol::SubmissionOfferV1,
     claim: robin_run_protocol::CampaignContinuationAuthorizationClaimV1,
-) -> Result<Box<dyn MissionEndTask<HostLocalSignature>>, String> {
+) -> Result<Box<dyn MissionEndTask<HostLocalSignature>>, RankedError> {
     let (sender, receiver) = async_channel::bounded(1);
     wasm_bindgen_futures::spawn_local(async move {
         let result =
@@ -620,7 +643,7 @@ fn start_host_continuation_signature_task(
 #[cfg(target_arch = "wasm32")]
 fn start_host_submission_signature_task(
     envelope: robin_run_protocol::SubmissionEnvelopeV1,
-) -> Result<Box<dyn MissionEndTask<HostLocalSignature>>, String> {
+) -> Result<Box<dyn MissionEndTask<HostLocalSignature>>, RankedError> {
     let (sender, receiver) = async_channel::bounded(1);
     wasm_bindgen_futures::spawn_local(async move {
         let result = crate::leaderboard_signing::browser_game_sign_submission_claim(&envelope)
@@ -659,29 +682,32 @@ impl MultiplayerPeerCoSigner {
         mission_id: String,
         starting_campaign_bytes: Arc<[u8]>,
         replay_exports: crate::replay_service::ReplayExports,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, RankedError> {
         if port.role() != crate::multiplayer::RankedMultiplayerRole::Client
             || port.local_seat() == robin_engine::player_command::PlayerId::HOST
         {
-            return Err("ranked peer co-signer requires an authenticated client port".to_owned());
+            return Err(RankedError::rejected(
+                "ranked peer co-signer requires an authenticated client port",
+            ));
         }
         let client = signed
             .lifecycle
             .lock()
-            .map_err(|_| "ranked client lifecycle lock is poisoned".to_owned())?
+            .map_err(|_| RankedError::lifecycle("ranked client lifecycle lock is poisoned"))?
             .ranked_client()
             .cloned()
             .ok_or_else(|| {
-                "ranked client admission did not finish before mission runtime".to_owned()
+                RankedError::lifecycle(
+                    "ranked client admission did not finish before mission runtime",
+                )
             })?;
-        client.validate().map_err(|error| error.to_string())?;
+        client.validate()?;
         if client.local_seat != u16::from(port.local_seat().0)
             || client.session_genesis.claim.ranked_session.mission_id != mission_id
         {
-            return Err(
-                "ranked client lifecycle differs from the active mission seat or mission"
-                    .to_owned(),
-            );
+            return Err(RankedError::rejected(
+                "ranked client lifecycle differs from the active mission seat or mission",
+            ));
         }
         Ok(Self {
             port,
@@ -715,41 +741,49 @@ impl MultiplayerPeerCoSigner {
             .filter(|controller| *controller == self.local_public_key())
     }
 
-    fn prepare_replay(&mut self) -> Result<bool, String> {
+    fn prepare_replay(&mut self) -> Result<bool, RankedError> {
         if self.replay_bytes.is_some() && self.local_replay.is_some() {
             return Ok(true);
         }
         if self.replay_task.is_none() {
-            self.replay_task =
-                Some(ActiveMissionReplayExporter::new(self.replay_exports.clone()).begin()?);
+            // The replay exporter reports text through its `leaderboard::mission_end` trait.
+            self.replay_task = Some(
+                ActiveMissionReplayExporter::new(self.replay_exports.clone())
+                    .begin()
+                    .map_err(RankedError::task)?,
+            );
         }
         let Some(result) = self.replay_task.as_mut().and_then(|task| task.try_take()) else {
             return Ok(false);
         };
         self.replay_task = None;
-        let bytes = result?;
+        let bytes = result.map_err(RankedError::task)?;
         // Verify the exact frozen artifact we will co-sign, not a second live
         // snapshot that may belong to a newer recording generation.
-        let compact = std::str::from_utf8(&bytes)
-            .map_err(|error| format!("ranked replay export is not UTF-8: {error}"))?;
-        let (_, replay) = robin_replay_format::decode_compact(compact)
-            .map_err(|error| format!("decode ranked replay export: {error}"))?;
+        let compact = std::str::from_utf8(&bytes).map_err(|error| {
+            RankedError::evidence(format!("ranked replay export is not UTF-8: {error}"))
+        })?;
+        let (_, replay) = robin_replay_format::decode_compact(compact).map_err(|error| {
+            RankedError::evidence(format!("decode ranked replay export: {error}"))
+        })?;
         self.replay_bytes = Some(bytes);
         self.local_replay = Some(replay);
         Ok(true)
     }
 
-    fn validate_offer_request(&self, request: &SubmissionOfferRequestV1) -> Result<(), String> {
-        request.validate().map_err(|error| error.to_string())?;
+    fn validate_offer_request(
+        &self,
+        request: &SubmissionOfferRequestV1,
+    ) -> Result<(), RankedError> {
+        request.validate()?;
         if request.session_genesis != self.client.session_genesis
             || request.participant_claims != self.client.participant_claims
             || request.mission_id != self.mission_id
             || request.scope_request != self.scope_request
         {
-            return Err(
-                "host co-sign context differs from the client's admitted session, roster, mission, or campaign scope"
-                    .to_owned(),
-            );
+            return Err(RankedError::rejected(
+                "host co-sign context differs from the client's admitted session, roster, mission, or campaign scope",
+            ));
         }
         Ok(())
     }
@@ -757,9 +791,11 @@ impl MultiplayerPeerCoSigner {
     fn arm_context(
         &mut self,
         context: crate::leaderboard_ranked_session::RankedCoSignContextV1,
-    ) -> Result<(), String> {
+    ) -> Result<(), RankedError> {
         if self.armed_request.is_some() || self.signature_task.is_some() {
-            return Err("host sent overlapping ranked co-sign operations".to_owned());
+            return Err(RankedError::rejected(
+                "host sent overlapping ranked co-sign operations",
+            ));
         }
         let request = match context {
             crate::leaderboard_ranked_session::RankedCoSignContextV1::CampaignContinuation(
@@ -768,10 +804,9 @@ impl MultiplayerPeerCoSigner {
                 self.validate_offer_request(&context.offer_request)?;
                 let local_key = self.local_public_key();
                 if self.campaign_controller_public_key != Some(local_key) {
-                    return Err(
-                        "host targeted a non-controller peer for campaign continuation authorization"
-                            .to_owned(),
-                    );
+                    return Err(RankedError::rejected(
+                        "host targeted a non-controller peer for campaign continuation authorization",
+                    ));
                 }
                 let expected =
                     crate::leaderboard_ranked_session::RankedLocalContinuationEvidenceV1 {
@@ -779,31 +814,32 @@ impl MultiplayerPeerCoSigner {
                         continuation_claim: self.local_continuation_claim(&context)?,
                         local_public_key: local_key,
                     };
-                context
-                    .validate_and_co_sign_request(&expected)
-                    .map_err(|error| error.to_string())?
+                context.validate_and_co_sign_request(&expected)?
             }
             crate::leaderboard_ranked_session::RankedCoSignContextV1::Submission(context) => {
                 self.validate_offer_request(&context.offer_request)?;
                 let replay_bytes = self
                     .replay_bytes
                     .as_ref()
-                    .ok_or_else(|| "canonical replay export is not ready".to_owned())?;
+                    .ok_or_else(|| RankedError::evidence("canonical replay export is not ready"))?;
                 let local_replay = self
                     .local_replay
                     .as_ref()
-                    .ok_or_else(|| "local replay evidence is not ready".to_owned())?;
+                    .ok_or_else(|| RankedError::evidence("local replay evidence is not ready"))?;
                 let replay = crate::leaderboard_mission_end::canonical_replay_artifact(
                     replay_bytes,
                     &self.starting_campaign_bytes,
                     &self.mission_id,
                     &context.replay_session_transcript,
-                )
-                .map_err(|error| error.to_string())?;
+                )?;
                 let campaign = robin_run_protocol::ArtifactRefV1 {
                     sha256: Digest32::digest_bytes(&self.starting_campaign_bytes),
                     byte_length: u64::try_from(self.starting_campaign_bytes.len()).map_err(
-                        |_| "starting campaign length exceeds protocol bounds".to_owned(),
+                        |_| {
+                            RankedError::evidence(
+                                "starting campaign length exceeds protocol bounds",
+                            )
+                        },
                     )?,
                     media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
                 };
@@ -832,9 +868,7 @@ impl MultiplayerPeerCoSigner {
                     requested_metrics: self.requested_metrics.clone(),
                     local_public_key: self.local_public_key(),
                 };
-                context
-                    .validate_and_co_sign_request(&expected, local_replay)
-                    .map_err(|error| error.to_string())?
+                context.validate_and_co_sign_request(&expected, local_replay)?
             }
         };
         self.port.client_arm_co_sign_request(request)?;
@@ -845,24 +879,24 @@ impl MultiplayerPeerCoSigner {
     fn local_continuation_claim(
         &self,
         context: &crate::leaderboard_ranked_session::RankedContinuationContextV1,
-    ) -> Result<robin_run_protocol::CampaignContinuationAuthorizationClaimV1, String> {
+    ) -> Result<robin_run_protocol::CampaignContinuationAuthorizationClaimV1, RankedError> {
         let ScopeRequestV1::CampaignContinuation {
             chain_id,
             predecessor_run_id,
         } = &self.scope_request
         else {
-            return Err(
-                "continuation context arrived outside a locally admitted continuation".to_owned(),
-            );
+            return Err(RankedError::rejected(
+                "continuation context arrived outside a locally admitted continuation",
+            ));
         };
         let claim = &context.continuation_claim;
         if &claim.chain_id != chain_id
             || &claim.predecessor_run_id != predecessor_run_id
             || Some(claim.campaign_controller_public_key) != self.campaign_controller_public_key
         {
-            return Err(
-                "continuation context differs from the locally retained chain receipt".to_owned(),
-            );
+            return Err(RankedError::rejected(
+                "continuation context differs from the locally retained chain receipt",
+            ));
         }
         Ok(claim.clone())
     }
@@ -871,13 +905,16 @@ impl MultiplayerPeerCoSigner {
         &self,
         context: &crate::leaderboard_ranked_session::RankedSubmissionContextV1,
         artifacts: robin_run_protocol::SubmissionArtifactsV1,
-    ) -> Result<Option<robin_run_protocol::CampaignContinuationAuthorizationClaimV1>, String> {
+    ) -> Result<Option<robin_run_protocol::CampaignContinuationAuthorizationClaimV1>, RankedError>
+    {
         let Some(authorization) = &context.submission.campaign_continuation_authorization else {
             if matches!(
                 self.scope_request,
                 ScopeRequestV1::CampaignContinuation { .. }
             ) {
-                return Err("host omitted the locally required campaign continuation".to_owned());
+                return Err(RankedError::rejected(
+                    "host omitted the locally required campaign continuation",
+                ));
             }
             return Ok(None);
         };
@@ -887,22 +924,23 @@ impl MultiplayerPeerCoSigner {
             predecessor_run_id,
         } = &self.scope_request
         else {
-            return Err("host inserted campaign continuation into another local scope".to_owned());
+            return Err(RankedError::rejected(
+                "host inserted campaign continuation into another local scope",
+            ));
         };
         if &claim.chain_id != chain_id
             || &claim.predecessor_run_id != predecessor_run_id
             || Some(claim.campaign_controller_public_key) != self.campaign_controller_public_key
             || claim.next_artifacts != artifacts
         {
-            return Err(
-                "host continuation authorization differs from local chain/artifact evidence"
-                    .to_owned(),
-            );
+            return Err(RankedError::rejected(
+                "host continuation authorization differs from local chain/artifact evidence",
+            ));
         }
         Ok(Some(claim.clone()))
     }
 
-    fn poll_inner(&mut self) -> Result<(), String> {
+    fn poll_inner(&mut self) -> Result<(), RankedError> {
         if !self.prepare_replay()? {
             return Ok(());
         }
@@ -911,13 +949,15 @@ impl MultiplayerPeerCoSigner {
                 return Ok(());
             };
             self.signature_task = None;
-            let signature = signature?;
-            let request = self
-                .armed_request
-                .take()
-                .ok_or_else(|| "co-signature completed without an armed request".to_owned())?;
+            // The durable signer task reports text through `MissionEndTask`.
+            let signature = signature.map_err(RankedError::task)?;
+            let request = self.armed_request.take().ok_or_else(|| {
+                RankedError::rejected("co-signature completed without an armed request")
+            })?;
             if signature.public_key != self.local_public_key() {
-                return Err("durable signer returned another participant identity".to_owned());
+                return Err(RankedError::rejected(
+                    "durable signer returned another participant identity",
+                ));
             }
             self.port.client_respond_co_sign(
                 robin_engine::multiplayer::LeaderboardCoSignResponse {
@@ -941,28 +981,31 @@ impl MultiplayerPeerCoSigner {
                 }
                 crate::multiplayer::RankedAuthorizationEvent::CoSignRequest(request) => {
                     if self.armed_request.as_ref() != Some(&request) {
-                        return Err("transport released a co-sign request other than the locally armed request".to_owned());
+                        return Err(RankedError::rejected(
+                            "transport released a co-sign request other than the locally armed request",
+                        ));
                     }
                     install_signer_if_idle(&mut self.signature_task, || {
                         start_peer_signature_task(request)
                     })?;
                 }
                 crate::multiplayer::RankedAuthorizationEvent::SubmissionAccepted(accepted) => {
-                    accepted.validate().map_err(|error| error.to_string())?;
+                    accepted.validate()?;
                     self.accepted = Some(accepted);
                 }
                 crate::multiplayer::RankedAuthorizationEvent::CoSignResponse { .. } => {
-                    return Err("ranked client received a host-only co-sign response".to_owned());
+                    return Err(RankedError::rejected(
+                        "ranked client received a host-only co-sign response",
+                    ));
                 }
                 crate::multiplayer::RankedAuthorizationEvent::OfficialSessionSetup(_)
                 | crate::multiplayer::RankedAuthorizationEvent::ContinuationReceiptSelectionRequest(_)
                 | crate::multiplayer::RankedAuthorizationEvent::ContinuationReceiptSelectionResponse { .. }
                 | crate::multiplayer::RankedAuthorizationEvent::ContinuationPreflightClaim(_)
                 | crate::multiplayer::RankedAuthorizationEvent::ContinuationPreflightSignature { .. } => {
-                    return Err(
-                        "pre-frame ranked authorization event arrived at the mission-end co-signer"
-                            .to_owned(),
-                    );
+                    return Err(RankedError::rejected(
+                        "pre-frame ranked authorization event arrived at the mission-end co-signer",
+                    ));
                 }
             }
         }
@@ -987,6 +1030,8 @@ impl MissionEndPeerCoSigner for MultiplayerPeerCoSigner {
             return PeerCoSignPoll::AwaitingConsent;
         }
         if let Err(error) = self.poll_inner() {
+            // `PeerCoSignPoll::Failed` carries presentation text.
+            let error = error.to_string();
             self.signature_task = None;
             self.armed_request = None;
             self.failure = Some(error.clone());
@@ -1029,7 +1074,7 @@ impl MissionEndTask<ParticipantSignatureV1> for ImmediatePeerSignatureTask {
 #[cfg(not(target_arch = "wasm32"))]
 fn start_peer_signature_task(
     request: robin_run_protocol::LeaderboardCoSignRequestV1,
-) -> Result<Box<dyn MissionEndTask<ParticipantSignatureV1>>, String> {
+) -> Result<Box<dyn MissionEndTask<ParticipantSignatureV1>>, RankedError> {
     Ok(Box::new(ImmediatePeerSignatureTask(Some(
         crate::leaderboard_signing::sign_multiplayer_leaderboard_request(&request)
             .map_err(|error| error.to_string()),
@@ -1055,7 +1100,7 @@ impl MissionEndTask<ParticipantSignatureV1> for BrowserPeerSignatureTask {
 #[cfg(target_arch = "wasm32")]
 fn start_peer_signature_task(
     request: robin_run_protocol::LeaderboardCoSignRequestV1,
-) -> Result<Box<dyn MissionEndTask<ParticipantSignatureV1>>, String> {
+) -> Result<Box<dyn MissionEndTask<ParticipantSignatureV1>>, RankedError> {
     let (sender, receiver) = async_channel::bounded(1);
     wasm_bindgen_futures::spawn_local(async move {
         let result =
@@ -1071,12 +1116,12 @@ fn start_peer_signature_task(
 /// an in-flight task or start a second browser identity operation.
 fn install_signer_if_idle<T>(
     slot: &mut Option<Box<dyn MissionEndTask<T>>>,
-    start: impl FnOnce() -> Result<Box<dyn MissionEndTask<T>>, String>,
-) -> Result<(), String> {
+    start: impl FnOnce() -> Result<Box<dyn MissionEndTask<T>>, RankedError>,
+) -> Result<(), RankedError> {
     if slot.is_some() {
-        return Err(
-            "host sent a duplicate request while the durable peer signer was active".to_owned(),
-        );
+        return Err(RankedError::rejected(
+            "host sent a duplicate request while the durable peer signer was active",
+        ));
     }
     *slot = Some(start()?);
     Ok(())

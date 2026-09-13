@@ -1649,7 +1649,8 @@ impl InteractiveMissionBuilder {
                 }
                 Err(reason) => {
                     tracing::warn!("mission is browse-only: {reason}");
-                    super::leaderboard_runtime::RankedPreFramePlan::browse_only(reason)
+                    // The browse-only reason is retained admission data.
+                    super::leaderboard_runtime::RankedPreFramePlan::browse_only(reason.to_string())
                 }
             }
         };
