@@ -200,7 +200,7 @@ impl FrontendPointerCapture {
         false
     }
 
-    pub fn right_button_down(&mut self, clicks: u8) {
+    fn right_button_down(&mut self, clicks: u8) {
         self.right_double_click_pending = clicks >= 2;
     }
 

@@ -42,7 +42,7 @@ fn client_gamepad_reads_its_own_selection_not_the_host_selection() {
     assert_eq!(selected_leader(&engine, client).unwrap().0, client_pc);
     let mut pad = GamePadState::new();
     let mut pressed = JoystickState::default();
-    pressed.buttons[GamePadButton::ActionA.index()] = 1;
+    pressed.buttons[GamePadButton::ActionA] = true;
     pad.update(pressed);
     pad.update(JoystickState::default());
     let commands = pad.manage_action_select(&engine, client);
@@ -100,7 +100,7 @@ fn default_joystick_state_is_neutral() {
     assert_eq!(state.rz, AXIS_CENTER);
     assert_eq!(state.sliders[0], AXIS_CENTER);
     assert_eq!(state.povs[0], 0xFFFF_FFFF);
-    assert!(state.buttons.iter().all(|&b| b == 0));
+    assert!(state.buttons.values().all(|&pressed| !pressed));
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn button_edge_full_lifecycle() {
 
     // Press → Pushed
     let mut state = JoystickState::default();
-    state.buttons[GamePadButton::ActionA.index()] = 1;
+    state.buttons[GamePadButton::ActionA] = true;
     pad.update(state);
     assert!(pad.is_down(GamePadButton::ActionA));
     assert!(pad.is_pushed(GamePadButton::ActionA));
@@ -122,7 +122,7 @@ fn button_edge_full_lifecycle() {
 
     // Hold → Held
     let mut state = JoystickState::default();
-    state.buttons[GamePadButton::ActionA.index()] = 1;
+    state.buttons[GamePadButton::ActionA] = true;
     pad.update(state);
     assert!(pad.is_down(GamePadButton::ActionA));
     assert!(!pad.is_pushed(GamePadButton::ActionA));
@@ -301,7 +301,7 @@ fn gamepad_state_serde_roundtrip() {
         x: 1234,
         ..Default::default()
     };
-    state.buttons[0] = 1;
+    state.buttons[GamePadButton::ActionB] = true;
     pad.update(state);
 
     let json = serde_json::to_string(&pad).unwrap();
@@ -314,8 +314,8 @@ fn gamepad_state_serde_roundtrip() {
 fn multiple_buttons_independent() {
     let mut pad = GamePadState::new();
     let mut state = JoystickState::default();
-    state.buttons[GamePadButton::ActionA.index()] = 1;
-    state.buttons[GamePadButton::ActionB.index()] = 1;
+    state.buttons[GamePadButton::ActionA] = true;
+    state.buttons[GamePadButton::ActionB] = true;
     pad.update(state);
 
     assert!(pad.is_pushed(GamePadButton::ActionA));
@@ -363,7 +363,7 @@ fn manage_scroll_axis_pov_north_with_alt_zooms_in() {
     let mut pad = GamePadState::new();
     let mut state = JoystickState::default();
     state.povs[0] = 0; // North
-    state.buttons[GamePadButton::AltChoice.index()] = 1;
+    state.buttons[GamePadButton::AltChoice] = true;
     prime_and_set(&mut pad, state);
 
     let mut cmds = Vec::new();
@@ -427,7 +427,7 @@ fn manage_action_select_cancel_parade_release_emits_right_click() {
     let mut pad = GamePadState::new();
     // Push then release CANCEL_PARADE (edge-detect the up-transition).
     let mut state = JoystickState::default();
-    state.buttons[GamePadButton::CancelParade.index()] = 1;
+    state.buttons[GamePadButton::CancelParade] = true;
     pad.update(state);
     pad.update(JoystickState::default()); // release
 
@@ -463,12 +463,12 @@ fn manage_qa_timer_expiration_with_selected_pc() {
     let mut pad = GamePadState::new();
     // Arm the timer: release QA while ALT is held.
     let mut pressed = JoystickState::default();
-    pressed.buttons[GamePadButton::QaManage.index()] = 1;
-    pressed.buttons[GamePadButton::AltChoice.index()] = 1;
+    pressed.buttons[GamePadButton::QaManage] = true;
+    pressed.buttons[GamePadButton::AltChoice] = true;
     pad.update(pressed);
 
     let mut released_alt_still_down = JoystickState::default();
-    released_alt_still_down.buttons[GamePadButton::AltChoice.index()] = 1;
+    released_alt_still_down.buttons[GamePadButton::AltChoice] = true;
     pad.update(released_alt_still_down);
 
     // First pass: arm the timer. Requires at least one selected PC;
@@ -480,21 +480,21 @@ fn manage_qa_timer_expiration_with_selected_pc() {
 }
 
 #[test]
-fn standard_button_to_gamepad_index_mapping() {
+fn standard_button_to_gamepad_button_mapping() {
     assert_eq!(
-        standard_button_to_gamepad_index(0),
-        Some(GamePadButton::ActionB as u8)
+        standard_button_to_gamepad_button(0),
+        Some(GamePadButton::ActionB)
     );
     assert_eq!(
-        standard_button_to_gamepad_index(1),
-        Some(GamePadButton::ActionA as u8)
+        standard_button_to_gamepad_button(1),
+        Some(GamePadButton::ActionA)
     );
     assert_eq!(
-        standard_button_to_gamepad_index(3),
-        Some(GamePadButton::CancelParade as u8)
+        standard_button_to_gamepad_button(3),
+        Some(GamePadButton::CancelParade)
     );
     // D-pad buttons are routed elsewhere.
-    assert_eq!(standard_button_to_gamepad_index(11), None);
+    assert_eq!(standard_button_to_gamepad_button(11), None);
 }
 
 #[test]
@@ -539,10 +539,10 @@ fn apply_axis_event_left_stick_stays_signed() {
 #[test]
 fn apply_button_event_mirrors_pressed_state() {
     let mut pad = GamePadState::new();
-    pad.apply_button_event(GamePadButton::ActionA as u8, true);
-    assert_eq!(pad.pending.buttons[GamePadButton::ActionA.index()], 1);
-    pad.apply_button_event(GamePadButton::ActionA as u8, false);
-    assert_eq!(pad.pending.buttons[GamePadButton::ActionA.index()], 0);
+    pad.apply_button_event(GamePadButton::ActionA, true);
+    assert!(pad.pending.buttons[GamePadButton::ActionA]);
+    pad.apply_button_event(GamePadButton::ActionA, false);
+    assert!(!pad.pending.buttons[GamePadButton::ActionA]);
 }
 
 #[test]
