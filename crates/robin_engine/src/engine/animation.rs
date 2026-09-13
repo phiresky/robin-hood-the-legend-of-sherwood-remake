@@ -2223,7 +2223,7 @@ fn apply_under_net_initialization_side_effect(
         return;
     }
 
-    let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+    let is_unconscious = entity.is_unconscious();
     let is_tied = entity.element_data().posture() == Posture::Tied;
     if !entity.is_dead() && !is_unconscious && !is_tied {
         entity.set_posture(Posture::StuckUnderNet);
@@ -4685,8 +4685,7 @@ impl EngineInner {
                     // element; original-game termination uses that live identity,
                     // while ABORTED uses the entry snapshot.
                     let is_npc = matches!(entity, Entity::Soldier(_) | Entity::Civilian(_));
-                    let is_unconscious =
-                        entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+                    let is_unconscious = entity.is_unconscious();
                     let mut arm_ctx = ArmCtx {
                         entity_id,
                         is_npc,

@@ -44,11 +44,10 @@ const WASP_SPEED: f32 = 5.0;
 const NEST_ATTRACTION: f32 = 0.08;
 /// Base frames between direction changes; jittered +0..3.
 const DIRECTION_CHANGE_TIMEOUT: u16 = 7;
-// Kept-justified: paired with STINGING_MAX_TIMEOUT below for parity
-// documentation; unused at runtime due to the parens bug.
-#[allow(dead_code)]
-const STINGING_MIN_TIMEOUT: u16 = 10;
-/// Sting-delay ceiling in frames.
+/// Sting-delay ceiling in frames. The original also declared a 10-frame
+/// `STINGING_MIN_TIMEOUT` floor, but its precedence bug cancels that
+/// floor out (see the sting-delay draw below), so no runtime constant
+/// exists for it here.
 const STINGING_MAX_TIMEOUT: u16 = 60;
 /// Starting range for victim search.  Multiplied by `APPLE_ATTRACTION`
 /// for apple-smelling soldiers.
@@ -314,13 +313,13 @@ impl EngineInner {
                 let dz = cur.z - eyes.z;
                 if (dx * dx + dy * dy + dz * dz).sqrt() <= STING_DISTANCE {
                     // The original sting-delay formula has a
-                    // precedence bug:
-                    //   `( rand() % STINGING_MAX_TIMEOUT - STINGING_MIN_TIMEOUT + 1 ) + STINGING_MIN_TIMEOUT`
+                    // precedence bug (MIN = 10, MAX = STINGING_MAX_TIMEOUT):
+                    //   `( rand() % MAX - MIN + 1 ) + MIN`
                     // `%` binds tighter than `-`, so the parens are
                     // misplaced and the MIN floor cancels itself out:
                     //   `(rand()%MAX) - MIN + 1 + MIN` == `(rand()%MAX) + 1`
                     // i.e. the actual sting delay is 1..=STINGING_MAX_TIMEOUT,
-                    // not the intended STINGING_MIN..=STINGING_MAX range.
+                    // not the intended 10..=STINGING_MAX_TIMEOUT range.
                     // Preserved verbatim for parity.
                     let delay = crate::sim_rng::u32(
                         sim,

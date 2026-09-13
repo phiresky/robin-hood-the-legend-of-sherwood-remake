@@ -819,7 +819,7 @@ impl EngineInner {
             .entities
             .npcs()
             .filter_map(|(id, e)| {
-                if e.human_data().map(|h| h.unconscious).unwrap_or(false) {
+                if e.is_unconscious() {
                     Some(id.into())
                 } else {
                     None

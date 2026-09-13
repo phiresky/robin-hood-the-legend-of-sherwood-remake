@@ -2283,1324 +2283,6 @@ fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::ai::Position> 
     }
 }
 
-#[cfg(test)]
-#[allow(clippy::items_after_test_module)]
-mod tests {
-    use super::{
-        projectile_trajectory_origin, projectile_trajectory_origin_sector,
-        set_projectile_trajectory_origin, soldier_piercing_protection, soldier_shield_dimensions,
-    };
-    use crate::element::{
-        ActionState, ActorData, ActorPc, ElementData, ElementKind, ElementProjectile, Entity,
-        EntityId, HumanData, ObjectData, Posture, ProjectileData,
-    };
-    use crate::engine::{EngineInner, LevelAssets};
-    use crate::order::OrderType;
-    use crate::profiles::{HtHWeaponProfile, ProfileManager, SoldierProfile, SoldierProfileIdx};
-    use crate::sequence::{SequenceElementData, SequenceState};
-    use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
-    use std::sync::Arc;
-
-    fn make_pc(posture: Posture) -> Entity {
-        Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(posture);
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element
-            },
-            actor: ActorData {
-                action_state: ActionState::Waiting,
-                ..Default::default()
-            },
-            human: HumanData::default(),
-            pc: Default::default(),
-        })
-    }
-
-    #[test]
-    fn distraction_projectile_latch_survives_serialization_and_emits_once() {
-        std::thread::Builder::new()
-            .name("distraction-projectile-latch-roundtrip".into())
-            .stack_size(16 * 1024 * 1024)
-            .spawn(distraction_projectile_latch_survives_serialization_and_emits_once_inner)
-            .expect("spawn large-stack projectile round-trip regression")
-            .join()
-            .expect("large-stack projectile round-trip regression panicked");
-    }
-
-    fn distraction_projectile_latch_survives_serialization_and_emits_once_inner() {
-        let mut engine = EngineInner::new();
-        let mut projectile = Entity::Projectile(ElementProjectile {
-            element: {
-                let mut initial_element = ElementData::default();
-                initial_element.kind = ElementKind::ObjectProjectile;
-                initial_element
-            },
-            object: ObjectData {
-                object_type: crate::element::ObjectType::Stone,
-                ..Default::default()
-            },
-            projectile: ProjectileData {
-                noise_distraction: true,
-                ..Default::default()
-            },
-        });
-        projectile.element_data_mut().set_layer(2);
-
-        let encoded = bitcode::encode(&projectile);
-        let restored: Entity = bitcode::decode(&encoded).expect("decode distraction projectile");
-        assert!(matches!(
-            &restored,
-            Entity::Projectile(projectile) if projectile.projectile.noise_distraction
-        ));
-
-        let projectile_id = engine.add_test_entity(restored);
-        let sim = crate::sim_rng::test_context();
-        let assets = LevelAssets::new();
-        let impact = crate::coordinates::MapPoint::new(80.0, 120.0);
-        assert!(engine.emit_noise_distraction_impact(&sim, &assets, projectile_id, impact));
-        assert!(!engine.emit_noise_distraction_impact(&sim, &assets, projectile_id, impact));
-    }
-
-    #[test]
-    fn water_splash_accepts_original_no_layer_sentinel() {
-        let mut engine = EngineInner::new();
-        let mut element = {
-            let mut initial_element = ElementData::default();
-            initial_element.active = true;
-            initial_element.kind = ElementKind::ObjectProjectile;
-            initial_element
-        };
-        element.clear_layer();
-        element.set_position(crate::coordinates::WorldPoint3D::new(80.0, 120.0, 2.0));
-        let projectile_id = engine.add_test_entity(Entity::Projectile(ElementProjectile {
-            element,
-            object: ObjectData {
-                object_type: crate::element::ObjectType::Arrow,
-                ..Default::default()
-            },
-            projectile: ProjectileData {
-                dive: true,
-                ..Default::default()
-            },
-        }));
-        engine
-            .get_entity_mut(projectile_id)
-            .expect("inserted projectile")
-            .element_data_mut()
-            .clear_layer();
-
-        engine.maybe_splash_on_landing(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            projectile_id,
-        );
-
-        let splash = engine
-            .feedback
-            .titbit_manager
-            .titbits()
-            .iter()
-            .find(|titbit| titbit.kind == crate::titbit::TitbitKind::Plouf)
-            .expect("water landing must emit a Plouf titbit");
-        // The original game normalizes an unowned raw -1 hint layer to layer 0
-        // during the effect update.
-        assert_eq!(splash.layer, 0);
-    }
-
-    fn purse_publication_assets() -> LevelAssets {
-        use crate::element::{Animation, ObjectType};
-        use crate::sprite::Sprite;
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
-
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
-        conversion[Animation::ObjectFlying as usize] = 16;
-        let script = SpriteScript {
-            action_id: Animation::ObjectFlying as u16,
-            action_done: 4,
-            frame_ids: vec![1, 2, 3, 4, 5],
-            delays: vec![0; 5],
-            distances: vec![0; 5],
-            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 5],
-            sound_ids: vec![0; 5],
-            ..Default::default()
-        };
-        let mut assets = LevelAssets::new();
-        let prototype = Sprite::new(Arc::new(vec![script; 17]), Arc::new(conversion));
-        assets
-            .accessory_sprite_prototypes
-            .insert(ObjectType::Purse, prototype.clone());
-        assets
-            .accessory_sprite_prototypes
-            .insert(ObjectType::Coin, prototype);
-        assets
-    }
-
-    #[test]
-    fn purse_prepublication_hourglass_preserves_origin_material_and_next_tick_edge() {
-        use crate::coordinates::{MapPoint, WorldPoint3D};
-        use crate::element::{Entity, GameMaterial, TrajectoryPointRuntime};
-        use crate::position_interface::SectorHandle;
-
-        let sim = crate::sim_rng::test_context();
-        let assets = purse_publication_assets();
-        let mut engine = EngineInner::new();
-        let mut thrower = make_pc(Posture::Upright);
-        thrower
-            .element_data_mut()
-            .set_position_map(MapPoint::new(400.0, 500.0));
-        thrower.element_data_mut().set_layer(2);
-        thrower.element_data_mut().set_sector(SectorHandle::new(7));
-        let thrower = engine.add_test_entity(thrower);
-        let start = WorldPoint3D::new(64.0, 64.0, 20.0);
-        let target = WorldPoint3D::new(200.0, 64.0, 0.0);
-        let mut entity = crate::bow_shot::spawn_purse(thrower, start, target, 2, None);
-        let Entity::Projectile(purse) = &mut entity else {
-            unreachable!()
-        };
-        purse.projectile.trajectory_runtime = vec![
-            TrajectoryPointRuntime {
-                bounce: false,
-                material: GameMaterial::Stone.as_u32(),
-            };
-            purse.projectile.trajectory.len()
-        ];
-
-        let purse_id = engine.publish_new_purse(&sim, &assets, thrower, entity);
-        let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
-            panic!("published purse disappeared")
-        };
-        assert_eq!(purse.element.direction(), 0);
-        assert_eq!(purse.element.sprite.position_iface.old_position(), start);
-        assert_eq!(purse.element.material(), GameMaterial::Stone);
-        assert_eq!(purse.element.sprite.current_row, 16);
-        assert_eq!(purse.element.sprite.current_frame, 2);
-        assert_eq!(purse.projectile.frame_count, 1);
-        assert_eq!(purse.projectile.start_of_trajectory_x, 400.0);
-        assert_eq!(purse.projectile.start_of_trajectory_y, 500.0);
-        assert_eq!(purse.projectile.trajectory_origin_sector, Some(7));
-        assert_eq!(
-            purse.projectile.trajectory_origin_layer,
-            crate::position_interface::Layer::new(2)
-        );
-        let after_prime = purse.element.position();
-        engine.tick_projectile_or_net_hourglass(&sim, &assets, purse_id);
-        let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
-            panic!("published purse disappeared")
-        };
-        assert_eq!(purse.projectile.frame_count, 2);
-        assert_eq!(
-            purse.element.sprite.position_iface.old_position(),
-            after_prime
-        );
-    }
-
-    #[test]
-    fn purse_prepublication_empty_and_one_step_trajectories_are_not_double_primed() {
-        use crate::coordinates::WorldPoint3D;
-        use crate::element::{Entity, TrajectoryPoint};
-
-        let sim = crate::sim_rng::test_context();
-        let assets = purse_publication_assets();
-        let mut engine = EngineInner::new();
-        let mut unplaced_thrower = make_pc(Posture::Upright);
-        unplaced_thrower.element_data_mut().clear_layer();
-        unplaced_thrower.element_data_mut().set_sector(None);
-        let thrower = engine.add_test_entity(unplaced_thrower);
-        let start = WorldPoint3D::new(20.0, 30.0, 10.0);
-
-        let mut empty = crate::bow_shot::spawn_purse(thrower, start, start, 0, None);
-        let Entity::Projectile(empty_purse) = &mut empty else {
-            unreachable!()
-        };
-        empty_purse.projectile.trajectory.clear();
-        empty_purse.projectile.trajectory_runtime.clear();
-        let empty_id = engine.publish_new_purse(&sim, &assets, thrower, empty);
-        let Some(Entity::Projectile(empty_purse)) = engine.get_entity(empty_id) else {
-            panic!("published empty purse disappeared")
-        };
-        assert!(!empty_purse.element.active);
-        assert_eq!(
-            empty_purse.projectile.purse.child_coins.len(),
-            usize::from(crate::bow_shot::NUMBER_OF_COINS_IN_PURSE)
-        );
-        assert!(
-            empty_purse
-                .projectile
-                .purse
-                .child_coins
-                .iter()
-                .all(|child| child.index() < empty_id.index()),
-            "Original adds every burst coin before the inactive purse"
-        );
-        let purse_creation = engine.original_creation_order(empty_id);
-        for &child in &empty_purse.projectile.purse.child_coins {
-            let Some(Entity::Projectile(coin)) = engine.get_entity(child) else {
-                panic!("purse child {child} is not a coin projectile")
-            };
-            assert_eq!(coin.projectile.purse.source_purse, Some(empty_id));
-            assert_eq!(
-                coin.object.animation,
-                crate::element::Animation::ObjectFlying
-            );
-            assert_eq!(coin.element.sprite.current_row, 16);
-            assert_eq!(coin.element.sprite.current_frame, 2);
-            assert_eq!(coin.element.sprite.position_iface.old_position(), start);
-            assert_eq!(coin.projectile.start_of_trajectory_x, start.x);
-            assert_eq!(coin.projectile.start_of_trajectory_y, start.y - start.z);
-            assert_eq!(coin.projectile.trajectory_origin_sector, None);
-            assert_eq!(coin.projectile.trajectory_origin_layer, None);
-            assert_eq!(coin.element.sector(), None);
-            assert_eq!(coin.element.optional_layer(), None);
-            assert!(
-                purse_creation < engine.original_creation_order(child),
-                "purse constructor identity must precede child coin constructors"
-            );
-        }
-        assert_eq!(empty_purse.element.optional_layer(), None);
-        assert_eq!(empty_purse.element.sector(), None);
-        assert_eq!(empty_purse.projectile.trajectory_origin_layer, None);
-        assert_eq!(empty_purse.projectile.trajectory_origin_sector, None);
-
-        let endpoint = WorldPoint3D::new(24.0, 36.0, 8.0);
-        let mut one = crate::bow_shot::spawn_purse(thrower, start, endpoint, 0, None);
-        let Entity::Projectile(one_purse) = &mut one else {
-            unreachable!()
-        };
-        one_purse.projectile.trajectory = vec![TrajectoryPoint {
-            position: endpoint,
-            time: 1,
-        }];
-        one_purse.projectile.trajectory_runtime.clear();
-        let one_id = engine.publish_new_purse(&sim, &assets, thrower, one);
-        let Some(Entity::Projectile(one_purse)) = engine.get_entity(one_id) else {
-            panic!("published one-step purse disappeared")
-        };
-        assert_eq!(one_purse.element.position(), endpoint);
-        assert_eq!(one_purse.projectile.frame_count, 1);
-        assert!(one_purse.projectile.trajectory.is_empty());
-    }
-
-    #[test]
-    fn purse_prepublication_water_and_hole_exhaustion_do_not_burst() {
-        use crate::coordinates::WorldPoint3D;
-        use crate::element::{Entity, GameMaterial};
-
-        for (material, dive, disappear) in [
-            (GameMaterial::Water, true, false),
-            (GameMaterial::Hole, false, true),
-        ] {
-            let sim = crate::sim_rng::test_context();
-            let assets = purse_publication_assets();
-            let mut engine = EngineInner::new();
-            let thrower = engine.add_test_entity(make_pc(Posture::Upright));
-            let start = WorldPoint3D::new(20.0, 30.0, 10.0);
-            let mut purse = crate::bow_shot::spawn_purse(thrower, start, start, 0, None);
-            let Entity::Projectile(projectile) = &mut purse else {
-                unreachable!()
-            };
-            projectile.projectile.trajectory.clear();
-            projectile.projectile.trajectory_runtime.clear();
-            projectile.projectile.dive = dive;
-            projectile.projectile.disappear = disappear;
-            projectile.element.set_material(material);
-
-            let purse_id = engine.publish_new_purse(&sim, &assets, thrower, purse);
-            let Some(Entity::Projectile(projectile)) = engine.get_entity(purse_id) else {
-                panic!("published water/hole purse disappeared")
-            };
-            assert!(projectile.element.active);
-            assert!(!projectile.projectile.purse.burst);
-            assert!(projectile.projectile.purse.child_coins.is_empty());
-            assert_eq!(
-                projectile.projectile.trajectory_frame_count,
-                if dive { 0 } else { u16::MAX }
-            );
-            assert_eq!(
-                projectile.projectile.velocity_increment,
-                crate::coordinates::WorldVec3D::ZERO
-            );
-        }
-    }
-
-    #[test]
-    fn purse_prepublication_first_segment_obeys_base_shield_early_return() {
-        use crate::coordinates::{MapPoint, WorldPoint3D};
-        use crate::element::{ActionState, Entity, TrajectoryPoint};
-
-        let sim = crate::sim_rng::test_context();
-        let assets = purse_publication_assets();
-        let mut engine = EngineInner::new();
-        let thrower = engine.add_test_entity(make_pc(Posture::Upright));
-        let mut holder = make_arrow_warning_soldier();
-        holder
-            .element_data_mut()
-            .set_position_map(MapPoint::new(50.0, 0.0));
-        holder.element_data_mut().set_direction_instantly(4);
-        {
-            let actor = holder.actor_data_mut().unwrap();
-            actor.action_state = ActionState::HoldingShield;
-            actor.shield_obstacle = Some(crate::bow_shot::compute_shield_obstacle(
-                MapPoint::new(50.0, 0.0),
-                0.0,
-                4,
-                &crate::bow_shot::ShieldParams {
-                    pre_offset: 20.0,
-                    width: 20.0,
-                    depth: 5.0,
-                    height: 40.0,
-                    z_offset: 10.0,
-                },
-            ));
-        }
-        let holder = engine.add_test_entity(holder);
-
-        let start = WorldPoint3D::new(100.0, 0.0, 40.0);
-        let end = WorldPoint3D::new(50.0, 0.0, 40.0);
-        let mut purse = crate::bow_shot::spawn_purse(thrower, start, end, 0, None);
-        let Entity::Projectile(projectile) = &mut purse else {
-            unreachable!()
-        };
-        projectile.projectile.trajectory = vec![TrajectoryPoint {
-            position: end,
-            time: 1,
-        }];
-        projectile.projectile.trajectory_runtime.clear();
-        let purse_id = engine.publish_new_purse(&sim, &assets, thrower, purse);
-        let Some(Entity::Projectile(projectile)) = engine.get_entity(purse_id) else {
-            panic!("published shielded purse disappeared")
-        };
-        assert!(projectile.projectile.flying);
-        assert!(projectile.projectile.trajectory.is_empty());
-        assert_eq!(projectile.element.sprite.current_frame, 2);
-        assert!(
-            engine
-                .orders
-                .sequence_manager
-                .sequences_iter()
-                .flat_map(|sequence| &sequence.elements)
-                .any(|element| element.owner == Some(holder)
-                    && element.command == crate::element::Command::ParryShield)
-        );
-    }
-
-    fn make_arrow_warning_soldier() -> Entity {
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-                initial_element.kind = ElementKind::ActorSoldier;
-                initial_element.active = true;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
-        soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
-        soldier.npc.life_points = 100;
-        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        Entity::Soldier(soldier)
-    }
-
-    fn bind_arrow_warning_sprite(entity: &mut Entity) {
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
-
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
-        conversion[OrderType::WaitingShield as usize] = 0;
-        conversion[OrderType::LoweringShield as usize] = 0;
-        let script = SpriteScript {
-            action_id: OrderType::WaitingShield as u16,
-            action_done: 1,
-            average_speed: 0.0,
-            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
-            sum_distance: 0,
-            frame_ids: vec![1, 2],
-            delays: vec![0, 0],
-            distances: vec![0, 0],
-            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
-            sound_ids: vec![0, 0],
-        };
-        entity.element_data_mut().sprite =
-            crate::sprite::Sprite::new(Arc::new(vec![script; 16]), Arc::new(conversion));
-    }
-
-    fn arrow_warning_fixture(
-        shield_weapon: bool,
-        shooter_x: f32,
-    ) -> (
-        EngineInner,
-        LevelAssets,
-        EntityId,
-        EntityId,
-        crate::sequence::SequenceId,
-    ) {
-        use crate::ai::{AiState, Substate};
-        use crate::coordinates::{MapPoint, WorldPoint3D};
-        use crate::element::{Command, EyeStatus};
-        use crate::sequence::SequenceElement;
-
-        let mut engine = EngineInner::new();
-        // Legacy human handles reserve zero as missing; production has a hidden
-        // pre-level prefix, so keep the test shooter on a nonzero handle too.
-        engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
-            element: {
-                let mut initial_element = ElementData::default();
-                initial_element.kind = ElementKind::Target;
-                initial_element
-            },
-            fx: Default::default(),
-            target: Default::default(),
-        }));
-
-        let mut shooter = make_pc(Posture::Upright);
-        shooter.element_data_mut().active = true;
-        shooter
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(shooter_x, 0.0, 0.0));
-        shooter
-            .element_data_mut()
-            .set_position_map(MapPoint::new(shooter_x, 0.0));
-        shooter.pc_data_mut().unwrap().life_points = 100;
-        let shooter_id = engine.add_test_entity(shooter);
-
-        let mut target = make_arrow_warning_soldier();
-        bind_arrow_warning_sprite(&mut target);
-        target
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(0.0, 0.0, 0.0));
-        target
-            .element_data_mut()
-            .set_position_map(MapPoint::new(0.0, 0.0));
-        target.element_data_mut().set_direction_instantly(4);
-        let target_id = engine.add_test_entity(target);
-        assert!(shooter_id.index() < target_id.index());
-
-        let mut assets = LevelAssets::new();
-        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-        let profiles = Arc::make_mut(&mut assets.profile_manager);
-        profiles.soldiers[0].hth_weapon_id = 1;
-        profiles.hth_weapons[0].shield = shield_weapon;
-
-        let Entity::Soldier(target) = engine.get_entity_mut(target_id).unwrap() else {
-            unreachable!()
-        };
-        target.actor.action_state = ActionState::HoldingShield;
-        target.npc.view_direction = [1.0, 0.0];
-        target.npc.view_radius = 135;
-        target.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
-        target.npc.eye_status = EyeStatus::Stare;
-        let ai = target.npc.ai_brain.enemy_mut().unwrap();
-        ai.base.me = target_id.index();
-        ai.base.current_state = AiState::Attacking;
-        ai.base.current_substate = Substate::AttackingProtectingWithShield;
-
-        let lower = engine
-            .orders
-            .sequence_manager
-            .launch_element(SequenceElement::new(
-                1,
-                Command::LowerShield,
-                Some(target_id),
-            ));
-        crate::engine::melee::ShieldCommandContext::new(
-            &mut engine.world.entities,
-            &mut engine.orders.sequence_manager,
-            &mut engine.orders.next_order_id,
-        )
-        .dispatch(target_id, Command::LowerShield, lower, 0);
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .current_order_for_actor(target_id)
-                .map(|(_, _, order)| order.order_type),
-            Some(OrderType::LoweringShield)
-        );
-
-        (engine, assets, shooter_id, target_id, lower)
-    }
-
-    #[test]
-    fn arrow_warning_synchronously_interrupts_later_shield_target_and_preserves_fifo() {
-        use crate::ai::{Stimulus, StimulusType};
-        use crate::sequence::SequenceState;
-
-        let sim = crate::sim_rng::test_context();
-        let (mut engine, assets, shooter, target, lower) = arrow_warning_fixture(true, 55.0);
-        engine
-            .get_entity_mut(target)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap()
-            .outbox
-            .detection
-            .stimuli
-            .push(Stimulus::new(StimulusType::EventTimer));
-
-        engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
-
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(lower, 0)
-                .unwrap()
-                .state,
-            SequenceState::Interrupted,
-            "the release-site Think must interrupt LowerShield before the later target slot animates"
-        );
-        assert_eq!(
-            engine
-                .get_entity(target)
-                .and_then(Entity::enemy_ai)
-                .unwrap()
-                .base
-                .primary_target,
-            Some(crate::ai::AiEntityHandle::new(shooter.index())),
-            "the arrow reaction must run now, not remain queued for the target's later slot"
-        );
-        let queued = &engine
-            .get_entity(target)
-            .and_then(Entity::ai_controller)
-            .unwrap()
-            .outbox
-            .detection
-            .stimuli;
-        assert_eq!(queued.len(), 1);
-        assert_eq!(queued[0].stimulus_type, StimulusType::EventTimer);
-    }
-
-    #[test]
-    fn arrow_warning_skips_nonshield_and_nonseeing_targets() {
-        use crate::sequence::SequenceState;
-
-        let sim = crate::sim_rng::test_context();
-        for (shield_weapon, shooter_x) in [(false, 55.0), (true, 500.0)] {
-            let (mut engine, assets, shooter, target, lower) =
-                arrow_warning_fixture(shield_weapon, shooter_x);
-
-            engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
-
-            assert_eq!(
-                engine
-                    .orders
-                    .sequence_manager
-                    .get_element(lower, 0)
-                    .unwrap()
-                    .state,
-                SequenceState::InProgress
-            );
-            assert!(
-                engine
-                    .get_entity(target)
-                    .and_then(Entity::ai_controller)
-                    .unwrap()
-                    .outbox
-                    .detection
-                    .stimuli
-                    .is_empty()
-            );
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "bow target 2 requires missing soldier profile 9")]
-    fn arrow_warning_rejects_missing_authoritative_soldier_profile() {
-        let sim = crate::sim_rng::test_context();
-        let (mut engine, assets, shooter, target, _) = arrow_warning_fixture(true, 55.0);
-        let Entity::Soldier(soldier) = engine.get_entity_mut(target).unwrap() else {
-            unreachable!()
-        };
-        soldier.soldier.soldier_profile_index = SoldierProfileIdx(9);
-
-        engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
-    }
-
-    fn attach_drop_test_sprite(entity: &mut Entity) {
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript};
-
-        let script = SpriteScript {
-            action_id: 0,
-            action_done: 0,
-            average_speed: 0.0,
-            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
-            sum_distance: 0,
-            frame_ids: vec![1],
-            delays: vec![0],
-            distances: vec![0],
-            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
-            sound_ids: vec![0],
-        };
-        entity.element_data_mut().sprite = crate::sprite::Sprite::new(
-            Arc::new(vec![script; 16]),
-            Arc::new(vec![0; NONANIMATION_END]),
-        );
-    }
-
-    fn corpse_drop_pair(
-        carrier_pos: crate::coordinates::MapPoint,
-    ) -> (
-        EngineInner,
-        crate::element::EntityId,
-        crate::element::EntityId,
-    ) {
-        let mut engine = EngineInner::new();
-        let target_id = engine.add_test_entity(make_pc(Posture::Carried));
-        let mut carrier = make_pc(Posture::CarryingCorpse);
-        attach_drop_test_sprite(&mut carrier);
-        carrier.pc_data_mut().unwrap().carried = Some(target_id);
-        carrier.element_data_mut().set_position_map(carrier_pos);
-        let carrier_id = engine.add_test_entity(carrier);
-        engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .carrier = Some(carrier_id);
-        (engine, carrier_id, target_id)
-    }
-
-    fn install_corpse_drop_building_sector(engine: &mut EngineInner, raw_sector: u16) {
-        let mut level = crate::fast_find_grid::LevelGrid::default();
-        level
-            .sector_number_map
-            .insert(crate::sector::SectorNumber::new(raw_sector as i16), 0);
-        level.sectors.push(crate::fast_find_grid::GridSector {
-            points: Vec::new(),
-            bounding_box: crate::coordinates::MapBBox::new(),
-            sector_type: crate::sector::SectorType::BUILDING,
-            layer: 0,
-            sector_number: crate::sector::SectorNumber::new(raw_sector as i16),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
-        });
-        engine.world.fast_grid_mut().level = Arc::new(level);
-    }
-
-    #[test]
-    fn delayed_corpse_drop_carries_sloped_surface_into_next_frame_position() {
-        let carrier_pos = crate::coordinates::MapPoint::new(743.0, 1681.0);
-        let plane = crate::position_interface::PlaneZCoeffs {
-            az: -0.270_139,
-            bz: -1.787_207,
-            dz: 3_396.161_9,
-        };
-        let obstacle = crate::position_interface::ObstacleHandle::new(221).unwrap();
-        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
-        let cached_position = crate::coordinates::WorldPoint3D::new(700.0, 1906.001, 225.001);
-        engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
-            .set_position(cached_position);
-        engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
-            .set_material(crate::element::GameMaterial::Grass);
-        {
-            let carrier = engine.get_entity_mut(carrier_id).unwrap();
-            let elem = carrier.element_data_mut();
-            elem.set_layer(1);
-            elem.set_obstacle_index(Some(obstacle), Some(plane));
-        }
-
-        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Lying, carrier_pos, 15);
-
-        let target = engine.get_entity(target_id).unwrap();
-        assert!(target.element_data().position_map_delayed);
-        assert_eq!(target.element_data().layer(), 1);
-        assert_eq!(
-            target.element_data().material(),
-            crate::element::GameMaterial::Grass
-        );
-        assert_eq!(target.position_iface().get_obstacle(), Some(obstacle));
-        assert_eq!(target.position_iface().get_plane(), Some(&plane));
-        assert_eq!(target.element_data().position(), cached_position);
-
-        engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
-            .apply_next_delayed_position()
-            .expect("outdoor corpse drop must commit its delayed position next frame");
-        let target = engine.get_entity(target_id).unwrap();
-        assert_eq!(target.element_data().position_map(), carrier_pos);
-        assert_eq!(
-            target.element_data().position().z.to_bits(),
-            plane.compute_z(743.0, 1681.0).to_bits()
-        );
-        assert_ne!(
-            target.element_data().position().z.to_bits(),
-            0.0_f32.to_bits()
-        );
-    }
-
-    #[test]
-    fn outdoor_null_surface_corpse_drop_preserves_cached_elevation_until_delayed_commit() {
-        let carrier_pos = crate::coordinates::MapPoint::new(3126.2605, 2149.9695);
-        let carried_position = crate::coordinates::WorldPoint3D::new(3125.0, 2375.001, 225.001);
-        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
-        {
-            let target = engine.get_entity_mut(target_id).unwrap();
-            target.element_data_mut().set_position(carried_position);
-        }
-        let carried_map = engine
-            .get_entity(target_id)
-            .unwrap()
-            .element_data()
-            .position_map();
-
-        engine.apply_completed_corpse_drop(
-            carrier_id,
-            target_id,
-            Posture::DeadBack,
-            carrier_pos,
-            0,
-        );
-
-        let target = engine.get_entity(target_id).unwrap();
-        assert!(target.element_data().position_map_delayed);
-        assert_eq!(target.element_data().position(), carried_position);
-        assert_eq!(target.element_data().position_map(), carried_map);
-        assert_eq!(target.position_iface().get_obstacle(), None);
-        assert_eq!(target.position_iface().get_plane(), None);
-
-        engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
-            .apply_next_delayed_position()
-            .expect("outdoor corpse drop must commit its delayed position next frame");
-        let target = engine.get_entity(target_id).unwrap();
-        assert_eq!(target.element_data().position_map(), carrier_pos);
-        assert_eq!(
-            target.element_data().position().z.to_bits(),
-            0.0_f32.to_bits()
-        );
-    }
-
-    #[test]
-    fn delayed_corpse_drop_updates_intersections_at_old_current_position() {
-        let carried_position = crate::coordinates::MapPoint::new(100.0, 100.0);
-        let drop_position = crate::coordinates::MapPoint::new(300.0, 300.0);
-        let (mut engine, carrier_id, target_id) = corpse_drop_pair(drop_position);
-        {
-            let target = engine.get_entity_mut(target_id).unwrap();
-            target.element_data_mut().set_position_map(carried_position);
-            assert_eq!(
-                target
-                    .human_data()
-                    .unwrap()
-                    .last_is_lying_for_corpse_intersection,
-                None,
-                "freshly adopted carried bodies have no derived observer state"
-            );
-        }
-        let mut neighbour = make_pc(Posture::Tied);
-        neighbour
-            .element_data_mut()
-            .set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
-        neighbour
-            .human_data_mut()
-            .unwrap()
-            .last_is_lying_for_corpse_intersection = Some(true);
-        let neighbour_id = engine.add_test_entity(neighbour);
-
-        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Tied, drop_position, 0);
-
-        let target = engine.get_entity(target_id).unwrap();
-        assert!(target.element_data().position_map_delayed);
-        assert_eq!(target.element_data().position_map(), carried_position);
-        assert!(target.human_data().unwrap().small_repulsive_radius);
-        assert!(
-            engine
-                .get_entity(neighbour_id)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
-
-        engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
-            .apply_next_delayed_position()
-            .expect("outdoor corpse drop must retain its delayed destination");
-        assert_eq!(
-            engine
-                .get_entity(target_id)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            drop_position
-        );
-    }
-
-    #[test]
-    fn instant_building_corpse_drop_keeps_carrier_surface_and_commits_immediately() {
-        let carrier_pos = crate::coordinates::MapPoint::new(120.0, 240.0);
-        let plane = crate::position_interface::PlaneZCoeffs {
-            az: 0.125,
-            bz: -0.25,
-            dz: 45.0,
-        };
-        let obstacle = crate::position_interface::ObstacleHandle::new(17).unwrap();
-        let sector = crate::position_interface::SectorHandle::new(7).unwrap();
-        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
-        install_corpse_drop_building_sector(&mut engine, 7);
-        engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
-            .set_material(crate::element::GameMaterial::Leaves);
-        {
-            let carrier = engine.get_entity_mut(carrier_id).unwrap();
-            let elem = carrier.element_data_mut();
-            elem.set_layer(3);
-            elem.set_sector(Some(sector));
-            elem.set_obstacle_index(Some(obstacle), Some(plane));
-        }
-
-        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Lying, carrier_pos, 4);
-
-        let target = engine.get_entity(target_id).unwrap();
-        assert!(!target.element_data().position_map_delayed);
-        assert_eq!(target.element_data().position_map(), carrier_pos);
-        assert_eq!(target.element_data().layer(), 3);
-        assert_eq!(target.element_data().sector(), Some(sector));
-        assert_eq!(
-            target.element_data().material(),
-            crate::element::GameMaterial::Leaves
-        );
-        assert_eq!(target.position_iface().get_obstacle(), Some(obstacle));
-        assert_eq!(target.position_iface().get_plane(), Some(&plane));
-        assert_eq!(
-            target.element_data().position().z.to_bits(),
-            plane.compute_z(120.0, 240.0).to_bits()
-        );
-        assert_eq!(target.element_data().direction(), 0);
-        assert_eq!(
-            i16::from(target.position_iface().get_direction_goal()),
-            4,
-            "clearing the carrier must restore its facing as the dropped corpse's goal"
-        );
-    }
-
-    #[test]
-    fn task229_projectile_ai_origin_preserves_saved_sector_and_layer() {
-        let exact_sector = crate::fast_find_grid::SectorIndex::new(41).unwrap();
-        let mut projectile = Entity::Projectile(ElementProjectile {
-            element: {
-                let mut initial_element = ElementData::default();
-                initial_element.kind = ElementKind::ObjectProjectile;
-                initial_element
-            },
-            object: ObjectData::default(),
-            projectile: ProjectileData {
-                start_of_trajectory_x: 572.0,
-                start_of_trajectory_y: 2360.0,
-                ..Default::default()
-            },
-        });
-        let Entity::Projectile(projectile_data) = &mut projectile else {
-            unreachable!()
-        };
-        let exact_handle = crate::position_interface::SectorHandle::new(17)
-            .unwrap()
-            .with_arena_index(exact_sector);
-        set_projectile_trajectory_origin(&mut projectile_data.projectile, Some(exact_handle), 11);
-        assert_eq!(
-            projectile_data.projectile.trajectory_origin_sector,
-            Some(17)
-        );
-        assert_eq!(
-            projectile_data.projectile.trajectory_origin_sector_index,
-            Some(exact_sector),
-            "the shared arrow/apple publication writer must retain exact origin topology"
-        );
-
-        let origin = projectile_trajectory_origin(&projectile).unwrap();
-        assert_eq!(origin.x, 572.0);
-        assert_eq!(origin.y, 2360.0);
-        assert_eq!(origin.sector.map(|sector| sector.get()), Some(17));
-        assert_eq!(
-            origin.sector.and_then(|sector| sector.arena_index()),
-            Some(exact_sector),
-            "arrow-hit events must copy the exact trajectory-origin sector identity"
-        );
-        assert_eq!(origin.level, 11);
-
-        // The task-229 boundary lies on opposite sides of a direction-sector
-        // threshold depending on whether Face(Position) retains sector 17's
-        // projection elevation. Dropping the sector changes the authored turn.
-        let dx = 572.0 - 785.243_35;
-        let dy = 2360.0 - 2_192.851_6;
-        assert_eq!(
-            crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-            10
-        );
-        assert_eq!(
-            crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy + 105.001_01),
-            9
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "without its public sector number")]
-    fn projectile_origin_rejects_orphan_exact_sector_identity() {
-        let projectile = ProjectileData {
-            trajectory_origin_sector_index: crate::fast_find_grid::SectorIndex::new(41),
-            ..Default::default()
-        };
-        let _ = projectile_trajectory_origin_sector(&projectile);
-    }
-
-    fn blocked_shoulder_pair() -> (
-        EngineInner,
-        LevelAssets,
-        crate::element::EntityId,
-        crate::element::EntityId,
-    ) {
-        let mut engine = EngineInner::new();
-        let victim_id = engine.add_test_entity(make_pc(Posture::OnShoulders));
-        let mut carrier = make_pc(Posture::CarryingOnShoulders);
-        let Entity::Pc(carrier_pc) = &mut carrier else {
-            unreachable!()
-        };
-        carrier_pc.pc.carried = Some(victim_id);
-        let carrier_id = engine.add_test_entity(carrier);
-        engine
-            .get_entity_mut(victim_id)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .carrier = Some(carrier_id);
-
-        // A flat solid slab from z=60 through z=70 intersects the exact
-        // Shoulder-carry eligibility's vertical segment (z=50..90) at the default
-        // actor position (0, 0).
-        let mut ceiling = SightObstacle::new_default(0);
-        ceiling.obstacle_points = vec![
-            ObstaclePoint {
-                x: -10.0,
-                y: -10.0,
-                z_top: 70.0,
-                z_bottom: 60.0,
-            },
-            ObstaclePoint {
-                x: 10.0,
-                y: -10.0,
-                z_top: 70.0,
-                z_bottom: 60.0,
-            },
-            ObstaclePoint {
-                x: 10.0,
-                y: 10.0,
-                z_top: 70.0,
-                z_bottom: 60.0,
-            },
-            ObstaclePoint {
-                x: -10.0,
-                y: 10.0,
-                z_top: 70.0,
-                z_bottom: 60.0,
-            },
-        ];
-        ceiling.top_plane_points = [
-            [-10.0, -10.0, 70.0],
-            [10.0, -10.0, 70.0],
-            [-10.0, 10.0, 70.0],
-        ];
-        ceiling.bottom_plane_points = [
-            [-10.0, -10.0, 60.0],
-            [10.0, -10.0, 60.0],
-            [-10.0, 10.0, 60.0],
-        ];
-        ceiling.rebuild_geometry();
-
-        let mut assets = LevelAssets::new();
-        assets.environment.static_sight_obstacles = Arc::new(vec![ceiling]);
-        (engine, assets, carrier_id, victim_id)
-    }
-
-    fn shoulder_drop_elements(engine: &EngineInner) -> Vec<&crate::sequence::SequenceElement> {
-        engine
-            .orders
-            .sequence_manager
-            .sequences_iter()
-            .flat_map(|sequence| sequence.elements.iter())
-            .filter(|element| element.command == crate::element::Command::ReceiveDamage)
-            .collect()
-    }
-
-    #[test]
-    fn stone_soldier_protection_requires_real_weapon_profile() {
-        let mut profiles = ProfileManager::new();
-        profiles.soldiers.push(SoldierProfile {
-            hth_weapon_id: 1,
-            ..SoldierProfile::default()
-        });
-
-        assert_eq!(
-            soldier_piercing_protection(&profiles, SoldierProfileIdx(0)),
-            None
-        );
-
-        profiles.hth_weapons.push(HtHWeaponProfile {
-            piercing_protection: 35,
-            ..HtHWeaponProfile::default()
-        });
-
-        assert_eq!(
-            soldier_piercing_protection(&profiles, SoldierProfileIdx(0)),
-            Some(35)
-        );
-    }
-
-    #[test]
-    fn soldier_shield_dimensions_require_real_weapon_profile() {
-        let mut profiles = ProfileManager::new();
-        profiles.soldiers.push(SoldierProfile {
-            hth_weapon_id: 1,
-            ..SoldierProfile::default()
-        });
-
-        assert_eq!(
-            soldier_shield_dimensions(&profiles, SoldierProfileIdx(0)),
-            None
-        );
-
-        profiles.hth_weapons.push(HtHWeaponProfile {
-            shield_width: 22,
-            shield_height: 44,
-            ..HtHWeaponProfile::default()
-        });
-
-        assert_eq!(
-            soldier_shield_dimensions(&profiles, SoldierProfileIdx(0)),
-            Some((22, 44))
-        );
-    }
-
-    #[test]
-    fn carrying_posture_waiting_action_does_not_run_ceiling_check() {
-        let (mut engine, assets, carrier_id, _) = blocked_shoulder_pair();
-
-        engine.tick_shouldered_carry_ceiling(
-            &assets,
-            &[(carrier_id, OrderType::WaitingCarryingOnShoulders)],
-        );
-
-        assert!(shoulder_drop_elements(&engine).is_empty());
-    }
-
-    #[test]
-    fn carry_done_applies_effect_without_releasing_selected_ability() {
-        let mut engine = EngineInner::new();
-        let carrier = engine.add_test_entity(make_pc(Posture::CarryingCorpse));
-        let target = engine.add_test_entity(make_pc(Posture::Lying));
-        let selected = crate::movement::ActiveAbility {
-            kind: Some(crate::movement::AbilityKind::Carry),
-            sequence_id: Some(crate::sequence::SequenceId(91)),
-            element_index: 2,
-            target: Some(target),
-            done_effect_applied: true,
-            ..Default::default()
-        };
-        engine
-            .get_entity_mut(carrier)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_ability = selected.clone();
-        let selected_before = bitcode::encode(&selected);
-
-        engine.apply_ability_tick_result(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            false,
-            crate::abilities::AbilityTickResult::CarryDone {
-                carrier_id: carrier,
-                target_id: target,
-                carried_posture: Posture::Lying,
-                seq_id: crate::sequence::SequenceId(91),
-                elem_idx: 2,
-            },
-        );
-
-        let carrier = engine.get_entity(carrier).unwrap();
-        assert_eq!(carrier.pc_data().unwrap().carried, Some(target));
-        assert_eq!(
-            bitcode::encode(&carrier.actor_data().unwrap().active_ability),
-            selected_before
-        );
-        let target = engine.get_entity(target).unwrap();
-        assert_eq!(target.posture(), Posture::Carried);
-        assert_eq!(
-            target.actor_data().unwrap().action_state,
-            ActionState::Waiting
-        );
-        assert!(
-            engine
-                .orders
-                .sequence_manager
-                .sequences_iter()
-                .next()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn shoulder_dismount_done_detaches_both_owners_before_helper_wait() {
-        let (mut engine, assets, helper, climber) = blocked_shoulder_pair();
-        let helper_position = crate::coordinates::MapPoint::new(80.0, 96.0);
-        {
-            let helper = engine.get_entity_mut(helper).unwrap();
-            helper.element_data_mut().set_position_map(helper_position);
-            helper.element_data_mut().set_direction_instantly(6);
-            helper.actor_data_mut().unwrap().execution_frozen = true;
-        }
-        {
-            let climber_entity = engine.get_entity_mut(climber).unwrap();
-            climber_entity.actor_data_mut().unwrap().execution_frozen = true;
-            climber_entity.element_data_mut().sprite.display_order_ref = Some(helper);
-            climber_entity
-                .element_data_mut()
-                .sprite
-                .behind_display_order_ref = true;
-        }
-
-        engine.apply_ability_tick_result(
-            &crate::sim_rng::test_context(),
-            &assets,
-            false,
-            crate::abilities::AbilityTickResult::ClimbDownFromShouldersDone {
-                climber_id: climber,
-                helper_id: helper,
-                seq_id: crate::sequence::SequenceId(92),
-                elem_idx: 0,
-            },
-        );
-
-        let climber_entity = engine.get_entity(climber).unwrap();
-        assert_eq!(climber_entity.posture(), Posture::Upright);
-        assert_eq!(climber_entity.human_data().unwrap().carrier, None);
-        assert!(!climber_entity.actor_data().unwrap().execution_frozen);
-        assert_eq!(
-            climber_entity.element_data().position_map(),
-            helper_position
-        );
-        assert_eq!(climber_entity.element_data().direction(), 14);
-        assert_eq!(climber_entity.sprite().display_order_ref, None);
-        assert!(!climber_entity.sprite().behind_display_order_ref);
-        let helper_entity = engine.get_entity(helper).unwrap();
-        assert_eq!(helper_entity.posture(), Posture::HelpingToClimb);
-        assert_eq!(helper_entity.pc_data().unwrap().carried, None);
-        assert!(!helper_entity.actor_data().unwrap().execution_frozen);
-        let waits = engine
-            .orders
-            .sequence_manager
-            .sequences_iter()
-            .flat_map(|sequence| &sequence.elements)
-            .filter(|element| element.command == crate::element::Command::Wait)
-            .collect::<Vec<_>>();
-        assert_eq!(waits.len(), 1);
-        assert_eq!(waits[0].owner, Some(helper));
-        assert_eq!(waits[0].priority, crate::sequence::SequencePriority::Wait);
-    }
-
-    #[test]
-    fn walking_carry_action_launches_drop_on_that_action_frame() {
-        let (mut engine, assets, carrier_id, victim_id) = blocked_shoulder_pair();
-        assert!(shoulder_drop_elements(&engine).is_empty());
-
-        engine.tick_shouldered_carry_ceiling(
-            &assets,
-            &[(carrier_id, OrderType::WalkingCarryingOnShoulders)],
-        );
-
-        let drops = shoulder_drop_elements(&engine);
-        assert_eq!(drops.len(), 1);
-        let drop = drops[0];
-        assert_eq!(drop.owner, Some(victim_id));
-        assert_eq!(drop.state, SequenceState::Todo);
-        assert!(matches!(
-            drop.data,
-            SequenceElementData::Damage {
-                origin: Some(origin),
-                projectile: None,
-                damage: 0,
-                concussion: 0,
-                sword_strike: None,
-                sword_profile_idx: None,
-                is_harder_hit: false,
-            } if origin == victim_id
-        ));
-    }
-
-    #[test]
-    fn projectile_damage_waits_for_sequence_manager_dispatch() {
-        let mut engine = EngineInner::new();
-        let shooter = engine.add_test_entity(make_pc(Posture::Upright));
-        let mut victim = make_pc(Posture::Upright);
-        let Entity::Pc(victim_pc) = &mut victim else {
-            unreachable!()
-        };
-        victim_pc.pc.life_points = 100;
-        let victim = engine.add_test_entity(victim);
-
-        engine.queue_projectile_damage(
-            victim,
-            shooter,
-            crate::element::Command::ReceiveArrowDamage,
-            40,
-            0,
-            Some(shooter),
-        );
-
-        assert_eq!(
-            engine
-                .get_entity(victim)
-                .and_then(|entity| entity.pc_data())
-                .map(|pc| pc.life_points),
-            Some(100),
-            "projectile collision must not apply damage before the sequence-manager tick"
-        );
-        let damage = engine
-            .orders
-            .sequence_manager
-            .sequences_iter()
-            .flat_map(|sequence| sequence.elements.iter())
-            .find(|element| {
-                element.owner == Some(victim)
-                    && element.command == crate::element::Command::ReceiveArrowDamage
-            })
-            .expect("queued arrow damage element");
-        assert_eq!(damage.state, SequenceState::Todo);
-        assert!(matches!(
-            damage.data,
-            SequenceElementData::Damage {
-                origin: Some(origin),
-                projectile: Some(projectile),
-                damage: 40,
-                concussion: 0,
-                ..
-            } if origin == shooter && projectile == shooter
-        ));
-    }
-}
-
 /// Index used by relic-collection bookkeeping — the BonusType ordinal
 /// for each relic.
 fn relic_object_type_index(obj: crate::element::ObjectType) -> u32 {
@@ -6748,5 +5430,1322 @@ impl EngineInner {
                 "shoulder carrying: ceiling blocked → launched drop damage"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        projectile_trajectory_origin, projectile_trajectory_origin_sector,
+        set_projectile_trajectory_origin, soldier_piercing_protection, soldier_shield_dimensions,
+    };
+    use crate::element::{
+        ActionState, ActorData, ActorPc, ElementData, ElementKind, ElementProjectile, Entity,
+        EntityId, HumanData, ObjectData, Posture, ProjectileData,
+    };
+    use crate::engine::{EngineInner, LevelAssets};
+    use crate::order::OrderType;
+    use crate::profiles::{HtHWeaponProfile, ProfileManager, SoldierProfile, SoldierProfileIdx};
+    use crate::sequence::{SequenceElementData, SequenceState};
+    use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
+    use std::sync::Arc;
+
+    fn make_pc(posture: Posture) -> Entity {
+        Entity::Pc(ActorPc {
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(posture);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
+            },
+            actor: ActorData {
+                action_state: ActionState::Waiting,
+                ..Default::default()
+            },
+            human: HumanData::default(),
+            pc: Default::default(),
+        })
+    }
+
+    #[test]
+    fn distraction_projectile_latch_survives_serialization_and_emits_once() {
+        std::thread::Builder::new()
+            .name("distraction-projectile-latch-roundtrip".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(distraction_projectile_latch_survives_serialization_and_emits_once_inner)
+            .expect("spawn large-stack projectile round-trip regression")
+            .join()
+            .expect("large-stack projectile round-trip regression panicked");
+    }
+
+    fn distraction_projectile_latch_survives_serialization_and_emits_once_inner() {
+        let mut engine = EngineInner::new();
+        let mut projectile = Entity::Projectile(ElementProjectile {
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element
+            },
+            object: ObjectData {
+                object_type: crate::element::ObjectType::Stone,
+                ..Default::default()
+            },
+            projectile: ProjectileData {
+                noise_distraction: true,
+                ..Default::default()
+            },
+        });
+        projectile.element_data_mut().set_layer(2);
+
+        let encoded = bitcode::encode(&projectile);
+        let restored: Entity = bitcode::decode(&encoded).expect("decode distraction projectile");
+        assert!(matches!(
+            &restored,
+            Entity::Projectile(projectile) if projectile.projectile.noise_distraction
+        ));
+
+        let projectile_id = engine.add_test_entity(restored);
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        let impact = crate::coordinates::MapPoint::new(80.0, 120.0);
+        assert!(engine.emit_noise_distraction_impact(&sim, &assets, projectile_id, impact));
+        assert!(!engine.emit_noise_distraction_impact(&sim, &assets, projectile_id, impact));
+    }
+
+    #[test]
+    fn water_splash_accepts_original_no_layer_sentinel() {
+        let mut engine = EngineInner::new();
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.active = true;
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element
+        };
+        element.clear_layer();
+        element.set_position(crate::coordinates::WorldPoint3D::new(80.0, 120.0, 2.0));
+        let projectile_id = engine.add_test_entity(Entity::Projectile(ElementProjectile {
+            element,
+            object: ObjectData {
+                object_type: crate::element::ObjectType::Arrow,
+                ..Default::default()
+            },
+            projectile: ProjectileData {
+                dive: true,
+                ..Default::default()
+            },
+        }));
+        engine
+            .get_entity_mut(projectile_id)
+            .expect("inserted projectile")
+            .element_data_mut()
+            .clear_layer();
+
+        engine.maybe_splash_on_landing(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            projectile_id,
+        );
+
+        let splash = engine
+            .feedback
+            .titbit_manager
+            .titbits()
+            .iter()
+            .find(|titbit| titbit.kind == crate::titbit::TitbitKind::Plouf)
+            .expect("water landing must emit a Plouf titbit");
+        // The original game normalizes an unowned raw -1 hint layer to layer 0
+        // during the effect update.
+        assert_eq!(splash.layer, 0);
+    }
+
+    fn purse_publication_assets() -> LevelAssets {
+        use crate::element::{Animation, ObjectType};
+        use crate::sprite::Sprite;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[Animation::ObjectFlying as usize] = 16;
+        let script = SpriteScript {
+            action_id: Animation::ObjectFlying as u16,
+            action_done: 4,
+            frame_ids: vec![1, 2, 3, 4, 5],
+            delays: vec![0; 5],
+            distances: vec![0; 5],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 5],
+            sound_ids: vec![0; 5],
+            ..Default::default()
+        };
+        let mut assets = LevelAssets::new();
+        let prototype = Sprite::new(Arc::new(vec![script; 17]), Arc::new(conversion));
+        assets
+            .accessory_sprite_prototypes
+            .insert(ObjectType::Purse, prototype.clone());
+        assets
+            .accessory_sprite_prototypes
+            .insert(ObjectType::Coin, prototype);
+        assets
+    }
+
+    #[test]
+    fn purse_prepublication_hourglass_preserves_origin_material_and_next_tick_edge() {
+        use crate::coordinates::{MapPoint, WorldPoint3D};
+        use crate::element::{Entity, GameMaterial, TrajectoryPointRuntime};
+        use crate::position_interface::SectorHandle;
+
+        let sim = crate::sim_rng::test_context();
+        let assets = purse_publication_assets();
+        let mut engine = EngineInner::new();
+        let mut thrower = make_pc(Posture::Upright);
+        thrower
+            .element_data_mut()
+            .set_position_map(MapPoint::new(400.0, 500.0));
+        thrower.element_data_mut().set_layer(2);
+        thrower.element_data_mut().set_sector(SectorHandle::new(7));
+        let thrower = engine.add_test_entity(thrower);
+        let start = WorldPoint3D::new(64.0, 64.0, 20.0);
+        let target = WorldPoint3D::new(200.0, 64.0, 0.0);
+        let mut entity = crate::bow_shot::spawn_purse(thrower, start, target, 2, None);
+        let Entity::Projectile(purse) = &mut entity else {
+            unreachable!()
+        };
+        purse.projectile.trajectory_runtime = vec![
+            TrajectoryPointRuntime {
+                bounce: false,
+                material: GameMaterial::Stone.as_u32(),
+            };
+            purse.projectile.trajectory.len()
+        ];
+
+        let purse_id = engine.publish_new_purse(&sim, &assets, thrower, entity);
+        let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
+            panic!("published purse disappeared")
+        };
+        assert_eq!(purse.element.direction(), 0);
+        assert_eq!(purse.element.sprite.position_iface.old_position(), start);
+        assert_eq!(purse.element.material(), GameMaterial::Stone);
+        assert_eq!(purse.element.sprite.current_row, 16);
+        assert_eq!(purse.element.sprite.current_frame, 2);
+        assert_eq!(purse.projectile.frame_count, 1);
+        assert_eq!(purse.projectile.start_of_trajectory_x, 400.0);
+        assert_eq!(purse.projectile.start_of_trajectory_y, 500.0);
+        assert_eq!(purse.projectile.trajectory_origin_sector, Some(7));
+        assert_eq!(
+            purse.projectile.trajectory_origin_layer,
+            crate::position_interface::Layer::new(2)
+        );
+        let after_prime = purse.element.position();
+        engine.tick_projectile_or_net_hourglass(&sim, &assets, purse_id);
+        let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
+            panic!("published purse disappeared")
+        };
+        assert_eq!(purse.projectile.frame_count, 2);
+        assert_eq!(
+            purse.element.sprite.position_iface.old_position(),
+            after_prime
+        );
+    }
+
+    #[test]
+    fn purse_prepublication_empty_and_one_step_trajectories_are_not_double_primed() {
+        use crate::coordinates::WorldPoint3D;
+        use crate::element::{Entity, TrajectoryPoint};
+
+        let sim = crate::sim_rng::test_context();
+        let assets = purse_publication_assets();
+        let mut engine = EngineInner::new();
+        let mut unplaced_thrower = make_pc(Posture::Upright);
+        unplaced_thrower.element_data_mut().clear_layer();
+        unplaced_thrower.element_data_mut().set_sector(None);
+        let thrower = engine.add_test_entity(unplaced_thrower);
+        let start = WorldPoint3D::new(20.0, 30.0, 10.0);
+
+        let mut empty = crate::bow_shot::spawn_purse(thrower, start, start, 0, None);
+        let Entity::Projectile(empty_purse) = &mut empty else {
+            unreachable!()
+        };
+        empty_purse.projectile.trajectory.clear();
+        empty_purse.projectile.trajectory_runtime.clear();
+        let empty_id = engine.publish_new_purse(&sim, &assets, thrower, empty);
+        let Some(Entity::Projectile(empty_purse)) = engine.get_entity(empty_id) else {
+            panic!("published empty purse disappeared")
+        };
+        assert!(!empty_purse.element.active);
+        assert_eq!(
+            empty_purse.projectile.purse.child_coins.len(),
+            usize::from(crate::bow_shot::NUMBER_OF_COINS_IN_PURSE)
+        );
+        assert!(
+            empty_purse
+                .projectile
+                .purse
+                .child_coins
+                .iter()
+                .all(|child| child.index() < empty_id.index()),
+            "Original adds every burst coin before the inactive purse"
+        );
+        let purse_creation = engine.original_creation_order(empty_id);
+        for &child in &empty_purse.projectile.purse.child_coins {
+            let Some(Entity::Projectile(coin)) = engine.get_entity(child) else {
+                panic!("purse child {child} is not a coin projectile")
+            };
+            assert_eq!(coin.projectile.purse.source_purse, Some(empty_id));
+            assert_eq!(
+                coin.object.animation,
+                crate::element::Animation::ObjectFlying
+            );
+            assert_eq!(coin.element.sprite.current_row, 16);
+            assert_eq!(coin.element.sprite.current_frame, 2);
+            assert_eq!(coin.element.sprite.position_iface.old_position(), start);
+            assert_eq!(coin.projectile.start_of_trajectory_x, start.x);
+            assert_eq!(coin.projectile.start_of_trajectory_y, start.y - start.z);
+            assert_eq!(coin.projectile.trajectory_origin_sector, None);
+            assert_eq!(coin.projectile.trajectory_origin_layer, None);
+            assert_eq!(coin.element.sector(), None);
+            assert_eq!(coin.element.optional_layer(), None);
+            assert!(
+                purse_creation < engine.original_creation_order(child),
+                "purse constructor identity must precede child coin constructors"
+            );
+        }
+        assert_eq!(empty_purse.element.optional_layer(), None);
+        assert_eq!(empty_purse.element.sector(), None);
+        assert_eq!(empty_purse.projectile.trajectory_origin_layer, None);
+        assert_eq!(empty_purse.projectile.trajectory_origin_sector, None);
+
+        let endpoint = WorldPoint3D::new(24.0, 36.0, 8.0);
+        let mut one = crate::bow_shot::spawn_purse(thrower, start, endpoint, 0, None);
+        let Entity::Projectile(one_purse) = &mut one else {
+            unreachable!()
+        };
+        one_purse.projectile.trajectory = vec![TrajectoryPoint {
+            position: endpoint,
+            time: 1,
+        }];
+        one_purse.projectile.trajectory_runtime.clear();
+        let one_id = engine.publish_new_purse(&sim, &assets, thrower, one);
+        let Some(Entity::Projectile(one_purse)) = engine.get_entity(one_id) else {
+            panic!("published one-step purse disappeared")
+        };
+        assert_eq!(one_purse.element.position(), endpoint);
+        assert_eq!(one_purse.projectile.frame_count, 1);
+        assert!(one_purse.projectile.trajectory.is_empty());
+    }
+
+    #[test]
+    fn purse_prepublication_water_and_hole_exhaustion_do_not_burst() {
+        use crate::coordinates::WorldPoint3D;
+        use crate::element::{Entity, GameMaterial};
+
+        for (material, dive, disappear) in [
+            (GameMaterial::Water, true, false),
+            (GameMaterial::Hole, false, true),
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let assets = purse_publication_assets();
+            let mut engine = EngineInner::new();
+            let thrower = engine.add_test_entity(make_pc(Posture::Upright));
+            let start = WorldPoint3D::new(20.0, 30.0, 10.0);
+            let mut purse = crate::bow_shot::spawn_purse(thrower, start, start, 0, None);
+            let Entity::Projectile(projectile) = &mut purse else {
+                unreachable!()
+            };
+            projectile.projectile.trajectory.clear();
+            projectile.projectile.trajectory_runtime.clear();
+            projectile.projectile.dive = dive;
+            projectile.projectile.disappear = disappear;
+            projectile.element.set_material(material);
+
+            let purse_id = engine.publish_new_purse(&sim, &assets, thrower, purse);
+            let Some(Entity::Projectile(projectile)) = engine.get_entity(purse_id) else {
+                panic!("published water/hole purse disappeared")
+            };
+            assert!(projectile.element.active);
+            assert!(!projectile.projectile.purse.burst);
+            assert!(projectile.projectile.purse.child_coins.is_empty());
+            assert_eq!(
+                projectile.projectile.trajectory_frame_count,
+                if dive { 0 } else { u16::MAX }
+            );
+            assert_eq!(
+                projectile.projectile.velocity_increment,
+                crate::coordinates::WorldVec3D::ZERO
+            );
+        }
+    }
+
+    #[test]
+    fn purse_prepublication_first_segment_obeys_base_shield_early_return() {
+        use crate::coordinates::{MapPoint, WorldPoint3D};
+        use crate::element::{ActionState, Entity, TrajectoryPoint};
+
+        let sim = crate::sim_rng::test_context();
+        let assets = purse_publication_assets();
+        let mut engine = EngineInner::new();
+        let thrower = engine.add_test_entity(make_pc(Posture::Upright));
+        let mut holder = make_arrow_warning_soldier();
+        holder
+            .element_data_mut()
+            .set_position_map(MapPoint::new(50.0, 0.0));
+        holder.element_data_mut().set_direction_instantly(4);
+        {
+            let actor = holder.actor_data_mut().unwrap();
+            actor.action_state = ActionState::HoldingShield;
+            actor.shield_obstacle = Some(crate::bow_shot::compute_shield_obstacle(
+                MapPoint::new(50.0, 0.0),
+                0.0,
+                4,
+                &crate::bow_shot::ShieldParams {
+                    pre_offset: 20.0,
+                    width: 20.0,
+                    depth: 5.0,
+                    height: 40.0,
+                    z_offset: 10.0,
+                },
+            ));
+        }
+        let holder = engine.add_test_entity(holder);
+
+        let start = WorldPoint3D::new(100.0, 0.0, 40.0);
+        let end = WorldPoint3D::new(50.0, 0.0, 40.0);
+        let mut purse = crate::bow_shot::spawn_purse(thrower, start, end, 0, None);
+        let Entity::Projectile(projectile) = &mut purse else {
+            unreachable!()
+        };
+        projectile.projectile.trajectory = vec![TrajectoryPoint {
+            position: end,
+            time: 1,
+        }];
+        projectile.projectile.trajectory_runtime.clear();
+        let purse_id = engine.publish_new_purse(&sim, &assets, thrower, purse);
+        let Some(Entity::Projectile(projectile)) = engine.get_entity(purse_id) else {
+            panic!("published shielded purse disappeared")
+        };
+        assert!(projectile.projectile.flying);
+        assert!(projectile.projectile.trajectory.is_empty());
+        assert_eq!(projectile.element.sprite.current_frame, 2);
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| &sequence.elements)
+                .any(|element| element.owner == Some(holder)
+                    && element.command == crate::element::Command::ParryShield)
+        );
+    }
+
+    fn make_arrow_warning_soldier() -> Entity {
+        let mut soldier = crate::element::ActorSoldier {
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+        soldier.npc.life_points = 100;
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        Entity::Soldier(soldier)
+    }
+
+    fn bind_arrow_warning_sprite(entity: &mut Entity) {
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::WaitingShield as usize] = 0;
+        conversion[OrderType::LoweringShield as usize] = 0;
+        let script = SpriteScript {
+            action_id: OrderType::WaitingShield as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2],
+            delays: vec![0, 0],
+            distances: vec![0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0, 0],
+        };
+        entity.element_data_mut().sprite =
+            crate::sprite::Sprite::new(Arc::new(vec![script; 16]), Arc::new(conversion));
+    }
+
+    fn arrow_warning_fixture(
+        shield_weapon: bool,
+        shooter_x: f32,
+    ) -> (
+        EngineInner,
+        LevelAssets,
+        EntityId,
+        EntityId,
+        crate::sequence::SequenceId,
+    ) {
+        use crate::ai::{AiState, Substate};
+        use crate::coordinates::{MapPoint, WorldPoint3D};
+        use crate::element::{Command, EyeStatus};
+        use crate::sequence::SequenceElement;
+
+        let mut engine = EngineInner::new();
+        // Legacy human handles reserve zero as missing; production has a hidden
+        // pre-level prefix, so keep the test shooter on a nonzero handle too.
+        engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Target;
+                initial_element
+            },
+            fx: Default::default(),
+            target: Default::default(),
+        }));
+
+        let mut shooter = make_pc(Posture::Upright);
+        shooter.element_data_mut().active = true;
+        shooter
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(shooter_x, 0.0, 0.0));
+        shooter
+            .element_data_mut()
+            .set_position_map(MapPoint::new(shooter_x, 0.0));
+        shooter.pc_data_mut().unwrap().life_points = 100;
+        let shooter_id = engine.add_test_entity(shooter);
+
+        let mut target = make_arrow_warning_soldier();
+        bind_arrow_warning_sprite(&mut target);
+        target
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(0.0, 0.0, 0.0));
+        target
+            .element_data_mut()
+            .set_position_map(MapPoint::new(0.0, 0.0));
+        target.element_data_mut().set_direction_instantly(4);
+        let target_id = engine.add_test_entity(target);
+        assert!(shooter_id.index() < target_id.index());
+
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let profiles = Arc::make_mut(&mut assets.profile_manager);
+        profiles.soldiers[0].hth_weapon_id = 1;
+        profiles.hth_weapons[0].shield = shield_weapon;
+
+        let Entity::Soldier(target) = engine.get_entity_mut(target_id).unwrap() else {
+            unreachable!()
+        };
+        target.actor.action_state = ActionState::HoldingShield;
+        target.npc.view_direction = [1.0, 0.0];
+        target.npc.view_radius = 135;
+        target.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+        target.npc.eye_status = EyeStatus::Stare;
+        let ai = target.npc.ai_brain.enemy_mut().unwrap();
+        ai.base.me = target_id.index();
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingProtectingWithShield;
+
+        let lower = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(
+                1,
+                Command::LowerShield,
+                Some(target_id),
+            ));
+        crate::engine::melee::ShieldCommandContext::new(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            &mut engine.orders.next_order_id,
+        )
+        .dispatch(target_id, Command::LowerShield, lower, 0);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(target_id)
+                .map(|(_, _, order)| order.order_type),
+            Some(OrderType::LoweringShield)
+        );
+
+        (engine, assets, shooter_id, target_id, lower)
+    }
+
+    #[test]
+    fn arrow_warning_synchronously_interrupts_later_shield_target_and_preserves_fifo() {
+        use crate::ai::{Stimulus, StimulusType};
+        use crate::sequence::SequenceState;
+
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, shooter, target, lower) = arrow_warning_fixture(true, 55.0);
+        engine
+            .get_entity_mut(target)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap()
+            .outbox
+            .detection
+            .stimuli
+            .push(Stimulus::new(StimulusType::EventTimer));
+
+        engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(lower, 0)
+                .unwrap()
+                .state,
+            SequenceState::Interrupted,
+            "the release-site Think must interrupt LowerShield before the later target slot animates"
+        );
+        assert_eq!(
+            engine
+                .get_entity(target)
+                .and_then(Entity::enemy_ai)
+                .unwrap()
+                .base
+                .primary_target,
+            Some(crate::ai::AiEntityHandle::new(shooter.index())),
+            "the arrow reaction must run now, not remain queued for the target's later slot"
+        );
+        let queued = &engine
+            .get_entity(target)
+            .and_then(Entity::ai_controller)
+            .unwrap()
+            .outbox
+            .detection
+            .stimuli;
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].stimulus_type, StimulusType::EventTimer);
+    }
+
+    #[test]
+    fn arrow_warning_skips_nonshield_and_nonseeing_targets() {
+        use crate::sequence::SequenceState;
+
+        let sim = crate::sim_rng::test_context();
+        for (shield_weapon, shooter_x) in [(false, 55.0), (true, 500.0)] {
+            let (mut engine, assets, shooter, target, lower) =
+                arrow_warning_fixture(shield_weapon, shooter_x);
+
+            engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(lower, 0)
+                    .unwrap()
+                    .state,
+                SequenceState::InProgress
+            );
+            assert!(
+                engine
+                    .get_entity(target)
+                    .and_then(Entity::ai_controller)
+                    .unwrap()
+                    .outbox
+                    .detection
+                    .stimuli
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "bow target 2 requires missing soldier profile 9")]
+    fn arrow_warning_rejects_missing_authoritative_soldier_profile() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, shooter, target, _) = arrow_warning_fixture(true, 55.0);
+        let Entity::Soldier(soldier) = engine.get_entity_mut(target).unwrap() else {
+            unreachable!()
+        };
+        soldier.soldier.soldier_profile_index = SoldierProfileIdx(9);
+
+        engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+    }
+
+    fn attach_drop_test_sprite(entity: &mut Entity) {
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript};
+
+        let script = SpriteScript {
+            action_id: 0,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+            Arc::new(vec![script; 16]),
+            Arc::new(vec![0; NONANIMATION_END]),
+        );
+    }
+
+    fn corpse_drop_pair(
+        carrier_pos: crate::coordinates::MapPoint,
+    ) -> (
+        EngineInner,
+        crate::element::EntityId,
+        crate::element::EntityId,
+    ) {
+        let mut engine = EngineInner::new();
+        let target_id = engine.add_test_entity(make_pc(Posture::Carried));
+        let mut carrier = make_pc(Posture::CarryingCorpse);
+        attach_drop_test_sprite(&mut carrier);
+        carrier.pc_data_mut().unwrap().carried = Some(target_id);
+        carrier.element_data_mut().set_position_map(carrier_pos);
+        let carrier_id = engine.add_test_entity(carrier);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .carrier = Some(carrier_id);
+        (engine, carrier_id, target_id)
+    }
+
+    fn install_corpse_drop_building_sector(engine: &mut EngineInner, raw_sector: u16) {
+        let mut level = crate::fast_find_grid::LevelGrid::default();
+        level
+            .sector_number_map
+            .insert(crate::sector::SectorNumber::new(raw_sector as i16), 0);
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::BUILDING,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(raw_sector as i16),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+        engine.world.fast_grid_mut().level = Arc::new(level);
+    }
+
+    #[test]
+    fn delayed_corpse_drop_carries_sloped_surface_into_next_frame_position() {
+        let carrier_pos = crate::coordinates::MapPoint::new(743.0, 1681.0);
+        let plane = crate::position_interface::PlaneZCoeffs {
+            az: -0.270_139,
+            bz: -1.787_207,
+            dz: 3_396.161_9,
+        };
+        let obstacle = crate::position_interface::ObstacleHandle::new(221).unwrap();
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        let cached_position = crate::coordinates::WorldPoint3D::new(700.0, 1906.001, 225.001);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_position(cached_position);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_material(crate::element::GameMaterial::Grass);
+        {
+            let carrier = engine.get_entity_mut(carrier_id).unwrap();
+            let elem = carrier.element_data_mut();
+            elem.set_layer(1);
+            elem.set_obstacle_index(Some(obstacle), Some(plane));
+        }
+
+        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Lying, carrier_pos, 15);
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().layer(), 1);
+        assert_eq!(
+            target.element_data().material(),
+            crate::element::GameMaterial::Grass
+        );
+        assert_eq!(target.position_iface().get_obstacle(), Some(obstacle));
+        assert_eq!(target.position_iface().get_plane(), Some(&plane));
+        assert_eq!(target.element_data().position(), cached_position);
+
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .apply_next_delayed_position()
+            .expect("outdoor corpse drop must commit its delayed position next frame");
+        let target = engine.get_entity(target_id).unwrap();
+        assert_eq!(target.element_data().position_map(), carrier_pos);
+        assert_eq!(
+            target.element_data().position().z.to_bits(),
+            plane.compute_z(743.0, 1681.0).to_bits()
+        );
+        assert_ne!(
+            target.element_data().position().z.to_bits(),
+            0.0_f32.to_bits()
+        );
+    }
+
+    #[test]
+    fn outdoor_null_surface_corpse_drop_preserves_cached_elevation_until_delayed_commit() {
+        let carrier_pos = crate::coordinates::MapPoint::new(3126.2605, 2149.9695);
+        let carried_position = crate::coordinates::WorldPoint3D::new(3125.0, 2375.001, 225.001);
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        {
+            let target = engine.get_entity_mut(target_id).unwrap();
+            target.element_data_mut().set_position(carried_position);
+        }
+        let carried_map = engine
+            .get_entity(target_id)
+            .unwrap()
+            .element_data()
+            .position_map();
+
+        engine.apply_completed_corpse_drop(
+            carrier_id,
+            target_id,
+            Posture::DeadBack,
+            carrier_pos,
+            0,
+        );
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().position(), carried_position);
+        assert_eq!(target.element_data().position_map(), carried_map);
+        assert_eq!(target.position_iface().get_obstacle(), None);
+        assert_eq!(target.position_iface().get_plane(), None);
+
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .apply_next_delayed_position()
+            .expect("outdoor corpse drop must commit its delayed position next frame");
+        let target = engine.get_entity(target_id).unwrap();
+        assert_eq!(target.element_data().position_map(), carrier_pos);
+        assert_eq!(
+            target.element_data().position().z.to_bits(),
+            0.0_f32.to_bits()
+        );
+    }
+
+    #[test]
+    fn delayed_corpse_drop_updates_intersections_at_old_current_position() {
+        let carried_position = crate::coordinates::MapPoint::new(100.0, 100.0);
+        let drop_position = crate::coordinates::MapPoint::new(300.0, 300.0);
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(drop_position);
+        {
+            let target = engine.get_entity_mut(target_id).unwrap();
+            target.element_data_mut().set_position_map(carried_position);
+            assert_eq!(
+                target
+                    .human_data()
+                    .unwrap()
+                    .last_is_lying_for_corpse_intersection,
+                None,
+                "freshly adopted carried bodies have no derived observer state"
+            );
+        }
+        let mut neighbour = make_pc(Posture::Tied);
+        neighbour
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
+        neighbour
+            .human_data_mut()
+            .unwrap()
+            .last_is_lying_for_corpse_intersection = Some(true);
+        let neighbour_id = engine.add_test_entity(neighbour);
+
+        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Tied, drop_position, 0);
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().position_map(), carried_position);
+        assert!(target.human_data().unwrap().small_repulsive_radius);
+        assert!(
+            engine
+                .get_entity(neighbour_id)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .small_repulsive_radius
+        );
+
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .apply_next_delayed_position()
+            .expect("outdoor corpse drop must retain its delayed destination");
+        assert_eq!(
+            engine
+                .get_entity(target_id)
+                .unwrap()
+                .element_data()
+                .position_map(),
+            drop_position
+        );
+    }
+
+    #[test]
+    fn instant_building_corpse_drop_keeps_carrier_surface_and_commits_immediately() {
+        let carrier_pos = crate::coordinates::MapPoint::new(120.0, 240.0);
+        let plane = crate::position_interface::PlaneZCoeffs {
+            az: 0.125,
+            bz: -0.25,
+            dz: 45.0,
+        };
+        let obstacle = crate::position_interface::ObstacleHandle::new(17).unwrap();
+        let sector = crate::position_interface::SectorHandle::new(7).unwrap();
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        install_corpse_drop_building_sector(&mut engine, 7);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_material(crate::element::GameMaterial::Leaves);
+        {
+            let carrier = engine.get_entity_mut(carrier_id).unwrap();
+            let elem = carrier.element_data_mut();
+            elem.set_layer(3);
+            elem.set_sector(Some(sector));
+            elem.set_obstacle_index(Some(obstacle), Some(plane));
+        }
+
+        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Lying, carrier_pos, 4);
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(!target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().position_map(), carrier_pos);
+        assert_eq!(target.element_data().layer(), 3);
+        assert_eq!(target.element_data().sector(), Some(sector));
+        assert_eq!(
+            target.element_data().material(),
+            crate::element::GameMaterial::Leaves
+        );
+        assert_eq!(target.position_iface().get_obstacle(), Some(obstacle));
+        assert_eq!(target.position_iface().get_plane(), Some(&plane));
+        assert_eq!(
+            target.element_data().position().z.to_bits(),
+            plane.compute_z(120.0, 240.0).to_bits()
+        );
+        assert_eq!(target.element_data().direction(), 0);
+        assert_eq!(
+            i16::from(target.position_iface().get_direction_goal()),
+            4,
+            "clearing the carrier must restore its facing as the dropped corpse's goal"
+        );
+    }
+
+    #[test]
+    fn task229_projectile_ai_origin_preserves_saved_sector_and_layer() {
+        let exact_sector = crate::fast_find_grid::SectorIndex::new(41).unwrap();
+        let mut projectile = Entity::Projectile(ElementProjectile {
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element
+            },
+            object: ObjectData::default(),
+            projectile: ProjectileData {
+                start_of_trajectory_x: 572.0,
+                start_of_trajectory_y: 2360.0,
+                ..Default::default()
+            },
+        });
+        let Entity::Projectile(projectile_data) = &mut projectile else {
+            unreachable!()
+        };
+        let exact_handle = crate::position_interface::SectorHandle::new(17)
+            .unwrap()
+            .with_arena_index(exact_sector);
+        set_projectile_trajectory_origin(&mut projectile_data.projectile, Some(exact_handle), 11);
+        assert_eq!(
+            projectile_data.projectile.trajectory_origin_sector,
+            Some(17)
+        );
+        assert_eq!(
+            projectile_data.projectile.trajectory_origin_sector_index,
+            Some(exact_sector),
+            "the shared arrow/apple publication writer must retain exact origin topology"
+        );
+
+        let origin = projectile_trajectory_origin(&projectile).unwrap();
+        assert_eq!(origin.x, 572.0);
+        assert_eq!(origin.y, 2360.0);
+        assert_eq!(origin.sector.map(|sector| sector.get()), Some(17));
+        assert_eq!(
+            origin.sector.and_then(|sector| sector.arena_index()),
+            Some(exact_sector),
+            "arrow-hit events must copy the exact trajectory-origin sector identity"
+        );
+        assert_eq!(origin.level, 11);
+
+        // The task-229 boundary lies on opposite sides of a direction-sector
+        // threshold depending on whether Face(Position) retains sector 17's
+        // projection elevation. Dropping the sector changes the authored turn.
+        let dx = 572.0 - 785.243_35;
+        let dy = 2360.0 - 2_192.851_6;
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
+            10
+        );
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy + 105.001_01),
+            9
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "without its public sector number")]
+    fn projectile_origin_rejects_orphan_exact_sector_identity() {
+        let projectile = ProjectileData {
+            trajectory_origin_sector_index: crate::fast_find_grid::SectorIndex::new(41),
+            ..Default::default()
+        };
+        let _ = projectile_trajectory_origin_sector(&projectile);
+    }
+
+    fn blocked_shoulder_pair() -> (
+        EngineInner,
+        LevelAssets,
+        crate::element::EntityId,
+        crate::element::EntityId,
+    ) {
+        let mut engine = EngineInner::new();
+        let victim_id = engine.add_test_entity(make_pc(Posture::OnShoulders));
+        let mut carrier = make_pc(Posture::CarryingOnShoulders);
+        let Entity::Pc(carrier_pc) = &mut carrier else {
+            unreachable!()
+        };
+        carrier_pc.pc.carried = Some(victim_id);
+        let carrier_id = engine.add_test_entity(carrier);
+        engine
+            .get_entity_mut(victim_id)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .carrier = Some(carrier_id);
+
+        // A flat solid slab from z=60 through z=70 intersects the exact
+        // Shoulder-carry eligibility's vertical segment (z=50..90) at the default
+        // actor position (0, 0).
+        let mut ceiling = SightObstacle::new_default(0);
+        ceiling.obstacle_points = vec![
+            ObstaclePoint {
+                x: -10.0,
+                y: -10.0,
+                z_top: 70.0,
+                z_bottom: 60.0,
+            },
+            ObstaclePoint {
+                x: 10.0,
+                y: -10.0,
+                z_top: 70.0,
+                z_bottom: 60.0,
+            },
+            ObstaclePoint {
+                x: 10.0,
+                y: 10.0,
+                z_top: 70.0,
+                z_bottom: 60.0,
+            },
+            ObstaclePoint {
+                x: -10.0,
+                y: 10.0,
+                z_top: 70.0,
+                z_bottom: 60.0,
+            },
+        ];
+        ceiling.top_plane_points = [
+            [-10.0, -10.0, 70.0],
+            [10.0, -10.0, 70.0],
+            [-10.0, 10.0, 70.0],
+        ];
+        ceiling.bottom_plane_points = [
+            [-10.0, -10.0, 60.0],
+            [10.0, -10.0, 60.0],
+            [-10.0, 10.0, 60.0],
+        ];
+        ceiling.rebuild_geometry();
+
+        let mut assets = LevelAssets::new();
+        assets.environment.static_sight_obstacles = Arc::new(vec![ceiling]);
+        (engine, assets, carrier_id, victim_id)
+    }
+
+    fn shoulder_drop_elements(engine: &EngineInner) -> Vec<&crate::sequence::SequenceElement> {
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .filter(|element| element.command == crate::element::Command::ReceiveDamage)
+            .collect()
+    }
+
+    #[test]
+    fn stone_soldier_protection_requires_real_weapon_profile() {
+        let mut profiles = ProfileManager::new();
+        profiles.soldiers.push(SoldierProfile {
+            hth_weapon_id: 1,
+            ..SoldierProfile::default()
+        });
+
+        assert_eq!(
+            soldier_piercing_protection(&profiles, SoldierProfileIdx(0)),
+            None
+        );
+
+        profiles.hth_weapons.push(HtHWeaponProfile {
+            piercing_protection: 35,
+            ..HtHWeaponProfile::default()
+        });
+
+        assert_eq!(
+            soldier_piercing_protection(&profiles, SoldierProfileIdx(0)),
+            Some(35)
+        );
+    }
+
+    #[test]
+    fn soldier_shield_dimensions_require_real_weapon_profile() {
+        let mut profiles = ProfileManager::new();
+        profiles.soldiers.push(SoldierProfile {
+            hth_weapon_id: 1,
+            ..SoldierProfile::default()
+        });
+
+        assert_eq!(
+            soldier_shield_dimensions(&profiles, SoldierProfileIdx(0)),
+            None
+        );
+
+        profiles.hth_weapons.push(HtHWeaponProfile {
+            shield_width: 22,
+            shield_height: 44,
+            ..HtHWeaponProfile::default()
+        });
+
+        assert_eq!(
+            soldier_shield_dimensions(&profiles, SoldierProfileIdx(0)),
+            Some((22, 44))
+        );
+    }
+
+    #[test]
+    fn carrying_posture_waiting_action_does_not_run_ceiling_check() {
+        let (mut engine, assets, carrier_id, _) = blocked_shoulder_pair();
+
+        engine.tick_shouldered_carry_ceiling(
+            &assets,
+            &[(carrier_id, OrderType::WaitingCarryingOnShoulders)],
+        );
+
+        assert!(shoulder_drop_elements(&engine).is_empty());
+    }
+
+    #[test]
+    fn carry_done_applies_effect_without_releasing_selected_ability() {
+        let mut engine = EngineInner::new();
+        let carrier = engine.add_test_entity(make_pc(Posture::CarryingCorpse));
+        let target = engine.add_test_entity(make_pc(Posture::Lying));
+        let selected = crate::movement::ActiveAbility {
+            kind: Some(crate::movement::AbilityKind::Carry),
+            sequence_id: Some(crate::sequence::SequenceId(91)),
+            element_index: 2,
+            target: Some(target),
+            done_effect_applied: true,
+            ..Default::default()
+        };
+        engine
+            .get_entity_mut(carrier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_ability = selected.clone();
+        let selected_before = bitcode::encode(&selected);
+
+        engine.apply_ability_tick_result(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            false,
+            crate::abilities::AbilityTickResult::CarryDone {
+                carrier_id: carrier,
+                target_id: target,
+                carried_posture: Posture::Lying,
+                seq_id: crate::sequence::SequenceId(91),
+                elem_idx: 2,
+            },
+        );
+
+        let carrier = engine.get_entity(carrier).unwrap();
+        assert_eq!(carrier.pc_data().unwrap().carried, Some(target));
+        assert_eq!(
+            bitcode::encode(&carrier.actor_data().unwrap().active_ability),
+            selected_before
+        );
+        let target = engine.get_entity(target).unwrap();
+        assert_eq!(target.posture(), Posture::Carried);
+        assert_eq!(
+            target.actor_data().unwrap().action_state,
+            ActionState::Waiting
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .next()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn shoulder_dismount_done_detaches_both_owners_before_helper_wait() {
+        let (mut engine, assets, helper, climber) = blocked_shoulder_pair();
+        let helper_position = crate::coordinates::MapPoint::new(80.0, 96.0);
+        {
+            let helper = engine.get_entity_mut(helper).unwrap();
+            helper.element_data_mut().set_position_map(helper_position);
+            helper.element_data_mut().set_direction_instantly(6);
+            helper.actor_data_mut().unwrap().execution_frozen = true;
+        }
+        {
+            let climber_entity = engine.get_entity_mut(climber).unwrap();
+            climber_entity.actor_data_mut().unwrap().execution_frozen = true;
+            climber_entity.element_data_mut().sprite.display_order_ref = Some(helper);
+            climber_entity
+                .element_data_mut()
+                .sprite
+                .behind_display_order_ref = true;
+        }
+
+        engine.apply_ability_tick_result(
+            &crate::sim_rng::test_context(),
+            &assets,
+            false,
+            crate::abilities::AbilityTickResult::ClimbDownFromShouldersDone {
+                climber_id: climber,
+                helper_id: helper,
+                seq_id: crate::sequence::SequenceId(92),
+                elem_idx: 0,
+            },
+        );
+
+        let climber_entity = engine.get_entity(climber).unwrap();
+        assert_eq!(climber_entity.posture(), Posture::Upright);
+        assert_eq!(climber_entity.human_data().unwrap().carrier, None);
+        assert!(!climber_entity.actor_data().unwrap().execution_frozen);
+        assert_eq!(
+            climber_entity.element_data().position_map(),
+            helper_position
+        );
+        assert_eq!(climber_entity.element_data().direction(), 14);
+        assert_eq!(climber_entity.sprite().display_order_ref, None);
+        assert!(!climber_entity.sprite().behind_display_order_ref);
+        let helper_entity = engine.get_entity(helper).unwrap();
+        assert_eq!(helper_entity.posture(), Posture::HelpingToClimb);
+        assert_eq!(helper_entity.pc_data().unwrap().carried, None);
+        assert!(!helper_entity.actor_data().unwrap().execution_frozen);
+        let waits = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| &sequence.elements)
+            .filter(|element| element.command == crate::element::Command::Wait)
+            .collect::<Vec<_>>();
+        assert_eq!(waits.len(), 1);
+        assert_eq!(waits[0].owner, Some(helper));
+        assert_eq!(waits[0].priority, crate::sequence::SequencePriority::Wait);
+    }
+
+    #[test]
+    fn walking_carry_action_launches_drop_on_that_action_frame() {
+        let (mut engine, assets, carrier_id, victim_id) = blocked_shoulder_pair();
+        assert!(shoulder_drop_elements(&engine).is_empty());
+
+        engine.tick_shouldered_carry_ceiling(
+            &assets,
+            &[(carrier_id, OrderType::WalkingCarryingOnShoulders)],
+        );
+
+        let drops = shoulder_drop_elements(&engine);
+        assert_eq!(drops.len(), 1);
+        let drop = drops[0];
+        assert_eq!(drop.owner, Some(victim_id));
+        assert_eq!(drop.state, SequenceState::Todo);
+        assert!(matches!(
+            drop.data,
+            SequenceElementData::Damage {
+                origin: Some(origin),
+                projectile: None,
+                damage: 0,
+                concussion: 0,
+                sword_strike: None,
+                sword_profile_idx: None,
+                is_harder_hit: false,
+            } if origin == victim_id
+        ));
+    }
+
+    #[test]
+    fn projectile_damage_waits_for_sequence_manager_dispatch() {
+        let mut engine = EngineInner::new();
+        let shooter = engine.add_test_entity(make_pc(Posture::Upright));
+        let mut victim = make_pc(Posture::Upright);
+        let Entity::Pc(victim_pc) = &mut victim else {
+            unreachable!()
+        };
+        victim_pc.pc.life_points = 100;
+        let victim = engine.add_test_entity(victim);
+
+        engine.queue_projectile_damage(
+            victim,
+            shooter,
+            crate::element::Command::ReceiveArrowDamage,
+            40,
+            0,
+            Some(shooter),
+        );
+
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .and_then(|entity| entity.pc_data())
+                .map(|pc| pc.life_points),
+            Some(100),
+            "projectile collision must not apply damage before the sequence-manager tick"
+        );
+        let damage = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .find(|element| {
+                element.owner == Some(victim)
+                    && element.command == crate::element::Command::ReceiveArrowDamage
+            })
+            .expect("queued arrow damage element");
+        assert_eq!(damage.state, SequenceState::Todo);
+        assert!(matches!(
+            damage.data,
+            SequenceElementData::Damage {
+                origin: Some(origin),
+                projectile: Some(projectile),
+                damage: 40,
+                concussion: 0,
+                ..
+            } if origin == shooter && projectile == shooter
+        ));
     }
 }

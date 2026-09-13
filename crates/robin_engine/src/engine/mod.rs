@@ -1172,7 +1172,6 @@ impl EngineInner {
     // ─── State changes ───────────────────────────────────────────
 
     /// Handle a state change request.
-    #[allow(clippy::collapsible_match)]
     pub(crate) fn change_state(
         &mut self,
         display: &mut CameraDisplayState,
@@ -1336,10 +1335,7 @@ impl EngineInner {
         // the soldier profile at level load) so VIP soldiers get the
         // purple `OC_NPC_VIP_*` outline scheme rather than the standard
         // red enemy scheme.
-        let is_vip = match &*entity {
-            Entity::Soldier(s) => s.npc.ai_brain.enemy().map(|ai| ai.is_vip).unwrap_or(false),
-            _ => false,
-        };
+        let is_vip = entity.is_vip();
         entity.element_data_mut().init_outline_colors(is_vip);
 
         // Override the Hidden/Default/Target outline-colour slots with
@@ -1845,8 +1841,7 @@ impl EngineInner {
             let owner_entity = elem.owner.and_then(|id| entities.get(id));
             match owner_entity {
                 Some(entity) if entity.kind().is_actor() => {
-                    let is_unconscious =
-                        entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+                    let is_unconscious = entity.is_unconscious();
                     crate::element_priority::determine_priority(
                         crate::element_priority::ActorPriorityContext {
                             kind: entity.kind(),

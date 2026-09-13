@@ -328,7 +328,7 @@ impl EngineInner {
                 };
                 // Reject dead / unconscious humans.
                 let dead = entity.is_dead();
-                let unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+                let unconscious = entity.is_unconscious();
                 if dead || unconscious {
                     return;
                 }
