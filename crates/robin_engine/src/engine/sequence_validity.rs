@@ -2396,8 +2396,8 @@ mod tests {
             actor.installed_order = Some(installed_order);
 
             let assets = LevelAssets::new();
-            let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-            engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets, &positions);
+
+            engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
             assert_eq!(
                 engine

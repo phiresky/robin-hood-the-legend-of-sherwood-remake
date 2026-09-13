@@ -89,7 +89,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) {
         use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
 
@@ -112,12 +111,7 @@ impl EngineInner {
         if self.is_very_very_busy(owner) {
             return;
         }
-        let scratch = self.build_owner_context_scratch_at_slot_without_forecast(
-            assets,
-            owner,
-            positions_before_movement,
-            crate::engine::ai::OwnerActorPhase::BeforeActor,
-        );
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
 
         let frame = self.control.frame_counter;
         let all_npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();

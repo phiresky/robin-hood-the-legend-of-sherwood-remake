@@ -31,11 +31,10 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
         .get_mut(0)
         .expect("inactive PC fixture has a character profile")
         .endurance = 100;
-    let positions = engine.boundary_positions_snapshot();
 
     let (_, trace) = capture_actor_owner_envelope(|| {
         crate::sim_rng::with_seed(0xA013_6A7E, |sim| {
-            engine.tick_actor_owner_envelopes(sim, &assets, &positions)
+            engine.tick_actor_owner_envelopes(sim, &assets)
         })
     });
 
@@ -100,7 +99,6 @@ fn patrol_refresh_uses_owner_relative_member_positions_and_spawn_fallback() {
         };
         let mut assets = LevelAssets::new();
         complete_test_runtime_fixture(&mut engine, &mut assets);
-        let mut positions = engine.boundary_positions_snapshot();
         let member = initial_member
             .unwrap_or_else(|| engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists)));
 
@@ -118,18 +116,11 @@ fn patrol_refresh_uses_owner_relative_member_positions_and_spawn_fallback() {
             .unwrap()
             .element_data_mut()
             .set_position_map(MapPoint::new(0.0, 0.0));
-        let member_before = MapPoint::new(50.0, 0.0);
         let member_after = if member_before_chief {
             MapPoint::new(500.0, 0.0)
         } else {
             MapPoint::new(50.0, 0.0)
         };
-        if positions.get(member).is_some() {
-            positions[member] = Some(crate::entities::BoundaryPosition {
-                map: member_before,
-                world: crate::coordinates::WorldPoint3D::new(member_before.x, member_before.y, 0.0),
-            });
-        }
         engine
             .get_entity_mut(member)
             .unwrap()
@@ -144,7 +135,7 @@ fn patrol_refresh_uses_owner_relative_member_positions_and_spawn_fallback() {
         chief_ai.theoretical_patrol = vec![member];
 
         crate::sim_rng::with_seed(0x0A01_3705, |sim| {
-            engine.tick_patrol_coordination_for_npc(sim, &assets, chief, &positions)
+            engine.tick_patrol_coordination_for_npc(sim, &assets, chief)
         });
         engine
             .get_entity(chief)
@@ -201,10 +192,9 @@ fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
     ai.when_does_macro_timer_ring = u32::MAX;
     ai.emoticon_expiration_date = u32::MAX;
 
-    let positions = engine.boundary_positions_snapshot();
     let (_, trace) = capture_npc_post_detection_tail_phases(|| {
         crate::sim_rng::with_seed(0xA013_10CC, |sim| {
-            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
+            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
         })
     });
     let locked_trace: Vec<_> = trace
@@ -590,7 +580,6 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
         };
         let mut assets = LevelAssets::new();
         complete_test_runtime_fixture(&mut engine, &mut assets);
-        let mut positions = engine.boundary_positions_snapshot();
         let target_id = initial_target
             .unwrap_or_else(|| engine.add_test_entity(make_test_pc(Posture::Upright)));
         if spawn_after_snapshot {
@@ -627,28 +616,21 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
         ai.me = observer_id.index();
         ai.locks_flag_field = AiLockFlags::FREEZE;
 
-        let before = MapPoint::new(50.0, 0.0);
-        let after = if spawn_after_snapshot {
+        let at_observer_turn = if observer_before_target || spawn_after_snapshot {
             MapPoint::new(50.0, 0.0)
         } else {
             MapPoint::new(5_000.0, 0.0)
         };
-        if positions.get(target_id).is_some() {
-            positions[target_id] = Some(crate::entities::BoundaryPosition {
-                map: before,
-                world: crate::coordinates::WorldPoint3D::new(before.x, before.y, 0.0),
-            });
-        }
         let Entity::Pc(target) = engine.get_entity_mut(target_id).unwrap() else {
             unreachable!()
         };
         target.element.active = true;
-        target.element.set_position_map(after);
+        target.element.set_position_map(at_observer_turn);
         target.pc.life_points = 100;
 
         let sim = crate::sim_rng::test_context();
         let mut prepared = engine.prepare_npc_owner_pass();
-        engine.tick_npc_owner_pass(&sim, &assets, &positions, &mut prepared, observer_id);
+        engine.tick_npc_owner_pass(&sim, &assets, &mut prepared, observer_id);
 
         engine
             .get_entity(observer_id)

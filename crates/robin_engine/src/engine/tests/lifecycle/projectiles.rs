@@ -179,11 +179,8 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
         );
     assert_eq!(motion, crate::sprite::MotionState::InProgress);
 
-    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     let (_, visited) = engine.with_simulation_context(|engine, sim| {
-        capture_ordered_gameplay_entities(|| {
-            engine.tick_actor_owner_envelopes(sim, &assets, &positions)
-        })
+        capture_ordered_gameplay_entities(|| engine.tick_actor_owner_envelopes(sim, &assets))
     });
 
     let shot_after = engine
@@ -311,11 +308,10 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
         },
     }));
     let assets = LevelAssets::new();
-    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+
     let (_, tails) = capture_projectile_derived_tails(|| {
-        engine.with_simulation_context(|engine, sim| {
-            engine.tick_actor_owner_envelopes(sim, &assets, &positions)
-        })
+        engine
+            .with_simulation_context(|engine, sim| engine.tick_actor_owner_envelopes(sim, &assets))
     });
 
     assert!(engine.get_entity(apple).is_some());
@@ -851,16 +847,8 @@ fn bound_bow_transition_advances_through_production_owner_coordinator() {
         released: false,
         shoot_mode: Some(ShootMode::Normal),
     };
-    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    positions[owner] = Some(crate::entities::BoundaryPosition::of(
-        engine.get_entity(owner).unwrap().element_data(),
-    ));
 
-    engine.tick_actor_owner_envelopes(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &positions,
-    );
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
 
     let entity = engine.get_entity(owner).unwrap();
     assert_eq!(entity.sprite().last_action, OrderType::TransitionEquipBow);
@@ -910,16 +898,8 @@ fn unbound_bow_transition_still_uses_generic_execute() {
         .orders
         .sequence_manager
         .element_in_progress(sequence, 0);
-    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    positions[owner] = Some(crate::entities::BoundaryPosition::of(
-        engine.get_entity(owner).unwrap().element_data(),
-    ));
 
-    engine.tick_actor_owner_envelopes(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &positions,
-    );
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
 
     assert_eq!(
         engine.get_entity(owner).unwrap().sprite().last_action,
@@ -1189,14 +1169,8 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
         .element_in_progress(sequence, 0);
 
     for _ in 0..10 {
-        let positions_before_movement = engine.boundary_positions_snapshot();
         let mut display = CameraDisplayState::default();
-        engine.tick_actor_owner_envelopes_with_display(
-            &sim,
-            &mut display,
-            &assets,
-            &positions_before_movement,
-        );
+        engine.tick_actor_owner_envelopes_with_display(&sim, &mut display, &assets);
     }
 
     assert_eq!(engine.world.entities.projectiles().count(), 1);

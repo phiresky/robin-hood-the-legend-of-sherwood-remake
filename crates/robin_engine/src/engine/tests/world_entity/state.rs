@@ -27,7 +27,6 @@ fn removal_revalidates_stimuli_detached_across_a_synchronous_boundary() {
         observer,
         &LevelAssets::new(),
         None,
-        None,
     );
     let ai = engine
         .get_entity(observer)

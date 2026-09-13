@@ -5967,7 +5967,6 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
         .element_data_mut()
         .set_position(WorldPoint3D::new(198.0, 100.0, 0.0));
     let sim = crate::sim_rng::test_context();
-    let positions = engine.boundary_positions_snapshot();
 
     // Scratch construction prepares forecasts without drawing; the control
     // proves the unrelated door actor's alternatives would draw if resolved.
@@ -5985,8 +5984,7 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
         control_trace.contains(&RngSite::BuildingExitGate),
         "the fixture must prove that resolving the unrelated door actor's forecast would draw"
     );
-    let (_, fused_trace) =
-        with_draw_trace(|| engine.tick_actor_owner_envelopes(&sim, &assets, &positions));
+    let (_, fused_trace) = with_draw_trace(|| engine.tick_actor_owner_envelopes(&sim, &assets));
 
     assert!(engine.get_entity(owner).is_some());
     assert!(
@@ -6050,7 +6048,7 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
 
     let sim = crate::sim_rng::test_context();
     let (_, trace) = with_draw_trace(|| {
-        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(&sim, owner, &assets, None, None)
+        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(&sim, owner, &assets, None)
     });
     assert!(
         !trace.contains(&RngSite::BuildingExitGate),

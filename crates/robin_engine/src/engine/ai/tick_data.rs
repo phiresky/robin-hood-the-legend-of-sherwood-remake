@@ -1,13 +1,5 @@
 use super::*;
 
-/// Whether this owner's actor slot has already published movement. Later
-/// owners still observe the preserved pre-movement position in either phase.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(in crate::engine) enum OwnerActorPhase {
-    BeforeActor,
-    AfterActor,
-}
-
 /// Selects the observation's temporal contract; it does not change the
 /// scheduling point at which the caller builds it.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -20,7 +12,6 @@ enum AiObservationMode {
 enum AiObservationKind {
     Current,
     WithoutForecast,
-    OwnerSlot,
     PreparedDetection,
 }
 
@@ -413,55 +404,6 @@ impl EngineInner {
         id
     }
 
-    /// Position visible at one Original legacy owner boundary. Rust movement
-    /// is globally batched, so later slots are projected back to the preserved
-    /// pre-movement oracle. Callback-spawned slots are absent from that oracle
-    /// and correctly retain their current (never-moved) position.
-    pub(in crate::engine) fn position_at_owner_boundary(
-        &self,
-        target: EntityId,
-        owner: EntityId,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
-        owner_phase: OwnerActorPhase,
-    ) -> MapPoint {
-        self.boundary_position(target, owner, positions_before_movement, owner_phase)
-            .map
-    }
-
-    /// The same boundary choice, keeping both stored coordinate spaces. Direct
-    /// actor geometry (eye-point / detection-point calculation) reads the
-    /// 3D position, which is not recoverable from the map projection without
-    /// rounding.
-    pub(in crate::engine) fn boundary_position(
-        &self,
-        target: EntityId,
-        owner: EntityId,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
-        owner_phase: OwnerActorPhase,
-    ) -> crate::entities::BoundaryPosition {
-        let current = crate::entities::BoundaryPosition::of(
-            self.world
-                .entities
-                .expect_entity(
-                    target,
-                    format_args!("owner {} position target", owner.index()),
-                )
-                .element_data(),
-        );
-        let target_has_not_moved = self.world.original_creation_order(target)
-            > self.world.original_creation_order(owner)
-            || (owner_phase == OwnerActorPhase::BeforeActor && target.index() == owner.index());
-        if target_has_not_moved {
-            positions_before_movement
-                .get(target)
-                .copied()
-                .flatten()
-                .unwrap_or(current)
-        } else {
-            current
-        }
-    }
-
     pub(super) fn build_ai_sight_obstacles(
         &self,
         assets: &LevelAssets,
@@ -526,56 +468,6 @@ impl EngineInner {
             started,
             self.control.frame_counter,
             mode.into(),
-            self.world.entities.len(),
-            rebuilt,
-            &scratch,
-        );
-        scratch
-    }
-
-    pub(in crate::engine) fn build_owner_context_scratch_at_slot_without_forecast(
-        &self,
-        assets: &LevelAssets,
-        owner: EntityId,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
-        owner_phase: OwnerActorPhase,
-    ) -> SimScratch {
-        let started = observation_build_started();
-        let mut views = build_entity_views_without_forecast(self);
-        for (target, _) in self.world.entities.occupied() {
-            let boundary =
-                self.boundary_position(target, owner, positions_before_movement, owner_phase);
-            // The initial view builder already applies
-            // The original-game AI position's committed
-            // gate-side override. Creation-slot projection is for live map
-            // positions and must not replace that AI-specific value.
-            // Direct geometry is different: detection-point calculation starts from
-            // literal world position even during a door pass, so always stamp its
-            // map/world pair with the owner-boundary values.
-            let passing_door = self
-                .world
-                .entities
-                .get(target)
-                .and_then(Entity::actor_data)
-                .is_some_and(|actor| actor.active_door_pass.is_some());
-            if let Some(view) = views.get_mut(&target.index()) {
-                view.detection_position = boundary.map;
-                view.detection_position_world = boundary.world;
-                if !passing_door {
-                    view.position.x = boundary.map.x;
-                    view.position.y = boundary.map.y;
-                }
-            }
-        }
-        let rebuilt = views.len();
-        let scratch = SimScratch {
-            ai_entity_views: self.share_ai_entity_views(views),
-            ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
-        };
-        observe_view_build(
-            started,
-            self.control.frame_counter,
-            AiObservationKind::OwnerSlot,
             self.world.entities.len(),
             rebuilt,
             &scratch,
@@ -825,8 +717,7 @@ impl EngineInner {
         // principal can differ from the AI member captured above, so retain
         // prepared forecasts by detectable handle as well as in the
         // primary-target convenience slot.  Detection dispatch rebuilds this
-        // list with owner-boundary positions; timer/sequence dispatches still
-        // need the live variants populated here.
+        // list from live positions for each synchronous delivery.
         if build_forecasts {
             for detectable in &ai_actor.detectable_lists[enemy_idx] {
                 let Some(target_id) = detectable.element else {

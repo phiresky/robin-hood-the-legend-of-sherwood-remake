@@ -23,7 +23,6 @@ pub(crate) use detection::debug_detectable_mutation_load_snapshot;
 mod post_detection;
 mod snapshots;
 mod tick_data;
-pub(in crate::engine) use tick_data::OwnerActorPhase;
 mod tick_scheduling;
 
 #[cfg(test)]
@@ -40,7 +39,7 @@ use crate::element::{
     Camp, Detectable, DetectableType, Entity, EntityId, Human as _, PcId, SoldierId,
 };
 use crate::engine::SimScratch;
-use crate::entities::{Entities, EntitySlots};
+use crate::entities::Entities;
 use serde::{Deserialize, Serialize};
 
 fn beam_door_waypoints_into_houses(

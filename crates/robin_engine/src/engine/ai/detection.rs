@@ -86,16 +86,6 @@ fn fighter_ai_position(
     })
 }
 
-fn apply_camp_soldier_boundary_position(
-    position: &mut crate::ai::Position,
-    position_world: &mut crate::coordinates::WorldPoint3D,
-    boundary: crate::entities::BoundaryPosition,
-) {
-    position.x = boundary.map.x;
-    position.y = boundary.map.y;
-    *position_world = boundary.world;
-}
-
 use crate::engine::diagnostics::ParityGate;
 use std::sync::OnceLock;
 
@@ -1953,12 +1943,12 @@ impl EngineInner {
         }
     }
 
-    /// P3 — per-NPC detection-refresh pass.
-    ///
-    /// For every NPC: run synchronous acoustics, select the camp-specific
+    /// One NPC's contiguous detection refresh. The owner coordinator runs its
+    /// inform/view prelude and post-detection tail around this call.
+    /// Run synchronous acoustics, select the camp-specific
     /// Enemy visibility path (Lacklandist→PC or Royalist→Lacklandist), then run
     /// the remaining detectable buckets and flush that NPC's complete FIFO
-    /// before advancing to the next creation slot. EVENT_VIEW is queued after
+    /// before returning to the owner coordinator. EVENT_VIEW is queued after
     /// the Enemy scan and dispatched only after every detectable bucket has
     /// released the NPC borrow.
     /// Volatile NPC target metadata is rebuilt at each creation slot so a
@@ -1972,10 +1962,8 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         world: &AiWorldView,
-        positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
-        owner: Option<EntityId>,
-        dispatch_legacy_test_wakes: bool,
-        prepared_entity_views: Option<&mut super::PreparedAiEntityViewCache>,
+        npc_id: EntityId,
+        entity_view_cache: &mut super::PreparedAiEntityViewCache,
     ) {
         let _detail = super::super::tick::entity_system_detail_guard(
             super::super::tick::EntitySystemDetail::RefreshDetection,
@@ -1986,250 +1974,204 @@ impl EngineInner {
         // detection-speed parameters when scaling a PC's visual
         // detection speed in the per-target visibility pass below.
         let is_forest_level = self.world.weather.is_forest_level;
-        let npc_ids: Vec<_> = match owner {
-            Some(npc_id) => vec![npc_id],
-            None => self.world.entities.ai_owner_ids().collect(),
-        };
-        let mut local_entity_views = super::PreparedAiEntityViewCache::default();
-        let entity_view_cache = prepared_entity_views.unwrap_or(&mut local_entity_views);
 
-        for npc_id in npc_ids {
-            // The original-game NPC update performs these owner
-            // operations immediately before this same NPC enters
-            // detection refresh. Do not
-            // pre-apply a later NPC's body/recovery/view work: synchronous
-            // broadcasts and Think/script effects from earlier slots may
-            // affect later observers, never observers whose slots already ran.
-            if let Some(positions_before_movement) = positions_before_movement {
-                // The production owner envelope dispatches concussion wakes in
-                // the Human pre-Actor hook. Keep the historical test-only
-                // coordinator behavior for tests that call this lower-level
-                // seam directly.
-                if dispatch_legacy_test_wakes
-                    && self.dispatch_pending_fit_again_for_npc(sim, npc_id, assets)
-                {
-                    self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
-                    self.apply_wake_redetection_blinks(npc_id);
-                }
-                self.tick_inform_my_friends_for_npc(npc_id);
-                self.refresh_npc_view_for_npc(npc_id, positions_before_movement);
+        self.tick_enemy_ai_npc_blip_detection_for_npc(sim, npc_id, assets);
+
+        // Sample the two pre-acoustic detection-refresh gates before
+        // EVENT_HEAR can synchronously run Think/script and mutate the
+        // viewer. Once these gates pass, original control flow always
+        // reaches the pre-optical maxima reset.
+        let passed_pre_acoustic_gates = self.world.entities.get(npc_id).is_some_and(|entity| {
+            let elem = entity.element_data();
+            let entered_refresh = elem.active
+                || elem.is_in_door_transit()
+                || self.entity_building_sector(elem.sector()).is_some();
+            entered_refresh
+                && !entity.is_dead()
+                && entity.human_data().is_none_or(|human| !human.unconscious)
+                && elem.posture() != Posture::Tied
+        });
+        self.tick_enemy_ai_acoustic_detection_for_npc(
+            sim,
+            npc_id,
+            assets,
+            world,
+            entity_view_cache,
+        );
+
+        // Detection refresh clears both maxima after acoustics but
+        // before its narrower optical eligibility gate. In particular,
+        // an inactive NPC on a door rail reaches this reset and then
+        // returns without scanning; an inactive outdoor NPC returned at
+        // the entry gate and must retain the old value.
+        if passed_pre_acoustic_gates
+            && let Some(npc) = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_actor_data_mut)
+        {
+            npc.maximal_detection_suspect = 0;
+            if let Some(ai) = npc.ai_brain.base_mut() {
+                ai.max_visibility = 0;
             }
+        }
 
-            self.tick_enemy_ai_npc_blip_detection_for_npc(sim, npc_id, assets);
-
-            // Sample the two pre-acoustic detection-refresh gates before
-            // EVENT_HEAR can synchronously run Think/script and mutate the
-            // viewer. Once these gates pass, original control flow always
-            // reaches the pre-optical maxima reset.
-            let passed_pre_acoustic_gates = self.world.entities.get(npc_id).is_some_and(|entity| {
-                let elem = entity.element_data();
-                let entered_refresh = elem.active
-                    || elem.is_in_door_transit()
-                    || self.entity_building_sector(elem.sector()).is_some();
-                entered_refresh
-                    && !entity.is_dead()
-                    && entity.human_data().is_none_or(|human| !human.unconscious)
-                    && elem.posture() != Posture::Tied
-            });
-            self.tick_enemy_ai_acoustic_detection_for_npc(
-                sim,
-                npc_id,
-                assets,
-                world,
-                entity_view_cache,
-            );
-
-            // Detection refresh clears both maxima after acoustics but
-            // before its narrower optical eligibility gate. In particular,
-            // an inactive NPC on a door rail reaches this reset and then
-            // returns without scanning; an inactive outdoor NPC returned at
-            // the entry gate and must retain the old value.
-            if passed_pre_acoustic_gates
-                && let Some(npc) = self
-                    .world
-                    .entities
-                    .get_mut(npc_id)
-                    .and_then(Entity::ai_actor_data_mut)
-            {
-                npc.maximal_detection_suspect = 0;
-                if let Some(ai) = npc.ai_brain.base_mut() {
-                    ai.max_visibility = 0;
-                }
-            }
-
-            let detectable_list_debug_creation_order = detectable_list_debug_gate()
-                .matches([Some(universal_frame), None])
-                .then(|| self.original_static_creation_order(npc_id));
-            if detectable_mutation_debug_owner_slot_matches(npc_id.index()) {
-                let owner_creation_order = self.original_static_creation_order(npc_id);
-                if detectable_mutation_debug_owner_matches(npc_id.index(), owner_creation_order) {
-                    let npc = self
-                        .world
-                        .entities
-                        .get(npc_id)
-                        .and_then(Entity::ai_actor_data)
-                        .expect("DETMUT owner lost AI actor data before detection refresh");
-                    debug_detectable_mutation_snapshot(
-                        "refresh_entry_snapshot",
-                        "tick_enemy_ai_refresh_detection",
-                        universal_frame,
-                        npc_id,
-                        owner_creation_order,
-                        &npc.detectable_lists,
-                        |target_id| Some(self.original_static_creation_order(target_id)),
-                    );
-                }
-            }
-            if let Some(creation_order) = detectable_list_debug_creation_order
-                && let Some(npc) = self
+        let detectable_list_debug_creation_order = detectable_list_debug_gate()
+            .matches([Some(universal_frame), None])
+            .then(|| self.original_static_creation_order(npc_id));
+        if detectable_mutation_debug_owner_slot_matches(npc_id.index()) {
+            let owner_creation_order = self.original_static_creation_order(npc_id);
+            if detectable_mutation_debug_owner_matches(npc_id.index(), owner_creation_order) {
+                let npc = self
                     .world
                     .entities
                     .get(npc_id)
                     .and_then(Entity::ai_actor_data)
-            {
-                debug_all_detectable_list_buckets(
-                    "optical_entry",
-                    npc_id,
-                    npc,
+                    .expect("DETMUT owner lost AI actor data before detection refresh");
+                debug_detectable_mutation_snapshot(
+                    "refresh_entry_snapshot",
+                    "tick_enemy_ai_refresh_detection",
                     universal_frame,
-                    creation_order,
+                    npc_id,
+                    owner_creation_order,
+                    &npc.detectable_lists,
+                    |target_id| Some(self.original_static_creation_order(target_id)),
                 );
             }
-
-            // The original game's detectable cleanup and visibility calculation use live
-            // human pointers. Rebuild the target records at this creation
-            // slot, but let the NPC's detectable list dictate scan order.
-            let enemy_target_ids: std::collections::HashSet<_> = self
+        }
+        if let Some(creation_order) = detectable_list_debug_creation_order
+            && let Some(npc) = self
                 .world
                 .entities
                 .get(npc_id)
                 .and_then(Entity::ai_actor_data)
-                .expect("detection-refresh owner lost AI actor data before Enemy snapshot")
-                .detectable_lists[DetectableType::Enemy as usize]
-                .iter()
-                .filter_map(|detectable| detectable.element)
-                .collect();
-            let enemy_targets = self.tick_enemy_ai_build_live_enemy_optical_targets(
-                assets,
-                world,
-                positions_before_movement.map(|positions| (npc_id, positions)),
-                Some(&enemy_target_ids),
-            );
-            // Original caches the view radius for this viewer/frame: one
-            // ground entry plus one entry on each projection obstacle. Enemy
-            // and the later detectable-type buckets share the same cache
-            // during this contiguous detection refresh.
-            let view_radius_cache = OwnerViewRadiusCache::from_persistent(
-                &self.ai.view_radius_cache,
+        {
+            debug_all_detectable_list_buckets(
+                "optical_entry",
                 npc_id,
+                npc,
                 universal_frame,
-                "refresh_detection",
+                creation_order,
             );
-            let think_input = self.tick_enemy_ai_refresh_detection_for_npc(
-                npc_id,
-                assets,
-                world,
-                &enemy_targets,
-                universal_frame,
-                golden_eye,
-                is_forest_level,
-                &view_radius_cache,
-            );
-            // Enemy predetection may already have queued shadows. Append
-            // the ordered Enemy VIEW / OUTOFVIEW block now, before later
-            // detectable types, preserving the original
-            // SHADOW → (VIEW|OUTOFVIEW)* → BODY → OBJECT → FRIEND →
-            // MISSED_FRIEND → BEGGAR FIFO.
-            let enemy_block = think_input;
-            let enemy_detection_tick_data = if let Some((stimuli, mut tick_data)) = enemy_block {
-                self.prepare_detection_forecasts_for_owner(
-                    npc_id,
-                    positions_before_movement,
-                    &mut tick_data,
-                );
-                let ai = self.world.entities.expect_ai_controller_mut(
-                    npc_id,
-                    format_args!("detected NPC before its same-phase stimulus queue"),
-                );
-                let queue_start = ai.outbox.detection.stimuli.len();
-                ai.outbox.detection.stimuli.extend(stimuli.iter().copied());
-                Some(super::post_detection::PendingEnemyDetectionTickData::new(
-                    queue_start,
-                    stimuli,
-                    tick_data,
-                ))
-            } else {
-                None
-            };
-            // The original NPC update completes this NPC's entire
-            // detection-refresh scan before flushing its FIFO stimulus list.
-            // Rebuild only the volatile human/object target metadata here;
-            // `world.pcs` remains the once-per-frame snapshot because its
-            // construction also updates produced-noise state. No Think has
-            // run for this NPC yet, so all its buckets observe the same
-            // pre-Think state.
-            let (human_targets, object_targets) = self
-                .tick_enemy_ai_build_human_object_targets_for_npc(
-                    npc_id,
-                    positions_before_movement,
-                );
-            self.tick_enemy_ai_refresh_per_type_for_npc(
-                npc_id,
-                assets,
-                &human_targets,
-                &object_targets,
-                universal_frame,
-                golden_eye,
-                &view_radius_cache,
-            );
-            if let Some(creation_order) = detectable_list_debug_creation_order
-                && let Some(npc) = self
-                    .world
-                    .entities
-                    .get(npc_id)
-                    .and_then(Entity::ai_actor_data)
-            {
-                debug_all_detectable_list_buckets(
-                    "optical_exit",
-                    npc_id,
-                    npc,
-                    universal_frame,
-                    creation_order,
-                );
-            }
-            // No other viewer can run inside this contiguous
-            // detection-refresh scan. Commit at its boundary before the first
-            // queued decision tick, where synchronous detection may consume it.
-            view_radius_cache.commit_to(&mut self.ai.view_radius_cache, npc_id, universal_frame);
+        }
 
-            let has_pending_stimuli = self
+        // The original game's detectable cleanup and visibility calculation use live
+        // human pointers. Rebuild the target records at this creation
+        // slot, but let the NPC's detectable list dictate scan order.
+        let enemy_target_ids: std::collections::HashSet<_> = self
+            .world
+            .entities
+            .get(npc_id)
+            .and_then(Entity::ai_actor_data)
+            .expect("detection-refresh owner lost AI actor data before Enemy snapshot")
+            .detectable_lists[DetectableType::Enemy as usize]
+            .iter()
+            .filter_map(|detectable| detectable.element)
+            .collect();
+        let enemy_targets = self.tick_enemy_ai_build_live_enemy_optical_targets(
+            assets,
+            world,
+            Some(&enemy_target_ids),
+        );
+        // Original caches the view radius for this viewer/frame: one
+        // ground entry plus one entry on each projection obstacle. Enemy
+        // and the later detectable-type buckets share the same cache
+        // during this contiguous detection refresh.
+        let view_radius_cache = OwnerViewRadiusCache::from_persistent(
+            &self.ai.view_radius_cache,
+            npc_id,
+            universal_frame,
+            "refresh_detection",
+        );
+        let think_input = self.tick_enemy_ai_refresh_detection_for_npc(
+            npc_id,
+            assets,
+            world,
+            &enemy_targets,
+            universal_frame,
+            golden_eye,
+            is_forest_level,
+            &view_radius_cache,
+        );
+        // Enemy predetection may already have queued shadows. Append
+        // the ordered Enemy VIEW / OUTOFVIEW block now, before later
+        // detectable types, preserving the original
+        // SHADOW → (VIEW|OUTOFVIEW)* → BODY → OBJECT → FRIEND →
+        // MISSED_FRIEND → BEGGAR FIFO.
+        let enemy_block = think_input;
+        let enemy_detection_tick_data = if let Some((stimuli, mut tick_data)) = enemy_block {
+            self.prepare_detection_forecasts_for_owner(npc_id, &mut tick_data);
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!("detected NPC before its same-phase stimulus queue"),
+            );
+            let queue_start = ai.outbox.detection.stimuli.len();
+            ai.outbox.detection.stimuli.extend(stimuli.iter().copied());
+            Some(super::post_detection::PendingEnemyDetectionTickData::new(
+                queue_start,
+                stimuli,
+                tick_data,
+            ))
+        } else {
+            None
+        };
+        // The original NPC update completes this NPC's entire
+        // detection-refresh scan before flushing its FIFO stimulus list.
+        // Rebuild only the volatile human/object target metadata here;
+        // `world.pcs` remains the once-per-frame snapshot because its
+        // construction also updates produced-noise state. No Think has
+        // run for this NPC yet, so all its buckets observe the same
+        // pre-Think state.
+        let (human_targets, object_targets) =
+            self.tick_enemy_ai_build_human_object_targets_for_npc(npc_id);
+        self.tick_enemy_ai_refresh_per_type_for_npc(
+            npc_id,
+            assets,
+            &human_targets,
+            &object_targets,
+            universal_frame,
+            golden_eye,
+            &view_radius_cache,
+        );
+        if let Some(creation_order) = detectable_list_debug_creation_order
+            && let Some(npc) = self
                 .world
                 .entities
                 .get(npc_id)
-                .and_then(Entity::ai_controller)
-                .is_some_and(|ai| !ai.outbox.detection.stimuli.is_empty());
-            if !has_pending_stimuli {
-                assert!(
-                    enemy_detection_tick_data.is_none(),
-                    "queued Enemy detection block lost its stimuli before the per-NPC drain"
-                );
-            } else {
-                self.tick_enemy_ai_drain_pending_stimuli_for_npc(
-                    sim,
-                    npc_id,
-                    assets,
-                    enemy_detection_tick_data,
-                    positions_before_movement,
-                );
-            }
+                .and_then(Entity::ai_actor_data)
+        {
+            debug_all_detectable_list_buckets(
+                "optical_exit",
+                npc_id,
+                npc,
+                universal_frame,
+                creation_order,
+            );
+        }
+        // No other viewer can run inside this contiguous
+        // detection-refresh scan. Commit at its boundary before the first
+        // queued decision tick, where synchronous detection may consume it.
+        view_radius_cache.commit_to(&mut self.ai.view_radius_cache, npc_id, universal_frame);
 
-            // The production NPC update continues with this same owner's
-            // complete tail before advancing to the next creation slot. The
-            // focused detection-only seam passes no pre-movement positions
-            // and deliberately stops at the detection-refresh boundary.
-            if positions_before_movement.is_some() {
-                self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
-            }
+        let has_pending_stimuli = self
+            .world
+            .entities
+            .get(npc_id)
+            .and_then(Entity::ai_controller)
+            .is_some_and(|ai| !ai.outbox.detection.stimuli.is_empty());
+        if !has_pending_stimuli {
+            assert!(
+                enemy_detection_tick_data.is_none(),
+                "queued Enemy detection block lost its stimuli before the per-NPC drain"
+            );
+        } else {
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(
+                sim,
+                npc_id,
+                assets,
+                enemy_detection_tick_data,
+            );
         }
     }
 
@@ -2239,7 +2181,6 @@ impl EngineInner {
     pub(super) fn prepare_detection_forecasts_for_owner(
         &self,
         npc_id: EntityId,
-        positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
         tick_data: &mut AiPerTickData,
     ) {
         let forecast = |target_id: EntityId| {
@@ -2247,7 +2188,7 @@ impl EngineInner {
                 target_id,
                 format_args!("NPC {} destination forecast actor", npc_id.index()),
             );
-            let mut input = extract_exact_forecast_input(
+            let input = extract_exact_forecast_input(
                 self,
                 target,
                 selected_actor_is_passing_door(&self.orders.sequence_manager, target_id),
@@ -2259,16 +2200,6 @@ impl EngineInner {
                     target_id.index()
                 )
             });
-            if let Some(positions) = positions_before_movement {
-                let position = self.position_at_owner_boundary(
-                    target_id,
-                    npc_id,
-                    positions,
-                    crate::engine::ai::OwnerActorPhase::AfterActor,
-                );
-                input.position_map_x = position.x;
-                input.position_map_y = position.y;
-            }
             crate::ai::prepare_forecast_destination_for_ia(
                 &input,
                 self.script_domains.interactables.doors.as_slice(),
@@ -2350,87 +2281,6 @@ impl EngineInner {
         }
     }
 
-    pub(super) fn apply_owner_relative_tick_positions(
-        &self,
-        npc_id: EntityId,
-        target_id: Option<EntityId>,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
-        tick_data: &mut AiPerTickData,
-    ) {
-        if let Some(target_id) = target_id {
-            let position = self.position_at_owner_boundary(
-                target_id,
-                npc_id,
-                positions_before_movement,
-                crate::engine::ai::OwnerActorPhase::AfterActor,
-            );
-            if let Some(target) = &mut tick_data.primary_target_position {
-                target.x = position.x;
-                target.y = position.y;
-            }
-        }
-        for fighter in &mut tick_data.nearby_fighters {
-            if let Some(id) = self.entity_id_for_index(fighter.handle) {
-                let position = self.position_at_owner_boundary(
-                    id,
-                    npc_id,
-                    positions_before_movement,
-                    crate::engine::ai::OwnerActorPhase::AfterActor,
-                );
-                fighter.position.x = position.x;
-                fighter.position.y = position.y;
-            }
-        }
-        for fighter in &mut tick_data.reconsider_swordfight_observation_fighters {
-            let id = self.entity_id_for_index(fighter.handle).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} has missing observation fighter {} at its owner boundary",
-                    npc_id.index(),
-                    fighter.handle
-                )
-            });
-            fighter.raw_world_position = self
-                .boundary_position(
-                    id,
-                    npc_id,
-                    positions_before_movement,
-                    crate::engine::ai::OwnerActorPhase::AfterActor,
-                )
-                .world;
-        }
-        for soldier in &mut tick_data.camp_soldiers {
-            let id = self.entity_id_for_index(soldier.handle).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} has missing camp soldier {} at its owner boundary",
-                    npc_id.index(),
-                    soldier.handle
-                )
-            });
-            // Battle decisions' omnidirectional-detection variant does not use
-            // AI Position(actor): it reads the friend's literal 3-D actor
-            // position to build the detection point. Keep both coordinate
-            // spaces on the same creation-order boundary. Updating only the
-            // map point left the visibility ray at the once-per-frame world
-            // snapshot after an earlier-created friend had moved.
-            let boundary = self.boundary_position(
-                id,
-                npc_id,
-                positions_before_movement,
-                crate::engine::ai::OwnerActorPhase::AfterActor,
-            );
-            apply_camp_soldier_boundary_position(
-                &mut soldier.position,
-                &mut soldier.position_world,
-                boundary,
-            );
-        }
-        self.prepare_detection_forecasts_for_owner(
-            npc_id,
-            Some(positions_before_movement),
-            tick_data,
-        );
-    }
-
     /// Test seam for creation-slot parity: capture the ordinary tick-start AI
     /// view, mutate live entity/sequence state, then run only detection refresh.
     #[cfg(test)]
@@ -2440,9 +2290,13 @@ impl EngineInner {
         assets: &LevelAssets,
         mutate_live_state: impl FnOnce(&mut Self),
     ) {
-        let world = self.tick_enemy_ai_build_world_view(assets, None);
+        let world = self.tick_enemy_ai_build_world_view(assets);
         mutate_live_state(self);
-        self.tick_enemy_ai_refresh_detection(sim, assets, &world, None, None, false, None);
+        let owners: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        let mut entity_views = super::PreparedAiEntityViewCache::default();
+        for owner in owners {
+            self.tick_enemy_ai_refresh_detection(sim, assets, &world, owner, &mut entity_views);
+        }
     }
 
     #[cfg(test)]
@@ -3136,14 +2990,12 @@ impl EngineInner {
     /// Build every PC/soldier that may legally occupy an Enemy list in global
     /// creation order. The actual scan walks the NPC's live detectable list;
     /// this view only supplies target fields without aliasing the observer.
+    /// Read stored map/world coordinates independently: converting between
+    /// them would round away the exact values retained by Original.
     fn tick_enemy_ai_build_live_enemy_optical_targets(
         &self,
         assets: &LevelAssets,
         world: &AiWorldView,
-        owner_boundary: Option<(
-            EntityId,
-            &EntitySlots<Option<crate::entities::BoundaryPosition>>,
-        )>,
         required_targets: Option<&std::collections::HashSet<EntityId>>,
     ) -> Vec<EnemyOpticalTarget> {
         self.world
@@ -3198,11 +3050,8 @@ impl EngineInner {
                         });
                     let posture = pc.element.posture();
                     let ground_z = pc.element.position().z;
-                    let boundary = owner_boundary
-                        .map(|(owner, positions)| {
-                            self.boundary_position(entity_id, owner, positions, crate::engine::ai::OwnerActorPhase::AfterActor)
-                        })
-                        .unwrap_or_else(|| crate::entities::BoundaryPosition::of(&pc.element));
+                    let stored_map = (&pc.element).position_map();
+                    let stored_world = (&pc.element).position();
                     let order_type = self
                         .orders
                         .sequence_manager
@@ -3211,10 +3060,10 @@ impl EngineInner {
                         .unwrap_or(crate::order::OrderType::Invalid);
                     Some(EnemyOpticalTarget {
                         id: entity_id,
-                        position: boundary.map,
+                        position: stored_map,
                         live_position_world: pc.element.position(),
-                        ai_position: self.ai_position_at_owner_boundary(entity_id, owner_boundary),
-                        ground_position: GroundPoint::from_map_and_z(boundary.map, ground_z),
+                        ai_position: self.live_ai_position(entity_id),
+                        ground_position: GroundPoint::from_map_and_z(stored_map, ground_z),
                         sector: pc.element.sector(),
                         layer: pc.element.layer(),
                         posture,
@@ -3227,7 +3076,7 @@ impl EngineInner {
                         // zero-offset detection point.
                         detection_point: (!dead).then(|| {
                             crate::stealth::detection_point_world(
-                                boundary.world,
+                                stored_world,
                                 posture,
                                 pc.element.direction(),
                                 false,
@@ -3262,17 +3111,14 @@ impl EngineInner {
                     let posture = soldier.element.posture();
                     let is_rider = soldier.soldier.rider;
                     let dead = soldier.npc.life_points <= 0;
-                    let boundary = owner_boundary
-                        .map(|(owner, positions)| {
-                            self.boundary_position(entity_id, owner, positions, crate::engine::ai::OwnerActorPhase::AfterActor)
-                        })
-                        .unwrap_or_else(|| crate::entities::BoundaryPosition::of(&soldier.element));
-                    let position = boundary.map;
+                    let stored_map = (&soldier.element).position_map();
+                    let stored_world = (&soldier.element).position();
+                    let position = stored_map;
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position,
                         live_position_world: soldier.element.position(),
-                        ai_position: self.ai_position_at_owner_boundary(entity_id, owner_boundary),
+                        ai_position: self.live_ai_position(entity_id),
                         ground_position: GroundPoint::from_map_and_z(
                             position,
                             soldier.element.position().z,
@@ -3284,7 +3130,7 @@ impl EngineInner {
                         building_sector: self.entity_building_sector(soldier.element.sector()),
                         detection_point: (!dead).then(|| {
                             crate::stealth::detection_point_world(
-                                boundary.world,
+                                stored_world,
                                 posture,
                                 soldier.element.direction(),
                                 is_rider,
@@ -3317,24 +3163,14 @@ impl EngineInner {
     }
 
     #[cfg(test)]
-    pub(crate) fn enemy_optical_geometry_at_owner_for_test(
+    pub(crate) fn enemy_optical_geometry_for_test(
         &mut self,
         assets: &LevelAssets,
-        owner: EntityId,
-        positions_before_movement: &crate::entities::EntitySlots<
-            Option<crate::entities::BoundaryPosition>,
-        >,
         target: EntityId,
     ) -> (crate::ai::Position, crate::coordinates::WorldPoint3D) {
-        let world =
-            self.tick_enemy_ai_build_world_view(assets, Some((owner, positions_before_movement)));
+        let world = self.tick_enemy_ai_build_world_view(assets);
         let optical = self
-            .tick_enemy_ai_build_live_enemy_optical_targets(
-                assets,
-                &world,
-                Some((owner, positions_before_movement)),
-                None,
-            )
+            .tick_enemy_ai_build_live_enemy_optical_targets(assets, &world, None)
             .into_iter()
             .find(|entry| entry.id == target)
             .unwrap_or_else(|| panic!("test optical target {target:?} is missing"));
@@ -4710,30 +4546,6 @@ mod tests {
         sequences.element_in_progress(sequence, 0);
 
         assert!(optical_target_is_passing_door(&sequences, target));
-    }
-
-    #[test]
-    fn camp_soldier_owner_boundary_updates_raw_world_position_with_map_position() {
-        // Savegame_035 replays 026/027: an earlier-created friend moved
-        // before the deciding soldier's slot. Battle planning consumes the
-        // raw world point for omnidirectional detection, so retaining the frame
-        // snapshot here changed both the visibility query and ally list.
-        let mut position = crate::ai::Position {
-            x: 10.0,
-            y: 20.0,
-            sector: None,
-            level: 0,
-        };
-        let mut position_world = crate::coordinates::WorldPoint3D::new(10.0, 120.0, 100.0);
-        let boundary = crate::entities::BoundaryPosition {
-            map: crate::coordinates::MapPoint::new(30.0, 40.0),
-            world: crate::coordinates::WorldPoint3D::new(30.0, 240.0, 200.0),
-        };
-
-        apply_camp_soldier_boundary_position(&mut position, &mut position_world, boundary);
-
-        assert_eq!((position.x, position.y), (30.0, 40.0));
-        assert_eq!(position_world, boundary.world);
     }
 
     #[test]

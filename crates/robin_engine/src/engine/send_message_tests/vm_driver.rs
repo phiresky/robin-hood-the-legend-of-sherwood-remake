@@ -144,12 +144,6 @@ fn animated_bonus(object_type: crate::element::ObjectType, active: bool) -> Enti
     })
 }
 
-fn empty_positions(
-    engine: &EngineInner,
-) -> crate::entities::EntitySlots<Option<crate::entities::BoundaryPosition>> {
-    crate::entities::EntitySlots::filled(engine.world.entities.len(), None)
-}
-
 #[test]
 fn due_scroll_self_deactivation_keeps_entry_active_animation_order() {
     let mut engine = EngineInner::new();
@@ -171,12 +165,12 @@ fn due_scroll_self_deactivation_keeps_entry_active_animation_order() {
         .unwrap()
         .scroll_instances
         .insert(handle, instance);
-    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.attach_script_bindings(&assets);
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets, &positions);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let Entity::Scroll(scroll) = engine
         .get_entity(scroll_id)
@@ -212,8 +206,8 @@ fn due_scroll_self_deactivation_keeps_entry_active_animation_order() {
         .scroll_instances
         .insert(frozen_handle, frozen_instance);
     engine.set_actors_frozen(true);
-    let positions = empty_positions(&engine);
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets, &positions);
+
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
     let Entity::Scroll(frozen_scroll) = engine.get_entity(frozen_id).unwrap() else {
         unreachable!()
     };
@@ -251,11 +245,11 @@ fn due_scroll_callback_changes_same_slot_freeze_gate_live() {
             .scroll_instances
             .insert(handle, instance);
         engine.set_actors_frozen(initially_frozen);
-        let positions = empty_positions(&engine);
+
         let assets = LevelAssets::new();
         engine.attach_script_bindings(&assets);
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets, &positions);
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
         (
             engine.actors_frozen(),
@@ -310,10 +304,10 @@ fn target_bored_rng_draws_follow_live_slot_order_exactly_once() {
                 engine.add_test_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
             (a, b)
         };
-        let positions = empty_positions(&engine);
+
         let assets = LevelAssets::new();
         crate::sim_rng::with_seed(seed, |sim| {
-            engine.tick_actor_owner_envelopes(sim, &assets, &positions);
+            engine.tick_actor_owner_envelopes(sim, &assets);
         });
         (
             engine
@@ -402,8 +396,8 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
         .element_data()
         .sprite
         .current_frame;
-    let positions = empty_positions(&engine);
-    engine.tick_actor_owner_envelopes(&sim, &assets, &positions);
+
+    engine.tick_actor_owner_envelopes(&sim, &assets);
 
     // An inactive ale reports false from its update, but the engine's
     // default removal only deactivates: the slot stays occupied because

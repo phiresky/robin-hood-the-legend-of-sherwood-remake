@@ -1,101 +1,92 @@
 use super::*;
 
 #[test]
-fn owner_boundary_positions_follow_original_creation_order_not_entity_slots() {
-    use crate::coordinates::{MapPoint, WorldPoint3D};
-    use crate::entities::{BoundaryPosition, EntitySlots};
+fn owner_walk_observes_live_geometry_in_original_creation_order() {
+    use crate::coordinates::MapPoint;
     use std::collections::BTreeMap;
-
     let mut engine = EngineInner::new();
-    // Deliberately allocate in the opposite order from Original's element
-    // walk. Rust slots are loader/runtime storage identities; Original
-    // Update visibility is determined by creation order.
-    let later_target = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    let later = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
-    let earlier_target =
-        engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    let earlier = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     engine.world.install_original_creation_orders(
-        BTreeMap::from([(later_target, 30), (owner, 20), (earlier_target, 10)]),
+        BTreeMap::from([(later, 30), (owner, 20), (earlier, 10)]),
         31,
     );
-    assert!(later_target.index() < owner.index());
-    assert!(earlier_target.index() > owner.index());
-
-    let earlier_before = BoundaryPosition {
-        map: MapPoint::new(10.0, 20.0),
-        world: WorldPoint3D::new(10.0, 23.0, 3.0),
-    };
-    let owner_before = BoundaryPosition {
-        map: MapPoint::new(30.0, 40.0),
-        world: WorldPoint3D::new(30.0, 45.0, 5.0),
-    };
-    let later_before = BoundaryPosition {
-        map: MapPoint::new(50.0, 60.0),
-        world: WorldPoint3D::new(50.0, 67.0, 7.0),
-    };
-    let mut before = EntitySlots::filled(engine.world.entities.len(), None);
-    before[earlier_target] = Some(earlier_before);
-    before[owner] = Some(owner_before);
-    before[later_target] = Some(later_before);
-
-    let earlier_live = WorldPoint3D::new(110.0, 123.0, 13.0);
-    let owner_live = WorldPoint3D::new(130.0, 145.0, 15.0);
-    let later_live = WorldPoint3D::new(150.0, 167.0, 17.0);
-    engine
-        .get_entity_mut(earlier_target)
-        .unwrap()
-        .element_data_mut()
-        .set_position(earlier_live);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_position(owner_live);
-    engine
-        .get_entity_mut(later_target)
-        .unwrap()
-        .element_data_mut()
-        .set_position(later_live);
-
-    assert_eq!(
-        engine.boundary_position(
-            earlier_target,
-            owner,
-            &before,
-            crate::engine::ai::OwnerActorPhase::AfterActor
-        ),
-        BoundaryPosition::of(engine.get_entity(earlier_target).unwrap().element_data()),
-        "an earlier Original slot has already completed its actor movement"
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    for (id, x) in [(earlier, 10.0), (owner, 30.0), (later, 50.0)] {
+        let entity = engine.get_entity_mut(id).unwrap();
+        entity.element_data_mut().active = true;
+        entity.npc_data_mut().unwrap().life_points = 100;
+        engine
+            .get_entity_mut(id)
+            .unwrap()
+            .element_data_mut()
+            .set_position_map(MapPoint::new(x, 0.0));
+    }
+    crate::ai_vision::focus_entity(
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .npc_data_mut()
+            .unwrap(),
+        later,
     );
-    assert_eq!(
-        engine.boundary_position(
-            later_target,
-            owner,
-            &before,
-            crate::engine::ai::OwnerActorPhase::AfterActor
-        ),
-        later_before,
-        "a later Original slot still exposes its preserved pre-movement position"
+    let mut visits = Vec::new();
+    let mut observed = None;
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
+        &crate::sim_rng::test_context(),
+        &assets,
+        |engine, id| {
+            visits.push(id);
+            if id == earlier {
+                engine
+                    .get_entity_mut(earlier)
+                    .unwrap()
+                    .element_data_mut()
+                    .set_position_map(MapPoint::new(110.0, 0.0));
+                // A callback may move a later actor before that actor's turn.
+                engine
+                    .get_entity_mut(later)
+                    .unwrap()
+                    .element_data_mut()
+                    .set_position_map(MapPoint::new(70.0, 0.0));
+            } else if id == owner {
+                observed = Some((
+                    engine
+                        .get_entity(earlier)
+                        .unwrap()
+                        .element_data()
+                        .position_map()
+                        .x,
+                    engine
+                        .get_entity(later)
+                        .unwrap()
+                        .element_data()
+                        .position_map()
+                        .x,
+                ));
+            } else if id == later {
+                engine
+                    .get_entity_mut(later)
+                    .unwrap()
+                    .element_data_mut()
+                    .set_position_map(MapPoint::new(150.0, 0.0));
+            }
+        },
     );
+    assert_eq!(visits, vec![earlier, owner, later]);
+    assert_eq!(observed, Some((110.0, 70.0)));
     assert_eq!(
-        engine.boundary_position(
-            owner,
-            owner,
-            &before,
-            crate::engine::ai::OwnerActorPhase::BeforeActor
-        ),
-        owner_before,
-        "the owner itself is pre-movement before its actor-update phase"
-    );
-    assert_eq!(
-        engine.boundary_position(
-            owner,
-            owner,
-            &before,
-            crate::engine::ai::OwnerActorPhase::AfterActor
-        ),
-        BoundaryPosition::of(engine.get_entity(owner).unwrap().element_data()),
-        "the owner itself is live after its actor-update phase"
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .npc_data()
+            .unwrap()
+            .stare_point
+            .x,
+        70.0,
+        "view refresh must retain an earlier callback's mutation of a later actor"
     );
 }
 
@@ -1080,11 +1071,10 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
 }
 
 #[test]
-fn optical_ai_position_uses_carrier_boundary_but_detects_the_target_world_point() {
+fn optical_ai_position_follows_carrier_but_detects_target_stored_world_point() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let carrier = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::OnShoulders));
 
@@ -1121,19 +1111,8 @@ fn optical_ai_position_uses_carrier_boundary_but_detects_the_target_world_point(
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let positions = engine.boundary_positions_snapshot();
-    let Entity::Pc(carrier_pc) = engine.get_entity_mut(carrier).expect("carrier PC remains") else {
-        panic!("carrier changed kind")
-    };
-    carrier_pc
-        .element
-        .set_position(WorldPoint3D::new(999.0, 999.0, 99.0));
-    carrier_pc
-        .element
-        .set_position_map(MapPoint::new(999.0, 999.0));
 
-    let (ai_position, optical_point) =
-        engine.enemy_optical_geometry_at_owner_for_test(&assets, owner, &positions, target);
+    let (ai_position, optical_point) = engine.enemy_optical_geometry_for_test(&assets, target);
     assert_eq!(ai_position.x, 321.25);
     assert_eq!(ai_position.y, 640.0);
     assert_eq!(
@@ -1148,6 +1127,17 @@ fn optical_ai_position_uses_carrier_boundary_but_detects_the_target_world_point(
         optical_point.z.to_bits(),
         expected_optical_point.z.to_bits()
     );
+    // A callback changes the carrier before its next movement synchronizes
+    // the body. Effective AI position follows it; optical geometry stays on
+    // the carried human's own stored world point.
+    engine
+        .get_entity_mut(carrier)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(MapPoint::new(999.0, 999.0));
+    let (moved_ai, unmoved_optical) = engine.enemy_optical_geometry_for_test(&assets, target);
+    assert_eq!((moved_ai.x, moved_ai.y), (999.0, 999.0));
+    assert_eq!(unmoved_optical, expected_optical_point);
 }
 
 #[test]

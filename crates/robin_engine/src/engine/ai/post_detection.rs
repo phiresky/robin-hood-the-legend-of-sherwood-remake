@@ -357,7 +357,7 @@ impl EngineInner {
     ) {
         let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for npc_id in npc_ids {
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None);
         }
     }
 
@@ -397,7 +397,7 @@ impl EngineInner {
         };
 
         self.dispatch_ai_stimulus(npc_id, stimulus);
-        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
+        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None);
 
         // This FIFO was detached during the synchronous call, so deletion's
         // owner hooks could not reach it. Do not restore newly stale targets.
@@ -425,7 +425,6 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
         mut enemy_detection_tick_data: Option<PendingEnemyDetectionTickData>,
-        positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
     ) {
         let stimuli = {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
@@ -471,16 +470,7 @@ impl EngineInner {
             // recursive event it launches) finishes before the next queued
             // stimulus starts, so every entry must observe mutations made by
             // its predecessor rather than the tick-start entity-view map.
-            let scratch = positions_before_movement
-                .map(|positions| {
-                    self.build_owner_context_scratch_at_slot_without_forecast(
-                        assets,
-                        npc_id,
-                        positions,
-                        crate::engine::ai::OwnerActorPhase::AfterActor,
-                    )
-                })
-                .unwrap_or_else(|| self.build_owner_context_scratch_without_forecast(assets));
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
             if let crate::ai::StimulusInfo::Human(handle) = stimulus.info
                 && !scratch.ai_entity_views.contains_key(&handle.get())
             {
@@ -562,14 +552,7 @@ impl EngineInner {
                 let mut live =
                     self.build_npc_tick_data_for_target(sim, npc_id, assets, Some(target_id));
                 overlay_final_detection_scan(&mut live, &aggregate);
-                if let Some(positions) = positions_before_movement {
-                    self.apply_owner_relative_tick_positions(
-                        npc_id,
-                        Some(target_id),
-                        positions,
-                        &mut live,
-                    );
-                }
+
                 live
             } else {
                 let target_override = match stimulus.info {
@@ -592,18 +575,11 @@ impl EngineInner {
                     }
                     _ => None,
                 };
-                let mut live =
-                    self.build_npc_tick_data_for_target(sim, npc_id, assets, target_override);
-                if let Some(positions) = positions_before_movement {
-                    self.apply_owner_relative_tick_positions(
-                        npc_id,
-                        target_override,
-                        positions,
-                        &mut live,
-                    );
-                }
-                live
+                self.build_npc_tick_data_for_target(sim, npc_id, assets, target_override)
             };
+            // Detection delivery forecasts the actor's actual primary target,
+            // which can differ from this stimulus's tactical target override.
+            self.prepare_detection_forecasts_for_owner(npc_id, &mut tick_data);
             if matches!(
                 stimulus.stimulus_type,
                 crate::ai::StimulusType::EventView | crate::ai::StimulusType::EventOutOfView
@@ -834,7 +810,7 @@ impl EngineInner {
                 // generic tick builder only prepares primary/missed
                 // forecasts, so add the per-detectable ones the handler
                 // indexes by handle.
-                self.prepare_detection_forecasts_for_owner(npc_id, None, &mut tick_data);
+                self.prepare_detection_forecasts_for_owner(npc_id, &mut tick_data);
             }
             self.dispatch_think_with_drain_without_forecast(
                 sim, npc_id, &stimulus, &ctx, &tick_data, assets,

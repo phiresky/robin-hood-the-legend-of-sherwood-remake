@@ -171,11 +171,11 @@ fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
             },
         }));
         let assets = LevelAssets::new();
-        let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+
         let tick = |engine: &mut EngineInner| {
             capture_projectile_derived_tails(|| {
                 engine.with_simulation_context(|engine, sim| {
-                    engine.tick_actor_owner_envelopes(sim, &assets, &positions)
+                    engine.tick_actor_owner_envelopes(sim, &assets)
                 })
             })
             .1
@@ -1539,7 +1539,6 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
             Sprite::new(Arc::new(vec![script; 17]), Arc::new(conversion)),
         );
     }
-    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
 
     for (name, execution_frozen, fried) in
         [("execution_frozen", true, false), ("fried", false, true)]
@@ -1553,7 +1552,6 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
         gated.tick_actor_owner_envelopes_with_test_owner_hook(
             &crate::sim_rng::test_context(),
             &assets,
-            &positions,
             |_, _| {},
         );
         assert!(
@@ -1569,7 +1567,6 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
         &crate::sim_rng::test_context(),
         &assets,
-        &positions,
         |_, _| {},
     );
     assert_eq!(

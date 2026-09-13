@@ -2837,9 +2837,7 @@ impl EngineInner {
                 // the just-appended lose-consciousness event.
                 self.drain_pending_concussion_side_effects(sim, assets);
                 if matches!(victim_id, EntityId::Soldier(_) | EntityId::Civilian(_)) {
-                    self.tick_enemy_ai_drain_pending_stimuli_for_npc(
-                        sim, victim_id, assets, None, None,
-                    );
+                    self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, victim_id, assets, None);
                     self.tick_ai_pending_resurrection_and_eyes_for_npc(victim_id);
                 }
             }
