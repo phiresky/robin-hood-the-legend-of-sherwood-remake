@@ -735,9 +735,7 @@ async fn confirm_exit(io: &mut MainMenuIo<'_>, application_context: &Application
         // Persist the profile manager right before closing so
         // unsaved profile-level changes (active selection,
         // renames, etc.) survive the exit.
-        application_context
-            .save_player_profiles()
-            .unwrap_or_else(|error| panic!("Main menu Exit lost its ApplicationContext: {error}"))
+        crate::application::require(application_context.save_player_profiles(), "Main menu Exit")
             .log_persistence_error("Main menu Exit: failed to save profile manager");
         return true;
     }
@@ -1041,9 +1039,10 @@ fn apply_selected_profile_graphics(
     // would require a top-level main-menu `SoundManager` first;
     // that is a structural change beyond the scope of this arm.
     // Preserve the original game's player-selection entry behavior.
-    let graphic = application_context
-        .with_active_profile(|profile| profile.graphic_config.clone())
-        .unwrap_or_else(|error| panic!("Select Player removed the active profile: {error}"));
+    let graphic = crate::application::require(
+        application_context.with_active_profile(|profile| profile.graphic_config.clone()),
+        "Select Player",
+    );
     io.window.set_logical_resolution_policy(&graphic);
     io.renderer.sync_window_size(io.window);
     io.renderer.apply_upscale_config(&graphic);

@@ -386,14 +386,15 @@ impl SelectPlayerState {
             };
             // Persist the selected 4:3 scale reference, not the
             // transient aspect-adapted canvas dimensions.
-            let screen_dims = application_context
-                .with_active_profile(|profile| {
+            let screen_dims = crate::application::require(
+                application_context.with_active_profile(|profile| {
                     (
                         profile.graphic_config.resolution_x.round() as u32,
                         profile.graphic_config.resolution_y.round() as u32,
                     )
-                })
-                .unwrap_or_else(|error| panic!("new-player flow lost the active profile: {error}"));
+                }),
+                "New-player flow",
+            );
             let idx = create_new_profile(
                 application_context,
                 final_name,
