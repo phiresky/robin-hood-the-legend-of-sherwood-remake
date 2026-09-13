@@ -1,6 +1,14 @@
 //! Replay-specific launch reconstruction and immutable asset admission.
 use super::{ApplicationContext, Campaign, MissionLocation, engine_api, engine_profiles};
 
+// Per-platform replay asset restore; both modules export the same signature.
+#[cfg(not(target_arch = "wasm32"))]
+#[path = "replay_launch/native.rs"]
+mod platform;
+#[cfg(target_arch = "wasm32")]
+#[path = "replay_launch/wasm.rs"]
+mod platform;
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PreparedReplayLaunch {
     pub(crate) campaign: Campaign,
@@ -140,70 +148,7 @@ async fn resolve_replay_mission_assets(
             .map_err(|error| error.to_string());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let roots = crate::mission_asset_restore::MissionAssetRoots::discover();
-        let with_cache = application_context.with_distributed_mod_cache_mut(|cache| {
-            crate::mission_asset_restore::resolve_native_mission_assets(
-                descriptor,
-                package,
-                &roots,
-                Some(cache),
-                application_context.preparation_files()?.clone(),
-            )
-            .map_err(|error| error.to_string())
-        });
-        match with_cache {
-            Ok(resolved) => Ok(resolved),
-            Err(cache_error) => crate::mission_asset_restore::resolve_native_mission_assets(
-                descriptor,
-                package,
-                &roots,
-                None,
-                application_context.preparation_files()?.clone(),
-            )
-            .map_err(|without_cache| {
-                format!(
-                    "restore replay mission assets without cache: {without_cache}; cache attempt: {cache_error}"
-                )
-            }),
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        use robin_engine::mission_assets::MissionAssetSource;
-        match &descriptor.source {
-            MissionAssetSource::BuiltIn => {
-                crate::mission_asset_restore::resolve_built_in_mission_assets(descriptor, package)
-                    .map_err(|error| error.to_string())
-            }
-            MissionAssetSource::Archive(archive) => {
-                let cache_identity = archive.distributed_cache.as_ref().ok_or_else(|| {
-                    format!(
-                        "browser cold replay `{}` has no exact distributed-cache identity",
-                        descriptor.mission_basename
-                    )
-                })?;
-                let lease = crate::distributed_mod_cache::acquire(cache_identity.full_mod_sha256)
-                    .await
-                    .map_err(|error| format!("acquire browser replay mission cache: {error}"))?
-                    .ok_or_else(|| {
-                        format!(
-                            "browser replay mission cache has no exact object {}",
-                            robin_engine::spellforge::hex_hash(&cache_identity.full_mod_sha256)
-                        )
-                    })?;
-                crate::mission_asset_restore::resolve_cached_mission_assets(
-                    descriptor,
-                    package,
-                    lease,
-                    application_context.preparation_files()?.clone(),
-                )
-                .map_err(|error| error.to_string())
-            }
-        }
-    }
+    platform::resolve_non_built_in_mission_assets(application_context, descriptor, package).await
 }
 
 pub(super) fn choose_pending_replay(

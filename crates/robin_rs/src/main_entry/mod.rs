@@ -19,6 +19,7 @@
 mod callbacks;
 mod cli;
 mod init;
+mod platform;
 mod run;
 
 #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
@@ -34,9 +35,10 @@ pub use cli::{
 pub use init::rust_init_official_projection;
 pub use init::{
     FALLBACK_LOCALE_FOLDER, InitError, InitErrorCategory, LANGUAGE_FOLDERS, OVERLAY_DATA_DIRS_ENV,
-    RustInit, overlay_mods_dir, register_language_data_paths_for_tool, rust_init,
-    rust_init_with_data_dir, rust_init_with_shipping,
+    RustInit, register_language_data_paths_for_tool, rust_init, rust_init_with_data_dir,
+    rust_init_with_shipping,
 };
+pub use platform::overlay_mods_dir;
 
 pub(crate) use callbacks::{
     AutosaveNotices, OperationOutcome, PendingMultiplayerCampaignExit, RustCallbacks,

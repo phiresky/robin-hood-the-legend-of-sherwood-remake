@@ -12,6 +12,7 @@ use robin_engine::profiles::MissionLocation;
 
 use super::callbacks::{RustCallbacks, detect_demo_mode_with_context, force_mission_launch};
 use super::cli::{MissionLaunch, requested_replay_data};
+use super::platform::prepare_direct_custom_mission_args;
 
 use crate::game_session::PreparedReplayLaunch;
 
@@ -1117,65 +1118,6 @@ async fn wait_for_replay_command_headless(context: &ApplicationContext) -> Resul
         }
         crate::window::sleep_ms(50).await;
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn prepare_direct_custom_mission_args(
-    args: &MissionLaunch,
-    profiles: &engine_profiles::ProfileManager,
-    application_context: &ApplicationContext,
-) -> Result<Option<MissionLaunch>, String> {
-    let Some(archive) = args.custom_mission.as_deref() else {
-        return Ok(None);
-    };
-    let mission = args.mission.as_deref().ok_or_else(|| {
-        "--custom-mission requires --mission even when arguments bypass clap".to_owned()
-    })?;
-    let map = args
-        .proto
-        .clone()
-        .or_else(|| {
-            profiles
-                .missions
-                .iter()
-                .find(|profile| profile.mission_filename.eq_ignore_ascii_case(mission))
-                .map(|profile| profile.proto_level_filename.clone())
-        })
-        .unwrap_or_else(|| mission.to_owned());
-
-    let prepared = crate::mission_asset_launch::prepare_direct_custom_mission(
-        application_context,
-        archive,
-        mission,
-        &map,
-        args.custom_mission_entry.as_deref(),
-    )
-    .map_err(|error| format!("--custom-mission: {error}"))?;
-
-    if prepared.spellforge_package.is_some() {
-        return Err(
-            "--custom-mission accepts vanilla archives only; launch Spellforge content from the Custom Missions menu"
-                .to_owned(),
-        );
-    }
-    let mut prepared_args = args.clone();
-    prepared_args.resolved_mission_assets = Some(prepared.resolved);
-    Ok(Some(prepared_args))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn prepare_direct_custom_mission_args(
-    args: &MissionLaunch,
-    _profiles: &engine_profiles::ProfileManager,
-    _application_context: &ApplicationContext,
-) -> Result<Option<MissionLaunch>, String> {
-    if args.custom_mission.is_some() {
-        return Err(
-            "--custom-mission filesystem paths are unavailable in browser builds; use canonical host-distributed content"
-                .to_owned(),
-        );
-    }
-    Ok(None)
 }
 
 /// Block until a `load-replay` RPC call queues a pending replay,
