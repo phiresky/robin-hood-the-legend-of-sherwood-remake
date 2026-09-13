@@ -235,13 +235,21 @@ impl EngineInner {
         }
 
         // ── Send reinforcement messages ──────────────────────────
-        //
-        // For every PC, decrement `time_till_reinforcement` and, the
-        // tick it hits zero, enqueue a reinforcement spawn directly
-        // (skipping the messenger round-trip the original used).
-        // `drain_pending_reinforcements` already handles the
-        // `&mut LevelAssets` needed for sprite loading, and the
-        // intermediate message was never observed by anything else.
+        self.tick_pc_reinforcement_arrivals();
+
+        // ── Process messenger (engine-state messages) ────────────
+        self.drain_engine_state_messages(assets);
+
+        None
+    }
+
+    /// For every PC, decrement `time_till_reinforcement` and, the tick it
+    /// hits zero, enqueue a reinforcement spawn directly (skipping the
+    /// messenger round-trip the original used).
+    /// `drain_pending_reinforcements` already handles the
+    /// `&mut LevelAssets` needed for sprite loading, and the intermediate
+    /// message was never observed by anything else.
+    fn tick_pc_reinforcement_arrivals(&mut self) {
         let pc_ids_for_reinf: Vec<EntityId> = self.world.pc_ids.clone();
         for pc_id in pc_ids_for_reinf {
             let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) else {
@@ -262,413 +270,435 @@ impl EngineInner {
                 self.orders.pending_reinforcements.push(Some(pc_id));
             }
         }
+    }
 
-        // ── Process messenger (engine-state messages) ────────────
-        // Handle pending messages that mutate engine state. Other
-        // messages (UI/mission flow) are left in the queue for their
-        // respective consumers (UI layer, tests, etc.) to observe.
-        // We only consume the ones that actually affect engine state.
-        {
-            // Message forwarding is synchronous and recursive:
-            // a message emitted while handling another message completes
-            // before the outer call resumes.  Keep host/UI-only messages for
-            // their downstream consumer, but prepend newly emitted messages
-            // to the remaining engine work so their observable state changes
-            // happen depth-first in this frame.
-            let mut messages: std::collections::VecDeque<_> = self.orders.messenger.drain().into();
-            let mut downstream = std::collections::VecDeque::new();
-            while let Some(msg) = messages.pop_front() {
-                match msg.msg_type {
-                    MessageType::Simple(SimpleMessage::LockAlt) => {
-                        self.players.seats[0].is_lock_alt = true;
+    /// Handle pending messages that mutate engine state. Other messages
+    /// (UI/mission flow) are left in the queue for their respective
+    /// consumers (UI layer, tests, etc.) to observe. We only consume the
+    /// ones that actually affect engine state.
+    fn drain_engine_state_messages(&mut self, assets: &LevelAssets) {
+        // Message forwarding is synchronous and recursive:
+        // a message emitted while handling another message completes
+        // before the outer call resumes.  Keep host/UI-only messages for
+        // their downstream consumer, but prepend newly emitted messages
+        // to the remaining engine work so their observable state changes
+        // happen depth-first in this frame.
+        let mut messages: std::collections::VecDeque<_> = self.orders.messenger.drain().into();
+        let mut downstream = std::collections::VecDeque::new();
+        while let Some(msg) = messages.pop_front() {
+            // The two handlers are one match split in arm order: a message
+            // reaches the second only if no arm of the first matched.
+            if let Some(msg) = self.handle_selection_and_macro_message(assets, msg)
+                && let Some(msg) = self.handle_input_and_action_message(assets, msg)
+            {
+                // Other messages are consumed by downstream systems
+                // (UI layer, mission flow). Re-enqueue so those
+                // consumers can still observe them.
+                downstream.push_back(msg);
+            }
+
+            // Preserve the send order of recursive calls while placing
+            // them ahead of pre-existing sibling messages.
+            for nested in self.orders.messenger.drain().into_iter().rev() {
+                messages.push_front(nested);
+            }
+        }
+        for msg in downstream {
+            self.orders.messenger.send(msg);
+        }
+    }
+
+    /// Engine-state arms for alt-lock, macro recording, reinforcement
+    /// requests, PC-info overlay, and character selection/enable. Returns
+    /// the message unchanged when no arm matches.
+    fn handle_selection_and_macro_message(
+        &mut self,
+        assets: &LevelAssets,
+        msg: crate::messenger::Message,
+    ) -> Option<crate::messenger::Message> {
+        match msg.msg_type {
+            MessageType::Simple(SimpleMessage::LockAlt) => {
+                self.players.seats[0].is_lock_alt = true;
+            }
+            MessageType::Simple(SimpleMessage::UnlockAlt) => {
+                self.players.seats[0].is_lock_alt = false;
+            }
+            // Macro recording state machine.  The PC id is
+            // passed via the message: a present id targets one
+            // specific PC; an absent id arms every currently-
+            // selected PC.
+            MessageType::Pc(crate::messenger::PcMessage::StartRecordingMacro, pc) => {
+                let slot = self.players.qa_recording_slot;
+                let targets: Vec<crate::element::EntityId> = match pc {
+                    Some(id) => vec![id],
+                    None => self.players.seats[0].selection.clone(),
+                };
+                for pc_id in &targets {
+                    self.players
+                        .macro_store
+                        .get_or_insert(*pc_id)
+                        .begin_recording(slot);
+                    let pc = self
+                        .get_entity_mut(*pc_id)
+                        .and_then(|entity| entity.pc_data_mut())
+                        .unwrap_or_else(|| {
+                            panic!("quick-action recording target {pc_id:?} is not a PC")
+                        });
+                    pc.portrait.quick_icons[slot as usize] = Default::default();
+                }
+                self.players.qa_recording_for = targets;
+                // Snapshot the currently-armed action so the
+                // MSG_STOP_RECORDING_MACRO post-process can
+                // restore it.
+                self.players.action_before_recording_macro = self.get_selected_action();
+            }
+            MessageType::Pc(crate::messenger::PcMessage::StopRecordingMacro, _) => {
+                // Suppress the post-process restore unless
+                // something was actually recording.
+                let was_recording = !self.players.qa_recording_for.is_empty();
+                self.stop_recording_macro();
+
+                // Post-process: re-select the action that was
+                // armed before recording started.  Apply the
+                // saved action to each selected PC directly —
+                // we do not route MSG_SELECT_ACTION through
+                // the messenger drain.
+                if was_recording {
+                    let restore = self.players.action_before_recording_macro;
+                    self.players.action_before_recording_macro = crate::profiles::Action::NoAction;
+                    self.players.seats[0].selected_action = restore;
+                    for id in self.players.seats[0].selection.clone() {
+                        if let Some(entity) = self.get_entity_mut(id)
+                            && let Some(pc) = entity.pc_data_mut()
+                        {
+                            pc.current_action = restore;
+                        }
                     }
-                    MessageType::Simple(SimpleMessage::UnlockAlt) => {
-                        self.players.seats[0].is_lock_alt = false;
+                    // Emit the message for script /
+                    // edge-subscriber observation.
+                    self.orders
+                        .messenger
+                        .send(crate::messenger::Message::pc_with_value(
+                            crate::messenger::PcMessage::SelectAction,
+                            None,
+                            restore as u32,
+                        ));
+                }
+            }
+            MessageType::Pc(crate::messenger::PcMessage::UpdateRecordingMacro, _) => {
+                // When a recording is live, end it on PCs no
+                // longer selected and start it on any newly-
+                // selected PC — keeping the slot index stable
+                // across selection changes.
+                if !self.players.qa_recording_for.is_empty() {
+                    let slot = self.players.qa_recording_slot;
+                    let selected: Vec<crate::element::EntityId> =
+                        self.players.seats[0].selection.clone();
+                    // End on PCs that left the selection.
+                    let current = self.players.qa_recording_for.clone();
+                    for pc_id in &current {
+                        if !selected.contains(pc_id)
+                            && let Some(state) = self.players.macro_store.get_mut(*pc_id)
+                        {
+                            state.stop_recording();
+                        }
                     }
-                    // Macro recording state machine.  The PC id is
-                    // passed via the message: a present id targets one
-                    // specific PC; an absent id arms every currently-
-                    // selected PC.
-                    MessageType::Pc(crate::messenger::PcMessage::StartRecordingMacro, pc) => {
-                        let slot = self.players.qa_recording_slot;
-                        let targets: Vec<crate::element::EntityId> = match pc {
-                            Some(id) => vec![id],
-                            None => self.players.seats[0].selection.clone(),
-                        };
-                        for pc_id in &targets {
+                    // Start on PCs newly selected.
+                    for pc_id in &selected {
+                        if !current.contains(pc_id) {
                             self.players
                                 .macro_store
                                 .get_or_insert(*pc_id)
                                 .begin_recording(slot);
-                            let pc = self
-                                .get_entity_mut(*pc_id)
-                                .and_then(|entity| entity.pc_data_mut())
-                                .unwrap_or_else(|| {
-                                    panic!("quick-action recording target {pc_id:?} is not a PC")
-                                });
-                            pc.portrait.quick_icons[slot as usize] = Default::default();
                         }
-                        self.players.qa_recording_for = targets;
-                        // Snapshot the currently-armed action so the
-                        // MSG_STOP_RECORDING_MACRO post-process can
-                        // restore it.
-                        self.players.action_before_recording_macro = self.get_selected_action();
                     }
-                    MessageType::Pc(crate::messenger::PcMessage::StopRecordingMacro, _) => {
-                        // Suppress the post-process restore unless
-                        // something was actually recording.
-                        let was_recording = !self.players.qa_recording_for.is_empty();
-                        self.stop_recording_macro();
-
-                        // Post-process: re-select the action that was
-                        // armed before recording started.  Apply the
-                        // saved action to each selected PC directly —
-                        // we do not route MSG_SELECT_ACTION through
-                        // the messenger drain.
-                        if was_recording {
-                            let restore = self.players.action_before_recording_macro;
-                            self.players.action_before_recording_macro =
-                                crate::profiles::Action::NoAction;
-                            self.players.seats[0].selected_action = restore;
-                            for id in self.players.seats[0].selection.clone() {
-                                if let Some(entity) = self.get_entity_mut(id)
-                                    && let Some(pc) = entity.pc_data_mut()
+                    self.players.qa_recording_for = selected;
+                }
+            }
+            MessageType::Pc(crate::messenger::PcMessage::SendReinforcement, pc) => {
+                // `MSG_SEND_REINFORCEMENT` plays the "new peasant
+                // called" jingle and sets the PC's cooldown to
+                // 100 ticks.  The cooldown poll in the tick
+                // above spawns the replacement when the counter
+                // hits zero.
+                if let Some(pc_id) = pc
+                    && let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id)
+                {
+                    pc.pc.time_till_reinforcement = 100;
+                }
+                self.feedback.pending_side_effects.sounds.push(
+                    crate::engine::SoundCommand::Jingle(crate::sound::Jingle::NewPeasantCalled),
+                );
+            }
+            // PC-info hover popup is HQ-only (Sherwood) — go
+            // through `request_pc_info_overlay` so that gate
+            // is honored.
+            //
+            // UI-has-focus: another UI widget grabbed input
+            // focus — hide any live PC-info hover popup.
+            // Emitted from the minimap drag handler
+            // (commands.rs) and should be emitted from any
+            // future in-game widget that grabs focus.
+            //
+            // The Rust port keeps the mouse focus gate on
+            // host-owned `InputState`; display-effect preparation
+            // consumes the side effect below and clears that gate
+            // before later mouse dispatch can see it.
+            MessageType::Simple(crate::messenger::SimpleMessage::UiHasFocus) => {
+                self.request_pc_info_overlay(assets, None);
+                self.feedback.pending_side_effects.ui_has_focus = true;
+            }
+            MessageType::Pc(crate::messenger::PcMessage::ShowPcInformation, pc) => {
+                self.request_pc_info_overlay(assets, pc);
+            }
+            MessageType::Pc(crate::messenger::PcMessage::HidePcInformation, _) => {
+                self.request_pc_info_overlay(assets, None);
+            }
+            // The four `SelectCharacter[Add][WithEcho]` arms
+            // all route through `select_pc` with the
+            // appropriate (multi-select, speak) flags.
+            MessageType::Pc(crate::messenger::PcMessage::SelectCharacter, Some(pc_id)) => {
+                // Tick messenger drains: ambient single-seat
+                // semantics; LOCAL seat for now.
+                self.select_pc(assets, 0, pc_id, false, false);
+                self.emit_character_selection_followups();
+            }
+            MessageType::Pc(crate::messenger::PcMessage::SelectCharacterWithEcho, Some(pc_id)) => {
+                self.select_pc(assets, 0, pc_id, false, true);
+                self.emit_character_selection_followups();
+            }
+            MessageType::Pc(crate::messenger::PcMessage::SelectAddCharacter, Some(pc_id)) => {
+                self.select_pc(assets, 0, pc_id, true, false);
+                self.emit_character_selection_followups();
+            }
+            MessageType::Pc(
+                crate::messenger::PcMessage::SelectAddCharacterWithEcho,
+                Some(pc_id),
+            ) => {
+                self.select_pc(assets, 0, pc_id, true, true);
+                self.emit_character_selection_followups();
+            }
+            // `pc == None` drops the whole selection;
+            // otherwise remove the specific PC.  Producers:
+            // `tick.rs:L4279` (dying / KO'd PC), `LockUser`,
+            // `DisableCharacter` (below).
+            MessageType::Pc(crate::messenger::PcMessage::UnselectCharacter, pc) => {
+                // Sherwood-only: on `pc == None`, mark every
+                // PC's interface hidden; otherwise hide just
+                // that PC's.  Engine side clears the selection
+                // list separately.
+                if self.is_sherwood(&assets.profile_manager) {
+                    match pc {
+                        None => {
+                            let ids = self.world.pc_ids.clone();
+                            for id in ids {
+                                if let Some(crate::element::Entity::Pc(pc)) =
+                                    self.get_entity_mut(id)
                                 {
-                                    pc.current_action = restore;
-                                }
-                            }
-                            // Emit the message for script /
-                            // edge-subscriber observation.
-                            self.orders
-                                .messenger
-                                .send(crate::messenger::Message::pc_with_value(
-                                    crate::messenger::PcMessage::SelectAction,
-                                    None,
-                                    restore as u32,
-                                ));
-                        }
-                    }
-                    MessageType::Pc(crate::messenger::PcMessage::UpdateRecordingMacro, _) => {
-                        // When a recording is live, end it on PCs no
-                        // longer selected and start it on any newly-
-                        // selected PC — keeping the slot index stable
-                        // across selection changes.
-                        if !self.players.qa_recording_for.is_empty() {
-                            let slot = self.players.qa_recording_slot;
-                            let selected: Vec<crate::element::EntityId> =
-                                self.players.seats[0].selection.clone();
-                            // End on PCs that left the selection.
-                            let current = self.players.qa_recording_for.clone();
-                            for pc_id in &current {
-                                if !selected.contains(pc_id)
-                                    && let Some(state) = self.players.macro_store.get_mut(*pc_id)
-                                {
-                                    state.stop_recording();
-                                }
-                            }
-                            // Start on PCs newly selected.
-                            for pc_id in &selected {
-                                if !current.contains(pc_id) {
-                                    self.players
-                                        .macro_store
-                                        .get_or_insert(*pc_id)
-                                        .begin_recording(slot);
-                                }
-                            }
-                            self.players.qa_recording_for = selected;
-                        }
-                    }
-                    MessageType::Pc(crate::messenger::PcMessage::SendReinforcement, pc) => {
-                        // `MSG_SEND_REINFORCEMENT` plays the "new peasant
-                        // called" jingle and sets the PC's cooldown to
-                        // 100 ticks.  The cooldown poll in the tick
-                        // above spawns the replacement when the counter
-                        // hits zero.
-                        if let Some(pc_id) = pc
-                            && let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id)
-                        {
-                            pc.pc.time_till_reinforcement = 100;
-                        }
-                        self.feedback.pending_side_effects.sounds.push(
-                            crate::engine::SoundCommand::Jingle(
-                                crate::sound::Jingle::NewPeasantCalled,
-                            ),
-                        );
-                    }
-                    // PC-info hover popup is HQ-only (Sherwood) — go
-                    // through `request_pc_info_overlay` so that gate
-                    // is honored.
-                    //
-                    // UI-has-focus: another UI widget grabbed input
-                    // focus — hide any live PC-info hover popup.
-                    // Emitted from the minimap drag handler
-                    // (commands.rs) and should be emitted from any
-                    // future in-game widget that grabs focus.
-                    //
-                    // The Rust port keeps the mouse focus gate on
-                    // host-owned `InputState`; display-effect preparation
-                    // consumes the side effect below and clears that gate
-                    // before later mouse dispatch can see it.
-                    MessageType::Simple(crate::messenger::SimpleMessage::UiHasFocus) => {
-                        self.request_pc_info_overlay(assets, None);
-                        self.feedback.pending_side_effects.ui_has_focus = true;
-                    }
-                    MessageType::Pc(crate::messenger::PcMessage::ShowPcInformation, pc) => {
-                        self.request_pc_info_overlay(assets, pc);
-                    }
-                    MessageType::Pc(crate::messenger::PcMessage::HidePcInformation, _) => {
-                        self.request_pc_info_overlay(assets, None);
-                    }
-                    // The four `SelectCharacter[Add][WithEcho]` arms
-                    // all route through `select_pc` with the
-                    // appropriate (multi-select, speak) flags.
-                    MessageType::Pc(crate::messenger::PcMessage::SelectCharacter, Some(pc_id)) => {
-                        // Tick messenger drains: ambient single-seat
-                        // semantics; LOCAL seat for now.
-                        self.select_pc(assets, 0, pc_id, false, false);
-                        self.emit_character_selection_followups();
-                    }
-                    MessageType::Pc(
-                        crate::messenger::PcMessage::SelectCharacterWithEcho,
-                        Some(pc_id),
-                    ) => {
-                        self.select_pc(assets, 0, pc_id, false, true);
-                        self.emit_character_selection_followups();
-                    }
-                    MessageType::Pc(
-                        crate::messenger::PcMessage::SelectAddCharacter,
-                        Some(pc_id),
-                    ) => {
-                        self.select_pc(assets, 0, pc_id, true, false);
-                        self.emit_character_selection_followups();
-                    }
-                    MessageType::Pc(
-                        crate::messenger::PcMessage::SelectAddCharacterWithEcho,
-                        Some(pc_id),
-                    ) => {
-                        self.select_pc(assets, 0, pc_id, true, true);
-                        self.emit_character_selection_followups();
-                    }
-                    // `pc == None` drops the whole selection;
-                    // otherwise remove the specific PC.  Producers:
-                    // `tick.rs:L4279` (dying / KO'd PC), `LockUser`,
-                    // `DisableCharacter` (below).
-                    MessageType::Pc(crate::messenger::PcMessage::UnselectCharacter, pc) => {
-                        // Sherwood-only: on `pc == None`, mark every
-                        // PC's interface hidden; otherwise hide just
-                        // that PC's.  Engine side clears the selection
-                        // list separately.
-                        if self.is_sherwood(&assets.profile_manager) {
-                            match pc {
-                                None => {
-                                    let ids = self.world.pc_ids.clone();
-                                    for id in ids {
-                                        if let Some(crate::element::Entity::Pc(pc)) =
-                                            self.get_entity_mut(id)
-                                        {
-                                            pc.pc.interface_hidden = true;
-                                        }
-                                    }
-                                }
-                                Some(pc_id) => {
-                                    if let Some(crate::element::Entity::Pc(pc)) =
-                                        self.get_entity_mut(pc_id)
-                                    {
-                                        pc.pc.interface_hidden = true;
-                                    }
+                                    pc.pc.interface_hidden = true;
                                 }
                             }
                         }
-                        match pc {
-                            None => self.unselect_all_pcs(0),
-                            Some(pc_id) => self.unselect_single_pc(pc_id),
-                        }
-                        self.emit_character_selection_followups();
-                    }
-                    // The engine drops the PC from the selection and
-                    // (outside Sherwood) removes the portrait.  The
-                    // portrait strip in Rust immediate-mode renders
-                    // from `pc_ids` filtered by `pc.playable`, so the
-                    // "portrait disappears" side effect is covered by
-                    // the native already writing `pc.playable = false`
-                    // at `natives/mod.rs:1546`.  Here we only need the
-                    // selection-drop plus the Sherwood interface flag.
-                    MessageType::Pc(crate::messenger::PcMessage::DisableCharacter, pc) => {
-                        if let Some(pc_id) = pc {
-                            self.unselect_single_pc(pc_id);
-                            // Net effect: flip the interface-hidden
-                            // flag only when we are NOT in Sherwood.
-                            // Previously the gate was inverted; the
-                            // effect was masked because
-                            // `interface_hidden` is not read by the
-                            // HUD path, but parity still matters for
-                            // the `STATUS PC` cheat and future HUD
-                            // wiring.
-                            if !self.is_sherwood(&assets.profile_manager)
-                                && let Some(crate::element::Entity::Pc(pc)) =
-                                    self.get_entity_mut(pc_id)
+                        Some(pc_id) => {
+                            if let Some(crate::element::Entity::Pc(pc)) = self.get_entity_mut(pc_id)
                             {
                                 pc.pc.interface_hidden = true;
                             }
                         }
                     }
-                    // The portrait widget is re-added only outside
-                    // Sherwood.  In Rust, the live HUD reads
-                    // `pc.interface_hidden`; clear it whenever the
-                    // portrait would have been re-added.  Sherwood
-                    // also gets the same clear so the HUD panel
-                    // re-shows the PC when re-activated mid-Sherwood.
-                    MessageType::Pc(crate::messenger::PcMessage::EnableCharacter, pc) => {
-                        if let Some(pc_id) = pc
-                            && let Some(crate::element::Entity::Pc(pc)) = self.get_entity_mut(pc_id)
-                        {
-                            pc.pc.interface_hidden = false;
-                        }
+                }
+                match pc {
+                    None => self.unselect_all_pcs(0),
+                    Some(pc_id) => self.unselect_single_pc(pc_id),
+                }
+                self.emit_character_selection_followups();
+            }
+            // The engine drops the PC from the selection and
+            // (outside Sherwood) removes the portrait.  The
+            // portrait strip in Rust immediate-mode renders
+            // from `pc_ids` filtered by `pc.playable`, so the
+            // "portrait disappears" side effect is covered by
+            // the native already writing `pc.playable = false`
+            // at `natives/mod.rs:1546`.  Here we only need the
+            // selection-drop plus the Sherwood interface flag.
+            MessageType::Pc(crate::messenger::PcMessage::DisableCharacter, pc) => {
+                if let Some(pc_id) = pc {
+                    self.unselect_single_pc(pc_id);
+                    // Net effect: flip the interface-hidden
+                    // flag only when we are NOT in Sherwood.
+                    // Previously the gate was inverted; the
+                    // effect was masked because
+                    // `interface_hidden` is not read by the
+                    // HUD path, but parity still matters for
+                    // the `STATUS PC` cheat and future HUD
+                    // wiring.
+                    if !self.is_sherwood(&assets.profile_manager)
+                        && let Some(crate::element::Entity::Pc(pc)) = self.get_entity_mut(pc_id)
+                    {
+                        pc.pc.interface_hidden = true;
                     }
-                    // After a modal (dialogue, popup, Sherwood report)
-                    // closes, zero the cached mouse/keyboard state,
-                    // clear the rubber-band selection and
-                    // pending-drag / click suppression flags, and drop
-                    // pressed-key edges queued during the modal.  The
-                    // Rust equivalents live host-side across two
-                    // InputState groups: ThreadedInput pressed-key
-                    // cache (`pending_reset_input`) and the
-                    // rubber-band / click-suppression flags
-                    // (`reset_input`).
-                    MessageType::Simple(crate::messenger::SimpleMessage::ResetInput) => {
-                        self.feedback.pending_side_effects.pending_reset_input = true;
-                        self.feedback.pending_side_effects.reset_input = true;
-                        // Clear the alt-lock latch along with the
-                        // modifier cache; without this, an alt-lock
-                        // toggled before a console-hide / task-switch
-                        // / save-load / unlock-user would persist
-                        // past the reset.
-                        self.players.seats[0].is_lock_alt = false;
-                    }
-                    // Ctrl-press saves the current action on every
-                    // selected PC so the follow-on move command can
-                    // run without the action overriding it (and the
-                    // action is restored on ctrl-release).  Emitted
-                    // by the host input layer when
-                    // `GameAction::KeyControl` fires.
-                    MessageType::Simple(crate::messenger::SimpleMessage::KeyControl) => {
-                        self.save_action_for_selected_pcs(0);
-                    }
-                    // `LockUser` / `UnlockUser` flip `user_locked`.
-                    // Scripts already set it directly via
-                    // `Command::LockUser` (see tick.rs sequence-manager
-                    // handler), but wiring the messenger variants
-                    // keeps any non-script producer in sync with the
-                    // engine-side flag that gates mouse events in
-                    // `handle_mouse_input`.  Unlock also raises the
-                    // `pending_reset_input` side-effect so held-key
-                    // edges from the locked period are dropped.
-                    MessageType::Simple(crate::messenger::SimpleMessage::LockUser) => {
-                        self.players.user_locked = true;
-                    }
-                    MessageType::Simple(crate::messenger::SimpleMessage::UnlockUser) => {
-                        self.players.user_locked = false;
-                        self.feedback.pending_side_effects.pending_reset_input = true;
-                    }
-                    // After hiding the console or switching task,
-                    // emit `MSG_RESET_INPUT` so the held-key edges
-                    // and modifier latches don't bleed across the
-                    // task boundary.
-                    MessageType::Simple(crate::messenger::SimpleMessage::HideConsole)
-                    | MessageType::Simple(crate::messenger::SimpleMessage::SwitchTask) => {
-                        self.feedback.pending_side_effects.pending_reset_input = true;
-                        self.feedback.pending_side_effects.reset_input = true;
-                        // Same `is_lock_alt` clear as the explicit
-                        // `ResetInput` arm above.
-                        self.players.seats[0].is_lock_alt = false;
-                    }
-                    // `SelectActionSimple` and `DisableAction` both
-                    // clear the aim-trajectory preview so a dropped /
-                    // replaced action doesn't leave a stale trajectory
-                    // overlay on screen.  `valid_trajectory` lives on
-                    // `host` in the Rust split, so raise the
-                    // side-effect flag.
+                }
+            }
+            // The portrait widget is re-added only outside
+            // Sherwood.  In Rust, the live HUD reads
+            // `pc.interface_hidden`; clear it whenever the
+            // portrait would have been re-added.  Sherwood
+            // also gets the same clear so the HUD panel
+            // re-shows the PC when re-activated mid-Sherwood.
+            MessageType::Pc(crate::messenger::PcMessage::EnableCharacter, pc) => {
+                if let Some(pc_id) = pc
+                    && let Some(crate::element::Entity::Pc(pc)) = self.get_entity_mut(pc_id)
+                {
+                    pc.pc.interface_hidden = false;
+                }
+            }
+            _ => return Some(msg),
+        }
+        None
+    }
+
+    /// Engine-state arms for input resets, user locks, action selection,
+    /// and macro QA feedback. Returns the message unchanged when no arm
+    /// matches.
+    fn handle_input_and_action_message(
+        &mut self,
+        assets: &LevelAssets,
+        msg: crate::messenger::Message,
+    ) -> Option<crate::messenger::Message> {
+        match msg.msg_type {
+            // After a modal (dialogue, popup, Sherwood report)
+            // closes, zero the cached mouse/keyboard state,
+            // clear the rubber-band selection and
+            // pending-drag / click suppression flags, and drop
+            // pressed-key edges queued during the modal.  The
+            // Rust equivalents live host-side across two
+            // InputState groups: ThreadedInput pressed-key
+            // cache (`pending_reset_input`) and the
+            // rubber-band / click-suppression flags
+            // (`reset_input`).
+            MessageType::Simple(crate::messenger::SimpleMessage::ResetInput) => {
+                self.feedback.pending_side_effects.pending_reset_input = true;
+                self.feedback.pending_side_effects.reset_input = true;
+                // Clear the alt-lock latch along with the
+                // modifier cache; without this, an alt-lock
+                // toggled before a console-hide / task-switch
+                // / save-load / unlock-user would persist
+                // past the reset.
+                self.players.seats[0].is_lock_alt = false;
+            }
+            // Ctrl-press saves the current action on every
+            // selected PC so the follow-on move command can
+            // run without the action overriding it (and the
+            // action is restored on ctrl-release).  Emitted
+            // by the host input layer when
+            // `GameAction::KeyControl` fires.
+            MessageType::Simple(crate::messenger::SimpleMessage::KeyControl) => {
+                self.save_action_for_selected_pcs(0);
+            }
+            // `LockUser` / `UnlockUser` flip `user_locked`.
+            // Scripts already set it directly via
+            // `Command::LockUser` (see tick.rs sequence-manager
+            // handler), but wiring the messenger variants
+            // keeps any non-script producer in sync with the
+            // engine-side flag that gates mouse events in
+            // `handle_mouse_input`.  Unlock also raises the
+            // `pending_reset_input` side-effect so held-key
+            // edges from the locked period are dropped.
+            MessageType::Simple(crate::messenger::SimpleMessage::LockUser) => {
+                self.players.user_locked = true;
+            }
+            MessageType::Simple(crate::messenger::SimpleMessage::UnlockUser) => {
+                self.players.user_locked = false;
+                self.feedback.pending_side_effects.pending_reset_input = true;
+            }
+            // After hiding the console or switching task,
+            // emit `MSG_RESET_INPUT` so the held-key edges
+            // and modifier latches don't bleed across the
+            // task boundary.
+            MessageType::Simple(crate::messenger::SimpleMessage::HideConsole)
+            | MessageType::Simple(crate::messenger::SimpleMessage::SwitchTask) => {
+                self.feedback.pending_side_effects.pending_reset_input = true;
+                self.feedback.pending_side_effects.reset_input = true;
+                // Same `is_lock_alt` clear as the explicit
+                // `ResetInput` arm above.
+                self.players.seats[0].is_lock_alt = false;
+            }
+            // `SelectActionSimple` and `DisableAction` both
+            // clear the aim-trajectory preview so a dropped /
+            // replaced action doesn't leave a stale trajectory
+            // overlay on screen.  `valid_trajectory` lives on
+            // `host` in the Rust split, so raise the
+            // side-effect flag.
+            MessageType::Pc(crate::messenger::PcMessage::SelectActionSimple, _)
+            | MessageType::Pc(crate::messenger::PcMessage::DisableAction, _) => {
+                if matches!(
+                    msg.msg_type,
                     MessageType::Pc(crate::messenger::PcMessage::SelectActionSimple, _)
-                    | MessageType::Pc(crate::messenger::PcMessage::DisableAction, _) => {
-                        if matches!(
-                            msg.msg_type,
-                            MessageType::Pc(crate::messenger::PcMessage::SelectActionSimple, _)
-                        ) {
-                            self.players.seats[0].selected_action =
-                                crate::profiles::Action::try_from(msg.value).unwrap_or_else(|_| {
-                                    panic!(
-                                        "MSG_SELECT_ACTION_SIMPLE carried invalid action {}",
-                                        msg.value
-                                    )
-                                });
-                        }
+                ) {
+                    self.players.seats[0].selected_action =
+                        crate::profiles::Action::try_from(msg.value).unwrap_or_else(|_| {
+                            panic!(
+                                "MSG_SELECT_ACTION_SIMPLE carried invalid action {}",
+                                msg.value
+                            )
+                        });
+                }
+                self.feedback
+                    .pending_side_effects
+                    .invalidate_trajectory_preview = true;
+            }
+            // A macro fizzled on a PC's QA slot, so arm the
+            // per-slot titbit blink strobe.  Typed `pc` slot
+            // carries the PC id; `msg.value` is the QA slot
+            // index.  A `None` PC is treated as a no-op with
+            // a warning (the producer must always set one).
+            MessageType::Pc(crate::messenger::PcMessage::FizzleMacro, pc) => {
+                let slot = msg.value as usize;
+                match pc {
+                    None => tracing::warn!(
+                        "FizzleMacro received with no PC; \
+                                 producer must set the PC id"
+                    ),
+                    Some(pc_id) => {
                         self.feedback
                             .pending_side_effects
-                            .invalidate_trajectory_preview = true;
+                            .host_events
+                            .push(HostEvent::MacroUi(MacroUiHostEvent::BlinkQa {
+                                pc_id,
+                                slot,
+                            }));
                     }
-                    // A macro fizzled on a PC's QA slot, so arm the
-                    // per-slot titbit blink strobe.  Typed `pc` slot
-                    // carries the PC id; `msg.value` is the QA slot
-                    // index.  A `None` PC is treated as a no-op with
-                    // a warning (the producer must always set one).
-                    MessageType::Pc(crate::messenger::PcMessage::FizzleMacro, pc) => {
-                        let slot = msg.value as usize;
-                        match pc {
-                            None => tracing::warn!(
-                                "FizzleMacro received with no PC; \
-                                 producer must set the PC id"
-                            ),
-                            Some(pc_id) => {
-                                self.feedback.pending_side_effects.host_events.push(
-                                    HostEvent::MacroUi(MacroUiHostEvent::BlinkQa { pc_id, slot }),
-                                );
-                            }
-                        }
-                    }
-                    // `QaFocus` flashes the macro titbit for the
-                    // focused QA slot.  Typed `pc` slot carries the
-                    // PC (None = all PCs); `msg.value` encodes the
-                    // slot index.
-                    MessageType::Pc(crate::messenger::PcMessage::QaFocus, pc) => {
-                        let slot = msg.value as usize;
-                        match pc {
-                            None => {
-                                let pc_ids = self.world.pc_ids.clone();
-                                for pc_id in pc_ids {
-                                    self.set_blinking_for_slot(pc_id, slot);
-                                }
-                            }
-                            Some(pc_id) => self.set_blinking_for_slot(pc_id, slot),
-                        }
-                    }
-                    // Bulk-flip `disabled_actions_temp` on a specific
-                    // PC (`Some(pc_id)`) or every selected PC
-                    // (`None`).
-                    MessageType::Pc(crate::messenger::PcMessage::DisableAllActionsTemp, pc) => {
-                        // Tick messenger drain: ambient single-seat
-                        // semantics; LOCAL seat for now.
-                        self.apply_disable_all_actions_temp(0, pc);
-                    }
-                    MessageType::Pc(crate::messenger::PcMessage::EnableAllActionsTemp, pc) => {
-                        self.apply_enable_all_actions_temp(assets, 0, pc);
-                    }
-                    // Other messages are consumed by downstream systems
-                    // (UI layer, mission flow). Re-enqueue so those
-                    // consumers can still observe them.
-                    _ => downstream.push_back(msg),
-                }
-
-                // Preserve the send order of recursive calls while placing
-                // them ahead of pre-existing sibling messages.
-                for nested in self.orders.messenger.drain().into_iter().rev() {
-                    messages.push_front(nested);
                 }
             }
-            for msg in downstream {
-                self.orders.messenger.send(msg);
+            // `QaFocus` flashes the macro titbit for the
+            // focused QA slot.  Typed `pc` slot carries the
+            // PC (None = all PCs); `msg.value` encodes the
+            // slot index.
+            MessageType::Pc(crate::messenger::PcMessage::QaFocus, pc) => {
+                let slot = msg.value as usize;
+                match pc {
+                    None => {
+                        let pc_ids = self.world.pc_ids.clone();
+                        for pc_id in pc_ids {
+                            self.set_blinking_for_slot(pc_id, slot);
+                        }
+                    }
+                    Some(pc_id) => self.set_blinking_for_slot(pc_id, slot),
+                }
             }
+            // Bulk-flip `disabled_actions_temp` on a specific
+            // PC (`Some(pc_id)`) or every selected PC
+            // (`None`).
+            MessageType::Pc(crate::messenger::PcMessage::DisableAllActionsTemp, pc) => {
+                // Tick messenger drain: ambient single-seat
+                // semantics; LOCAL seat for now.
+                self.apply_disable_all_actions_temp(0, pc);
+            }
+            MessageType::Pc(crate::messenger::PcMessage::EnableAllActionsTemp, pc) => {
+                self.apply_enable_all_actions_temp(assets, 0, pc);
+            }
+            _ => return Some(msg),
         }
-
         None
     }
 
