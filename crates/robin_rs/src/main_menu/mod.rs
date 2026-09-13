@@ -31,7 +31,7 @@ use crate::ingame_menu::resources::{
     MT_STR_DIFFICULTY_HARD, MT_STR_DIFFICULTY_LEVEL, MT_STR_DIFFICULTY_MEDIUM, MT_STR_MONEY,
     MT_STR_PLAYING_TIME, MT_STR_PROGRESSION, MT_STR_SCORE, substitute_integer,
 };
-use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
+use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
 use crate::ingame_menu::yesno::show_yesno;
 use crate::renderer::BLIT_SOURCE_TRANSPARENT;
 use crate::renderer::Renderer;
@@ -620,10 +620,12 @@ impl MainMenuState {
             // WM_DELETE_WINDOW into "No" and reopen forever.
             if window.close_requested
                 || show_yesno(
-                    &mut *window,
-                    renderer,
-                    menu_resources,
-                    Some(ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0)),
+                    &mut ModalScreenIo {
+                        window: &mut *window,
+                        renderer,
+                        resources: menu_resources,
+                        cursor: Some(&ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0)),
+                    },
                     &msg,
                 )
                 .await
@@ -984,7 +986,16 @@ async fn dispatch_click(
             None
         }
         ClickAction::ShowMovies => {
-            movies::show_movies(application_context, event_pump, renderer, menu_resources).await;
+            movies::show_movies(
+                application_context,
+                &mut ModalScreenIo {
+                    window: event_pump,
+                    renderer,
+                    resources: menu_resources,
+                    cursor: None,
+                },
+            )
+            .await;
             None
         }
         ClickAction::CustomMissions => {

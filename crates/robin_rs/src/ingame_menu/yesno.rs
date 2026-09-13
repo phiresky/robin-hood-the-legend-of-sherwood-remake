@@ -27,7 +27,7 @@ use super::layout::{
     dim_screen, draw_background, enter_modal_gpu_phase, render_clipped_text_in_box_font,
 };
 use super::resources::{IngameMenuResources, MT_INFOBULLE_BUTTON_NO, MT_INFOBULLE_BUTTON_YES};
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo, ScreenFrame};
 
 /// Virtual window geometry.
 pub const WIN_W: i32 = 400;
@@ -56,25 +56,9 @@ pub enum YesNoChoice {
 /// Display the modal confirmation dialog.  Returns `true` if the player
 /// chose Yes (or pressed Return / Numpad Enter), `false` if the player
 /// chose No (or pressed Escape / closed the window).
-pub async fn show_yesno(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: Option<ModalCursor<'_>>,
-    message: &str,
-) -> bool {
-    let mut state = YesNoModalState::new(event_pump, renderer, resources, message.to_string());
-    loop {
-        if let Some(result) = state.tick(&mut widget_bridge::ModalScreenIo {
-            window: event_pump,
-            renderer,
-            resources,
-            cursor: cursor.as_ref(),
-        }) {
-            return result;
-        }
-        crate::window::sleep_ui_frame().await;
-    }
+pub async fn show_yesno(io: &mut ModalScreenIo<'_, '_>, message: &str) -> bool {
+    let mut state = YesNoModalState::new(io.window, io.renderer, io.resources, message.to_string());
+    widget_bridge::run_modal(io, |io| state.tick(io)).await
 }
 
 /// One-frame state for the standard yes/no modal.
@@ -97,9 +81,7 @@ impl YesNoModalState {
         resources: &IngameMenuResources,
         message: String,
     ) -> Self {
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
+        let transform = MenuTransform::for_renderer(renderer);
 
         let win_x = (super::layout::MENU_W - WIN_W) / 2;
         let win_y = (super::layout::MENU_H - WIN_H) / 2;
@@ -176,19 +158,18 @@ impl YesNoModalState {
         }
     }
 
-    pub fn tick(&mut self, io: &mut widget_bridge::ModalScreenIo<'_, '_>) -> Option<bool> {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
+    pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<bool> {
         if let Some(choice) = self.choice {
             return Some(choice == YesNoChoice::Yes);
         }
 
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        self.handle_events(&events, transform);
-        self.render_overlay(renderer, resources, cursor);
-        renderer.present();
+        let screen = ScreenFrame::poll(io);
+        // `handle_events` adopts `screen.transform`, so the content and the
+        // cursor drawn by `finish` share this frame's transform.
+        self.handle_events(&screen.events, screen.transform);
+        screen.begin_draw(io.renderer);
+        self.draw_content(io.renderer, io.resources);
+        screen.finish(io, &self.input_state);
         self.result()
     }
 
@@ -224,7 +205,12 @@ impl YesNoModalState {
         resources: &IngameMenuResources,
         cursor: Option<&ModalCursor<'_>>,
     ) {
-        self.render(renderer, resources, cursor);
+        enter_modal_gpu_phase(renderer);
+        dim_screen(renderer);
+        self.draw_content(renderer, resources);
+        if let Some(c) = cursor {
+            c.draw(renderer, self.transform, &self.input_state);
+        }
     }
 
     pub fn result(&self) -> Option<bool> {
@@ -271,15 +257,9 @@ impl YesNoModalState {
         }
     }
 
-    fn render(
-        &mut self,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
-    ) {
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
-
+    /// Dialog panel, message, buttons and tooltip; the caller owns the modal
+    /// phase/dim before and the cursor/present after.
+    fn draw_content(&mut self, renderer: &mut Renderer, resources: &IngameMenuResources) {
         if let Some(bg) = resources.menu_bg_small {
             draw_background(
                 renderer,
@@ -330,10 +310,6 @@ impl YesNoModalState {
         if let Some(font) = resources.popup_font_any() {
             self.tooltip
                 .draw(renderer, font, self.transform, &self.frame, mouse_pt);
-        }
-
-        if let Some(c) = cursor {
-            c.draw(renderer, self.transform, &self.input_state);
         }
     }
 }

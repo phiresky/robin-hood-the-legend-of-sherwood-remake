@@ -363,9 +363,12 @@ impl MissionDescriptionModalState {
             {
                 let mission = &engine.campaign().missions[self.mission_index];
                 self.buy_blazons = Some(BuyBlazonsModalState::new(
-                    event_pump,
-                    renderer,
-                    resources,
+                    &ModalScreenIo {
+                        window: event_pump,
+                        renderer,
+                        resources,
+                        cursor: None,
+                    },
                     self.mission_index,
                     mission.get_blazon_price() as u32,
                     engine.campaign().get_value(CampaignValue::Ransom).max(0) as u32,

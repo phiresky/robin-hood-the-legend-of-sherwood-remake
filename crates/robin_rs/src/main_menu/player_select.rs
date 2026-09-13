@@ -32,7 +32,7 @@ use crate::ingame_menu::resources::{
     MT_STR_DIFFICULTY_HARD, MT_STR_DIFFICULTY_LEVEL, MT_STR_DIFFICULTY_MEDIUM, MT_STR_NAME,
     MT_TTL_NEW_PLAYER,
 };
-use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
+use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
 use crate::ingame_menu::yesno::show_yesno;
 use crate::renderer::Renderer;
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
@@ -407,10 +407,12 @@ impl SelectPlayerState {
                     if let Some(idx) = self.selected {
                         let msg = resources.menu_text.get(MT_MSG_REALLY_DELETE_PLAYER);
                         if show_yesno(
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor.as_mut().map(|c| c.reborrow()),
+                            &mut ModalScreenIo {
+                                window: event_pump,
+                                renderer,
+                                resources,
+                                cursor: cursor.as_ref(),
+                            },
                             &msg,
                         )
                         .await
