@@ -180,12 +180,9 @@ impl EngineInner {
                         format_args!("patrol chief {chief} lost its EnemyAi"),
                     )
                     .dispatch_stimulus_to_whole_patrol(
-                        sim,
+                        crate::ai_enemy::ThinkEnv::new(sim, &chief_ctx, &chief_tick, Some(grid)),
                         &stimulus,
                         global,
-                        &chief_ctx,
-                        &chief_tick,
-                        Some(grid),
                     )
             };
             chief_ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
@@ -348,14 +345,11 @@ impl EngineInner {
                     format_args!("Think-result caller {caller} lost its EnemyAi"),
                 )
                 .resolve_think_result(
-                    sim,
+                    crate::ai_enemy::ThinkEnv::new(sim, &source_ctx, &source_tick, Some(grid)),
                     accepted,
                     target,
                     continuation,
                     global,
-                    Some(grid),
-                    &source_ctx,
-                    &source_tick,
                 );
 
             // The continuation is the caller's original-game stack frame resuming
@@ -487,7 +481,11 @@ impl EngineInner {
                         source_id,
                         format_args!("soldier CALL_ALERT caller {caller} lost its EnemyAi"),
                     )
-                    .resolve_alert_request(sim, accepted, continuation, &source_ctx, &source_tick),
+                    .resolve_alert_request(
+                        crate::ai_enemy::ThinkEnv::new(sim, &source_ctx, &source_tick, None),
+                        accepted,
+                        continuation,
+                    ),
             }
         }
     }
@@ -570,7 +568,10 @@ impl EngineInner {
                 .world
                 .entities
                 .expect_enemy_ai_mut(charly_id, format_args!("reporting Charly {charly}"));
-            enemy.resolve_charly_officer_report(sim, accepted, &charly_ctx, &charly_tick);
+            enemy.resolve_charly_officer_report(
+                crate::ai_enemy::ThinkEnv::new(sim, &charly_ctx, &charly_tick, None),
+                accepted,
+            );
         }
     }
 }

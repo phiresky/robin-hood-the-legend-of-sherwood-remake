@@ -1,5 +1,23 @@
 use super::*;
 
+impl FriendlyAi {
+    /// Raw-coordinate panic entry point (tests only).  Production
+    /// code uses [`Self::panic_from_point_at`] so the panic
+    /// center carries a valid sector/level for the multi-level
+    /// door lookup.
+    fn panic_from_point(&mut self, center_x: f32, center_y: f32, runs: u8) {
+        self.panic_from_point_at(
+            Position {
+                x: center_x,
+                y: center_y,
+                sector: None,
+                level: 0,
+            },
+            runs,
+        );
+    }
+}
+
 #[test]
 fn friendly_ai_defaults() {
     let ai = FriendlyAi::new(99);
@@ -174,7 +192,6 @@ fn review_running_to_soldier_requires_the_live_antagonist_view() {
     ai.think_expected_event(
         &sim,
         &Stimulus::new(StimulusType::EventReachPoint),
-        &mut AiGlobalState::default(),
         &AiContext::test_fixture(),
         &FriendlyPerTickData::without_patrol_chief(),
         None,
@@ -242,14 +259,12 @@ fn think_expected_admiring_hero_returns_to_duty() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut ai = FriendlyAi::new(1);
-    let mut global = AiGlobalState::default();
     ai.set_state(AiState::Wondering, Substate::WonderingCivilianAdmiringHero);
 
     let stimulus = Stimulus::new(StimulusType::EventTimer);
     ai.think_expected_event(
         sim,
         &stimulus,
-        &mut global,
         &AiContext::test_fixture(),
         &FriendlyPerTickData::without_patrol_chief(),
         None,
@@ -507,7 +522,6 @@ fn hiding_timer_uses_virtual_return_before_fleeing_event_view_panics() {
     ai.think_expected_event(
         sim,
         &Stimulus::new(StimulusType::EventTimer),
-        &mut AiGlobalState::default(),
         &AiContext::test_fixture(),
         &FriendlyPerTickData::without_patrol_chief(),
         None,
@@ -709,7 +723,6 @@ fn patrol_coordinate_uses_real_chief_position_for_near_backwards_gate() {
 #[should_panic(expected = "requires a live patrol-chief snapshot")]
 fn patrol_handler_cannot_silently_consume_missing_friendly_tick_data() {
     let sim = crate::sim_rng::test_context();
-    let mut global = AiGlobalState::default();
     let mut ai = FriendlyAi::new(1);
     ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
         crate::entity_id::SoldierId(2),
@@ -718,7 +731,6 @@ fn patrol_handler_cannot_silently_consume_missing_friendly_tick_data() {
     ai.think_expected_event(
         &sim,
         &Stimulus::new(StimulusType::EventTimer),
-        &mut global,
         &AiContext::test_fixture(),
         &FriendlyPerTickData::without_patrol_chief(),
         None,
@@ -770,7 +782,6 @@ fn expected_event_body_reactiontime_alert_fails_panics() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut ai = FriendlyAi::new(1);
-    let mut global = AiGlobalState::default();
     ai.set_state(
         AiState::Wondering,
         Substate::WonderingCivilianBodyReactiontime,
@@ -780,7 +791,6 @@ fn expected_event_body_reactiontime_alert_fails_panics() {
     ai.think_expected_event(
         sim,
         &stimulus,
-        &mut global,
         &AiContext::test_fixture(),
         &FriendlyPerTickData::without_patrol_chief(),
         None,
@@ -806,14 +816,12 @@ fn expected_event_whistling_child_approaches() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut ai = FriendlyAi::new(1);
-    let mut global = AiGlobalState::default();
     ai.set_state(AiState::Wondering, Substate::WonderingWatchingWhistling);
 
     let stimulus = Stimulus::new(StimulusType::EventTimer);
     ai.think_expected_event(
         sim,
         &stimulus,
-        &mut global,
         &AiContext::test_fixture(),
         &FriendlyPerTickData::without_patrol_chief(),
         None,
@@ -841,14 +849,12 @@ fn fleeing_child_chased_end_returns_to_duty() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut ai = FriendlyAi::new(1);
-    let mut global = AiGlobalState::default();
     ai.set_state(AiState::Fleeing, Substate::FleeingChildChasedEnd);
 
     let stimulus = Stimulus::new(StimulusType::EventTimer);
     ai.think_expected_event(
         sim,
         &stimulus,
-        &mut global,
         &AiContext::test_fixture(),
         &FriendlyPerTickData::without_patrol_chief(),
         None,
@@ -863,7 +869,6 @@ fn seeking_report_point_done_transitions() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut ai = FriendlyAi::new(1);
-    let mut global = AiGlobalState::default();
     ai.set_state(
         AiState::Seeking,
         Substate::SeekingCivilianGiveAlertingReportToSoldierPoint,
@@ -873,7 +878,6 @@ fn seeking_report_point_done_transitions() {
     ai.think_expected_event(
         sim,
         &stimulus,
-        &mut global,
         &AiContext::test_fixture(),
         &FriendlyPerTickData::without_patrol_chief(),
         None,

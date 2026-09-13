@@ -6,12 +6,14 @@
 //! and the report-merging helper `get_report_from_soldier`.
 
 use crate::ai::*;
-use crate::coordinates::{MapPoint, WorldPoint3D};
+use crate::coordinates::{MapPoint, MapVec, WorldPoint3D};
 use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
-use super::util::{ai_max_norm_distance, iso_normalize, vec_to_sector, vec_to_sector_ar};
-use super::{CampSoldierInfo, EnemyAi, ProfileRank, SeekFlags, combat, task_priority};
+use super::map_vec_ext::AiMapVec;
+use super::util::{ai_max_norm_distance, vec_to_sector};
+use super::{CampSoldierInfo, EnemyAi, ProfileRank, SeekFlags, ThinkEnv, combat, task_priority};
+use crate::fast_find_grid::FastFindGrid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandSoldiersStart {
@@ -26,7 +28,7 @@ pub(crate) enum CommandSoldiersStart {
 /// argument explicit: using the aspect-1 classifier changes diagonal map-space
 /// vectors by a sector.
 fn formation_direction(dx: f32, dy: f32) -> u16 {
-    vec_to_sector_ar(dx, dy, ASPECT_RATIO)
+    MapVec::new(dx, dy).sector_with_aspect(ASPECT_RATIO)
 }
 
 /// Return Original's raw formation-loop cursor and its projected sector.
@@ -57,9 +59,9 @@ fn average_alerted_direction_vector(
     alerted_positions
         .iter()
         .fold((0.0, 0.0), |(sum_x, sum_y), soldier_pos| {
-            let direction =
-                iso_normalize((soldier_pos.x - officer.x, soldier_pos.y - officer.y), 1.0);
-            (sum_x + direction.0, sum_y + direction.1)
+            let direction = MapVec::new(soldier_pos.x - officer.x, soldier_pos.y - officer.y)
+                .iso_normalize(1.0);
+            (sum_x + direction.x, sum_y + direction.y)
         })
 }
 
@@ -248,7 +250,7 @@ impl EnemyAi {
     /// starts at `STANDARD_LINE_LENGTH` and bumps up if that would
     /// leave a single soldier in the last row.  Every slot is
     /// straight-line reachable from the officer via
-    /// [`crate::fast_find_grid::FastFindGrid::is_straight_movement_authorized`].
+    /// [`FastFindGrid::is_straight_movement_authorized`].
     /// Returns `None` as soon as any slot fails the reachability test;
     /// returns `Some(slots)` on success (slot 0 is the centre of the
     /// front row, then alternating sideways within the row, then
@@ -256,12 +258,11 @@ impl EnemyAi {
     fn can_put_soldiers_in_this_direction(
         &self,
         ctx: &AiContext,
-        global: &AiGlobalState,
         tick: &AiPerTickData,
         pt_officer: MapPoint,
         direction: u16,
         num_soldiers: u16,
-        grid: &crate::fast_find_grid::FastFindGrid,
+        grid: &FastFindGrid,
     ) -> Option<Vec<Position>> {
         // Bump the line length so the last row never has a single
         // lonely soldier.
@@ -287,7 +288,6 @@ impl EnemyAi {
         // surface those through `tick.my_exit_door` (populated by
         // `build_npc_tick_data`).  When the officer is outdoors, use
         // the officer's own layer/sector.
-        let _ = global;
         let (layer, sector_handle): (u16, Option<crate::position_interface::SectorHandle>) =
             if ctx.in_building {
                 let door = tick.my_exit_door?;
@@ -337,11 +337,11 @@ impl EnemyAi {
     pub(crate) fn command_soldiers_to_attack(
         &mut self,
         center: Position,
-        _global: &AiGlobalState,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
+        env: ThinkEnv<'_>,
     ) -> CommandSoldiersStart {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
         debug_assert_eq!(self.get_rank(), ProfileRank::Officer);
 
         let my_pos = ctx.position;
@@ -425,13 +425,7 @@ impl EnemyAi {
         }
     }
 
-    pub(super) fn finish_command_soldiers_to_attack(
-        &mut self,
-        _global: &AiGlobalState,
-        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        ctx: &AiContext,
-        _tick: &AiPerTickData,
-    ) -> bool {
+    pub(super) fn finish_command_soldiers_to_attack(&mut self, ctx: &AiContext) -> bool {
         let center = self.base.seek_position;
         let my_pos = ctx.position;
         let alerted_count = self.alerted_us.len() as u16;
@@ -531,16 +525,16 @@ impl EnemyAi {
     /// `CALL_COMBAT_ALERT`), merges the officer's reconnaissance report
     /// into each alerted soldier, and transitions the officer into the
     /// `SeekingOfficerWaitForGroup` flow.
-    pub fn alert_soldiers(
+    pub(crate) fn alert_soldiers(
         &mut self,
         center: Position,
         flags: u16,
-        _global: &AiGlobalState,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
+        env: ThinkEnv<'_>,
         failure: AlertSoldiersFailureContinuation,
     ) -> bool {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
         // Stash seek center + flags on the AI.
         let my_pos = ctx.position;
         self.base.seek_position = center;
@@ -665,13 +659,10 @@ impl EnemyAi {
         true
     }
 
-    pub(super) fn finish_alert_soldiers(
-        &mut self,
-        global: &AiGlobalState,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> bool {
+    pub(super) fn finish_alert_soldiers(&mut self, env: ThinkEnv<'_>) -> bool {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
         let my_pos = ctx.position;
         let my_world_pos = ctx
             .entity_view(self.base.me)
@@ -809,7 +800,6 @@ impl EnemyAi {
                             formation_sweep_cursor(avg_dir_start, offset);
                         if let Some(slots) = self.can_put_soldiers_in_this_direction(
                             ctx,
-                            global,
                             tick,
                             try_pt,
                             try_dir,
@@ -841,7 +831,6 @@ impl EnemyAi {
                         formation_sweep_cursor(avg_dir_start, offset);
                     if let Some(slots) = self.can_put_soldiers_in_this_direction(
                         ctx,
-                        global,
                         tick,
                         MapPoint::new(my_pos.x, my_pos.y),
                         try_dir,
@@ -979,11 +968,12 @@ impl EnemyAi {
             // the raw cursor rather than its 0..15 projection.
             self.gather_position = chosen_officer_position;
             self.gather_direction = chosen_direction_raw;
-            self.set_state(
+            self.set_state_with_timer(
                 AiState::Seeking,
                 Substate::SeekingOfficerWaitInsideHouseToInstructGroup,
+                50,
+                ctx,
             );
-            self.base.launch_timer(50, ctx.frame);
         } else {
             // Indoor alert, no place outside.
             self.set_state_with_timer(
@@ -1088,14 +1078,13 @@ impl EnemyAi {
     // already alerting" suppression gate.
     // -----------------------------------------------------------------------
 
-    pub fn alert_officer(
+    pub(crate) fn alert_officer(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         _center: Position,
         _flags: u16,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) -> bool {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         debug_assert_eq!(self.get_rank(), ProfileRank::Soldier);
 
         // Drop any prior gaze lock so the
@@ -1734,12 +1723,11 @@ impl EnemyAi {
                 .iter()
                 .filter(|cs| cs.rank == ProfileRank::Soldier && cs.is_able_to_help)
                 .filter(|cs| {
-                    ctx.entity_view(cs.handle)
-                        .map(|v| {
+                    ctx.entity_view_logged(cs.handle, "door reservist camp soldier")
+                        .is_some_and(|v| {
                             v.in_building
                                 && v.building_sector.map(u16::from) == Some(door.sector_in)
                         })
-                        .unwrap_or(false)
                 })
                 .count();
 

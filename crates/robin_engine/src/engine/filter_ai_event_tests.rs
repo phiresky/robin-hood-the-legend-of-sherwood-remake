@@ -826,7 +826,6 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
     );
     let tick = engine.build_npc_tick_data(&sim, officer_id, &assets);
     assert_eq!(tick.camp_soldiers.len(), candidates.len());
-    let global = engine.ai.global.clone();
     assert!(
         engine
             .get_entity_mut(officer_id)
@@ -838,10 +837,7 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
                     ..Default::default()
                 },
                 0,
-                &global,
-                None,
-                &ctx,
-                &tick,
+                crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
                 AlertSoldiersFailureContinuation::None,
             )
     );

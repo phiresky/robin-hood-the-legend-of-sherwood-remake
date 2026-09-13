@@ -4,7 +4,7 @@
 use crate::ai::*;
 use crate::parameters_ai;
 
-use super::{AmbushPointStatus, EnemyAi, ProfileRank};
+use super::{AmbushPointStatus, EnemyAi, ProfileRank, ThinkEnv};
 
 impl EnemyAi {
     // -----------------------------------------------------------------------
@@ -16,26 +16,25 @@ impl EnemyAi {
     /// Called every 16 frames (staggered per NPC) for periodic checks.
     /// `is_idle` corresponds to the wait command;
     /// `receiving_wasp_sting` to the receive-wasp-sting command.
-    pub fn the_16th_frame(
+    ///
+    /// Production scheduling calls [`Self::the_16th_frame_before_stuck`] and
+    /// [`Self::the_16th_frame_after_refresh`] separately; this combined entry
+    /// point only serves unit tests.
+    #[cfg(test)]
+    pub(crate) fn the_16th_frame(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         frame_phase: u8,
-        ctx: &AiContext,
         global: &AiGlobalState,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
         is_idle: bool,
         receiving_wasp_sting: bool,
         stuck_command_active: bool,
         sequence_null_about_to_launch: bool,
     ) {
         if !self.the_16th_frame_before_stuck(
-            sim,
+            env,
             frame_phase,
-            ctx,
             global,
-            tick,
-            grid,
             is_idle,
             receiving_wasp_sting,
         ) {
@@ -43,7 +42,7 @@ impl EnemyAi {
         }
         self.the_16th_frame_after_refresh(
             frame_phase,
-            ctx,
+            env.ctx,
             stuck_command_active,
             sequence_null_about_to_launch,
         );
@@ -58,15 +57,13 @@ impl EnemyAi {
     /// stood on entry.
     pub(crate) fn the_16th_frame_before_stuck(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         frame_phase: u8,
-        ctx: &AiContext,
         global: &AiGlobalState,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
         is_idle: bool,
         receiving_wasp_sting: bool,
     ) -> bool {
+        let ThinkEnv { sim, ctx, .. } = env;
         // Scotch — wasp stuck recovery.  The gate is on the NPC no
         // longer running the sting command at all, not on it having
         // fallen back to Wait: any other command means the sting is
@@ -121,7 +118,7 @@ impl EnemyAi {
 
         // Arrow protection — every-16-frame sweep
         // that drives reactive shield-raising.
-        self.refresh_arrow_protection(true, ctx, tick, grid);
+        self.refresh_arrow_protection(true, env);
 
         // Gate the rest on `frame_phase & 63`.
         (frame_phase & 63) == 0
@@ -427,11 +424,12 @@ impl EnemyAi {
             } else {
                 // Multiple near — defer the look so a second nearby
                 // point can join the decision.
-                self.set_state(
+                self.set_state_with_timer(
                     AiState::Seeking,
                     Substate::SeekingSeekpointPassedAmbushPointRight,
+                    3,
+                    ctx,
                 );
-                self.base.launch_timer(3, ctx.frame);
             }
         } else {
             // ---- Point on the left ----
@@ -448,11 +446,12 @@ impl EnemyAi {
                 );
                 self.base.outbox.actor.look_sidewards = Some(LookDirection::Left);
             } else {
-                self.set_state(
+                self.set_state_with_timer(
                     AiState::Seeking,
                     Substate::SeekingSeekpointPassedAmbushPointLeft,
+                    3,
+                    ctx,
                 );
-                self.base.launch_timer(3, ctx.frame);
             }
         }
     }

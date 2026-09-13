@@ -8,16 +8,18 @@
 //! swordfight begin/end transitions.
 
 use crate::ai::*;
+use crate::fast_find_grid::FastFindGrid;
 use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
+use crate::sim_rng::SimulationContext;
 
-use super::util::{
-    dot2, iso_norm, max_norm, pos_diff, sector_to_vector_iso, square_norm, vec_to_sector,
-};
+use super::map_vec_ext::AiMapVec;
+use super::util::vec_to_sector;
 use super::{
-    EnemyAi, FighterSnapshot, PrimaryTargetFlags, ProfileRank, SeekFlags, UNDEFINED_DIRECTION,
-    archer, combat,
+    EnemyAi, FighterSnapshot, PrimaryTargetFlags, ProfileRank, SeekFlags, ThinkEnv,
+    UNDEFINED_DIRECTION, archer, combat,
 };
+use crate::coordinates::MapVec;
 
 /// Keep the battle-side decision trace independently gated from the engine
 /// context trace. This diagnostic is process-local and stderr-only, so its
@@ -206,10 +208,6 @@ fn battle_friend_detected_360(
         target.in_building,
         ctx.obstacle_list(),
     );
-    let dx = detection_point.x - ctx.self_upright_eye_world.x;
-    let dy = (detection_point.y - ctx.self_upright_eye_world.y)
-        * crate::position_interface::INVERSE_ASPECT_RATIO;
-    let dz = detection_point.z - ctx.self_upright_eye_world.z;
     tracing::trace!(
         frame = ctx.frame,
         me,
@@ -224,7 +222,7 @@ fn battle_friend_detected_360(
         friend_x = detection_point.x,
         friend_y = detection_point.y,
         friend_z = detection_point.z,
-        sq_distance = dx * dx + dy * dy + dz * dz,
+        sq_distance = super::sq_distance_360(ctx.self_upright_eye_world, detection_point),
         sq_radius = (ctx.self_view_radius as f32).powi(2),
         detected,
         "battle-planning ally-list all-around detection check"
@@ -291,11 +289,10 @@ impl EnemyAi {
     /// exact same tail end — only the source of the list differs.
     fn approach_sleeping_enemies(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         targets: &[crate::ai::SleepingEnemyInfo],
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { ctx, tick, .. } = env;
         // Fold the sleeping-enemy list into list_them so the later
         // combat selection code sees them.
         for se in targets {
@@ -329,7 +326,7 @@ impl EnemyAi {
             );
         } else {
             // No allowed target — stand down.
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
         }
     }
 
@@ -346,19 +343,15 @@ impl EnemyAi {
     /// `tick.nearby_sleeping_enemies`.  This method just performs
     /// the target selection + state transition that the reference
     /// runs after the inline fighter-count loop.
-    fn kill_nearby_sleeping_enemies(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
+    fn kill_nearby_sleeping_enemies(&mut self, env: ThinkEnv<'_>) {
+        let ctx = env.ctx;
         // Combat trainers and merry-man-forest fighters call
         // Return to duty first — note the quirk that the function then
         // *continues* and may still overwrite state with
         // `SUBSTATE_ATTACKING_APPROACHING_SLEEPING_ENEMY` below. We
         // mirror the behaviour exactly.
         if self.combat_trainer || self.is_merry_man_forest(ctx) {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
             // Return to duty suspends around engine-owned patrol initialization in
             // Rust. Keep the remaining statements behind that continuation,
             // just as they are behind the complete synchronous call in the
@@ -371,15 +364,14 @@ impl EnemyAi {
             return;
         }
 
-        self.resume_kill_nearby_sleeping_enemies_after_return_to_duty(sim, ctx, tick);
+        self.resume_kill_nearby_sleeping_enemies_after_return_to_duty(env);
     }
 
     pub(crate) fn resume_kill_nearby_sleeping_enemies_after_return_to_duty(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
+        env: ThinkEnv<'_>,
     ) {
+        let ThinkEnv { ctx, tick, .. } = env;
         // The original game performs all-around detection here, after the
         // unconscious/not-carried gates and only when the final battle
         // fallback is reached. The engine snapshot carries ordered fighter
@@ -399,7 +391,7 @@ impl EnemyAi {
             .cloned()
             .collect::<Vec<_>>();
 
-        self.approach_sleeping_enemies(sim, &visible, ctx, tick);
+        self.approach_sleeping_enemies(env, &visible);
     }
 
     // -----------------------------------------------------------------------
@@ -453,7 +445,8 @@ impl EnemyAi {
     // Battle overview
     // -----------------------------------------------------------------------
 
-    pub fn get_battle_overview(&mut self, flags: u16, ctx: &AiContext, tick: &AiPerTickData) {
+    pub(crate) fn get_battle_overview(&mut self, flags: u16, env: ThinkEnv<'_>) {
+        let ThinkEnv { ctx, tick, .. } = env;
         const FAST_OVERVIEW: u16 = 0x0001;
 
         if (flags & FAST_OVERVIEW) != 0 {
@@ -470,13 +463,13 @@ impl EnemyAi {
                 let target = self.get_new_primary_target(PrimaryTargetFlags::empty(), ctx, tick);
                 if let Some(target) = target {
                     self.base.primary_target = Some(target);
-                    self.attack_enemy(target.get(), ctx, tick, None);
+                    self.attack_enemy(target.get(), ThinkEnv { grid: None, ..env });
                     return;
                 }
             }
         }
 
-        self.reinitialize_them_list(ctx, tick);
+        self.reinitialize_them_list(ctx);
         self.current_task_priority = self.minimal_task_priority;
 
         self.set_state(AiState::Attacking, Substate::AttackingOverviewLookLeft);
@@ -490,12 +483,8 @@ impl EnemyAi {
     // Battle predecisions — offensive or defensive?
     // -----------------------------------------------------------------------
 
-    pub fn make_battle_predecisions(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> Decision {
+    pub(crate) fn make_battle_predecisions(&mut self, env: ThinkEnv<'_>) -> Decision {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         // Archers with no ammo or already swordfighting → defensive.
         if self.is_archer() && (ctx.remaining_arrows == 0 || ctx.is_swordfighting) {
             return Decision::PredecisionDefensive;
@@ -596,14 +585,8 @@ impl EnemyAi {
     // Battle decisions — the heart of tactical AI
     // -----------------------------------------------------------------------
 
-    pub fn battle_decisions(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    pub(crate) fn battle_decisions(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
+        let ThinkEnv { ctx, tick, .. } = env;
         if let Err(reason) = ctx.entity_observation(self.base.me) {
             // TODO: establish Original invalid-layer timer-tail behavior before
             // changing this existing skip policy.
@@ -652,12 +635,13 @@ impl EnemyAi {
         self.list_them.retain(|&h| h != 0); // basic cleanup
 
         if debug_them {
-            crate::ai_enemy::parity_trace::them_battle_entry(
-                &(ctx.frame),
-                &(ctx.original_creation_order),
-                &(self.base.me),
-                &(self.list_them),
-            );
+            crate::ai_enemy::parity_trace::ThemBattleEntry {
+                frame: &(ctx.frame),
+                co: &(ctx.original_creation_order),
+                me: &(self.base.me),
+                list: &(self.list_them),
+            }
+            .emit();
         }
 
         // `num_enemies_i_can_see` is captured BEFORE friend-seen enemies
@@ -679,6 +663,83 @@ impl EnemyAi {
         // at least one claimant. The engine-wide snapshot is deliberately not
         // equivalent: it still contains claims from actors outside this
         // decision's rebuilt us/them lists.
+        let (mut decision_target_multiplicity, friends_nearer_to_enemy) =
+            self.battle_select_primary_target(env, global);
+        self.battle_inject_friend_seen_targets(env, global, &mut decision_target_multiplicity);
+        let (min_square_enemy_distance, unconscious_enemies_from_them) = self
+            .battle_cleanup_them_list(
+                env,
+                global,
+                &mut decision_target_multiplicity,
+                &mut num_enemies_i_can_see,
+                debug_them,
+            );
+
+        if num_enemies_i_can_see == 0 {
+            self.battle_no_visible_enemies(env, global, &unconscious_enemies_from_them);
+            return;
+        }
+
+        let (decision, cover_shield_bearer) = self.choose_battle_decision(
+            env,
+            global,
+            BattleDecisionInputs {
+                friends_lower_company,
+                soldiers_lower_pride,
+                simple_soldiers_near,
+                min_square_enemy_distance,
+                num_enemies_i_can_see,
+                friends_nearer_to_enemy,
+            },
+            &decision_target_multiplicity,
+        );
+
+        tracing::trace!(
+            me = self.base.me,
+            ?decision,
+            primary_target = ?self.base.primary_target,
+            num_enemies_i_can_see,
+            friends_nearer_to_enemy,
+            soldiers_lower_pride = soldiers_lower_pride,
+            friends_lower_company = friends_lower_company,
+            "battle_decisions: chose decision"
+        );
+        if crate::ai_enemy::battle_decision_debug_enabled() {
+            crate::ai_enemy::parity_trace::BattleDecision {
+                frame: &(ctx.frame),
+                me: &(self.base.me),
+                decision: &(decision),
+                old_substate: &(old_substate),
+                primary: &(self.base.primary_target),
+                seen: &(num_enemies_i_can_see),
+                friends_nearer: &(friends_nearer_to_enemy),
+            }
+            .emit();
+        }
+        // Carry out decision (with possible fallback loop). The Observe
+        // arm's avenger-on-roof fallback returns from the whole routine
+        // before the log line is registered; every other path logs.
+        if self.execute_battle_decision(
+            env,
+            decision,
+            old_substate,
+            cover_shield_bearer,
+            &mut decision_target_multiplicity,
+            global,
+        ) {
+            self.base
+                .register_log_line(LogLineType::BattleDecision, decision as u16);
+        }
+    }
+
+    /// Battle-planning local target multiplicity reset, primary-target
+    /// selection, and the friends-nearer-to-enemy count.
+    fn battle_select_primary_target(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+    ) -> (std::collections::BTreeMap<HumanHandle, u32>, u16) {
+        let ThinkEnv { ctx, tick, .. } = env;
         let mut decision_target_multiplicity = std::collections::BTreeMap::new();
         for &enemy in &self.list_them {
             decision_target_multiplicity.insert(enemy, 0_u32);
@@ -698,13 +759,14 @@ impl EnemyAi {
         if super::primary_swap_debug_enabled()
             && super::primary_swap_debug_matches(ctx.frame, self.base.me)
         {
-            crate::ai_enemy::parity_trace::primary_swap_battle_primary_selected(
-                &(ctx.frame),
-                &(ctx.original_creation_order),
-                &(self.base.me),
-                &(self.list_them),
-                &(self.base.primary_target),
-            );
+            crate::ai_enemy::parity_trace::PrimarySwapBattlePrimarySelected {
+                frame: &(ctx.frame),
+                co: &(ctx.original_creation_order),
+                owner: &(self.base.me),
+                list_them: &(self.list_them),
+                selected: &(self.base.primary_target),
+            }
+            .emit();
         }
 
         // Continue the same Original friend loop after primary-target
@@ -761,7 +823,17 @@ impl EnemyAi {
                 }
             }
         }
+        (decision_target_multiplicity, friends_nearer_to_enemy)
+    }
 
+    /// Battle-planning friend-seen enemy injection into the Them list.
+    fn battle_inject_friend_seen_targets(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        decision_target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
+    ) {
+        let ThinkEnv { ctx, tick, .. } = env;
         // Walk same-camp soldiers in STATE_ATTACKING and inject their
         // primary target into list_them so we hunt where they are
         // fighting. Skip self, missing primary_target, and anything
@@ -806,12 +878,12 @@ impl EnemyAi {
                 // Original's reset loop, so retain its shared counter before
                 // applying this decision's possible increment.
                 seed_appended_battle_target_multiplicity(
-                    &mut decision_target_multiplicity,
+                    decision_target_multiplicity,
                     target,
                     &global.primary_target_multiplicity_scratch,
                 );
                 if cs.ai_substate.is_any_swordfight() {
-                    increment_battle_target_multiplicity(&mut decision_target_multiplicity, target);
+                    increment_battle_target_multiplicity(decision_target_multiplicity, target);
                     increment_battle_target_multiplicity(
                         &mut global.primary_target_multiplicity_scratch,
                         target,
@@ -829,7 +901,19 @@ impl EnemyAi {
             }
             self.list_them.extend(friend_seen);
         }
+    }
 
+    /// Battle-planning Them-list cleanup: drops friends and unable-to-fight
+    /// entries, collects unconscious enemies and measures the nearest enemy.
+    fn battle_cleanup_them_list(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        decision_target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
+        num_enemies_i_can_see: &mut usize,
+        debug_them: bool,
+    ) -> (u32, Vec<crate::ai::SleepingEnemyInfo>) {
+        let ctx = env.ctx;
         // Clean up the Them list. Walk each entry: if it's not
         // able-to-fight, drop it. Each removal that falls within
         // `num_enemies_i_can_see` decrements the personally-visible
@@ -916,8 +1000,8 @@ impl EnemyAi {
                     // consuming that count,
                     // battle-planning cleanup), which can intentionally
                     // leave a positive visible count with an empty Them list.
-                    if decrement_visible_count && idx < num_enemies_i_can_see {
-                        num_enemies_i_can_see -= 1;
+                    if decrement_visible_count && idx < *num_enemies_i_can_see {
+                        *num_enemies_i_can_see -= 1;
                     }
                     self.list_them.remove(idx);
                     continue;
@@ -927,132 +1011,146 @@ impl EnemyAi {
         }
 
         if debug_them {
-            crate::ai_enemy::parity_trace::them_battle_cleanup_after(
-                &(ctx.frame),
-                &(ctx.original_creation_order),
-                &(self.base.me),
-                &(num_enemies_i_can_see),
-                &(self.list_them),
-                &(unconscious_enemies_from_them
+            crate::ai_enemy::parity_trace::ThemBattleCleanupAfter {
+                frame: &(ctx.frame),
+                co: &(ctx.original_creation_order),
+                me: &(self.base.me),
+                visible_count: &(*num_enemies_i_can_see),
+                list: &(self.list_them),
+                unconscious: &(unconscious_enemies_from_them
                     .iter()
                     .map(|enemy| enemy.handle)
                     .collect::<Vec<_>>()),
-            );
-        }
-
-        if num_enemies_i_can_see == 0 {
-            // No visible enemies. Ordering:
-            //   combat_trainer → my_shooting_point → archer-leaning-out
-            //   → friends-see-enemies (seek) → missed-PC → unconscious
-            //   → kill_nearby_sleeping. archer-leaning-out MUST come
-            //   before the seek-friends-enemies arm — an archer parked
-            //   on a bend point with friend-seen enemies should hold
-            //   the firing position, not run away to seek.
-            if self.combat_trainer {
-                self.return_to_duty_default(sim, ctx, tick);
-            } else if self.my_shooting_point.is_some() {
-                // Archer has a shooting point — equip bow based on
-                // elevation relative to last-seen enemy.
-                let my_elevation: u16 = ctx.elevation as u16;
-                if my_elevation >= self.enemy_had_this_elevation + 50 {
-                    // Target is below — aim down
-                    self.base
-                        .outbox
-                        .actor
-                        .launch_commands
-                        .push(crate::element::Command::EquipBowDown);
-                    self.set_state(
-                        AiState::Attacking,
-                        Substate::AttackingArcherWaitOnArcheryPathBending,
-                    );
-                } else {
-                    // Target is at same level or above
-                    self.base
-                        .outbox
-                        .actor
-                        .launch_commands
-                        .push(crate::element::Command::EquipBow);
-                    self.set_state(
-                        AiState::Attacking,
-                        Substate::AttackingArcherWaitOnArcheryPath,
-                    );
-                }
-                self.base.launch_timer(1000, ctx.frame);
-            } else if self.enemy_seen_below
-                && self.is_archer()
-                && ctx.posture == crate::element::Posture::LeaningOut
-            {
-                // Archer leaning out saw enemy below; hold the bend point.
-                // Must precede the friend-seen seek arm so an archer
-                // mid-shot doesn't abandon his position to chase someone
-                // else's sighting.
-                self.set_state_with_timer(
-                    AiState::Attacking,
-                    Substate::AttackingArcherWaitOnBendPoint,
-                    500,
-                    ctx,
-                );
-            } else if !self.list_them.is_empty() {
-                // Friends see enemies that I don't — seek toward the
-                // first friend's enemy position.
-                if let Some(first_enemy) = self.list_them.first().copied()
-                    && let Some(pos) = self
-                        .find_fighter(first_enemy, tick)
-                        .map(|f| f.position)
-                        .or_else(|| ctx.entity_view(first_enemy).map(|v| v.position))
-                {
-                    self.base.seek_position = pos;
-                }
-                self.seek_area(
-                    sim,
-                    self.base.seek_position,
-                    parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
-                    SeekFlags::LOCATION_FIRST,
-                    UNDEFINED_DIRECTION,
-                    global,
-                    ctx,
-                    tick,
-                );
-            } else if self.pc_missed
-                && self.missed_pc.is_some()
-                && tick.missed_pc_is_pc
-                && self.answer_question(Question::ShallIFollowLostEnemy, ctx)
-            {
-                // Lost enemy — re-forecast and seek with direction hint.
-                self.base.say(Remark::HuntsEnemy);
-                // Re-predict missed PC's destination before seeking. A
-                // synchronous queued Think can assign `missed_pc` after its
-                // per-tick snapshot was built, so use the handle-keyed
-                // detectable/primary forecast already prepared for that
-                // target before the snapshot's dedicated convenience slot.
-                // The original game forecasts the AI destination unconditionally;
-                // retaining an old seek position is not a valid fallback.
-                self.refresh_missed_pc_forecast(sim, tick);
-                self.seek_area(
-                    sim,
-                    self.base.seek_position,
-                    parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
-                    SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
-                    self.pc_gone_away_in_this_direction,
-                    global,
-                    ctx,
-                    tick,
-                );
-            } else if !unconscious_enemies_from_them.is_empty() && !self.is_merry_man_forest(ctx) {
-                // Enemies removed from the persistent Them list above are
-                // unconscious and not carried — put them back, select one,
-                // and walk up to finish them off.
-                debug_assert!(self.list_them.is_empty());
-                self.approach_sleeping_enemies(sim, &unconscious_enemies_from_them, ctx, tick);
-            } else {
-                // Final "there is literally nothing going on" fallback —
-                // look for sleeping enemies anywhere within the 360°
-                // detection radius and walk over to one.
-                self.kill_nearby_sleeping_enemies(sim, ctx, tick);
             }
-            return;
+            .emit();
         }
+        (min_square_enemy_distance, unconscious_enemies_from_them)
+    }
 
+    /// Battle planning with no personally visible enemies.
+    fn battle_no_visible_enemies(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        unconscious_enemies_from_them: &[crate::ai::SleepingEnemyInfo],
+    ) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
+        // No visible enemies. Ordering:
+        //   combat_trainer → my_shooting_point → archer-leaning-out
+        //   → friends-see-enemies (seek) → missed-PC → unconscious
+        //   → kill_nearby_sleeping. archer-leaning-out MUST come
+        //   before the seek-friends-enemies arm — an archer parked
+        //   on a bend point with friend-seen enemies should hold
+        //   the firing position, not run away to seek.
+        if self.combat_trainer {
+            self.return_to_duty_default(env);
+        } else if self.my_shooting_point.is_some() {
+            // Archer has a shooting point — equip bow based on
+            // elevation relative to last-seen enemy.
+            let my_elevation: u16 = ctx.elevation as u16;
+            if my_elevation >= self.enemy_had_this_elevation + 50 {
+                // Target is below — aim down
+                self.base
+                    .outbox
+                    .actor
+                    .launch_commands
+                    .push(crate::element::Command::EquipBowDown);
+                self.set_state(
+                    AiState::Attacking,
+                    Substate::AttackingArcherWaitOnArcheryPathBending,
+                );
+            } else {
+                // Target is at same level or above
+                self.base
+                    .outbox
+                    .actor
+                    .launch_commands
+                    .push(crate::element::Command::EquipBow);
+                self.set_state(
+                    AiState::Attacking,
+                    Substate::AttackingArcherWaitOnArcheryPath,
+                );
+            }
+            self.base.launch_timer(1000, ctx.frame);
+        } else if self.enemy_seen_below
+            && self.is_archer()
+            && ctx.posture == crate::element::Posture::LeaningOut
+        {
+            // Archer leaning out saw enemy below; hold the bend point.
+            // Must precede the friend-seen seek arm so an archer
+            // mid-shot doesn't abandon his position to chase someone
+            // else's sighting.
+            self.set_state_with_timer(
+                AiState::Attacking,
+                Substate::AttackingArcherWaitOnBendPoint,
+                500,
+                ctx,
+            );
+        } else if !self.list_them.is_empty() {
+            // Friends see enemies that I don't — seek toward the
+            // first friend's enemy position.
+            if let Some(first_enemy) = self.list_them.first().copied()
+                && let Some(pos) = self
+                    .find_fighter(first_enemy, tick)
+                    .map(|f| f.position)
+                    .or_else(|| ctx.entity_view(first_enemy).map(|v| v.position))
+            {
+                self.base.seek_position = pos;
+            }
+            self.seek_area(
+                env,
+                self.base.seek_position,
+                parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
+                SeekFlags::LOCATION_FIRST,
+                UNDEFINED_DIRECTION,
+                global,
+            );
+        } else if self.pc_missed
+            && self.missed_pc.is_some()
+            && tick.missed_pc_is_pc
+            && self.answer_question(Question::ShallIFollowLostEnemy, ctx)
+        {
+            // Lost enemy — re-forecast and seek with direction hint.
+            self.base.say(Remark::HuntsEnemy);
+            // Re-predict missed PC's destination before seeking. A
+            // synchronous queued Think can assign `missed_pc` after its
+            // per-tick snapshot was built, so use the handle-keyed
+            // detectable/primary forecast already prepared for that
+            // target before the snapshot's dedicated convenience slot.
+            // The original game forecasts the AI destination unconditionally;
+            // retaining an old seek position is not a valid fallback.
+            self.refresh_missed_pc_forecast(sim, tick);
+            self.seek_area(
+                env,
+                self.base.seek_position,
+                parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
+                SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
+                self.pc_gone_away_in_this_direction,
+                global,
+            );
+        } else if !unconscious_enemies_from_them.is_empty() && !self.is_merry_man_forest(ctx) {
+            // Enemies removed from the persistent Them list above are
+            // unconscious and not carried — put them back, select one,
+            // and walk up to finish them off.
+            debug_assert!(self.list_them.is_empty());
+            self.approach_sleeping_enemies(env, unconscious_enemies_from_them);
+        } else {
+            // Final "there is literally nothing going on" fallback —
+            // look for sleeping enemies anywhere within the 360°
+            // detection radius and walk over to one.
+            self.kill_nearby_sleeping_enemies(env);
+        }
+    }
+
+    /// Choose the battle decision: forced-decision whitelist, then the
+    /// offensive/defensive predecision split.
+    fn choose_battle_decision(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        inputs: BattleDecisionInputs,
+        decision_target_multiplicity: &std::collections::BTreeMap<HumanHandle, u32>,
+    ) -> (Decision, HumanHandle) {
         // Determine decision
         let decision;
         // Shield bearer handle for CoverBehindShieldBearer decision.
@@ -1102,7 +1200,7 @@ impl EnemyAi {
                 // best-effort recovery.
                 // Simulate "no forced decision" by jumping into the
                 // else block via a goto-style early flag.
-                let predecision = self.make_battle_predecisions(sim, ctx, tick);
+                let predecision = self.make_battle_predecisions(env);
                 decision = if self.combat_trainer || predecision == Decision::PredecisionDefensive {
                     Decision::Cassos
                 } else {
@@ -1111,245 +1209,241 @@ impl EnemyAi {
             }
         } else {
             // (1) Predecision: Offensive or defensive?
-            let predecision = self.make_battle_predecisions(sim, ctx, tick);
-
-            // Use the aggregates computed by this decision's camp scan.
-            let friends_with_lower_company = friends_lower_company;
-            let soldiers_with_lower_pride = soldiers_lower_pride;
+            let predecision = self.make_battle_predecisions(env);
 
             if self.combat_trainer {
                 decision = Decision::Observe;
             } else if predecision == Decision::PredecisionOffensive {
-                ////////// offensive decisions //////////////
+                decision = self.battle_offensive_decision(
+                    env,
+                    global,
+                    inputs,
+                    decision_target_multiplicity,
+                    &mut cover_shield_bearer,
+                );
+            } else {
+                decision = self.battle_defensive_decision(env);
+            }
+        }
+        (decision, cover_shield_bearer)
+    }
 
-                if self.is_archer() && self.base.blood_alcohol == 0 {
-                    if crate::ai_enemy::battle_decision_debug_enabled() {
-                        crate::ai_enemy::parity_trace::archer_decision(
-                            &(ctx.frame),
-                            &(self.base.me),
-                            &(self.tower_guard),
-                            &(self.shield_bearer_before_me),
-                            &(self.my_shooting_point),
-                            &(self.base.primary_target.is_some()
-                                && self.archer_is_too_near_to_enemy(
-                                    &ctx.position,
-                                    self.base.primary_target,
-                                    ctx,
-                                    tick,
-                                )),
-                            &(ctx.position),
-                            &(self.base.primary_target),
-                            &(self
-                                .find_fighter(self.base.primary_target, tick)
-                                .map(|f| f.position)),
-                        );
-                    }
-                    // Archer offensive.
-                    if self.tower_guard {
-                        if !self.base.friends_are_alerted {
-                            decision = Decision::TowerGuardAlert;
-                        } else {
-                            decision = Decision::Shoot;
-                        }
-                    } else if self.base.primary_target.is_some()
+    /// Offensive half of the battle decision tree (archer, tower guard,
+    /// officer alert, reserve, pride, observe, fight).
+    fn battle_offensive_decision(
+        &mut self,
+        env: ThinkEnv<'_>,
+        global: &mut AiGlobalState,
+        inputs: BattleDecisionInputs,
+        decision_target_multiplicity: &std::collections::BTreeMap<HumanHandle, u32>,
+        cover_shield_bearer: &mut HumanHandle,
+    ) -> Decision {
+        let ThinkEnv { ctx, tick, .. } = env;
+        let BattleDecisionInputs {
+            friends_lower_company,
+            soldiers_lower_pride,
+            simple_soldiers_near,
+            min_square_enemy_distance,
+            num_enemies_i_can_see,
+            friends_nearer_to_enemy,
+        } = inputs;
+        let decision;
+        // Use the aggregates computed by this decision's camp scan.
+        let friends_with_lower_company = friends_lower_company;
+        let soldiers_with_lower_pride = soldiers_lower_pride;
+
+        ////////// offensive decisions //////////////
+
+        if self.is_archer() && self.base.blood_alcohol == 0 {
+            if crate::ai_enemy::battle_decision_debug_enabled() {
+                crate::ai_enemy::parity_trace::ArcherDecision {
+                    frame: &(ctx.frame),
+                    me: &(self.base.me),
+                    tower: &(self.tower_guard),
+                    sbb: &(self.shield_bearer_before_me),
+                    shooting_point: &(self.my_shooting_point),
+                    too_near: &(self.base.primary_target.is_some()
                         && self.archer_is_too_near_to_enemy(
                             &ctx.position,
                             self.base.primary_target,
                             ctx,
                             tick,
-                        )
-                    {
-                        // Step back and decide again.
-                        decision = Decision::ArcherStepBack;
-                    } else if self.shield_bearer_before_me.is_some() && self.base.blood_alcohol == 0
-                    {
-                        // Already paired with a shield bearer — check if
-                        // we're still in cover or need to reposition.
-                        if let Some(cover_pos) =
-                            self.shield_bearer_cover_position(self.shield_bearer_before_me, tick)
-                        {
-                            let diff = pos_diff(&ctx.position, &cover_pos);
-                            if max_norm(diff) < archer::COVER_POINT_TOLERANCE as f32 {
-                                // Still in cover — shoot
-                                decision = Decision::Shoot;
-                            } else {
-                                // Need to reposition behind shield bearer
-                                cover_shield_bearer = self
-                                    .shield_bearer_before_me
-                                    .expect("active archer cover has no shield bearer")
-                                    .get();
-                                decision = Decision::CoverBehindShieldBearer;
-                            }
-                        } else {
-                            // Shield bearer lost or unreachable
-                            self.update_shield_bearer_before_me(None);
-                            decision = Decision::Shoot;
-                        }
-                    } else if self.my_shooting_point.is_some() {
-                        // Already have a shooting point.
-                        decision = Decision::Shoot;
-                    } else if self.choose_good_shooting_point(global, ctx, tick) {
-                        // Found a good archery point — run to it.
-                        decision = Decision::RunToArcheryPoint;
-                    } else {
-                        // Search for a shield bearer to hide behind.
-                        if let Some(sb) = self.get_nearest_free_shield_bearer(ctx, tick) {
-                            cover_shield_bearer = sb;
-                            decision = Decision::CoverBehindShieldBearer;
-                        } else {
-                            // No shield to hide behind
-                            decision = Decision::Shoot;
-                        }
-                    }
-                } else if self.tower_guard {
-                    // Tower guard offensive.
-                    if !self.base.friends_are_alerted {
-                        decision = Decision::TowerGuardAlert;
-                    } else if min_square_enemy_distance < combat::MIN_SQUARE_RESERVE_DISTANCE as u32
-                    {
-                        decision = Decision::Fight;
-                    } else {
-                        decision = Decision::TowerGuardObserve;
-                    }
-                } else if self.get_rank() == ProfileRank::Officer
-                    && simple_soldiers_near
-                    && !self.base.friends_are_alerted
-                    && self.base.blood_alcohol == 0
-                {
-                    // Officer alerts soldiers (only if simple soldiers are nearby).
-                    decision = Decision::AlertSoldiers;
-                } else if friends_with_lower_company >= self.list_them.len() as u16
-                    && min_square_enemy_distance > combat::MIN_SQUARE_RESERVE_DISTANCE as u32
-                {
-                    // Enough friends closer → hold back.
-                    decision = Decision::Reserve;
-                } else if self.company_number == 100
-                    && min_square_enemy_distance > combat::MIN_SQUARE_RESERVE_DISTANCE as u32
-                {
-                    // Company 100 → last reserve.
-                    decision = Decision::LastReserve;
-                } else if soldiers_with_lower_pride
-                    && self.is_too_proud_to_attack(ctx, tick, Some(&decision_target_multiplicity))
-                {
-                    // Too proud to fight alongside commoners.
-                    decision = Decision::TooProudToAttack;
-                } else if ctx.is_hostile_to_player()
-                    && !soldiers_with_lower_pride
-                    && enough_nearer_friends_to_observe(
-                        friends_nearer_to_enemy,
-                        num_enemies_i_can_see,
-                        self.get_courage(),
-                    )
-                {
-                    // Lacklandist observe — enough friends are already
-                    // fighting closer to the enemy, stand back and watch.
-                    // Camp-gated: only Lacklandists take this branch;
-                    // royalists fall through to Fight.
-                    // `num_enemies_i_can_see` is a persistent count of
-                    // tracked enemies, not a per-tick "detected this
-                    // frame" count, since `tick.personally_visible_enemies`
-                    // is only populated on the detection-commit dispatch
-                    // path; otherwise EVENT_TIMER-driven calls would see
-                    // `0 >= 0 + 0 = true` and wrongly observe instead of
-                    // charging.
-                    decision = Decision::Observe;
-                } else {
-                    // Charge! (Earlier port versions injected a
-                    // `refresh_arrow_protection` early-return here, but
-                    // the offensive-decision chain does not call
-                    // arrow-protection refresh — that sweep lives in
-                    // the every-16-frame update and a few explicit call sites.)
-                    decision = Decision::Fight;
+                        )),
+                    pos: &(ctx.position),
+                    primary: &(self.base.primary_target),
+                    primary_pos: &(self
+                        .find_fighter(self.base.primary_target, tick)
+                        .map(|f| f.position)),
                 }
-            } else {
-                // `only_enemy_soldiers` is initialized true, cleared if
-                // any PC is in list_them. Used to gate LookForHelp /
-                // RunAndAlertSoldiers — you don't call for help if your
-                // opponents are all enemy soldiers (friendly fire / brawl
-                // semantics).
-                let only_enemy_soldiers = !self
-                    .list_them
-                    .iter()
-                    .any(|&h| self.find_fighter(h, tick).map(|f| f.is_pc).unwrap_or(false));
-
-                // Archer with no arrows → run for new arrows.
-                if self.is_archer() && ctx.remaining_arrows == 0 {
-                    decision = Decision::RunForNewArrows;
+                .emit();
+            }
+            // Archer offensive.
+            if self.tower_guard {
+                if !self.base.friends_are_alerted {
+                    decision = Decision::TowerGuardAlert;
                 } else {
-                    match self.get_rank() {
-                        ProfileRank::Soldier
-                            if !self.base.friends_are_alerted
-                                && !only_enemy_soldiers
-                                && self.base.blood_alcohol == 0 =>
-                        {
-                            decision = Decision::LookForHelp;
-                        }
-                        ProfileRank::Soldier => {
-                            decision = Decision::Cassos;
-                        }
-                        ProfileRank::Officer
-                            if !self.base.friends_are_alerted
-                                && !only_enemy_soldiers
-                                && self.base.blood_alcohol == 0 =>
-                        {
-                            decision = Decision::RunAndAlertSoldiers;
-                        }
-                        ProfileRank::Officer => {
-                            decision = Decision::Cassos;
-                        }
-                        _ => {
-                            decision = Decision::Cassos;
-                        }
+                    decision = Decision::Shoot;
+                }
+            } else if self.base.primary_target.is_some()
+                && self.archer_is_too_near_to_enemy(
+                    &ctx.position,
+                    self.base.primary_target,
+                    ctx,
+                    tick,
+                )
+            {
+                // Step back and decide again.
+                decision = Decision::ArcherStepBack;
+            } else if self.shield_bearer_before_me.is_some() && self.base.blood_alcohol == 0 {
+                // Already paired with a shield bearer — check if
+                // we're still in cover or need to reposition.
+                if let Some(cover_pos) =
+                    self.shield_bearer_cover_position(self.shield_bearer_before_me, tick)
+                {
+                    let diff = ctx.position.map_point() - cover_pos.map_point();
+                    if diff.max_norm() < archer::COVER_POINT_TOLERANCE as f32 {
+                        // Still in cover — shoot
+                        decision = Decision::Shoot;
+                    } else {
+                        // Need to reposition behind shield bearer
+                        *cover_shield_bearer = self
+                            .shield_bearer_before_me
+                            .expect("active archer cover has no shield bearer")
+                            .get();
+                        decision = Decision::CoverBehindShieldBearer;
                     }
+                } else {
+                    // Shield bearer lost or unreachable
+                    self.update_shield_bearer_before_me(None);
+                    decision = Decision::Shoot;
+                }
+            } else if self.my_shooting_point.is_some() {
+                // Already have a shooting point.
+                decision = Decision::Shoot;
+            } else if self.choose_good_shooting_point(global, ctx, tick) {
+                // Found a good archery point — run to it.
+                decision = Decision::RunToArcheryPoint;
+            } else {
+                // Search for a shield bearer to hide behind.
+                if let Some(sb) = self.get_nearest_free_shield_bearer(ctx, tick) {
+                    *cover_shield_bearer = sb;
+                    decision = Decision::CoverBehindShieldBearer;
+                } else {
+                    // No shield to hide behind
+                    decision = Decision::Shoot;
+                }
+            }
+        } else if self.tower_guard {
+            // Tower guard offensive.
+            if !self.base.friends_are_alerted {
+                decision = Decision::TowerGuardAlert;
+            } else if min_square_enemy_distance < combat::MIN_SQUARE_RESERVE_DISTANCE as u32 {
+                decision = Decision::Fight;
+            } else {
+                decision = Decision::TowerGuardObserve;
+            }
+        } else if self.get_rank() == ProfileRank::Officer
+            && simple_soldiers_near
+            && !self.base.friends_are_alerted
+            && self.base.blood_alcohol == 0
+        {
+            // Officer alerts soldiers (only if simple soldiers are nearby).
+            decision = Decision::AlertSoldiers;
+        } else if friends_with_lower_company >= self.list_them.len() as u16
+            && min_square_enemy_distance > combat::MIN_SQUARE_RESERVE_DISTANCE as u32
+        {
+            // Enough friends closer → hold back.
+            decision = Decision::Reserve;
+        } else if self.company_number == 100
+            && min_square_enemy_distance > combat::MIN_SQUARE_RESERVE_DISTANCE as u32
+        {
+            // Company 100 → last reserve.
+            decision = Decision::LastReserve;
+        } else if soldiers_with_lower_pride
+            && self.is_too_proud_to_attack(ctx, tick, Some(decision_target_multiplicity))
+        {
+            // Too proud to fight alongside commoners.
+            decision = Decision::TooProudToAttack;
+        } else if ctx.is_hostile_to_player()
+            && !soldiers_with_lower_pride
+            && enough_nearer_friends_to_observe(
+                friends_nearer_to_enemy,
+                num_enemies_i_can_see,
+                self.get_courage(),
+            )
+        {
+            // Lacklandist observe — enough friends are already
+            // fighting closer to the enemy, stand back and watch.
+            // Camp-gated: only Lacklandists take this branch;
+            // royalists fall through to Fight.
+            // `num_enemies_i_can_see` is a persistent count of
+            // tracked enemies, not a per-tick "detected this
+            // frame" count, since `tick.personally_visible_enemies`
+            // is only populated on the detection-commit dispatch
+            // path; otherwise EVENT_TIMER-driven calls would see
+            // `0 >= 0 + 0 = true` and wrongly observe instead of
+            // charging.
+            decision = Decision::Observe;
+        } else {
+            // Charge! (Earlier port versions injected a
+            // `refresh_arrow_protection` early-return here, but
+            // the offensive-decision chain does not call
+            // arrow-protection refresh — that sweep lives in
+            // the every-16-frame update and a few explicit call sites.)
+            decision = Decision::Fight;
+        }
+        decision
+    }
+
+    /// Defensive half of the battle decision tree: arrows, then help/alert
+    /// by rank, otherwise Cassos.
+    fn battle_defensive_decision(&self, env: ThinkEnv<'_>) -> Decision {
+        let ThinkEnv { ctx, tick, .. } = env;
+        let decision;
+        // `only_enemy_soldiers` is initialized true, cleared if
+        // any PC is in list_them. Used to gate LookForHelp /
+        // RunAndAlertSoldiers — you don't call for help if your
+        // opponents are all enemy soldiers (friendly fire / brawl
+        // semantics).
+        let only_enemy_soldiers = !self.list_them.iter().any(|&h| {
+            self.find_fighter_logged(h, tick, "enemy-list PC scan")
+                .is_some_and(|f| f.is_pc)
+        });
+
+        // Archer with no arrows → run for new arrows.
+        if self.is_archer() && ctx.remaining_arrows == 0 {
+            decision = Decision::RunForNewArrows;
+        } else {
+            match self.get_rank() {
+                ProfileRank::Soldier
+                    if !self.base.friends_are_alerted
+                        && !only_enemy_soldiers
+                        && self.base.blood_alcohol == 0 =>
+                {
+                    decision = Decision::LookForHelp;
+                }
+                ProfileRank::Soldier => {
+                    decision = Decision::Cassos;
+                }
+                ProfileRank::Officer
+                    if !self.base.friends_are_alerted
+                        && !only_enemy_soldiers
+                        && self.base.blood_alcohol == 0 =>
+                {
+                    decision = Decision::RunAndAlertSoldiers;
+                }
+                ProfileRank::Officer => {
+                    decision = Decision::Cassos;
+                }
+                _ => {
+                    decision = Decision::Cassos;
                 }
             }
         }
-
-        tracing::trace!(
-            me = self.base.me,
-            ?decision,
-            primary_target = ?self.base.primary_target,
-            num_enemies_i_can_see,
-            friends_nearer_to_enemy,
-            soldiers_lower_pride = soldiers_lower_pride,
-            friends_lower_company = friends_lower_company,
-            "battle_decisions: chose decision"
-        );
-        if crate::ai_enemy::battle_decision_debug_enabled() {
-            crate::ai_enemy::parity_trace::battle_decision(
-                &(ctx.frame),
-                &(self.base.me),
-                &(decision),
-                &(old_substate),
-                &(self.base.primary_target),
-                &(num_enemies_i_can_see),
-                &(friends_nearer_to_enemy),
-            );
-        }
-        // Carry out decision (with possible fallback loop). The Observe
-        // arm's avenger-on-roof fallback returns from the whole routine
-        // before the log line is registered; every other path logs.
-        if self.execute_battle_decision(
-            sim,
-            decision,
-            old_substate,
-            cover_shield_bearer,
-            &mut decision_target_multiplicity,
-            global,
-            ctx,
-            tick,
-            grid,
-        ) {
-            self.base
-                .register_log_line(LogLineType::BattleDecision, decision as u16);
-        }
+        decision
     }
 
-    fn refresh_missed_pc_forecast(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        tick: &AiPerTickData,
-    ) {
+    fn refresh_missed_pc_forecast(&mut self, sim: &SimulationContext, tick: &AiPerTickData) {
         let missed_pc = self
             .missed_pc
             .expect("lost-PC forecast refresh requires a missed PC")
@@ -1386,36 +1480,24 @@ impl EnemyAi {
     /// route result is known. Every other path returns `true`.
     fn execute_battle_decision(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         mut decision: Decision,
         old_substate: Substate,
         cover_shield_bearer: HumanHandle,
         target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         // Allow up to 5 fallback decision changes to prevent infinite loops
         for _ in 0..5 {
             match decision {
-                Decision::Fight => {
-                    match self.execute_fight_decision(
-                        target_multiplicity,
-                        crate::ai_enemy::ThinkEnv {
-                            sim,
-                            ctx,
-                            tick,
-                            grid,
-                        },
-                    ) {
-                        std::ops::ControlFlow::Continue(next) => {
-                            decision = next;
-                            continue;
-                        }
-                        std::ops::ControlFlow::Break(result) => return result,
+                Decision::Fight => match self.execute_fight_decision(target_multiplicity, env) {
+                    std::ops::ControlFlow::Continue(next) => {
+                        decision = next;
+                        continue;
                     }
-                }
+                    std::ops::ControlFlow::Break(result) => return result,
+                },
 
                 Decision::Reserve => {
                     self.enter_battle_reserve_with_multiplicity(
@@ -1426,15 +1508,7 @@ impl EnemyAi {
                 }
 
                 Decision::LastReserve => {
-                    match self.execute_last_reserve_decision(
-                        target_multiplicity,
-                        crate::ai_enemy::ThinkEnv {
-                            sim,
-                            ctx,
-                            tick,
-                            grid,
-                        },
-                    ) {
+                    match self.execute_last_reserve_decision(target_multiplicity, env) {
                         std::ops::ControlFlow::Continue(next) => {
                             decision = next;
                             continue;
@@ -1444,15 +1518,7 @@ impl EnemyAi {
                 }
 
                 Decision::Observe => {
-                    match self.execute_observe_decision(
-                        target_multiplicity,
-                        crate::ai_enemy::ThinkEnv {
-                            sim,
-                            ctx,
-                            tick,
-                            grid,
-                        },
-                    ) {
+                    match self.execute_observe_decision(target_multiplicity, env) {
                         std::ops::ControlFlow::Continue(next) => {
                             decision = next;
                             continue;
@@ -1462,16 +1528,7 @@ impl EnemyAi {
                 }
 
                 Decision::Shoot => {
-                    match self.execute_shoot_decision(
-                        target_multiplicity,
-                        global,
-                        crate::ai_enemy::ThinkEnv {
-                            sim,
-                            ctx,
-                            tick,
-                            grid,
-                        },
-                    ) {
+                    match self.execute_shoot_decision(target_multiplicity, global, env) {
                         std::ops::ControlFlow::Continue(next) => {
                             decision = next;
                             continue;
@@ -1506,42 +1563,25 @@ impl EnemyAi {
                         // that selected CASSOS. Original then uses the existing
                         // undirected `Panic(runs)` overload when reselection is
                         // empty; handle 0 selects that overload here.
-                        self.begin_cassos_panic(target.map_or(0, AiEntityHandle::get), ctx, tick);
+                        self.begin_cassos_panic(target.map_or(0, AiEntityHandle::get), ctx);
                     }
                 }
 
-                Decision::LookForHelp => {
-                    match self.execute_look_for_help_decision(crate::ai_enemy::ThinkEnv {
-                        sim,
-                        ctx,
-                        tick,
-                        grid,
-                    }) {
-                        std::ops::ControlFlow::Continue(next) => {
-                            decision = next;
-                            continue;
-                        }
-                        std::ops::ControlFlow::Break(result) => return result,
+                Decision::LookForHelp => match self.execute_look_for_help_decision(env) {
+                    std::ops::ControlFlow::Continue(next) => {
+                        decision = next;
+                        continue;
                     }
-                }
+                    std::ops::ControlFlow::Break(result) => return result,
+                },
 
-                Decision::AlertSoldiers => {
-                    match self.execute_alert_soldiers_decision(
-                        global,
-                        crate::ai_enemy::ThinkEnv {
-                            sim,
-                            ctx,
-                            tick,
-                            grid,
-                        },
-                    ) {
-                        std::ops::ControlFlow::Continue(next) => {
-                            decision = next;
-                            continue;
-                        }
-                        std::ops::ControlFlow::Break(result) => return result,
+                Decision::AlertSoldiers => match self.execute_alert_soldiers_decision(env) {
+                    std::ops::ControlFlow::Continue(next) => {
+                        decision = next;
+                        continue;
                     }
-                }
+                    std::ops::ControlFlow::Break(result) => return result,
+                },
 
                 Decision::RunAndAlertSoldiers => {
                     let target =
@@ -1615,15 +1655,7 @@ impl EnemyAi {
                 }
 
                 Decision::RunForNewArrows => {
-                    match self.execute_run_for_new_arrows_decision(
-                        global,
-                        crate::ai_enemy::ThinkEnv {
-                            sim,
-                            ctx,
-                            tick,
-                            grid,
-                        },
-                    ) {
+                    match self.execute_run_for_new_arrows_decision(global, env) {
                         std::ops::ControlFlow::Continue(next) => {
                             decision = next;
                             continue;
@@ -1633,15 +1665,7 @@ impl EnemyAi {
                 }
 
                 Decision::TooProudToAttack => {
-                    match self.execute_too_proud_to_attack_decision(
-                        old_substate,
-                        crate::ai_enemy::ThinkEnv {
-                            sim,
-                            ctx,
-                            tick,
-                            grid,
-                        },
-                    ) {
+                    match self.execute_too_proud_to_attack_decision(old_substate, env) {
                         std::ops::ControlFlow::Continue(next) => {
                             decision = next;
                             continue;
@@ -1651,15 +1675,7 @@ impl EnemyAi {
                 }
 
                 Decision::ArcherStepBack => {
-                    match self.execute_archer_step_back_decision(
-                        old_substate,
-                        crate::ai_enemy::ThinkEnv {
-                            sim,
-                            ctx,
-                            tick,
-                            grid,
-                        },
-                    ) {
+                    match self.execute_archer_step_back_decision(old_substate, env) {
                         std::ops::ControlFlow::Continue(next) => {
                             decision = next;
                             continue;
@@ -1669,15 +1685,7 @@ impl EnemyAi {
                 }
 
                 Decision::ArcherObserve => {
-                    match self.execute_archer_observe_decision(
-                        target_multiplicity,
-                        crate::ai_enemy::ThinkEnv {
-                            sim,
-                            ctx,
-                            tick,
-                            grid,
-                        },
-                    ) {
+                    match self.execute_archer_observe_decision(target_multiplicity, env) {
                         std::ops::ControlFlow::Continue(next) => {
                             decision = next;
                             continue;
@@ -1692,21 +1700,17 @@ impl EnemyAi {
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                     self.base.primary_target = target;
                     let _target = target.expect("Menace decision requires a primary target");
-                    self.set_state(AiState::Menacing, Substate::MenacingPcInComa);
-                    self.base
-                        .launch_timer(parameters_ai::AI_MENACING_PATIENCE as u32, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Menacing,
+                        Substate::MenacingPcInComa,
+                        parameters_ai::AI_MENACING_PATIENCE as u32,
+                        ctx,
+                    );
                 }
 
                 Decision::CoverBehindShieldBearer => {
-                    match self.execute_cover_behind_shield_bearer_decision(
-                        cover_shield_bearer,
-                        crate::ai_enemy::ThinkEnv {
-                            sim,
-                            ctx,
-                            tick,
-                            grid,
-                        },
-                    ) {
+                    match self.execute_cover_behind_shield_bearer_decision(cover_shield_bearer, env)
+                    {
                         std::ops::ControlFlow::Continue(next) => {
                             decision = next;
                             continue;
@@ -1716,15 +1720,7 @@ impl EnemyAi {
                 }
 
                 Decision::RunToArcheryPoint => {
-                    match self.execute_run_to_archery_point_decision(
-                        global,
-                        crate::ai_enemy::ThinkEnv {
-                            sim,
-                            ctx,
-                            tick,
-                            grid,
-                        },
-                    ) {
+                    match self.execute_run_to_archery_point_decision(global, env) {
                         std::ops::ControlFlow::Continue(next) => {
                             decision = next;
                             continue;
@@ -1748,10 +1744,8 @@ impl EnemyAi {
     /// reconsidered enemy-approach route has settled.
     pub(crate) fn resume_battle_fight_after_reconsider(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
         if !self.base.couldnt_reachpoint {
             self.base
@@ -1789,15 +1783,12 @@ impl EnemyAi {
             })
             .collect::<std::collections::BTreeMap<_, _>>();
         let completed_inline = self.execute_battle_decision(
-            sim,
+            ThinkEnv { grid: None, ..env },
             Decision::Observe,
             self.base.current_substate,
             0,
             &mut target_multiplicity,
             global,
-            ctx,
-            tick,
-            None,
         );
         if self.base.outbox.reentrant.battle_observe_completion_pending {
             self.base.completion_latch_inside_think = completion_latch_inside_think;
@@ -1813,7 +1804,7 @@ impl EnemyAi {
     /// `Point(target)` at this call site; retaining an older seek point is not
     /// a valid substitute if the selected actor cannot be resolved. A null
     /// target deliberately calls the undirected `Panic(runs)` overload.
-    fn begin_cassos_panic(&mut self, target: HumanHandle, ctx: &AiContext, _tick: &AiPerTickData) {
+    fn begin_cassos_panic(&mut self, target: HumanHandle, ctx: &AiContext) {
         let runs = parameters_ai::AI_STANDARD_PANIC_RUNS as u8;
         if target == 0 {
             tracing::warn!(
@@ -1852,11 +1843,10 @@ impl EnemyAi {
     /// `CASSOS`; it is not delivered as `EVENT_COULDNT_REACHPOINT`.
     pub(crate) fn resume_battle_look_for_help_after_alert_officer(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         if !self.base.couldnt_reachpoint {
             if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
                 self.base.say(Remark::Cassos);
@@ -1879,7 +1869,7 @@ impl EnemyAi {
             }
             let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
             self.base.primary_target = target;
-            self.begin_cassos_panic(target.map_or(0, AiEntityHandle::get), ctx, tick);
+            self.begin_cassos_panic(target.map_or(0, AiEntityHandle::get), ctx);
         }
         self.base
             .register_log_line(LogLineType::BattleDecision, Decision::Cassos as u16);
@@ -1889,19 +1879,14 @@ impl EnemyAi {
     // Engage an enemy
     // -----------------------------------------------------------------------
 
-    pub(super) fn attack_enemy(
-        &mut self,
-        enemy: HumanHandle,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    pub(super) fn attack_enemy(&mut self, enemy: HumanHandle, env: ThinkEnv<'_>) {
+        let ThinkEnv { ctx, tick, .. } = env;
         // Rider charge wins before any state is committed. Run the charge
         // attempt first and early-return; only if it bails do we mutate
         // primary_target / seek_position / emoticon. Otherwise a
         // successful charge would leave the soldier with an X-mark
         // emoticon and a primary_target the reference never sets here.
-        if ctx.self_is_rider && self.maybe_make_rider_attack(ctx, tick, grid) {
+        if ctx.self_is_rider && self.maybe_make_rider_attack(env) {
             return;
         }
 
@@ -1937,16 +1922,18 @@ impl EnemyAi {
 
         // primary_target then emoticon.
         self.base.primary_target = Some(AiEntityHandle::new(enemy));
-        debug_assert!(
-            ctx.entity_view(enemy)
-                .map(|v| ctx.is_hostile_with(v.camp))
-                .unwrap_or(true),
-            "attack_enemy: target is a friend",
-        );
+        // The target's presence was already required above (entity view or
+        // nearby-fighter snapshot); the camp check needs the view.
+        if let Some(view) = ctx.entity_view(enemy) {
+            debug_assert!(
+                ctx.is_hostile_with(view.camp),
+                "attack_enemy: target is a friend"
+            );
+        }
         self.base.set_emoticon(EmoticonType::XMark);
 
         // Compute distance from `seek_position` (which is now fresh).
-        self.reconsider_enemy_approach(false, ctx, tick, grid);
+        self.reconsider_enemy_approach(false, env);
     }
 
     // -----------------------------------------------------------------------
@@ -1964,33 +1951,31 @@ impl EnemyAi {
     /// Rider charge is handled by `maybe_make_rider_attack` (called
     /// from `attack_enemy`). Line-jump data is precomputed by the engine
     /// in `AiPerTickData::primary_target_jump_line`.
-    pub fn reconsider_enemy_approach(
-        &mut self,
-        reachpoint: bool,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    pub(crate) fn reconsider_enemy_approach(&mut self, reachpoint: bool, env: ThinkEnv<'_>) {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
         let debug_decision_path = super::decision_path_debug_enabled()
             && super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_reconsider_enter(
-                &(ctx.frame),
-                &(self.base.me),
-                &(ctx.original_creation_order),
-                &(reachpoint),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.base.primary_target),
-                &(self.base.seek_position.x.to_bits()),
-                &(self.base.seek_position.y.to_bits()),
-                &(self.base.seek_position.sector),
-                &(self.base.seek_position.level),
-                &(ctx.self_is_rider),
-                &(self.base.couldnt_reachpoint),
-                &(self.base.already_on_point),
-                &(self.base.outbox.reentrant.owner_work),
-            );
+            crate::ai_enemy::parity_trace::AidecisionReconsiderEnter {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                co: &(ctx.original_creation_order),
+                reachpoint: &(reachpoint),
+                state: &(self.base.current_state),
+                substate: &(self.base.current_substate),
+                primary: &(self.base.primary_target),
+                seek_x_bits: &(self.base.seek_position.x.to_bits()),
+                seek_y_bits: &(self.base.seek_position.y.to_bits()),
+                seek_sector: &(self.base.seek_position.sector),
+                seek_level: &(self.base.seek_position.level),
+                rider: &(ctx.self_is_rider),
+                couldnt: &(self.base.couldnt_reachpoint),
+                already: &(self.base.already_on_point),
+                owner_work: &(self.base.outbox.reentrant.owner_work),
+            }
+            .emit();
         }
         // Already swordfighting? stay.
         if ctx.is_swordfighting {
@@ -1999,7 +1984,7 @@ impl EnemyAi {
         }
 
         // Arrow-protection branch claims the decision.
-        if self.refresh_arrow_protection(false, ctx, tick, grid) {
+        if self.refresh_arrow_protection(false, env) {
             return;
         }
 
@@ -2008,13 +1993,14 @@ impl EnemyAi {
         // EnemyAi's compatibility cache: old replay/save snapshots can carry
         // a range written with the former zero-based weapon-id convention.
         let standard_sword_range = self
-            .find_fighter(self.base.me, tick)
-            .unwrap_or_else(|| {
-                panic!(
+            .required_fighter(
+                self.base.me,
+                tick,
+                format_args!(
                     "enemy-approach reconsideration owner {} missing from fighter registry",
                     self.base.me
-                )
-            })
+                ),
+            )
             .sword_range_default;
         // sword_range = standard sword range + 10.
         let sword_range: f32 = (standard_sword_range + 10) as f32;
@@ -2028,7 +2014,7 @@ impl EnemyAi {
             distance,
             jump_line: my_line_jump,
             animation: target_animation,
-        } = self.prepare_approach_target(ctx, tick, grid);
+        } = self.prepare_approach_target(env);
 
         let SwappedApproachTarget {
             handle: working_target,
@@ -2107,29 +2093,30 @@ impl EnemyAi {
         self.base.outbox.actor.set_focus(working_target);
 
         // Riders try charge attack first.
-        if ctx.self_is_rider && self.maybe_make_rider_attack(ctx, tick, grid) {
+        if ctx.self_is_rider && self.maybe_make_rider_attack(env) {
             return;
         }
 
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_reconsider_close_enough(
-                &(ctx.frame),
-                &(self.base.me),
-                &(working_distance.to_bits()),
-                &(working_distance),
-                &(sword_range),
-                &(run_distance),
-                &(b_charge),
-                &(b_first_consideration),
-                &(my_line_jump),
-                &(target_in_lift),
-                &(working_target),
-            );
+            crate::ai_enemy::parity_trace::AidecisionReconsiderCloseEnough {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                working_distance_bits: &(working_distance.to_bits()),
+                working_distance: &(working_distance),
+                sword_range: &(sword_range),
+                run_distance: &(run_distance),
+                b_charge: &(b_charge),
+                b_first: &(b_first_consideration),
+                my_line_jump: &(my_line_jump),
+                target_in_lift: &(target_in_lift),
+                working_target: &(working_target),
+            }
+            .emit();
         }
         // Close enough to fight? Charging units defer until the
         // reachpoint has been hit; everyone else engages immediately.
         if working_distance <= sword_range && (!b_charge || reachpoint) {
-            self.begin_swordfight(ctx, tick);
+            self.begin_swordfight(ctx);
             return;
         }
 
@@ -2243,7 +2230,7 @@ impl EnemyAi {
                 );
                 if self.base.already_on_point {
                     self.base.already_on_point = false;
-                    self.begin_swordfight(ctx, tick);
+                    self.begin_swordfight(ctx);
                     return;
                 }
                 same_substate_route_split |= split_same_substate_route_before_set_state(
@@ -2266,7 +2253,7 @@ impl EnemyAi {
                 );
                 if self.base.already_on_point {
                     self.base.already_on_point = false;
-                    self.begin_swordfight(ctx, tick);
+                    self.begin_swordfight(ctx);
                     return;
                 }
                 same_substate_route_split |= split_same_substate_route_before_set_state(
@@ -2302,7 +2289,7 @@ impl EnemyAi {
                 }
                 if self.base.already_on_point {
                     self.base.already_on_point = false;
-                    self.begin_swordfight(ctx, tick);
+                    self.begin_swordfight(ctx);
                     return;
                 }
                 same_substate_route_split |= split_same_substate_route_before_set_state(
@@ -2330,7 +2317,7 @@ impl EnemyAi {
                 }
                 if self.base.already_on_point {
                     self.base.already_on_point = false;
-                    self.begin_swordfight(ctx, tick);
+                    self.begin_swordfight(ctx);
                     return;
                 }
                 same_substate_route_split |= split_same_substate_route_before_set_state(
@@ -2444,20 +2431,21 @@ impl EnemyAi {
                 },
             );
             if debug_decision_path {
-                crate::ai_enemy::parity_trace::aidecision_reconsider_deferred(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(self.base.current_state),
-                    &(self.base.current_substate),
-                    &(self.base.primary_target),
-                    &(working_target_pos.x.to_bits()),
-                    &(working_target_pos.y.to_bits()),
-                    &(working_target_pos.sector),
-                    &(working_target_pos.level),
-                    &(self.base.couldnt_reachpoint),
-                    &(self.base.already_on_point),
-                    &(self.base.outbox.reentrant.owner_work),
-                );
+                crate::ai_enemy::parity_trace::AidecisionReconsiderDeferred {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    state: &(self.base.current_state),
+                    substate: &(self.base.current_substate),
+                    primary: &(self.base.primary_target),
+                    target_x_bits: &(working_target_pos.x.to_bits()),
+                    target_y_bits: &(working_target_pos.y.to_bits()),
+                    target_sector: &(working_target_pos.sector),
+                    target_level: &(working_target_pos.level),
+                    couldnt: &(self.base.couldnt_reachpoint),
+                    already: &(self.base.already_on_point),
+                    owner_work: &(self.base.outbox.reentrant.owner_work),
+                }
+                .emit();
             }
         }
     }
@@ -2478,30 +2466,32 @@ impl EnemyAi {
         let debug_decision_path = super::decision_path_debug_enabled()
             && super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_reconsider_resume_enter(
-                &(ctx.frame),
-                &(self.base.me),
-                &(ctx.original_creation_order),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.base.couldnt_reachpoint),
-                &(self.base.already_on_point),
-                &(target_position.x.to_bits()),
-                &(target_position.y.to_bits()),
-                &(target_position.sector),
-                &(target_position.level),
-                &(avenger_wait_position),
-                &(self.base.outbox.reentrant.owner_work),
-            );
+            crate::ai_enemy::parity_trace::AidecisionReconsiderResumeEnter {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                co: &(ctx.original_creation_order),
+                state: &(self.base.current_state),
+                substate: &(self.base.current_substate),
+                couldnt: &(self.base.couldnt_reachpoint),
+                already: &(self.base.already_on_point),
+                target_x_bits: &(target_position.x.to_bits()),
+                target_y_bits: &(target_position.y.to_bits()),
+                target_sector: &(target_position.sector),
+                target_level: &(target_position.level),
+                avenger_wait: &(avenger_wait_position),
+                owner_work: &(self.base.outbox.reentrant.owner_work),
+            }
+            .emit();
         }
         if !self.base.couldnt_reachpoint {
             if debug_decision_path {
-                crate::ai_enemy::parity_trace::aidecision_reconsider_resume_result_route_ok(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(self.base.current_state),
-                    &(self.base.current_substate),
-                );
+                crate::ai_enemy::parity_trace::AidecisionReconsiderResumeResultRouteOk {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    state: &(self.base.current_state),
+                    substate: &(self.base.current_substate),
+                }
+                .emit();
             }
             return;
         }
@@ -2509,10 +2499,11 @@ impl EnemyAi {
             // The original game returns without clearing the unreachable-point flag when the
             // reverse gate walk cannot find a blocking gate.
             if debug_decision_path {
-                crate::ai_enemy::parity_trace::aidecision_reconsider_resume_result_failed_without_wait_position(
-&(ctx.frame),
-&(self.base.me)
-);
+                crate::ai_enemy::parity_trace::AidecisionReconsiderResumeResultFailedWithoutWaitPosition {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                }
+                .emit();
             }
             return;
         };
@@ -2542,15 +2533,16 @@ impl EnemyAi {
         // keeps the actual avenger position for the later face/wait behavior.
         self.base.seek_position = target_position;
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_reconsider_resume_result_avenger_fallback(
-                &(ctx.frame),
-                &(self.base.me),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.base.couldnt_reachpoint),
-                &(self.base.already_on_point),
-                &(self.base.outbox.reentrant.owner_work),
-            );
+            crate::ai_enemy::parity_trace::AidecisionReconsiderResumeResultAvengerFallback {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                state: &(self.base.current_state),
+                substate: &(self.base.current_substate),
+                couldnt: &(self.base.couldnt_reachpoint),
+                already: &(self.base.already_on_point),
+                owner_work: &(self.base.outbox.reentrant.owner_work),
+            }
+            .emit();
         }
     }
 
@@ -2604,7 +2596,7 @@ impl EnemyAi {
     /// from the victim's nearest-point projection on the paired line.
     fn compute_jump_line_target(
         &self,
-        grid: &crate::fast_find_grid::FastFindGrid,
+        grid: &FastFindGrid,
         line_idx: u32,
         victim_pos: crate::ai::Position,
     ) -> Option<crate::ai::Position> {
@@ -2645,31 +2637,28 @@ impl EnemyAi {
     /// Try to initiate a rider charge attack against any visible enemy.
     ///
     /// Returns `true` if a charge was initiated, `false` otherwise.
-    pub fn maybe_make_rider_attack(
-        &mut self,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) -> bool {
+    pub(crate) fn maybe_make_rider_attack(&mut self, env: ThinkEnv<'_>) -> bool {
+        let ThinkEnv { ctx, tick, .. } = env;
         let debug_decision_path = super::decision_path_debug_enabled()
             && super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_rider_attack_enter(
-                &(ctx.frame),
-                &(self.base.me),
-                &(ctx.original_creation_order),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.base.primary_target),
-                &(ctx.self_is_rider),
-                &(ctx.position.x.to_bits()),
-                &(ctx.position.y.to_bits()),
-                &(ctx.position.sector),
-                &(ctx.position.level),
-                &(ctx.direction),
-                &(self.list_them),
-                &(tick.nearby_fighters.len()),
-            );
+            crate::ai_enemy::parity_trace::AidecisionRiderAttackEnter {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                co: &(ctx.original_creation_order),
+                state: &(self.base.current_state),
+                substate: &(self.base.current_substate),
+                primary: &(self.base.primary_target),
+                rider: &(ctx.self_is_rider),
+                position_x_bits: &(ctx.position.x.to_bits()),
+                position_y_bits: &(ctx.position.y.to_bits()),
+                position_sector: &(ctx.position.sector),
+                position_level: &(ctx.position.level),
+                direction: &(ctx.direction),
+                list_them: &(self.list_them),
+                fighters: &(tick.nearby_fighters.len()),
+            }
+            .emit();
         }
         assert!(ctx.self_is_rider);
 
@@ -2701,10 +2690,10 @@ impl EnemyAi {
             // Do not substitute combat readiness: that broader helper
             // rejects temporary hit/recovery substates which remain valid
             // primary targets for a rider charge.
-            let target_alive = self
-                .find_fighter(target, tick)
-                .map(|f| !f.is_dead && !f.is_unconscious && !f.is_tied)
-                .unwrap_or(false);
+            // Same (pure) lookup as `target_snapshot`, which is present here.
+            let target_alive = !target_snapshot.is_dead
+                && !target_snapshot.is_unconscious
+                && !target_snapshot.is_tied;
 
             if target_alive
                 && let Some((d, bc)) = self.get_good_rider_attack_destination(
@@ -2712,8 +2701,7 @@ impl EnemyAi {
                     my_pos,
                     my_dir,
                     target_snapshot.raw_position,
-                    ctx,
-                    grid,
+                    env,
                     &tick.fighter_registry,
                 )
             {
@@ -2745,8 +2733,7 @@ impl EnemyAi {
                     my_pos,
                     my_dir,
                     epos,
-                    ctx,
-                    grid,
+                    env,
                     &tick.fighter_registry,
                 ) {
                     target = Some(AiEntityHandle::new(*enemy));
@@ -2770,14 +2757,15 @@ impl EnemyAi {
         );
         if !ok {
             if debug_decision_path {
-                crate::ai_enemy::parity_trace::aidecision_rider_attack_result_no_destination(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(self.base.primary_target),
-                    &(self.base.couldnt_reachpoint),
-                    &(self.base.already_on_point),
-                    &(self.base.outbox.reentrant.owner_work),
-                );
+                crate::ai_enemy::parity_trace::AidecisionRiderAttackResultNoDestination {
+                    frame: &(ctx.frame),
+                    owner: &(self.base.me),
+                    final_primary: &(self.base.primary_target),
+                    couldnt: &(self.base.couldnt_reachpoint),
+                    already: &(self.base.already_on_point),
+                    owner_work: &(self.base.outbox.reentrant.owner_work),
+                }
+                .emit();
             }
             return false;
         }
@@ -2789,12 +2777,13 @@ impl EnemyAi {
         // publishing the seek position for the later rider-return facing step.
         let target = target.expect("successful rider charge search has no target");
         self.base.seek_position = self
-            .find_fighter(target.get(), tick)
-            .unwrap_or_else(|| {
-                panic!(
+            .required_fighter(
+                target.get(),
+                tick,
+                format_args!(
                     "selected rider charge target {target:?} disappeared from the fighter registry"
-                )
-            })
+                ),
+            )
             .position;
 
         // Original focuses the selected target before choosing between the
@@ -2828,21 +2817,22 @@ impl EnemyAi {
         }
 
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_rider_attack_result_accepted(
-                &(ctx.frame),
-                &(self.base.me),
-                &(target),
-                &(dest.x.to_bits()),
-                &(dest.y.to_bits()),
-                &(dest.sector),
-                &(dest.level),
-                &(begin_charge),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.base.couldnt_reachpoint),
-                &(self.base.already_on_point),
-                &(self.base.outbox.reentrant.owner_work),
-            );
+            crate::ai_enemy::parity_trace::AidecisionRiderAttackResultAccepted {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                target: &(target),
+                destination_x_bits: &(dest.x.to_bits()),
+                destination_y_bits: &(dest.y.to_bits()),
+                destination_sector: &(dest.sector),
+                destination_level: &(dest.level),
+                begin_charge: &(begin_charge),
+                state: &(self.base.current_state),
+                substate: &(self.base.current_substate),
+                couldnt: &(self.base.couldnt_reachpoint),
+                already: &(self.base.already_on_point),
+                owner_work: &(self.base.outbox.reentrant.owner_work),
+            }
+            .emit();
         }
 
         true
@@ -2858,26 +2848,27 @@ impl EnemyAi {
         my_pos: Position,
         my_dir: u16,
         enemy_pos: Position,
-        ctx: &AiContext,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: ThinkEnv<'_>,
         fighter_registry: &[FighterSnapshot],
     ) -> Option<(Position, bool)> {
+        let ThinkEnv { ctx, grid, .. } = env;
         let debug_decision_path = super::decision_path_debug_enabled()
             && super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_rider_candidate_enter(
-                &(ctx.frame),
-                &(self.base.me),
-                &(candidate),
-                &(my_pos.x.to_bits()),
-                &(my_pos.y.to_bits()),
-                &(my_pos.level),
-                &(enemy_pos.x.to_bits()),
-                &(enemy_pos.y.to_bits()),
-                &(enemy_pos.level),
-                &(my_dir),
-                &(ctx.move_box),
-            );
+            crate::ai_enemy::parity_trace::AidecisionRiderCandidateEnter {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                candidate: &(candidate),
+                me_x_bits: &(my_pos.x.to_bits()),
+                me_y_bits: &(my_pos.y.to_bits()),
+                me_level: &(my_pos.level),
+                enemy_x_bits: &(enemy_pos.x.to_bits()),
+                enemy_y_bits: &(enemy_pos.y.to_bits()),
+                enemy_level: &(enemy_pos.level),
+                direction: &(my_dir),
+                move_box: &(ctx.move_box),
+            }
+            .emit();
         }
         let geometry = match rider_charge_goal_geometry(
             (my_pos.x, my_pos.y),
@@ -2888,37 +2879,52 @@ impl EnemyAi {
             Err(reject) => {
                 if debug_decision_path {
                     match reject {
-                        RiderChargeReject::Behind { forward_dot } => crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_behind(
-&(ctx.frame),
-&(self.base.me),
-&(candidate),
-&(forward_dot.to_bits())
-),
-                        RiderChargeReject::TooNear { norm, sq_norm } => crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_too_near(
-&(ctx.frame),
-&(self.base.me),
-&(candidate),
-&(norm.to_bits()),
-&(sq_norm.to_bits())
-),
-                        RiderChargeReject::ZeroOrthogonal { ortho_len } => crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_zero_orthogonal(
-&(ctx.frame),
-&(self.base.me),
-&(candidate),
-&(ortho_len.to_bits())
-),
-                        RiderChargeReject::ZeroHitVector { hp_len } => crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_zero_hit_vector(
-&(ctx.frame),
-&(self.base.me),
-&(candidate),
-&(hp_len.to_bits())
-),
-                        RiderChargeReject::ZeroHitNorm { hit_norm_len } => crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_zero_hit_norm(
-&(ctx.frame),
-&(self.base.me),
-&(candidate),
-&(hit_norm_len.to_bits())
-),
+                        RiderChargeReject::Behind { forward_dot } => {
+                            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectBehind {
+                                frame: &(ctx.frame),
+                                owner: &(self.base.me),
+                                candidate: &(candidate),
+                                forward_dot_bits: &(forward_dot.to_bits()),
+                            }
+                            .emit()
+                        }
+                        RiderChargeReject::TooNear { norm, sq_norm } => {
+                            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectTooNear {
+                                frame: &(ctx.frame),
+                                owner: &(self.base.me),
+                                candidate: &(candidate),
+                                norm_bits: &(norm.to_bits()),
+                                sq_norm_bits: &(sq_norm.to_bits()),
+                            }
+                            .emit()
+                        }
+                        RiderChargeReject::ZeroOrthogonal { ortho_len } => {
+                            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectZeroOrthogonal {
+                                frame: &(ctx.frame),
+                                owner: &(self.base.me),
+                                candidate: &(candidate),
+                                ortho_len_bits: &(ortho_len.to_bits()),
+                            }
+                            .emit()
+                        }
+                        RiderChargeReject::ZeroHitVector { hp_len } => {
+                            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectZeroHitVector {
+                                frame: &(ctx.frame),
+                                owner: &(self.base.me),
+                                candidate: &(candidate),
+                                hp_len_bits: &(hp_len.to_bits()),
+                            }
+                            .emit()
+                        }
+                        RiderChargeReject::ZeroHitNorm { hit_norm_len } => {
+                            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectZeroHitNorm {
+                                frame: &(ctx.frame),
+                                owner: &(self.base.me),
+                                candidate: &(candidate),
+                                hit_norm_bits: &(hit_norm_len.to_bits()),
+                            }
+                            .emit()
+                        }
                     }
                 }
                 return None;
@@ -2940,16 +2946,17 @@ impl EnemyAi {
             let pt_goal = crate::coordinates::MapPoint::new(goal_x, goal_y);
             if !g.is_straight_movement_authorized(pt_me, pt_goal, my_pos.level, &ctx.move_box) {
                 if debug_decision_path {
-                    crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_straight(
-&(ctx.frame),
-&(self.base.me),
-&(candidate),
-&(goal_x.to_bits()),
-&(goal_y.to_bits()),
-&(forward_dot.to_bits()),
-&(sq_norm.to_bits()),
-&(cos_alpha.to_bits())
-);
+                    crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectStraight {
+                        frame: &(ctx.frame),
+                        owner: &(self.base.me),
+                        candidate: &(candidate),
+                        goal_x_bits: &(goal_x.to_bits()),
+                        goal_y_bits: &(goal_y.to_bits()),
+                        forward_dot_bits: &(forward_dot.to_bits()),
+                        sq_norm_bits: &(sq_norm.to_bits()),
+                        cos_bits: &(cos_alpha.to_bits()),
+                    }
+                    .emit();
                 }
                 return None;
             }
@@ -3031,17 +3038,18 @@ impl EnemyAi {
                     let fp = geo::Point::new(f.raw_position.x as f64, f.raw_position.y as f64);
                     if poly.contains(&fp) {
                         if debug_decision_path {
-                            crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_friendly(
-&(ctx.frame),
-&(self.base.me),
-&(candidate),
-&(f.handle),
-&(f.raw_position.x.to_bits()),
-&(f.raw_position.y.to_bits()),
-&(f.raw_position.level),
-&(goal_x.to_bits()),
-&(goal_y.to_bits())
-);
+                            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectFriendly {
+                                frame: &(ctx.frame),
+                                owner: &(self.base.me),
+                                candidate: &(candidate),
+                                friendly: &(f.handle),
+                                friendly_x_bits: &(f.raw_position.x.to_bits()),
+                                friendly_y_bits: &(f.raw_position.y.to_bits()),
+                                friendly_level: &(f.raw_position.level),
+                                goal_x_bits: &(goal_x.to_bits()),
+                                goal_y_bits: &(goal_y.to_bits()),
+                            }
+                            .emit();
                         }
                         return None;
                     }
@@ -3061,20 +3069,21 @@ impl EnemyAi {
         let begin_charge_anim = sq_hit_dist < Self::RIDER_CHARGE_SQR_LOOP_DISTANCE;
 
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_accepted(
-                &(ctx.frame),
-                &(self.base.me),
-                &(candidate),
-                &(destination.x.to_bits()),
-                &(destination.y.to_bits()),
-                &(destination.sector),
-                &(destination.level),
-                &(forward_dot.to_bits()),
-                &(sq_norm.to_bits()),
-                &(cos_alpha.to_bits()),
-                &(sq_hit_dist.to_bits()),
-                &(begin_charge_anim),
-            );
+            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultAccepted {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                candidate: &(candidate),
+                goal_x_bits: &(destination.x.to_bits()),
+                goal_y_bits: &(destination.y.to_bits()),
+                goal_sector: &(destination.sector),
+                goal_level: &(destination.level),
+                forward_dot_bits: &(forward_dot.to_bits()),
+                sq_norm_bits: &(sq_norm.to_bits()),
+                cos_bits: &(cos_alpha.to_bits()),
+                sq_hit_bits: &(sq_hit_dist.to_bits()),
+                begin_charge: &(begin_charge_anim),
+            }
+            .emit();
         }
 
         Some((destination, begin_charge_anim))
@@ -3084,11 +3093,8 @@ impl EnemyAi {
     ///
     /// The rider tries to ride as far as possible in its current direction,
     /// testing variations (straight, slight left, slight right).
-    pub(super) fn get_good_rider_reattack_goal(
-        &self,
-        ctx: &AiContext,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) -> Option<Position> {
+    pub(super) fn get_good_rider_reattack_goal(&self, env: ThinkEnv<'_>) -> Option<Position> {
+        let ThinkEnv { ctx, grid, .. } = env;
         let my_pos = ctx.position;
         let my_dir = ctx.direction;
         let pt_me = crate::coordinates::MapPoint::new(my_pos.x, my_pos.y);
@@ -3107,9 +3113,9 @@ impl EnemyAi {
                 // like a UBYTE cast.
                 let raw = ((my_dir as i32) + (rel_dir as i32)) % 15;
                 let dir = (raw as u16) & 15;
-                let v = sector_to_vector_iso(dir, ASPECT_RATIO);
-                let gx = my_pos.x + v.0 * distance;
-                let gy = my_pos.y + v.1 * distance;
+                let v = MapVec::from_sector_iso(dir);
+                let gx = my_pos.x + v.x * distance;
+                let gy = my_pos.y + v.y * distance;
 
                 // straight-movement authorization.
                 let clear = match grid {
@@ -3137,15 +3143,9 @@ impl EnemyAi {
     }
 
     /// Handle reattack after a rider has passed through enemies and returned.
-    pub(super) fn rider_reattack(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
-        self.reinitialize_them_list(ctx, tick);
+    pub(super) fn rider_reattack(&mut self, env: ThinkEnv<'_>, global: &mut AiGlobalState) {
+        let ctx = env.ctx;
+        self.reinitialize_them_list(ctx);
 
         if self.list_them.is_empty() {
             // No enemies visible — ride to last known position
@@ -3157,7 +3157,7 @@ impl EnemyAi {
                 .go_to(self.base.seek_position, GotoFlags::RUN, ctx);
         } else {
             // Enemies visible — reconsider battle
-            self.battle_decisions(sim, global, ctx, tick, grid);
+            self.battle_decisions(env, global);
         }
     }
 
@@ -3165,7 +3165,7 @@ impl EnemyAi {
     // Enter swordfight
     // -----------------------------------------------------------------------
 
-    pub fn begin_swordfight(&mut self, ctx: &AiContext, _tick: &AiPerTickData) {
+    pub fn begin_swordfight(&mut self, ctx: &AiContext) {
         if self.base.primary_target.is_none() {
             tracing::warn!(
                 current_state = ?self.base.current_state,
@@ -3247,7 +3247,7 @@ impl EnemyAi {
     // End swordfight
     // -----------------------------------------------------------------------
 
-    pub fn end_swordfight(&mut self, ctx: &AiContext, _tick: &AiPerTickData) {
+    pub fn end_swordfight(&mut self, ctx: &AiContext) {
         // If the entity is still swordfighting, launch a QUIT_SWORDFIGHT
         // sequence element to clear the opponent list and transition
         // action state. We can't call the engine directly, so we set a
@@ -3320,10 +3320,10 @@ pub(crate) fn rider_charge_goal_geometry(
     );
 
     // Facing-sector vector — default aspect 1.0.
-    let nose_sy = sector_to_vector_iso(my_dir, 1.0);
+    let nose_sy = MapVec::from_sector_with_aspect(my_dir, 1.0);
 
     // Is the enemy before me?
-    let forward_dot = dot2(nose_sy, me_to_enemy_sy);
+    let forward_dot = nose_sy.dot(MapVec::new(me_to_enemy_sy.0, me_to_enemy_sy.1));
     if forward_dot < 0.0 {
         return Err(RiderChargeReject::Behind { forward_dot });
     }
@@ -3490,11 +3490,9 @@ impl EnemyAi {
     fn execute_fight_decision(
         &mut self,
         target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
-        env: crate::ai_enemy::ThinkEnv<'_>,
+        env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let crate::ai_enemy::ThinkEnv {
-            ctx, tick, grid, ..
-        } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         let target = self.get_new_primary_target_with_mult_override(
             PrimaryTargetFlags::UNOCCUPIED_PREFERRED,
             ctx,
@@ -3503,7 +3501,7 @@ impl EnemyAi {
         );
         if let Some(target) = target {
             self.base.primary_target = Some(target);
-            self.attack_enemy(target.get(), ctx, tick, grid);
+            self.attack_enemy(target.get(), env);
             if self
                 .base
                 .outbox
@@ -3536,9 +3534,9 @@ impl EnemyAi {
     fn execute_last_reserve_decision(
         &mut self,
         target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
-        env: crate::ai_enemy::ThinkEnv<'_>,
+        env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let crate::ai_enemy::ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         let target = self.get_new_primary_target_with_mult_override(
             PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
             ctx,
@@ -3558,8 +3556,8 @@ impl EnemyAi {
                 .map(|f| f.position)
                 .or_else(|| ctx.entity_view(target).map(|view| view.position))
             {
-                let d = pos_diff(&target_pos, &ctx.position);
-                let dir = vec_to_sector(d.0, d.1);
+                let d = target_pos.map_point() - ctx.position.map_point();
+                let dir = vec_to_sector(d.x, d.y);
                 self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
             }
         } else {
@@ -3574,9 +3572,9 @@ impl EnemyAi {
     fn execute_observe_decision(
         &mut self,
         target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
-        env: crate::ai_enemy::ThinkEnv<'_>,
+        env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let crate::ai_enemy::ThinkEnv { ctx, tick, .. } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         let target = self.get_new_primary_target_with_mult_override(
             PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
             ctx,
@@ -3668,14 +3666,14 @@ impl EnemyAi {
         &mut self,
         target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
         global: &mut AiGlobalState,
-        env: crate::ai_enemy::ThinkEnv<'_>,
+        env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let crate::ai_enemy::ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         if ctx.remaining_arrows == 0 {
             return std::ops::ControlFlow::Continue(Decision::RunForNewArrows);
         }
         // Pick best shot target.
-        let target = self.propose_shot_target(sim, ctx, tick);
+        let target = self.propose_shot_target(env);
         // Shot-target selection uses the actors' shared multiplicity
         // scratch field: it resets every current Them entry, then
         // rebuilds claims from nearby friends in bow substates.
@@ -3689,9 +3687,13 @@ impl EnemyAi {
             .copied()
             .filter(|&friend_handle| friend_handle != self.base.me)
             .filter_map(|friend_handle| {
-                let friend = self.find_fighter(friend_handle, tick).unwrap_or_else(|| {
-                    panic!("friend {friend_handle} in list_us is absent from fighter snapshot")
-                });
+                let friend = self.required_fighter(
+                    friend_handle,
+                    tick,
+                    format_args!(
+                        "friend {friend_handle} in list_us is absent from fighter snapshot"
+                    ),
+                );
                 (friend.is_soldier
                     && matches!(
                         friend.current_substate,
@@ -3725,12 +3727,16 @@ impl EnemyAi {
             if ctx.self_action_state.is_bow() {
                 if self.base.current_substate == Substate::AttackingBowAiming {
                     self.set_state(AiState::Attacking, Substate::AttackingBowShooting);
-                    self.shoot_arrow_at(target.get(), ctx, tick);
+                    self.shoot_arrow_at(target.get(), ctx);
                 } else {
                     let aim_time =
                         ((110u32).saturating_sub(self.get_shooting_ability(ctx) as u32)) / 2;
-                    self.set_state(AiState::Attacking, Substate::AttackingBowAiming);
-                    self.base.launch_timer(aim_time.max(5), ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Attacking,
+                        Substate::AttackingBowAiming,
+                        aim_time.max(5),
+                        ctx,
+                    );
                 }
             } else {
                 self.base.stop_all();
@@ -3754,9 +3760,9 @@ impl EnemyAi {
 
     fn execute_look_for_help_decision(
         &mut self,
-        env: crate::ai_enemy::ThinkEnv<'_>,
+        env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let crate::ai_enemy::ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
         self.base.primary_target = target;
         self.base.friends_are_alerted = true;
@@ -3780,7 +3786,7 @@ impl EnemyAi {
                 .iter()
                 .map(|cs| (cs.handle, cs.ai_substate)),
         );
-        if alerting_soldier_near || !self.alert_officer(sim, center, 0, ctx, tick) {
+        if alerting_soldier_near || !self.alert_officer(env, center, 0) {
             return std::ops::ControlFlow::Continue(Decision::Cassos);
         } else {
             // Officer alerting requests an approach synchronously. Its route
@@ -3810,12 +3816,9 @@ impl EnemyAi {
 
     fn execute_alert_soldiers_decision(
         &mut self,
-        global: &mut AiGlobalState,
-        env: crate::ai_enemy::ThinkEnv<'_>,
+        env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let crate::ai_enemy::ThinkEnv {
-            ctx, tick, grid, ..
-        } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
         self.base.primary_target = target;
         // The battle overview can become stale while membership is
@@ -3836,7 +3839,7 @@ impl EnemyAi {
         let center = ctx
             .expect_entity_view(target, "alert-soldiers primary target")
             .position;
-        match self.command_soldiers_to_attack(center, global, grid, ctx, tick) {
+        match self.command_soldiers_to_attack(center, env) {
             super::alert::CommandSoldiersStart::Pending => {
                 return std::ops::ControlFlow::Break(true);
             }
@@ -3849,9 +3852,9 @@ impl EnemyAi {
     fn execute_run_for_new_arrows_decision(
         &mut self,
         global: &mut AiGlobalState,
-        env: crate::ai_enemy::ThinkEnv<'_>,
+        env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let crate::ai_enemy::ThinkEnv { ctx, tick, .. } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         // Find nearest door with arrow reserves and run to it.
         self.base.say(Remark::OutOfAmmunition);
 
@@ -3929,7 +3932,7 @@ impl EnemyAi {
                 }
                 let dx = (door.point_out.x - ctx.position.x).abs();
                 let dy = (door.point_out.y - ctx.position.y).abs();
-                let distance = crate::ai::legacy_nearest_door_distance(
+                let distance = super::util::legacy_nearest_door_distance(
                     dx,
                     dy,
                     Some(door.sector_out) != my_sector_num,
@@ -3979,11 +3982,9 @@ impl EnemyAi {
     fn execute_too_proud_to_attack_decision(
         &mut self,
         old_substate: Substate,
-        env: crate::ai_enemy::ThinkEnv<'_>,
+        env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let crate::ai_enemy::ThinkEnv {
-            ctx, tick, grid, ..
-        } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         // Stand back and observe from a comfortable distance
         // while lesser soldiers fight.
         let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
@@ -4009,8 +4010,8 @@ impl EnemyAi {
                 })
                 .position
         };
-        let d = pos_diff(&target_pos, &ctx.position);
-        let distance = iso_norm(d, ASPECT_RATIO);
+        let d = target_pos.map_point() - ctx.position.map_point();
+        let distance = d.iso_norm(ASPECT_RATIO);
 
         if distance < parameters_ai::PROUD_OBSERVER_MIN_DISTANCE as f32 {
             // Too close — step back.
@@ -4018,8 +4019,7 @@ impl EnemyAi {
                 target_pos,
                 parameters_ai::PROUD_OBSERVER_GOOD_DISTANCE,
                 parameters_ai::PROUD_OBSERVER_MIN_DISTANCE,
-                ctx,
-                grid,
+                env,
                 ASPECT_RATIO,
             ) {
                 self.go_to(
@@ -4081,11 +4081,9 @@ impl EnemyAi {
     fn execute_archer_step_back_decision(
         &mut self,
         old_substate: Substate,
-        env: crate::ai_enemy::ThinkEnv<'_>,
+        env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let crate::ai_enemy::ThinkEnv {
-            ctx, tick, grid, ..
-        } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         // Archer steps back from enemy that's too close, then
         // re-evaluates.
         let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
@@ -4112,8 +4110,7 @@ impl EnemyAi {
             enemy_pos,
             parameters_ai::ARCHER_GOOD_DISTANCE,
             parameters_ai::ARCHER_MIN_DISTANCE,
-            ctx,
-            grid,
+            env,
             ASPECT_RATIO,
         ) {
             let debug_step_back = archer_step_back_lifecycle_debug_matches(
@@ -4122,22 +4119,23 @@ impl EnemyAi {
                 self.base.me,
             );
             if debug_step_back {
-                crate::ai_enemy::parity_trace::archerstep_decision(
-                    &(ctx.frame),
-                    &(ctx.original_creation_order),
-                    &(self.base.me),
-                    &(ctx.position),
-                    &(ctx.self_animation),
-                    &(ctx.self_action_state),
-                    &(ctx.self_animation_reached_action_done),
-                    &(self.base.timer_is_running),
-                    &(self.base.when_does_timer_ring),
-                    &(self.base.already_on_point),
-                    &(old_substate),
-                    &(target),
-                    &(enemy_pos),
-                    &(goal),
-                );
+                crate::ai_enemy::parity_trace::ArcherstepDecision {
+                    frame: &(ctx.frame),
+                    co: &(ctx.original_creation_order),
+                    me: &(self.base.me),
+                    owner_pos: &(ctx.position),
+                    animation: &(ctx.self_animation),
+                    action_state: &(ctx.self_action_state),
+                    reached_done: &(ctx.self_animation_reached_action_done),
+                    timer_running: &(self.base.timer_is_running),
+                    timer_ring: &(self.base.when_does_timer_ring),
+                    already_on_point: &(self.base.already_on_point),
+                    old_substate: &(old_substate),
+                    target: &(target),
+                    enemy_pos: &(enemy_pos),
+                    goal: &(goal),
+                }
+                .emit();
             }
             self.go_to(
                 AiState::Attacking,
@@ -4147,18 +4145,19 @@ impl EnemyAi {
                 ctx,
             );
             if debug_step_back {
-                crate::ai_enemy::parity_trace::archerstep_after_goto(
-                    &(ctx.frame),
-                    &(ctx.original_creation_order),
-                    &(self.base.me),
-                    &(self.base.current_state),
-                    &(self.base.current_substate),
-                    &(self.base.already_on_point),
-                    &(self.base.couldnt_reachpoint),
-                    &(self.base.outbox.actor.halt),
-                    &(self.base.outbox.actor.additional_halts),
-                    &(self.base.outbox.actor.orders.len()),
-                );
+                crate::ai_enemy::parity_trace::ArcherstepAfterGoto {
+                    frame: &(ctx.frame),
+                    co: &(ctx.original_creation_order),
+                    me: &(self.base.me),
+                    state: &(self.base.current_state),
+                    substate: &(self.base.current_substate),
+                    already_on_point: &(self.base.already_on_point),
+                    couldnt_reachpoint: &(self.base.couldnt_reachpoint),
+                    halt: &(self.base.outbox.actor.halt),
+                    additional_halts: &(self.base.outbox.actor.additional_halts),
+                    order_count: &(self.base.outbox.actor.orders.len()),
+                }
+                .emit();
             }
         } else {
             // Can't step back — fall back to shooting.
@@ -4170,9 +4169,9 @@ impl EnemyAi {
     fn execute_archer_observe_decision(
         &mut self,
         target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
-        env: crate::ai_enemy::ThinkEnv<'_>,
+        env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let crate::ai_enemy::ThinkEnv { ctx, tick, .. } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         let target = self.get_new_primary_target_with_mult_override(
             PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
             ctx,
@@ -4203,9 +4202,9 @@ impl EnemyAi {
     fn execute_cover_behind_shield_bearer_decision(
         &mut self,
         cover_shield_bearer: HumanHandle,
-        env: crate::ai_enemy::ThinkEnv<'_>,
+        env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let crate::ai_enemy::ThinkEnv {
+        let ThinkEnv {
             ctx, tick, grid, ..
         } = env;
         // Run to cover position behind shield bearer.
@@ -4229,9 +4228,7 @@ impl EnemyAi {
             self.shield_bearer_before_me
                 .expect("cover formation lost its shield bearer")
                 .get(),
-            ctx,
-            tick,
-            grid,
+            env,
         ) {
             // The original game passes the seek position as the output
             // argument to the position calculation behind the shield bearer.
@@ -4256,21 +4253,22 @@ impl EnemyAi {
                         self.base.primary_target
                     )
                 });
-            let d = pos_diff(&target_pos, &cover_pos);
+            let d = target_pos.map_point() - cover_pos.map_point();
             if crate::ai_enemy::battle_decision_debug_enabled() {
-                crate::ai_enemy::parity_trace::cover_arm(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(cover_shield_bearer),
-                    &(cover_pos),
-                    &(self.base.primary_target),
-                    &(target_pos),
-                    &(square_norm(d)),
-                    &(ctx.sq_standard_view_radius),
-                    &(grid.is_some()),
-                );
+                crate::ai_enemy::parity_trace::CoverArm {
+                    frame: &(ctx.frame),
+                    me: &(self.base.me),
+                    bearer: &(cover_shield_bearer),
+                    cover: &(cover_pos),
+                    target: &(self.base.primary_target),
+                    target_pos: &(target_pos),
+                    sq: &(d.square_norm()),
+                    sq_view: &(ctx.sq_standard_view_radius),
+                    grid: &(grid.is_some()),
+                }
+                .emit();
             }
-            if square_norm(d) >= ctx.sq_standard_view_radius {
+            if d.square_norm() >= ctx.sq_standard_view_radius {
                 // Cover point too far from target — fall back to shoot
                 self.update_shield_bearer_before_me(None);
                 return std::ops::ControlFlow::Continue(Decision::Shoot);
@@ -4309,12 +4307,13 @@ impl EnemyAi {
                 });
         } else {
             if crate::ai_enemy::battle_decision_debug_enabled() {
-                crate::ai_enemy::parity_trace::cover_arm_2(
-                    &(ctx.frame),
-                    &(self.base.me),
-                    &(cover_shield_bearer),
-                    &(grid.is_some()),
-                );
+                crate::ai_enemy::parity_trace::CoverArmNone {
+                    frame: &(ctx.frame),
+                    me: &(self.base.me),
+                    bearer: &(cover_shield_bearer),
+                    grid: &(grid.is_some()),
+                }
+                .emit();
             }
             // Can't compute position — give up cover attempt.
             self.update_shield_bearer_before_me(None);
@@ -4326,9 +4325,9 @@ impl EnemyAi {
     fn execute_run_to_archery_point_decision(
         &mut self,
         global: &mut AiGlobalState,
-        env: crate::ai_enemy::ThinkEnv<'_>,
+        env: ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
-        let crate::ai_enemy::ThinkEnv { ctx, tick, .. } = env;
+        let ThinkEnv { ctx, tick, .. } = env;
         // Run to the next waypoint on the archery path.
         if let Some(wp) = self.archery_path_get_waypoint(global) {
             // Remember enemy elevation for later bend decision
@@ -4376,6 +4375,18 @@ struct BattleFriendSummary {
     friends_lower_company: u16,
     soldiers_lower_pride: bool,
     simple_soldiers_near: bool,
+}
+
+/// Decision-local aggregates handed from `battle_decisions` to the
+/// decision-tree pieces.
+#[derive(Clone, Copy)]
+struct BattleDecisionInputs {
+    friends_lower_company: u16,
+    soldiers_lower_pride: bool,
+    simple_soldiers_near: bool,
+    min_square_enemy_distance: u32,
+    num_enemies_i_can_see: usize,
+    friends_nearer_to_enemy: u16,
 }
 
 impl EnemyAi {
@@ -4454,15 +4465,16 @@ impl EnemyAi {
                 continue;
             }
             if debug_them {
-                crate::ai_enemy::parity_trace::them_battle_friend_after_360(
-                    &(ctx.frame),
-                    &(ctx.original_creation_order),
-                    &(self.base.me),
-                    &(friend.handle),
-                    &(friend.ai_state),
-                    &(friend.ai_substate),
-                    &(friend.primary_target),
-                );
+                crate::ai_enemy::parity_trace::ThemBattleFriendAfter360 {
+                    frame: &(ctx.frame),
+                    co: &(ctx.original_creation_order),
+                    me: &(self.base.me),
+                    friend: &(friend.handle),
+                    state: &(friend.ai_state),
+                    substate: &(friend.ai_substate),
+                    primary_target: &(friend.primary_target),
+                }
+                .emit();
             }
             self.base.list_us.push(friend.handle);
             if self.company_number > friend.company_number
@@ -4500,12 +4512,10 @@ struct SwappedApproachTarget {
 
 impl EnemyAi {
     /// Resolve carry substitution and target geometry before friend swaps.
-    fn prepare_approach_target(
-        &mut self,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) -> ApproachTargetSnapshot {
+    fn prepare_approach_target(&mut self, env: ThinkEnv<'_>) -> ApproachTargetSnapshot {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
         // Target on another entity's shoulders: re-point `primary_target`
         // to the carrier so every downstream read (friend-swap
         // comparison, focusing, swordfight entry's
@@ -4672,25 +4682,27 @@ impl EnemyAi {
         for cand in &tick.friend_swap_candidates {
             if working_target.is_none() {
                 if debug_primary_swap {
-                    crate::ai_enemy::parity_trace::primary_swap_swap_stop_zero(
-                        &(ctx.frame),
-                        &(ctx.original_creation_order),
-                        &(self.base.me),
-                        &(cand.friend_id),
-                    );
+                    crate::ai_enemy::parity_trace::PrimarySwapSwapStopZero {
+                        frame: &(ctx.frame),
+                        co: &(ctx.original_creation_order),
+                        owner: &(self.base.me),
+                        friend: &(cand.friend_id),
+                    }
+                    .emit();
                 }
                 break;
             }
             if cand.friend_primary_target == working_target {
                 if debug_primary_swap {
-                    crate::ai_enemy::parity_trace::primary_swap_swap_skip_same(
-                        &(ctx.frame),
-                        &(ctx.original_creation_order),
-                        &(self.base.me),
-                        &(cand.friend_id),
-                        &(working_target),
-                        &(cand.friend_primary_target),
-                    );
+                    crate::ai_enemy::parity_trace::PrimarySwapSwapSkipSame {
+                        frame: &(ctx.frame),
+                        co: &(ctx.original_creation_order),
+                        owner: &(self.base.me),
+                        friend: &(cand.friend_id),
+                        owner_target: &(working_target),
+                        friend_target: &(cand.friend_primary_target),
+                    }
+                    .emit();
                 }
                 continue;
             }
@@ -4713,29 +4725,30 @@ impl EnemyAi {
             let right = working_distance + friend_to_friend_target;
             let swap = left < right;
             if debug_primary_swap {
-                crate::ai_enemy::parity_trace::primary_swap_swap_test(
-                    &(ctx.frame),
-                    &(ctx.original_creation_order),
-                    &(self.base.me),
-                    &(cand.friend_id),
-                    &(working_target),
-                    &(cand.friend_primary_target),
-                    &(ctx.position.x.to_bits()),
-                    &(ctx.position.y.to_bits()),
-                    &(working_target_pos.x.to_bits()),
-                    &(working_target_pos.y.to_bits()),
-                    &(cand.friend_position.x.to_bits()),
-                    &(cand.friend_position.y.to_bits()),
-                    &(cand.friend_primary_target_position.x.to_bits()),
-                    &(cand.friend_primary_target_position.y.to_bits()),
-                    &(working_distance.to_bits()),
-                    &(me_to_friend_target.to_bits()),
-                    &(friend_to_my_target.to_bits()),
-                    &(friend_to_friend_target.to_bits()),
-                    &(left.to_bits()),
-                    &(right.to_bits()),
-                    &(swap),
-                );
+                crate::ai_enemy::parity_trace::PrimarySwapSwapTest {
+                    frame: &(ctx.frame),
+                    co: &(ctx.original_creation_order),
+                    owner: &(self.base.me),
+                    friend: &(cand.friend_id),
+                    owner_target: &(working_target),
+                    friend_target: &(cand.friend_primary_target),
+                    owner_x_bits: &(ctx.position.x.to_bits()),
+                    owner_y_bits: &(ctx.position.y.to_bits()),
+                    owner_target_x_bits: &(working_target_pos.x.to_bits()),
+                    owner_target_y_bits: &(working_target_pos.y.to_bits()),
+                    friend_x_bits: &(cand.friend_position.x.to_bits()),
+                    friend_y_bits: &(cand.friend_position.y.to_bits()),
+                    friend_target_x_bits: &(cand.friend_primary_target_position.x.to_bits()),
+                    friend_target_y_bits: &(cand.friend_primary_target_position.y.to_bits()),
+                    working_distance: &(working_distance.to_bits()),
+                    me_to_friend_target: &(me_to_friend_target.to_bits()),
+                    friend_to_my_target: &(friend_to_my_target.to_bits()),
+                    friend_to_friend_target: &(friend_to_friend_target.to_bits()),
+                    left: &(left.to_bits()),
+                    right: &(right.to_bits()),
+                    swap: &(swap),
+                }
+                .emit();
             }
             if swap {
                 // Each improving friend is retargeted immediately: the
@@ -4755,16 +4768,17 @@ impl EnemyAi {
             }
         }
         if debug_primary_swap {
-            crate::ai_enemy::parity_trace::primary_swap_swap_final(
-                &(ctx.frame),
-                &(ctx.original_creation_order),
-                &(self.base.me),
-                &(working_target),
-                &(working_target_pos.x.to_bits()),
-                &(working_target_pos.y.to_bits()),
-                &(working_distance.to_bits()),
-                &(self.base.outbox.actor.friend_primary_target_swaps),
-            );
+            crate::ai_enemy::parity_trace::PrimarySwapSwapFinal {
+                frame: &(ctx.frame),
+                co: &(ctx.original_creation_order),
+                owner: &(self.base.me),
+                target: &(working_target),
+                target_x_bits: &(working_target_pos.x.to_bits()),
+                target_y_bits: &(working_target_pos.y.to_bits()),
+                distance: &(working_distance.to_bits()),
+                queued_swaps: &(self.base.outbox.actor.friend_primary_target_swaps),
+            }
+            .emit();
         }
 
         SwappedApproachTarget {

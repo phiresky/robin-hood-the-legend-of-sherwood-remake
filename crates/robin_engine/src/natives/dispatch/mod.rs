@@ -32,7 +32,7 @@ pub(super) fn call_immediate(
         // We cannot drain the stack because an unknown ID has no signature.
         // A malformed SCB calling outside the declarative registry is already
         // invalid, but retaining the zero result matches the prior adapter.
-        tracing::error!("Unknown native function index {index}");
+        tracing::error!(target: "script", "Unknown native function index {index}");
         return 0;
     };
 

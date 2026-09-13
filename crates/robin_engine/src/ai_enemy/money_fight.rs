@@ -372,14 +372,10 @@ impl EnemyAi {
     /// Pops the next queued money-fight victim and approaches it;
     /// returns to duty when the queue drains.  Sets `detected_body`
     /// before going near.
-    pub(super) fn awake_next_money_fight_victim_if_any(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
+    pub(super) fn awake_next_money_fight_victim_if_any(&mut self, env: ThinkEnv<'_>) {
+        let ctx = env.ctx;
         if self.money_fight_victims.is_empty() {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
             return;
         }
         let next = self.money_fight_victims.remove(0);
@@ -402,11 +398,7 @@ impl EnemyAi {
     /// After a brawl ends the soldier scans its seen-money list for
     /// the nearest still-active coin, runs for it, or falls back to a
     /// left/right scan when nothing remains.
-    pub(super) fn stop_brawling_and_collect_money(
-        &mut self,
-        ctx: &AiContext,
-        _tick: &AiPerTickData,
-    ) {
+    pub(super) fn stop_brawling_and_collect_money(&mut self, ctx: &AiContext) {
         // Clean up seen money, then select and remove the nearest entry.
         if let Some(coin) = self.get_nearest_seen_money_and_remove_it_from_list(ctx) {
             // interesting_object = nearest coin.
@@ -540,7 +532,7 @@ impl EnemyAi {
         // Morale check; bail and collect on no.
         if !self.wants_to_continue_money_fight(tick, ctx) {
             self.money_fight_enemies.clear();
-            self.stop_brawling_and_collect_money(ctx, tick);
+            self.stop_brawling_and_collect_money(ctx);
             return;
         }
         // Substate dispatch.

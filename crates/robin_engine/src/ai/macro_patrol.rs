@@ -426,6 +426,14 @@ pub struct Position {
     pub level: u16,
 }
 
+impl Position {
+    /// The projected map point `(x, y)`; sector and level are dropped.
+    /// `a.map_point() - b.map_point()` is the `MapVec` `(a.x - b.x, a.y - b.y)`.
+    pub fn map_point(&self) -> crate::coordinates::MapPoint {
+        crate::coordinates::MapPoint::new(self.x, self.y)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // AI destination forecasts
 // ---------------------------------------------------------------------------
@@ -579,8 +587,10 @@ pub fn forecast_destination_for_ia(
 /// read once and never enters engine state, snapshots, hashes, or the
 /// simulation RNG stream.
 fn forecast_ia_debug_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_FORECAST_IA").is_some())
+    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<0>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| crate::ai::parity_gate::switch_gate("PARITY_DEBUG_FORECAST_IA"))
+        .enabled()
 }
 
 /// Prepare every deterministic AI destination forecast without
@@ -736,16 +746,17 @@ pub fn prepare_forecast_destination_for_ia(
     }
 
     if forecast_ia_debug_enabled() && grid_sector.is_some_and(|gs| gs.sector_type.is_lift()) {
-        crate::ai::parity_trace::forecast(
-            &(point.x),
-            &(point.y),
-            &(u16::from(sector)),
-            &(building_gates.len()),
-            &(input),
-            &(layer),
-            &(direction),
-            &(entry_gate),
-        );
+        crate::ai::parity_trace::Forecast {
+            out_x: &(point.x),
+            out_y: &(point.y),
+            sector: &(u16::from(sector)),
+            gates: &(building_gates.len()),
+            input: &(input),
+            layer: &(layer),
+            direction: &(direction),
+            entry_gate: &(entry_gate),
+        }
+        .emit();
     }
 
     PreparedForecastDestination {

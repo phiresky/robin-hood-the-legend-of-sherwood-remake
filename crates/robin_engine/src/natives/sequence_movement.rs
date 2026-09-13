@@ -182,12 +182,14 @@ impl NativeContext<'_, '_> {
                 .filter(|e| e.is_pc())
                 .and_then(|_| self.actor_id(actor_handle))
             {
-                self.emit_engine(EngineCommand::HeroSpeak {
-                    pc_id,
-                    expression: crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
-                });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::HeroSpeak {
+                        pc_id,
+                        expression: crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                    });
             }
             tracing::debug!(
+                target: "script",
                 actor = actor_handle,
                 from_sector = source_sector.get(),
                 to_sector = goal_sector.get(),
@@ -522,6 +524,7 @@ impl NativeContext<'_, '_> {
                 (Some(s), Some(d)) => (s, d),
                 _ => {
                     tracing::warn!(
+                        target: "script",
                         gate = %shot.door_index,
                         "Jump gate missing jump_line indices; skipping"
                     );

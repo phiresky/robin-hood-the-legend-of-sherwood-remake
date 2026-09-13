@@ -49,12 +49,22 @@ impl EnemyAi {
             view.direction as i16,
             view.is_rider,
         );
-        let (sq_distance, los_clear) = detection_360_geometry(
-            viewer_eye,
-            target_detection,
-            ctx.sq_self_view_radius,
+        let detection = detects_360(
+            Viewer360 {
+                eye: viewer_eye,
+                sq_radius: ctx.sq_self_view_radius,
+                in_building: ctx.building_sector.is_some(),
+            },
+            Target360 {
+                detection: target_detection,
+                in_building: view.in_building,
+            },
             ctx.obstacle_list(),
         );
+        let sq_distance = detection
+            .sq_distance
+            .expect("both building gates were checked above");
+        let los_clear = detection.visible;
         tracing::trace!(
             target,
             sq_distance,
@@ -74,9 +84,8 @@ impl EnemyAi {
     /// the member, so the gate is evaluated through this accessor immediately
     /// before the member's `think`.
     pub(crate) fn detects_patrol_member_360(&self, member: NpcHandle, ctx: &AiContext) -> bool {
-        ctx.entity_view(member)
-            .map(|v| v.is_soldier())
-            .unwrap_or(false)
+        ctx.entity_view_logged(member, "patrol broadcast member")
+            .is_some_and(|v| v.is_soldier())
             && self.is_detecting_360_degrees(member as HumanHandle, ctx)
     }
 
@@ -218,13 +227,8 @@ impl EnemyAi {
     /// Complete the synchronous Charly-to-officer call after the engine
     /// has delivered `CALL_MR_OFFICER_I_AM_BACK` and obtained the
     /// officer's real `Think` return value.
-    pub(crate) fn resolve_charly_officer_report(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        accepted: bool,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
+    pub(crate) fn resolve_charly_officer_report(&mut self, env: ThinkEnv<'_>, accepted: bool) {
+        let ctx = env.ctx;
         if accepted {
             self.set_state_with_timer(
                 AiState::Seeking,
@@ -233,24 +237,23 @@ impl EnemyAi {
                 ctx,
             );
         } else {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
         }
     }
 
     pub(crate) fn resolve_alert_request(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         accepted: bool,
         continuation: crate::ai::AlertContinuation,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { sim, ctx, .. } = env;
         assert!(matches!(
             continuation,
             crate::ai::AlertContinuation::SoldierSawOfficer
         ));
         if !accepted {
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
             return;
         }
 
@@ -285,22 +288,23 @@ impl EnemyAi {
 
     pub(crate) fn resolve_think_result(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         accepted: bool,
         target: NpcHandle,
         continuation: ThinkResultContinuation,
         global: &mut AiGlobalState,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
         match continuation {
             ThinkResultContinuation::SoldierFinishedAlertReportStart => {
-                self.set_state(
+                self.set_state_with_timer(
                     AiState::Seeking,
                     Substate::SeekingSoldierGiveAlertingReportToOfficerPoint,
+                    100,
+                    ctx,
                 );
-                self.base.launch_timer(100, ctx.frame);
             }
             ThinkResultContinuation::OfficerCalledSoldier => {
                 if accepted {
@@ -310,7 +314,7 @@ impl EnemyAi {
                     self.base.say(Remark::OfficerCallsSoldier);
                     self.base.launch_timer(20, ctx.frame);
                 } else {
-                    self.return_to_duty_default(sim, ctx, tick);
+                    self.return_to_duty_default(env);
                 }
             }
             ThinkResultContinuation::OfficerSentCharlyToOfficer => {
@@ -336,13 +340,14 @@ impl EnemyAi {
                     self.pending_group_instruction_seek_flags = 0;
                     self.pending_group_instruction_clear_location_after_accept = false;
                     if self.alerted_us.is_empty() {
-                        self.return_to_duty_default(sim, ctx, tick);
+                        self.return_to_duty_default(env);
                     } else {
-                        self.set_state(
+                        self.set_state_with_timer(
                             AiState::Seeking,
                             Substate::SeekingOfficerWaitForInstructedGroup,
+                            30,
+                            ctx,
                         );
-                        self.base.launch_timer(30, ctx.frame);
                     }
                 }
             }
@@ -402,30 +407,28 @@ impl EnemyAi {
                     } else {
                         // A refused final call has no ConsiderReport boundary.
                         self.finalize_alert_soldiers(
-                            sim,
+                            ThinkEnv {
+                                grid: grid.filter(|_| use_formation),
+                                ..env
+                            },
                             failure,
                             global,
-                            grid.filter(|_| use_formation),
-                            ctx,
-                            tick,
                         );
                     }
                 }
             }
             ThinkResultContinuation::OfficerCombatAlertedSoldier {
                 last,
-                use_formation,
+                // TODO: `use_formation` only ever fed the (unused) grid
+                // placeholder of `finish_command_soldiers_to_attack`; check
+                // whether the formation layout should honour it.
+                use_formation: _,
             } => {
                 if accepted {
                     self.alerted_us.push(target);
                 }
                 if last {
-                    if self.finish_command_soldiers_to_attack(
-                        global,
-                        grid.filter(|_| use_formation),
-                        ctx,
-                        tick,
-                    ) {
+                    if self.finish_command_soldiers_to_attack(ctx) {
                         self.base.say(Remark::OfficerGivesAttackOrder);
                     } else {
                         self.enter_battle_reserve(ctx, tick);
@@ -462,39 +465,34 @@ impl EnemyAi {
 
     pub(super) fn resume_failed_alert_soldiers(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         continuation: AlertSoldiersFailureContinuation,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { ctx, .. } = env;
         match continuation {
             AlertSoldiersFailureContinuation::None => {}
             AlertSoldiersFailureContinuation::ReturnToDuty => {
-                self.return_to_duty_default(sim, ctx, tick);
+                self.return_to_duty_default(env);
             }
             AlertSoldiersFailureContinuation::SeekBody { center, radius } => {
                 self.seek_area(
-                    sim,
+                    env,
                     center,
                     radius,
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
                     UNDEFINED_DIRECTION,
                     global,
-                    ctx,
-                    tick,
                 );
             }
             AlertSoldiersFailureContinuation::SeekMissingInstructedSoldier => {
                 self.seek_area(
-                    sim,
+                    env,
                     ctx.position,
                     parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
                     SeekFlags::LOCATION_FIRST | self.seek_flags,
                     UNDEFINED_DIRECTION,
                     global,
-                    ctx,
-                    tick,
                 );
             }
             AlertSoldiersFailureContinuation::SeekMissedCharly { center } => {
@@ -507,14 +505,12 @@ impl EnemyAi {
                     parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS as u16
                 };
                 self.seek_area(
-                    sim,
+                    env,
                     center,
                     radius,
                     SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
                     UNDEFINED_DIRECTION,
                     global,
-                    ctx,
-                    tick,
                 );
             }
             AlertSoldiersFailureContinuation::FleeingRunToDoor => {
@@ -526,13 +522,11 @@ impl EnemyAi {
 
     pub(crate) fn finalize_alert_soldiers(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         failure: AlertSoldiersFailureContinuation,
         global: &mut AiGlobalState,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { ctx, .. } = env;
         // Missing-PC search is synchronous. The
         // DEFAULT_LOOKING_FOR_CHARLY timer handler calls it and then arms its
         // regular check timer, so that trailing 10-frame timer overwrites the
@@ -555,8 +549,8 @@ impl EnemyAi {
                     .frame
                     .wrapping_add(parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32);
         let first_new_order = self.base.outbox.actor.orders.len();
-        if !self.finish_alert_soldiers(global, grid, ctx, tick) {
-            self.resume_failed_alert_soldiers(sim, failure, global, ctx, tick);
+        if !self.finish_alert_soldiers(env) {
+            self.resume_failed_alert_soldiers(env, failure, global);
         }
         if resume_looking_for_charly_timer {
             self.base
@@ -710,21 +704,43 @@ pub(super) fn view_radius_memo_viewer(
 }
 
 /// Viewer half of a 180° detection test, so the test can be evaluated
-/// either from the acting NPC or from an ally it is reasoning about.
+/// from the acting NPC, from an ally it is reasoning about, or from a
+/// phalanx member's snapshot.
 pub(super) struct Viewer180 {
     /// Identity the surface radius memo is keyed by — the ally when the
     /// test runs through an ally's eyes, not the deciding soldier.
-    entity: crate::element::EntityId,
-    eye_ground: crate::coordinates::GroundPoint,
-    eye_z: f32,
-    direction: u16,
-    in_building: bool,
-    view_radius: u16,
-    sq_view_radius: f32,
-    view_direction: [f32; 2],
-    real_half_aperture: f32,
+    pub(super) entity: crate::element::EntityId,
+    pub(super) eye_ground: crate::coordinates::GroundPoint,
+    pub(super) eye_z: f32,
+    pub(super) direction: u16,
+    pub(super) in_building: bool,
+    pub(super) view_radius: u16,
+    pub(super) sq_view_radius: f32,
+    pub(super) view_direction: [f32; 2],
+    pub(super) real_half_aperture: f32,
 }
 
+/// Target half of a 180° detection test, built from an entity view or from
+/// a phalanx enemy snapshot.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub(super) struct Target180 {
+    pub(super) handle: HumanHandle,
+    /// Raw active flag, not able-to-fight: an unconscious actor remains
+    /// active and can still pass the 180-degree visibility test.
+    pub(super) active: bool,
+    /// World-space detection point. Detection-point calculation starts from
+    /// the raw element position; an AI-facing position may be a substituted
+    /// door endpoint/carrier.
+    pub(super) detection_world: crate::coordinates::WorldPoint3D,
+    /// Projection obstacle the target stands on (view-radius memo key).
+    pub(super) obstacle: Option<crate::position_interface::ObstacleHandle>,
+}
+
+/// Entity-view adapter over [`detects_180_degrees_core`].
+///
+/// Deliberately not `#[track_caller]`: every entity-view 180° check
+/// attributes its recorded view-radius and visibility queries to this one
+/// site, as it did before the core was split out.
 pub(super) fn detects_180_degrees(
     viewer: &Viewer180,
     target: HumanHandle,
@@ -741,26 +757,44 @@ pub(super) fn detects_180_degrees(
         );
         return false;
     };
-    // Step 2: the original game checks the raw active flag, not whether
-    // the target can fight. An unconscious actor remains active and can
-    // therefore still pass this standalone 180-degree visibility test.
-    if !view.active {
+    let target = Target180 {
+        handle: target,
+        active: view.active,
+        detection_world: crate::stealth::detection_point_world(
+            view.detection_position_world,
+            view.posture,
+            view.direction as i16,
+            view.is_rider,
+        ),
+        obstacle: view.obstacle_idx,
+    };
+    detects_180_degrees_core(viewer, &target, ctx)
+}
+
+/// The single 180° detection implementation (steps listed on
+/// [`EnemyAi::is_detecting_180_degrees`]). `#[track_caller]` so adapters
+/// choose where the recorded queries are attributed.
+#[track_caller]
+pub(super) fn detects_180_degrees_core(
+    viewer: &Viewer180,
+    target: &Target180,
+    ctx: &AiContext,
+) -> bool {
+    // Step 1: viewer in a building — always returns false.
+    if viewer.in_building {
+        return false;
+    }
+    // Step 2: raw active flag of the target.
+    if !target.active {
         return false;
     }
 
     let viewer_eye_z = viewer.eye_z;
-    // Detection-point calculation starts from the raw element position. The
-    // AI-facing `view.position` may be a substituted door endpoint/carrier.
-    let target_detection_world = crate::stealth::detection_point_world(
-        view.detection_position_world,
-        view.posture,
-        view.direction as i16,
-        view.is_rider,
-    );
-    let target_detection_z = target_detection_world.z;
+    let target_detection_z = target.detection_world.z;
     let viewer_eye_ground = viewer.eye_ground;
     let target_detection_ground =
-        crate::coordinates::GroundPoint::new(target_detection_world.x, target_detection_world.y);
+        crate::coordinates::GroundPoint::new(target.detection_world.x, target.detection_world.y);
+    let target_handle = target.handle;
 
     // Aspect-ratio-stretched view vector (`INVERSE_ASPECT_RATIO`
     // on the Y component), from viewer eye to target detection point.
@@ -769,7 +803,7 @@ pub(super) fn detects_180_degrees(
         * crate::position_interface::INVERSE_ASPECT_RATIO;
     let sq_distance = dx * dx + dy * dy;
     tracing::trace!(
-        target,
+        target = target_handle,
         viewer_x = viewer_eye_ground.x,
         viewer_y = viewer_eye_ground.y,
         viewer_z = viewer_eye_z,
@@ -783,29 +817,15 @@ pub(super) fn detects_180_degrees(
         return false;
     }
 
-    // Direction-vector calculation first compresses the table Y by
-    // ASPECT_RATIO; Original then stretches it back here.  The shared
-    // Rust table is already the resulting uncompressed unit vector, so
-    // applying INVERSE_ASPECT_RATIO a second time would narrow the
-    // forward half-plane incorrectly.
-    let dir = crate::shadow_polygon::sector_to_direction(viewer.direction as i16);
-    let fx = dir[0];
-    let fy = dir[1];
-
-    // Step 4: very-near "beside me" short-circuit.
-    if sq_distance < 50.0 * 50.0 {
-        let fwd_len = dx * fx + dy * fy;
-        let fc_x = fx * fwd_len;
-        let fc_y = fy * fwd_len;
-        let perp_sq = (dx - fc_x) * (dx - fc_x) + (dy - fc_y) * (dy - fc_y);
-        if perp_sq >= fwd_len {
-            return true;
+    // Step 4: very-near "beside me" short-circuit; step 5: forward
+    // half-plane (shared with the planar `detects_position_180_raw`).
+    match half_plane_180(dx, dy, sq_distance, viewer.direction) {
+        HalfPlane180::Beside => return true,
+        HalfPlane180::NotBeside { forward_dot } => {
+            if forward_dot < 0.0 {
+                return false;
+            }
         }
-    }
-
-    // Step 5: forward half-plane.
-    if dx * fx + dy * fy < 0.0 {
-        return false;
     }
 
     // Step 6: second, tighter radius gate against the spherical and
@@ -815,10 +835,10 @@ pub(super) fn detects_180_degrees(
     // those, since the sampling is observable through the shared
     // per-surface radius cache.
     let sight_obstacles = ctx.obstacle_list();
-    let target_obstacle = view.obstacle_idx.map(|handle| {
+    let target_obstacle = target.obstacle.map(|handle| {
         sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
             panic!(
-                "is_detecting_180_degrees: target {target} requires missing sight obstacle {handle}"
+                "is_detecting_180_degrees: target {target_handle} requires missing sight obstacle {handle}"
             )
         })
     });
@@ -839,7 +859,7 @@ pub(super) fn detects_180_degrees(
         )
     };
     let effective_view_radius =
-        ctx.compute_view_radius_cached(viewer.entity, view.obstacle_idx, compute_radius);
+        ctx.compute_view_radius_cached(viewer.entity, target.obstacle, compute_radius);
     if sq_distance > effective_view_radius * effective_view_radius {
         return false;
     }

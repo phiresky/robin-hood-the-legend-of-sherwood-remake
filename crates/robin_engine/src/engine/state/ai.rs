@@ -23,7 +23,7 @@ pub(crate) struct AiRuntime {
 /// independently of raw rollback cloning and the native wire codec.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PersistedAiRuntime {
-    global: crate::ai::persisted::PersistedAiGlobalState,
+    global: AiGlobalState,
 
     standard_view_polygon_radius: u16,
 
@@ -32,13 +32,14 @@ pub(crate) struct PersistedAiRuntime {
 
 impl PersistedAiRuntime {
     pub(crate) fn capture(value: &AiRuntime) -> Self {
+        use crate::ai::persisted::PersistedProjection;
         let AiRuntime {
             global: _,
             standard_view_polygon_radius: _,
             view_radius_cache: _,
         } = value;
         Self {
-            global: crate::ai::persisted::PersistedAiGlobalState::capture(&value.global),
+            global: value.global.persisted_clone(),
             standard_view_polygon_radius: value.standard_view_polygon_radius,
             view_radius_cache: value.view_radius_cache.clone(),
         }
@@ -46,7 +47,7 @@ impl PersistedAiRuntime {
 
     pub(crate) fn into_runtime(self) -> AiRuntime {
         AiRuntime {
-            global: self.global.into_runtime(),
+            global: self.global,
             standard_view_polygon_radius: self.standard_view_polygon_radius,
             view_radius_cache: self.view_radius_cache,
         }

@@ -781,7 +781,10 @@ pub(super) fn compute_trajectory_ballistic_impl(
                 (sdx * sdx + sdy * sdy).sqrt()
             };
             let time = if prev_seg_dist > 0.0 {
-                let speed = trajectory.last().unwrap().time as f32 / prev_seg_dist;
+                let landing = trajectory
+                    .last()
+                    .expect("trajectory has a landing point before the off-map extension");
+                let speed = landing.time as f32 / prev_seg_dist;
                 ((extension_dist * speed) as u16).max(1)
             } else {
                 1

@@ -71,7 +71,12 @@ fn reconsider_phalanx_attack_gate_uses_literal_body_positions() {
         ..FighterSnapshot::default()
     });
 
-    assert!(!ai.reconsider_phalanx(&SimulationContext::with_seed(0), &ctx, &tick, None));
+    assert!(!ai.reconsider_phalanx(ThinkEnv::new(
+        &SimulationContext::with_seed(0),
+        &ctx,
+        &tick,
+        None
+    )));
     assert_eq!(ai.base.current_substate, Substate::AttackingPhalanx);
     assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
 }
@@ -244,7 +249,12 @@ fn nescafe_phalanx_uses_raw_body_distance_then_ai_facing_chain_anchors() {
 
     assert_eq!(ai.get_nearest_free_shield_bearer(&ctx, &tick), Some(129));
     let (slot, _, left, right, crosses_sector) = ai
-        .find_phalanx_place(&ctx, &tick, None)
+        .find_phalanx_place(ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &tick,
+            None,
+        ))
         .expect("nearby protecting shield bearer provides a slot");
 
     assert_eq!(slot.sector, Some(sector_0));
@@ -449,7 +459,10 @@ fn already_in_cover_position_does_not_require_reachability() {
         .shield_bearer_cover_position(58, &tick)
         .expect("linked shield bearer has an ideal cover position");
 
-    assert!(max_norm(pos_diff(&archer_position, &cover)) < archer::COVER_POINT_TOLERANCE as f32);
+    assert!(
+        (archer_position.map_point() - cover.map_point()).max_norm()
+            < archer::COVER_POINT_TOLERANCE as f32
+    );
 }
 
 #[test]
@@ -661,16 +674,16 @@ fn phalanx_advance_uses_original_aspect_aware_normalization() {
     // the aspect-adjusted normal calculation in the original game.
     let center = position(720.15155, 2198.4492);
     let target = position(967.95605, 2068.5835);
-    let (forward, right) = phalanx_advance_vectors(pos_diff(&target, &center));
+    let (forward, right) = phalanx_advance_vectors(target.map_point() - center.map_point());
 
-    assert!((forward.0 - 51.67761).abs() < 0.0001);
-    assert!((forward.1 - -27.082436).abs() < 0.0001);
-    assert!((right.0 - 16.863138).abs() < 0.0001);
-    assert!((right.1 - 10.586092).abs() < 0.0001);
+    assert!((forward.x - 51.67761).abs() < 0.0001);
+    assert!((forward.y - -27.082436).abs() < 0.0001);
+    assert!((right.x - 16.863138).abs() < 0.0001);
+    assert!((right.y - 10.586092).abs() < 0.0001);
 
-    let new_center = (center.x + forward.0, center.y + forward.1);
-    let left_slot = (new_center.0 - right.0, new_center.1 - right.1);
-    let right_slot = (new_center.0 + right.0, new_center.1 + right.1);
+    let new_center = (center.x + forward.x, center.y + forward.y);
+    let left_slot = (new_center.0 - right.x, new_center.1 - right.y);
+    let right_slot = (new_center.0 + right.x, new_center.1 + right.y);
     assert!((left_slot.0 - 754.966).abs() < 0.001);
     assert!((left_slot.1 - 2160.7808).abs() < 0.001);
     assert!((right_slot.0 - 788.6923).abs() < 0.001);
@@ -971,9 +984,9 @@ fn sober_drunk_combat_gate_preserves_original_draws_and_short_circuit() {
 
 #[test]
 fn swordfight_range_checks_use_original_uword_truncation() {
-    assert_eq!(original_uword_norm((90.7, 0.0)), 90);
-    assert_eq!(original_uword_norm((91.0, 0.0)), 91);
-    assert!(original_uword_norm((90.7, 0.0)) <= 90);
+    assert_eq!(original_uword_norm(MapVec::new(90.7, 0.0)), 90);
+    assert_eq!(original_uword_norm(MapVec::new(91.0, 0.0)), 91);
+    assert!(original_uword_norm(MapVec::new(90.7, 0.0)) <= 90);
 }
 
 #[test]
@@ -1217,12 +1230,9 @@ fn swordfight_step_in_uses_live_exact_target_sector() {
     ai.base.primary_target = Some(AiEntityHandle::new(TARGET));
     ai.sword_range = 50;
     ai.reconsider_swordfight(
-        &SimulationContext::with_seed(seed),
+        ThinkEnv::new(&SimulationContext::with_seed(seed), &ctx, &tick, None),
         false,
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(
@@ -1306,12 +1316,9 @@ fn lost_enemy_overview_faces_live_target_not_forecast_destination() {
     let (mut ai, ctx, tick) = lost_enemy_reconsider_fixture(100);
     let sim = SimulationContext::with_seed(0);
     ai.reconsider_swordfight(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         false,
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(ai.base.seek_position, position(0.0, 100.0));
@@ -1349,12 +1356,9 @@ fn lost_enemy_follow_path_keeps_forecast_as_seek_center_without_direction_snap()
     let (mut ai, ctx, tick) = lost_enemy_reconsider_fixture(0);
     let sim = SimulationContext::with_seed(0);
     ai.reconsider_swordfight(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         false,
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(ai.base.outbox.actor.set_direction_instantly, None);
@@ -1392,12 +1396,9 @@ fn lost_enemy_refreshes_forecast_with_swordfight_principal() {
 
     let sim = SimulationContext::with_seed(0);
     ai.reconsider_swordfight(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         false,
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(NEW_PRINCIPAL)));

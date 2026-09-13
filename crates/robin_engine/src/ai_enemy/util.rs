@@ -4,7 +4,9 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
+use super::map_vec_ext::AiMapVec;
 use crate::ai::*;
+use crate::coordinates::MapVec;
 use crate::element::EntityId;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
 
@@ -63,7 +65,7 @@ crate::bitcode_adapters::impl_native_bitcode_flags!(GetNearestFlags, u16);
 
 bitflags! {
     /// Flags controlling how a seek operation is performed.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub struct SeekFlags: u16 {
         const LOCATION_END              = 0x0001;
         const LOCATION_FIRST            = 0x0002;
@@ -351,23 +353,27 @@ pub(crate) fn soldier_detects_detection_point_360(
     target_in_building: bool,
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> bool {
-    if viewer_in_building || target_in_building {
-        return false;
-    }
-    let dx = target_detection.x - viewer_eye.x;
-    let dy = (target_detection.y - viewer_eye.y) * INVERSE_ASPECT_RATIO;
-    let dz = target_detection.z - viewer_eye.z;
-    if dx * dx + dy * dy + dz * dz > (viewer_radius as f32).powi(2) {
-        return false;
-    }
-    crate::sight_obstacle::is_reachable_3d(
+    detects_360(
+        Viewer360 {
+            eye: viewer_eye,
+            sq_radius: (viewer_radius as f32).powi(2),
+            in_building: viewer_in_building,
+        },
+        Target360 {
+            detection: target_detection,
+            in_building: target_in_building,
+        },
         obstacles,
-        [viewer_eye.x, viewer_eye.y, viewer_eye.z],
-        [target_detection.x, target_detection.y, target_detection.z],
-        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
+    .visible
 }
 
+/// Map-space form of all-around detection: both points are rebuilt from AI
+/// positions plus ground Z (`GroundPoint::from_map_and_z`). That projection
+/// round trip is not bit-identical to the stored 3D points used by
+/// [`soldier_detects_detection_point_360`], which is why the eye point is an
+/// explicit input of the shared [`detects_360`] core rather than recomputed
+/// there.
 #[track_caller]
 pub(crate) fn soldier_detects_target_360(
     viewer_position: Position,
@@ -400,13 +406,23 @@ pub(crate) fn soldier_detects_target_360(
         viewer_ground_z,
     );
     let target_ground = crate::coordinates::GroundPoint::from_map_and_z(target_xy, target_ground_z);
-    detection_360_geometry(
-        crate::coordinates::WorldPoint3D::new(viewer_ground.x, viewer_ground.y, viewer_z),
-        crate::coordinates::WorldPoint3D::new(target_ground.x, target_ground.y, target_z),
-        (viewer_radius as f32).powi(2),
+    detects_360(
+        Viewer360 {
+            eye: crate::coordinates::WorldPoint3D::new(viewer_ground.x, viewer_ground.y, viewer_z),
+            sq_radius: (viewer_radius as f32).powi(2),
+            in_building: viewer_in_building,
+        },
+        Target360 {
+            detection: crate::coordinates::WorldPoint3D::new(
+                target_ground.x,
+                target_ground.y,
+                target_z,
+            ),
+            in_building: target_in_building,
+        },
         obstacles,
     )
-    .1
+    .visible
 }
 
 pub fn soldier_is_able_to_help_state(
@@ -471,11 +487,35 @@ pub(crate) fn detects_position_180_raw(
         return false;
     }
 
+    match half_plane_180(dx, dy, sq_distance, viewer_direction) {
+        HalfPlane180::Beside => true,
+        HalfPlane180::NotBeside { forward_dot } => forward_dot >= 0.0,
+    }
+}
+
+/// Planar outcome of a 180° detection test once the squared distance has
+/// passed the view-radius gate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum HalfPlane180 {
+    /// Within 50 units and beside the viewer (perpendicular component at
+    /// least the forward length): detected without any further test.
+    Beside,
+    /// Not beside. `forward_dot` is `dot(offset, forward)`; each caller applies
+    /// its own comparison (the LOS variant rejects on `< 0.0`, the planar
+    /// variant accepts on `>= 0.0`). Those differ for NaN, so this helper
+    /// deliberately does not pick one.
+    NotBeside { forward_dot: f32 },
+}
+
+/// The shared "beside me" / forward half-plane geometry of every 180°
+/// detection variant. `(dx, dy)` is the stretched-Y offset from the viewer's
+/// eye to the target and `sq_distance` its squared length.
+pub(super) fn half_plane_180(dx: f32, dy: f32, sq_distance: f32, direction: u16) -> HalfPlane180 {
     // The direction vector is built by compressing the sector table's Y by
     // ASPECT_RATIO and then stretching it back by INVERSE_ASPECT_RATIO. The
     // shared Rust table already holds the resulting uncompressed unit vector,
     // so stretching here a second time would narrow the forward half-plane.
-    let dir = crate::shadow_polygon::sector_to_direction(viewer_direction as i16);
+    let dir = crate::shadow_polygon::sector_to_direction(direction as i16);
     let fx = dir[0];
     let fy = dir[1];
 
@@ -485,11 +525,13 @@ pub(crate) fn detects_position_180_raw(
         let fc_y = fy * fwd_len;
         let perp_sq = (dx - fc_x) * (dx - fc_x) + (dy - fc_y) * (dy - fc_y);
         if perp_sq >= fwd_len {
-            return true;
+            return HalfPlane180::Beside;
         }
     }
 
-    dx * fx + dy * fy >= 0.0
+    HalfPlane180::NotBeside {
+        forward_dot: dx * fx + dy * fy,
+    }
 }
 
 /// Snapshot of entity-level data (position, direction, sword range,
@@ -637,50 +679,8 @@ impl FighterSnapshot {
 }
 
 // ---------------------------------------------------------------------------
-// Combat vector math helpers
+// Combat distance helpers (2-D vector math lives in `super::map_vec_ext`)
 // ---------------------------------------------------------------------------
-
-/// Convert a 0–15 compass sector to a unit direction vector.
-/// Sector 0 = north (0, -1), increasing clockwise.
-pub(super) fn sector_to_vector(sector: u16) -> (f32, f32) {
-    let [x, y] = crate::shadow_polygon::sector_to_direction(sector as i16);
-    (x, y)
-}
-
-/// Dot product of two 2D vectors.
-pub(super) fn dot2(a: (f32, f32), b: (f32, f32)) -> f32 {
-    crate::geo2d::dot(crate::geo2d::pt(a.0, a.1), crate::geo2d::pt(b.0, b.1))
-}
-
-/// 2D determinant (cross product Z component): positive if b is to the left of a.
-pub(super) fn det2(a: (f32, f32), b: (f32, f32)) -> f32 {
-    crate::geo2d::cross(crate::geo2d::pt(a.0, a.1), crate::geo2d::pt(b.0, b.1))
-}
-
-/// Max-norm (Chebyshev distance) of a 2D vector.
-pub(super) fn max_norm(v: (f32, f32)) -> f32 {
-    v.0.abs().max(v.1.abs())
-}
-
-/// Squared Euclidean norm of a 2D vector.
-pub(super) fn square_norm(v: (f32, f32)) -> f32 {
-    v.0 * v.0 + v.1 * v.1
-}
-
-/// Perpendicular vector (90° counter-clockwise rotation, left normal).
-pub(super) fn get_normal(v: (f32, f32)) -> (f32, f32) {
-    (-v.1, v.0)
-}
-
-/// Perpendicular vector (90° clockwise rotation, right normal).
-pub(super) fn get_normal_right(v: (f32, f32)) -> (f32, f32) {
-    (v.1, -v.0)
-}
-
-/// Position difference as a 2D vector.
-pub(super) fn pos_diff(a: &Position, b: &Position) -> (f32, f32) {
-    (a.x - b.x, a.y - b.y)
-}
 
 /// The AI's own squared distance metric: a stretched **3D** norm.
 ///
@@ -718,6 +718,25 @@ pub(super) fn ai_square_distance_world(
     let dy = (target.y - me.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
     let dz = target.z - me.z;
     dx * dx + dy * dy + dz * dz
+}
+
+/// Score a building-door candidate exactly like Original
+/// Nearest-door selection narrows maximum norm to 16 bits, then applies both penalties with
+/// wrapping 16-bit arithmetic.
+pub(crate) fn legacy_nearest_door_distance(
+    dx: f32,
+    dy: f32,
+    sector_changes: bool,
+    layer_changes: bool,
+) -> u16 {
+    let mut distance = dx.abs().max(dy.abs()) as u16;
+    if sector_changes {
+        distance = distance.wrapping_add(500);
+    }
+    if layer_changes {
+        distance = distance.wrapping_add(300);
+    }
+    distance
 }
 
 #[cfg(test)]
@@ -771,44 +790,6 @@ pub(super) fn ai_max_norm_distance_world(
 /// Thin alias over [`crate::position_interface::vector_to_sector_0_to_15_iso`].
 pub(super) fn vec_to_sector(dx: f32, dy: f32) -> u16 {
     crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy) as u16
-}
-
-/// Aspect-corrected Euclidean norm. Most callers pass
-/// `aspect_ratio = ASPECT_RATIO` for ordinary map-space AI geometry. A few
-/// sword-fight call sites deliberately pass `SWORDFIGHT_ASPECT_RATIO` instead.
-pub(super) fn iso_norm(v: (f32, f32), aspect_ratio: f32) -> f32 {
-    let yi = v.1 / aspect_ratio;
-    (v.0 * v.0 + yi * yi).sqrt()
-}
-
-/// Match original-game vector normalization, including its unchecked division
-/// when assertions are disabled in the shipping build.
-///
-/// In particular, a zero vector becomes `(NaN, NaN)`.  That behavior is
-/// observable when two sword-fight observers occupy the same point: Original
-/// starts a movement with a NaN goal instead of treating the zero vector as an
-/// already-reached destination.
-pub(super) fn iso_normalize(v: (f32, f32), aspect_ratio: f32) -> (f32, f32) {
-    let norm = iso_norm(v, aspect_ratio);
-    (v.0 / norm, v.1 / norm)
-}
-
-/// Sector to unit vector with the caller's Y aspect scaling.
-pub(super) fn sector_to_vector_iso(sector: u16, aspect_ratio: f32) -> (f32, f32) {
-    let [x, y] = crate::shadow_polygon::sector_to_direction(sector as i16);
-    (x, y * aspect_ratio)
-}
-
-/// Vector to sector using the caller's aspect ratio.
-pub(super) fn vec_to_sector_ar(dx: f32, dy: f32, aspect_ratio: f32) -> u16 {
-    crate::position_interface::vector_to_sector_0_to_15_with_aspect(dx, dy, aspect_ratio) as u16
-}
-
-/// Perpendicular vector in isometric space.  Thin alias over
-/// [`crate::position_interface::vector_normal_iso`].
-pub(super) fn get_normal_iso(v: (f32, f32), direct: bool, _aspect_ratio: f32) -> (f32, f32) {
-    let [x, y] = crate::position_interface::vector_normal_iso(v.0, v.1, direct);
-    (x, y)
 }
 
 /// Direction offsets for retreat scanning: 0, 1, -1, 2, -2, 3, -3.
@@ -885,15 +866,15 @@ pub fn propose_good_step_back_goal(
     grid: Option<&crate::fast_find_grid::FastFindGrid>,
     aspect_ratio: f32,
 ) -> Option<Position> {
-    let v = pos_diff(&pos_me, &pos_enemy);
-    let actual_distance = iso_norm(v, aspect_ratio);
+    let v = pos_me.map_point() - pos_enemy.map_point();
+    let actual_distance = v.iso_norm(aspect_ratio);
 
     // Already far enough away.
     if actual_distance >= good_distance as f32 {
         return Some(pos_me);
     }
 
-    let direction = vec_to_sector_ar(v.0, v.1, aspect_ratio);
+    let direction = v.sector_with_aspect(aspect_ratio);
     let minimal_run_distance = 10.0f32.max(min_distance as f32 - actual_distance);
 
     // Try to run away as far as possible, reducing distance by 10 each
@@ -905,10 +886,10 @@ pub fn propose_good_step_back_goal(
             // signed-promotion and UBYTE-conversion details are intentional
             // parity requirements. Keep them local to this source call site.
             let sector = step_back_direction_sector(direction, rel_dir);
-            let dir_vec = sector_to_vector_iso(sector, aspect_ratio);
+            let dir_vec = MapVec::from_sector_with_aspect(sector, aspect_ratio);
             let goal = Position {
-                x: pos_me.x + dir_vec.0 * distance,
-                y: pos_me.y + dir_vec.1 * distance,
+                x: pos_me.x + dir_vec.x * distance,
+                y: pos_me.y + dir_vec.y * distance,
                 sector: pos_me.sector,
                 level: pos_me.level,
             };
@@ -1215,8 +1196,8 @@ fn estimate_damage(
     // From-behind bonus/malus: gated on the *evaluator's* IQ (the
     // AI of `me`, not the attacker). The dot product uses the
     // Y-stretched strike vector; `dy_iso` is that stretched value.
-    let target_look = sector_to_vector(cp.target_direction);
-    let from_behind = dot2(target_look, (dx, dy_iso)) > 0.0;
+    let target_look = MapVec::from_sector(cp.target_direction);
+    let from_behind = target_look.dot(MapVec::new(dx, dy_iso)) > 0.0;
     if from_behind {
         if attacker.is_friendly {
             if iq > combat::ATTACK_FROM_BEHIND_MIN_IQ {
@@ -1281,7 +1262,7 @@ pub(super) fn evaluate_combat_position_full(
     let distance: u16 = if cp.change_position {
         // The original game truncates the maximum norm to 16 bits before applying the
         // fractional distance penalty.
-        max_norm(pos_diff(me_pos, &cp.attacker_position)) as u16
+        (me_pos.map_point() - cp.attacker_position.map_point()).max_norm() as u16
     } else {
         0
     };
@@ -1379,7 +1360,7 @@ pub(super) fn calculate_opponent_nearest_to_rene<'a>(
         // The original game subtracts raw map-space positions and stores the 2D
         // maximum norm in an unsigned 16-bit value before the strict comparison. Fractional
         // ties therefore retain Maurice's first opponent.
-        let dist = max_norm(pos_diff(rene_pos, &opp.position)) as u16;
+        let dist = (rene_pos.map_point() - opp.position.map_point()).max_norm() as u16;
         if dist < min_dist {
             min_dist = dist;
             nearest = Some(AiEntityHandle::new(opp_handle));
@@ -1550,25 +1531,78 @@ mod required_combat_input_tests;
 #[cfg(test)]
 mod swordfight_substate_tests;
 
+/// Viewer half of all-around (360°) detection.
+///
+/// The eye point is an explicit input because callers source it differently
+/// (the stored upright eye point, a member's stored world position plus the
+/// upright eye height, or a map position rebuilt with ground Z) and those
+/// sources are not bit-identical, so the shared core must not recompute it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct Viewer360 {
+    pub(crate) eye: crate::coordinates::WorldPoint3D,
+    pub(crate) sq_radius: f32,
+    pub(crate) in_building: bool,
+}
+
+/// Target half of all-around detection: the target's detection point.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct Target360 {
+    pub(crate) detection: crate::coordinates::WorldPoint3D,
+    pub(crate) in_building: bool,
+}
+
+/// Outcome of [`detects_360`]. `sq_distance` is `None` when the building gate
+/// rejected before any geometry ran.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct Detection360 {
+    pub(crate) sq_distance: Option<f32>,
+    pub(crate) visible: bool,
+}
+
+/// Stretched-Y 3D squared distance between a viewer eye point and a target
+/// detection point, as used by every all-around detection check.
+pub(crate) fn sq_distance_360(
+    eye: crate::coordinates::WorldPoint3D,
+    detection: crate::coordinates::WorldPoint3D,
+) -> f32 {
+    let dx = detection.x - eye.x;
+    let dy = (detection.y - eye.y) * INVERSE_ASPECT_RATIO;
+    let dz = detection.z - eye.z;
+    dx * dx + dy * dy + dz * dz
+}
+
+/// The single all-around detection implementation: building gate, squared
+/// 3D distance against the viewer radius, then the opaque 3D sight ray.
+///
+/// `#[track_caller]` so the recorded visibility query is attributed to the
+/// gate that asked for it, not to this shared helper.
 #[track_caller]
-pub(super) fn detection_360_geometry(
-    viewer: crate::coordinates::WorldPoint3D,
-    target: crate::coordinates::WorldPoint3D,
-    sq_radius: f32,
+pub(crate) fn detects_360(
+    viewer: Viewer360,
+    target: Target360,
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
-) -> (f32, bool) {
-    let dx = target.x - viewer.x;
-    let dy = (target.y - viewer.y) * INVERSE_ASPECT_RATIO;
-    let dz = target.z - viewer.z;
-    let sq_distance = dx * dx + dy * dy + dz * dz;
-    if sq_distance > sq_radius {
-        return (sq_distance, false);
+) -> Detection360 {
+    if viewer.in_building || target.in_building {
+        return Detection360 {
+            sq_distance: None,
+            visible: false,
+        };
+    }
+    let sq_distance = sq_distance_360(viewer.eye, target.detection);
+    if sq_distance > viewer.sq_radius {
+        return Detection360 {
+            sq_distance: Some(sq_distance),
+            visible: false,
+        };
     }
     let visible = crate::sight_obstacle::is_reachable_3d(
         obstacles,
-        [viewer.x, viewer.y, viewer.z],
-        [target.x, target.y, target.z],
+        [viewer.eye.x, viewer.eye.y, viewer.eye.z],
+        [target.detection.x, target.detection.y, target.detection.z],
         crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     );
-    (sq_distance, visible)
+    Detection360 {
+        sq_distance: Some(sq_distance),
+        visible,
+    }
 }

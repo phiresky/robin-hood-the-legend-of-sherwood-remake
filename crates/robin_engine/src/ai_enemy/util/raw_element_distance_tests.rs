@@ -1,5 +1,15 @@
-use super::ai_square_distance_world;
+use super::{ai_square_distance_world, legacy_nearest_door_distance};
 use crate::coordinates::WorldPoint3D;
+
+#[test]
+fn nearest_door_distance_uses_original_uword_maluses() {
+    assert_eq!(legacy_nearest_door_distance(100.9, 90.0, false, false), 100);
+    assert_eq!(legacy_nearest_door_distance(65_000.0, 0.0, true, true), 264);
+    assert_eq!(
+        legacy_nearest_door_distance(65_535.0, 0.0, false, false),
+        u16::MAX,
+    );
+}
 
 #[test]
 fn door_endpoint_is_not_substituted_for_literal_body_point() {

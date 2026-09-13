@@ -1473,7 +1473,10 @@ impl EngineInner {
                     entity
                         .enemy_ai_mut()
                         .expect("validated SwitchToAlertPath soldier lost its enemy AI")
-                        .return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx, &tick_data);
+                        .return_to_duty(
+                            crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick_data, None),
+                            crate::ai::DutyFlags::empty(),
+                        );
 
                     // Close the direct owner-local AI boundary and
                     // materialize any movement before the script VM resumes.
@@ -3848,17 +3851,19 @@ impl EngineInner {
             };
             if let Some(enemy_ai) = entity.enemy_ai_mut() {
                 enemy_ai.think(
-                    sim,
+                    crate::ai_enemy::ThinkEnv::new(
+                        sim,
+                        &live_ctx,
+                        live_enemy_tick.as_ref().unwrap_or_else(|| {
+                            panic!(
+                                "filtered Enemy AI stimulus for owner {} requires typed enemy tick data",
+                                entity_id.index()
+                            )
+                        }),
+                        Some(&self.world.fast_grid),
+                    ),
                     stimulus,
                     ai_global,
-                    &live_ctx,
-                    live_enemy_tick.as_ref().unwrap_or_else(|| {
-                        panic!(
-                            "filtered Enemy AI stimulus for owner {} requires typed enemy tick data",
-                            entity_id.index()
-                        )
-                    }),
-                    Some(&self.world.fast_grid),
                 )
             } else if let Some(friendly_ai) = entity.friendly_ai_mut() {
                 friendly_ai.think(
@@ -3989,25 +3994,26 @@ impl EngineInner {
                 enemy.base.outbox.reentrant.engine_drains_after_script_go_on = false;
                 if completed {
                     enemy.think_unexpected_event(
-                        sim,
+                        crate::ai_enemy::ThinkEnv::new(
+                            sim,
+                            &fresh_ctx,
+                            fresh_enemy_tick
+                                .as_ref()
+                                .expect("AfterScript Enemy tick data"),
+                            Some(&self.world.fast_grid),
+                        ),
                         stimulus,
                         ai_global,
-                        &fresh_ctx,
-                        fresh_enemy_tick
-                            .as_ref()
-                            .expect("AfterScript Enemy tick data"),
-                        Some(&self.world.fast_grid),
                     );
                 }
-                enemy.end_think(
+                enemy.end_think(crate::ai_enemy::ThinkEnv::new(
                     sim,
-                    ai_global,
                     &fresh_ctx,
                     fresh_enemy_tick
                         .as_ref()
                         .expect("AfterScript Enemy tick data"),
                     Some(&self.world.fast_grid),
-                );
+                ));
             } else if let Some(friendly) = entity.friendly_ai_mut() {
                 friendly
                     .base
@@ -4027,7 +4033,7 @@ impl EngineInner {
                         Some(self.script_domains.interactables.doors.as_slice()),
                     );
                 }
-                friendly.end_think(sim, ai_global, &fresh_ctx);
+                friendly.end_think(sim, &fresh_ctx);
             } else {
                 panic!(
                     "AfterScript owner has invalid kind {:?}",
@@ -4603,7 +4609,10 @@ impl EngineInner {
             .and_then(Entity::enemy_ai_mut)
             .unwrap_or_else(|| panic!("look-for-help owner {} lost Enemy AI", owner.index()));
         enemy.base.outbox.reentrant.look_for_help_completion_pending = false;
-        enemy.resume_battle_look_for_help_after_alert_officer(sim, ai_global, &ctx, &tick);
+        enemy.resume_battle_look_for_help_after_alert_officer(
+            crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None),
+            ai_global,
+        );
     }
 
     fn owner_work_resume_dead_body_alert_after_alert_officer(
@@ -4659,7 +4668,10 @@ impl EngineInner {
             .reentrant
             .dead_body_alert_completion_pending = false;
         enemy.resume_dead_body_alert_after_alert_officer(
-            sim, center, radius, ai_global, &ctx, &tick,
+            crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None),
+            center,
+            radius,
+            ai_global,
         );
     }
 
@@ -4714,11 +4726,9 @@ impl EngineInner {
             .reentrant
             .civilian_report_alert_officer_completion_pending = false;
         enemy.resume_civilian_report_after_alert_officer(
-            sim,
+            crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None),
             seek_position,
             ai_global,
-            &ctx,
-            &tick,
         );
     }
 
@@ -5254,7 +5264,9 @@ impl EngineInner {
                     owner.index()
                 )
             })
-            .resume_kill_nearby_sleeping_enemies_after_return_to_duty(sim, &ctx, &tick);
+            .resume_kill_nearby_sleeping_enemies_after_return_to_duty(
+                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None),
+            );
     }
 
     fn owner_work_resume_battle_observe_after_go_near(
@@ -5535,7 +5547,10 @@ impl EngineInner {
                     owner.index()
                 )
             });
-        enemy.resume_battle_fight_after_reconsider(sim, &mut self.ai.global, &ctx, &tick);
+        enemy.resume_battle_fight_after_reconsider(
+            crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None),
+            &mut self.ai.global,
+        );
     }
 
     fn owner_work_speech(

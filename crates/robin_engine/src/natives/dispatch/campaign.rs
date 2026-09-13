@@ -13,11 +13,12 @@ impl NativeContext<'_, '_> {
         match self.get_entity(actor) {
             Some(entity) => {
                 let Some(pc) = entity.pc_data() else {
-                    tracing::warn!("{operation}: actor {actor} is not a PC");
+                    script_error!(operation, "actor {actor} is not a PC");
                     return None;
                 };
                 let Some(raw_index) = pc.campaign_description_index else {
                     tracing::warn!(
+                        target: "script",
                         "{operation}: live PC actor {actor} has no campaign-description identity"
                     );
                     return None;
@@ -25,12 +26,14 @@ impl NativeContext<'_, '_> {
                 let index = raw_index as usize;
                 let Some(description) = campaign.characters.get(index) else {
                     tracing::warn!(
+                        target: "script",
                         "{operation}: live PC actor {actor} references missing campaign character {index}"
                     );
                     return None;
                 };
                 if description.character_profile_idx != Some(pc.profile_index) {
                     tracing::warn!(
+                        target: "script",
                         "{operation}: live PC actor {actor} campaign character {index} has profile {:?}, expected {:?}",
                         description.character_profile_idx,
                         pc.profile_index,
@@ -62,9 +65,7 @@ impl NativeContext<'_, '_> {
                     .and_then(|campaign| campaign.mission_team_indices.get(idx as usize))
                     .copied()
                 else {
-                    tracing::warn!(
-                        "GetPCFromMissionTeam index {idx} is outside the current mission team"
-                    );
+                    script_error!(native, "index {idx} is outside the current mission team");
                     return 0;
                 };
 
@@ -85,6 +86,7 @@ impl NativeContext<'_, '_> {
                     })
                     .unwrap_or_else(|| {
                         tracing::warn!(
+                            target: "script",
                             "GetPCFromMissionTeam member {idx} (campaign character \
                              {character_index}) has no live PC instance"
                         );
@@ -104,9 +106,10 @@ impl NativeContext<'_, '_> {
                 }
                 // Mark only on the success branch.
                 if added {
-                    self.emit_engine(EngineCommand::MarkPc {
-                        actor_handle: actor,
-                    });
+                    self.script_effects_mut()
+                        .emit_engine(EngineCommand::MarkPc {
+                            actor_handle: actor,
+                        });
                 }
                 0
             }
@@ -155,6 +158,7 @@ impl NativeContext<'_, '_> {
                         handle
                     } else {
                         tracing::warn!(
+                            target: "script",
                             "GetObligatoryPCFromMissionTeam: no live PC actor for profile {char_profile_idx}"
                         );
                         0
@@ -198,9 +202,7 @@ impl NativeContext<'_, '_> {
                         .and_then(|pi| profiles.missions.get(pi as usize))
                         .map(|mp| mp.location);
                     if current_loc != Some(crate::profiles::MissionLocation::Sherwood) {
-                        tracing::warn!(target: "script",
-                            "Script error: GetNumberOfBeamMes called from non-Sherwood mission"
-                        );
+                        script_error!(native, "called from non-Sherwood mission");
                         return 0;
                     }
                     campaign
@@ -246,15 +248,11 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 if !self.is_script_sector_handle(loc) {
-                    tracing::warn!(target: "script",
-                        "Script error: GetNumberOfActorsInSector on non-sector handle {loc}"
-                    );
+                    script_error!(native, "on non-sector handle {loc}");
                     return 0;
                 }
                 let Some(occupants) = self.zone_occupant_handles(loc) else {
-                    tracing::warn!(target: "script",
-                        "Script error: GetNumberOfActorsInSector missing zone for sector handle {loc}"
-                    );
+                    script_error!(native, "missing zone for sector handle {loc}");
                     return 0;
                 };
                 if let Some(vm) = &self.script_vm_diagnostic {
@@ -272,7 +270,7 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 if !self.is_script_sector_handle(loc) {
-                    tracing::warn!(target: "script","Script error: GetActorInSector on non-sector handle {loc}");
+                    script_error!(native, "on non-sector handle {loc}");
                     return 0;
                 }
                 match self.zone_occupant_handles(loc) {
@@ -280,17 +278,12 @@ impl NativeContext<'_, '_> {
                         if idx >= 0 && (idx as usize) < occ.len() {
                             occ[idx as usize]
                         } else {
-                            tracing::warn!(
-                                "GetActorInSector: index {idx} out of range (max={})",
-                                occ.len()
-                            );
+                            script_error!(native, "index {idx} out of range (max={})", occ.len());
                             0
                         }
                     }
                     None => {
-                        tracing::warn!(target: "script",
-                            "Script error: GetActorInSector missing zone for sector handle {loc}"
-                        );
+                        script_error!(native, "missing zone for sector handle {loc}");
                         0
                     }
                 }
@@ -362,7 +355,7 @@ impl NativeContext<'_, '_> {
                             }
                         }
                     } else {
-                        tracing::warn!("AddPCToGang: cannot resolve actor {actor}");
+                        script_error!(native, "cannot resolve actor {actor}");
                     }
                 }
                 0
@@ -407,7 +400,7 @@ impl NativeContext<'_, '_> {
                 // Validate the actor is a PC handle to surface
                 // script bugs that pass NPCs.
                 if !matches!(self.get_entity(actor), Some(Entity::Pc(_))) {
-                    tracing::warn!(target: "script","Script error: SetExperiences passed non-PC actor {actor}");
+                    script_error!(native, "passed non-PC actor {actor}");
                     return 0;
                 }
                 let profile_idx = self.resolve_profile(actor);
@@ -450,11 +443,11 @@ impl NativeContext<'_, '_> {
                 // warning rather than falling through to the
                 // "unknown filename" path.
                 if !self.actor_exists(actor) {
-                    tracing::warn!(target: "script","Script error: Trying to get the PC type of an invalid actor!");
+                    script_error!(native, "Trying to get the PC type of an invalid actor!");
                     return -1;
                 }
                 if !matches!(self.get_entity(actor), Some(Entity::Pc(_))) {
-                    tracing::warn!(target: "script","Script error: Trying to get the PC type of a non-PC!");
+                    script_error!(native, "Trying to get the PC type of a non-PC!");
                     return -1;
                 }
                 self.campaign.as_ref().expect("campaign required");
@@ -473,8 +466,9 @@ impl NativeContext<'_, '_> {
                             "MerryManB" => 7,               // PC_TYPE_FARMER_B
                             "MerryManC" => 8,               // PC_TYPE_FARMER_C
                             _ => {
-                                tracing::warn!(target: "script",
-                                    "Script error: PC with unknown type! (filename '{}')",
+                                script_error!(
+                                    native,
+                                    "PC with unknown type! (filename '{}')",
                                     cp.filename
                                 );
                                 -1
@@ -486,14 +480,15 @@ impl NativeContext<'_, '_> {
                 let select = stack.pop_i32();
                 let actor = stack.pop_i32();
                 if actor != 0 && !matches!(self.get_entity(actor), Some(Entity::Pc(_))) {
-                    tracing::warn!(target: "script","Script error: Trying to select an invalid or non-PC actor!");
+                    script_error!(native, "Trying to select an invalid or non-PC actor!");
                     return 0;
                 }
                 self.apply_script_selection(actor, select != 0);
-                self.emit_barrier(DeferredCommand::SelectPC {
-                    actor,
-                    select: select != 0,
-                });
+                self.script_effects_mut()
+                    .emit_barrier(DeferredCommand::SelectPC {
+                        actor,
+                        select: select != 0,
+                    });
                 0
             }
             IsPCSelected => {
@@ -503,7 +498,7 @@ impl NativeContext<'_, '_> {
                 // scripts that null-check the PC don't
                 // infinite-loop.
                 if !matches!(self.get_entity(actor), Some(Entity::Pc(_))) {
-                    tracing::warn!(target: "script","Script error: The Actor in IsPCSelected is invalid.");
+                    script_error!(native, "The Actor in IsPCSelected is invalid.");
                     return 1;
                 }
                 if self.selected_pc_handles().contains(&actor) {
@@ -520,8 +515,9 @@ impl NativeContext<'_, '_> {
                 // as out-of-range too.
                 let selected = self.selected_pc_handles();
                 if idx < 0 || (idx as usize) >= selected.len() {
-                    tracing::warn!(target: "script",
-                        "Script error: GetSelectedPC index {idx} out of range (count {})",
+                    script_error!(
+                        native,
+                        "index {idx} out of range (count {})",
                         selected.len()
                     );
                     return 0;
@@ -536,7 +532,7 @@ impl NativeContext<'_, '_> {
                 // 1 iff the actor was previously blipped.
                 let actor = stack.pop_i32();
                 if !self.actor_exists(actor) {
-                    tracing::warn!(target: "script","Script error: Reveal with invalid actor handle {actor}");
+                    script_error!(native, "with invalid actor handle {actor}");
                     return 0;
                 }
                 let was_blipped = self
@@ -554,7 +550,7 @@ impl NativeContext<'_, '_> {
                 // level.
                 let actor = stack.pop_i32();
                 if !self.is_actor_handle(actor) {
-                    tracing::warn!(target: "script","Script error: SequenceReveal illegal actor handle {actor}");
+                    script_error!(native, "illegal actor handle {actor}");
                     return 0;
                 }
                 let level = self.recording_level();
@@ -569,15 +565,11 @@ impl NativeContext<'_, '_> {
                 // if scripts mix the two names.
                 let actor = stack.pop_i32();
                 let Some(e) = self.get_entity(actor) else {
-                    tracing::warn!(target: "script",
-                        "Script error: IsActorOutOfAction with invalid actor handle {actor}"
-                    );
+                    script_error!(native, "with invalid actor handle {actor}");
                     return 0;
                 };
                 if !e.is_actor() {
-                    tracing::warn!(target: "script",
-                        "Script error: IsActorOutOfAction with non-actor handle {actor}"
-                    );
+                    script_error!(native, "with non-actor handle {actor}");
                     return 0;
                 }
                 let posture = e.element_data().posture();
@@ -613,6 +605,7 @@ impl NativeContext<'_, '_> {
                 // TODO(ai parity): implement once patrol run state has a
                 // canonical owner and an Original/Spellforge behavior oracle.
                 tracing::error!(
+                    target: "script",
                     actor,
                     should_run = should_run != 0,
                     "TODO(ai parity): SetPatrolShouldRun has no documented Original or Spellforge contract; request was not applied"
@@ -628,9 +621,7 @@ impl NativeContext<'_, '_> {
                 let loc_a = stack.pop_i32();
                 let lambda = f32::from_bits(lambda_bits as u32);
                 if !self.is_script_point(loc_a) || !self.is_script_point(loc_b) {
-                    tracing::warn!(target: "script",
-                        "Script error in ComputeLocationBetween: non-point handle(s) {loc_a}, {loc_b}"
-                    );
+                    script_error!(native, "non-point handle(s) {loc_a}, {loc_b}");
                     return 0;
                 }
                 let layer_sector_a = self.resolve_location_layer_sector_handle(loc_a);
@@ -647,8 +638,9 @@ impl NativeContext<'_, '_> {
                     && (layer_a != layer_b
                         || !crate::natives::script_sector_identities_match(sector_a, sector_b))
                 {
-                    tracing::warn!(target: "script",
-                        "Script error in ComputeLocationBetween: locations span different layers/sectors (a={layer_sector_a:?}, b={layer_sector_b:?})"
+                    script_error!(
+                        native,
+                        "locations span different layers/sectors (a={layer_sector_a:?}, b={layer_sector_b:?})"
                     );
                     return 0;
                 }
@@ -665,9 +657,7 @@ impl NativeContext<'_, '_> {
                         self.create_computed_location_full(x, y, layer_sector_a)
                     }
                     _ => {
-                        tracing::warn!(
-                            "ComputeLocationBetween: invalid location handle(s) {loc_a}, {loc_b}"
-                        );
+                        script_error!(native, "invalid location handle(s) {loc_a}, {loc_b}");
                         0
                     }
                 }

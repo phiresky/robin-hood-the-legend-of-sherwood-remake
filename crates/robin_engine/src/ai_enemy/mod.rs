@@ -12,6 +12,7 @@ mod detection;
 mod event_handlers;
 mod money_fight;
 pub(crate) use detection::context_detects_180_degrees;
+mod map_vec_ext;
 mod parity_trace;
 mod periodic;
 mod seek;
@@ -24,23 +25,55 @@ pub use util::*;
 
 use crate::ai::*;
 use crate::entity_id::PcId;
+use crate::fast_find_grid::FastFindGrid;
 use crate::parameters_ai;
+use crate::sim_rng::SimulationContext;
 
 /// Borrowed decision inputs. Mutable global AI state remains a separate owner.
 /// This is an ephemeral call context, never a save or rollback projection.
 #[derive(Clone, Copy)]
-struct ThinkEnv<'a> {
-    sim: &'a crate::sim_rng::SimulationContext,
-    ctx: &'a AiContext,
-    tick: &'a AiPerTickData,
-    grid: Option<&'a crate::fast_find_grid::FastFindGrid>,
+pub(crate) struct ThinkEnv<'a> {
+    pub(crate) sim: &'a SimulationContext,
+    pub(crate) ctx: &'a AiContext,
+    pub(crate) tick: &'a AiPerTickData,
+    pub(crate) grid: Option<&'a FastFindGrid>,
+}
+
+impl<'a> ThinkEnv<'a> {
+    pub(crate) fn new(
+        sim: &'a SimulationContext,
+        ctx: &'a AiContext,
+        tick: &'a AiPerTickData,
+        grid: Option<&'a FastFindGrid>,
+    ) -> Self {
+        Self {
+            sim,
+            ctx,
+            tick,
+            grid,
+        }
+    }
 }
 
 /// Master switch for the opt-in AI decision/path diagnostic used by the
 /// Save020/Save055 substate-only parity cohort. Keep this check separate so
 /// disabled runs return before reading frame, owner, AI, or geometry state.
 pub(crate) fn decision_path_debug_enabled() -> bool {
-    std::env::var_os("PARITY_DEBUG_AI_DECISION_PATH").is_some()
+    decision_path_debug_gate().enabled()
+}
+
+fn decision_path_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<2>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        crate::ai::parity_gate::required_parity_gate(
+            "PARITY_DEBUG_AI_DECISION_PATH",
+            [
+                "PARITY_DEBUG_AI_DECISION_PATH_FRAME",
+                "PARITY_DEBUG_AI_DECISION_PATH_OWNER",
+            ],
+        )
+    })
 }
 
 /// Master switch for the battle-planning / phalanx / shield-timer
@@ -49,8 +82,10 @@ pub(crate) fn decision_path_debug_enabled() -> bool {
 /// divergence in the shield-bearer and archer families reduces to. Cached in
 /// a `OnceLock` because the call sites sit on the per-stimulus AI path.
 pub(crate) fn battle_decision_debug_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BATTLE_DECISION").is_some())
+    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<0>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| crate::ai::parity_gate::switch_gate("PARITY_DEBUG_BATTLE_DECISION"))
+        .enabled()
 }
 
 /// Exact frame/owner gate for the AI decision/path diagnostic. Enabling the
@@ -61,21 +96,7 @@ pub(crate) fn decision_path_debug_matches(frame: u32, owner: HumanHandle) -> boo
 }
 
 pub(crate) fn decision_path_debug_matches_raw(frame: u32, owner: u32) -> bool {
-    static FILTER: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
-    let &(expected_frame, expected_owner) = FILTER.get_or_init(|| {
-        let parse_required = |name: &str| {
-            let value = std::env::var(name)
-                .unwrap_or_else(|_| panic!("{name} is required for AI_DECISION_PATH diagnostic"));
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for AI_DECISION_PATH diagnostic: {error}")
-            })
-        };
-        (
-            parse_required("PARITY_DEBUG_AI_DECISION_PATH_FRAME"),
-            parse_required("PARITY_DEBUG_AI_DECISION_PATH_OWNER"),
-        )
-    });
-    frame == expected_frame && owner == expected_owner
+    decision_path_debug_gate().matches_required([Some(frame), Some(owner)])
 }
 
 /// Opt-in, process-local tracing for the Save018 Them-list lifecycle cohort.
@@ -101,22 +122,28 @@ pub(super) fn them_lifecycle_debug_matches(ctx: &AiContext) -> bool {
 /// Keep this separate from [`primary_swap_debug_matches`] so every call site
 /// can return before reading AI/entity state when diagnostics are disabled.
 pub(crate) fn primary_swap_debug_enabled() -> bool {
-    std::env::var_os("PARITY_DEBUG_PRIMARY_SWAP").is_some()
+    primary_swap_debug_gate().enabled()
+}
+
+fn primary_swap_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<2>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        crate::ai::parity_gate::required_parity_gate(
+            "PARITY_DEBUG_PRIMARY_SWAP",
+            [
+                "PARITY_DEBUG_PRIMARY_SWAP_FRAME",
+                "PARITY_DEBUG_PRIMARY_SWAP_OWNER",
+            ],
+        )
+    })
 }
 
 /// Apply the required exact frame/owner gate for primary-target diagnostics.
 /// Invalid or incomplete enabled configurations fail loudly rather than
 /// accidentally producing a broad trace.
 pub(crate) fn primary_swap_debug_matches(frame: u32, owner: HumanHandle) -> bool {
-    let parse_required = |name: &str| {
-        let value = std::env::var(name)
-            .unwrap_or_else(|_| panic!("{name} is required for PRIMARY_SWAP diagnostic"));
-        value.parse::<u32>().unwrap_or_else(|error| {
-            panic!("invalid {name}={value:?} for PRIMARY_SWAP diagnostic: {error}")
-        })
-    };
-    frame == parse_required("PARITY_DEBUG_PRIMARY_SWAP_FRAME")
-        && owner == parse_required("PARITY_DEBUG_PRIMARY_SWAP_OWNER")
+    primary_swap_debug_gate().matches_required([Some(frame), Some(owner)])
 }
 use crate::position_interface::ASPECT_RATIO;
 use util::soldier_detects_position_180;
@@ -127,7 +154,19 @@ use util::soldier_detects_position_180;
 
 /// Enemy/soldier AI state. Extends [`AiController`] with villain-specific
 /// fields.
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+///
+/// Serde persists every field; `#[serde(default)]` fields may be absent
+/// from older saves. See [`crate::ai::persisted`].
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct EnemyAi {
     /// Base AI controller (contains all common state).
     pub base: AiController,
@@ -146,6 +185,7 @@ pub struct EnemyAi {
     /// strike proposer. The original game only proposes a good sword strike
     /// when that event-driven reconsideration reaches its decision tail;
     /// merely entering the swordfight substate must not authorize a draw.
+    #[serde(default)]
     pub pending_sword_strike_consideration: bool,
 
     /// AI decisions reached the combat-insult step after swordfight reconsideration,
@@ -155,9 +195,11 @@ pub struct EnemyAi {
     /// rejected proposal leaves `...SWORDFIGHT` and says it. The Rust port
     /// settles this latch immediately after `Think`, at the same owner
     /// boundary as `pending_sword_strike_consideration`.
+    #[serde(default)]
     pub pending_combat_insult_after_strike_consideration: bool,
 
     // -- Private fields --
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub missed_pc: Option<AiEntityHandle>,
     pub pc_missed: bool,
     pub pc_gone_away_in_this_direction: u16,
@@ -171,9 +213,11 @@ pub struct EnemyAi {
     /// distraction and therefore uses a running approach. This is explicit
     /// serialized AI memory: save/load and rollback must not infer it from a
     /// transient sound side effect.
+    #[serde(default)]
     pub investigating_distraction: bool,
     /// Cursor into the directions of the currently examined seek point.
     pub last_seek_direction_index: u8,
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub beggar_to_examine: Option<AiEntityHandle>,
     /// Whether the current `beggar_to_examine` is a real NPC beggar or a
     /// PC in disguise. Set by the engine when populating `beggars_to_control`.
@@ -225,11 +269,12 @@ pub struct EnemyAi {
     /// Original-game initialization leaves this field indeterminate and still
     /// serializes all four bytes. It only becomes semantically live after
     /// PC-sighting processing assigns it together with
-    /// `previous_substate`.
-    pub previous_state: i32,
+    /// `previous_substate`. Stored as the raw word (wire-identical to `i32`);
+    /// read it with [`StoredEnumWord::get`].
+    pub previous_state: crate::ai::StoredEnumWord<AiState>,
     /// Raw serialized storage for the original game's previous substate; see
     /// [`Self::previous_state`].
-    pub previous_substate: i32,
+    pub previous_substate: crate::ai::StoredEnumWord<Substate>,
 
     pub reported_to_officer: bool,
 
@@ -243,7 +288,9 @@ pub struct EnemyAi {
     pub money_fight_victims: Vec<NpcHandle>,
 
     // Archer / shield bearer (serialized by semantic entity reference)
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub archer_behind_me: Option<AiEntityHandle>,
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub shield_bearer_before_me: Option<AiEntityHandle>,
 
     pub shield_bearer_direction: u16,
@@ -266,12 +313,15 @@ pub struct EnemyAi {
     /// list and retries the same list index before deciding whether to clear
     /// `SEEK_LOCATION_FIRST`; keeping this as a continuation queue preserves
     /// that source order.
+    #[serde(default)]
     pub pending_group_instruction_candidates: Vec<(HumanHandle, Position)>,
     /// Flags for the next group instruction. Stored as bits so old serialized
     /// AI snapshots default cleanly and unknown bits cannot be invented.
+    #[serde(default)]
     pub pending_group_instruction_seek_flags: u16,
     /// Whether the first accepted member consumes `SEEK_LOCATION_FIRST`.
     /// Charly-path distribution keeps the flag for every member instead.
+    #[serde(default)]
     pub pending_group_instruction_clear_location_after_accept: bool,
 
     // Archery
@@ -347,6 +397,7 @@ pub struct EnemyAi {
     /// Cached eligibility for the optional zero-beer reliability rule. This
     /// is true only for a non-VIP soldier while the authoritative setting is
     /// enabled, so live menu commands affect spawned AI on the same frame.
+    #[serde(default)]
     pub ale_reliable_distraction: bool,
     /// Cached money count — used by `Q_SHALL_I_TAKE_MONEY`
     /// and `Q_SHALL_I_FIGHT_FOR_MONEY`.
@@ -384,7 +435,9 @@ pub struct EnemyAi {
     pub next_sword_strike_frame: u32,
 
     pub company_number: u16,
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub left_combat_neighbour: Option<AiEntityHandle>,
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub right_combat_neighbour: Option<AiEntityHandle>,
 
     pub attentive: bool,
@@ -404,163 +457,35 @@ pub struct EnemyAi {
     pub is_archer_unit: bool,
 }
 
-impl Default for EnemyAi {
-    fn default() -> Self {
-        Self {
-            base: AiController::default(),
-            pending_special_strike: false,
-            missed_pc: None,
-            pc_missed: false,
-            pc_gone_away_in_this_direction: 0,
-            frame_when_missed_charly: 0,
-            heard_nets: Vec::new(),
-            detected_something_there: Position::default(),
-            investigating_distraction: false,
-            last_seek_direction_index: 0,
-            beggar_to_examine: None,
-            beggar_is_npc: false,
-            current_task_priority: task_priority::NONE,
-            minimal_task_priority: task_priority::NONE,
-            new_task_priority: task_priority::NONE,
-            number_of_different_checkpoints: 0,
-            thirsty: true,
-            position_change_locked_for_test: false,
-            other_bodies_to_examine: Vec::new(),
-            beggars_to_control: Vec::new(),
-            positions_of_beggars_to_control: Vec::new(),
-            seen_dead_body: false,
-            seeking_charly: false,
-            my_seek_points: Vec::new(),
-            personal_seek_point_1: None,
-            personal_seek_point_2: None,
-            seek_center: Position::default(),
-            actual_seek_point: None,
-            seek_point_view_directions: Vec::new(),
-            seek_flags: SeekFlags::empty(),
-            old_odds: 0,
-            gather_position: Position::default(),
-            gather_direction: 0,
-            gather_position_instructed: false,
-            search_charly_way: Vec::new(),
-            officers_position: Position::default(),
-            previous_state: AiState::Default as i32,
-            previous_substate: Substate::DefaultOnPost as i32,
-            reported_to_officer: false,
-            missed_soldier_timer: 0,
-            old_money: 0,
-            other_seen_money: Vec::new(),
-            other_seen_ale: Vec::new(),
-            money_fight_enemies: Vec::new(),
-            money_fight_victims: Vec::new(),
-            archer_behind_me: None,
-            shield_bearer_before_me: None,
-            shield_bearer_direction: 0,
-            phalanx_aborted: false,
-            changed_to_alert_path: false,
-            already_seen_bodies: Vec::new(),
-            alerted_us: Vec::new(),
-            pending_alert_soldier_candidates: Vec::new(),
-            pending_group_instruction_candidates: Vec::new(),
-            pending_group_instruction_seek_flags: 0,
-            pending_group_instruction_clear_location_after_accept: false,
-            my_shooting_point: None,
-            my_archery_sector: None,
-            my_archery_sector_index: 0,
-            my_archery_point_index: crate::sector::ArcheryPointIdx::default(),
-            my_archery_point_increment: 0,
-            enemy_seen_below: false,
-            enemy_had_this_elevation: 0,
-            known_enemy_strike_1: None,
-            known_enemy_strike_2: None,
-            known_enemy_strike_3: None,
-            return_to_patrol_point: Position::default(),
-            fleeing_seen_enemy_counter: 0,
-            last_stimulus_dispatched_to_patrol: None,
-            character_id: 0,
-            old_life_points: 0,
-            initial_life_points: 0,
-            list_them: Vec::new(),
-            ambush_point_array_reset: false,
-            ambush_point_status: Vec::new(),
-            forced_next_battle_decision: Decision::None,
-            reset_battle_decision: false,
-            soldier_profile_iq: 50,
-            soldier_profile_courage: 50,
-            soldier_profile_shooting: 50,
-            soldier_profile_vip: false,
-            sword_range: 40, // default before profile lookup
-            hth_weapon_id: 0,
-            sword_is_charge_weapon: false,
-            next_sword_strike_frame: 0,
-            pending_sword_strike_consideration: false,
-            pending_combat_insult_after_strike_consideration: false,
-            soldier_profile_bee_time: 0,
-            soldier_profile_pride: 0,
-            soldier_profile_hearing_factor: 1.0,
-            soldier_profile_rank: ProfileRank::Soldier,
-            soldier_profile_initiative: 50,
-            soldier_profile_beer: 0,
-            ale_reliable_distraction: false,
-            soldier_profile_money: 0,
-            soldier_profile_apple: 0,
-            soldier_profile_whistle: 0,
-            soldier_profile_duty: false,
-            soldier_profile_endurance: 0,
-            is_vip: false,
-            company_number: 0,
-            left_combat_neighbour: None,
-            right_combat_neighbour: None,
-            attentive: false,
-            will_be_attentive: false,
-            forced_attentive: false,
-            guarded_pc: None,
-            my_line_jump: None,
-            tower_guard: false,
-            combat_trainer: false,
-            is_archer_unit: false,
-        }
+impl AiRole for EnemyAi {
+    fn base_mut(&mut self) -> &mut AiController {
+        &mut self.base
+    }
+
+    #[track_caller]
+    fn role_set_state(&mut self, state: AiState, substate: Substate) {
+        EnemyAi::set_state(self, state, substate);
+    }
+
+    /// Soldier alert setter: threads the forced-attentive view override.
+    fn role_set_alert_status(&mut self, level: AlertLevel) {
+        EnemyAi::set_alert_status(self, level);
+    }
+
+    /// Hold the patrol-coordinate movement behind the leave-attentive
+    /// element authored by the default-state transition.
+    fn after_patrol_move(&mut self, first_new_order: usize) {
+        self.hold_new_orders_behind_attentive(first_new_order);
     }
 }
 
 impl EnemyAi {
+    /// Unwrap a field the current substate requires to be set, panicking with
+    /// the owner, the field (`what`, e.g. "an antagonist") and the substate
+    /// `context` otherwise.
     #[track_caller]
-    fn required_primary_target(&self, context: &'static str) -> AiEntityHandle {
-        self.base.primary_target.unwrap_or_else(|| {
-            panic!(
-                "enemy AI {} requires a primary target while {context}",
-                self.base.me
-            )
-        })
-    }
-
-    #[track_caller]
-    fn required_antagonist(&self, context: &'static str) -> AiEntityHandle {
-        self.base.antagonist.unwrap_or_else(|| {
-            panic!(
-                "enemy AI {} requires an antagonist while {context}",
-                self.base.me
-            )
-        })
-    }
-
-    #[track_caller]
-    fn required_beggar_to_examine(&self, context: &'static str) -> AiEntityHandle {
-        self.beggar_to_examine.unwrap_or_else(|| {
-            panic!(
-                "enemy AI {} requires a beggar-to-examine while {context}",
-                self.base.me
-            )
-        })
-    }
-
-    #[track_caller]
-    fn required_detected_body(&self, context: &'static str) -> AiEntityHandle {
-        self.base.detected_body.unwrap_or_else(|| {
-            panic!(
-                "enemy AI {} requires a detected body while {context}",
-                self.base.me
-            )
-        })
+    fn required<T>(&self, value: Option<T>, what: &'static str, context: &'static str) -> T {
+        value.unwrap_or_else(|| panic!("enemy AI {} requires {what} while {context}", self.base.me))
     }
 
     /// Clear both combat-neighbour links and synchronously request the two
@@ -599,6 +524,17 @@ impl EnemyAi {
         Self {
             base,
             reset_battle_decision: true,
+            // Original base-class constructor values that differ from the
+            // zero/empty `Default` of their field types.
+            thirsty: true,
+            previous_state: crate::ai::StoredEnumWord::new(AiState::Default),
+            previous_substate: crate::ai::StoredEnumWord::new(Substate::DefaultOnPost),
+            soldier_profile_iq: 50,
+            soldier_profile_courage: 50,
+            soldier_profile_shooting: 50,
+            sword_range: 40, // default before profile lookup
+            soldier_profile_hearing_factor: 1.0,
+            soldier_profile_initiative: 50,
             ..Default::default()
         }
     }
@@ -715,9 +651,12 @@ impl EnemyAi {
         // standing still within our sword reach we attack regardless
         // of pride.
         let target_swordfighting = self
-            .find_fighter(new_target.get(), tick)
-            .map(|f| f.is_swordfighting)
-            .unwrap_or(false);
+            .find_fighter_logged(
+                new_target.get(),
+                tick,
+                "primary target sword-range early-out",
+            )
+            .is_some_and(|f| f.is_swordfighting);
         if !target_swordfighting && let Some(target) = self.find_fighter(new_target.get(), tick) {
             // The original game uses maximum-norm distance:
             // subtract raw element world positions, stretch Y for the
@@ -823,11 +762,7 @@ impl EnemyAi {
     ///     currently silent (the `current_remark == TheSoundOfSilence`
     ///     guard).  The silence guard is also enforced by `say_impl`
     ///     itself, but we keep the explicit check for clarity.
-    pub fn make_special_action_remark(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        is_shield_bearer: bool,
-    ) {
+    pub fn make_special_action_remark(&mut self, sim: &SimulationContext, is_shield_bearer: bool) {
         if is_shield_bearer {
             self.base
                 .say_with_flags(Remark::SpecialAction, crate::ai::SpeechFlags::ALWAYS);
@@ -873,7 +808,7 @@ impl EnemyAi {
     }
 
     /// Reinitialize the Them list with all currently visible enemies.
-    fn reinitialize_them_list(&mut self, ctx: &AiContext, _tick: &AiPerTickData) {
+    fn reinitialize_them_list(&mut self, ctx: &AiContext) {
         // The original game rebuilds the enemy list. The
         // original deletes the old list and rebuilds it only from enemies
         // whose current enemy-seen flag is set and who are not dead. It
@@ -885,35 +820,38 @@ impl EnemyAi {
         // `battle_decisions`.
         let debug = them_lifecycle_debug_matches(ctx);
         if debug {
-            crate::ai_enemy::parity_trace::them_reinitialize_before(
-                &(ctx.frame),
-                &(ctx.original_creation_order),
-                &(self.base.me),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.list_them),
-                &(ctx.self_seen_enemy_handles),
-            );
+            crate::ai_enemy::parity_trace::ThemReinitializeBefore {
+                frame: &(ctx.frame),
+                co: &(ctx.original_creation_order),
+                me: &(self.base.me),
+                state: &(self.base.current_state),
+                substate: &(self.base.current_substate),
+                list: &(self.list_them),
+                seen: &(ctx.self_seen_enemy_handles),
+            }
+            .emit();
             for &handle in &ctx.self_seen_enemy_handles {
                 let Some(target) = ctx.entity_view(handle) else {
-                    crate::ai_enemy::parity_trace::them_reinitialize_input(
-                        &(ctx.frame),
-                        &(ctx.original_creation_order),
-                        &(self.base.me),
-                        &(handle),
-                    );
+                    crate::ai_enemy::parity_trace::ThemReinitializeInputMissing {
+                        frame: &(ctx.frame),
+                        co: &(ctx.original_creation_order),
+                        me: &(self.base.me),
+                        target: &(handle),
+                    }
+                    .emit();
                     continue;
                 };
-                crate::ai_enemy::parity_trace::them_reinitialize_input_2(
-                    &(ctx.frame),
-                    &(ctx.original_creation_order),
-                    &(self.base.me),
-                    &(handle),
-                    &(target.is_dead),
-                    &(target.is_unconscious),
-                    &(target.is_carried),
-                    &(target.is_able_to_fight),
-                );
+                crate::ai_enemy::parity_trace::ThemReinitializeInput {
+                    frame: &(ctx.frame),
+                    co: &(ctx.original_creation_order),
+                    me: &(self.base.me),
+                    target: &(handle),
+                    dead: &(target.is_dead),
+                    unconscious: &(target.is_unconscious),
+                    carried: &(target.is_carried),
+                    able: &(target.is_able_to_fight),
+                }
+                .emit();
             }
         }
         self.list_them.clear();
@@ -943,12 +881,13 @@ impl EnemyAi {
             "reinitialize_them_list"
         );
         if debug {
-            crate::ai_enemy::parity_trace::them_reinitialize_after(
-                &(ctx.frame),
-                &(ctx.original_creation_order),
-                &(self.base.me),
-                &(self.list_them),
-            );
+            crate::ai_enemy::parity_trace::ThemReinitializeAfter {
+                frame: &(ctx.frame),
+                co: &(ctx.original_creation_order),
+                me: &(self.base.me),
+                list: &(self.list_them),
+            }
+            .emit();
         }
     }
 
@@ -967,13 +906,11 @@ impl EnemyAi {
     /// (caller should NOT process the stimulus itself).
     pub(crate) fn dispatch_stimulus_to_whole_patrol(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        let ThinkEnv { ctx, .. } = env;
         tracing::trace!(
             target: "patrol_relay",
             frame = ctx.frame,
@@ -1029,9 +966,8 @@ impl EnemyAi {
         if let Some(chief_id) = self.base.patrol_chief {
             let chief = chief_id.index();
             let chief_is_soldier = ctx
-                .entity_view(chief)
-                .map(|v| v.is_soldier())
-                .unwrap_or(false);
+                .entity_view_logged(chief, "patrol chief")
+                .is_some_and(|v| v.is_soldier());
             // Short-circuit: a non-soldier chief never reaches the LOS
             // query, so no visibility-cache traffic is generated for it.
             if chief_is_soldier && self.is_detecting_360_degrees(chief as HumanHandle, ctx) {
@@ -1099,7 +1035,7 @@ impl EnemyAi {
                  dispatch); scripted actor may see divergent behavior"
             );
         }
-        self.think(sim, &forwarded_stimulus, global, ctx, tick, grid);
+        self.think(env, &forwarded_stimulus, global);
 
         // Forward to patrol members that are soldiers and within 360°
         // detection range. Queue the walk as one action rather than resolving
@@ -1448,13 +1384,11 @@ impl EnemyAi {
     /// battle overview.
     fn out_of_view_seek_handler(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         enemy: HumanHandle,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
         tracing::trace!(
             npc = self.base.me,
             frame = ctx.frame,
@@ -1493,12 +1427,12 @@ impl EnemyAi {
 
         self.missed_pc = Some(AiEntityHandle::new(enemy));
         self.pc_missed = true;
-        self.reinitialize_them_list(ctx, tick);
+        self.reinitialize_them_list(ctx);
 
         if self.list_them.is_empty() {
             let defer_overview_until_after_quit = ctx.is_swordfighting;
             if defer_overview_until_after_quit {
-                self.end_swordfight(ctx, tick);
+                self.end_swordfight(ctx);
             }
             self.base.outbox.actor.set_unfocus();
 
@@ -1514,14 +1448,12 @@ impl EnemyAi {
             if enemy_is_pc && self.answer_question(Question::ShallIFollowLostEnemy, ctx) {
                 self.base.say(Remark::HuntsEnemy);
                 self.seek_area(
-                    sim,
+                    env,
                     self.base.seek_position,
                     parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                     SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
                     self.pc_gone_away_in_this_direction,
                     global,
-                    ctx,
-                    tick,
                 );
             } else {
                 // The lost-enemy branch snaps toward the missed human's
@@ -1548,7 +1480,7 @@ impl EnemyAi {
                     // into battle-overview evaluation.
                     self.base.outbox.actor.lost_enemy_overview_after_quit = true;
                 } else {
-                    self.get_battle_overview(0, ctx, tick);
+                    self.get_battle_overview(0, env);
                 }
             }
         }
@@ -1612,13 +1544,11 @@ impl EnemyAi {
 
     pub(crate) fn resume_after_look_there(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         continuation: LookThereContinuation,
         global: &mut AiGlobalState,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
     ) {
+        let ThinkEnv { ctx, tick, .. } = env;
         tracing::trace!(
             target: "look_there",
             me = self.base.me,
@@ -1629,7 +1559,7 @@ impl EnemyAi {
         );
         match continuation {
             LookThereContinuation::EventView { enemy, enemy_pos } => {
-                self.event_view_after_look_there(sim, enemy, enemy_pos, global, ctx, tick, grid);
+                self.event_view_after_look_there(env, enemy, enemy_pos, global);
             }
             LookThereContinuation::EventSeesBody {
                 body,
@@ -1662,7 +1592,7 @@ impl EnemyAi {
     /// handler.
     fn default_bored_standard_procedure(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         ctx: &AiContext,
     ) -> bool {
         // Also gate on `self_animation != WaitingUprightBoredRandom`:
@@ -1739,18 +1669,19 @@ impl EnemyAi {
         let debug_decision_path = decision_path_debug_enabled()
             && decision_path_debug_matches(self.base.cached_frame, self.base.me);
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_set_state(
-                &(self.base.cached_frame),
-                &(self.base.me),
-                &(std::panic::Location::caller()),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.base.couldnt_reachpoint),
-                &(self.base.already_on_point),
-                &(self.base.outbox.reentrant.owner_work),
-                &(state),
-                &(substate),
-            );
+            crate::ai_enemy::parity_trace::AidecisionSetState {
+                frame: &(self.base.cached_frame),
+                owner: &(self.base.me),
+                caller: &(std::panic::Location::caller()),
+                from_state: &(self.base.current_state),
+                from_substate: &(self.base.current_substate),
+                couldnt: &(self.base.couldnt_reachpoint),
+                already: &(self.base.already_on_point),
+                owner_work_before: &(self.base.outbox.reentrant.owner_work),
+                state: &(state),
+                substate: &(substate),
+            }
+            .emit();
         }
         debug_assert_eq!(
             substate.ai_state_family(),
@@ -2055,15 +1986,16 @@ impl EnemyAi {
         self.set_alert_status(alert);
 
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_set_state_done(
-                &(self.base.cached_frame),
-                &(self.base.me),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.base.couldnt_reachpoint),
-                &(self.base.already_on_point),
-                &(self.base.outbox.reentrant.owner_work),
-            );
+            crate::ai_enemy::parity_trace::AidecisionSetStateDone {
+                frame: &(self.base.cached_frame),
+                owner: &(self.base.me),
+                state: &(self.base.current_state),
+                substate: &(self.base.current_substate),
+                couldnt: &(self.base.couldnt_reachpoint),
+                already: &(self.base.already_on_point),
+                owner_work_after: &(self.base.outbox.reentrant.owner_work),
+            }
+            .emit();
         }
 
         self.finish_set_state(substate)
@@ -2204,103 +2136,13 @@ impl EnemyAi {
     // move without naming the new substate.
     // -----------------------------------------------------------------------
 
-    /// Transition to `(state, substate)` and queue a movement to `destination`.
-    /// See the section comment above for why state+substate are required.
-    #[track_caller]
-    pub fn go_to(
-        &mut self,
-        state: AiState,
-        substate: Substate,
-        destination: Position,
-        flags: crate::ai::GotoFlags,
-        ctx: &AiContext,
-    ) {
-        self.set_state(state, substate);
-        self.base.go_to(destination, flags, ctx);
-    }
-
-    /// Like [`EnemyAi::go_to`] but with a speed modifier.
-    #[track_caller]
-    pub fn go_to_speed(
-        &mut self,
-        state: AiState,
-        substate: Substate,
-        destination: Position,
-        flags: crate::ai::GotoFlags,
-        speed: f32,
-        ctx: &AiContext,
-    ) {
-        self.set_state(state, substate);
-        self.base.go_to_speed(destination, flags, speed, ctx);
-    }
-
-    /// Transition to `(state, substate)` and queue a "go near" movement
-    /// (stops within `distance` of the destination).
-    #[track_caller]
-    pub fn go_near(
-        &mut self,
-        state: AiState,
-        substate: Substate,
-        destination: Position,
-        distance: i32,
-        flags: crate::ai::GotoFlags,
-        ctx: &AiContext,
-    ) {
-        self.set_state(state, substate);
-        self.base.go_near(destination, distance, flags, ctx);
-    }
-
-    /// Apply common patrol geometry through enemy state changes.
-    /// Original's default-state transition clears alert and authors the
-    /// leave-attentive element before the following movement.
-    fn coordinate_patrol(
-        &mut self,
-        info: &StimulusInfo,
-        ctx: &AiContext,
-        patrol_chief_position: Position,
-    ) {
-        let Some(action) = self
-            .base
-            .prepare_patrol_coordinate(info, ctx, patrol_chief_position)
-        else {
-            return;
-        };
-
-        match action {
-            PatrolCoordinateAction::FaceChief { target } => {
-                self.base.face_position_with_ctx(target, ctx);
-            }
-            PatrolCoordinateAction::Walk {
-                target,
-                speed_factor,
-            } => {
-                let first_new_order = self.base.outbox.actor.orders.len();
-                let flags = GotoFlags::NO_HALT
-                    | GotoFlags::DONT_STOP
-                    | self.base.default_path_walking_flags;
-                self.go_to_speed(
-                    AiState::Default,
-                    Substate::DefaultPatrolEnroute,
-                    target,
-                    flags,
-                    speed_factor,
-                    ctx,
-                );
-                self.hold_new_orders_behind_attentive(first_new_order);
-            }
-            PatrolCoordinateAction::Run { target } => {
-                let first_new_order = self.base.outbox.actor.orders.len();
-                self.go_to(
-                    AiState::Default,
-                    Substate::DefaultPatrolEnrouteRunning,
-                    target,
-                    GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
-                    ctx,
-                );
-                self.hold_new_orders_behind_attentive(first_new_order);
-            }
-        }
-    }
+    // The wrappers themselves (`go_to`, `go_to_speed`, `go_near`) and
+    // `coordinate_patrol` are shared with the friendly role: see
+    // [`AiRole`] (`crate::ai::role`). The enemy-specific
+    // `hold_new_orders_behind_attentive` bracket runs through
+    // `AiRole::after_patrol_move`: Original's default-state transition
+    // clears alert and authors the leave-attentive element before the
+    // following movement.
 
     /// Entering the default state disables attentive mode before the
     /// following movement request. Only hold the movement when that call actually
@@ -2324,15 +2166,13 @@ impl EnemyAi {
 
     /// Main entry point for stimulus processing. Routes the stimulus
     /// to the appropriate Think sub-method based on its type.
-    pub fn think(
+    pub(crate) fn think(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        env: ThinkEnv<'_>,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        let ThinkEnv { ctx, .. } = env;
         // Cache engine state for say() / forbidden remarks
         self.base.cached_frame = ctx.frame;
         self.base.cached_in_building = ctx.in_building;
@@ -2340,22 +2180,23 @@ impl EnemyAi {
         let debug_decision_path =
             decision_path_debug_enabled() && decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
-            crate::ai_enemy::parity_trace::aidecision_think_enter(
-                &(ctx.frame),
-                &(self.base.me),
-                &(ctx.original_creation_order),
-                &(self.base.think_recursion_depth),
-                &(self.base.open_end_think_frames),
-                &(stimulus.stimulus_type),
-                &(self.base.current_state),
-                &(self.base.current_substate),
-                &(self.base.primary_target),
-                &(ctx.self_is_rider),
-                &(self.base.couldnt_reachpoint),
-                &(self.base.already_on_point),
-                &(self.list_them),
-                &(self.base.outbox.reentrant.owner_work),
-            );
+            crate::ai_enemy::parity_trace::AidecisionThinkEnter {
+                frame: &(ctx.frame),
+                owner: &(self.base.me),
+                co: &(ctx.original_creation_order),
+                depth: &(self.base.think_recursion_depth),
+                open: &(self.base.open_end_think_frames),
+                stimulus: &(stimulus.stimulus_type),
+                state: &(self.base.current_state),
+                substate: &(self.base.current_substate),
+                primary: &(self.base.primary_target),
+                rider: &(ctx.self_is_rider),
+                couldnt: &(self.base.couldnt_reachpoint),
+                already: &(self.base.already_on_point),
+                list_them: &(self.list_them),
+                owner_work: &(self.base.outbox.reentrant.owner_work),
+            }
+            .emit();
         }
 
         let stimulus_type = stimulus.stimulus_type;
@@ -2379,7 +2220,7 @@ impl EnemyAi {
             if stimulus_type == StimulusType::EventAfterScriptGoOn {
                 self.base.outbox.reentrant.engine_drains_after_script_go_on = false;
             }
-            self.end_think(sim, global, ctx, tick, grid);
+            self.end_think(env);
             self.base
                 .debug_macro_lifecycle(ctx, "think_rejected_return", stimulus_type);
             return true;
@@ -2413,9 +2254,7 @@ impl EnemyAi {
             | StimulusType::CallYourTalk0
             | StimulusType::CallYourTalk1
             | StimulusType::CallYourTalk2
-            | StimulusType::CallYourTalk3 => {
-                self.think_expected_event(sim, stimulus, global, ctx, tick, grid)
-            }
+            | StimulusType::CallYourTalk3 => self.think_expected_event(env, stimulus, global),
 
             // Unexpected events — may interrupt current behavior
             StimulusType::EventOutOfView
@@ -2446,9 +2285,7 @@ impl EnemyAi {
             | StimulusType::EventAfterCombatInjury
             | StimulusType::EventGoodStrike
             | StimulusType::EventLethalStrike
-            | StimulusType::EventEnemyNear => {
-                self.think_unexpected_event(sim, stimulus, global, ctx, tick, grid)
-            }
+            | StimulusType::EventEnemyNear => self.think_unexpected_event(env, stimulus, global),
 
             // Alerting events — high-priority perception
             StimulusType::EventView
@@ -2469,12 +2306,10 @@ impl EnemyAi {
             | StimulusType::EventDoorCombat
             | StimulusType::EventSeesShadow
             | StimulusType::EventArrowLaunched
-            | StimulusType::EventStop => {
-                self.think_alerting_event(sim, stimulus, global, ctx, tick, grid)
-            }
+            | StimulusType::EventStop => self.think_alerting_event(env, stimulus, global),
 
             StimulusType::EventReturnToDuty => {
-                self.return_to_duty_default(sim, ctx, tick);
+                self.return_to_duty_default(env);
                 // This arm never assigns the return value, so it
                 // returns `false` (the default).  Callers test the
                 // bool to decide whether to re-dispatch / continue
@@ -2494,7 +2329,7 @@ impl EnemyAi {
         if !(stimulus_type == StimulusType::EventAfterScriptGoOn
             && self.base.outbox.reentrant.engine_drains_after_script_go_on)
         {
-            self.end_think(sim, global, ctx, tick, grid);
+            self.end_think(env);
         }
         self.base
             .debug_macro_lifecycle(ctx, "think_return", stimulus_type);
@@ -2515,29 +2350,9 @@ impl EnemyAi {
         self.start_think_post_filter(stimulus, ctx, static_ai_frozen)
     }
 
-    /// Decision-tick admission work which precedes the script `FilterAIEvent` call.
-    /// Kept separate so script-native SetAIState can yield through the VM at
-    /// the exact callback boundary without aliasing the typed brain.
-    pub(crate) fn start_think_pre_filter(&mut self, stimulus: &Stimulus) {
-        let stimulus_type = stimulus.stimulus_type;
-
-        // Reset per-think flags
-        self.base.couldnt_reachpoint = false;
-        self.base.already_on_point = false;
-        self.base.already_turned = false;
-        self.base.old_state = self.base.current_state as i32;
-        self.base.think_recursion_depth += 1;
-
-        // Track stimulus actor
-        if let StimulusInfo::Human(h) = stimulus.info {
-            self.base.last_stimulus_actor = Some(h);
-        }
-
-        // LOSE_CONSCIOUSNESS always goes to green alert
-        if stimulus_type == StimulusType::EventLoseConsciousness {
-            self.set_alert_status(AlertLevel::Green);
-        }
-    }
+    // `start_think_pre_filter` is shared with the friendly role via
+    // [`AiRole`]; the enemy hook routes its LOSE_CONSCIOUSNESS green alert
+    // through `EnemyAi::set_alert_status` (forced-attentive view override).
 
     /// Decision-tick admission work after `FilterAIEvent`. The return value is the
     /// ordinary Think admission decision; SetAIState intentionally observes
@@ -2633,14 +2448,7 @@ impl EnemyAi {
     // Decision-tick completion — post-tick event dispatch
     // -----------------------------------------------------------------------
 
-    pub(crate) fn end_think(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        _global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    pub(crate) fn end_think(&mut self, env: ThinkEnv<'_>) {
         // The original game's end-think phase dispatches this event here and runs the
         // script FilterAIEvent gate before dispatch. Queue these as
         // same-frame self-stimuli so the engine-side drain can apply
@@ -2662,7 +2470,7 @@ impl EnemyAi {
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty_default(sim, ctx, tick);
+                self.return_to_duty_default(env);
             }
         }
 
@@ -2679,7 +2487,7 @@ impl EnemyAi {
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty_default(sim, ctx, tick);
+                self.return_to_duty_default(env);
             }
         }
 
@@ -2696,7 +2504,7 @@ impl EnemyAi {
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty_default(sim, ctx, tick);
+                self.return_to_duty_default(env);
             }
         }
 
@@ -2791,13 +2599,8 @@ impl EnemyAi {
 
     /// Ordinary return with no special duty-transition flags.
     #[track_caller]
-    fn return_to_duty_default(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
-        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+    fn return_to_duty_default(&mut self, env: ThinkEnv<'_>) {
+        self.return_to_duty(env, DutyFlags::empty());
     }
 
     /// Change virtual enemy state before arming the incoming state's timer.
@@ -2813,13 +2616,8 @@ impl EnemyAi {
         self.base.launch_timer(frames, ctx.frame);
     }
 
-    pub fn return_to_duty(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        flags: DutyFlags,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
+    pub(crate) fn return_to_duty(&mut self, env: ThinkEnv<'_>, flags: DutyFlags) {
+        let ThinkEnv { ctx, tick, .. } = env;
         self.investigating_distraction = false;
 
         // Removing all beggar detectables is synchronous in
@@ -2862,7 +2660,7 @@ impl EnemyAi {
         {
             self.seek_flags = SeekFlags::empty();
             if self.get_rank() == ProfileRank::Soldier
-                && self.alert_officer(sim, self.seek_center, 0, ctx, tick)
+                && self.alert_officer(env, self.seek_center, 0)
             {
                 return;
             }
@@ -3018,7 +2816,7 @@ impl EnemyAi {
     /// inline patrol initialization has returned.
     pub fn resume_return_to_duty_after_patrol_init(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        sim: &SimulationContext,
         flags: DutyFlags,
         ctx: &AiContext,
         high_recursion_failsafe: bool,
@@ -3145,18 +2943,14 @@ impl EnemyAi {
         // common code has already advanced the live state to
         // Default/GotoRoute.
         if outgoing_substate != incoming_substate {
-            self.base
-                .outbox
-                .reentrant
-                .owner_work
-                .push(AiOwnerWork::StateChange(AiStateChangeNotification {
-                    outgoing_state,
-                    outgoing_substate,
-                    incoming_state,
-                    incoming_substate,
-                    source: AiStateChangeSource::SelfActor,
-                    actor_effects_before_callback: Default::default(),
-                }));
+            // Outgoing/incoming were captured around the common
+            // return-to-duty tail; no actor prefix rides this callback.
+            self.base.queue_state_transition(
+                (outgoing_state, outgoing_substate),
+                (incoming_state, incoming_substate),
+                AiStateChangeSource::SelfActor,
+                None,
+            );
         }
     }
 
@@ -3470,12 +3264,8 @@ impl EnemyAi {
     // -----------------------------------------------------------------------
 
     /// Initialize patrol membership, authored AI state, and initial duty.
-    pub fn init_one_ai(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> crate::ai::InitStateSideEffects {
+    pub(crate) fn init_one_ai(&mut self, env: ThinkEnv<'_>) -> crate::ai::InitStateSideEffects {
+        let ThinkEnv { sim, ctx, .. } = env;
         // Initialize the "old odds" accumulator used by the weighted
         // decision RNG (old_odds = 50).
         self.old_odds = 50;
@@ -3502,7 +3292,7 @@ impl EnemyAi {
             // the default `Substate::DefaultOnPost`.
             self.base.substate_at_last_timer_launch = self.base.current_substate;
             self.set_state(AiState::Default, Substate::DefaultEnroute);
-            self.return_to_duty_default(sim, ctx, tick);
+            self.return_to_duty_default(env);
         }
 
         // Movement setup checks `think_method_recursion_depth > 0` and

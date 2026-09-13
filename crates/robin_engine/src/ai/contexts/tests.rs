@@ -1,5 +1,54 @@
 use super::*;
 
+impl AiContext {
+    /// Complete the minimal synthetic owner identity used by AI unit tests.
+    ///
+    /// Production contexts are assembled from loaded actors and never use
+    /// `Default`. Keeping `Camp::default()` as the invalid sentinel remains
+    /// important: explicit incomplete fixtures must still fail strict
+    /// diplomacy validation. Tests which need an ordinary enemy owner should
+    /// opt into this valid Lacklandist fixture instead.
+    pub(crate) fn test_fixture() -> Self {
+        Self {
+            camp: crate::element::Camp::Lacklandists,
+            ..Self::default()
+        }
+    }
+
+    /// Build a minimal loaded-world fixture containing one flat motion
+    /// sector. Tests which exercise world-point conversion must provide sector
+    /// geometry just as a loaded level does; an exact arena index into an
+    /// empty grid is intentionally rejected by the runtime.
+    pub(crate) fn test_fixture_with_motion_sector(sector_number: i16, layer: u16) -> Self {
+        let mut fast_grid = crate::fast_find_grid::FastFindGrid::new();
+        fast_grid.add_sector(
+            crate::fast_find_grid::GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+                layer,
+                sector_number: crate::sector::SectorNumber::new(sector_number),
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            },
+            layer,
+        );
+        Self {
+            fast_grid: std::sync::Arc::new(fast_grid),
+            ..Self::test_fixture()
+        }
+    }
+}
+
 #[test]
 fn view_radius_cache_zero_replaces_alternating_viewers() {
     let first = crate::element::EntityId::from(crate::entity_id::SoldierId(7));
@@ -106,6 +155,18 @@ fn seek_point(x: f32) -> SeekPoint {
         locked: false,
         id: 0,
     }
+}
+
+#[test]
+fn ai_global_state_default_starts_repulsive_ids_at_one_and_green() {
+    let global = AiGlobalState::default();
+    assert_eq!(global.next_repulsive_point_id, 1);
+    assert_eq!(global.overall_alert_status, AlertLevel::Green);
+    assert_eq!(global.overall_villain_alert_status, AlertLevel::Green);
+    assert_eq!(global.green_alert_soldiers, 0);
+    assert!(global.repulsive_points.is_empty());
+    assert!(global.all_soldier_handles.is_empty());
+    assert!(!global.primary_target_multiplicity_initialized);
 }
 
 #[test]

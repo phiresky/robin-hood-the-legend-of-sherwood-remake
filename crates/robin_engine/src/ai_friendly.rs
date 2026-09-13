@@ -38,6 +38,10 @@ pub enum AlertSoldierFailureContinuation {
 /// already report a committed gate-side point while the actor's sprite is
 /// still interpolating through a door, so the AI planning position is not a
 /// valid substitute here.
+///
+/// The caller keeps its own `square_distance <= sq_view_radius && LOS` gate
+/// instead of routing through `ai_enemy::detects_360`: that core rejects on
+/// `sq_distance > radius`, which differs for a NaN distance.
 fn alert_soldier_360_geometry(
     ctx: &AiContext,
     target: &crate::ai_entity_view::AiEntityView,
@@ -55,10 +59,8 @@ fn alert_soldier_360_geometry(
         target.direction as i16,
         target.is_rider,
     );
-    let dx = target_detection.x - viewer_eye.x;
-    let dy = (target_detection.y - viewer_eye.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-    let dz = target_detection.z - viewer_eye.z;
-    (viewer_eye, target_detection, dx * dx + dy * dy + dz * dz)
+    let square_distance = crate::ai_enemy::sq_distance_360(viewer_eye, target_detection);
+    (viewer_eye, target_detection, square_distance)
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +107,15 @@ impl FriendlyPerTickData {
 // ---------------------------------------------------------------------------
 
 /// Civilian AI state. Extends [`AiController`] with civilian-specific fields.
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct FriendlyAi {
     /// Base AI controller (contains all common state).
     pub base: AiController,
@@ -117,6 +127,8 @@ pub struct FriendlyAi {
     pub wants_to_talk: bool,
     /// Last NPC this civilian talked to. The original game initializes this reference to
     /// null and preserves that nullability in saved games.
+    // TODO: historically persisted untagged (bare handle), unlike the tagged
+    // `optional_ai_handle` fields; kept for save compatibility.
     pub last_talk_partner: Option<AiEntityHandle>,
     /// Script-controlled permission to leave after the current interaction.
     pub can_go_away: bool,
@@ -136,6 +148,22 @@ impl Default for FriendlyAi {
             last_talk_partner: None,
             can_go_away: true,
         }
+    }
+}
+
+impl AiRole for FriendlyAi {
+    fn base_mut(&mut self) -> &mut AiController {
+        &mut self.base
+    }
+
+    #[track_caller]
+    fn role_set_state(&mut self, state: AiState, substate: Substate) {
+        FriendlyAi::set_state(self, state, substate);
+    }
+
+    /// Civilians have no view override; use the base alert setter.
+    fn role_set_alert_status(&mut self, level: AlertLevel) {
+        self.base.set_alert_status(level);
     }
 }
 
@@ -212,96 +240,8 @@ impl FriendlyAi {
         self.base.current_substate = substate;
     }
 
-    // -- Movement helpers (Shape 1 — see `ai_enemy.rs` section comment) --
-
-    /// Transition to `(state, substate)` and queue a movement to `destination`.
-    pub fn go_to(
-        &mut self,
-        state: AiState,
-        substate: Substate,
-        destination: Position,
-        flags: crate::ai::GotoFlags,
-        ctx: &AiContext,
-    ) {
-        self.set_state(state, substate);
-        self.base.go_to(destination, flags, ctx);
-    }
-
-    /// Like [`FriendlyAi::go_to`] but with a speed modifier.
-    pub fn go_to_speed(
-        &mut self,
-        state: AiState,
-        substate: Substate,
-        destination: Position,
-        flags: crate::ai::GotoFlags,
-        speed: f32,
-        ctx: &AiContext,
-    ) {
-        self.set_state(state, substate);
-        self.base.go_to_speed(destination, flags, speed, ctx);
-    }
-
-    /// Transition to `(state, substate)` and queue a "go near" movement.
-    pub fn go_near(
-        &mut self,
-        state: AiState,
-        substate: Substate,
-        destination: Position,
-        distance: i32,
-        flags: crate::ai::GotoFlags,
-        ctx: &AiContext,
-    ) {
-        self.set_state(state, substate);
-        self.base.go_near(destination, distance, flags, ctx);
-    }
-
-    /// Apply common patrol geometry through friendly state changes.
-    /// The base routine owns stop-all and formation planning; the friendly
-    /// override owns alert/script state effects before the movement order.
-    fn coordinate_patrol(
-        &mut self,
-        info: &StimulusInfo,
-        ctx: &AiContext,
-        patrol_chief_position: Position,
-    ) {
-        let Some(action) = self
-            .base
-            .prepare_patrol_coordinate(info, ctx, patrol_chief_position)
-        else {
-            return;
-        };
-
-        match action {
-            PatrolCoordinateAction::FaceChief { target } => {
-                self.base.face_position_with_ctx(target, ctx);
-            }
-            PatrolCoordinateAction::Walk {
-                target,
-                speed_factor,
-            } => {
-                let flags = GotoFlags::NO_HALT
-                    | GotoFlags::DONT_STOP
-                    | self.base.default_path_walking_flags;
-                self.go_to_speed(
-                    AiState::Default,
-                    Substate::DefaultPatrolEnroute,
-                    target,
-                    flags,
-                    speed_factor,
-                    ctx,
-                );
-            }
-            PatrolCoordinateAction::Run { target } => {
-                self.go_to(
-                    AiState::Default,
-                    Substate::DefaultPatrolEnrouteRunning,
-                    target,
-                    GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
-                    ctx,
-                );
-            }
-        }
-    }
+    // Movement helpers (`go_to`, `go_to_speed`, `go_near`) and
+    // `coordinate_patrol` are shared with the enemy role via [`AiRole`].
 
     // -- Panic helpers (civilians go through set_state for alert status) --
     //
@@ -341,23 +281,6 @@ impl FriendlyAi {
             alert: AlertLevel::Red,
             is_new_panic: !was_already_fleeing,
         });
-    }
-
-    /// Raw-coordinate panic entry point (tests only).  Production
-    /// code should use [`Self::panic_from_point_at`] so the panic
-    /// center carries a valid sector/level for the multi-level
-    /// door lookup.
-    #[cfg(test)]
-    fn panic_from_point(&mut self, center_x: f32, center_y: f32, runs: u8) {
-        self.panic_from_point_at(
-            Position {
-                x: center_x,
-                y: center_y,
-                sector: None,
-                level: 0,
-            },
-            runs,
-        );
     }
 
     /// Undirected panic.
@@ -407,7 +330,7 @@ impl FriendlyAi {
             if stimulus_type == StimulusType::EventAfterScriptGoOn {
                 self.base.outbox.reentrant.engine_drains_after_script_go_on = false;
             }
-            self.end_think(sim, global, ctx);
+            self.end_think(sim, ctx);
             return true;
         }
 
@@ -426,7 +349,7 @@ impl FriendlyAi {
             | StimulusType::EventMyTalk1
             | StimulusType::EventMyTalk2
             | StimulusType::EventMyTalk3 => {
-                self.think_expected_event(sim, stimulus, global, ctx, tick, grid, doors)
+                self.think_expected_event(sim, stimulus, ctx, tick, grid, doors)
             }
 
             // Unexpected events
@@ -493,7 +416,7 @@ impl FriendlyAi {
         if !(stimulus_type == StimulusType::EventAfterScriptGoOn
             && self.base.outbox.reentrant.engine_drains_after_script_go_on)
         {
-            self.end_think(sim, global, ctx);
+            self.end_think(sim, ctx);
         }
         return_value
     }
@@ -570,34 +493,14 @@ impl FriendlyAi {
         self.start_think_post_filter(stimulus, ctx, static_ai_frozen)
     }
 
-    /// Decision-tick admission work which precedes the script `FilterAIEvent` call.
-    pub(crate) fn start_think_pre_filter(&mut self, stimulus: &Stimulus) {
-        // Civilian pre-think pipeline.  Civilians normally never
-        // hit `EventWasp` / `EventNet`, but the gates live on the
-        // shared behavior so any scripted substate change could reach them;
-        // mirror the enemy path's defensive refusals.
-        let stimulus_type = stimulus.stimulus_type;
-
-        self.base.couldnt_reachpoint = false;
-        self.base.already_on_point = false;
-        self.base.already_turned = false;
-        self.base.old_state = self.base.current_state as i32;
-        self.base.think_recursion_depth = self.base.think_recursion_depth.saturating_add(1);
-
-        if let StimulusInfo::Human(h) = stimulus.info {
-            self.base.last_stimulus_actor = Some(h);
-        }
-
-        // LOSE_CONSCIOUSNESS always drops the alert regardless of the
-        // downstream refusal — even when the event is otherwise
-        // filtered out.
-        if stimulus_type == StimulusType::EventLoseConsciousness {
-            self.base.set_alert_status(AlertLevel::Green);
-        }
-    }
+    // `start_think_pre_filter` (decision-tick admission before the script
+    // `FilterAIEvent` call) is shared with the enemy role via [`AiRole`].
 
     /// Decision-tick admission work after `FilterAIEvent`. SetAIState observes these
     /// gates but deliberately ignores the returned admission decision.
+    /// Civilians normally never hit `EventWasp` / `EventNet`, but the gates
+    /// live on the shared behavior so any scripted substate change could
+    /// reach them; mirror the enemy path's defensive refusals.
     pub(crate) fn start_think_post_filter(
         &mut self,
         stimulus: &Stimulus,
@@ -657,12 +560,7 @@ impl FriendlyAi {
         true
     }
 
-    pub(crate) fn end_think(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        _global: &mut AiGlobalState,
-        ctx: &AiContext,
-    ) {
+    pub(crate) fn end_think(&mut self, sim: &crate::sim_rng::SimulationContext, ctx: &AiContext) {
         // The original game's end-think phase dispatches this event here and runs the
         // script FilterAIEvent gate before dispatch. Queue these as
         // same-frame self-stimuli so the engine-side drain can apply
@@ -730,7 +628,6 @@ impl FriendlyAi {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
-        _global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &FriendlyPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -1447,15 +1344,14 @@ impl FriendlyAi {
                     );
                 self.return_to_duty(sim, DutyFlags::empty(), ctx);
                 if return_to_duty_sets_state {
-                    self.base.outbox.reentrant.owner_work.push(
-                        crate::ai::AiOwnerWork::StateChange(crate::ai::AiStateChangeNotification {
-                            outgoing_state,
-                            outgoing_substate,
-                            incoming_state: self.base.current_state,
-                            incoming_substate: self.base.current_substate,
-                            source: crate::ai::AiStateChangeSource::SelfActor,
-                            actor_effects_before_callback: Default::default(),
-                        }),
+                    // Outgoing state was captured before `return_to_duty`
+                    // mutated it; no actor prefix rides this callback.
+                    let incoming = (self.base.current_state, self.base.current_substate);
+                    self.base.queue_state_transition(
+                        (outgoing_state, outgoing_substate),
+                        incoming,
+                        AiStateChangeSource::SelfActor,
+                        None,
                     );
                 }
             }
@@ -2183,7 +2079,6 @@ impl FriendlyAi {
     pub fn the_16th_frame(
         &mut self,
         frame_phase: u8,
-        _global: &mut AiGlobalState,
         ctx: &AiContext,
         is_idle: bool,
         sequence_null_about_to_launch: bool,

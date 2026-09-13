@@ -530,14 +530,24 @@ impl ReplayData {
         Ok(())
     }
 
-    /// Validate invariants shared by JSONL and compact replay containers.
-    pub fn validate_layout(&self) -> Result<(), String> {
-        if self.header.version != REPLAY_SCHEMA_VERSION {
+    /// Reject any header whose schema version is not the current one.
+    ///
+    /// Shared by [`Self::validate_layout`] and the JSONL header pre-check in
+    /// [`Self::from_reader`], which runs before the typed header / frame
+    /// records are parsed so an obsolete file reports its version instead of
+    /// a field-level decode error.
+    fn check_schema_version(version: u32) -> Result<(), String> {
+        if version != REPLAY_SCHEMA_VERSION {
             return Err(format!(
-                "unsupported replay schema version {}; expected {REPLAY_SCHEMA_VERSION}",
-                self.header.version
+                "unsupported replay schema version {version}; expected {REPLAY_SCHEMA_VERSION}"
             ));
         }
+        Ok(())
+    }
+
+    /// Validate invariants shared by JSONL and compact replay containers.
+    pub fn validate_layout(&self) -> Result<(), String> {
+        Self::check_schema_version(self.header.version)?;
         // Metadata belongs to an admitted host frame; EOF is not a frame.
         // This is the same strict range enforced at public codec admission.
         self.validate_metadata_ordinals("hash", self.hashes.keys().copied())?;
@@ -713,12 +723,10 @@ impl ReplayData {
             .get("version")
             .and_then(serde_json::Value::as_u64)
             .ok_or("bad header: missing integer version")? as u32;
-        if version != REPLAY_SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported replay schema version {}; expected {REPLAY_SCHEMA_VERSION}",
-                version
-            ));
-        }
+        // Checked again by `validate_layout` at the end of this function, but
+        // an obsolete schema must be reported before the typed header and the
+        // frame lines are decoded with the current record shapes.
+        Self::check_schema_version(version)?;
         let mut header: ReplayHeader =
             serde_json::from_value(header_value).map_err(|e| format!("bad header: {e}"))?;
         let mut frames = BTreeMap::new();

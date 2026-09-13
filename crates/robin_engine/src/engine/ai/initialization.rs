@@ -667,7 +667,7 @@ impl EngineInner {
                     // anyway.  Skip the round-trip and pass stub
                     // directly.
                     let tick = AiPerTickData::stub();
-                    e.init_one_ai(sim, &init_ctx, &tick)
+                    e.init_one_ai(crate::ai_enemy::ThinkEnv::new(sim, &init_ctx, &tick, None))
                 }
                 Some(crate::element::AiBrain::Friendly(f)) => f.init_one_ai(sim, &init_ctx),
                 _ => return,

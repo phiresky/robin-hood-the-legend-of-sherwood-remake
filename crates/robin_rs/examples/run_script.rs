@@ -71,7 +71,7 @@ fn run_script(
     tracing::info!("frames depth: {}", activation.frames.len());
     tracing::info!(
         "--- {} deferred engine commands ---",
-        context.engine_commands().len()
+        context.script_effects().engine_commands().len()
     );
     for (id, val) in context.script_globals().iter().enumerate() {
         tracing::info!("  [{id}] = {val}");

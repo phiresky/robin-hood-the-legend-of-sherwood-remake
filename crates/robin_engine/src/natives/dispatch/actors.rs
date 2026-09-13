@@ -34,7 +34,7 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 let Some(entity) = self.get_entity(handle) else {
-                    tracing::warn!(target: "script", %native, handle, "invalid actor handle");
+                    script_error!(native, [handle], "invalid actor handle");
                     return 0;
                 };
                 i32::from(match native {
@@ -80,11 +80,11 @@ impl NativeContext<'_, '_> {
                 // returns -1 for unmapped variants.
                 let actor = stack.pop_i32();
                 let Some(entity) = self.get_entity(actor) else {
-                    tracing::warn!(target: "script","Script error: GetActorPosture invalid actor {actor}");
+                    script_error!(native, "invalid actor {actor}");
                     return -1;
                 };
                 if !entity.is_human() {
-                    tracing::warn!(target: "script","Script error: GetActorPosture target {actor} is not human");
+                    script_error!(native, "target {actor} is not human");
                     return -1;
                 }
                 let posture = entity.element_data().posture();
@@ -116,6 +116,7 @@ impl NativeContext<'_, '_> {
                     Posture::Sitting => 16,
                     _ => {
                         tracing::warn!(
+                            target: "script",
                             "GetActorPosture: unmapped posture {:?} on actor {actor}",
                             posture
                         );
@@ -138,11 +139,11 @@ impl NativeContext<'_, '_> {
                 // Handle existence and human-type checks: warn and return on
                 // failure of either.
                 let Some(entity) = self.get_entity(actor) else {
-                    tracing::warn!(target: "script","Script error: SetActorPosture invalid actor {actor}");
+                    script_error!(native, "invalid actor {actor}");
                     return 0;
                 };
                 if !entity.is_human() {
-                    tracing::warn!(target: "script","Script error: SetActorPosture target {actor} is not human");
+                    script_error!(native, "target {actor} is not human");
                     return 0;
                 }
 
@@ -150,9 +151,7 @@ impl NativeContext<'_, '_> {
                     4 | 5 | 6 | 8 | 9 | 11 => {
                         // Warn + return; never touches state.
                         // No Wait().
-                        tracing::warn!(target: "script",
-                            "Script error: SetActorPosture cannot set posture {val} from script"
-                        );
+                        script_error!(native, "cannot set posture {val} from script");
                     }
                     0 | 2 | 7 | 10 | 15 | 16 | 17 | 100 => {
                         let request = crate::interp::SynchronousScriptRequest::SetActorPosture {
@@ -163,7 +162,7 @@ impl NativeContext<'_, '_> {
                         self.yield_engine_action(request);
                     }
                     _ => {
-                        tracing::warn!(target: "script","Script error: SetActorPosture illegal ID {val}");
+                        script_error!(native, "illegal ID {val}");
                     }
                 }
                 0
@@ -216,7 +215,7 @@ impl NativeContext<'_, '_> {
                         self.create_computed_location_full(pos.x, pos.y, meta)
                     }
                     None => {
-                        tracing::warn!("GetActorLocation: invalid actor handle {actor}");
+                        script_error!(native, "invalid actor handle {actor}");
                         0
                     }
                 }
@@ -225,7 +224,7 @@ impl NativeContext<'_, '_> {
                 let loc = stack.pop_i32();
                 let actor = stack.pop_i32();
                 if self.get_entity(actor).is_none() {
-                    tracing::warn!("SetActorLocation: invalid actor handle {actor}");
+                    script_error!(native, "invalid actor handle {actor}");
                     return 0;
                 }
                 let request = crate::interp::SynchronousScriptRequest::SetActorLocation {
@@ -347,7 +346,7 @@ impl NativeContext<'_, '_> {
                 // blipped before the call.
                 let actor = stack.pop_i32();
                 if !self.actor_exists(actor) {
-                    tracing::warn!(target: "script","Script error (UnBlip): invalid actor handle {actor}");
+                    script_error!(native, "invalid actor handle {actor}");
                     return 0;
                 }
                 let was_blipped = self
@@ -382,9 +381,7 @@ impl NativeContext<'_, '_> {
                 // their canonical animation field directly.
                 let actor = stack.pop_i32();
                 let Some(entity) = self.get_entity(actor) else {
-                    tracing::warn!(target: "script",
-                        "Script error: GetCurrentAction on invalid actor handle {actor}"
-                    );
+                    script_error!(native, "on invalid actor handle {actor}");
                     return 0;
                 };
                 if entity.is_object() {
@@ -392,8 +389,9 @@ impl NativeContext<'_, '_> {
                 } else if entity.is_actor() {
                     self.current_animation(actor).map_or(0, |a| a as i32)
                 } else {
-                    tracing::warn!(target: "script",
-                        "Script error: GetCurrentAction on illegal actor handle {actor} (not actor, not object)"
+                    script_error!(
+                        native,
+                        "on illegal actor handle {actor} (not actor, not object)"
                     );
                     0
                 }
@@ -412,7 +410,7 @@ impl NativeContext<'_, '_> {
                 let amount = stack.pop_i32();
                 let actor = stack.pop_i32();
                 if !self.actor_exists(actor) {
-                    tracing::warn!(target: "script","Script error: InflictPain on invalid actor handle {actor}");
+                    script_error!(native, "on invalid actor handle {actor}");
                     return 0;
                 }
                 // `amount` flows straight into a u16 slot;
@@ -434,9 +432,7 @@ impl NativeContext<'_, '_> {
                         // `company_number` is a u16.
                         enemy.company_number = num as u16;
                     } else {
-                        tracing::warn!(target: "script",
-                            "Script error: SetCompanyNumber on non-soldier actor {actor}"
-                        );
+                        script_error!(native, "on non-soldier actor {actor}");
                     }
                 }
                 0
@@ -455,13 +451,11 @@ impl NativeContext<'_, '_> {
                 let frame = self.frame_counter();
                 match self.get_entity_mut(actor) {
                     None => {
-                        tracing::warn!(target: "script","Script error: SetAlwaysAttentive on invalid actor {actor}");
+                        script_error!(native, "on invalid actor {actor}");
                     }
                     Some(entity) => match entity.enemy_ai_mut() {
                         None => {
-                            tracing::warn!(target: "script",
-                                "Script error: SetAlwaysAttentive on non-soldier actor {actor}"
-                            );
+                            script_error!(native, "on non-soldier actor {actor}");
                         }
                         Some(enemy) => {
                             enemy.forced_attentive = target;
@@ -505,14 +499,14 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 match self.get_entity_mut(actor) {
                     None => {
-                        tracing::warn!("SetInvisible: actor {actor} does not exist");
+                        script_error!(native, "actor {actor} does not exist");
                     }
                     Some(entity) => match entity.human_data_mut() {
                         Some(human) => {
                             human.hollow_man = val != 0;
                         }
                         None => {
-                            tracing::warn!("SetInvisible: actor {actor} is not human");
+                            script_error!(native, "actor {actor} is not human");
                         }
                     },
                 }
@@ -531,9 +525,10 @@ impl NativeContext<'_, '_> {
                 // engine-side state. Validation (existing PC)
                 // and the actual `actor_make_crouched`
                 // call happen in the engine-side handler.
-                self.emit_engine(EngineCommand::ScriptMakePCCrouched {
-                    actor_handle: actor,
-                });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::ScriptMakePCCrouched {
+                        actor_handle: actor,
+                    });
                 0
             }
             GetActorActionState => {
@@ -544,13 +539,11 @@ impl NativeContext<'_, '_> {
                 // on the happy path.
                 let actor = stack.pop_i32();
                 let Some(entity) = self.get_entity(actor) else {
-                    tracing::warn!(target: "script","Script error: GetActorActionState invalid actor {actor}");
+                    script_error!(native, "invalid actor {actor}");
                     return -1;
                 };
                 if !entity.is_human() {
-                    tracing::warn!(target: "script",
-                        "Script error: GetActorActionState target {actor} is not human"
-                    );
+                    script_error!(native, "target {actor} is not human");
                     return -1;
                 }
                 entity.actor_data().map_or(-1, |a| a.action_state as i32)
@@ -566,15 +559,15 @@ impl NativeContext<'_, '_> {
                 let val = stack.pop_i32();
                 let actor = stack.pop_i32();
                 let Some(entity) = self.get_entity(actor) else {
-                    tracing::warn!(target: "script","Script error: SetActorActionState invalid actor {actor}");
+                    script_error!(native, "invalid actor {actor}");
                     return 0;
                 };
                 if !entity.is_human() {
-                    tracing::warn!(target: "script","Script error: SetActorActionState target {actor} is not human");
+                    script_error!(native, "target {actor} is not human");
                     return 0;
                 }
                 let Ok(s) = ActionState::try_from(val as u32) else {
-                    tracing::warn!("SetActorActionState: invalid value {val}");
+                    script_error!(native, "invalid value {val}");
                     return 0;
                 };
                 self.yield_engine_action(
@@ -609,14 +602,16 @@ impl NativeContext<'_, '_> {
 
                 // Four warn + return-false validation gates.
                 let Some(npc_entity) = self.get_entity(npc_h) else {
-                    tracing::warn!(target: "script",
-                        "Script error: Trying to test if an invalid actor element ({npc_h}) sees another actor."
+                    script_error!(
+                        native,
+                        "Trying to test if an invalid actor element ({npc_h}) sees another actor."
                     );
                     return 0;
                 };
                 if npc_entity.ai_controller().is_none() {
-                    tracing::warn!(target: "script",
-                        "Script error: Trying to test if a non-NPC element ({npc_h}) sees another actor."
+                    script_error!(
+                        native,
+                        "Trying to test if a non-NPC element ({npc_h}) sees another actor."
                     );
                     return 0;
                 }
@@ -640,14 +635,16 @@ impl NativeContext<'_, '_> {
                     },
                 );
                 let Some(target_entity) = self.get_entity(target_h) else {
-                    tracing::warn!(target: "script",
-                        "Script error: Trying to test if a NPC sees an invalid actor element ({target_h})."
+                    script_error!(
+                        native,
+                        "Trying to test if a NPC sees an invalid actor element ({target_h})."
                     );
                     return 0;
                 };
                 if target_entity.human_data().is_none() {
-                    tracing::warn!(target: "script",
-                        "Script error: Trying to test if a NPC sees a non-human ({target_h})."
+                    script_error!(
+                        native,
+                        "Trying to test if a NPC sees a non-human ({target_h})."
                     );
                     return 0;
                 }
@@ -668,8 +665,9 @@ impl NativeContext<'_, '_> {
                 };
                 let npc_layer = npc_layer.get();
                 let Some(npc_data) = npc_entity.npc_data() else {
-                    tracing::warn!(target: "script",
-                        "Script error: NPC {npc_h} has no NpcData (view parameters missing)."
+                    script_error!(
+                        native,
+                        "NPC {npc_h} has no NpcData (view parameters missing)."
                     );
                     return 0;
                 };
@@ -866,8 +864,9 @@ impl NativeContext<'_, '_> {
                     .get_entity(actor)
                     .is_some_and(|e| e.ai_controller().is_some());
                 if !is_npc {
-                    tracing::warn!(target: "script",
-                        "Script error: Trying to enable the view cone of an element which is not a NPC."
+                    script_error!(
+                        native,
+                        "Trying to enable the view cone of an element which is not a NPC."
                     );
                 }
                 if self.ai_global().ezekiel_2517 {
@@ -899,14 +898,14 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Non-null non-actor handle → warn + no dispatch.
                 if actor != 0 && !self.is_actor_handle(actor) {
-                    tracing::warn!(target: "script","Script error : trying to send a message to non actor object.");
+                    script_error!(native, "trying to send a message to non actor object.");
                     return 0;
                 }
                 // Scripted message sending constructs and launches the sequence
                 // element inline. Launching through the live manager keeps
                 // its sequence id ordered with recorded Thanx sequences and
                 // yields to ProcessMessage before this callback resumes.
-                tracing::trace!(target_actor = actor, message = msg, "script SendMessage");
+                tracing::trace!(target: "script", target_actor = actor, message = msg, "script SendMessage");
                 let mut sequence = Sequence::new();
                 sequence.append_element(self.build_send_message_element(1, actor, msg, 0, 0));
                 self.launch_script_sequence(sequence, 0);
@@ -919,7 +918,7 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Same actor-type guard as SendMessage.
                 if actor != 0 && !self.is_actor_handle(actor) {
-                    tracing::warn!(target: "script","Script error : trying to send a message to non actor object.");
+                    script_error!(native, "trying to send a message to non actor object.");
                     return 0;
                 }
                 let mut sequence = Sequence::new();
@@ -940,17 +939,15 @@ impl NativeContext<'_, '_> {
                 let action_idx = stack.pop_i32();
                 let actor = stack.pop_i32();
                 let Some(entity) = self.get_entity(actor) else {
-                    tracing::warn!(target: "script","Script error: SetActionAvailable invalid actor {actor}");
+                    script_error!(native, "invalid actor {actor}");
                     return 0;
                 };
                 if !entity.is_pc() {
-                    tracing::warn!(target: "script","Script error: SetActionAvailable target {actor} is not a PC");
+                    script_error!(native, "target {actor} is not a PC");
                     return 0;
                 }
                 if !(0..=5).contains(&action_idx) {
-                    tracing::warn!(target: "script",
-                        "Script error: SetActionAvailable action index {action_idx} out of range"
-                    );
+                    script_error!(native, "action index {action_idx} out of range");
                     return 0;
                 }
                 1
@@ -962,17 +959,15 @@ impl NativeContext<'_, '_> {
                 let action_idx = stack.pop_i32();
                 let actor = stack.pop_i32();
                 let Some(entity) = self.get_entity(actor) else {
-                    tracing::warn!(target: "script","Script error: IsActionAvailable invalid actor {actor}");
+                    script_error!(native, "invalid actor {actor}");
                     return 0;
                 };
                 let Some(pc) = entity.pc_data() else {
-                    tracing::warn!(target: "script","Script error: IsActionAvailable target {actor} is not a PC");
+                    script_error!(native, "target {actor} is not a PC");
                     return 0;
                 };
                 if !(0..=5).contains(&action_idx) {
-                    tracing::warn!(target: "script",
-                        "Script error: IsActionAvailable action index {action_idx} out of range"
-                    );
+                    script_error!(native, "action index {action_idx} out of range");
                     return 0;
                 }
                 let idx = action_idx as usize;
@@ -1022,18 +1017,19 @@ impl NativeContext<'_, '_> {
                 // Requires an existing PC; warn and return
                 // false on either failure.
                 let Some(entity) = self.get_entity(actor) else {
-                    tracing::warn!(target: "script",
-                        "Script error: Trying to call HasPCAction for invalid actor element."
+                    script_error!(
+                        native,
+                        "Trying to call HasPCAction for invalid actor element."
                     );
                     return 0;
                 };
                 if entity.pc_data().is_none() {
-                    tracing::warn!(target: "script","Script error: Trying to call HasPCAction for non-PC.");
+                    script_error!(native, "Trying to call HasPCAction for non-PC.");
                     return 0;
                 }
                 let Ok(script_action) = crate::profiles::ScriptAction::try_from(action_code as u32)
                 else {
-                    tracing::warn!(target: "script","Script error: HasPCAction with bad action ID {action_code}");
+                    script_error!(native, "with bad action ID {action_code}");
                     return 0;
                 };
                 let action = script_action.to_action();
@@ -1055,7 +1051,7 @@ impl NativeContext<'_, '_> {
                 let action_code = stack.pop_i32();
                 let Ok(script_action) = crate::profiles::ScriptAction::try_from(action_code as u32)
                 else {
-                    tracing::warn!(target: "script","Script error: HasAnyPCAction with bad action ID {action_code}");
+                    script_error!(native, "with bad action ID {action_code}");
                     return 0;
                 };
                 let action = script_action.to_action();
@@ -1083,9 +1079,7 @@ impl NativeContext<'_, '_> {
                 let action_code = stack.pop_i32();
                 let Ok(script_action) = crate::profiles::ScriptAction::try_from(action_code as u32)
                 else {
-                    tracing::warn!(target: "script",
-                        "Script error: HasAnyActivePCAction with bad action ID {action_code}"
-                    );
+                    script_error!(native, "with bad action ID {action_code}");
                     return 0;
                 };
                 let action = script_action.to_action();
@@ -1123,12 +1117,12 @@ impl NativeContext<'_, '_> {
                 // SELECT_ACTION_SIMPLE can clear only the messenger action).
                 let actor = stack.pop_i32();
                 if !self.actor_exists(actor) {
-                    tracing::warn!(target: "script","Script error: HasAnyActionSelected for invalid actor {actor}");
+                    script_error!(native, "for invalid actor {actor}");
                     return 0;
                 }
                 let entity = self.get_entity(actor).unwrap();
                 if !entity.is_pc() {
-                    tracing::warn!(target: "script","Script error: HasAnyActionSelected for non-PC {actor}");
+                    script_error!(native, "for non-PC {actor}");
                     return 0;
                 }
                 // Must be selected

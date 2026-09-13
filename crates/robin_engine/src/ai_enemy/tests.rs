@@ -800,12 +800,9 @@ fn charly_inside_view_cone_queues_synchronous_officer_report_without_transitioni
     let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
 
     ai.think_expected_event(
-        sim,
+        ThinkEnv::new(sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(ai.base.current_substate, Substate::SeekingCharlyGoToOfficer);
@@ -826,7 +823,7 @@ fn accepted_officer_report_enters_seen_and_arms_ten_frame_timer() {
     let mut ai = charly_heading_to_officer();
     let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
 
-    ai.resolve_charly_officer_report(sim, true, &ctx, &AiPerTickData::stub());
+    ai.resolve_charly_officer_report(ThinkEnv::new(sim, &ctx, &AiPerTickData::stub(), None), true);
 
     assert_eq!(
         ai.base.current_substate,
@@ -846,7 +843,10 @@ fn refused_officer_report_returns_charly_to_duty() {
     let mut ai = charly_heading_to_officer();
     let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
 
-    ai.resolve_charly_officer_report(sim, false, &ctx, &AiPerTickData::stub());
+    ai.resolve_charly_officer_report(
+        ThinkEnv::new(sim, &ctx, &AiPerTickData::stub(), None),
+        false,
+    );
 
     // The refused report enters return-to-duty handling, which suspends its common
     // tail at the owner boundary so the engine can run patrol initialization
@@ -991,12 +991,9 @@ fn charly_outside_view_cone_retries_after_ten_frames() {
     let ctx = charly_to_officer_context(test_position(-200.0, 0.0), Vec::new());
 
     ai.think_expected_event(
-        sim,
+        ThinkEnv::new(sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(ai.base.current_substate, Substate::SeekingCharlyGoToOfficer);
@@ -1021,12 +1018,9 @@ fn charly_cannot_report_through_opaque_obstruction_and_retries() {
         charly_to_officer_context(test_position(200.0, 0.0), vec![opaque_wall_across_x_axis()]);
 
     ai.think_expected_event(
-        sim,
+        ThinkEnv::new(sim, &ctx, &AiPerTickData::stub(), None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(ai.base.current_substate, Substate::SeekingCharlyGoToOfficer);
@@ -1104,14 +1098,12 @@ fn run_find_door_authorization_case(
         crate::position_interface::vector_to_sector_0_to_15_iso(point_out.x, point_out.y) as u16;
 
     ai.seek_area(
-        sim,
+        ThinkEnv::new(sim, &ctx, &AiPerTickData::stub(), None),
         center,
         0,
         SeekFlags::HOUSE | SeekFlags::LOCATION_FIRST,
         seek_direction,
         &mut global,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     // The indoor caller must enter the three-frame watching delay after
@@ -1290,7 +1282,7 @@ fn reinitialize_them_list_preserves_order_and_omits_all_unavailable_observations
         .insert(5, AiObservationUnavailable::ExcludedEntity);
     let original_seen = ctx.self_seen_enemy_handles.clone();
 
-    ai.reinitialize_them_list(&ctx, &AiPerTickData::stub());
+    ai.reinitialize_them_list(&ctx);
 
     assert_eq!(ai.list_them, vec![6, 2, 6]);
     assert_eq!(
@@ -1325,11 +1317,8 @@ fn unavailable_owner_preserves_battle_and_target_selection_skip_policy() {
             None
         );
         ai.battle_decisions(
-            &crate::sim_rng::test_context(),
+            ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
             &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
         );
         assert_eq!(
             bitcode::encode(&ai),
@@ -1345,7 +1334,7 @@ fn reinitialize_them_list_does_not_preserve_unseen_primary_target() {
     ai.base.primary_target = Some(AiEntityHandle::new(2));
     ai.list_them = vec![2, 3];
 
-    ai.reinitialize_them_list(&AiContext::test_fixture(), &AiPerTickData::stub());
+    ai.reinitialize_them_list(&AiContext::test_fixture());
 
     assert!(ai.list_them.is_empty());
     assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(2)));
@@ -1578,12 +1567,9 @@ fn special_strike_latch_tracks_preparation_and_in_flight_lifecycle() {
     };
     let tick = AiPerTickData::stub();
     ai.think(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::new(StimulusType::EventDone),
         &mut global,
-        &ctx,
-        &tick,
-        None,
     );
     ai.reconcile_special_strike(false, 41);
     assert!(ai.pending_special_strike);
@@ -1607,7 +1593,11 @@ fn special_strike_latch_tracks_preparation_and_in_flight_lifecycle() {
         frame: 42,
         ..AiContext::test_fixture()
     };
-    ai.think(&sim, &retained, &mut global, &ctx, &tick, None);
+    ai.think(
+        ThinkEnv::new(&sim, &ctx, &tick, None),
+        &retained,
+        &mut global,
+    );
     assert!(!ai.pending_special_strike);
     assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
     assert_eq!(ai.next_sword_strike_frame, 62);
@@ -1671,7 +1661,7 @@ fn return_to_duty_resets() {
     ai.current_task_priority = task_priority::ENEMY;
     let ctx = AiContext::test_fixture();
     let tick = AiPerTickData::stub();
-    ai.return_to_duty(sim, DutyFlags::empty(), &ctx, &tick);
+    ai.return_to_duty(ThinkEnv::new(sim, &ctx, &tick, None), DutyFlags::empty());
 
     assert_eq!(ai.base.current_state, AiState::Attacking);
     assert!(!ai.base.needs_patrol_reinit);
@@ -1728,10 +1718,13 @@ fn return_to_duty_deletes_beggars_added_earlier_in_same_dispatch() {
         .add_detectable((target, DetectableType::Enemy));
 
     ai.return_to_duty(
-        &sim,
+        ThinkEnv::new(
+            &sim,
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None,
+        ),
         DutyFlags::empty(),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(
@@ -1809,7 +1802,10 @@ fn high_recursion_return_to_duty_keeps_close_point_as_latch_after_deferred_resum
         ..AiContext::test_fixture()
     };
 
-    ai.return_to_duty(&sim, DutyFlags::empty(), &ctx, &AiPerTickData::stub());
+    ai.return_to_duty(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        DutyFlags::empty(),
+    );
     let (flags, high_recursion_failsafe) = std::mem::take(&mut ai.base.outbox.reentrant.owner_work)
         .into_iter()
         .find_map(|work| match work {
@@ -1993,7 +1989,10 @@ fn return_to_duty_remembered_ale_saves_patrol_return_point() {
     ai.base.current_substate = Substate::WonderingDrinkingAle;
     ai.other_seen_ale.push(ale);
 
-    ai.return_to_duty(&sim, DutyFlags::empty(), &ctx, &AiPerTickData::stub());
+    ai.return_to_duty(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        DutyFlags::empty(),
+    );
 
     assert_eq!(ai.base.current_state, AiState::Wondering);
     assert_eq!(ai.base.current_substate, Substate::WonderingApproachingAle);
@@ -2059,7 +2058,10 @@ fn one_point_enemy_path_dispatches_virtual_return_before_patrol_init_resume() {
         "the common controller must not skip the Enemy ReturnToDuty override"
     );
 
-    ai.return_to_duty(&sim, DutyFlags::empty(), &ctx, &AiPerTickData::stub());
+    ai.return_to_duty(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        DutyFlags::empty(),
+    );
 
     assert!(matches!(
         ai.base.outbox.reentrant.owner_work.as_slice(),
@@ -2192,12 +2194,9 @@ fn return_to_duty_clears_shield_pair_before_bearer_protection_timer() {
         ..FighterSnapshot::default()
     });
     bearer.think_expected_event(
-        &sim,
+        ThinkEnv::new(&sim, &AiContext::test_fixture(), &tick, None),
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-        &AiContext::test_fixture(),
-        &tick,
-        None,
     );
 
     assert_eq!(
@@ -2288,12 +2287,14 @@ fn tower_guard_defers_battle_decisions_until_alert_calls_return() {
     ai.base.seek_position = test_position(120.0, 80.0);
 
     ai.think_expected_event(
-        &sim,
+        ThinkEnv::new(
+            &sim,
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None,
+        ),
         &Stimulus::new(StimulusType::EventDone),
         &mut AiGlobalState::default(),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert!(matches!(
@@ -2405,7 +2406,11 @@ fn enter_swordfight_event_does_not_reenter_swordfight() {
     let tick = AiPerTickData::stub();
     let stimulus = Stimulus::with_human(StimulusType::EventEnterSwordfight, 2);
 
-    let _ = ai.think(sim, &stimulus, &mut global, &ctx, &tick, None);
+    let _ = ai.think(
+        ThinkEnv::new(sim, &ctx, &tick, None),
+        &stimulus,
+        &mut global,
+    );
 
     assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(2)));
     assert_eq!(ai.base.current_state, AiState::Attacking);
@@ -2483,13 +2488,25 @@ fn periodic_timer_restart_obeys_static_ai_freeze() {
     };
 
     ai.the_16th_frame(
-        sim, 0, &ctx, &global, &tick, None, false, false, false, false,
+        ThinkEnv::new(sim, &ctx, &tick, None),
+        0,
+        &global,
+        false,
+        false,
+        false,
+        false,
     );
     assert!(!ai.base.timer_is_running);
 
     global.freeze = false;
     ai.the_16th_frame(
-        sim, 0, &ctx, &global, &tick, None, false, false, false, false,
+        ThinkEnv::new(sim, &ctx, &tick, None),
+        0,
+        &global,
+        false,
+        false,
+        false,
+        false,
     );
     assert!(ai.base.timer_is_running);
 }
@@ -2510,12 +2527,9 @@ fn periodic_bored_roll_reads_live_animation_not_action_change_history() {
     };
 
     ai.the_16th_frame(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         16,
-        &ctx,
         &AiGlobalState::default(),
-        &AiPerTickData::stub(),
-        None,
         true,
         false,
         true,
@@ -2540,7 +2554,13 @@ fn periodic_smalltalk_command_advances_reachpoint_stuck_counter() {
     let tick = AiPerTickData::stub();
 
     ai.the_16th_frame(
-        &sim, 0, &ctx, &global, &tick, None, false, false, true, false,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
+        0,
+        &global,
+        false,
+        false,
+        true,
+        false,
     );
     assert_eq!(
         ai.base.stuck_counter, 3,
@@ -2548,7 +2568,13 @@ fn periodic_smalltalk_command_advances_reachpoint_stuck_counter() {
     );
 
     ai.the_16th_frame(
-        &sim, 0, &ctx, &global, &tick, None, false, false, false, false,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
+        0,
+        &global,
+        false,
+        false,
+        false,
+        false,
     );
     assert_eq!(
         ai.base.stuck_counter, 3,
@@ -2653,12 +2679,9 @@ fn periodic_phalanx_goto_does_not_hide_same_call_idle_actor() {
     });
 
     ai.the_16th_frame(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         0,
-        &ctx,
         &AiGlobalState::default(),
-        &tick,
-        None,
         true,
         false,
         true,
@@ -2740,12 +2763,9 @@ fn periodic_phalanx_goto_does_not_fake_wait_during_attentive_transition() {
     });
 
     ai.the_16th_frame(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         0,
-        &ctx,
         &AiGlobalState::default(),
-        &tick,
-        None,
         false,
         false,
         false,
@@ -2829,12 +2849,9 @@ fn periodic_phalanx_already_on_point_does_not_fake_a_pending_sequence() {
     });
 
     ai.the_16th_frame(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         0,
-        &ctx,
         &AiGlobalState::default(),
-        &tick,
-        None,
         true,
         false,
         true,
@@ -2888,12 +2905,9 @@ fn forget_attentive_events_preserve_the_forced_script_latch() {
             let tick = AiPerTickData::stub();
 
             ai.think(
-                &sim,
+                ThinkEnv::new(&sim, &ctx, &tick, None),
                 &Stimulus::new(stimulus_type),
                 &mut global,
-                &ctx,
-                &tick,
-                None,
             );
 
             assert!(!ai.attentive, "{stimulus_type:?}");
@@ -2913,12 +2927,9 @@ fn forget_attentive_events_preserve_the_forced_script_latch() {
 
             if stimulus_type == StimulusType::EventLoseConsciousness {
                 ai.think(
-                    &sim,
+                    ThinkEnv::new(&sim, &ctx, &tick, None),
                     &Stimulus::new(StimulusType::EventFitAgain),
                     &mut global,
-                    &ctx,
-                    &tick,
-                    None,
                 );
                 assert_eq!(ai.base.current_substate, Substate::SleepingAwakening);
                 assert_eq!(ai.forced_attentive, forced_attentive);
@@ -3007,7 +3018,11 @@ fn watching_for_more_money_skips_looted_victims_and_marks_next() {
     let mut global = AiGlobalState::default();
 
     let stimulus = Stimulus::new(StimulusType::EventDone);
-    let _ = ai.think(sim, &stimulus, &mut global, &ctx, &tick, None);
+    let _ = ai.think(
+        ThinkEnv::new(sim, &ctx, &tick, None),
+        &stimulus,
+        &mut global,
+    );
 
     assert_eq!(ai.base.detected_body, Some(AiEntityHandle::new(3)));
     assert_eq!(
@@ -3053,7 +3068,15 @@ fn run_to_examine_body_uses_stuck_under_net_cover_info() {
         ..AiContext::test_fixture()
     };
 
-    ai.run_to_examine_body(2, &ctx, &AiPerTickData::stub(), None);
+    ai.run_to_examine_body(
+        2,
+        ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        ),
+    );
 
     assert_eq!(ai.base.detected_body, Some(AiEntityHandle::new(2)));
     assert_eq!(ai.base.interesting_object, Some(AiEntityHandle::new(77)));
@@ -3065,7 +3088,15 @@ fn run_to_examine_body_uses_stuck_under_net_cover_info() {
 #[should_panic(expected = "soldier 1 cannot examine missing body 77")]
 fn run_to_examine_body_rejects_a_missing_required_body() {
     let mut ai = EnemyAi::new(1);
-    ai.run_to_examine_body(77, &AiContext::test_fixture(), &AiPerTickData::stub(), None);
+    ai.run_to_examine_body(
+        77,
+        ThinkEnv::new(
+            &crate::sim_rng::test_context(),
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None,
+        ),
+    );
 }
 
 #[test]
@@ -3081,7 +3112,7 @@ fn make_battle_predecisions_returns_valid() {
             ..AiContext::test_fixture()
         };
         let tick = AiPerTickData::stub();
-        let d = ai.make_battle_predecisions(sim, &ctx, &tick);
+        let d = ai.make_battle_predecisions(ThinkEnv::new(sim, &ctx, &tick, None));
         assert!(d == Decision::PredecisionOffensive || d == Decision::PredecisionDefensive);
     });
 }
@@ -3566,12 +3597,9 @@ fn queued_out_of_view_does_not_substitute_actor_principal_for_ai_target() {
 
     crate::sight_obstacle::begin_parity_visibility_capture();
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::with_human(StimulusType::EventOutOfView, 171),
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
     let visibility_queries = crate::sight_obstacle::take_parity_visibility_capture();
 
@@ -3610,12 +3638,9 @@ fn out_of_view_removes_non_primary_target_at_perpendicular_boundary() {
     ));
 
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::with_human(StimulusType::EventOutOfView, 171),
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(ai.list_them, vec![84]);
@@ -3654,12 +3679,9 @@ fn out_of_view_uses_exact_stimulus_target_forecast_after_detectable_removal() {
     // entry in `enemy_detectable_forecasts`.
 
     ai.think_unexpected_event(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         &Stimulus::with_human(StimulusType::EventOutOfView, 171),
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
-        None,
     );
 
     assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(171)));

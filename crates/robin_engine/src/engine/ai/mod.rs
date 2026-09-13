@@ -5990,6 +5990,7 @@ impl EngineInner {
 
     /// Enter the pre-filter half of typed no-event decision-tick admission.
     pub(super) fn start_script_ai_native_think_pre_filter(&mut self, npc_id: EntityId) {
+        use crate::ai::AiRole;
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::NoEvent);
         let entity = self.expect_entity_mut(npc_id, "SetAIState decision-entry owner");
         if let Some(enemy) = entity.enemy_ai_mut() {
@@ -6083,15 +6084,13 @@ impl EngineInner {
             "SetAIState decision-completion owner {} has no matching decision entry",
             npc_id.index()
         );
-        let global = &mut self.ai.global;
         let entity = self
             .world
             .entities
             .expect_entity_mut(npc_id, format_args!("SetAIState decision-completion owner"));
         if let Some(enemy) = entity.enemy_ai_mut() {
-            enemy.end_think(
+            enemy.end_think(crate::ai_enemy::ThinkEnv::new(
                 sim,
-                global,
                 &ctx,
                 enemy_tick.as_ref().unwrap_or_else(|| {
                     panic!(
@@ -6100,9 +6099,9 @@ impl EngineInner {
                     )
                 }),
                 None,
-            );
+            ));
         } else if let Some(friendly) = entity.friendly_ai_mut() {
-            friendly.end_think(sim, global, &ctx);
+            friendly.end_think(sim, &ctx);
         } else {
             panic!(
                 "SetAIState decision-completion owner {} has no typed AI for entity kind {:?}",
@@ -6156,14 +6155,12 @@ impl EngineInner {
             Self::trace_seek_area_script_caller(npc_id, ctx);
         }
         enemy_ai.seek_area(
-            sim,
+            crate::ai_enemy::ThinkEnv::new(sim, ctx, tick, None),
             request.center,
             request.radius,
             crate::ai_enemy::SeekFlags::empty(),
             crate::ai_enemy::UNDEFINED_DIRECTION,
             &mut self.ai.global,
-            ctx,
-            tick,
         );
         // Area seeking's typed state-change callback is inside the decision-tick
         // scope and must finish before its later movement/order tail is

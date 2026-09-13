@@ -1548,7 +1548,7 @@ impl EngineInner {
                 if door.is_locked_pc() || door.is_locked_npc_villain() {
                     continue;
                 }
-                let distance = crate::ai::legacy_nearest_door_distance(
+                let distance = crate::ai_enemy::legacy_nearest_door_distance(
                     door.point_in.x - first_pos.x,
                     door.point_in.y - first_pos.y,
                     false,

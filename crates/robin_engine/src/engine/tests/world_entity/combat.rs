@@ -699,7 +699,6 @@ fn review2_combat_alert_preserves_original_busy_lock_acceptance() {
         .expect("review2 combat-alert soldier has AI")
         .locks_flag_field = AiLockFlags::BUSY;
     let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    let global = engine.ai.global.clone();
     engine
         .get_entity_mut(officer_id)
         .and_then(Entity::enemy_ai_mut)
@@ -709,10 +708,7 @@ fn review2_combat_alert_preserves_original_busy_lock_acceptance() {
                 x: 100.0,
                 ..Default::default()
             },
-            &global,
-            None,
-            &ctx,
-            &tick,
+            crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
         );
     engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 
@@ -745,7 +741,6 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
     let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    let global = engine.ai.global.clone();
     engine
         .get_entity_mut(officer_id)
         .and_then(Entity::enemy_ai_mut)
@@ -755,10 +750,7 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
                 x: 300.0,
                 ..Default::default()
             },
-            &global,
-            None,
-            &ctx,
-            &tick,
+            crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
         );
     engine
         .get_entity_mut(soldier_id)
@@ -833,7 +825,6 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
 
     let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
     assert_eq!(tick.camp_soldiers.len(), 2);
-    let global = engine.ai.global.clone();
     let grid = &engine.world.fast_grid;
     engine
         .world
@@ -846,10 +837,12 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
                 x: 300.0,
                 ..Default::default()
             },
-            &global,
-            Some(grid),
-            &ctx,
-            &tick,
+            crate::ai_enemy::ThinkEnv::new(
+                &crate::sim_rng::test_context(),
+                &ctx,
+                &tick,
+                Some(grid),
+            ),
         );
     engine
         .get_entity_mut(refused_id)
@@ -903,7 +896,6 @@ fn final_review_combat_alert_requires_recipient_360_detection() {
         .expect("360-degree recipient is a soldier")
         .view_radius = 10;
     let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    let global = engine.ai.global.clone();
     let start = engine
         .get_entity_mut(officer_id)
         .and_then(Entity::enemy_ai_mut)
@@ -913,10 +905,7 @@ fn final_review_combat_alert_requires_recipient_360_detection() {
                 x: 300.0,
                 ..Default::default()
             },
-            &global,
-            None,
-            &ctx,
-            &tick,
+            crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
         );
     assert_eq!(start, crate::ai_enemy::CommandSoldiersStart::Rejected);
     assert!(

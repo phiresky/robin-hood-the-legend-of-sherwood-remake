@@ -2010,7 +2010,6 @@ fn review2_alert_soldiers_uses_state_refusal_and_does_not_consider_report() {
         };
     }
     let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    let global = engine.ai.global.clone();
     engine
         .get_entity_mut(officer_id)
         .and_then(Entity::enemy_ai_mut)
@@ -2021,10 +2020,7 @@ fn review2_alert_soldiers_uses_state_refusal_and_does_not_consider_report() {
                 ..Default::default()
             },
             0,
-            &global,
-            None,
-            &ctx,
-            &tick,
+            crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
             crate::ai::AlertSoldiersFailureContinuation::None,
         );
     // The candidate snapshot admitted this soldier, but the live recipient
@@ -2357,7 +2353,6 @@ fn final_review_alert_all_refused_resumes_caller_failure() {
         .expect("alert caller has EnemyAi")
         .set_state(AiState::Seeking, Substate::SeekingArrowJustWatching);
     let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    let global = engine.ai.global.clone();
     assert!(
         engine
             .get_entity_mut(officer_id)
@@ -2369,10 +2364,7 @@ fn final_review_alert_all_refused_resumes_caller_failure() {
                     ..Default::default()
                 },
                 0,
-                &global,
-                None,
-                &ctx,
-                &tick,
+                crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
                 AlertSoldiersFailureContinuation::ReturnToDuty,
             ),
         "an admitted candidate suspends the outer AlertSoldiers call"
@@ -2452,7 +2444,6 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
         ));
 
     let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    let global = engine.ai.global.clone();
     let grid = &engine.world.fast_grid;
     engine
         .world
@@ -2466,10 +2457,12 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
                 ..Default::default()
             },
             0,
-            &global,
-            Some(grid),
-            &ctx,
-            &tick,
+            crate::ai_enemy::ThinkEnv::new(
+                &crate::sim_rng::test_context(),
+                &ctx,
+                &tick,
+                Some(grid),
+            ),
             AlertSoldiersFailureContinuation::ReturnToDuty,
         );
     engine
@@ -2521,7 +2514,6 @@ fn search_charly_caller_timer_follows_deferred_alert_finalization() {
             .expect("alert caller has EnemyAi")
             .set_state(AiState::Default, suspended_substate);
         let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-        let global = engine.ai.global.clone();
         {
             let officer = engine
                 .get_entity_mut(officer_id)
@@ -2530,10 +2522,7 @@ fn search_charly_caller_timer_follows_deferred_alert_finalization() {
             assert!(officer.alert_soldiers(
                 ctx.position,
                 0,
-                &global,
-                None,
-                &ctx,
-                &tick,
+                crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
                 AlertSoldiersFailureContinuation::SeekMissedCharly {
                     center: ctx.position,
                 },
@@ -2607,7 +2596,6 @@ fn closure_review_alert_soldiers_keeps_tied_and_carried_able_to_help() {
             .expect("tied/carried soldier remains in the owner camp snapshot");
         assert!(!candidate.is_able_to_fight);
         assert!(candidate.is_able_to_help);
-        let global = engine.ai.global.clone();
         assert!(
             engine
                 .get_entity_mut(officer_id)
@@ -2616,10 +2604,12 @@ fn closure_review_alert_soldiers_keeps_tied_and_carried_able_to_help() {
                 .alert_soldiers(
                     Position::default(),
                     0,
-                    &global,
-                    None,
-                    &ctx,
-                    &tick,
+                    crate::ai_enemy::ThinkEnv::new(
+                        &crate::sim_rng::test_context(),
+                        &ctx,
+                        &tick,
+                        None
+                    ),
                     AlertSoldiersFailureContinuation::None,
                 )
         );
@@ -2696,7 +2686,7 @@ fn closure_review_final_alert_report_boundary_precedes_formation() {
         .and_then(Entity::enemy_ai_mut)
         .expect("final-alert officer has EnemyAi")
         .resolve_think_result(
-            &sim,
+            crate::ai_enemy::ThinkEnv::new(&sim, &ctx, &tick, Some(grid)),
             true,
             soldier_id.index(),
             ThinkResultContinuation::OfficerAlertedSoldier {
@@ -2705,9 +2695,6 @@ fn closure_review_final_alert_report_boundary_precedes_formation() {
                 failure: AlertSoldiersFailureContinuation::None,
             },
             global,
-            Some(grid),
-            &ctx,
-            &tick,
         );
 
     let officer = engine

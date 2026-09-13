@@ -80,13 +80,7 @@ fn enemy_behind_door_uses_exact_outside_sector_identity() {
     let direction = vec_to_sector(10.0, 0.0);
 
     let mut exact_center = center;
-    ai.find_door_enemy_could_be_behind(
-        &mut exact_center,
-        direction,
-        &global,
-        &ctx,
-        &AiPerTickData::stub(),
-    );
+    ai.find_door_enemy_could_be_behind(&mut exact_center, direction, &global, &ctx);
     assert_eq!(exact_center, correct_inside);
 
     // Explicitly number-only compatibility data cannot distinguish the
@@ -95,13 +89,7 @@ fn enemy_behind_door_uses_exact_outside_sector_identity() {
         sector: SectorHandle::new(88),
         ..center
     };
-    ai.find_door_enemy_could_be_behind(
-        &mut numeric_center,
-        direction,
-        &global,
-        &ctx,
-        &AiPerTickData::stub(),
-    );
+    ai.find_door_enemy_could_be_behind(&mut numeric_center, direction, &global, &ctx);
     assert_eq!(numeric_center, wrong_inside);
 }
 
@@ -137,7 +125,6 @@ fn enemy_behind_door_rejects_missing_exact_outside_identity() {
         vec_to_sector(1.0, 0.0),
         &global,
         &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
     );
 }
 
@@ -388,7 +375,10 @@ fn officer_search_charly_preserves_check_for_macro_into_inline_seek_area() {
         id: 0,
     });
 
-    ai.search_charly(&sim, &mut global, &ctx, &AiPerTickData::stub(), None);
+    ai.search_charly(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        &mut global,
+    );
 
     assert!(ai.base.macro_in_progress);
     assert_eq!(ai.base.macro_command_offset, 23);
@@ -431,11 +421,8 @@ fn soldier_search_charly_preserves_authored_waypoint_sector() {
     };
 
     ai.search_charly(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(
@@ -476,13 +463,10 @@ fn dead_body_alert_with_officer_queues_actor_prefix_then_typed_resume() {
         .push(alert_test_officer(7, Substate::DefaultGotoPost));
 
     ai.dead_body_alert(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         center,
         SeekFlags::empty(),
         &mut AiGlobalState::default(),
-        None,
-        &ctx,
-        &tick,
     );
 
     assert!(ai.base.outbox.reentrant.dead_body_alert_completion_pending);
@@ -509,12 +493,10 @@ fn dead_body_alert_with_officer_queues_actor_prefix_then_typed_resume() {
     ai.base.couldnt_reachpoint = true;
     ai.base.outbox.reentrant.dead_body_alert_completion_pending = false;
     ai.resume_dead_body_alert_after_alert_officer(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         center,
         300,
         &mut AiGlobalState::default(),
-        &ctx,
-        &tick,
     );
     assert_eq!(
         ai.seek_flags,
@@ -543,13 +525,10 @@ fn dead_body_alert_instructed_group_route_never_queues_fallback() {
     ));
 
     ai.dead_body_alert(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &tick, None),
         Position::default(),
         SeekFlags::empty(),
         &mut AiGlobalState::default(),
-        None,
-        &ctx,
-        &tick,
     );
 
     // Route construction reports failure only after the AI borrow is
@@ -594,12 +573,10 @@ fn failed_dead_body_alert_officer_route_falls_back_to_body_seek() {
     };
 
     ai.resume_dead_body_alert_after_alert_officer(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         center,
         300,
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert!(!ai.base.couldnt_reachpoint);
@@ -630,12 +607,10 @@ fn successful_dead_body_alert_officer_route_has_no_fallback() {
     };
 
     ai.resume_dead_body_alert_after_alert_officer(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         Position::default(),
         300,
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert!(ai.seek_flags.is_empty());
@@ -663,13 +638,10 @@ fn dead_body_alert_without_officer_falls_back_immediately() {
     };
 
     ai.dead_body_alert(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         center,
         SeekFlags::empty(),
         &mut AiGlobalState::default(),
-        None,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(
@@ -780,14 +752,12 @@ fn seek_area_obligatory_selection_respects_original_finite_sentinel() {
     };
 
     ai.seek_area(
-        &sim,
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
         center,
         300,
         SeekFlags::empty(),
         8,
         &mut global,
-        &ctx,
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(ai.my_seek_points.first(), Some(&212));
@@ -821,10 +791,13 @@ fn seek_next_point_preserves_the_search_center() {
     });
 
     ai.seek_next_point(
-        &sim,
+        ThinkEnv::new(
+            &sim,
+            &AiContext::test_fixture(),
+            &AiPerTickData::stub(),
+            None,
+        ),
         &mut AiGlobalState::default(),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
     );
 
     assert_eq!(ai.base.last_goto_destination, route_point);
@@ -873,7 +846,10 @@ fn locked_seek_point_skips_interest_recalculation_and_acceptance_draw() {
     };
 
     let (_, draws) = with_draw_trace(|| {
-        ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());
+        ai.seek_next_point(
+            ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+            &mut global,
+        );
     });
 
     assert_eq!(draws, [RngSite::SeekPointAcceptance]);
@@ -911,7 +887,10 @@ fn unlocked_seek_point_recalculates_draws_subtracts_and_locks() {
     };
 
     let (_, draws) = with_draw_trace(|| {
-        ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());
+        ai.seek_next_point(
+            ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+            &mut global,
+        );
     });
 
     assert_eq!(draws, [RngSite::SeekPointAcceptance]);
@@ -966,7 +945,10 @@ fn beggar_detour_retains_old_seek_point_for_second_unlock() {
     };
     let ctx = AiContext::test_fixture();
 
-    ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());
+    ai.seek_next_point(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        &mut global,
+    );
 
     assert_eq!(ai.actual_seek_point, Some(0));
     assert!(!global.seek_points[0].locked);
@@ -982,7 +964,10 @@ fn beggar_detour_retains_old_seek_point_for_second_unlock() {
     ai.beggar_to_examine = None;
     ai.my_seek_points.push(1);
 
-    ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());
+    ai.seek_next_point(
+        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+        &mut global,
+    );
 
     assert!(!global.seek_points[0].locked);
     assert_eq!(ai.actual_seek_point, Some(1));
@@ -1060,7 +1045,11 @@ fn area_global_selection_keeps_first_insertion_draw_and_obligatory_duplicate() {
         ..AiContext::test_fixture()
     };
     let (_, draws) = with_draw_trace(|| {
-        ai.append_global_area_seek_points(&sim, spec, &mut global, &ctx, &AiPerTickData::stub());
+        ai.append_global_area_seek_points(
+            ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+            spec,
+            &mut global,
+        );
     });
 
     assert_eq!(

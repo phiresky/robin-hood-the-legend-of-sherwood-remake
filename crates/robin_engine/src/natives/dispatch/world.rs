@@ -11,7 +11,7 @@ impl NativeContext<'_, '_> {
             IsAnimationActive => {
                 let actor_h = stack.pop_i32();
                 if actor_h == 0 {
-                    tracing::warn!(target: "script","Script error: IsAnimationActive with null handle");
+                    script_error!(native, "with null handle");
                     0
                 } else {
                     self.get_entity(actor_h)
@@ -25,9 +25,7 @@ impl NativeContext<'_, '_> {
                 let actor_h = stack.pop_i32();
                 let is_fx = self.get_entity(actor_h).is_some_and(|e| e.is_fx());
                 if !self.actor_exists(actor_h) || !is_fx {
-                    tracing::warn!(target: "script",
-                        "Script error (SetAnimationState): invalid animation handle {actor_h}"
-                    );
+                    script_error!(native, "invalid animation handle {actor_h}");
                     0
                 } else {
                     let on = state != 0;
@@ -54,10 +52,12 @@ impl NativeContext<'_, '_> {
                     if !effects.is_empty()
                         && let Some(patch_index) = crate::patch::PatchIndex::new(patch_index as u32)
                     {
-                        self.emit_barrier(DeferredCommand::ProcessPatchEffects {
-                            patch_index,
-                            effects,
-                        });
+                        self.script_effects_mut().emit_barrier(
+                            DeferredCommand::ProcessPatchEffects {
+                                patch_index,
+                                effects,
+                            },
+                        );
                     }
                 }
                 1
@@ -75,10 +75,12 @@ impl NativeContext<'_, '_> {
                     if !effects.is_empty()
                         && let Some(patch_index) = crate::patch::PatchIndex::new(patch_index as u32)
                     {
-                        self.emit_barrier(DeferredCommand::ProcessPatchEffects {
-                            patch_index,
-                            effects,
-                        });
+                        self.script_effects_mut().emit_barrier(
+                            DeferredCommand::ProcessPatchEffects {
+                                patch_index,
+                                effects,
+                            },
+                        );
                     }
                 }
                 1
@@ -135,32 +137,28 @@ impl NativeContext<'_, '_> {
                 let fx_id = match self.actor_id(fx_h) {
                     Some(id) if self.get_entity(fx_h).is_some_and(|entity| entity.is_fx()) => id,
                     None => {
-                        tracing::warn!(target: "script",
-                            "Script error (LinkTargetToFX): null/invalid FX handle {fx_h}"
-                        );
+                        script_error!(native, "null/invalid FX handle {fx_h}");
                         return 0;
                     }
                     Some(_) => {
-                        tracing::warn!(target: "script","Script error (LinkTargetToFX): handle {fx_h} is not an FX");
+                        script_error!(native, "handle {fx_h} is not an FX");
                         return 0;
                     }
                 };
                 let Some(fx_entity) = self.get_entity(fx_h) else {
-                    tracing::warn!(target: "script","Script error (LinkTargetToFX): invalid FX handle {fx_h}");
+                    script_error!(native, "invalid FX handle {fx_h}");
                     return 0;
                 };
                 if !fx_entity.is_fx() {
-                    tracing::warn!("Script target-linking error: invalid FX");
+                    script_error!(native, "invalid FX");
                     return 0;
                 }
                 let Some(target_entity) = self.get_entity_mut(target_h) else {
-                    tracing::warn!(target: "script",
-                        "Script error (LinkTargetToFX): invalid target handle {target_h}"
-                    );
+                    script_error!(native, "invalid target handle {target_h}");
                     return 0;
                 };
                 if !target_entity.is_fx_target() {
-                    tracing::warn!("Script target-linking error: invalid target");
+                    script_error!(native, "invalid target");
                     return 0;
                 }
                 let Entity::Target(t) = target_entity else {
@@ -173,23 +171,27 @@ impl NativeContext<'_, '_> {
 
             // --- sound ---
             SuspendAllSoundSources => {
-                self.emit_sound(SoundCommand::SuspendAll);
+                self.script_effects_mut()
+                    .emit_sound(SoundCommand::SuspendAll);
                 1
             }
             ResumeAllSoundSources => {
-                self.emit_sound(SoundCommand::ResumeAll);
+                self.script_effects_mut()
+                    .emit_sound(SoundCommand::ResumeAll);
                 1
             }
             ActivateSoundSource => {
                 let ss_h = stack.pop_i32();
                 if ss_h != 0 {
-                    self.emit_sound(SoundCommand::Activate(ss_h));
+                    self.script_effects_mut()
+                        .emit_sound(SoundCommand::Activate(ss_h));
                 }
                 1
             }
             DeactivateSoundSource => {
                 let ss_h = stack.pop_i32();
-                self.emit_sound(SoundCommand::Deactivate(ss_h));
+                self.script_effects_mut()
+                    .emit_sound(SoundCommand::Deactivate(ss_h));
                 1
             }
             DestroySoundSource => {
@@ -200,7 +202,8 @@ impl NativeContext<'_, '_> {
                         .expect("DestroySoundSource requires live sound-source state")
                         .delete(index);
                 }
-                self.emit_sound(SoundCommand::Destroy(ss_h));
+                self.script_effects_mut()
+                    .emit_sound(SoundCommand::Destroy(ss_h));
                 1
             }
 
@@ -246,10 +249,7 @@ impl NativeContext<'_, '_> {
                     }
                     1
                 } else {
-                    tracing::warn!(target: "script",
-                        "Script error: CleanFromHisBuildingBeforeTeleport: \
-                         actor {actor_h} not in a building"
-                    );
+                    script_error!(native, "actor {actor_h} not in a building");
                     0
                 }
             }
@@ -269,17 +269,11 @@ impl NativeContext<'_, '_> {
                         zone.leave(actor_id);
                         1
                     } else {
-                        tracing::warn!(target: "script",
-                            "Script error: CleanFromScriptZoneBeforeTeleport: \
-                             actor {actor_h} not in zone {loc_h}"
-                        );
+                        script_error!(native, "actor {actor_h} not in zone {loc_h}");
                         0
                     }
                 } else {
-                    tracing::warn!(target: "script",
-                        "Script error: CleanFromScriptZoneBeforeTeleport: \
-                         invalid zone {loc_h}"
-                    );
+                    script_error!(native, "invalid zone {loc_h}");
                     0
                 }
             }
@@ -326,10 +320,11 @@ impl NativeContext<'_, '_> {
                 // EngineInner applies positioning (inactive + special layer +
                 // building sector + gate point_in + DisableAllActionsTemp
                 // for PCs) after the script step.
-                self.emit_barrier(DeferredCommand::PutActorInBuilding {
-                    actor: actor_h,
-                    building: bld_h,
-                });
+                self.script_effects_mut()
+                    .emit_barrier(DeferredCommand::PutActorInBuilding {
+                        actor: actor_h,
+                        building: bld_h,
+                    });
                 0
             }
             SetBuildingActive => {
@@ -508,9 +503,7 @@ impl NativeContext<'_, '_> {
                 let door_h = stack.pop_i32();
                 let active = stack.pop_i32();
                 if self.get_door(door_h).is_none() {
-                    tracing::warn!(target: "script",
-                        "Script error: ActivateDoorMouseSector: door {door_h} not found"
-                    );
+                    script_error!(native, "door {door_h} not found");
                     return 0;
                 }
                 let door_idx = Self::door_index(door_h)
@@ -539,16 +532,14 @@ impl NativeContext<'_, '_> {
                 // "not a scroll" warn + 0; scroll → its status.
                 let scroll_h = stack.pop_i32();
                 if scroll_h == 0 {
-                    tracing::warn!(target: "script","Script error: GetScrollStatus with null element");
+                    script_error!(native, "with null element");
                     0
                 } else {
                     let is_scroll = self
                         .get_entity(scroll_h)
                         .is_some_and(|e| e.kind() == ElementKind::ObjectScroll);
                     if !is_scroll {
-                        tracing::warn!(target: "script",
-                            "Script error: GetScrollStatus on non-scroll element {scroll_h}"
-                        );
+                        script_error!(native, "on non-scroll element {scroll_h}");
                         return 0;
                     }
                     self.script_domains
@@ -568,29 +559,26 @@ impl NativeContext<'_, '_> {
                 let status = stack.pop_i32();
                 let scroll_h = stack.pop_i32();
                 if scroll_h == 0 {
-                    tracing::warn!(target: "script","Script error: SetScrollStatus with null element");
+                    script_error!(native, "with null element");
                     return 0;
                 }
                 let is_scroll = self
                     .get_entity(scroll_h)
                     .is_some_and(|e| e.kind() == ElementKind::ObjectScroll);
                 if !is_scroll {
-                    tracing::warn!(target: "script",
-                        "Script error: SetScrollStatus on non-scroll element {scroll_h}"
-                    );
+                    script_error!(native, "on non-scroll element {scroll_h}");
                     return 0;
                 }
                 if !(0..=3).contains(&status) {
-                    tracing::warn!(target: "script",
-                        "Script error: SetScrollStatus status {status} out of range (must be 0..=3)"
-                    );
+                    script_error!(native, "status {status} out of range (must be 0..=3)");
                     return 0;
                 }
                 self.script_domains.scrolls.status.insert(scroll_h, status);
-                self.emit_engine(EngineCommand::SetScrollStatus {
-                    scroll_handle: scroll_h,
-                    status,
-                });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::SetScrollStatus {
+                        scroll_handle: scroll_h,
+                        status,
+                    });
                 0
             }
             AttachScrollToNPC => {
@@ -609,9 +597,7 @@ impl NativeContext<'_, '_> {
                 // Branch 1: bad NPC handle.
                 let npc_is_npc = self.get_entity(npc_h).is_some_and(|e| e.is_npc());
                 if !npc_is_npc {
-                    tracing::warn!(target: "script",
-                        "Script error: AttachScrollToNPC with non-NPC actor handle {npc_h}"
-                    );
+                    script_error!(native, "with non-NPC actor handle {npc_h}");
                     return 0;
                 }
                 if scroll_h == 0 {
@@ -633,9 +619,7 @@ impl NativeContext<'_, '_> {
                         .get_entity(scroll_h)
                         .is_some_and(|e| e.kind() == ElementKind::ObjectScroll);
                     if !scroll_ok {
-                        tracing::warn!(target: "script",
-                            "Script error: AttachScrollToNPC element {scroll_h} is not a scroll object"
-                        );
+                        script_error!(native, "element {scroll_h} is not a scroll object");
                     }
                     // Branch 4: replace-or-insert; mark dirty when the value
                     // changes so the SPEAK titbit gets re-installed.

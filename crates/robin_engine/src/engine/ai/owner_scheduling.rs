@@ -599,7 +599,10 @@ impl EngineInner {
                         npc_id.index()
                     ),
                 )
-                .return_to_duty(sim, flags, &ctx, &tick);
+                .return_to_duty(
+                    crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None),
+                    flags,
+                );
         } else {
             self.world
                 .entities
@@ -1145,12 +1148,14 @@ impl EngineInner {
                         panic!("periodic soldier {} has no enemy AI", npc_id.index())
                     })
                     .the_16th_frame_before_stuck(
-                        sim,
+                        crate::ai_enemy::ThinkEnv::new(
+                            sim,
+                            &ctx,
+                            &tick_data,
+                            Some(&self.world.fast_grid),
+                        ),
                         frame_phase,
-                        &ctx,
                         &self.ai.global,
-                        &tick_data,
-                        Some(&self.world.fast_grid),
                         is_idle,
                         receiving_wasp_sting,
                     );
@@ -1172,13 +1177,7 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         panic!("periodic civilian {} has no friendly AI", npc_id.index())
                     })
-                    .the_16th_frame(
-                        frame_phase,
-                        &mut self.ai.global,
-                        &ctx,
-                        is_idle,
-                        sequence_null_about_to_launch,
-                    );
+                    .the_16th_frame(frame_phase, &ctx, is_idle, sequence_null_about_to_launch);
                 // `tick_data` is only used for enemies; civilians
                 // don't need it.
                 let _ = &tick_data;
@@ -1721,7 +1720,10 @@ impl EngineInner {
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
         let entity = self.expect_entity_mut(npc_id, "ladder-tail NPC before recovery");
         if let Some(enemy) = entity.enemy_ai_mut() {
-            enemy.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx, &tick_data);
+            enemy.return_to_duty(
+                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick_data, None),
+                crate::ai::DutyFlags::empty(),
+            );
         } else if let Some(friendly) = entity.friendly_ai_mut() {
             friendly.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx);
         } else {

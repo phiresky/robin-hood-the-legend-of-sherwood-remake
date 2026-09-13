@@ -60,7 +60,14 @@ pub struct InitStateSideEffects {
 /// boilerplate. Direct constructors for the few multi-field payloads keep the
 /// production order visible at the call site.
 #[derive(
-    Debug, Default, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode,
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct AiOutbox {
     /// Drained by `tick_patrol_coordination` before per-NPC thinking.
@@ -92,7 +99,14 @@ pub struct AiPatrolOutbox {
 }
 
 #[derive(
-    Debug, Default, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode,
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct AiDetectionOutbox {
     pub stimuli: Vec<Stimulus>,
@@ -100,9 +114,17 @@ pub struct AiDetectionOutbox {
 }
 
 #[derive(
-    Debug, Default, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode,
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct AiReentrantOutbox {
+    #[serde(skip)]
     #[state_hash(skip)]
     #[bitcode(skip)]
     pub engine_drains_after_script_go_on: bool,
@@ -131,11 +153,13 @@ pub struct AiReentrantOutbox {
     /// The original game's recursive roof fallback then reaches the movement request's still-true
     /// path-computation tail and is halted after registration, before it
     /// can be instructed.
+    #[serde(default)]
     pub reconsider_approach_replaced_path_waiter: bool,
     /// `DECISION_OBSERVE` has issued its synchronous approach, but the
     /// following observation-approach state write and avenger-on-roof fallback
     /// have not run yet. Retain a deferred route failure for that exact owner
     /// continuation instead of surfacing an early EventCouldntReachPoint.
+    #[serde(default)]
     pub battle_observe_completion_pending: bool,
     /// Officer alerting has issued its synchronous approach, but the enclosing
     /// `DECISION_LOOK_4_HELP` statement has not inspected the resulting
@@ -147,25 +171,30 @@ pub struct AiReentrantOutbox {
     /// Friendly soldier alerting is waiting for its synchronous approach
     /// path result. The typed continuation consumes route failure and retries
     /// with the door-path flag before the enclosing Think may see it.
+    #[serde(default)]
     pub alert_soldier_completion_pending: bool,
     /// A dead-body alert has issued the officer alert's synchronous approach, but
     /// the enclosing soldier fallback has not inspected the route result.
     /// Retain route failure for that typed continuation instead of surfacing
     /// an independent `EVENT_COULDNT_REACHPOINT`.
+    #[serde(default)]
     pub dead_body_alert_completion_pending: bool,
     /// `CALL_TOWER_GUARD_CALLS_ME` ignores the officer-alert result, but
     /// Officer alerting itself still consumes a synchronous approach route
     /// failure before returning. Rust constructs that route at the owner
     /// boundary, so retain the latch until the matching no-result tail can
     /// clear it instead of emitting an independent couldn't-reach event.
+    #[serde(default)]
     pub tower_guard_alert_officer_completion_pending: bool,
     /// The soldier-report timer began officer alerting, whose synchronous
     /// approach result decides whether the same statement falls back to
     /// area search around the civilian's report position.
+    #[serde(default)]
     pub civilian_report_alert_officer_completion_pending: bool,
     /// `WonderingBrawlHitting::EVENT_DONE` is suspended while the engine
     /// performs its inline civilian sweep and synchronous officer callback.
     /// The enclosing decision frame remains open until the brawler tail completes.
+    #[serde(default)]
     pub brawl_hitting_completion_pending: bool,
 }
 

@@ -984,7 +984,6 @@ fn closure_review_alert_soldiers_keeps_inactive_soldier_in_both_camp_snapshots()
     assert!(!candidate.is_able_to_fight);
     assert!(candidate.is_able_to_help);
 
-    let global = engine.ai.global.clone();
     assert!(
         engine
             .get_entity_mut(officer_id)
@@ -993,10 +992,7 @@ fn closure_review_alert_soldiers_keeps_inactive_soldier_in_both_camp_snapshots()
             .alert_soldiers(
                 Position::default(),
                 0,
-                &global,
-                None,
-                &ctx,
-                &tick,
+                crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
                 AlertSoldiersFailureContinuation::None,
             )
     );

@@ -14,25 +14,7 @@ use crate::coordinates::MapPoint;
 use crate::element::EntityId;
 use crate::order::AiOrderIntent;
 
-/// Score a building-door candidate exactly like Original
-/// Nearest-door selection narrows maximum norm to 16 bits, then applies both penalties with
-/// wrapping 16-bit arithmetic.
-pub(crate) fn legacy_nearest_door_distance(
-    dx: f32,
-    dy: f32,
-    sector_changes: bool,
-    layer_changes: bool,
-) -> u16 {
-    let mut distance = dx.abs().max(dy.abs()) as u16;
-    if sector_changes {
-        distance = distance.wrapping_add(500);
-    }
-    if layer_changes {
-        distance = distance.wrapping_add(300);
-    }
-    distance
-}
-
+pub(crate) mod parity_gate;
 pub(crate) mod parity_trace;
 mod types;
 pub(crate) use types::optional_ai_handle;
@@ -55,12 +37,12 @@ pub use model::{
     AMBUSH_BOX_HALF_SIZE, AiState, AlertContinuation, AlertLevel, AlertSoldiersFailureContinuation,
     AmbushPoint, Attitude, CombatInfo, CrossNpcAction, Curiosity, Decision, Detection,
     DoorCombatInfo, DoorSeekInfo, EmoticonType, ForbiddenRemark, Hint, LogLine, LogLineType,
-    LookDirection, LookThereContinuation, Noise, NoiseOrigin, NoiseType, PanicRequest,
-    PatrolAssignment, PointArchery, ProbabilityDistribution, Question, ReconnaissanceReport,
-    Remark, ReportType, RepulsivePoint, ScreenRemark, ScriptSeekAreaRequest, SectorArchery,
-    SeekPoint, SeekPointDirection, Stimulus, StimulusCategory, StimulusInfo, StimulusType,
-    StolenObject, Substate, TargetType, ThinkResultContinuation, ViewCone,
-    stimulus_to_ai_event_code,
+    LookDirection, LookThereContinuation, Noise, NoiseOrigin, NoiseType, OriginalEnumWord,
+    PanicRequest, PatrolAssignment, PointArchery, ProbabilityDistribution, Question,
+    ReconnaissanceReport, Remark, ReportType, RepulsivePoint, ScreenRemark, ScriptSeekAreaRequest,
+    SectorArchery, SeekPoint, SeekPointDirection, Stimulus, StimulusCategory, StimulusInfo,
+    StimulusType, StolenObject, StoredEnumWord, Substate, TargetType, ThinkResultContinuation,
+    ViewCone, stimulus_to_ai_event_code,
 };
 pub(crate) use model::{
     QueuedSelfStimulus, SelfStimulusOrigin, cache_npc_villain_authorized_direct,
@@ -85,10 +67,12 @@ pub use effects::{
 
 mod controller;
 pub mod persisted;
+mod role;
 pub(crate) use controller::PatrolCoordinateAction;
 pub(crate) use controller::WillStopCaller;
 pub(crate) use controller::consider_report_debug_matches;
 pub use controller::{AiController, ConsiderationAccumulator};
+pub(crate) use role::AiRole;
 
 #[cfg(test)]
 mod tests;

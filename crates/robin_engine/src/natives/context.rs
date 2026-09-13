@@ -1,7 +1,4 @@
-use std::{
-    cell::{RefCell, RefMut},
-    ops::{Deref, DerefMut},
-};
+use std::cell::{RefCell, RefMut};
 
 use super::{
     AttachedScriptBindings, ScriptBindings, ScriptEffects, ScriptHandleCodec, ScriptState,
@@ -385,23 +382,17 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
 
 impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
     pub(crate) fn is_player_aligned_camp(&self, camp: crate::element::Camp) -> bool {
-        self.diplomacy.as_deref().map_or_else(
-            || {
-                tracing::warn!(target: "script", ?camp, "allegiance query has no attached diplomacy; using default campaign relationships");
-                crate::diplomacy::DiplomacyState::default().is_player_aligned(camp)
-            },
-            |diplomacy| diplomacy.is_player_aligned(camp),
-        )
+        self.diplomacy
+            .as_deref()
+            .expect("allegiance natives require an attached DiplomacyState")
+            .is_player_aligned(camp)
     }
 
     pub(crate) fn is_hostile_to_player(&self, camp: crate::element::Camp) -> bool {
-        self.diplomacy.as_deref().map_or_else(
-            || {
-                tracing::warn!(target: "script", ?camp, "hostility query has no attached diplomacy; using default campaign relationships");
-                crate::diplomacy::DiplomacyState::default().is_hostile_to_player(camp)
-            },
-            |diplomacy| diplomacy.is_hostile_to_player(camp),
-        )
+        self.diplomacy
+            .as_deref()
+            .expect("hostility natives require an attached DiplomacyState")
+            .is_hostile_to_player(camp)
     }
 
     pub fn new(
@@ -487,6 +478,13 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
         self.script_effects
     }
 
+    /// Mutable access to the effect queue natives append to. Explicit
+    /// instead of `DerefMut` so an effect emission is visible at the call
+    /// site rather than hidden behind method auto-deref.
+    pub(crate) fn script_effects_mut(&mut self) -> &mut ScriptEffects {
+        self.script_effects
+    }
+
     pub fn script_state_mut(&mut self) -> &mut ScriptState {
         self.script_state
     }
@@ -499,9 +497,9 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
         &mut self.ai_global
     }
 
-    // Associated functions do not participate in deref method lookup. These
-    // forwards let native dispatch use `Self` while the stateless codec remains
-    // the single owner of the script-handle representation.
+    // These forwards let native dispatch spell handle conversions as
+    // `Self::..` while the stateless codec remains the single owner of the
+    // script-handle representation.
     pub(crate) fn actor_handle<I: Into<EntityId>>(id: I) -> i32 {
         ScriptHandleCodec::actor_handle(id)
     }
@@ -540,19 +538,5 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
 
     pub(crate) fn way_index(handle: i32) -> Option<usize> {
         ScriptHandleCodec::way_index(handle)
-    }
-}
-
-impl Deref for NativeContext<'_, '_> {
-    type Target = ScriptEffects;
-
-    fn deref(&self) -> &Self::Target {
-        self.script_effects
-    }
-}
-
-impl DerefMut for NativeContext<'_, '_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.script_effects
     }
 }

@@ -1,34 +1,129 @@
 use super::*;
+use crate::ai_enemy::{AmbushPointStatus, ProfileRank, SeekFlags};
+use crate::entity_id::PcId;
 use robin_util::state_hash::compute;
+mod field_guards;
+mod goldens;
 mod legacy;
 use legacy::LegacyWire;
 
-// The test-only legacy declarations are independent of the projections.
+// The test-only legacy declarations are independent of the runtime derives.
 // Check field order, optional-handle tags, defaults, native layout and hash
-// semantics without putting a serializer on the capture path.
-// Compare decoded oracle values directly, without another mapping into the
-// runtime. Production capture remains exhaustive over runtime fields; the
-// tests below separately assert reconstruction of skipped runtime-only state.
+// semantics against them. The in-memory save projection (`persisted_clone`)
+// must equal a serde round trip, including the reset runtime-only state
+// (compared through `Debug`, which covers skipped fields).
 macro_rules! assert_projection_matches_wire {
-    ($runtime:expr, $persisted:ty, $live:ty) => {{
-        let runtime = $runtime;
+    ($runtime:expr, $live:ty) => {{
+        let runtime: $live = $runtime;
         assert_eq!(compute(&runtime), runtime.legacy_hash());
         assert_eq!(bitcode::encode(&runtime), runtime.legacy_native_bytes());
         let json = runtime.legacy_json();
         assert_eq!(serde_json::to_string(&runtime).unwrap(), json);
-        let persisted = <$persisted>::capture(&runtime);
-        assert_eq!(serde_json::to_string(&persisted).unwrap(), json);
-        let restored = persisted.into_runtime();
+        let restored = runtime.persisted_clone();
         let (legacy_bytes, legacy_hash) =
             <$live as LegacyWire>::legacy_decoded_bytes_and_hash(&json);
         assert_eq!(serde_json::to_string(&restored).unwrap(), json);
         assert_eq!(bitcode::encode(&restored), legacy_bytes);
         assert_eq!(bitcode::encode(&restored), bitcode::encode(&runtime));
         assert_eq!(compute(&restored), legacy_hash);
-        let dto: $persisted = serde_json::from_str(&json).unwrap();
-        assert_eq!(bitcode::encode(&dto.into_runtime()), legacy_bytes);
+        let decoded: $live = serde_json::from_str(&json).unwrap();
+        assert_eq!(bitcode::encode(&decoded), legacy_bytes);
+        assert_eq!(format!("{decoded:?}"), format!("{restored:?}"));
         restored
     }};
+}
+
+#[test]
+fn stored_enum_word_wire_matches_raw_i32() {
+    #[derive(
+        Serialize, Deserialize, bitcode::Encode, bitcode::Decode, robin_state_hash_derive::StateHash,
+    )]
+    struct OldShape {
+        before: u16,
+        previous_state: i32,
+        previous_substate: i32,
+        after: bool,
+    }
+    #[derive(
+        Serialize, Deserialize, bitcode::Encode, bitcode::Decode, robin_state_hash_derive::StateHash,
+    )]
+    struct NewShape {
+        before: u16,
+        previous_state: StoredEnumWord<AiState>,
+        previous_substate: StoredEnumWord<Substate>,
+        after: bool,
+    }
+
+    let default_state = StoredEnumWord::<AiState>::default().raw();
+    let default_substate = StoredEnumWord::<Substate>::default().raw();
+    assert_eq!((default_state, default_substate), (0, 0));
+    let cases = [
+        (default_state, default_substate),
+        (AiState::Default as i32, Substate::DefaultOnPost as i32),
+        (
+            AiState::Seeking as i32,
+            Substate::SeekingDetectedCharly as i32,
+        ),
+        (i32::MIN, i32::MAX),
+        (-27, -1),
+    ];
+    for (state, substate) in cases {
+        let old = OldShape {
+            before: 0xBEEF,
+            previous_state: state,
+            previous_substate: substate,
+            after: true,
+        };
+        let new = NewShape {
+            before: 0xBEEF,
+            previous_state: StoredEnumWord::from_raw(state),
+            previous_substate: StoredEnumWord::from_raw(substate),
+            after: true,
+        };
+        // (1) state hash: field and whole struct.
+        assert_eq!(compute(&new.previous_state), compute(&state));
+        assert_eq!(compute(&new.previous_substate), compute(&substate));
+        assert_eq!(compute(&new), compute(&old));
+        // (2) bitcode bytes, both directions.
+        let old_bytes = bitcode::encode(&old);
+        assert_eq!(bitcode::encode(&new), old_bytes);
+        let decoded: NewShape = bitcode::decode(&old_bytes).unwrap();
+        assert_eq!(decoded.previous_state.raw(), state);
+        assert_eq!(decoded.previous_substate.raw(), substate);
+        // (3) serde_json, both directions.
+        let old_json = serde_json::to_string(&old).unwrap();
+        assert_eq!(serde_json::to_string(&new).unwrap(), old_json);
+        let decoded: NewShape = serde_json::from_str(&old_json).unwrap();
+        assert_eq!(decoded.previous_state.raw(), state);
+        assert_eq!(decoded.previous_substate.raw(), substate);
+        // Debug stays the bare i32.
+        assert_eq!(format!("{:?}", new.previous_state), format!("{state:?}"));
+        // (4) EnemyAi derived serde / persisted_clone against the legacy
+        // i32-shaped EnemyAi wire.
+        let enemy = EnemyAi {
+            previous_state: StoredEnumWord::from_raw(state),
+            previous_substate: StoredEnumWord::from_raw(substate),
+            ..EnemyAi::new(7)
+        };
+        let restored = assert_projection_matches_wire!(enemy, EnemyAi);
+        assert_eq!(restored.previous_state.raw(), state);
+        assert_eq!(restored.previous_substate.raw(), substate);
+    }
+    // Typed construction writes the same word as the old `as i32` cast.
+    assert_eq!(
+        StoredEnumWord::new(Substate::SeekingDetectedCharly).raw(),
+        Substate::SeekingDetectedCharly as i32
+    );
+    assert_eq!(
+        StoredEnumWord::<AiState>::from_raw(AiState::Seeking as i32).get("previous_state"),
+        AiState::Seeking
+    );
+}
+
+#[test]
+#[should_panic(expected = "live previous_substate contains invalid original-game enum word -27")]
+fn stored_enum_word_get_panics_on_invalid_word() {
+    StoredEnumWord::<Substate>::from_raw(-27).get("previous_substate");
 }
 
 #[test]
@@ -102,7 +197,7 @@ fn ai_controller_scalar_projection_matrix() {
             cached_in_building: seed & (1 << 3) != 0,
             ..Default::default()
         };
-        assert_projection_matches_wire!(value, PersistedAiController, AiController);
+        assert_projection_matches_wire!(value, AiController);
     }
 }
 
@@ -125,7 +220,7 @@ fn ai_global_state_scalar_projection_matrix() {
             next_repulsive_point_id: (24u32 + seed) as i32,
             ..Default::default()
         };
-        assert_projection_matches_wire!(value, PersistedAiGlobalState, AiGlobalState);
+        assert_projection_matches_wire!(value, AiGlobalState);
     }
 }
 
@@ -155,8 +250,8 @@ fn enemy_ai_scalar_projection_matrix() {
             old_odds: (33u32 + seed) as i16,
             gather_direction: (35u32 + seed) as u16,
             gather_position_instructed: seed & (1 << 3) != 0,
-            previous_state: (39u32 + seed) as i32,
-            previous_substate: (40u32 + seed) as i32,
+            previous_state: StoredEnumWord::from_raw((39u32 + seed) as i32),
+            previous_substate: StoredEnumWord::from_raw((40u32 + seed) as i32),
             reported_to_officer: seed & (1 << 0) != 0,
             missed_soldier_timer: (42u32 + seed) as u16,
             old_money: (43u32 + seed) as u16,
@@ -204,7 +299,7 @@ fn enemy_ai_scalar_projection_matrix() {
             is_archer_unit: seed & (1 << 2) != 0,
             ..Default::default()
         };
-        assert_projection_matches_wire!(value, PersistedEnemyAi, EnemyAi);
+        assert_projection_matches_wire!(value, EnemyAi);
     }
 }
 
@@ -218,7 +313,7 @@ fn friendly_ai_scalar_projection_matrix() {
             can_go_away: seed & (1 << 1) != 0,
             ..Default::default()
         };
-        assert_projection_matches_wire!(value, PersistedFriendlyAi, FriendlyAi);
+        assert_projection_matches_wire!(value, FriendlyAi);
     }
 }
 
@@ -284,8 +379,7 @@ fn populated_outbox() -> AiOutbox {
 fn controller_projection_matches_existing_json_native_and_hash_contracts() {
     let raw = populated_controller();
     let raw_clone = raw.clone();
-    let restored =
-        assert_projection_matches_wire!(raw.clone(), PersistedAiController, AiController);
+    let restored = assert_projection_matches_wire!(raw.clone(), AiController);
     assert_eq!(raw_clone.open_end_think_frames, 7);
     assert_eq!(raw_clone.engine_deferred_end_think_frames, 5);
     assert!(raw_clone.engine_completion_verdict_resolved);
@@ -316,8 +410,7 @@ fn global_projection_reconstructs_nonpersisted_scratch_without_changing_hash() {
     raw.primary_target_multiplicity_scratch.insert(7, 19);
     raw.primary_target_multiplicity_initialized = true;
     let raw_clone = raw.clone();
-    let restored =
-        assert_projection_matches_wire!(raw.clone(), PersistedAiGlobalState, AiGlobalState);
+    let restored = assert_projection_matches_wire!(raw.clone(), AiGlobalState);
     // Target selection now persists only its live actor state, not a dead
     // global compensation ledger from the former batched AI scheduler.
     assert!(
@@ -333,8 +426,8 @@ fn global_projection_reconstructs_nonpersisted_scratch_without_changing_hash() {
         Some(&19)
     );
     assert!(raw_clone.primary_target_multiplicity_initialized);
-    // Historical StateHash inferred this opt-out from serde(skip). The live
-    // declaration now states it explicitly because serde delegates to the DTO.
+    // The scratch fields are both `serde(skip)` and `state_hash(skip)`: one
+    // skipped-field marker each, identical to the historical declaration.
     assert_eq!(compute(&raw), compute(&restored));
 }
 
@@ -342,7 +435,7 @@ fn global_projection_reconstructs_nonpersisted_scratch_without_changing_hash() {
 fn outbox_projection_preserves_fifo_and_only_reconstructs_runtime_provenance() {
     let raw = populated_outbox();
     let raw_clone = raw.clone();
-    let restored = assert_projection_matches_wire!(raw, PersistedAiOutbox, AiOutbox);
+    let restored = assert_projection_matches_wire!(raw, AiOutbox);
     assert!(raw_clone.reentrant.engine_drains_after_script_go_on);
     assert_eq!(
         raw_clone.reentrant.self_stimuli[1].origin,
@@ -373,8 +466,9 @@ fn outbox_projection_preserves_fifo_and_only_reconstructs_runtime_provenance() {
 fn enemy_and_friendly_projection_recurse_into_base_and_last_patrol_stimulus() {
     let enemy = EnemyAi {
         base: populated_controller(),
-        previous_state: i32::MIN,
-        previous_substate: i32::MAX,
+        // Out-of-range words must still round-trip verbatim.
+        previous_state: StoredEnumWord::from_raw(i32::MIN),
+        previous_substate: StoredEnumWord::from_raw(i32::MAX),
         missed_pc: Some(AiEntityHandle::new(0)),
         pending_group_instruction_candidates: vec![
             (3, Position::default()),
@@ -385,7 +479,7 @@ fn enemy_and_friendly_projection_recurse_into_base_and_last_patrol_stimulus() {
         )),
         ..Default::default()
     };
-    let restored = assert_projection_matches_wire!(enemy, PersistedEnemyAi, EnemyAi);
+    let restored = assert_projection_matches_wire!(enemy, EnemyAi);
     assert_eq!(
         restored
             .last_stimulus_dispatched_to_patrol
@@ -399,7 +493,7 @@ fn enemy_and_friendly_projection_recurse_into_base_and_last_patrol_stimulus() {
         can_go_away: true,
         ..Default::default()
     };
-    let restored = assert_projection_matches_wire!(friendly, PersistedFriendlyAi, FriendlyAi);
+    let restored = assert_projection_matches_wire!(friendly, FriendlyAi);
     assert_eq!(restored.base.open_end_think_frames, 0);
     assert_eq!(restored.last_talk_partner, Some(AiEntityHandle::new(0)));
 }
@@ -410,15 +504,11 @@ fn stimulus_projection_preserves_transparent_queue_and_tagged_owner_wire() {
         StimulusType::EventDone,
         SelfStimulusOrigin::EngineCompletion,
     );
-    let restored =
-        assert_projection_matches_wire!(raw, PersistedQueuedSelfStimulus, QueuedSelfStimulus);
-    assert_eq!(
-        serde_json::to_string(&PersistedQueuedSelfStimulus::capture(&raw)).unwrap(),
-        "\"EventDone\""
-    );
+    let restored = assert_projection_matches_wire!(raw, QueuedSelfStimulus);
+    assert_eq!(serde_json::to_string(&raw).unwrap(), "\"EventDone\"");
     assert_eq!(restored.origin, SelfStimulusOrigin::Ordinary);
     let raw = provenance_stimulus(SelfStimulusOrigin::EngineCompletion);
-    let restored = assert_projection_matches_wire!(raw, PersistedStimulus, Stimulus);
+    let restored = assert_projection_matches_wire!(raw, Stimulus);
     assert_eq!(restored.owner, Some(AiEntityHandle::new(0)));
     assert!(
         serde_json::to_string(&restored)

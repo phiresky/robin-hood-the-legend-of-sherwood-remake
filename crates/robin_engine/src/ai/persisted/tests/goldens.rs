@@ -1,0 +1,460 @@
+// Byte-level goldens for the nine persisted AI owners.
+//
+// Each case pins (1) the exact serde_json bytes, (2) the `StateHash` of the
+// live value, (3) the `StateHash` of its native bitcode bytes, and (4) that
+// decoding the golden JSON reproduces the live value with only the
+// runtime-only scratch fields reset to their defaults (checked through
+// `Debug`, which covers scratch fields, plus bitcode and hash). The helpers
+// only touch runtime types, so the goldens are independent of how the serde
+// impls are produced.
+use super::*;
+
+use robin_util::state_hash::StateHash;
+use serde::de::DeserializeOwned;
+
+struct Golden {
+    file: &'static str,
+    json: &'static str,
+    hash: u64,
+    native_hash: u64,
+}
+
+macro_rules! golden {
+    ($file:literal, $hash:expr, $native_hash:expr) => {
+        Golden {
+            file: $file,
+            json: include_str!(concat!("goldens/", $file)),
+            hash: $hash,
+            native_hash: $native_hash,
+        }
+    };
+}
+
+fn check_golden<T>(name: &str, live: &T, expected_restored: &T, golden: Golden)
+where
+    T: Serialize + DeserializeOwned + std::fmt::Debug + bitcode::Encode + StateHash,
+{
+    let json = serde_json::to_string(live).unwrap();
+    assert_eq!(
+        json,
+        golden.json.trim_end_matches('\n'),
+        "{name}: serde_json bytes (goldens/{})",
+        golden.file
+    );
+    assert_eq!(compute(live), golden.hash, "{name}: StateHash");
+    assert_eq!(
+        compute(&bitcode::encode(live)),
+        golden.native_hash,
+        "{name}: native bytes"
+    );
+    let restored: T = serde_json::from_str(golden.json).unwrap();
+    assert_eq!(
+        format!("{restored:?}"),
+        format!("{expected_restored:?}"),
+        "{name}: decoded value"
+    );
+    assert_eq!(
+        bitcode::encode(&restored),
+        bitcode::encode(expected_restored),
+        "{name}: decoded native bytes"
+    );
+    assert_eq!(compute(&restored), golden.hash, "{name}: decoded StateHash");
+    assert_eq!(
+        serde_json::to_string(&restored).unwrap(),
+        json,
+        "{name}: re-encoded serde_json bytes"
+    );
+}
+
+fn scrub_stimulus(value: &mut Stimulus) {
+    value.self_origin = SelfStimulusOrigin::default();
+}
+
+fn scrub_queued(value: &mut QueuedSelfStimulus) {
+    value.origin = SelfStimulusOrigin::default();
+}
+
+fn scrub_detection(value: &mut AiDetectionOutbox) {
+    value.stimuli.iter_mut().for_each(scrub_stimulus);
+}
+
+fn scrub_reentrant(value: &mut AiReentrantOutbox) {
+    value.engine_drains_after_script_go_on = false;
+    value.self_stimuli.iter_mut().for_each(scrub_queued);
+}
+
+fn scrub_outbox(value: &mut AiOutbox) {
+    scrub_detection(&mut value.detection);
+    scrub_reentrant(&mut value.reentrant);
+}
+
+fn scrub_controller(value: &mut AiController) {
+    value.open_end_think_frames = 0;
+    value.engine_deferred_end_think_frames = 0;
+    value.engine_completion_verdict_resolved = false;
+    value.stimulus_queue.iter_mut().for_each(scrub_stimulus);
+    scrub_outbox(&mut value.outbox);
+}
+
+fn scrubbed<T: Clone>(value: &T, scrub: impl FnOnce(&mut T)) -> T {
+    let mut value = value.clone();
+    scrub(&mut value);
+    value
+}
+
+fn golden_controller() -> AiController {
+    AiController {
+        last_stimulus_actor: Some(AiEntityHandle::new(3)),
+        last_synced_focus_target: Some(AiEntityHandle::new(0)),
+        master: Some(AiEntityHandle::new(11)),
+        synchronize_charly: Some(AiEntityHandle::new(0)),
+        path_id: PathId::new(4),
+        stimulus_queue: vec![
+            provenance_stimulus(SelfStimulusOrigin::Condolation),
+            Stimulus::new(StimulusType::EventDone),
+        ],
+        panic_center_x: -3.25,
+        panic_center_y: f32::MAX,
+        ..populated_controller()
+    }
+}
+
+fn golden_global() -> AiGlobalState {
+    let mut value = AiGlobalState {
+        saved_random_seed: i64::MIN + 31,
+        green_alert_soldiers: 17,
+        yellow_alert_soldiers: 2,
+        red_alert_soldiers: 65535,
+        freeze: true,
+        golden_eye_mode: true,
+        remarks_forbidden_till_frame: vec![0, 9, u32::MAX],
+        current_speech_variant: 3,
+        next_repulsive_point_id: -4,
+        all_soldier_handles: std::sync::Arc::new(vec![19, 0, 7]),
+        ..Default::default()
+    };
+    value.primary_target_multiplicity_scratch.insert(7, 19);
+    value.primary_target_multiplicity_initialized = true;
+    value
+}
+
+fn golden_enemy() -> EnemyAi {
+    EnemyAi {
+        base: golden_controller(),
+        previous_state: StoredEnumWord::from_raw(i32::MIN),
+        previous_substate: StoredEnumWord::from_raw(i32::MAX),
+        missed_pc: Some(AiEntityHandle::new(0)),
+        archer_behind_me: Some(AiEntityHandle::new(12)),
+        pending_group_instruction_candidates: vec![
+            (3, Position::default()),
+            (1, Position::default()),
+        ],
+        pending_group_instruction_seek_flags: 5,
+        ale_reliable_distraction: true,
+        soldier_profile_hearing_factor: 0.1,
+        my_shooting_point: Some((1, 2)),
+        last_stimulus_dispatched_to_patrol: Some(provenance_stimulus(
+            SelfStimulusOrigin::Condolation,
+        )),
+        ..Default::default()
+    }
+}
+
+fn golden_friendly() -> FriendlyAi {
+    FriendlyAi {
+        base: golden_controller(),
+        beggar_dont_talk_counter: 9,
+        last_talk_partner: Some(AiEntityHandle::new(0)),
+        can_go_away: true,
+        ..Default::default()
+    }
+}
+
+fn golden_reentrant() -> AiReentrantOutbox {
+    let mut value = populated_outbox().reentrant;
+    value.reconsider_approach_replaced_path_waiter = true;
+    value.brawl_hitting_completion_pending = true;
+    value
+}
+
+#[test]
+fn ai_controller_golden() {
+    let live = golden_controller();
+    let expected = scrubbed(&live, scrub_controller);
+    check_golden(
+        "AiController",
+        &live,
+        &expected,
+        golden!(
+            "ai_controller.json",
+            0x2a5a_f035_01de_3c88,
+            0xc633_7e99_96af_edb3
+        ),
+    );
+}
+
+#[test]
+fn ai_global_state_golden() {
+    let live = golden_global();
+    let expected = scrubbed(&live, |value| {
+        value.primary_target_multiplicity_scratch.clear();
+        value.primary_target_multiplicity_initialized = false;
+    });
+    check_golden(
+        "AiGlobalState",
+        &live,
+        &expected,
+        golden!(
+            "ai_global_state.json",
+            0xc9ad_c60e_5fa1_fb96,
+            0x3c90_939c_116f_f060
+        ),
+    );
+}
+
+#[test]
+fn queued_self_stimulus_golden() {
+    let live = QueuedSelfStimulus::new(
+        StimulusType::EventDone,
+        SelfStimulusOrigin::EngineCompletion,
+    );
+    let expected = scrubbed(&live, scrub_queued);
+    check_golden(
+        "QueuedSelfStimulus",
+        &live,
+        &expected,
+        golden!(
+            "queued_self_stimulus.json",
+            0x8e03_e9aa_39aa_a78c,
+            0xbcb8_704b_2926_6f0f
+        ),
+    );
+}
+
+#[test]
+fn stimulus_golden() {
+    let live = provenance_stimulus(SelfStimulusOrigin::EngineCompletion);
+    let expected = scrubbed(&live, scrub_stimulus);
+    check_golden(
+        "Stimulus",
+        &live,
+        &expected,
+        golden!(
+            "stimulus.json",
+            0xc17f_f983_878a_ff48,
+            0xb9d3_8070_b338_f042
+        ),
+    );
+}
+
+#[test]
+fn ai_outbox_golden() {
+    let live = populated_outbox();
+    let expected = scrubbed(&live, scrub_outbox);
+    check_golden(
+        "AiOutbox",
+        &live,
+        &expected,
+        golden!(
+            "ai_outbox.json",
+            0xa806_6281_7029_63a6,
+            0xbd01_4c67_dcbb_4b59
+        ),
+    );
+}
+
+#[test]
+fn ai_detection_outbox_golden() {
+    let live = populated_outbox().detection;
+    let expected = scrubbed(&live, scrub_detection);
+    check_golden(
+        "AiDetectionOutbox",
+        &live,
+        &expected,
+        golden!(
+            "ai_detection_outbox.json",
+            0xea4d_0188_3816_8ed2,
+            0xb45a_6711_410a_5280
+        ),
+    );
+}
+
+#[test]
+fn ai_reentrant_outbox_golden() {
+    let live = golden_reentrant();
+    let expected = scrubbed(&live, scrub_reentrant);
+    check_golden(
+        "AiReentrantOutbox",
+        &live,
+        &expected,
+        golden!(
+            "ai_reentrant_outbox.json",
+            0xc564_e64f_b7ea_43d6,
+            0x9fc7_fc54_5bf0_02e9
+        ),
+    );
+}
+
+#[test]
+fn enemy_ai_golden() {
+    let live = golden_enemy();
+    let expected = scrubbed(&live, |value| {
+        scrub_controller(&mut value.base);
+        value
+            .last_stimulus_dispatched_to_patrol
+            .iter_mut()
+            .for_each(scrub_stimulus);
+    });
+    check_golden(
+        "EnemyAi",
+        &live,
+        &expected,
+        golden!(
+            "enemy_ai.json",
+            0x13a6_27d2_6253_fb9e,
+            0xf1b4_418f_957b_4b2e
+        ),
+    );
+}
+
+#[test]
+fn friendly_ai_golden() {
+    let live = golden_friendly();
+    let expected = scrubbed(&live, |value| scrub_controller(&mut value.base));
+    check_golden(
+        "FriendlyAi",
+        &live,
+        &expected,
+        golden!(
+            "friendly_ai.json",
+            0x6b62_e148_33ae_8844,
+            0x22be_5eb7_fc5e_e62d
+        ),
+    );
+}
+
+/// Remove `keys` from a golden JSON object and decode the result.
+fn decode_without<T: DeserializeOwned>(json: &str, keys: &[&str]) -> Result<T, serde_json::Error> {
+    let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
+    let object = value.as_object_mut().unwrap();
+    for key in keys {
+        assert!(object.remove(*key).is_some(), "golden lacks key {key}");
+    }
+    serde_json::from_value(value)
+}
+
+/// Fields that decode with their type default when absent from older saves.
+const ENEMY_DEFAULTED_KEYS: &[&str] = &[
+    "pending_sword_strike_consideration",
+    "pending_combat_insult_after_strike_consideration",
+    "missed_pc",
+    "investigating_distraction",
+    "beggar_to_examine",
+    "archer_behind_me",
+    "shield_bearer_before_me",
+    "pending_group_instruction_candidates",
+    "pending_group_instruction_seek_flags",
+    "pending_group_instruction_clear_location_after_accept",
+    "ale_reliable_distraction",
+    "left_combat_neighbour",
+    "right_combat_neighbour",
+];
+
+const REENTRANT_DEFAULTED_KEYS: &[&str] = &[
+    "reconsider_approach_replaced_path_waiter",
+    "battle_observe_completion_pending",
+    "alert_soldier_completion_pending",
+    "dead_body_alert_completion_pending",
+    "tower_guard_alert_officer_completion_pending",
+    "civilian_report_alert_officer_completion_pending",
+    "brawl_hitting_completion_pending",
+];
+
+#[test]
+fn enemy_ai_legacy_missing_defaulted_fields_decode_to_type_defaults() {
+    let json = include_str!("goldens/enemy_ai.json");
+    let decoded: EnemyAi = decode_without(json, ENEMY_DEFAULTED_KEYS).unwrap();
+    let mut expected = golden_enemy();
+    scrub_controller(&mut expected.base);
+    expected
+        .last_stimulus_dispatched_to_patrol
+        .iter_mut()
+        .for_each(scrub_stimulus);
+    expected.pending_sword_strike_consideration = false;
+    expected.pending_combat_insult_after_strike_consideration = false;
+    expected.missed_pc = None;
+    expected.investigating_distraction = false;
+    expected.beggar_to_examine = None;
+    expected.archer_behind_me = None;
+    expected.shield_bearer_before_me = None;
+    expected.pending_group_instruction_candidates = Vec::new();
+    expected.pending_group_instruction_seek_flags = 0;
+    expected.pending_group_instruction_clear_location_after_accept = false;
+    expected.ale_reliable_distraction = false;
+    expected.left_combat_neighbour = None;
+    expected.right_combat_neighbour = None;
+    assert_eq!(format!("{decoded:?}"), format!("{expected:?}"));
+    // Every other field stays required; there is no container-level default.
+    for required in ["pc_missed", "base", "previous_state", "is_archer_unit"] {
+        assert!(
+            decode_without::<EnemyAi>(json, &[required]).is_err(),
+            "EnemyAi.{required} must stay required"
+        );
+    }
+}
+
+#[test]
+fn reentrant_outbox_legacy_missing_defaulted_fields_decode_to_type_defaults() {
+    let json = include_str!("goldens/ai_reentrant_outbox.json");
+    let decoded: AiReentrantOutbox = decode_without(json, REENTRANT_DEFAULTED_KEYS).unwrap();
+    let mut expected = golden_reentrant();
+    scrub_reentrant(&mut expected);
+    expected.reconsider_approach_replaced_path_waiter = false;
+    expected.battle_observe_completion_pending = false;
+    expected.alert_soldier_completion_pending = false;
+    expected.dead_body_alert_completion_pending = false;
+    expected.tower_guard_alert_officer_completion_pending = false;
+    expected.civilian_report_alert_officer_completion_pending = false;
+    expected.brawl_hitting_completion_pending = false;
+    assert_eq!(format!("{decoded:?}"), format!("{expected:?}"));
+    for required in ["cross_npc_actions", "look_for_help_completion_pending"] {
+        assert!(
+            decode_without::<AiReentrantOutbox>(json, &[required]).is_err(),
+            "AiReentrantOutbox.{required} must stay required"
+        );
+    }
+    // serde's derive treats an absent plain `Option` field as `None` (no
+    // `with` adapter involved), so this historical leniency is pinned too.
+    let decoded: AiReentrantOutbox =
+        decode_without(json, &["waypoint_script_reach_point"]).unwrap();
+    assert_eq!(decoded.waypoint_script_reach_point, None);
+}
+
+#[test]
+fn skipped_scratch_keys_are_absent_and_ignored_on_decode() {
+    let controller = serde_json::to_value(golden_controller()).unwrap();
+    for key in [
+        "open_end_think_frames",
+        "engine_deferred_end_think_frames",
+        "engine_completion_verdict_resolved",
+    ] {
+        assert!(controller.get(key).is_none(), "{key} must not be persisted");
+    }
+    assert!(
+        controller["stimulus_queue"][0].get("self_origin").is_none(),
+        "self_origin must not be persisted"
+    );
+    let global = serde_json::to_value(golden_global()).unwrap();
+    for key in [
+        "primary_target_multiplicity_scratch",
+        "primary_target_multiplicity_initialized",
+    ] {
+        assert!(global.get(key).is_none(), "{key} must not be persisted");
+    }
+    let reentrant = serde_json::to_value(golden_reentrant()).unwrap();
+    assert!(reentrant.get("engine_drains_after_script_go_on").is_none());
+    assert_eq!(
+        reentrant["self_stimuli"],
+        serde_json::json!(["EventDone", "EventReachPoint"])
+    );
+}

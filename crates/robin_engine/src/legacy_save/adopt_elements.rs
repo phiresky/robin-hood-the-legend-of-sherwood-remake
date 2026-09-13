@@ -2331,8 +2331,8 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
             ai.gather_direction = gather_direction;
             ai.gather_position_instructed = gather_position_instructed;
             ai.officers_position = officers_position;
-            ai.previous_state = previous_state;
-            ai.previous_substate = previous_substate;
+            ai.previous_state = crate::ai::StoredEnumWord::from_raw(previous_state);
+            ai.previous_substate = crate::ai::StoredEnumWord::from_raw(previous_substate);
             ai.reported_to_officer = reported_to_officer;
             ai.missed_soldier_timer = missed_soldier_timer;
             ai.old_money = old_money;

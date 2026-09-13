@@ -384,56 +384,6 @@ pub struct AiContext {
     pub all_soldier_handles: std::sync::Arc<Vec<u32>>,
 }
 
-#[cfg(test)]
-impl AiContext {
-    /// Complete the minimal synthetic owner identity used by AI unit tests.
-    ///
-    /// Production contexts are assembled from loaded actors and never use
-    /// `Default`. Keeping `Camp::default()` as the invalid sentinel remains
-    /// important: explicit incomplete fixtures must still fail strict
-    /// diplomacy validation. Tests which need an ordinary enemy owner should
-    /// opt into this valid Lacklandist fixture instead.
-    pub(crate) fn test_fixture() -> Self {
-        Self {
-            camp: crate::element::Camp::Lacklandists,
-            ..Self::default()
-        }
-    }
-
-    /// Build a minimal loaded-world fixture containing one flat motion
-    /// sector. Tests which exercise world-point conversion must provide sector
-    /// geometry just as a loaded level does; an exact arena index into an
-    /// empty grid is intentionally rejected by the runtime.
-    pub(crate) fn test_fixture_with_motion_sector(sector_number: i16, layer: u16) -> Self {
-        let mut fast_grid = crate::fast_find_grid::FastFindGrid::new();
-        fast_grid.add_sector(
-            crate::fast_find_grid::GridSector {
-                points: Vec::new(),
-                bounding_box: crate::coordinates::MapBBox::new(),
-                sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
-                layer,
-                sector_number: crate::sector::SectorNumber::new(sector_number),
-                door_index: None,
-                lift_type: None,
-                lift_direction: 0,
-                force_crouched: false,
-                building_index: None,
-                low_exit_point: None,
-                high_exit_point: None,
-                lowest_door_index: None,
-                jump_line_indices: Vec::new(),
-                gate_indices: Vec::new(),
-                underlying_sector: None,
-            },
-            layer,
-        );
-        Self {
-            fast_grid: std::sync::Arc::new(fast_grid),
-            ..Self::test_fixture()
-        }
-    }
-}
-
 impl AiContext {
     pub fn player_relationship(&self) -> crate::diplomacy::Relationship {
         self.entity_views
@@ -632,6 +582,33 @@ impl AiContext {
     ) -> Option<&crate::ai_entity_view::AiEntityView> {
         let handle = handle.into_optional_ai_handle()?.get();
         self.entity_views.get(&handle)
+    }
+
+    /// [`Self::entity_view`] for callers where a *null* handle is a legal,
+    /// silent "nobody", but a non-null handle whose view is unavailable is an
+    /// anomaly the caller tolerates by taking its documented fallback branch.
+    /// That fallback stays unchanged; this only makes it visible in the log
+    /// (with the reason and the calling site).
+    #[track_caller]
+    pub fn entity_view_logged(
+        &self,
+        handle: impl IntoOptionalAiHandle + Copy,
+        what: &'static str,
+    ) -> Option<&crate::ai_entity_view::AiEntityView> {
+        let raw = handle.into_optional_ai_handle()?.get();
+        match self.entity_observation(handle) {
+            Ok(view) => Some(view),
+            Err(reason) => {
+                tracing::warn!(
+                    handle = raw,
+                    ?reason,
+                    what,
+                    caller = %std::panic::Location::caller(),
+                    "AI entity view unavailable; taking the caller's absent-entity fallback"
+                );
+                None
+            }
+        }
     }
 
     /// Look up a handle that the calling logic has already established as a
@@ -1494,7 +1471,16 @@ pub struct DoorRallyPoint {
 pub const AI_DOOR_RALLY_POINT_DISTANCE: f32 = 100.0;
 
 /// Global / shared AI state, conceptually module-static.
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    smart_default::SmartDefault,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiGlobalState {
     pub green_alert_soldiers: u16,
     pub yellow_alert_soldiers: u16,
@@ -1545,7 +1531,8 @@ pub struct AiGlobalState {
     /// Scripts add/remove them by integer ID.
     pub repulsive_points: Vec<RepulsivePoint>,
 
-    /// Next auto-incrementing ID for repulsive points.
+    /// Next auto-incrementing ID for repulsive points. IDs start at 1.
+    #[default(1)]
     pub next_repulsive_point_id: i32,
 
     /// Cached door geometry for finding a door an enemy could be behind.
@@ -1582,48 +1569,14 @@ pub struct AiGlobalState {
     /// exact serial mutation history. Original explicitly does not serialize
     /// this scratch field, so a loaded session starts it empty and then
     /// preserves owner-ordered mutations.
+    #[serde(skip)]
     #[state_hash(skip)]
     #[bitcode(skip)]
     pub primary_target_multiplicity_scratch: std::collections::BTreeMap<HumanHandle, u32>,
+    #[serde(skip)]
     #[state_hash(skip)]
     #[bitcode(skip)]
     pub primary_target_multiplicity_initialized: bool,
-}
-
-impl Default for AiGlobalState {
-    fn default() -> Self {
-        Self {
-            green_alert_soldiers: 0,
-            yellow_alert_soldiers: 0,
-            red_alert_soldiers: 0,
-            soldier_camps: std::collections::BTreeSet::new(),
-            stupid_soldiers_cheat: false,
-            freeze: false,
-            overall_alert_status: AlertLevel::Green,
-            overall_villain_alert_status: AlertLevel::Green,
-            ambush_points: Vec::new(),
-            seek_points: Vec::new(),
-            archery_sectors: Vec::new(),
-            saved_random_seed: 0,
-            remarks_forbidden_till_frame: Vec::new(),
-            forbidden_remarks: Vec::new(),
-            screen_remarks: Vec::new(),
-            attribute_display: false,
-            speech_display: false,
-            golden_eye_mode: false,
-            ezekiel_2517: false,
-            current_speech_variant: 0,
-            repulsive_points: Vec::new(),
-            next_repulsive_point_id: 1,
-            door_seek_infos: Vec::new(),
-            reinforcement_doors: Vec::new(),
-            houses: Vec::new(),
-            door_rally_points: Vec::new(),
-            all_soldier_handles: std::sync::Arc::new(Vec::new()),
-            primary_target_multiplicity_scratch: std::collections::BTreeMap::new(),
-            primary_target_multiplicity_initialized: false,
-        }
-    }
 }
 
 impl AiGlobalState {

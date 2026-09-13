@@ -858,7 +858,6 @@ fn tick_bow_shots_matching(
             y: entity.element_data().position_map().y,
             z: elevation,
         };
-        let _action_state = actor.action_state;
 
         // Peek at the current order to determine what animation to drive.
         // Orders live on the owning `SequenceElement.orders` (looked up via
