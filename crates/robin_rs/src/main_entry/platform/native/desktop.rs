@@ -10,9 +10,11 @@ use crate::main_entry::init::{InitError, add_language_folder_with_files, add_ove
 /// Set up the working directory so that `Data/` is accessible.
 ///
 /// `data_dir_override` (e.g. a tool's `--data-dir` flag) takes priority
-/// over the `ROBINHOOD_DATA_DIR` environment variable.
+/// over the `ROBINHOOD_DATA_DIR` environment variable. `install_root`, when
+/// given, is where `assets/core-datadir` and `mods/` are found.
 pub fn setup_data_dir(
     data_dir_override: Option<&Path>,
+    install_root: Option<&Path>,
     files: &SbFileSystem,
 ) -> Result<(), InitError> {
     let data_dir = configured_data_dir(data_dir_override, std::env::var("ROBINHOOD_DATA_DIR").ok());
@@ -52,7 +54,7 @@ pub fn setup_data_dir(
         });
     }
 
-    add_overlay_data_dirs(files)?;
+    add_overlay_data_dirs(files, install_root)?;
     add_language_folder_with_files(files)?;
     Ok(())
 }

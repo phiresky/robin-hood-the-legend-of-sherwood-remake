@@ -13,6 +13,8 @@ use crate::main_entry::init::InitError;
 /// `ShippingDatadir` / `asset_fs` bundle.
 pub fn setup_data_dir(
     data_dir_override: Option<&Path>,
+    // Android mounts no install-relative core overlay or mods directory.
+    _install_root: Option<&Path>,
     files: &SbFileSystem,
 ) -> Result<(), InitError> {
     let data_dir = configured_data_dir(data_dir_override, std::env::var("ROBINHOOD_DATA_DIR").ok());

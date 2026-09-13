@@ -21,6 +21,7 @@ use anyhow::Context;
 use clap::Parser;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::replay::state_hash;
+use robin_engine::sbfile::SbFileSystem;
 use robin_rs::Host;
 
 const WARMUP_FRAMES: u32 = 30;
@@ -38,28 +39,35 @@ fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
-    if let Some(dir) = args
+    // Without an explicit root, paths resolve against the invocation directory
+    // (the file system is still explicit; the process cwd is never changed).
+    let dir = args
         .data_dir
         .or_else(|| std::env::var_os("ROBINHOOD_DATA_DIR").map(PathBuf::from))
-    {
-        // Same root validation and diagnostics as the original-data tests.
-        robin_test_support::original_data::resolve_data_path_from(
-            Some(dir.as_os_str()),
-            Path::new("Data"),
-            robin_test_support::original_data::FixtureKind::Directory,
-        )
-        .map_err(anyhow::Error::msg)
-        .with_context(|| format!("open Original data root {}", dir.display()))?;
-        // TODO: replace this tool's process-wide bootstrap once all downstream
-        // Original profile, sprite-bank and mission loaders accept an explicit filesystem.
-        std::env::set_current_dir(&dir)
-            .with_context(|| format!("open Original data root {}", dir.display()))?;
-    }
-    robin_rs::main_entry::register_language_data_paths_for_tool();
+        .unwrap_or_else(|| PathBuf::from("."));
+    // Same root validation and diagnostics as the original-data tests.
+    robin_test_support::original_data::resolve_data_path_from(
+        Some(dir.as_os_str()),
+        Path::new("Data"),
+        robin_test_support::original_data::FixtureKind::Directory,
+    )
+    .map_err(anyhow::Error::msg)
+    .with_context(|| format!("open Original data root {}", dir.display()))?;
+    let files = std::sync::Arc::new(SbFileSystem::new(std::sync::Arc::new(
+        robin_util::asset_fs::AssetVfs::new(),
+    )));
+    files
+        .set_primary_path(&dir.to_string_lossy())
+        .map_err(|status| {
+            anyhow::anyhow!("mount Original data root {}: {status}", dir.display())
+        })?;
+    robin_rs::main_entry::register_language_data_paths_with_files(&files)
+        .context("register language data paths")?;
 
     // Load the real profile pool from the legacy CPF (mirrors main_entry).
     let mut pm = robin_engine::profiles::ProfileManager::new();
-    let mut cpf = robin_engine::sbfile::SbFile::open("Data/Configuration/profile.cpf")
+    let mut cpf = files
+        .open("Data/Configuration/profile.cpf")
         .expect("open profile.cpf");
     pm.load_all_legacy_cpf(&mut cpf).expect("parse profile.cpf");
     let profiles = std::sync::Arc::new(pm);
@@ -69,19 +77,27 @@ fn main() -> anyhow::Result<()> {
         &profiles,
         robin_engine::player_profile::DifficultyLevel::Medium,
     );
-    campaign.create_gang_from_pcs(
+    campaign.create_gang_from_pcs_with_file_exists(
         "RJMT",
         &profiles,
         robin_engine::player_profile::DifficultyLevel::Medium,
+        |path| {
+            files.try_exists(path).unwrap_or_else(|error| {
+                panic!("cannot inspect campaign resource {path:?}: {error:?}")
+            })
+        },
     );
     campaign.add_all_to_mission_team();
     campaign.current_mission_idx = Some(1);
 
     let mut assets = LevelAssets::new();
-    assets.sprite_scriptor =
-        std::sync::Arc::new(robin_engine::sprite_script::SpriteScriptor::legacy_tool());
+    assets.sprite_scriptor = std::sync::Arc::new(
+        robin_engine::sprite_script::SpriteScriptor::with_resources(std::sync::Arc::new(
+            robin_engine::sprite_script::MissionResourceEnvironment::from_files(&files),
+        )),
+    );
     assets.profile_manager = profiles.clone();
-    let mut text_res = robin_assets::resource_manager::ResourceManager::legacy_tool();
+    let mut text_res = robin_assets::resource_manager::ResourceManager::with_files(files.clone());
     text_res
         .attach_resource_file("Data/Text/Level.res")
         .expect("load localized mission names");
@@ -95,7 +111,7 @@ fn main() -> anyhow::Result<()> {
         .frontend
         .resources
         .frame_holder_before_publication_mut()
-        .initialize_sprite_bank(".")
+        .initialize_sprite_bank_with_files(".", &files)
     {
         tracing::warn!("sprite bank: {e}");
     }
@@ -111,17 +127,18 @@ fn main() -> anyhow::Result<()> {
     });
     if let Some(name) = mission_name {
         let path = format!("Data/Levels/{name}.scb");
-        let program = load_mission_program(Path::new(&path))?;
+        let program = load_mission_program(&files, &path)?;
         let mut m = std::collections::BTreeMap::new();
         m.insert(name, std::sync::Arc::new(program));
         assets.scripts.mission_programs = std::sync::Arc::new(m);
     }
 
-    let loaded = robin_engine::engine::level_loading::load_mission_for_campaign(
+    let loaded = robin_engine::engine::level_loading::load_mission_for_campaign_with_files(
         &campaign,
         &profiles,
         "Data/Levels",
         &mut |_| {},
+        &files,
     )
     .expect("load mission");
 
@@ -219,10 +236,12 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn load_mission_program(
-    path: &Path,
+    files: &SbFileSystem,
+    path: &str,
 ) -> anyhow::Result<robin_engine::script_manager::ScriptProgram> {
-    let resolved =
-        robin_engine::sbfile::resolve_case_insensitive(path).unwrap_or_else(|| path.to_path_buf());
+    let resolved = files
+        .resolve_data_path(path)
+        .with_context(|| format!("mission script {path} not found under the data root"))?;
     let scb = robin_assets::scb::parse_file(&resolved)
         .with_context(|| format!("load mission script {}", resolved.display()))?;
     robin_engine::script_manager::ScriptProgram::from_scb(scb)
@@ -288,18 +307,22 @@ fn diff_json(path: &str, a: &serde_json::Value, b: &serde_json::Value) {
 mod tests {
     use super::*;
 
+    fn rooted_files(root: &Path) -> SbFileSystem {
+        let files = SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        files.set_primary_path(&root.to_string_lossy()).unwrap();
+        files
+    }
+
     #[test]
-    fn missing_mission_script_reports_path_and_io_cause() {
+    fn missing_mission_script_reports_requested_path() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("missing.scb");
-        let error = load_mission_program(&path).unwrap_err();
-        assert!(error.to_string().contains(&path.display().to_string()));
-        match error.downcast_ref::<robin_assets::scb::Error>().unwrap() {
-            robin_assets::scb::Error::Io(cause) => {
-                assert_eq!(cause.kind(), std::io::ErrorKind::NotFound);
-            }
-            other => panic!("expected file read failure, got {other:?}"),
-        }
+        let error = load_mission_program(&rooted_files(dir.path()), "missing.scb").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("mission script missing.scb not found"),
+            "{error:#}"
+        );
     }
 
     #[test]
@@ -307,8 +330,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let actual = dir.path().join("Mission.SCB");
         std::fs::write(&actual, b"not-scb!").unwrap();
-        let requested = dir.path().join("mission.scb");
-        let error = load_mission_program(&requested).unwrap_err();
+        let error = load_mission_program(&rooted_files(dir.path()), "mission.scb").unwrap_err();
         assert!(error.to_string().contains(&actual.display().to_string()));
         assert!(matches!(
             error.downcast_ref::<robin_assets::scb::Error>(),
