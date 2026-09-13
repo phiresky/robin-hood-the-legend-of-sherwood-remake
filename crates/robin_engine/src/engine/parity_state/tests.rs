@@ -165,7 +165,7 @@ impl Engine {
         position_state
             .as_object_mut()
             .expect("parity position chunk must be an object")
-            .extend(into_projection_fields(json!({
+            .extend(serde_json::from_value::<serde_json::Map<String, Value>>(json!({
                 "world": point3(position.position.x, position.position.y, position.position.z),
                 "map": point2(position.map.x, position.map.y),
                 "sprite": point2(current_sprite.x, current_sprite.y),
@@ -180,7 +180,7 @@ impl Engine {
                 "accumulated_movement_map": point2(position.accumulated_movement_map.x, position.accumulated_movement_map.y),
                 "forecasted_movement": point3(position.forecasted_movement.x, position.forecasted_movement.y, position.forecasted_movement.z),
                 "move_box": bbox(position.move_box_map), "blocked_box": bbox(position.blocked_box),
-                })));
+                })).expect("frozen oracle chunk is a JSON object"));
         let sprite_state = json!({
                 "row": sprite.current_row, "frame": sprite.current_frame,
                 "frame_count": sprite.frame_count,

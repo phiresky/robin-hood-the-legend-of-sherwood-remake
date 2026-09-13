@@ -496,7 +496,7 @@ impl Engine {
             state
                 .as_object_mut()
                 .expect("parity NPC AI state must be an object")
-                .extend(into_projection_fields(json!({
+                .extend(serde_json::from_value::<serde_json::Map<String, Value>>(json!({
                 "sorrow": ai.sorrow_level,
                 "last_stimuli": ai.last_stimulus.map(|stimulus| stimulus as u32),
                 "last_stimulus_multiplicities": ai.last_stimulus_multiplicity,
@@ -538,11 +538,11 @@ impl Engine {
                 "inside_halt": ai.inside_halt_method,
                 "synchronizing_actors": handles(&ai.synchronizing_actors),
                 "default_path_flags": ai.default_path_walking_flags.bits(),
-                })));
+                })).expect("frozen oracle chunk is a JSON object"));
             state
                 .as_object_mut()
                 .expect("parity NPC AI state must be an object")
-                .extend(into_projection_fields(json!({
+                .extend(serde_json::from_value::<serde_json::Map<String, Value>>(json!({
                 "current_remark": ai.current_remark as u32,
                 "emoticon": {
                     "type": ai.current_emoticon_type as u32,
@@ -565,7 +565,7 @@ impl Engine {
                     "theoretical": ai.theoretical_patrol.iter().copied().map(entity_ref).collect::<Vec<_>>(),
                     "stopped": ai.patrol_stopped, "direction": ai.patrol_direction,
                 },
-                })));
+                })).expect("frozen oracle chunk is a JSON object"));
             let subclass = match &npc.ai_brain {
                 crate::element::AiBrain::Friendly(friendly) => Some(json!({
                     "kind": "friendly",
@@ -622,7 +622,7 @@ impl Engine {
                     subclass
                         .as_object_mut()
                         .expect("parity enemy AI state must be an object")
-                        .extend(into_projection_fields(json!({
+                        .extend(serde_json::from_value::<serde_json::Map<String, Value>>(json!({
                     "forced_next_battle_decision": enemy.forced_next_battle_decision as u32,
                     "reset_battle_decision": enemy.reset_battle_decision,
                     "synchronize_index": enemy.base.synchronize_index,
@@ -655,11 +655,11 @@ impl Engine {
                     "shield_bearer_direction": enemy.shield_bearer_direction,
                     "phalanx_aborted": enemy.phalanx_aborted,
                     "changed_to_alert_path": enemy.changed_to_alert_path,
-                    })));
+                    })).expect("frozen oracle chunk is a JSON object"));
                     subclass
                         .as_object_mut()
                         .expect("parity enemy AI state must be an object")
-                        .extend(into_projection_fields(json!({
+                        .extend(serde_json::from_value::<serde_json::Map<String, Value>>(json!({
                     "shooting_point": enemy.my_shooting_point.map(|(sector_index, point_index)| json!({
                         "sector_index": sector_index, "point_index": point_index,
                     })),
@@ -675,7 +675,7 @@ impl Engine {
                         known_strike_command(enemy.known_enemy_strike_3),
                     ],
                     "last_stimulus_dispatched_to_patrol": patrol_stimulus(enemy.last_stimulus_dispatched_to_patrol.as_ref()),
-                    })));
+                    })).expect("frozen oracle chunk is a JSON object"));
                     Some(subclass)
                 },
                 crate::element::AiBrain::None => None,
