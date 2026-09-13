@@ -121,7 +121,19 @@ worker_version() {
         jq -er 'last.versions | max_by(.percentage).version_id'
 }
 # Hex of the first 12 decoded bytes (8-byte magic + u32 LE version) at URL $1.
-datadir_header() { (set +o pipefail; curl -fsS "$1" | zstd -dc 2>/dev/null | head -c 12 | od -An -tx1 | tr -d ' \n'); }
+# Download to a file first: piping curl into `head -c 12` makes curl report a
+# spurious write failure when the reader closes early. A real fetch error still
+# returns non-zero and yields an empty header, which the caller rejects.
+datadir_header() {
+    local tmp
+    tmp=$(mktemp) || return 1
+    if ! curl -fsS -o "$tmp" "$1"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    (set +o pipefail; zstd -dc <"$tmp" 2>/dev/null | head -c 12 | od -An -tx1 | tr -d ' \n')
+    rm -f "$tmp"
+}
 # Replace a checkout upload directory with a staged one.
 stage_checkout() { run rm -rf "$2"; run cp -RH "$1" "$2"; run chmod -R u+w "$2"; }
 

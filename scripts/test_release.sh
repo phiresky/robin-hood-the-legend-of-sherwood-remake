@@ -66,6 +66,12 @@ fake "$bin/zstd" <<'EOF'
 cat
 EOF
 fake "$bin/curl" <<'EOF'
+out=""
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+    [[ ${args[i]} == -o ]] && out=${args[i + 1]}
+done
+[[ -z $out || $out == /dev/null ]] || exec >"$out"
 case "$*" in
     *latest.json*) echo '{"short":"000000000000","multiplayerContent":{"demo":{"url":"https://robinhood.phiresky.xyz/datadirs/demo.rhdata.zst","sha256":"x"},"full":null}}' ;;
     *demo.rhdata.zst*) printf '%s\x10\x00\x00\x00payload' "${FAKE_LIVE_MAGIC:-RHDDNA16}" ;;
