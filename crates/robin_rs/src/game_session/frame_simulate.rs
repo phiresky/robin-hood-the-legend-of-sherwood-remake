@@ -127,6 +127,7 @@ struct SimulationModalState {
 ///
 /// Not serde: a frame-scoped bundle of borrowed process resources.
 struct UiTaskOutcomeTarget<'a> {
+    cli: &'a crate::main_entry::CliArgs,
     window: &'a mut GameWindow,
     callbacks: &'a mut RustCallbacks,
     host: &'a mut Host,
@@ -224,6 +225,7 @@ impl UiTaskOutcomeTarget<'_> {
     /// enqueue the authorized simulation-setting commands.
     fn apply_options_accepted(self, result: super::ui_task_state::OptionsTaskResult) {
         let Self {
+            cli,
             window,
             host,
             game,
@@ -269,9 +271,10 @@ impl UiTaskOutcomeTarget<'_> {
                 &PlayerCommand::CancelPlannedAction,
             );
         }
-        window.set_native_refresh_presentation(effects.native_refresh_presentation);
+        let native_refresh = cli.native_refresh_presentation(effects.native_refresh_presentation);
+        window.set_native_refresh_presentation(native_refresh);
         presentation.renderer.configure_native_refresh_presentation(
-            effects.native_refresh_presentation,
+            native_refresh,
             window.surface_config.width,
             window.surface_config.height,
         );
@@ -1207,6 +1210,7 @@ impl InteractiveFrameSimulation {
             if let Some(outcome) = task_outcome {
                 task.cleanup();
                 ui_task_exit_requested = UiTaskOutcomeTarget {
+                    cli: &services.args.config.cli,
                     window,
                     callbacks,
                     host,
@@ -1725,9 +1729,18 @@ impl InteractiveFrameSimulation {
                 auto_dismiss: false,
                 ..Default::default()
             };
-            if let Err(error) =
-                run_forward_ticks(manager, host, assets, dev, game, runtime, 1, &mut policy)
-            {
+            if let Err(error) = run_forward_ticks(
+                super::tick::StepWorld {
+                    manager,
+                    host,
+                    assets,
+                    dev,
+                    game,
+                },
+                runtime,
+                1,
+                &mut policy,
+            ) {
                 tracing::warn!(%error, "keyboard step-forward stopped");
             }
         } else if keyboard_step == KeyboardStep::Back {

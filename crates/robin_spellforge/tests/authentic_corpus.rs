@@ -1,5 +1,5 @@
-use robin_engine::natives::NativeFn;
-use robin_engine::spellforge::{
+use robin_script_types::natives::NativeFn;
+use robin_script_types::spellforge::{
     SpellforgeInvocation, SpellforgeRuntime, SpellforgeStep, SpellforgeTape, SpellforgeTarget,
     hex_hash,
 };

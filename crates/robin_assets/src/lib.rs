@@ -15,7 +15,7 @@ mod original_data {
     }
 }
 
-pub mod binary_reader;
+pub use robin_asset_codecs::{binary_reader, packed_sprite, sprite_codec};
 #[cfg(feature = "engine-adapters")]
 pub mod custom_sprites;
 pub mod frame_holder;
@@ -24,7 +24,6 @@ pub mod interface_metadata;
 pub mod late_sprites;
 #[cfg(feature = "engine-adapters")]
 pub mod original_text;
-pub mod packed_sprite;
 pub mod picture;
 #[cfg(feature = "engine-adapters")]
 pub mod res_descr;
@@ -37,7 +36,6 @@ pub mod scb;
 pub mod shipping_boot_trim;
 #[cfg(feature = "engine-adapters")]
 pub mod shipping_datadir;
-pub mod sprite_codec;
 #[cfg(feature = "engine-adapters")]
 pub mod sprite_groups;
 pub mod sprite_pixels;

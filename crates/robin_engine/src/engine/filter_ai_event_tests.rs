@@ -4116,6 +4116,80 @@ fn civilian_random_speech_closes_its_owner_boundary_before_the_lock_gate() {
 }
 
 #[test]
+fn civilian_owner_speech_matches_full_observations() {
+    use crate::engine::types::SimulationRng;
+    use crate::order::OrderType;
+    use crate::profiles::CivilianType;
+
+    for civilian_type in [CivilianType::Man, CivilianType::Beggar] {
+        for animation in [OrderType::WaitingUpright, OrderType::Weeping] {
+            let mut engine = EngineInner::new();
+            let id = engine.add_test_entity(make_scripted_civilian(""));
+            let Entity::Civilian(civilian) = engine.get_entity_mut(id).unwrap() else {
+                unreachable!()
+            };
+            civilian.civilian.cached_civilian_type = civilian_type;
+            civilian.element.sprite.last_action = animation;
+            civilian.npc.register_number = 0;
+            civilian.npc.ai_brain.base_mut().unwrap().me = id.index();
+            engine.control.frame_counter = 100;
+            engine.control.rng =
+                SimulationRng::with_original_replay(vec![915_892_857, 378_770_797]);
+            let mut assets = LevelAssets::new();
+            std::sync::Arc::make_mut(&mut assets.profile_manager)
+                .civilians
+                .push(crate::profiles::CivilianProfile {
+                    civilian_type,
+                    ..Default::default()
+                });
+            let mut reference = engine.clone();
+            reference.with_simulation_context(|reference, sim| {
+                let scratch = reference.build_sim_scratch(&assets);
+                let entity = reference.expect_entity(id, "reference speech owner");
+                let ctx = reference.ai_context_from_entity(
+                    entity,
+                    100,
+                    reference.entity_building_sector(entity.element_data().sector()),
+                    &scratch,
+                    &assets,
+                );
+                reference
+                    .expect_entity_mut(id, "reference speech owner")
+                    .friendly_ai_mut()
+                    .unwrap()
+                    .random_speech(sim, 0, &ctx);
+                reference.drain_direct_ai_owner_boundary(sim, id, &assets);
+            });
+            engine.with_simulation_context(|engine, sim| {
+                engine.tick_civilian_random_speech_for_npc(sim, id, &assets);
+            });
+            assert_eq!(
+                crate::replay::state_hash(&engine),
+                crate::replay::state_hash(&reference),
+                "{civilian_type:?}, {animation:?}"
+            );
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "position has no layer")]
+fn civilian_owner_speech_rejects_missing_position_layer() {
+    let mut engine = EngineInner::new();
+    let id = engine.add_test_entity(make_scripted_civilian(""));
+    let Entity::Civilian(civilian) = engine.get_entity_mut(id).unwrap() else {
+        unreachable!()
+    };
+    civilian.element.clear_layer();
+    civilian.npc.register_number = 0;
+    civilian.npc.ai_brain.base_mut().unwrap().me = id.index();
+    engine.control.frame_counter = 100;
+    engine.with_simulation_context(|engine, sim| {
+        engine.tick_civilian_random_speech_for_npc(sim, id, &LevelAssets::new());
+    });
+}
+
+#[test]
 fn actor_execute_arm_ledger_has_unique_linked_routes() {
     use super::tick::ACTOR_EXECUTE_CATALOG;
 

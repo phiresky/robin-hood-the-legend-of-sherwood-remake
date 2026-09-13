@@ -579,7 +579,7 @@ impl HudDrawCtx<'_> {
             let is_disabled = !shift_held
                 && entity
                     .and_then(|e| e.pc_data())
-                    .is_some_and(|pc| pc.disabled_actions[i] || pc.disabled_actions_temp[i]);
+                    .is_some_and(|pc| pc.action_slot_disabled(i));
             let is_hovered = hovered_action == Some((pc.slot as u8, i as u8));
 
             let mut icon_drawn = false;

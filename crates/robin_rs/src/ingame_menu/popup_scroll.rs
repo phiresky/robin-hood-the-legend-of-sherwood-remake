@@ -28,7 +28,7 @@ use crate::widget::{FrameWnd, WidgetPicture};
 use robin_engine::resource_ids;
 
 use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, dim_screen, draw_background,
+    MENU_H, MENU_W, MenuRect, MenuTransform, TextAlign, TooltipState, dim_screen, draw_background,
     enter_modal_gpu_phase, render_text_in_box_with_drop_cap_font, render_text_virt_font,
 };
 use super::resources::{MT_INFOBULLE_BUTTON_OK, MenuSurface};
@@ -433,12 +433,13 @@ impl PopupScrollModalState {
                 font,
                 self.transform,
                 &self.page_body,
-                self.virt_x + BODY_LEFT,
-                self.body_y,
-                BODY_W,
-                self.body_h,
-                self.drop_cap_w,
-                self.drop_cap_h,
+                MenuRect {
+                    x: self.virt_x + BODY_LEFT,
+                    y: self.body_y,
+                    w: BODY_W,
+                    h: self.body_h,
+                },
+                (self.drop_cap_w, self.drop_cap_h),
                 self.align,
             ),
             None => self.page_body.clone(),

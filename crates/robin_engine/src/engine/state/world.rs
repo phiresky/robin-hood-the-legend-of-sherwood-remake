@@ -326,7 +326,8 @@ impl WorldState {
             })
             .map(|(id, _)| id)
             .collect();
-        ids.sort_by_key(|&id| self.original_creation_order(id));
+        // Cache each tree lookup for this scan while retaining stable tie order.
+        ids.sort_by_cached_key(|&id| self.original_creation_order(id));
         ids
     }
 
@@ -572,6 +573,57 @@ impl WorldState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn registry_test_soldier() -> Entity {
+        Entity::Soldier(crate::element::ActorSoldier {
+            element: Default::default(),
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        })
+    }
+
+    #[test]
+    fn fighter_registry_preserves_creation_and_tie_order_across_edits() {
+        let mut world = WorldState::new();
+        let mut ids = Vec::new();
+        for creation_order in [50, 20, 20, 40] {
+            let id = EntityId::Soldier(crate::entity_id::SoldierId(ids.len() as u32));
+            world.entities.push(Some(registry_test_soldier()));
+            world.assign_reserved_original_creation_order(id, creation_order);
+            ids.push(id);
+        }
+        // Non-fighters do not need a creation identity for this scan.
+        world
+            .entities
+            .push(Some(Entity::Fx(crate::element::ElementFx {
+                element: Default::default(),
+                fx: Default::default(),
+            })));
+        assert_eq!(
+            world.fighter_registry_order(),
+            [ids[1], ids[2], ids[3], ids[0]]
+        );
+
+        world.entities.remove(ids[1]).unwrap();
+        let added = EntityId::Soldier(crate::entity_id::SoldierId(5));
+        world.entities.push(Some(registry_test_soldier()));
+        world.assign_reserved_original_creation_order(added, 30);
+        assert_eq!(
+            world.fighter_registry_order(),
+            [ids[2], added, ids[3], ids[0]]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "has no authoritative Original creation order")]
+    fn fighter_registry_rejects_missing_creation_order() {
+        let mut world = WorldState::new();
+        world.entities.push(Some(registry_test_soldier()));
+        world.entities.push(Some(registry_test_soldier()));
+        world.fighter_registry_order();
+    }
 
     #[test]
     fn empty_world_accepts_empty_level_attachments() {

@@ -333,6 +333,7 @@ impl ParityReplaySetup<'_> {
             assets,
             frame,
             SelectionCommandBatchMode::IndependentRecordedMessages,
+            crate::replay::state_hash,
         )
     }
 

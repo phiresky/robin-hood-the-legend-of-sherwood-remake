@@ -16,7 +16,7 @@ case "$1" in
         cargo fmt --all -- --check
         ;;
     core)
-        cargo test --locked -p robin_util -p robin_display_text -p robin_state_hash_derive -p robin_spellforge -p robin_lua -p robin_test_support
+        cargo test --locked -p robin_util -p robin_display_text -p robin_state_hash_derive -p robin_script_types -p robin_spellforge -p robin_lua -p robin_test_support
         ;;
     scripting-llvm)
         # LLVM verifies unwind/destructor semantics, not just panic detection.
@@ -27,11 +27,11 @@ case "$1" in
         cargo test --locked -p robin_lua --test natives_smoke panic_unwind_detaches_native_session \
             --config 'profile.test.package.robin_lua.codegen-backend="llvm"'
         ;;
-    engine) cargo test --locked -p robin_engine ;;
+    engine) cargo test --locked -p robin_engine_types -p robin_engine ;;
     assets)
         cargo test --locked -p robin_content
         cargo test --locked -p robin_content --features simulation-codecs
-        cargo test --locked -p robin_assets -p robin_data_io
+        cargo test --locked -p robin_asset_codecs -p robin_assets -p robin_data_io
         cargo test --locked -p robin_assets --no-default-features
         python3 scripts/check_asset_boundary.py
         ;;
@@ -99,6 +99,7 @@ case "$1" in
         python3 -m unittest discover -s scripts/validation -p namespace_x11_test.py
         python3 -m unittest discover -s scripts/validation -p runtime_evidence_test.py
         bash scripts/test_parity_orchestration.sh
+        bash scripts/test_release.sh
         ;;
     unreferenced-items)
         # Advisory review queue, never a gate: rust-analyzer cannot see every

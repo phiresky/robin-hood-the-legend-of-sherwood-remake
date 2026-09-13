@@ -17,7 +17,7 @@ fn main() {
     // Shared validators and typed ABI interpretation affect guest admission and
     // execution too. Keep them inside the source-fingerprint boundary after
     // moving them out of this crate.
-    let engine = manifest.join("../robin_engine");
+    let engine = manifest.join("../robin_script_types");
     let mut contract_files = vec![
         engine.join("src/spellforge.rs"),
         engine.join("src/natives/signatures.rs"),

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { applyPreparedReplay, prepareReplay, prepareReplayWithRuntime, replayFromQuery, type RobinRpc } from './replay.ts';
+import { applyPreparedReplay, prepareReplay, prepareReplayWithRuntime, replayFromQuery, replayRuntimeOverride, type RobinRpc } from './replay.ts';
 
 test('cold public playback validates the exact compact bytes before loading', async () => {
     const compact = 'rhrec-0123456789ab-canonical_payload';
@@ -149,4 +149,12 @@ test('runtime/admission failure cancels sibling and external abort cannot publis
         await assert.rejects(pending, mode === 'abort' ? { name: 'AbortError' } : new RegExp(mode + ' failed'));
         assert.ok(siblingSignal.aborted);
     }
+});
+
+test('compact recordings from unpublished commits use the current runtime', () => {
+    assert.equal(replayRuntimeOverride('rhrec-189abc221ca6-AAAA'), undefined);
+    assert.equal(replayRuntimeOverride(null), undefined);
+    assert.equal(replayRuntimeOverride(''), undefined);
+    assert.equal(replayRuntimeOverride('189abc221ca6'), '189abc221ca6');
+    assert.throws(() => replayRuntimeOverride('not-a-replay'), /replay= must be/);
 });

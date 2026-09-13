@@ -11,12 +11,13 @@ impl Database {
         verifier_executable_sha256: [u8; 32],
         verifier_job_config_sha256: Digest32,
         result: &VerificationResultV1,
-        build_manifest: &LoadedBuildManifest,
-        content_manifest: &ContentManifestV1,
-        campaign_content_manifest: Option<&CampaignContentManifestV1>,
-        published_ruleset: &PublishedRulesetV1,
-        competition_manifest: Option<&CompetitionManifestV1>,
+        manifests: AcceptanceManifests<'_>,
     ) -> Result<String, DbError> {
+        let AcceptanceManifests {
+            campaign_content_manifest,
+            published_ruleset,
+            ..
+        } = manifests;
         result
             .validate()
             .map_err(|error| DbError::ResultInvariant(error.to_string()))?;
@@ -85,12 +86,7 @@ impl Database {
             result,
             &stored_signed,
             verifier_executable_sha256,
-            build_manifest.public_digest(),
-            build_manifest.semantics(),
-            content_manifest,
-            campaign_content_manifest,
-            published_ruleset,
-            competition_manifest,
+            manifests,
         )?;
         let scope_kind = check_offer_matches_result(
             &mut tx,

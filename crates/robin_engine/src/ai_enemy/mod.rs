@@ -15,6 +15,7 @@ pub(crate) use detection::context_detects_180_degrees;
 mod map_vec_ext;
 mod parity_trace;
 mod periodic;
+pub(crate) use periodic::AmbushPointContext;
 mod seek;
 mod substate_handlers;
 mod util;
@@ -569,15 +570,21 @@ impl EnemyAi {
     // -----------------------------------------------------------------------
 
     pub fn get_iq(&self, ctx: &AiContext) -> u16 {
+        self.iq_for_difficulty(ctx.difficulty, ctx.is_hostile_to_player())
+    }
+
+    pub(crate) fn iq_for_difficulty(
+        &self,
+        difficulty: crate::player_profile::DifficultyLevel,
+        hostile_to_player: bool,
+    ) -> u16 {
         // Intelligence capacity scales only when the NPC's camp
         // is Lacklandists; Royalist soldiers (also EnemyAi-driven)
         // get the raw intelligence.
-        if !ctx.is_hostile_to_player() {
+        if !hostile_to_player {
             return self.soldier_profile_iq;
         }
-        ctx.difficulty
-            .rules()
-            .enemy_iq(self.soldier_profile_iq, 100)
+        difficulty.rules().enemy_iq(self.soldier_profile_iq, 100)
     }
 
     pub fn get_courage(&self) -> u16 {

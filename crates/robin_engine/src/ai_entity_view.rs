@@ -443,6 +443,19 @@ impl AiEntityView {
 /// via an [`Arc`] so building a new `AiContext` is O(1).
 pub type AiEntityViewMap = HashMap<u32, AiEntityView>;
 
+thread_local! {
+    // Allocation reuse only: the map is empty whenever it enters this slot.
+    // One allocation per worker bounds retention across nested observations.
+    static RELEASED_VIEW_MAP: std::cell::RefCell<AiEntityViewMap> =
+        std::cell::RefCell::new(AiEntityViewMap::new());
+}
+
+pub(crate) fn take_entity_view_map(capacity: usize) -> AiEntityViewMap {
+    let mut map = RELEASED_VIEW_MAP.with(|slot| std::mem::take(&mut *slot.borrow_mut()));
+    map.reserve(capacity);
+    map
+}
+
 /// Why a handle cannot supply spatial AI state at this snapshot boundary.
 /// This is observation availability, not visibility or combat eligibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -482,6 +495,22 @@ pub struct AiEntityViews {
     /// Relationship data captured at the same deterministic boundary as the
     /// entity views.
     pub diplomacy: crate::diplomacy::DiplomacyState,
+}
+
+impl Drop for AiEntityViews {
+    fn drop(&mut self) {
+        // Shared snapshots arrive here only after their last Arc is released.
+        // Never clear or recycle an observation that still has a reader.
+        self.entities.clear();
+        // Thread-local destruction may already have retired the allocation
+        // slot. In that case normal field destruction frees this map.
+        let _ = RELEASED_VIEW_MAP.try_with(|slot| {
+            let mut released = slot.borrow_mut();
+            if self.entities.capacity() > released.capacity() {
+                std::mem::swap(&mut self.entities, &mut released);
+            }
+        });
+    }
 }
 
 impl std::ops::Deref for AiEntityViews {
@@ -1015,6 +1044,28 @@ fn authoritative_initial_position(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn released_maps_reuse_capacity_without_recycling_live_snapshots() {
+        drop(take_entity_view_map(0));
+        let entity = Entity::Scroll(crate::element::ElementScroll::default());
+        let view =
+            entity_view_from_entity(&entity, 1, false, None, None, OrderType::NonanimationEnd);
+        let mut map = take_entity_view_map(16);
+        map.insert(7, view);
+        let original = shared_entity_views(map);
+        let reader = original.clone();
+        drop(original);
+        let unrelated = take_entity_view_map(0);
+        assert!(unrelated.is_empty());
+        assert_eq!(unrelated.capacity(), 0);
+        assert_eq!(reader.len(), 1);
+        assert!(reader.contains_key(&7));
+        drop(reader);
+        let reused = take_entity_view_map(0);
+        assert!(reused.is_empty());
+        assert!(reused.capacity() >= 16);
+    }
 
     #[test]
     fn pc_view_preserves_authored_allegiance() {

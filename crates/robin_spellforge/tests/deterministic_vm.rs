@@ -1,4 +1,4 @@
-use robin_engine::spellforge::{
+use robin_script_types::spellforge::{
     SPELLFORGE_CONTRACT_VERSION, SpellforgeInvocation, SpellforgePackage, SpellforgeRuntime,
     SpellforgeScriptMode, SpellforgeStep, SpellforgeTape, SpellforgeTarget,
 };

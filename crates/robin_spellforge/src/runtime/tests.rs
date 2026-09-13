@@ -1,5 +1,5 @@
 use super::*;
-use robin_engine::spellforge::SpellforgeScriptMode;
+use robin_script_types::spellforge::SpellforgeScriptMode;
 
 fn package(source: &str) -> SpellforgePackage {
     let mut package = SpellforgePackage {
@@ -680,7 +680,7 @@ fn every_exposed_native_and_alias_preserves_the_registry_word_abi() {
         probes.push((
             *alias,
             *native,
-            robin_engine::natives::native_signature_by_index(*native as u32).unwrap(),
+            robin_script_types::natives::native_signature_by_index(*native as u32).unwrap(),
         ));
     }
     let mut source = String::new();

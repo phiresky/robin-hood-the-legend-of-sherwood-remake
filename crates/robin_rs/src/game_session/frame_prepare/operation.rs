@@ -286,22 +286,26 @@ pub(super) async fn process_operation_and_save(
             )
         } else {
             callbacks.enqueue_autosave(
-                host,
-                game,
-                &manager.engine,
-                mission_id,
-                profiles,
+                crate::autosave::AutosaveRequest {
+                    host,
+                    game,
+                    engine: &manager.engine,
+                    mission_id,
+                    profiles,
+                },
                 pending_thumbnail.clone(),
                 reason,
             )
         };
         #[cfg(not(target_arch = "wasm32"))]
         let accepted = callbacks.enqueue_autosave(
-            host,
-            game,
-            &manager.engine,
-            mission_id,
-            profiles,
+            crate::autosave::AutosaveRequest {
+                host,
+                game,
+                engine: &manager.engine,
+                mission_id,
+                profiles,
+            },
             pending_thumbnail.clone(),
             reason,
         );

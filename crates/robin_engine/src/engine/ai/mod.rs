@@ -629,6 +629,7 @@ struct AiEntityViewStamp {
 pub(super) struct PreparedAiEntityViewCache {
     views: Option<SharedAiEntityViews>,
     stamps: std::collections::HashMap<u32, AiEntityViewStamp>,
+    live_slots: Vec<bool>,
 }
 
 /// Immutable, RNG-free inputs prepared lazily at the first NPC owner slot.
@@ -3908,7 +3909,7 @@ pub(super) fn build_my_exit_door_info(
 /// objects remain excluded. All views require a populated layer; the shared
 /// snapshot separately records present entities excluded by that requirement.
 pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
-    build_entity_views_and_stamps(engine).0
+    build_entity_views_and_stamps(engine, None)
 }
 
 impl EngineInner {
@@ -4494,10 +4495,8 @@ fn build_nets_by_victim(
 
 fn build_entity_views_and_stamps(
     engine: &EngineInner,
-) -> (
-    AiEntityViewMap,
-    std::collections::HashMap<u32, AiEntityViewStamp>,
-) {
+    mut stamps: Option<&mut std::collections::HashMap<u32, AiEntityViewStamp>>,
+) -> AiEntityViewMap {
     let _detail =
         super::tick::entity_system_detail_guard(super::tick::EntitySystemDetail::BuildEntityViews);
     // Scratch views are also built by empty/pre-script engine fixtures.  Door
@@ -4520,8 +4519,11 @@ fn build_entity_views_and_stamps(
     let mut nets_by_victim = build_nets_by_victim(engine);
 
     let nets_generation = entity_views_nets_generation(engine);
-    let mut map = AiEntityViewMap::with_capacity(engine.world.entities.len());
-    let mut stamps = std::collections::HashMap::with_capacity(engine.world.entities.len());
+    let mut map = ai_entity_view::take_entity_view_map(engine.world.entities.len());
+    if let Some(stamps) = stamps.as_mut() {
+        stamps.clear();
+        stamps.reserve(engine.world.entities.len());
+    }
     for (entity_id, entity) in engine.world.entities.occupied() {
         if !entity_has_ai_view(entity) {
             continue;
@@ -4540,9 +4542,11 @@ fn build_entity_views_and_stamps(
         // target_id.index()` elsewhere, and `self.world.entities.get_mut(target as
         // usize)` for `CrossNpcAction` handlers).
         map.insert(entity_id.index(), view);
-        stamps.insert(entity_id.index(), stamp);
+        if let Some(stamps) = stamps.as_mut() {
+            stamps.insert(entity_id.index(), stamp);
+        }
     }
-    (map, stamps)
+    map
 }
 
 fn entity_has_ai_view(entity: &Entity) -> bool {
@@ -4560,9 +4564,8 @@ fn refresh_prepared_entity_views(
     let _detail =
         super::tick::entity_system_detail_guard(super::tick::EntitySystemDetail::BuildEntityViews);
     if cache.views.is_none() {
-        let (entities, stamps) = build_entity_views_and_stamps(engine);
+        let entities = build_entity_views_and_stamps(engine, Some(&mut cache.stamps));
         cache.views = Some(engine.share_ai_entity_views(entities));
-        cache.stamps = stamps;
         let rebuilt = cache.stamps.len();
         return rebuilt;
     }
@@ -4575,7 +4578,9 @@ fn refresh_prepared_entity_views(
         .unwrap_or(&[]);
     let nets_generation = entity_views_nets_generation(engine);
     let mut nets_by_victim = build_nets_by_victim(engine);
-    let mut live_slots = vec![false; engine.world.entities.len()];
+    let live_slots = &mut cache.live_slots;
+    live_slots.clear();
+    live_slots.resize(engine.world.entities.len(), false);
     let shared = cache
         .views
         .as_mut()

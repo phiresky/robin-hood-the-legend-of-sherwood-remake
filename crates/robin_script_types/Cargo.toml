@@ -1,0 +1,23 @@
+[package]
+name = "robin_script_types"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+robin_engine_types.workspace = true
+robin_util.workspace = true
+robin_state_hash_derive.workspace = true
+serde = { workspace = true, features = ["derive", "rc"] }
+bitcode.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+num_enum = "0.7"
+strum_macros = "0.28.0"
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

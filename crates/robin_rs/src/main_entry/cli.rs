@@ -155,7 +155,7 @@ pub struct CliArgs {
     )]
     pub http_server: u16,
 
-    /// Run the frame loop with no 25 fps pacing sleep — ticks and
+    /// Run the frame loop with no 25 fps pacing sleep or VSync — ticks and
     /// renders happen back-to-back at full CPU/GPU speed.  Useful for
     /// automated tests, replay scrubbing, and profiling.  Independent
     /// of the in-game fast-forward toggle (which also skips rendering);
@@ -237,6 +237,14 @@ pub struct CliArgs {
     /// peers.  Defaults to a host-name-derived fallback when omitted.
     #[arg(long, value_name = "NICKNAME", default_value = "")]
     pub mp_nickname: String,
+}
+
+impl CliArgs {
+    /// Resolve live presentation without modifying the saved graphics setting.
+    /// Fast-forward must bypass swapchain waiting as well as the tick sleep.
+    pub(crate) fn native_refresh_presentation(&self, preference: bool) -> bool {
+        preference && !self.fast_forward
+    }
 }
 
 impl Default for CliArgs {

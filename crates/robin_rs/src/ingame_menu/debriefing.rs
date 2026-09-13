@@ -21,7 +21,7 @@ use crate::native_font::Font;
 use crate::widget::FrameWnd;
 
 use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, WrappedLine, draw_background,
+    MENU_H, MENU_W, MenuRect, MenuTransform, TextAlign, TooltipState, WrappedLine, draw_background,
     render_clipped_text_in_box_font,
 };
 use super::resources::{
@@ -698,10 +698,12 @@ impl DebriefingPageState {
                 font,
                 self.transform,
                 &self.title,
-                self.virt_x + TITLE_X,
-                self.virt_y + TITLE_Y,
-                TITLE_W,
-                TITLE_H,
+                MenuRect {
+                    x: self.virt_x + TITLE_X,
+                    y: self.virt_y + TITLE_Y,
+                    w: TITLE_W,
+                    h: TITLE_H,
+                },
                 TextAlign::Center,
                 super::layout::VAlign::Top,
             );

@@ -8,7 +8,9 @@ use robin_engine::mission_assets::{
     InstalledModsRoot, MissionAssetDescriptor,
 };
 
-use super::{InstalledMissionSource, PreparedLiveMissionAssets, prepare_archive_assets};
+use super::{
+    InstalledMissionSource, LiveArchiveAssets, PreparedLiveMissionAssets, prepare_archive_assets,
+};
 use crate::distributed_mod::{DISTRIBUTED_MOD_ARCHIVE_LIMIT, ValidatedDistributedMod};
 
 /// Resolve a selected native archive against the two allowed installed roots.
@@ -89,14 +91,16 @@ pub fn prepare_installed_custom_mission(
 ) -> Result<PreparedLiveMissionAssets, String> {
     let exact = read_installed_launch_archives(launch)?;
     prepare_archive_assets(
-        &launch.rhm_basename,
-        &launch.map_filename,
-        &launch.rhm_zip_entry,
-        launch.requires_spellforge,
-        exact.mission_archive,
-        exact.shared_archive,
-        Some(exact.locator),
-        None,
+        LiveArchiveAssets {
+            mission_basename: &launch.rhm_basename,
+            map_filename: &launch.map_filename,
+            rhm_entry: &launch.rhm_zip_entry,
+            requires_spellforge: launch.requires_spellforge,
+            mission_archive: exact.mission_archive,
+            shared_archive: exact.shared_archive,
+            installed: Some(exact.locator),
+            distributed_cache: None,
+        },
         files,
     )
 }
@@ -124,14 +128,16 @@ pub fn prepare_direct_custom_mission(
     let rhm_entry = select_direct_rhm_entry(&mission_archive, mission_basename, selected_entry)?;
     match installed {
         Ok(source) => prepare_archive_assets(
-            mission_basename,
-            map_filename,
-            &rhm_entry,
-            false,
-            mission_archive,
-            None,
-            Some(source.locator),
-            None,
+            LiveArchiveAssets {
+                mission_basename,
+                map_filename,
+                rhm_entry: &rhm_entry,
+                requires_spellforge: false,
+                mission_archive,
+                shared_archive: None,
+                installed: Some(source.locator),
+                distributed_cache: None,
+            },
             application_context.preparation_files()?.clone(),
         ),
         Err(locator_error) => prepare_external_direct_in_cache(

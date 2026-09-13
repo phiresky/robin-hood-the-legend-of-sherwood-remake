@@ -19,6 +19,18 @@ use std::hash::Hasher;
 /// byte sequence into the hasher, regardless of in-memory layout.
 pub trait StateHash {
     fn state_hash<H: Hasher>(&self, state: &mut H);
+
+    /// Hash consecutive elements without a length prefix. Overrides must emit
+    /// the same byte stream as hashing each element in order.
+    #[inline]
+    fn state_hash_slice<H: Hasher>(values: &[Self], state: &mut H)
+    where
+        Self: Sized,
+    {
+        for value in values {
+            value.state_hash(state);
+        }
+    }
 }
 
 /// Feed an explicit marker for one intentionally unhashed field.
@@ -50,7 +62,6 @@ macro_rules! impl_state_hash_int {
 }
 
 impl_state_hash_int! {
-    u8 => write_u8,
     u16 => write_u16,
     u32 => write_u32,
     u64 => write_u64,
@@ -62,6 +73,18 @@ impl_state_hash_int! {
     i64 => write_i64,
     i128 => write_i128,
     isize => write_isize,
+}
+
+impl StateHash for u8 {
+    #[inline]
+    fn state_hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u8(*self);
+    }
+
+    #[inline]
+    fn state_hash_slice<H: Hasher>(values: &[Self], state: &mut H) {
+        state.write(values);
+    }
 }
 
 impl StateHash for bool {
@@ -237,9 +260,7 @@ impl<T: StateHash> StateHash for [T] {
     #[inline]
     fn state_hash<H: Hasher>(&self, state: &mut H) {
         state.write_u64(self.len() as u64);
-        for item in self {
-            item.state_hash(state);
-        }
+        T::state_hash_slice(self, state);
     }
 }
 
@@ -247,9 +268,7 @@ impl<T: StateHash, const N: usize> StateHash for [T; N] {
     #[inline]
     fn state_hash<H: Hasher>(&self, state: &mut H) {
         // Length is constant; skip it.
-        for item in self {
-            item.state_hash(state);
-        }
+        T::state_hash_slice(self, state);
     }
 }
 
@@ -439,8 +458,23 @@ impl StateHash for fastrand::Rng {
 /// Neither is suitable for replay hashes shared by native 64-bit and wasm32.
 /// This adapter gives every integer an explicit little-endian encoding and
 /// widens pointer-sized integers to 64 bits.
-#[derive(Default)]
-struct StableHasher(xxhash_rust::xxh3::Xxh3);
+struct StableHasher {
+    inner: xxhash_rust::xxh3::Xxh3,
+    // StateHash emits mostly individual scalars. Batch their identical byte
+    // stream rather than entering XXH3's streaming machinery for each field.
+    buffer: [u8; 1024],
+    buffered: usize,
+}
+
+impl Default for StableHasher {
+    fn default() -> Self {
+        Self {
+            inner: Default::default(),
+            buffer: [0; 1024],
+            buffered: 0,
+        }
+    }
+}
 
 macro_rules! stable_write {
     ($($method:ident($ty:ty)),* $(,)?) => {
@@ -456,12 +490,37 @@ macro_rules! stable_write {
 impl Hasher for StableHasher {
     #[inline]
     fn finish(&self) -> u64 {
-        self.0.digest()
+        if self.buffered == 0 {
+            self.inner.digest()
+        } else {
+            // Hasher::finish must not consume the stream: callers may finish
+            // repeatedly or append more bytes after inspecting a prefix.
+            let mut inner = self.inner.clone();
+            inner.update(&self.buffer[..self.buffered]);
+            inner.digest()
+        }
     }
 
     #[inline]
-    fn write(&mut self, bytes: &[u8]) {
-        self.0.update(bytes);
+    fn write(&mut self, mut bytes: &[u8]) {
+        let remaining = self.buffer.len() - self.buffered;
+        if bytes.len() <= remaining {
+            self.buffer[self.buffered..self.buffered + bytes.len()].copy_from_slice(bytes);
+            self.buffered += bytes.len();
+            return;
+        }
+        if self.buffered != 0 {
+            self.buffer[self.buffered..].copy_from_slice(&bytes[..remaining]);
+            self.inner.update(&self.buffer);
+            bytes = &bytes[remaining..];
+            self.buffered = 0;
+        }
+        if bytes.len() >= self.buffer.len() {
+            self.inner.update(bytes);
+        } else {
+            self.buffer[..bytes.len()].copy_from_slice(bytes);
+            self.buffered = bytes.len();
+        }
     }
 
     stable_write! {
@@ -504,6 +563,119 @@ pub fn compute<T: StateHash + ?Sized>(value: &T) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffered_hash_matches_xxh3_across_write_and_finish_boundaries() {
+        let bytes: Vec<u8> = (0..8193).map(|i| (i * 37 + 11) as u8).collect();
+        for chunk_size in [
+            1, 2, 3, 7, 8, 63, 64, 65, 255, 256, 257, 1023, 1024, 1025, 4096,
+        ] {
+            let mut hasher = StableHasher::default();
+            assert_eq!(hasher.finish(), xxhash_rust::xxh3::xxh3_64(&[]));
+            let mut consumed = 0;
+            for chunk in bytes.chunks(chunk_size) {
+                hasher.write(chunk);
+                hasher.write(&[]);
+                consumed += chunk.len();
+                let expected = xxhash_rust::xxh3::xxh3_64(&bytes[..consumed]);
+                assert_eq!(
+                    hasher.finish(),
+                    expected,
+                    "chunk size {chunk_size}, prefix {consumed}"
+                );
+                assert_eq!(hasher.finish(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn byte_sequences_preserve_length_prefix_and_canonical_hash() {
+        for len in [
+            0, 1, 7, 8, 63, 64, 65, 255, 256, 257, 1015, 1016, 1017, 1023, 1024, 1025, 2048, 8193,
+        ] {
+            let bytes: Vec<u8> = (0..len).map(|i| (i * 37 + 11) as u8).collect();
+            let mut canonical = (len as u64).to_le_bytes().to_vec();
+            canonical.extend_from_slice(&bytes);
+            let expected = xxhash_rust::xxh3::xxh3_64(&canonical);
+            assert_eq!(compute(&bytes), expected, "vector length {len}");
+            assert_eq!(compute(bytes.as_slice()), expected, "slice length {len}");
+            assert_eq!(compute(&std::sync::Arc::new(bytes.clone())), expected);
+            assert_eq!(
+                compute(&std::sync::Arc::<[u8]>::from(bytes.as_slice())),
+                expected
+            );
+
+            // Exercise a bulk payload between scalar fields, including when
+            // its prefix or payload crosses the streaming buffer boundary.
+            let mut record = 0x1234_u16.to_le_bytes().to_vec();
+            record.extend_from_slice(&canonical);
+            record.extend_from_slice(&0x5678_9abc_def0_1234_u64.to_le_bytes());
+            assert_eq!(
+                compute(&(0x1234_u16, bytes, 0x5678_9abc_def0_1234_u64)),
+                xxhash_rust::xxh3::xxh3_64(&record),
+                "record length {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn byte_arrays_preserve_omitted_length_prefix() {
+        fn check<const N: usize>() {
+            let bytes: [u8; N] = std::array::from_fn(|i| (i * 37 + 11) as u8);
+            let expected = xxhash_rust::xxh3::xxh3_64(&bytes);
+            assert_eq!(compute(&bytes), expected, "array length {N}");
+            assert_eq!(compute(&std::sync::Arc::new(bytes)), expected);
+            let mut canonical = vec![0x12];
+            canonical.extend_from_slice(&bytes);
+            canonical.extend_from_slice(&0x3456_u16.to_le_bytes());
+            assert_eq!(
+                compute(&(0x12_u8, bytes, 0x3456_u16)),
+                xxhash_rust::xxh3::xxh3_64(&canonical),
+                "array record length {N}"
+            );
+        }
+        check::<0>();
+        check::<1>();
+        check::<63>();
+        check::<64>();
+        check::<65>();
+        check::<1023>();
+        check::<1024>();
+        check::<1025>();
+        check::<8193>();
+    }
+
+    #[test]
+    fn non_byte_and_nested_sequences_keep_element_encoding() {
+        let values = [0x1234_u16, 0x5678, 0xabcd];
+        let encoded = [0x34, 0x12, 0x78, 0x56, 0xcd, 0xab];
+        assert_eq!(compute(&values), xxhash_rust::xxh3::xxh3_64(&encoded));
+        let mut canonical = 3_u64.to_le_bytes().to_vec();
+        canonical.extend_from_slice(&encoded);
+        assert_eq!(
+            compute(values.as_slice()),
+            xxhash_rust::xxh3::xxh3_64(&canonical)
+        );
+
+        let mut canonical = 2_u64.to_le_bytes().to_vec();
+        canonical.extend_from_slice(&2_u64.to_le_bytes());
+        canonical.extend_from_slice(&[1, 2]);
+        canonical.extend_from_slice(&1_u64.to_le_bytes());
+        canonical.push(3);
+        assert_eq!(
+            compute(&vec![vec![1_u8, 2], vec![3]]),
+            xxhash_rust::xxh3::xxh3_64(&canonical)
+        );
+        assert_ne!(
+            compute(&vec![vec![1_u8, 2], vec![3]]),
+            compute(&vec![vec![1_u8], vec![2, 3]])
+        );
+
+        let values = [-0.0_f32, f32::from_bits(0x7fc0_0001)];
+        let mut canonical = 0_u32.to_le_bytes().to_vec();
+        canonical.extend_from_slice(&f32::NAN.to_bits().to_le_bytes());
+        assert_eq!(compute(&values), xxhash_rust::xxh3::xxh3_64(&canonical));
+    }
 
     #[test]
     fn floats_canonicalize_zero_and_nan() {
