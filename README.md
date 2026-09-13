@@ -32,14 +32,16 @@ Currently only tested on a Linux host. Bare builds use no optional client
 features. Use `--features desktop` for the normal native game (audio, OS
 data-directory lookup/dialogs, gamepads, and hardware reporting). Large
 integrations are opt-in: `multiplayer` (iroh/DHT matchmaking), `video`
-(intro/outro via ffmpeg-next), `retroarch-shaders` (librashader), and `lua`
-(Spellforge custom missions). Packaged desktop builds additionally enable
-`auto-update` (Velopack). Enable every runtime integration with:
+(intro/outro via ffmpeg-next) and `retroarch-shaders` (librashader; run
+`scripts/fetch-slang-shaders.sh` first for the preset collection). Custom
+Spellforge missions always use the built-in pure-Rust Lua VM; the `lua` feature
+only enables legacy mlua comparison tests. Packaged desktop builds additionally
+enable `auto-update` (Velopack). Enable every runtime integration with:
 
     bash scripts/build-native.sh --features robin_rs/full
 
 The native packaging workflow uses `--features release`, which includes the
-desktop, Lua, multiplayer, and auto-update features. It will switch to `full`
+desktop, multiplayer, and auto-update features. It will switch to `full`
 once FFmpeg libraries can be bundled consistently on every release target.
 
 At the workspace root, bare `cargo build` and `cargo test` intentionally cover

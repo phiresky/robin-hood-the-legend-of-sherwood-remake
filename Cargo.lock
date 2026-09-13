@@ -6188,7 +6188,7 @@ dependencies = [
 
 [[package]]
 name = "robin_replay_verifier"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
@@ -6212,7 +6212,7 @@ dependencies = [
 
 [[package]]
 name = "robin_rs"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
