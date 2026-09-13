@@ -144,92 +144,188 @@ impl EngineInner {
         match cmd {
             // ── Campaign value mutations ─────────────────────────
             GiveMoney { amount, show_help } => self.console_give_money(*amount, *show_help),
-            GiveBlazon { amount } => {
-                self.campaign_mut_or_panic()
-                    .add_value(CampaignValue::Blazon, *amount as i32);
-                // Rust HUD is immediate-mode but we still push the
-                // information-bars command so script-side consumers and
-                // the blazon-bar state recomputation see the hook —
-                // same pattern as the `WinMission` branch below.
-                if let Some(effects) = self
-                    .scripts
-                    .mission
-                    .as_mut()
-                    .map(|s| s.script_effects_mut())
-                {
-                    effects.emit_engine(EngineCommand::UpdateInformationBars);
-                }
-                ConsoleResponse::Ok(format!("{amount} blazons added."))
-            }
-            GiveAmulets { amount } => {
-                self.campaign_mut_or_panic()
-                    .set_value(CampaignValue::Amulets, *amount as i32);
-                ConsoleResponse::Ok(format!("{amount} amulets set."))
-            }
-            AddPeasant => {
-                self.campaign_mut_or_panic().add_new_peasant_to_gang(
-                    sim,
-                    None,
-                    &assets.profile_manager,
-                );
-                ConsoleResponse::Ok("New member!".to_string())
-            }
-            CampaignReport => {
-                self.campaign_mut_or_panic()
-                    .log_report(&assets.profile_manager);
-                ConsoleResponse::Ok("Reporting...".to_string())
-            }
+            GiveBlazon { amount } => self.console_give_blazon(*amount),
+            GiveAmulets { amount } => self.console_give_amulets(*amount),
+            AddPeasant => self.console_add_peasant(sim, assets),
+            CampaignReport => self.console_campaign_report(assets),
 
             // ── Mission flow ─────────────────────────────────────
-            LoseMission => {
-                self.mission_domain.state.quit_lost = true;
-                ConsoleResponse::Ok("Mission lost !".to_string())
-            }
+            LoseMission => self.console_lose_mission(),
             WinMission => self.console_win_mission(assets),
-            WinCampaign => {
-                // Sets `ARESStateSucceeded = 9` on the shared mission
-                // profile.  Rust profiles are `Arc`-shared, so we stash
-                // the override on `Mission::ares_state_override` — read
-                // by `Campaign::set_mission_done` when the win lands.
-                if let Some(campaign) = Some(&mut self.mission_domain.campaign)
-                    && let Some(idx) = campaign.current_mission_idx
-                {
-                    campaign.missions[idx].ares_state_override = Some(9);
-                }
-                self.win(true);
-                self.mission_domain.state.quit_won = true;
-                ConsoleResponse::Ok("Campaign won !".to_string())
-            }
+            WinCampaign => self.console_win_campaign(),
+            // The save-file format lives in the host (robin_rs::save_file).
+            // EngineInner returns the request; host dispatches the actual load.
             LoadCampaign { filename } => {
-                // The save-file format lives in the host (robin_rs::save_file).
-                // EngineInner returns the request; host dispatches the actual load.
                 ConsoleResponse::LoadCampaignRequested(std::path::PathBuf::from(filename))
             }
             SetDiplomacy {
                 first,
                 second,
                 relationship,
-            } => {
-                self.mission_domain
-                    .diplomacy
-                    .set_relationship_ids(*first, *second, *relationship)
-                    .unwrap_or_else(|error| panic!("invalid DIPLOMACY command: {error}"));
-                crate::diplomacy::reconcile_entities(
-                    &mut self.world.entities,
-                    &self.mission_domain.diplomacy,
-                );
-                ConsoleResponse::Ok(format!(
-                    "Diplomacy {first}<->{second} set to {relationship:?}."
-                ))
-            }
+            } => self.console_set_diplomacy(*first, *second, *relationship),
 
             // ── Blip / stealth cheats ────────────────────────────
-            Ubiquity => {
-                self.reveal_all_blips();
-                ConsoleResponse::Ok("Unblip !".to_string())
-            }
+            Ubiquity => self.console_ubiquity(),
 
             // ── Simple AI-global toggles ─────────────────────────
+            Freeze | StupidSoldiers | Goldeneye | Babylon | Ai | DiesIrae => {
+                self.console_ai_global_toggle(cmd)
+            }
+
+            // ── Debug flag toggles ───────────────────────────────
+            Elevation
+            | Railroad
+            | Einstein
+            | Projection
+            | Euler
+            | Motion
+            | Noise
+            | SeekAndDestroy
+            | Light
+            | PcSight
+            | Shadow
+            | Sphere
+            | SpriteMasks
+            | Surface
+            | EnergyDisplay
+            | Anim
+            | Companies
+            | CestLaZone
+            | BigBrother
+            | LevelText { .. } => console_debug_display(&mut dev, cmd),
+
+            // ── PC invulnerability ───────────────────────────────
+            Highlander => {
+                self.console_make_camp_invulnerable(Camp::Royalists, "Friends invulnerable")
+            }
+            Highlander2 => {
+                self.console_make_camp_invulnerable(Camp::Lacklandists, "Foes invulnerable")
+            }
+
+            // ── Commands needing features not yet implemented ────
+            Nuke => self.console_nuke(),
+            Wakeup => self.console_wake_npcs(sim, assets),
+            BudSpencer => self.console_knock_out_enemy_soldiers(sim, assets),
+            Honolulu => self.console_honolulu(dev.as_deref_mut(), selected_view_element),
+            Morpheus => self.console_morpheus(sim, assets, selected_view_element),
+            Hades => self.console_hades(selected_view_element),
+            LastManStanding => self.console_last_man_standing(selected_view_element),
+            RoterAlarm => self.console_alert_soldiers(),
+            MisterSandman => self.console_mister_sandman(),
+            Coma => self.console_coma(),
+            Reinforcement => self.console_reinforcement(),
+            SanPetrus => self.console_san_petrus(assets),
+            WaspMaster | GiveArrows => self.console_force_ammo_cheat(assets, cmd),
+            GiveAmmo => self.console_give_ammo(assets),
+            Lukas { pcs } => self.console_lukas(assets, pcs.as_deref()),
+            Call { actor, method } => self.console_call_actor(assets, actor, method),
+            StatusFramecache | StatusShadow | StatusHardware | StatusPc | Optimize | Forget
+            | Sarkozy | Fps => self.console_status_report(&mut dev, cmd),
+
+            // ── Misc dev-mode ────────────────────────────────────
+            Help => ConsoleResponse::Ok(
+                cheat_help_text(host_dev(&mut dev).console.use_final).to_string(),
+            ),
+            AssertFalse => {
+                // This cheat only logs; it does not interrupt execution.
+                tracing::warn!("console: assert(false) cheat invoked");
+                ConsoleResponse::Ok("assert( false );".to_string())
+            }
+            UsageError(msg) => ConsoleResponse::Ok((*msg).to_string()),
+        }
+    }
+}
+
+/// Per-arm handlers of `dispatch_console_command_resolved`. Family handlers
+/// receive the whole command and are only reachable from their dispatch arm.
+impl EngineInner {
+    fn console_give_blazon(&mut self, amount: u32) -> ConsoleResponse {
+        self.campaign_mut_or_panic()
+            .add_value(CampaignValue::Blazon, amount as i32);
+        // Rust HUD is immediate-mode but we still push the
+        // information-bars command so script-side consumers and
+        // the blazon-bar state recomputation see the hook —
+        // same pattern as the `WinMission` branch.
+        if let Some(effects) = self
+            .scripts
+            .mission
+            .as_mut()
+            .map(|s| s.script_effects_mut())
+        {
+            effects.emit_engine(EngineCommand::UpdateInformationBars);
+        }
+        ConsoleResponse::Ok(format!("{amount} blazons added."))
+    }
+
+    fn console_give_amulets(&mut self, amount: u32) -> ConsoleResponse {
+        self.campaign_mut_or_panic()
+            .set_value(CampaignValue::Amulets, amount as i32);
+        ConsoleResponse::Ok(format!("{amount} amulets set."))
+    }
+
+    fn console_add_peasant(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> ConsoleResponse {
+        self.campaign_mut_or_panic()
+            .add_new_peasant_to_gang(sim, None, &assets.profile_manager);
+        ConsoleResponse::Ok("New member!".to_string())
+    }
+
+    fn console_campaign_report(&mut self, assets: &LevelAssets) -> ConsoleResponse {
+        self.campaign_mut_or_panic()
+            .log_report(&assets.profile_manager);
+        ConsoleResponse::Ok("Reporting...".to_string())
+    }
+
+    fn console_lose_mission(&mut self) -> ConsoleResponse {
+        self.mission_domain.state.quit_lost = true;
+        ConsoleResponse::Ok("Mission lost !".to_string())
+    }
+
+    fn console_win_campaign(&mut self) -> ConsoleResponse {
+        // Sets `ARESStateSucceeded = 9` on the shared mission
+        // profile.  Rust profiles are `Arc`-shared, so we stash
+        // the override on `Mission::ares_state_override` — read
+        // by `Campaign::set_mission_done` when the win lands.
+        let campaign = &mut self.mission_domain.campaign;
+        if let Some(idx) = campaign.current_mission_idx {
+            campaign.missions[idx].ares_state_override = Some(9);
+        }
+        self.win(true);
+        self.mission_domain.state.quit_won = true;
+        ConsoleResponse::Ok("Campaign won !".to_string())
+    }
+
+    fn console_set_diplomacy(
+        &mut self,
+        first: u16,
+        second: u16,
+        relationship: crate::diplomacy::Relationship,
+    ) -> ConsoleResponse {
+        self.mission_domain
+            .diplomacy
+            .set_relationship_ids(first, second, relationship)
+            .unwrap_or_else(|error| panic!("invalid DIPLOMACY command: {error}"));
+        crate::diplomacy::reconcile_entities(
+            &mut self.world.entities,
+            &self.mission_domain.diplomacy,
+        );
+        ConsoleResponse::Ok(format!(
+            "Diplomacy {first}<->{second} set to {relationship:?}."
+        ))
+    }
+
+    fn console_ubiquity(&mut self) -> ConsoleResponse {
+        self.reveal_all_blips();
+        ConsoleResponse::Ok("Unblip !".to_string())
+    }
+
+    /// Simple `ai.global` flag toggles.
+    fn console_ai_global_toggle(&mut self, cmd: &ConsoleCommand) -> ConsoleResponse {
+        use ConsoleCommand::*;
+        match cmd {
             Freeze => {
                 // Prints a leading "freeze" banner line, then the
                 // frozen/defrosted status line.
@@ -285,218 +381,6 @@ impl EngineInner {
                     .to_string(),
                 )
             }
-
-            // ── Debug flag toggles ───────────────────────────────
-            Elevation => toggle_debug(
-                &mut host_dev(&mut dev).debug.elevation_display,
-                "Elevation display enabled.",
-                "Elevation display disabled.",
-            ),
-            Railroad => toggle_debug(
-                &mut host_dev(&mut dev).debug.railroad_display,
-                "Railroads displayed.",
-                "Railroads hidden.",
-            ),
-            Einstein => toggle_debug(
-                &mut host_dev(&mut dev).debug.all_obstacles_display,
-                "3D-obstacles displayed.",
-                "3D-obstacles hidden.",
-            ),
-            Projection => toggle_debug(
-                &mut host_dev(&mut dev).debug.projection_areas_display,
-                "Projection areas displayed.",
-                "Projection areas hidden.",
-            ),
-            Euler => {
-                // Toggles motion-graph display and resets the index to 0.
-                host_dev(&mut dev).debug.motion_graph_display =
-                    !host_dev(&mut dev).debug.motion_graph_display;
-                host_dev(&mut dev).debug.motion_graph_display_index = 0;
-                ConsoleResponse::Ok(
-                    if host_dev(&mut dev).debug.motion_graph_display {
-                        "The seven bridges of Koenigsberg."
-                    } else {
-                        "Graph hidden."
-                    }
-                    .to_string(),
-                )
-            }
-            Motion => {
-                host_dev(&mut dev).debug.motion_obstacles_display =
-                    !host_dev(&mut dev).debug.motion_obstacles_display;
-                host_dev(&mut dev).debug.door_display = !host_dev(&mut dev).debug.door_display;
-                ConsoleResponse::Ok(
-                    if host_dev(&mut dev).debug.motion_obstacles_display {
-                        "Motion obstacles displayed."
-                    } else {
-                        "Motion obstacles hidden."
-                    }
-                    .to_string(),
-                )
-            }
-            Noise => {
-                // "noise" banner, then on enable four lines (status +
-                // three legend lines), on disable just the status line.
-                host_dev(&mut dev).debug.noise_display = !host_dev(&mut dev).debug.noise_display;
-                let body = if host_dev(&mut dev).debug.noise_display {
-                    "Noise display enabled.\n\
-                     \x20 White circles: Noises\n\
-                     \x20 Black circles: Deafness because of covering noises, explosions etc...\n\
-                     \x20 A NPC can hear a nois when he resp. his black circle is entirely within a white circle."
-                } else {
-                    "Noise display disabled."
-                };
-                ConsoleResponse::Ok(format!("noise\n{body}"))
-            }
-            SeekAndDestroy => toggle_debug(
-                &mut host_dev(&mut dev).debug.display_seek_points,
-                "Seek points displayed",
-                "Seek points hidden",
-            ),
-            Light => toggle_debug(
-                &mut host_dev(&mut dev).debug.display_light_zones,
-                "Light zones enabled.",
-                "Light zones disabled.",
-            ),
-            PcSight => {
-                // Prints the *old* state then toggles, so the displayed
-                // text is inverted vs. the new value.
-                let was = host_dev(&mut dev).debug.pc_sight;
-                host_dev(&mut dev).debug.pc_sight = !was;
-                ConsoleResponse::Ok(if was { "PCs can't see" } else { "PCs can see" }.to_string())
-            }
-            Shadow => toggle_debug(
-                &mut host_dev(&mut dev).debug.free_shadow_polygon,
-                "Free shadow polygon enabled",
-                "Free shadow polygon disabled",
-            ),
-            Sphere => {
-                host_dev(&mut dev).debug.shadow_polygon_sphere =
-                    !host_dev(&mut dev).debug.shadow_polygon_sphere;
-                ConsoleResponse::Ok(String::new())
-            }
-            SpriteMasks => toggle_debug(
-                &mut host_dev(&mut dev).debug.sprite_masks_display,
-                "Sprite masks displayed.",
-                "Sprite masks hidden.",
-            ),
-            Surface => toggle_debug(
-                &mut host_dev(&mut dev).debug.surface_display,
-                "Surface overlay displayed.",
-                "Surface overlay hidden.",
-            ),
-            EnergyDisplay => toggle_debug(
-                &mut host_dev(&mut dev).debug.combat_energy_display,
-                "Combat energy display enabled !",
-                "Combat energy display disabled !",
-            ),
-            Anim => toggle_debug(
-                &mut host_dev(&mut dev).debug.display_animation_lines,
-                "Animation lines displayed.",
-                "Animation lines hidden.",
-            ),
-            Companies => {
-                host_dev(&mut dev).debug.company_number_display =
-                    !host_dev(&mut dev).debug.company_number_display;
-                let on = host_dev(&mut dev).debug.company_number_display;
-                ConsoleResponse::Ok(
-                    if on {
-                        "Company number displayed"
-                    } else {
-                        "Company number hidden"
-                    }
-                    .to_string(),
-                )
-            }
-            CestLaZone => {
-                // "Zone" banner then the enabled/disabled status line.
-                host_dev(&mut dev).debug.script_zone_display =
-                    !host_dev(&mut dev).debug.script_zone_display;
-                let status = if host_dev(&mut dev).debug.script_zone_display {
-                    "Script zone display enabled."
-                } else {
-                    "Script zone display disabled."
-                };
-                ConsoleResponse::Ok(format!("Zone\n{status}"))
-            }
-            BigBrother => {
-                host_dev(&mut dev).debug.actor_info_display =
-                    !host_dev(&mut dev).debug.actor_info_display;
-                // TODO: Port the original actor-info text overlay. Until then,
-                // make BIG BROTHER drive the live numeric ID overlay that is
-                // already rendered by the host.
-                host_dev(&mut dev).debug.entity_ids = host_dev(&mut dev).debug.actor_info_display;
-                ConsoleResponse::Ok(
-                    if host_dev(&mut dev).debug.actor_info_display {
-                        "Actor infos displayed !"
-                    } else {
-                        "Actors infos hidden !"
-                    }
-                    .to_string(),
-                )
-            }
-            LevelText { option } => match option.as_deref() {
-                Some("DG") => {
-                    host_dev(&mut dev).debug.all_dialogues = true;
-                    ConsoleResponse::Ok("Displaying all dialogues...".to_string())
-                }
-                Some("DB") => {
-                    host_dev(&mut dev).debug.all_debriefings = true;
-                    ConsoleResponse::Ok("Displaying all debriefings...".to_string())
-                }
-                Some("PT") => {
-                    host_dev(&mut dev).debug.all_popup_texts = true;
-                    ConsoleResponse::Ok("Displaying all popup texts...".to_string())
-                }
-                Some("SB") => ConsoleResponse::Ok(
-                    "Short-briefing DisplayAll cheat is no longer available.".to_string(),
-                ),
-                _ => ConsoleResponse::Ok("Displayes all texts. Options: DG DB PT".to_string()),
-            },
-
-            // ── PC invulnerability ───────────────────────────────
-            // `Highlander` makes every Royalist fighter invulnerable;
-            // `Highlander2` does the same for Lacklandists. Civilians
-            // are intentionally excluded.
-            Highlander => {
-                let ids: Vec<_> = self
-                    .world
-                    .entities
-                    .fighter_ids_for_camp(crate::element::Camp::Royalists)
-                    .collect();
-                for id in ids {
-                    if let Some(entity) = self.get_entity_mut(id)
-                        && let Some(h) = entity.human_data_mut()
-                    {
-                        h.invulnerable = true;
-                    }
-                }
-                ConsoleResponse::Ok("Friends invulnerable".to_string())
-            }
-            Highlander2 => {
-                let ids: Vec<_> = self
-                    .world
-                    .entities
-                    .fighter_ids_for_camp(crate::element::Camp::Lacklandists)
-                    .collect();
-                for id in ids {
-                    if let Some(entity) = self.get_entity_mut(id)
-                        && let Some(h) = entity.human_data_mut()
-                    {
-                        h.invulnerable = true;
-                    }
-                }
-                ConsoleResponse::Ok("Foes invulnerable".to_string())
-            }
-
-            // ── Commands needing features not yet implemented ────
-            Nuke => self.console_nuke(),
-            Wakeup => self.console_wake_npcs(sim, assets),
-            BudSpencer => self.console_knock_out_enemy_soldiers(sim, assets),
-            Honolulu => self.console_honolulu(dev.as_deref_mut(), selected_view_element),
-            Morpheus => self.console_morpheus(sim, assets, selected_view_element),
-            Hades => self.console_hades(selected_view_element),
-            LastManStanding => self.console_last_man_standing(selected_view_element),
             DiesIrae => {
                 // Prints "Dies irae" banner, toggles
                 // `ai_global.ezekiel_2517`, then prints either "Mine is
@@ -511,28 +395,52 @@ impl EngineInner {
                 };
                 ConsoleResponse::Ok(format!("Dies irae\n{status}"))
             }
-            RoterAlarm => self.console_alert_soldiers(),
-            MisterSandman => {
-                // For every PC, launch a damage(100, 0) sequence —
-                // hp=100, concussion=0, *not* the reverse.  Swapping
-                // the two would change a death roll into a concussion
-                // roll.
-                let pcs = self.world.pc_ids.clone();
-                for id in pcs {
-                    self.launch_damage(id, 100, 0);
-                }
-                ConsoleResponse::Ok("Sweet dreams !".to_string())
+            _ => unreachable!("console command routed to the wrong AI-global toggle: {cmd:?}"),
+        }
+    }
+
+    // `Highlander` makes every Royalist fighter invulnerable;
+    // `Highlander2` does the same for Lacklandists. Civilians
+    // are intentionally excluded.
+    fn console_make_camp_invulnerable(&mut self, camp: Camp, reply: &str) -> ConsoleResponse {
+        let ids: Vec<_> = self.world.entities.fighter_ids_for_camp(camp).collect();
+        for id in ids {
+            if let Some(entity) = self.get_entity_mut(id)
+                && let Some(h) = entity.human_data_mut()
+            {
+                h.invulnerable = true;
             }
-            Coma => self.console_coma(),
-            Reinforcement => {
-                // Silent cheat: queue a reinforcement request here,
-                // and let `drain_pending_reinforcements` perform the
-                // actual PC spawn during `perform_hourglass`.
-                self.orders.pending_reinforcements.push(None);
-                ConsoleResponse::Ok(String::new())
-            }
-            SanPetrus => self.console_san_petrus(assets),
-            WaspMaster => {
+        }
+        ConsoleResponse::Ok(reply.to_string())
+    }
+
+    fn console_mister_sandman(&mut self) -> ConsoleResponse {
+        // For every PC, launch a damage(100, 0) sequence —
+        // hp=100, concussion=0, *not* the reverse.  Swapping
+        // the two would change a death roll into a concussion
+        // roll.
+        let pcs = self.world.pc_ids.clone();
+        for id in pcs {
+            self.launch_damage(id, 100, 0);
+        }
+        ConsoleResponse::Ok("Sweet dreams !".to_string())
+    }
+
+    fn console_reinforcement(&mut self) -> ConsoleResponse {
+        // Silent cheat: queue a reinforcement request here,
+        // and let `drain_pending_reinforcements` perform the
+        // actual PC spawn during `perform_hourglass`.
+        self.orders.pending_reinforcements.push(None);
+        ConsoleResponse::Ok(String::new())
+    }
+
+    fn console_force_ammo_cheat(
+        &mut self,
+        assets: &LevelAssets,
+        cmd: &ConsoleCommand,
+    ) -> ConsoleResponse {
+        match cmd {
+            ConsoleCommand::WaspMaster => {
                 // Always prints "Wasps", then either the typo-preserved
                 // error or force-sets every selected PC's wasp ammo to
                 // `0xFFFF`.  Re-enables the action slot via
@@ -545,7 +453,7 @@ impl EngineInner {
                     "You must selected at meast one PC which must go to paradise.",
                 )
             }
-            GiveArrows => {
+            ConsoleCommand::GiveArrows => {
                 // Always prints "Arrows", then either the typo-preserved
                 // error or force-sets every selected PC's bow ammo to
                 // `0xFFFF` (and re-enables the action slot).
@@ -557,26 +465,37 @@ impl EngineInner {
                     "You must selected at meast one PC.",
                 )
             }
-            GiveAmmo => self.console_give_ammo(assets),
-            Lukas { pcs } => {
-                // Resolve each single-letter initial (R/J/T/S/W/M/A/B/C)
-                // to a PC via the character profile index, then inflict
-                // pain — funnels to an hp=100 / concussion=100 damage
-                // sequence (same sequence used elsewhere).
-                if let Some(pcs) = pcs {
-                    let ids = self.resolve_pcs_by_initials(assets, pcs);
-                    for id in ids {
-                        self.launch_damage(id, 100, 100);
-                    }
-                }
-                ConsoleResponse::Ok("PCs knocked out !".to_string())
+            _ => unreachable!("console command routed to the wrong ammo cheat: {cmd:?}"),
+        }
+    }
+
+    fn console_lukas(&mut self, assets: &LevelAssets, pcs: Option<&str>) -> ConsoleResponse {
+        // Resolve each single-letter initial (R/J/T/S/W/M/A/B/C)
+        // to a PC via the character profile index, then inflict
+        // pain — funnels to an hp=100 / concussion=100 damage
+        // sequence (same sequence used elsewhere).
+        if let Some(pcs) = pcs {
+            let ids = self.resolve_pcs_by_initials(assets, pcs);
+            for id in ids {
+                self.launch_damage(id, 100, 100);
             }
-            Call { actor, method } => self.console_call_actor(assets, actor, method),
+        }
+        ConsoleResponse::Ok("PCs knocked out !".to_string())
+    }
+
+    /// `STATUS *`, `OPTIMIZE`, `FORGET`, `SARKOZY` and `FPS` diagnostics.
+    fn console_status_report(
+        &mut self,
+        dev: &mut Option<&mut DevState>,
+        cmd: &ConsoleCommand,
+    ) -> ConsoleResponse {
+        use ConsoleCommand::*;
+        match cmd {
             Fps => {
                 // Idempotent set (not a toggle): unconditionally
                 // enables FPS display and prints "FPS displayed."
                 // every time.
-                host_dev(&mut dev).debug.fps_display = true;
+                host_dev(dev).debug.fps_display = true;
                 ConsoleResponse::Ok("FPS displayed.".to_string())
             }
             StatusFramecache | StatusShadow => {
@@ -587,66 +506,7 @@ impl EngineInner {
                     "STATUS: no frame cache / shadow buffer in Rust port.".to_string(),
                 )
             }
-            StatusHardware => {
-                // Print a multi-section hardware report.  We push every
-                // line through `Console::pending_output` so the overlay
-                // scrollback shows them interleaved with the user's
-                // input line.  Rust port uses the system allocator and
-                // portable feature detection, so we surface the subset
-                // we can actually query (arch, SIMD features, CPU
-                // count); the rest (cache sizes, physical memory) were
-                // platform-detection stubs even in the shipping
-                // original.
-                host_dev(&mut dev).console.push_output("=> CPU Information");
-                host_dev(&mut dev).console.push_output("");
-                host_dev(&mut dev).console.push_output(format!(
-                    "Vendor String................. {}",
-                    std::env::consts::ARCH
-                ));
-                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-                let (has_mmx, has_sse, has_sse2, has_avx) = (
-                    std::is_x86_feature_detected!("mmx"),
-                    std::is_x86_feature_detected!("sse"),
-                    std::is_x86_feature_detected!("sse2"),
-                    std::is_x86_feature_detected!("avx"),
-                );
-                #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-                let (has_mmx, has_sse, has_sse2, has_avx) = (false, false, false, false);
-                host_dev(&mut dev)
-                    .console
-                    .push_output("FPU........................... Detected");
-                host_dev(&mut dev).console.push_output(format!(
-                    "Multi Media eXtension......... {}",
-                    if has_mmx { "Detected" } else { "Not Detected" }
-                ));
-                host_dev(&mut dev).console.push_output(format!(
-                    "Streaming SIMD Extension...... {}",
-                    if has_sse { "Detected" } else { "Not Detected" }
-                ));
-                host_dev(&mut dev).console.push_output(format!(
-                    "SSE2.......................... {}",
-                    if has_sse2 { "Detected" } else { "Not Detected" }
-                ));
-                host_dev(&mut dev).console.push_output(format!(
-                    "AVX........................... {}",
-                    if has_avx { "Detected" } else { "Not Detected" }
-                ));
-                let procs = std::thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(1);
-                host_dev(&mut dev).console.push_output(format!(
-                    "Architecture.................. {}",
-                    if procs > 1 {
-                        "Multiprocessor"
-                    } else {
-                        "Monoprocessor"
-                    }
-                ));
-                host_dev(&mut dev)
-                    .console
-                    .push_output(format!("Logical Processors............ {procs}"));
-                ConsoleResponse::Ok(String::new())
-            }
+            StatusHardware => console_status_hardware(host_dev(dev)),
             StatusPc => {
                 // Per-PC dump of the actor identity + its
                 // interface-displayed state.  Hex pointers are
@@ -661,10 +521,10 @@ impl EngineInner {
                         .and_then(|e| e.pc_data())
                         .map(|pc| !pc.interface_hidden)
                         .unwrap_or(true);
-                    host_dev(&mut dev)
+                    host_dev(dev)
                         .console
                         .push_output(format!("Actor id ........................ {}", id.index()));
-                    host_dev(&mut dev).console.push_output(format!(
+                    host_dev(dev).console.push_output(format!(
                         "Interface Displayed ............. {}",
                         if displayed { "YES" } else { "NO" }
                     ));
@@ -688,20 +548,239 @@ impl EngineInner {
                 // compiled out).
                 ConsoleResponse::Ok(String::new())
             }
-
-            // ── Misc dev-mode ────────────────────────────────────
-            Help => ConsoleResponse::Ok(
-                cheat_help_text(host_dev(&mut dev).console.use_final).to_string(),
-            ),
-            AssertFalse => {
-                // This cheat only logs; it does not interrupt execution.
-                tracing::warn!("console: assert(false) cheat invoked");
-                ConsoleResponse::Ok("assert( false );".to_string())
-            }
-            UsageError(msg) => ConsoleResponse::Ok((*msg).to_string()),
+            _ => unreachable!("console command routed to the wrong status report: {cmd:?}"),
         }
     }
+}
 
+/// Host-only debug display toggles; every arm requires `DevState`.
+fn console_debug_display(dev: &mut Option<&mut DevState>, cmd: &ConsoleCommand) -> ConsoleResponse {
+    use ConsoleCommand::*;
+    match cmd {
+        Elevation => toggle_debug(
+            &mut host_dev(dev).debug.elevation_display,
+            "Elevation display enabled.",
+            "Elevation display disabled.",
+        ),
+        Railroad => toggle_debug(
+            &mut host_dev(dev).debug.railroad_display,
+            "Railroads displayed.",
+            "Railroads hidden.",
+        ),
+        Einstein => toggle_debug(
+            &mut host_dev(dev).debug.all_obstacles_display,
+            "3D-obstacles displayed.",
+            "3D-obstacles hidden.",
+        ),
+        Projection => toggle_debug(
+            &mut host_dev(dev).debug.projection_areas_display,
+            "Projection areas displayed.",
+            "Projection areas hidden.",
+        ),
+        Euler => {
+            // Toggles motion-graph display and resets the index to 0.
+            host_dev(dev).debug.motion_graph_display = !host_dev(dev).debug.motion_graph_display;
+            host_dev(dev).debug.motion_graph_display_index = 0;
+            ConsoleResponse::Ok(
+                if host_dev(dev).debug.motion_graph_display {
+                    "The seven bridges of Koenigsberg."
+                } else {
+                    "Graph hidden."
+                }
+                .to_string(),
+            )
+        }
+        Motion => {
+            host_dev(dev).debug.motion_obstacles_display =
+                !host_dev(dev).debug.motion_obstacles_display;
+            host_dev(dev).debug.door_display = !host_dev(dev).debug.door_display;
+            ConsoleResponse::Ok(
+                if host_dev(dev).debug.motion_obstacles_display {
+                    "Motion obstacles displayed."
+                } else {
+                    "Motion obstacles hidden."
+                }
+                .to_string(),
+            )
+        }
+        Noise => {
+            // "noise" banner, then on enable four lines (status +
+            // three legend lines), on disable just the status line.
+            host_dev(dev).debug.noise_display = !host_dev(dev).debug.noise_display;
+            let body = if host_dev(dev).debug.noise_display {
+                "Noise display enabled.\n\
+                     \x20 White circles: Noises\n\
+                     \x20 Black circles: Deafness because of covering noises, explosions etc...\n\
+                     \x20 A NPC can hear a nois when he resp. his black circle is entirely within a white circle."
+            } else {
+                "Noise display disabled."
+            };
+            ConsoleResponse::Ok(format!("noise\n{body}"))
+        }
+        SeekAndDestroy => toggle_debug(
+            &mut host_dev(dev).debug.display_seek_points,
+            "Seek points displayed",
+            "Seek points hidden",
+        ),
+        Light => toggle_debug(
+            &mut host_dev(dev).debug.display_light_zones,
+            "Light zones enabled.",
+            "Light zones disabled.",
+        ),
+        PcSight => {
+            // Prints the *old* state then toggles, so the displayed
+            // text is inverted vs. the new value.
+            let was = host_dev(dev).debug.pc_sight;
+            host_dev(dev).debug.pc_sight = !was;
+            ConsoleResponse::Ok(if was { "PCs can't see" } else { "PCs can see" }.to_string())
+        }
+        Shadow => toggle_debug(
+            &mut host_dev(dev).debug.free_shadow_polygon,
+            "Free shadow polygon enabled",
+            "Free shadow polygon disabled",
+        ),
+        Sphere => {
+            host_dev(dev).debug.shadow_polygon_sphere = !host_dev(dev).debug.shadow_polygon_sphere;
+            ConsoleResponse::Ok(String::new())
+        }
+        SpriteMasks => toggle_debug(
+            &mut host_dev(dev).debug.sprite_masks_display,
+            "Sprite masks displayed.",
+            "Sprite masks hidden.",
+        ),
+        Surface => toggle_debug(
+            &mut host_dev(dev).debug.surface_display,
+            "Surface overlay displayed.",
+            "Surface overlay hidden.",
+        ),
+        EnergyDisplay => toggle_debug(
+            &mut host_dev(dev).debug.combat_energy_display,
+            "Combat energy display enabled !",
+            "Combat energy display disabled !",
+        ),
+        Anim => toggle_debug(
+            &mut host_dev(dev).debug.display_animation_lines,
+            "Animation lines displayed.",
+            "Animation lines hidden.",
+        ),
+        Companies => {
+            host_dev(dev).debug.company_number_display =
+                !host_dev(dev).debug.company_number_display;
+            let on = host_dev(dev).debug.company_number_display;
+            ConsoleResponse::Ok(
+                if on {
+                    "Company number displayed"
+                } else {
+                    "Company number hidden"
+                }
+                .to_string(),
+            )
+        }
+        CestLaZone => {
+            // "Zone" banner then the enabled/disabled status line.
+            host_dev(dev).debug.script_zone_display = !host_dev(dev).debug.script_zone_display;
+            let status = if host_dev(dev).debug.script_zone_display {
+                "Script zone display enabled."
+            } else {
+                "Script zone display disabled."
+            };
+            ConsoleResponse::Ok(format!("Zone\n{status}"))
+        }
+        BigBrother => {
+            host_dev(dev).debug.actor_info_display = !host_dev(dev).debug.actor_info_display;
+            // TODO: Port the original actor-info text overlay. Until then,
+            // make BIG BROTHER drive the live numeric ID overlay that is
+            // already rendered by the host.
+            host_dev(dev).debug.entity_ids = host_dev(dev).debug.actor_info_display;
+            ConsoleResponse::Ok(
+                if host_dev(dev).debug.actor_info_display {
+                    "Actor infos displayed !"
+                } else {
+                    "Actors infos hidden !"
+                }
+                .to_string(),
+            )
+        }
+        LevelText { option } => match option.as_deref() {
+            Some("DG") => {
+                host_dev(dev).debug.all_dialogues = true;
+                ConsoleResponse::Ok("Displaying all dialogues...".to_string())
+            }
+            Some("DB") => {
+                host_dev(dev).debug.all_debriefings = true;
+                ConsoleResponse::Ok("Displaying all debriefings...".to_string())
+            }
+            Some("PT") => {
+                host_dev(dev).debug.all_popup_texts = true;
+                ConsoleResponse::Ok("Displaying all popup texts...".to_string())
+            }
+            Some("SB") => ConsoleResponse::Ok(
+                "Short-briefing DisplayAll cheat is no longer available.".to_string(),
+            ),
+            _ => ConsoleResponse::Ok("Displayes all texts. Options: DG DB PT".to_string()),
+        },
+        _ => unreachable!("console command routed to the wrong debug display toggle: {cmd:?}"),
+    }
+}
+
+/// Print a multi-section hardware report.  We push every line through
+/// `Console::pending_output` so the overlay scrollback shows them
+/// interleaved with the user's input line.  Rust port uses the system
+/// allocator and portable feature detection, so we surface the subset we can
+/// actually query (arch, SIMD features, CPU count); the rest (cache sizes,
+/// physical memory) were platform-detection stubs even in the shipping
+/// original.
+fn console_status_hardware(dev: &mut DevState) -> ConsoleResponse {
+    dev.console.push_output("=> CPU Information");
+    dev.console.push_output("");
+    dev.console.push_output(format!(
+        "Vendor String................. {}",
+        std::env::consts::ARCH
+    ));
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    let (has_mmx, has_sse, has_sse2, has_avx) = (
+        std::is_x86_feature_detected!("mmx"),
+        std::is_x86_feature_detected!("sse"),
+        std::is_x86_feature_detected!("sse2"),
+        std::is_x86_feature_detected!("avx"),
+    );
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    let (has_mmx, has_sse, has_sse2, has_avx) = (false, false, false, false);
+    dev.console
+        .push_output("FPU........................... Detected");
+    dev.console.push_output(format!(
+        "Multi Media eXtension......... {}",
+        if has_mmx { "Detected" } else { "Not Detected" }
+    ));
+    dev.console.push_output(format!(
+        "Streaming SIMD Extension...... {}",
+        if has_sse { "Detected" } else { "Not Detected" }
+    ));
+    dev.console.push_output(format!(
+        "SSE2.......................... {}",
+        if has_sse2 { "Detected" } else { "Not Detected" }
+    ));
+    dev.console.push_output(format!(
+        "AVX........................... {}",
+        if has_avx { "Detected" } else { "Not Detected" }
+    ));
+    let procs = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    dev.console.push_output(format!(
+        "Architecture.................. {}",
+        if procs > 1 {
+            "Multiprocessor"
+        } else {
+            "Monoprocessor"
+        }
+    ));
+    dev.console
+        .push_output(format!("Logical Processors............ {procs}"));
+    ConsoleResponse::Ok(String::new())
+}
+
+impl EngineInner {
     fn console_give_money(&mut self, amount: u32, show_help: bool) -> ConsoleResponse {
         // Panic on missing campaign — matches `campaign_mut_or_panic`'s
         // contract for cheats issued outside a mission.
