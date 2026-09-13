@@ -235,31 +235,33 @@ fn phalanx_member_detects_360(
         return false;
     }
 
-    let viewer_eye_z = member.world_position.z
-        + crate::stealth::eye_z_for_posture(crate::element::Posture::Upright, member.is_rider);
+    // Viewer eye: the member's stored world position with the upright eye
+    // height (no posture XY shift in the all-around overload).
+    let viewer_eye = crate::coordinates::WorldPoint3D::new(
+        member.world_position.x,
+        member.world_position.y,
+        member.world_position.z
+            + crate::stealth::eye_z_for_posture(crate::element::Posture::Upright, member.is_rider),
+    );
     let target_detection = crate::stealth::detection_point_world(
         target.world_position,
         target.posture,
         target.direction as i16,
         target.is_rider,
     );
-    let dx = target_detection.x - member.world_position.x;
-    let dy = (target_detection.y - member.world_position.y) * INVERSE_ASPECT_RATIO;
-    let dz = target_detection.z - viewer_eye_z;
-    if dx * dx + dy * dy + dz * dz > member.sq_view_radius {
-        return false;
-    }
-
-    crate::sight_obstacle::is_reachable_3d(
+    super::detects_360(
+        super::Viewer360 {
+            eye: viewer_eye,
+            sq_radius: member.sq_view_radius,
+            in_building: member.in_building,
+        },
+        super::Target360 {
+            detection: target_detection,
+            in_building: target.in_building,
+        },
         obstacles,
-        [
-            member.world_position.x,
-            member.world_position.y,
-            viewer_eye_z,
-        ],
-        [target_detection.x, target_detection.y, target_detection.z],
-        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
+    .visible
 }
 
 #[track_caller]
@@ -268,7 +270,9 @@ fn phalanx_member_detects_180(
     target: &PhalanxEnemySnapshot,
     ctx: &AiContext,
 ) -> bool {
-    if !member.active || member.in_building || !target.active {
+    // `Viewer180` has no activity field; the viewer-building and
+    // target-activity gates run inside the shared core.
+    if !member.active {
         return false;
     }
 
@@ -285,78 +289,33 @@ fn phalanx_member_detects_180(
         member.world_position.z
             + crate::stealth::eye_z_for_posture(member.posture, member.is_rider),
     );
-    let target_world = crate::stealth::detection_point_world(
-        target.world_position,
-        target.posture,
-        target.direction as i16,
-        target.is_rider,
-    );
-    let dx = target_world.x - viewer_world.x;
-    let dy = (target_world.y - viewer_world.y) * INVERSE_ASPECT_RATIO;
-    let sq_distance = dx * dx + dy * dy;
-    if sq_distance > member.sq_view_radius {
-        return false;
-    }
-
-    // The direction vector this test compares against is built in map
-    // space, where Y is already compressed by `ASPECT_RATIO`, and is then
-    // expanded back into the stretched frame the offsets above use. The
-    // shared table is the expanded unit vector already, so stretching it
-    // a second time would narrow the forward half-plane and reject
-    // enemies that are genuinely in front.
-    let direction = crate::shadow_polygon::sector_to_direction(member.direction as i16);
-    let forward_x = direction[0];
-    let forward_y = direction[1];
-    if sq_distance < 50.0 * 50.0 {
-        let forward_length = dx * forward_x + dy * forward_y;
-        let projected_x = forward_x * forward_length;
-        let projected_y = forward_y * forward_length;
-        let perpendicular_sq =
-            (dx - projected_x) * (dx - projected_x) + (dy - projected_y) * (dy - projected_y);
-        if perpendicular_sq >= forward_length {
-            return true;
-        }
-    }
-    if dx * forward_x + dy * forward_y < 0.0 {
-        return false;
-    }
-
-    // The original game computes view radius here, before the final target LOS.
-    // At night/fog that call emits the ordered light-sector barycentre rays;
-    // its per-surface memo is observable because later detection calls can
-    // reuse the radius without repeating those rays.
-    let obstacles = ctx.obstacle_list();
-    let target_obstacle = target.obstacle.map(|handle| {
-        obstacles.get(usize::from(handle)).unwrap_or_else(|| {
-            panic!(
-                "phalanx detection target {} requires missing sight obstacle {}",
-                target.handle, handle
-            )
-        })
-    });
-    let effective_view_radius =
-        ctx.compute_view_radius_cached(member.entity, target.obstacle, || {
-            crate::ai_vision::compute_view_radius(
-                viewer_world,
-                member.view_radius,
-                (member.view_direction[0], member.view_direction[1]),
-                member.real_half_aperture,
-                ctx.is_night_or_fog,
-                &ctx.fast_grid,
-                obstacles,
-                target_obstacle,
-            )
-        });
-    if sq_distance > effective_view_radius * effective_view_radius {
-        return false;
-    }
-
-    crate::sight_obstacle::is_reachable_3d(
-        obstacles,
-        [viewer_world.x, viewer_world.y, viewer_world.z],
-        [target_world.x, target_world.y, target_world.z],
-        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
-    )
+    // The core computes view radius before the final target LOS, as the
+    // original game does: at night/fog that call emits the ordered
+    // light-sector barycentre rays, and its per-surface memo is observable
+    // because later detection calls can reuse the radius.
+    let viewer = super::detection::Viewer180 {
+        entity: member.entity,
+        eye_ground: crate::coordinates::GroundPoint::new(viewer_world.x, viewer_world.y),
+        eye_z: viewer_world.z,
+        direction: member.direction,
+        in_building: member.in_building,
+        view_radius: member.view_radius,
+        sq_view_radius: member.sq_view_radius,
+        view_direction: member.view_direction,
+        real_half_aperture: member.real_half_aperture,
+    };
+    let target = super::detection::Target180 {
+        handle: target.handle,
+        active: target.active,
+        detection_world: crate::stealth::detection_point_world(
+            target.world_position,
+            target.posture,
+            target.direction as i16,
+            target.is_rider,
+        ),
+        obstacle: target.obstacle,
+    };
+    super::detection::detects_180_degrees_core(&viewer, &target, ctx)
 }
 
 fn append_phalanx_member_enemies(

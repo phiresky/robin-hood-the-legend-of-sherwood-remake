@@ -208,10 +208,6 @@ fn battle_friend_detected_360(
         target.in_building,
         ctx.obstacle_list(),
     );
-    let dx = detection_point.x - ctx.self_upright_eye_world.x;
-    let dy = (detection_point.y - ctx.self_upright_eye_world.y)
-        * crate::position_interface::INVERSE_ASPECT_RATIO;
-    let dz = detection_point.z - ctx.self_upright_eye_world.z;
     tracing::trace!(
         frame = ctx.frame,
         me,
@@ -226,7 +222,7 @@ fn battle_friend_detected_360(
         friend_x = detection_point.x,
         friend_y = detection_point.y,
         friend_z = detection_point.z,
-        sq_distance = dx * dx + dy * dy + dz * dz,
+        sq_distance = super::sq_distance_360(ctx.self_upright_eye_world, detection_point),
         sq_radius = (ctx.self_view_radius as f32).powi(2),
         detected,
         "battle-planning ally-list all-around detection check"

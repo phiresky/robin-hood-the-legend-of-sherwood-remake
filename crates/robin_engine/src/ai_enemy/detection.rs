@@ -49,12 +49,22 @@ impl EnemyAi {
             view.direction as i16,
             view.is_rider,
         );
-        let (sq_distance, los_clear) = detection_360_geometry(
-            viewer_eye,
-            target_detection,
-            ctx.sq_self_view_radius,
+        let detection = detects_360(
+            Viewer360 {
+                eye: viewer_eye,
+                sq_radius: ctx.sq_self_view_radius,
+                in_building: ctx.building_sector.is_some(),
+            },
+            Target360 {
+                detection: target_detection,
+                in_building: view.in_building,
+            },
             ctx.obstacle_list(),
         );
+        let sq_distance = detection
+            .sq_distance
+            .expect("both building gates were checked above");
+        let los_clear = detection.visible;
         tracing::trace!(
             target,
             sq_distance,
@@ -694,21 +704,43 @@ pub(super) fn view_radius_memo_viewer(
 }
 
 /// Viewer half of a 180° detection test, so the test can be evaluated
-/// either from the acting NPC or from an ally it is reasoning about.
+/// from the acting NPC, from an ally it is reasoning about, or from a
+/// phalanx member's snapshot.
 pub(super) struct Viewer180 {
     /// Identity the surface radius memo is keyed by — the ally when the
     /// test runs through an ally's eyes, not the deciding soldier.
-    entity: crate::element::EntityId,
-    eye_ground: crate::coordinates::GroundPoint,
-    eye_z: f32,
-    direction: u16,
-    in_building: bool,
-    view_radius: u16,
-    sq_view_radius: f32,
-    view_direction: [f32; 2],
-    real_half_aperture: f32,
+    pub(super) entity: crate::element::EntityId,
+    pub(super) eye_ground: crate::coordinates::GroundPoint,
+    pub(super) eye_z: f32,
+    pub(super) direction: u16,
+    pub(super) in_building: bool,
+    pub(super) view_radius: u16,
+    pub(super) sq_view_radius: f32,
+    pub(super) view_direction: [f32; 2],
+    pub(super) real_half_aperture: f32,
 }
 
+/// Target half of a 180° detection test, built from an entity view or from
+/// a phalanx enemy snapshot.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub(super) struct Target180 {
+    pub(super) handle: HumanHandle,
+    /// Raw active flag, not able-to-fight: an unconscious actor remains
+    /// active and can still pass the 180-degree visibility test.
+    pub(super) active: bool,
+    /// World-space detection point. Detection-point calculation starts from
+    /// the raw element position; an AI-facing position may be a substituted
+    /// door endpoint/carrier.
+    pub(super) detection_world: crate::coordinates::WorldPoint3D,
+    /// Projection obstacle the target stands on (view-radius memo key).
+    pub(super) obstacle: Option<crate::position_interface::ObstacleHandle>,
+}
+
+/// Entity-view adapter over [`detects_180_degrees_core`].
+///
+/// Deliberately not `#[track_caller]`: every entity-view 180° check
+/// attributes its recorded view-radius and visibility queries to this one
+/// site, as it did before the core was split out.
 pub(super) fn detects_180_degrees(
     viewer: &Viewer180,
     target: HumanHandle,
@@ -725,26 +757,44 @@ pub(super) fn detects_180_degrees(
         );
         return false;
     };
-    // Step 2: the original game checks the raw active flag, not whether
-    // the target can fight. An unconscious actor remains active and can
-    // therefore still pass this standalone 180-degree visibility test.
-    if !view.active {
+    let target = Target180 {
+        handle: target,
+        active: view.active,
+        detection_world: crate::stealth::detection_point_world(
+            view.detection_position_world,
+            view.posture,
+            view.direction as i16,
+            view.is_rider,
+        ),
+        obstacle: view.obstacle_idx,
+    };
+    detects_180_degrees_core(viewer, &target, ctx)
+}
+
+/// The single 180° detection implementation (steps listed on
+/// [`EnemyAi::is_detecting_180_degrees`]). `#[track_caller]` so adapters
+/// choose where the recorded queries are attributed.
+#[track_caller]
+pub(super) fn detects_180_degrees_core(
+    viewer: &Viewer180,
+    target: &Target180,
+    ctx: &AiContext,
+) -> bool {
+    // Step 1: viewer in a building — always returns false.
+    if viewer.in_building {
+        return false;
+    }
+    // Step 2: raw active flag of the target.
+    if !target.active {
         return false;
     }
 
     let viewer_eye_z = viewer.eye_z;
-    // Detection-point calculation starts from the raw element position. The
-    // AI-facing `view.position` may be a substituted door endpoint/carrier.
-    let target_detection_world = crate::stealth::detection_point_world(
-        view.detection_position_world,
-        view.posture,
-        view.direction as i16,
-        view.is_rider,
-    );
-    let target_detection_z = target_detection_world.z;
+    let target_detection_z = target.detection_world.z;
     let viewer_eye_ground = viewer.eye_ground;
     let target_detection_ground =
-        crate::coordinates::GroundPoint::new(target_detection_world.x, target_detection_world.y);
+        crate::coordinates::GroundPoint::new(target.detection_world.x, target.detection_world.y);
+    let target_handle = target.handle;
 
     // Aspect-ratio-stretched view vector (`INVERSE_ASPECT_RATIO`
     // on the Y component), from viewer eye to target detection point.
@@ -753,7 +803,7 @@ pub(super) fn detects_180_degrees(
         * crate::position_interface::INVERSE_ASPECT_RATIO;
     let sq_distance = dx * dx + dy * dy;
     tracing::trace!(
-        target,
+        target = target_handle,
         viewer_x = viewer_eye_ground.x,
         viewer_y = viewer_eye_ground.y,
         viewer_z = viewer_eye_z,
@@ -767,29 +817,15 @@ pub(super) fn detects_180_degrees(
         return false;
     }
 
-    // Direction-vector calculation first compresses the table Y by
-    // ASPECT_RATIO; Original then stretches it back here.  The shared
-    // Rust table is already the resulting uncompressed unit vector, so
-    // applying INVERSE_ASPECT_RATIO a second time would narrow the
-    // forward half-plane incorrectly.
-    let dir = crate::shadow_polygon::sector_to_direction(viewer.direction as i16);
-    let fx = dir[0];
-    let fy = dir[1];
-
-    // Step 4: very-near "beside me" short-circuit.
-    if sq_distance < 50.0 * 50.0 {
-        let fwd_len = dx * fx + dy * fy;
-        let fc_x = fx * fwd_len;
-        let fc_y = fy * fwd_len;
-        let perp_sq = (dx - fc_x) * (dx - fc_x) + (dy - fc_y) * (dy - fc_y);
-        if perp_sq >= fwd_len {
-            return true;
+    // Step 4: very-near "beside me" short-circuit; step 5: forward
+    // half-plane (shared with the planar `detects_position_180_raw`).
+    match half_plane_180(dx, dy, sq_distance, viewer.direction) {
+        HalfPlane180::Beside => return true,
+        HalfPlane180::NotBeside { forward_dot } => {
+            if forward_dot < 0.0 {
+                return false;
+            }
         }
-    }
-
-    // Step 5: forward half-plane.
-    if dx * fx + dy * fy < 0.0 {
-        return false;
     }
 
     // Step 6: second, tighter radius gate against the spherical and
@@ -799,10 +835,10 @@ pub(super) fn detects_180_degrees(
     // those, since the sampling is observable through the shared
     // per-surface radius cache.
     let sight_obstacles = ctx.obstacle_list();
-    let target_obstacle = view.obstacle_idx.map(|handle| {
+    let target_obstacle = target.obstacle.map(|handle| {
         sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
             panic!(
-                "is_detecting_180_degrees: target {target} requires missing sight obstacle {handle}"
+                "is_detecting_180_degrees: target {target_handle} requires missing sight obstacle {handle}"
             )
         })
     });
@@ -823,7 +859,7 @@ pub(super) fn detects_180_degrees(
         )
     };
     let effective_view_radius =
-        ctx.compute_view_radius_cached(viewer.entity, view.obstacle_idx, compute_radius);
+        ctx.compute_view_radius_cached(viewer.entity, target.obstacle, compute_radius);
     if sq_distance > effective_view_radius * effective_view_radius {
         return false;
     }

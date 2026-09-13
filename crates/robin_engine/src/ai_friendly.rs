@@ -38,6 +38,10 @@ pub enum AlertSoldierFailureContinuation {
 /// already report a committed gate-side point while the actor's sprite is
 /// still interpolating through a door, so the AI planning position is not a
 /// valid substitute here.
+///
+/// The caller keeps its own `square_distance <= sq_view_radius && LOS` gate
+/// instead of routing through `ai_enemy::detects_360`: that core rejects on
+/// `sq_distance > radius`, which differs for a NaN distance.
 fn alert_soldier_360_geometry(
     ctx: &AiContext,
     target: &crate::ai_entity_view::AiEntityView,
@@ -55,10 +59,8 @@ fn alert_soldier_360_geometry(
         target.direction as i16,
         target.is_rider,
     );
-    let dx = target_detection.x - viewer_eye.x;
-    let dy = (target_detection.y - viewer_eye.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-    let dz = target_detection.z - viewer_eye.z;
-    (viewer_eye, target_detection, dx * dx + dy * dy + dz * dz)
+    let square_distance = crate::ai_enemy::sq_distance_360(viewer_eye, target_detection);
+    (viewer_eye, target_detection, square_distance)
 }
 
 // ---------------------------------------------------------------------------
