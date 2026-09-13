@@ -3,10 +3,13 @@
 //! The store selects authority at application initialization. The legacy
 //! manager's serialized save_directory remains wire-compatible metadata and
 //! cannot redirect an already-created store.
-#[cfg(target_arch = "wasm32")]
-use crate::blob_store::{BlobStore as _, BrowserLocalStorage};
 use robin_engine::player_profile::{DifficultyLevel, PlayerProfileManager};
 use serde::{Deserialize, Serialize};
+
+#[cfg(target_arch = "wasm32")]
+mod browser;
+#[cfg(not(target_arch = "wasm32"))]
+mod native;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PlayerProfileStore {
@@ -29,40 +32,12 @@ impl Default for PlayerProfileStore {
     }
 }
 
+/// Platform modules supply `for_directory`, `directory`, `load_existing`,
+/// `publish` and `move_profile_saves` with identical signatures.
 impl PlayerProfileStore {
-    pub fn for_directory(directory: &str) -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            Self::Native {
-                directory: directory.into(),
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            Self::Browser {
-                directory: directory.into(),
-            }
-        }
-    }
-
     pub fn unavailable(reason: impl Into<String>) -> Self {
         Self::Unavailable {
             reason: reason.into(),
-        }
-    }
-
-    pub(crate) fn directory(&self) -> std::io::Result<&str> {
-        match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Native { directory } => directory.to_str().ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "player-profile directory cannot be represented as UTF-8 archive metadata",
-                )
-            }),
-            #[cfg(target_arch = "wasm32")]
-            Self::Browser { directory } => Ok(directory),
-            Self::Unavailable { reason } => Err(std::io::Error::other(reason.clone())),
         }
     }
 
@@ -70,27 +45,7 @@ impl PlayerProfileStore {
     /// default. Corruption and unavailable storage are errors, not defaults.
     pub fn load(&self) -> std::io::Result<PlayerProfileManager> {
         let directory = self.directory()?;
-        let existing = match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Native { directory: root } => {
-                match std::fs::File::open(root.join("profiles.json")) {
-                    Ok(file) => Some(decode_native_archive(
-                        std::io::BufReader::new(file),
-                        directory,
-                    )?),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(error) => return Err(error),
-                }
-            }
-            #[cfg(target_arch = "wasm32")]
-            Self::Browser { directory } => BrowserLocalStorage::open()
-                .and_then(|storage| storage.read_text(BROWSER_PROFILE_STORE_KEY))
-                .map_err(|error| error.into_io("read browser player profiles"))?
-                .map(|serialized| decode_browser_profile_archive(&serialized, directory))
-                .transpose()?,
-            Self::Unavailable { .. } => unreachable!("directory checked authority"),
-        };
-        if let Some(manager) = existing {
+        if let Some(manager) = self.load_existing(directory)? {
             return Ok(manager);
         }
         let mut manager = PlayerProfileManager::new(directory.to_owned());
@@ -113,23 +68,7 @@ impl PlayerProfileStore {
                 "player-profile directory differs from its initialized persistence authority",
             ));
         }
-        match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Native { directory } => {
-                manager
-                    .validate_archive()
-                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-                crate::desktop_persistence::write_json(&directory.join("profiles.json"), manager)
-            }
-            #[cfg(target_arch = "wasm32")]
-            Self::Browser { .. } => {
-                let serialized = encode_browser_profile_archive(manager)?;
-                BrowserLocalStorage::open()
-                    .and_then(|storage| storage.write_text(BROWSER_PROFILE_STORE_KEY, &serialized))
-                    .map_err(|error| error.into_io("persist browser player profiles"))
-            }
-            Self::Unavailable { .. } => unreachable!("directory checked authority"),
-        }
+        self.publish(manager)
     }
 
     /// Rename saves aside before publishing deletion. They remain recoverable:
@@ -151,80 +90,6 @@ impl PlayerProfileStore {
         }
         Ok(())
     }
-
-    fn move_profile_saves(&self, profile_id: u32, restore: bool) -> std::io::Result<()> {
-        self.directory()?;
-        match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Native { directory } => {
-                let name = robin_engine::player_profile::profile_save_subdirectory(profile_id);
-                let live = directory.join(&name);
-                let deleted = directory.join(format!(".deleted-{name}"));
-                let (source, destination) = if restore {
-                    (deleted, live)
-                } else {
-                    (live, deleted)
-                };
-                match std::fs::symlink_metadata(&source) {
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                    Err(error) => return Err(error),
-                    Ok(metadata) if !metadata.is_dir() => {
-                        return Err(std::io::Error::other(format!(
-                            "profile saves are not a directory: {}",
-                            source.display()
-                        )));
-                    }
-                    Ok(_) => {}
-                }
-                match std::fs::symlink_metadata(&destination) {
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error),
-                    Ok(_) => {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::AlreadyExists,
-                            format!(
-                                "refusing to replace profile saves at {}",
-                                destination.display()
-                            ),
-                        ));
-                    }
-                }
-                std::fs::rename(&source, &destination)?;
-                #[cfg(unix)]
-                std::fs::File::open(directory)?.sync_all()?;
-                tracing::info!(
-                    "Moved profile saves {} → {}",
-                    source.display(),
-                    destination.display()
-                );
-                Ok(())
-            }
-            #[cfg(target_arch = "wasm32")]
-            Self::Browser { .. } => {
-                // Browser saves have their own store; the legacy profile
-                // archive did not perform filesystem directory deletion.
-                let _ = (profile_id, restore);
-                Ok(())
-            }
-            Self::Unavailable { .. } => unreachable!("directory checked authority"),
-        }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn decode_native_archive(
-    input: impl std::io::Read,
-    directory: &str,
-) -> std::io::Result<PlayerProfileManager> {
-    let manager = serde_json::from_reader(input).map_err(|error| {
-        std::io::Error::new(
-            error
-                .io_error_kind()
-                .unwrap_or(std::io::ErrorKind::InvalidData),
-            error,
-        )
-    })?;
-    finish_loading_archive(manager, directory)
 }
 
 fn finish_loading_archive(
@@ -240,6 +105,7 @@ fn finish_loading_archive(
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    use super::native::decode_native_archive;
     use super::*;
     use std::fs;
 
@@ -627,65 +493,11 @@ mod tests {
         );
     }
 }
-#[cfg(all(test, target_arch = "wasm32"))]
-mod browser_persistence_tests {
-    use super::*;
-    use wasm_bindgen_test::wasm_bindgen_test;
-
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
-    #[wasm_bindgen_test]
-    fn durable_profile_reload_and_corruption_are_distinguished() {
-        let storage = BrowserLocalStorage::open().unwrap();
-        storage.remove(BROWSER_PROFILE_STORE_KEY).unwrap();
-
-        let mut first = PlayerProfileStore::for_directory("browser-save")
-            .load()
-            .unwrap();
-        assert!(first.default_profiles);
-        first.default_profiles = false;
-        first.profiles[0].name = "Durable Robin".to_owned();
-        PlayerProfileStore::for_directory("browser-save")
-            .save(&first)
-            .unwrap();
-
-        let reloaded = PlayerProfileStore::for_directory("ignored-after-load")
-            .load()
-            .unwrap();
-        assert!(!reloaded.default_profiles);
-        assert_eq!(reloaded.get_active().unwrap().name, "Durable Robin");
-        assert_eq!(reloaded.save_directory, "ignored-after-load");
-
-        storage
-            .write_text(
-                BROWSER_PROFILE_STORE_KEY,
-                r#"{"schema_version":999,"manager":{}}"#,
-            )
-            .unwrap();
-        assert!(
-            PlayerProfileStore::for_directory("browser-save")
-                .load()
-                .is_err()
-        );
-        assert!(
-            decode_browser_profile_archive(
-                &"x".repeat(BROWSER_PROFILE_BYTE_LIMIT + 1),
-                "browser-save"
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("limit")
-        );
-        storage.remove(BROWSER_PROFILE_STORE_KEY).unwrap();
-    }
-}
 
 #[cfg(any(test, target_arch = "wasm32"))]
 const BROWSER_PROFILE_SCHEMA_VERSION: u32 = 1;
 #[cfg(any(test, target_arch = "wasm32"))]
 const BROWSER_PROFILE_BYTE_LIMIT: usize = 4 * 1024 * 1024;
-#[cfg(target_arch = "wasm32")]
-const BROWSER_PROFILE_STORE_KEY: &str = "robin-hood-player-profiles-v1";
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Serialize, Deserialize)]
