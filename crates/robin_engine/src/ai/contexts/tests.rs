@@ -158,6 +158,18 @@ fn seek_point(x: f32) -> SeekPoint {
 }
 
 #[test]
+fn ai_global_state_default_starts_repulsive_ids_at_one_and_green() {
+    let global = AiGlobalState::default();
+    assert_eq!(global.next_repulsive_point_id, 1);
+    assert_eq!(global.overall_alert_status, AlertLevel::Green);
+    assert_eq!(global.overall_villain_alert_status, AlertLevel::Green);
+    assert_eq!(global.green_alert_soldiers, 0);
+    assert!(global.repulsive_points.is_empty());
+    assert!(global.all_soldier_handles.is_empty());
+    assert!(!global.primary_target_multiplicity_initialized);
+}
+
+#[test]
 fn near_seek_candidates_use_truncated_uword_distances() {
     let sim = crate::sim_rng::test_context();
     let mut global = AiGlobalState::default();

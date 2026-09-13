@@ -1444,7 +1444,14 @@ pub struct DoorRallyPoint {
 pub const AI_DOOR_RALLY_POINT_DISTANCE: f32 = 100.0;
 
 /// Global / shared AI state, conceptually module-static.
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    smart_default::SmartDefault,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiGlobalState {
     pub green_alert_soldiers: u16,
     pub yellow_alert_soldiers: u16,
@@ -1495,7 +1502,8 @@ pub struct AiGlobalState {
     /// Scripts add/remove them by integer ID.
     pub repulsive_points: Vec<RepulsivePoint>,
 
-    /// Next auto-incrementing ID for repulsive points.
+    /// Next auto-incrementing ID for repulsive points. IDs start at 1.
+    #[default(1)]
     pub next_repulsive_point_id: i32,
 
     /// Cached door geometry for finding a door an enemy could be behind.
@@ -1538,42 +1546,6 @@ pub struct AiGlobalState {
     #[state_hash(skip)]
     #[bitcode(skip)]
     pub primary_target_multiplicity_initialized: bool,
-}
-
-impl Default for AiGlobalState {
-    fn default() -> Self {
-        Self {
-            green_alert_soldiers: 0,
-            yellow_alert_soldiers: 0,
-            red_alert_soldiers: 0,
-            soldier_camps: std::collections::BTreeSet::new(),
-            stupid_soldiers_cheat: false,
-            freeze: false,
-            overall_alert_status: AlertLevel::Green,
-            overall_villain_alert_status: AlertLevel::Green,
-            ambush_points: Vec::new(),
-            seek_points: Vec::new(),
-            archery_sectors: Vec::new(),
-            saved_random_seed: 0,
-            remarks_forbidden_till_frame: Vec::new(),
-            forbidden_remarks: Vec::new(),
-            screen_remarks: Vec::new(),
-            attribute_display: false,
-            speech_display: false,
-            golden_eye_mode: false,
-            ezekiel_2517: false,
-            current_speech_variant: 0,
-            repulsive_points: Vec::new(),
-            next_repulsive_point_id: 1,
-            door_seek_infos: Vec::new(),
-            reinforcement_doors: Vec::new(),
-            houses: Vec::new(),
-            door_rally_points: Vec::new(),
-            all_soldier_handles: std::sync::Arc::new(Vec::new()),
-            primary_target_multiplicity_scratch: std::collections::BTreeMap::new(),
-            primary_target_multiplicity_initialized: false,
-        }
-    }
 }
 
 impl AiGlobalState {
