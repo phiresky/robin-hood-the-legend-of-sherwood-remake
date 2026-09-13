@@ -48,6 +48,10 @@ pub mod graphic_config;
 pub mod human_control;
 pub mod interp;
 pub mod inventory;
+/// Host/diagnostics JSON projection (engine dumps, save identities, parity
+/// reports). Lives here because robin_engine is the lowest crate both
+/// robin_rs and the CPU-only robin_parity build depend on.
+pub mod json_value;
 pub mod jump_line;
 pub use robin_data_io::legacy_io;
 pub mod engine;
