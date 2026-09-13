@@ -107,24 +107,13 @@ verify_script() {
 }
 
 
+# Verifies the source bundle or a pinned copy of it. Pinned copies keep the
+# source bundle's byte-identical loader proof, so the proof is bound to $bundle.
 verify_bundle() {
-    local bundle=$1
-    [[ -x "$bundle/original_parity_replay" \
-        && -x "$bundle/original_parity_replay.remote" \
-        && -f "$bundle/SHA256SUMS" \
-        && -f "$bundle/LIB_SHA256SUMS" \
-        && -f "$bundle/PROVENANCE.txt" ]] \
-        || fail "incomplete runner bundle: $bundle"
-    [[ "$(sha256_file "$bundle/original_parity_replay")" == "$runner_sha" ]] \
-        || fail 'raw runner hash mismatch'
-    [[ "$(runner_bundle_digest "$bundle")" == "$bundle_trust_sha" ]] \
-        || fail 'runner bundle trust digest mismatch'
-    mapfile -t protocol < <(sed -n 's/^NATIVE_CONVERSION_PROTOCOL=//p' "$bundle/PROVENANCE.txt")
-    [[ ${#protocol[@]} == 1 && "${protocol[0]}" == 2 ]] \
-        || fail 'runner bundle does not authenticate native conversion protocol 2'
-    (cd -- "$bundle" && sha256sum --strict -c SHA256SUMS \
-        && sha256sum --strict -c LIB_SHA256SUMS) >/dev/null \
-        || fail 'runner bundle checksum verification failed'
+    local candidate=$1
+    verify_runner_bundle "$candidate" "$bundle" \
+        && verify_runner_bundle_identity "$candidate" "$bundle_trust_sha" "$runner_sha" \
+        || exit 2
 }
 
 verify_campaign_metadata() {

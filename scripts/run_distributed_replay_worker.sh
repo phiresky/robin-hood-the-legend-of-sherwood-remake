@@ -178,52 +178,13 @@ publish_infrastructure_stop() {
         "$status" "$finished" >/dev/null 2>&1 || true
 }
 
+# LOADER_LIST.txt and SHA256SUMS remain byte-for-byte deployment metadata from
+# the authoritative remote bundle, whose path is unknown here; the shared
+# verifier's --relocated mode proves the same bytes resolve inside this copy.
+# A rejection returns so the caller can publish an infrastructure stop.
 verify_bundle() {
-    [[ -x "$bundle/original_parity_replay" && -x "$bundle/original_parity_replay.remote" \
-        && -x "$bundle/lib/ld-linux-x86-64.so.2" && -f "$bundle/LOADER_LIST.txt" \
-        && -f "$bundle/SHA256SUMS" && -f "$bundle/LIB_SHA256SUMS" ]] || return 1
-    [[ "$(sha256_file "$bundle/original_parity_replay")" == "$runner_sha" ]] || return 1
-    (cd -- "$bundle" && sha256sum --strict -c SHA256SUMS >/dev/null \
-        && sha256sum --strict -c LIB_SHA256SUMS >/dev/null) || return 1
-    [[ -z "$(find "$bundle" -type l -print -quit)" ]] || return 1
-    diff -u -- \
-        <(find "$bundle/lib" -type f -printf 'lib/%P\n' | LC_ALL=C sort) \
-        <(sed -n 's/^[0-9a-fA-F]\{64\} [ *]//p' "$bundle/LIB_SHA256SUMS" | LC_ALL=C sort) \
-        >/dev/null || return 1
-    diff -u -- \
-        <(printf '%s\n' LIB_SHA256SUMS LOADER_LIST.txt PROVENANCE.txt \
-            original_parity_replay original_parity_replay.remote | LC_ALL=C sort) \
-        <(sed -n 's/^[0-9a-fA-F]\{64\} [ *]//p' "$bundle/SHA256SUMS" | LC_ALL=C sort) \
-        >/dev/null || return 1
-    diff -u -- \
-        <(printf '%s\n' LIB_SHA256SUMS LOADER_LIST.txt PROVENANCE.txt SHA256SUMS \
-            original_parity_replay original_parity_replay.remote | LC_ALL=C sort) \
-        <(find "$bundle" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort) \
-        >/dev/null || return 1
-    mapfile -t protocol_values < <(sed -n 's/^NATIVE_CONVERSION_PROTOCOL=//p' \
-        "$bundle/PROVENANCE.txt")
-    [[ ${#protocol_values[@]} == 1 && ${protocol_values[0]} == 2 ]] || return 1
-    local main_sha lib_sha actual
-    main_sha=$(sha256_file "$bundle/SHA256SUMS")
-    lib_sha=$(sha256_file "$bundle/LIB_SHA256SUMS")
-    actual=$(printf 'schema16-runner-bundle-v1\nSHA256SUMS=%s\nLIB_SHA256SUMS=%s\n' \
-        "$main_sha" "$lib_sha" | sha256sum)
-    [[ "${actual%% *}" == "$bundle_trust_sha" ]] || return 1
-
-    # LOADER_LIST.txt and SHA256SUMS remain byte-for-byte deployment metadata
-    # from the authoritative remote bundle. This separate ephemeral check
-    # proves those same raw/lib bytes are safely relocatable on this host; it
-    # never regenerates or rewrites authenticated metadata.
-    local loader_output resolved
-    loader_output=$("$bundle/lib/ld-linux-x86-64.so.2" \
-        --library-path "$bundle/lib" --list "$bundle/original_parity_replay") || return 1
-    while IFS= read -r resolved; do
-        [[ -n "$resolved" ]] || continue
-        resolved=$(realpath -e -- "$resolved") || return 1
-        [[ "$resolved" == "$bundle/lib/"* ]] || return 1
-    done < <(printf '%s\n' "$loader_output" | sed -n \
-        -e 's/.* => \([^ ]*\) .*/\1/p' \
-        -e 's/^[[:space:]]*\(\/[^ ]*ld-linux[^ ]*\) .*/\1/p')
+    verify_runner_bundle "$bundle" --relocated \
+        && verify_runner_bundle_identity "$bundle" "$bundle_trust_sha" "$runner_sha"
 }
 
 if ! verify_bundle; then

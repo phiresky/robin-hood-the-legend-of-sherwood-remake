@@ -26,7 +26,8 @@ set -euo pipefail
 trace=${!#}
 name=${trace##*/}
 printf '%s\n' "$name" >>"$FAKE_RUNNER_INVOCATIONS"
-publish_result() {
+# Mock of the external Rust runner's result line (not a copy of a driver helper).
+emit_fake_runner_result() {
     python3 - "$trace" "$0" <<'PY'
 import json
 import sys
@@ -48,12 +49,12 @@ case "$name" in
             : >"$FAKE_PARALLEL_BARRIER"
             sleep 0.2
         fi
-        publish_result
+        emit_fake_runner_result
         printf '%s\n' 'parity trace matched every recorded frame'
         ;;
     02-fail.jsonl.zst)
         if [[ ${FAKE_RUNNER_REPAIR:-0} == 1 ]]; then
-            publish_result
+            emit_fake_runner_result
             printf '%s\n' 'parity trace matched every recorded frame'
         else
             if [[ -n ${FAKE_PARALLEL_BARRIER:-} ]]; then

@@ -32,15 +32,20 @@ printf '#!/usr/bin/env bash\nexit 0\n' >"$recorder"
 chmod +x -- "$recorder"
 recorder_sha=$(sha256sum -- "$recorder"); recorder_sha=${recorder_sha%% *}
 bundle="$workspace/runner-bundle"
-mkdir -p -- "$bundle"
-printf '#!/usr/bin/env bash\nexit 0\n' >"$bundle/original_parity_replay"
-chmod +x -- "$bundle/original_parity_replay"
+mkdir -p -- "$bundle/lib"
+for executable in original_parity_replay original_parity_replay.remote lib/ld-linux-x86-64.so.2; do
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$bundle/$executable"
+    chmod +x -- "$bundle/$executable"
+done
 printf 'NATIVE_CONVERSION_PROTOCOL=2\n' >"$bundle/PROVENANCE.txt"
-printf 'library\n' >"$bundle/libfake.so"
+printf 'library\n' >"$bundle/lib/libfake.so"
+printf 'ld-linux.so => %s/lib/ld-linux-x86-64.so.2 (0x0)\nlibfake.so => %s/lib/libfake.so (0x0)\n' \
+    "$bundle" "$bundle" >"$bundle/LOADER_LIST.txt"
 (
     cd -- "$bundle"
-    sha256sum -- original_parity_replay PROVENANCE.txt >SHA256SUMS
-    sha256sum -- libfake.so >LIB_SHA256SUMS
+    sha256sum -- lib/ld-linux-x86-64.so.2 lib/libfake.so >LIB_SHA256SUMS
+    sha256sum -- original_parity_replay original_parity_replay.remote PROVENANCE.txt \
+        LOADER_LIST.txt LIB_SHA256SUMS >SHA256SUMS
 )
 runner_sha=$(sha256sum -- "$bundle/original_parity_replay"); runner_sha=${runner_sha%% *}
 main_sha=$(sha256sum -- "$bundle/SHA256SUMS"); main_sha=${main_sha%% *}

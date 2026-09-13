@@ -40,17 +40,12 @@ find "$trace_root" -type f -name '*.parity.bitcode.zst' -print -quit | grep -q .
 [[ "$jobs" =~ ^[1-8]$ ]] || fail 'NATIVE_REBLOCK_JOBS must be 1..8'
 [[ "$timeout_seconds" =~ ^[0-9]+$ && "$timeout_seconds" -ge 3600 ]] || fail 'invalid timeout'
 runner="$bundle/original_parity_replay.remote"
-[[ -x "$runner" && -x "$bundle/original_parity_replay" && -f "$bundle/SHA256SUMS" \
-    && -f "$bundle/LIB_SHA256SUMS" ]] || fail 'incomplete runner bundle'
-find "$bundle" -type l -print -quit | grep -q . && fail 'runner bundle contains a symlink'
-(cd "$bundle" && sha256sum --strict -c SHA256SUMS && sha256sum --strict -c LIB_SHA256SUMS) \
-    >/dev/null || fail 'runner bundle checksum verification failed'
-manifest_sha=$(sha256sum -- "$bundle/SHA256SUMS"); manifest_sha=${manifest_sha%% *}
-lib_manifest_sha=$(sha256sum -- "$bundle/LIB_SHA256SUMS"); lib_manifest_sha=${lib_manifest_sha%% *}
-actual_trust=$(printf 'schema16-runner-bundle-v1\nSHA256SUMS=%s\nLIB_SHA256SUMS=%s\n' \
-    "$manifest_sha" "$lib_manifest_sha" | sha256sum); actual_trust=${actual_trust%% *}
-[[ "$actual_trust" == "$expected_trust" ]] || fail "runner trust mismatch: $actual_trust"
-raw_sha=$(sha256sum -- "$bundle/original_parity_replay"); raw_sha=${raw_sha%% *}
+# This driver runs wherever the authoritative bundle is deployed and is not told
+# the path its LOADER_LIST.txt was generated at, so it uses the relocation proof.
+verify_runner_bundle "$bundle" --relocated || exit 2
+verify_runner_bundle_identity "$bundle" "$expected_trust" || exit 2
+actual_trust=$expected_trust
+raw_sha=$(sha256_file "$bundle/original_parity_replay") || fail 'cannot hash raw runner'
 
 mkdir -p -- "${outer_lock%/*}" "${audit%/*}"
 exec {outer_fd}>"$outer_lock"
@@ -101,43 +96,39 @@ else
 fi
 
 run_one() {
-    local native=$1 relative key status prior attempt=1 log_name log_tmp log_final rc=0
-    relative=${native#"$workspace"/}
-    key=$(printf '%s' "$relative" | sha256sum); key=${key%% *}
+    local native=$1 key status first_attempt=1 rc=0
+    local attempt_prior_status attempt_prior_number attempt_prior_log
+    local attempt_number attempt_log_name attempt_log_final attempt_log_in_progress
+    key=$(attempt_key "$workspace" "$native") || return 1
     status="$audit/status/$key.status"
     if [[ -f "$status" ]]; then
-        IFS=$'\t' read -r prior attempt log_name <"$status" || return 1
-        if [[ "$prior" == 0 ]]; then
+        attempt_read_status "$status" || return 1
+        if [[ "$attempt_prior_status" == 0 ]]; then
             [[ -f "$native" && ! -e "$native.parity-reblock-source-v66" \
                 && ! -e "$native.parity-reblock-binding-v66.json" \
                 && ! -e "$native.parity-reblock-source-v67" \
                 && ! -e "$native.parity-reblock-binding-v67.json" ]] || return 1
             return 0
         fi
-        attempt=$((attempt + 1))
+        first_attempt=$((attempt_prior_number + 1))
     fi
-    printf -v label '%04d' "$attempt"
-    log_name="$key.attempt-$label.log"
-    log_final="$audit/logs/$log_name"
-    log_tmp="$log_final.in-progress"
-    [[ ! -e "$log_final" && ! -e "$log_tmp" ]] || return 1
-    : >"$log_tmp"
-    printf 'running\t%s\t%s\n' "$attempt" "$log_name" | write_atomic "$status" || return 1
+    attempt_begin "$audit/logs" "$key" "$first_attempt" "$status" || return 1
     timeout --signal=TERM --kill-after=30s "${timeout_seconds}s" \
         nice -n 10 ionice -c 2 -n 7 env -u LD_LIBRARY_PATH \
-        "$runner" --reblock "$native" >"$log_tmp" 2>&1 || rc=$?
+        "$runner" --reblock "$native" >"$attempt_log_in_progress" 2>&1 || rc=$?
     if (( rc == 0 )) && { [[ ! -f "$native" || -e "$native.parity-reblock-source-v66" \
         || -e "$native.parity-reblock-binding-v66.json" \
         || -e "$native.parity-reblock-source-v67" \
         || -e "$native.parity-reblock-binding-v67.json" ]]; }; then
         rc=65
-        printf 'postcondition failed: canonical or recovery state invalid\n' >>"$log_tmp"
+        printf 'postcondition failed: canonical or recovery state invalid\n' \
+            >>"$attempt_log_in_progress"
     fi
-    mv -- "$log_tmp" "$log_final"
-    printf '%s\t%s\t%s\n' "$rc" "$attempt" "$log_name" | write_atomic "$status"
+    attempt_finish "$status" "$rc" || return 1
     (( rc == 0 ))
 }
-export -f run_one write_atomic
+export -f run_one sha256_file write_atomic attempt_key attempt_read_status \
+    attempt_begin attempt_finish
 export workspace audit runner timeout_seconds
 
 active=0

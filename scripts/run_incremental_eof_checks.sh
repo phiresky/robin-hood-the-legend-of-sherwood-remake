@@ -70,75 +70,9 @@ path_has_newline() {
 
 
 verify_bundle() {
-    local manifest line path
-    [[ -x "$bundle/original_parity_replay" \
-        && -x "$bundle/original_parity_replay.remote" \
-        && -f "$bundle/SHA256SUMS" \
-        && -f "$bundle/LIB_SHA256SUMS" \
-        && -f "$bundle/PROVENANCE.txt" ]] \
-        || fail "incomplete runner bundle: $bundle"
-    [[ "$(sha256_file "$bundle/original_parity_replay")" == "$runner_sha" ]] \
-        || fail 'raw runner hash mismatch'
-    [[ "$(runner_bundle_digest "$bundle")" == "$bundle_trust_sha" ]] \
-        || fail 'runner bundle trust digest mismatch'
-    mapfile -t protocol_values < <(sed -n 's/^NATIVE_CONVERSION_PROTOCOL=//p' \
-        "$bundle/PROVENANCE.txt")
-    [[ ${#protocol_values[@]} == 1 && "${protocol_values[0]}" == 2 ]] \
-        || fail 'runner bundle does not authenticate native conversion protocol 2'
-    if find "$bundle" -type l -print -quit | grep -q .; then
-        fail "runner bundle contains a symlink: $bundle"
-    fi
-    for manifest in "$bundle/SHA256SUMS" "$bundle/LIB_SHA256SUMS"; do
-        while IFS= read -r line; do
-            [[ "$line" =~ ^[0-9a-fA-F]{64}[[:space:]][\ \*](.+)$ ]] \
-                || fail "malformed bundle checksum entry: $manifest"
-            path=${BASH_REMATCH[1]}
-            [[ "$path" != /* && "$path" != ../* && "$path" != */../* \
-                && "$path" != *'/..' && "$path" != *$'\n'* ]] \
-                || fail "unsafe bundle checksum path: $path"
-        done <"$manifest"
-    done
-    diff -u -- \
-        <(find "$bundle/lib" -type f -printf 'lib/%P\n' | LC_ALL=C sort) \
-        <(sed -n 's/^[0-9a-fA-F]\{64\} [ *]//p' "$bundle/LIB_SHA256SUMS" \
-            | LC_ALL=C sort) >/dev/null \
-        || fail 'library manifest does not exactly cover bundle lib tree'
-    diff -u -- \
-        <(printf '%s\n' LIB_SHA256SUMS LOADER_LIST.txt PROVENANCE.txt \
-            original_parity_replay original_parity_replay.remote | LC_ALL=C sort) \
-        <(sed -n 's/^[0-9a-fA-F]\{64\} [ *]//p' "$bundle/SHA256SUMS" \
-            | LC_ALL=C sort) >/dev/null \
-        || fail 'main manifest does not exactly cover bundle root files'
-    diff -u -- \
-        <(printf '%s\n' LIB_SHA256SUMS LOADER_LIST.txt PROVENANCE.txt SHA256SUMS \
-            original_parity_replay original_parity_replay.remote | LC_ALL=C sort) \
-        <(find "$bundle" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort) \
-        >/dev/null || fail 'runner bundle root file set is not canonical'
-    diff -u -- <(printf 'lib\n') \
-        <(find "$bundle" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
-            | LC_ALL=C sort) >/dev/null \
-        || fail 'runner bundle has an unexpected root directory'
-    grep -Fq -- "=> $bundle/lib/ld-linux-x86-64.so.2 " "$bundle/LOADER_LIST.txt" \
-        || fail 'runner loader proof is not bound to this bundle path'
-    awk -v prefix="$bundle/lib/" '
-        /=>/ {
-            resolved=$0
-            sub(/^.*=>[[:space:]]*/, "", resolved)
-            sub(/[[:space:]].*$/, "", resolved)
-            if (index(resolved, prefix) != 1) exit 1
-        }
-    ' "$bundle/LOADER_LIST.txt" \
-        || fail 'runner loader proof resolves outside authenticated lib tree'
-    grep -Eq '^[0-9a-fA-F]{64} [ *]original_parity_replay$' "$bundle/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]original_parity_replay\.remote$' "$bundle/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]LIB_SHA256SUMS$' "$bundle/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]PROVENANCE\.txt$' "$bundle/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]LOADER_LIST\.txt$' "$bundle/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]lib/ld-linux-x86-64\.so\.2$' "$bundle/LIB_SHA256SUMS" \
-        || fail 'bundle manifests omit required runtime inputs'
-    (cd -- "$bundle" && sha256sum --strict -c SHA256SUMS \
-        && sha256sum --strict -c LIB_SHA256SUMS) >/dev/null \
-        || fail 'runner bundle checksum verification failed'
+    verify_runner_bundle "$bundle" "$bundle" \
+        && verify_runner_bundle_identity "$bundle" "$bundle_trust_sha" "$runner_sha" \
+        || exit 2
 }
 
 read_phase() {
