@@ -984,8 +984,9 @@ A list of which additional features we have added, which ones we might still wan
 
 ### Legendary enemy-placement candidate generator
 
-- `docs/legendary-enemy-proposals/generate.py` builds a deterministic,
-  browser-based mission review from a hackable datadir. It renders authored
+- A deterministic generator (formerly `docs/legendary-enemy-proposals/generate.py`,
+  which is not part of this repository; TODO: check it in or record where it
+  lives) builds a browser-based mission review from a hackable datadir. It renders authored
   start facings, walkable surfaces, active and inactive walking paths, and
   before/after crops for each candidate.
 - The generator accepts mission, surface, background, location, and output
@@ -1049,6 +1050,23 @@ A list of which additional features we have added, which ones we might still wan
   runtime fields only when their semantics are proven; keep asset-reader
   translation at the binary boundary instead of spreading sentinel checks.
 
+## Removed
+
+Post-port functionality that was built and then deliberately retired. The code
+is recoverable from Git history.
+
+- **Leaderboard account self-service flows** (commit 25cb60809, "retire dormant
+  account flows"). The client no longer offers username changes
+  (`username_challenge`/`update_username`), deletion of an owned run
+  (`deletion_challenge`/`delete_owned_run`), abuse reports (`report_abuse`),
+  player-profile lookup, or the browse screen's run/campaign-session detail
+  and verified replay download (`persist_verified_replay`,
+  `trigger_verified_replay_download`).
+- **Sprite compression research probes** (commit b112f8141). The
+  `sprite_probe_experiments`, `sprite_probe_rdo` and `sprite_probe_rle_dict`
+  examples were retired after their experiments closed; `docs/COMPRESSION.md`
+  records the findings. `sprite_size_bench` and `sprite_compression_probe`
+  remain.
 
 ## Not-Todos
 
