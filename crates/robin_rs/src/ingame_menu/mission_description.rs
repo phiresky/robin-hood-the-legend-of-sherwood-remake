@@ -31,9 +31,10 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite::BBox;
 
 use crate::gfx_types::GameEvent;
+use crate::ingame_menu::layout::center_horizontally_x;
 use crate::renderer::Renderer;
 use crate::ui_screens::{
-    MissionChoice, MissionDescriptionButton, MissionDescriptionScreen, center_horizontally_x,
+    MissionChoice, MissionDescriptionButton, MissionDescriptionScreen,
     mission_description_layout as layout_consts,
 };
 use crate::widget::FrameWnd;

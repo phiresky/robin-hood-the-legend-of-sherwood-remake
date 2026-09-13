@@ -118,8 +118,6 @@ pub enum MissionDescriptionButton {
     ConvertMission,
 }
 
-pub use crate::ingame_menu::layout::center_horizontally_x;
-
 /// State for the pre-mission description screen.
 ///
 /// Handles mission info display and blazon conversion button logic.
