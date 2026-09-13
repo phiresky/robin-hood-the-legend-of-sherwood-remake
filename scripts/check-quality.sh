@@ -27,7 +27,7 @@ case "$1" in
         cargo test --locked -p robin_lua --test natives_smoke panic_unwind_detaches_native_session \
             --config 'profile.test.package.robin_lua.codegen-backend="llvm"'
         ;;
-    engine) cargo test --locked -p robin_engine_types -p robin_legacy_save -p robin_engine ;;
+    engine) cargo test --locked -p robin_engine_types -p robin_legacy_save -p robin_level_data -p robin_engine ;;
     assets)
         cargo test --locked -p robin_content
         cargo test --locked -p robin_content --features simulation-codecs
@@ -174,9 +174,9 @@ case "$1" in
         ;;
     fixtures-demo)
         : "${ROBINHOOD_DATA_DIR:?Set ROBINHOOD_DATA_DIR to the Leicester demo root containing Data/}"
-        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib profiles::tests::load_demo_profile_cpf -- --ignored --exact
-        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib profiles::tests::original_cpf_and_exported_document_share_profile_validation -- --ignored --exact
-        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib profiles::tests::demo_profile_serde_round_trip -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_level_data --lib profiles::tests::load_demo_profile_cpf -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_level_data --lib profiles::tests::original_cpf_and_exported_document_share_profile_validation -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_level_data --lib profiles::tests::demo_profile_serde_round_trip -- --ignored --exact
         python3 scripts/run_fixture_test.py --locked -p robin_rs --lib font::tests::test_parse_real_tfn -- --ignored --exact
         python3 scripts/run_fixture_test.py --locked -p robin_assets --lib frame_holder::tests::test_initialize_sprite_bank_from_game_data -- --ignored --exact
         python3 scripts/run_fixture_test.py --locked -p robin_assets --lib frame_holder::tests::test_sprite_bank_packed_data_present -- --ignored --exact
@@ -188,8 +188,8 @@ case "$1" in
         ;;
     fixtures-fullgame)
         : "${ROBINHOOD_DATA_DIR:?Set ROBINHOOD_DATA_DIR to the full-game root containing Data/}"
-        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib profiles::tests::load_fullgame_profile_cpf -- --ignored --exact
-        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib profiles::tests::original_cpf_and_exported_document_share_profile_validation -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_level_data --lib profiles::tests::load_fullgame_profile_cpf -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_level_data --lib profiles::tests::original_cpf_and_exported_document_share_profile_validation -- --ignored --exact
         python3 scripts/run_fixture_test.py --locked -p robin_assets fullgame_scripts -- --ignored
         python3 scripts/run_fixture_test.py --locked -p robin_rs --features tools --bin convert_datadir tests::authentic_fullgame_root_has_exact_typed_edition -- --ignored --exact
         ;;

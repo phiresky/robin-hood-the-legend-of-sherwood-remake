@@ -289,14 +289,7 @@ impl ViewRadiusCache {
 
 // ─── Constants ───────────────────────────────────────────────────
 
-/// Default view radius the engine hands out at level start before any
-/// per-NPC mutation.  Used as the `view_radius` seed for freshly-spawned
-/// NPCs.
-pub const DEFAULT_VIEW_RADIUS: u16 = 400;
-
-/// Reduced view radius for Fog/Night ambiances, installed at mission
-/// load.
-pub const NIGHT_VIEW_RADIUS: u16 = 300;
+pub use robin_engine_types::mission_environment::{DEFAULT_VIEW_RADIUS, NIGHT_VIEW_RADIUS};
 
 /// Squared radius below which the close-range halfcircle test applies
 /// instead of the narrow forward cone.

@@ -238,6 +238,32 @@ class QualitySuitesTests(unittest.TestCase):
                     for name in names
                 ])
 
+    def test_profile_fixtures_select_the_level_data_crate(self):
+        self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)
+        expected = {
+            "fixtures-demo": [
+                "load_demo_profile_cpf",
+                "original_cpf_and_exported_document_share_profile_validation",
+                "demo_profile_serde_round_trip",
+            ],
+            "fixtures-fullgame": [
+                "load_fullgame_profile_cpf",
+                "original_cpf_and_exported_document_share_profile_validation",
+            ],
+        }
+        for suite, names in expected.items():
+            with self.subTest(suite=suite):
+                if self.log.exists():
+                    self.log.unlink()
+                self.run_suite(suite)
+                selected = [call for call in self.calls()
+                            if any(arg.startswith("profiles::tests::") for arg in call)]
+                self.assertEqual(selected, [
+                    ["test", "--locked", "-p", "robin_level_data", "--lib",
+                     f"profiles::tests::{name}", "--", "--ignored", "--exact"]
+                    for name in names
+                ])
+
     def test_demo_picture_fixture_explicitly_exercises_archive_adapters(self):
         self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)
         self.run_suite("fixtures-demo")

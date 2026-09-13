@@ -8,6 +8,7 @@ publish.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 bitcode.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 geo = { workspace = true, features = ["serde"] }
 robin_util.workspace = true
 robin_data_io.workspace = true
