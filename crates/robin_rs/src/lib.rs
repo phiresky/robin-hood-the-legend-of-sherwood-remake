@@ -235,6 +235,8 @@ pub mod audio_backend;
 #[cfg(any(test, all(target_arch = "wasm32", feature = "audio")))]
 pub mod audio_bundle_cache;
 pub(crate) mod blob_store;
+#[cfg(feature = "audio")]
+pub(crate) mod byte_budget_lru;
 pub mod cache_maintenance;
 pub mod combat_gesture_overlay;
 pub mod desktop_persistence;
