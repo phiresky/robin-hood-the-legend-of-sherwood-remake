@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { cp, copyFile, lstat, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises';
+import { chmod, cp, copyFile, lstat, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { stageCloudflareHeaders } from './stage-cloudflare-headers.mjs';
@@ -25,6 +25,20 @@ function requireDisjointOutput(output, inputs) {
         if (containsPath(input, output) || containsPath(output, input)) {
             throw new Error(`output must be disjoint from every input: ${output} overlaps ${input}`);
         }
+    }
+}
+
+/**
+ * Retained corpora are archived read-only and `cp` preserves directory modes.
+ * Only the private staging copy's directories become owner-writable, so a new
+ * generation can be added and a failed staging tree can be removed.
+ */
+async function makeStagingDirectoriesWritable(directory) {
+    const facts = await lstat(directory);
+    if (!facts.isDirectory()) return;
+    await chmod(directory, facts.mode | 0o700);
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (entry.isDirectory()) await makeStagingDirectoriesWritable(resolve(directory, entry.name));
     }
 }
 
@@ -72,6 +86,7 @@ export async function assembleDatadirCorpus({ existing, demo, output, retainedGe
                     errorOnExist: true,
                 });
             }
+            await makeStagingDirectoriesWritable(stagingRoot);
             // A new generation is added beside every retained object; the
             // exclusive copy refuses to replace any published path.
             if (!existingHasCurrent) await copyEntries(demoAuthority, stagingRoot);
@@ -82,6 +97,7 @@ export async function assembleDatadirCorpus({ existing, demo, output, retainedGe
         await rename(stagingRoot, outputRoot);
         return result;
     } catch (error) {
+        await makeStagingDirectoriesWritable(stagingRoot);
         await rm(stagingRoot, { recursive: true, force: true });
         throw error;
     }
