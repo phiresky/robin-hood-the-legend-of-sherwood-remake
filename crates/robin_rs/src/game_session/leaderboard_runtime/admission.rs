@@ -352,7 +352,7 @@ async fn wait_for_host_preflight_lobby(
                 }
             }
             Ok(_) => return Err("host preflight resolved a client transport capability".into()),
-            Err(error) => last_unavailable = error,
+            Err(error) => last_unavailable = error.to_string(),
         }
         crate::window::sleep_ms(10).await;
     }
@@ -380,7 +380,7 @@ async fn wait_for_client_ranked_identity(
                 }
             }
             Ok(_) => return Err("client preflight resolved a host transport capability".into()),
-            Err(error) => last_unavailable = error,
+            Err(error) => last_unavailable = error.to_string(),
         }
         crate::window::sleep_ms(10).await;
     }
@@ -434,7 +434,9 @@ async fn install_ranked_multiplayer_host(
         requested_metrics,
         campaign_controller_public_key: setup.campaign_controller_public_key(),
     };
-    let final_port = net.ranked_port()?;
+    // TODO(10/F11): leaderboard admission still reports text; type it with
+    // the rest of `leaderboard_runtime`.
+    let final_port = net.ranked_port().map_err(|error| error.to_string())?;
     if final_port.role() != crate::multiplayer::RankedMultiplayerRole::Host
         || final_port.host_preflight_lobby()? != lobby
     {
@@ -444,7 +446,8 @@ async fn install_ranked_multiplayer_host(
     // genesis challenge, while clients need the independently checked setup
     // before they are allowed to answer it.
     final_port.host_publish_official_session_setup(&setup)?;
-    net.install_ranked_session_setup(Some(setup))?;
+    net.install_ranked_session_setup(Some(setup))
+        .map_err(|error| error.to_string())?;
     Ok(resolved)
 }
 
@@ -808,7 +811,9 @@ async fn install_ranked_multiplayer_client(
                     RANKED_PREFLIGHT_PHASE_TIMEOUT_MS,
                     "client authority reconstruction",
                 )?;
-                let final_port = net.ranked_port()?;
+                // TODO(10/F11): leaderboard admission still reports text; type it with
+                // the rest of `leaderboard_runtime`.
+                let final_port = net.ranked_port().map_err(|error| error.to_string())?;
                 if final_port.role() != crate::multiplayer::RankedMultiplayerRole::Client
                     || final_port.authenticated_ranked_identity_pair()?
                         != (authenticated_host_public_key, local_public_key)
@@ -822,7 +827,8 @@ async fn install_ranked_multiplayer_client(
                     requested_metrics: authority.requested_metrics,
                     campaign_controller_public_key: setup.campaign_controller_public_key(),
                 };
-                net.install_ranked_session_setup(Some(setup))?;
+                net.install_ranked_session_setup(Some(setup))
+                    .map_err(|error| error.to_string())?;
                 return Ok(resolved);
             }
             Some(_) => {

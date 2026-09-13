@@ -126,7 +126,7 @@ pub async fn admit_trusted_distributed_mod(
                     })?;
                 admission.committed(durable_offset)?;
             }
-            Ok(NetEvent::Fatal(message)) => return Err(message),
+            Ok(NetEvent::Fatal(message)) => return Err(message.to_string()),
             Ok(event) => defer_admission_event(channels, offer, &mut deferred, event)?,
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 crate::window::sleep_ms(10).await;
@@ -226,7 +226,7 @@ async fn await_authenticated_offer(
                 channels.reject_content(offer.full_mod_sha256, message.clone());
                 return Err(message);
             }
-            Ok(NetEvent::Fatal(message)) => return Err(message),
+            Ok(NetEvent::Fatal(message)) => return Err(message.to_string()),
             Ok(event) => defer_admission_event(channels, offer, deferred, event)?,
             Err(std::sync::mpsc::TryRecvError::Empty) if wait_budget.is_some() => {
                 crate::window::sleep_ms(10).await;
@@ -420,7 +420,9 @@ mod tests {
                 replaced.full_mod_sha256 = [2; 32];
                 incoming
                     .send(if fatal {
-                        NetEvent::Fatal("closed".into())
+                        NetEvent::Fatal(robin_engine::multiplayer::NetFatal::new(
+                            crate::multiplayer::MultiplayerError::ChannelClosed("closed".into()),
+                        ))
                     } else {
                         NetEvent::ContentOffer(replaced)
                     })

@@ -8,8 +8,10 @@
 //! platform-specific [`MultiplayerRuntime`] have one owner and one lifetime.
 
 mod clock;
+mod error;
 
-pub use clock::current_epoch_ms;
+pub use clock::{ClockError, current_epoch_ms};
+pub use error::{MessageError, MultiplayerError, SharedError};
 use robin_engine::multiplayer::LeaderboardAuthorizationInbox;
 use robin_engine::multiplayer::LeaderboardCoSignResponse;
 use robin_engine::multiplayer::NetChannels as EngineNetChannels;
@@ -105,7 +107,7 @@ impl NetChannels {
 
     /// Create a mission-end ranked authorization capability without lending
     /// the runtime owner or this non-clone channel bundle.
-    pub(crate) fn ranked_port(&self) -> Result<RankedMultiplayerPort, String> {
+    pub(crate) fn ranked_port(&self) -> Result<RankedMultiplayerPort, MultiplayerError> {
         transport::attached_ranked_port(self.runtime.as_ref(), &self.channels)
     }
 
@@ -115,7 +117,7 @@ impl NetChannels {
     pub(crate) fn install_ranked_session_setup(
         &self,
         setup: Option<OfficialRankedSessionSetupV1>,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         transport::install_attached_ranked_session_setup(self.runtime.as_ref(), setup)
     }
 
@@ -526,6 +528,7 @@ mod tests {
             mismatch_state
                 .receive_wire_challenge(fixture.challenge.clone())
                 .unwrap_err()
+                .to_string()
                 .contains("does not match")
         );
 
@@ -536,6 +539,7 @@ mod tests {
             state
                 .receive_wire_challenge(fixture.challenge.clone())
                 .unwrap_err()
+                .to_string()
                 .contains("replayed or replaced")
         );
         state.authorize_response(&fixture.response).unwrap();
@@ -602,6 +606,7 @@ mod tests {
             state
                 .receive_wire_challenge(fixture.challenge)
                 .unwrap_err()
+                .to_string()
                 .contains("earlier stream")
         );
         assert_eq!(
@@ -634,6 +639,7 @@ mod tests {
             state
                 .receive_wire_acceptance(substituted_roster)
                 .unwrap_err()
+                .to_string()
                 .contains("changed the immutable participant roster")
         );
         state.receive_wire_acceptance(reconnect_accepted).unwrap();
@@ -877,6 +883,7 @@ mod tests {
             state
                 .receive_wire_request(continuation)
                 .unwrap_err()
+                .to_string()
                 .contains("duplicate")
         );
 
@@ -892,6 +899,7 @@ mod tests {
             state
                 .authorize_response(&response)
                 .unwrap_err()
+                .to_string()
                 .contains("duplicate")
         );
     }
@@ -909,7 +917,7 @@ mod tests {
             let state = ClientLeaderboardCoSignState::default();
             state.arm_request(expected).unwrap();
             let error = state.receive_wire_request(wrong).unwrap_err();
-            assert!(error.contains("does not equal"));
+            assert!(error.to_string().contains("does not equal"));
         }
 
         let mut wrong_session = expected;
@@ -920,6 +928,7 @@ mod tests {
             state
                 .receive_wire_request(wrong_session)
                 .unwrap_err()
+                .to_string()
                 .contains("does not equal")
         );
         assert_eq!(

@@ -250,10 +250,12 @@ impl MatchmakingSession {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn checked_start_epoch_ms(now_epoch_ms: u64) -> Result<u64, String> {
-    now_epoch_ms
-        .checked_add(START_DELAY_MS)
-        .ok_or_else(|| "matchmaking start timestamp exceeds the u64 Unix range".to_owned())
+fn checked_start_epoch_ms(now_epoch_ms: u64) -> Result<u64, super::MultiplayerError> {
+    now_epoch_ms.checked_add(START_DELAY_MS).ok_or_else(|| {
+        super::MultiplayerError::LocalState(
+            "matchmaking start timestamp exceeds the u64 Unix range".into(),
+        )
+    })
 }
 
 pub use super::clock::current_epoch_ms;
@@ -351,7 +353,8 @@ mod native {
         let endpoint = match crate::multiplayer::identity::bind_ephemeral_endpoint().await {
             Ok(endpoint) => endpoint,
             Err(e) => {
-                let _ = events.send(MatchmakingEvent::Disconnected(e));
+                // Matchmaking events carry menu text.
+                let _ = events.send(MatchmakingEvent::Disconnected(e.to_string()));
                 return;
             }
         };
@@ -577,7 +580,7 @@ mod native {
                     let id = match crate::multiplayer::identity::local_endpoint_id_string() {
                         Ok(id) => id,
                         Err(e) => {
-                            let _ = self.events.send(MatchmakingEvent::Error(e));
+                            let _ = self.events.send(MatchmakingEvent::Error(e.to_string()));
                             return true;
                         }
                     };
@@ -646,16 +649,18 @@ mod native {
                             ));
                             return true;
                         };
-                        let start_at_epoch_ms =
-                            match try_current_epoch_ms().and_then(checked_start_epoch_ms) {
-                                Ok(start_at_epoch_ms) => start_at_epoch_ms,
-                                Err(error) => {
-                                    let _ = self.events.send(MatchmakingEvent::Error(format!(
-                                        "cannot start multiplayer game: {error}"
-                                    )));
-                                    return true;
-                                }
-                            };
+                        let start_at_epoch_ms = match try_current_epoch_ms()
+                            .map_err(crate::multiplayer::MultiplayerError::from)
+                            .and_then(checked_start_epoch_ms)
+                        {
+                            Ok(start_at_epoch_ms) => start_at_epoch_ms,
+                            Err(error) => {
+                                let _ = self.events.send(MatchmakingEvent::Error(format!(
+                                    "cannot start multiplayer game: {error}"
+                                )));
+                                return true;
+                            }
+                        };
                         game.state = "started".to_string();
                         game.start_at_epoch_ms = Some(start_at_epoch_ms);
                         game.players = 1 + joiners.len() as u32;
@@ -868,7 +873,10 @@ mod tests {
             .checked_sub(std::time::Duration::from_millis(1))
             .expect("one millisecond before Unix epoch is representable");
         let error = native_epoch_ms_at(before_epoch).expect_err("pre-epoch clock must fail");
-        assert!(error.contains("precedes the Unix epoch"), "{error}");
+        assert!(
+            error.to_string().contains("precedes the Unix epoch"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -881,7 +889,10 @@ mod tests {
     fn start_timestamp_rejects_overflow_instead_of_saturating() {
         let error = checked_start_epoch_ms(u64::MAX)
             .expect_err("overflowing matchmaking start time must fail");
-        assert!(error.contains("exceeds the u64 Unix range"), "{error}");
+        assert!(
+            error.to_string().contains("exceeds the u64 Unix range"),
+            "{error}"
+        );
     }
 }
 

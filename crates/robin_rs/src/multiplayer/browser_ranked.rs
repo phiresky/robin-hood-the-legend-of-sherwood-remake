@@ -15,9 +15,9 @@ use super::client_session::{
 };
 use super::ranked_client::{BrowserAdmissionPhase, ClientRankedJoinState, ranked_lifecycle_lock};
 use super::{
-    NetEvent, NetMsg, RankedBrowseOnlyReason, RankedJoinAttestationDocument, RankedJoinChallenge,
-    RankedJoinResponse, RankedJoinUnavailableReason, RankedSessionConfigDocument,
-    SharedClientRankedJoinState,
+    MessageError, MultiplayerError, NetEvent, NetMsg, RankedBrowseOnlyReason,
+    RankedJoinAttestationDocument, RankedJoinChallenge, RankedJoinResponse,
+    RankedJoinUnavailableReason, RankedSessionConfigDocument, SharedClientRankedJoinState,
 };
 use crate::leaderboard_ranked_session::{
     OfficialRankedSessionSetupV1, RankedSessionClientAdmissionV1, SharedRankedSessionLifecycle,
@@ -39,6 +39,14 @@ use std::time::Duration;
 // browsers and cold HTTP caches routinely exceed a few seconds; retain a
 // bounded failure path without racing normal bootstrap into browse-only.
 const RANKED_SETUP_TIMEOUT: Duration = Duration::from_secs(120);
+
+fn lifecycle_poisoned() -> MultiplayerError {
+    MultiplayerError::LocalState("browser ranked lifecycle lock is poisoned".into())
+}
+
+fn closed(message: &'static str) -> MultiplayerError {
+    MultiplayerError::ChannelClosed(message.into())
+}
 
 /// Browser-only ranking state that must survive a dropped relay stream. The
 /// shared gate owns the exact documents; the cells retain transport facts
@@ -92,9 +100,11 @@ impl BrowserRankedAdmission {
         &self,
         challenge: RankedJoinChallenge,
         incoming_tx: &std::sync::mpsc::Sender<NetEvent>,
-    ) -> Result<(RankedJoinResponse, BrowserAdmissionPhase), String> {
+    ) -> Result<(RankedJoinResponse, BrowserAdmissionPhase), MultiplayerError> {
         if self.admission.get().pending() {
-            return Err("host replayed or replaced a pending ranked join challenge".to_string());
+            return Err(MultiplayerError::Ranked(
+                "host replayed or replaced a pending ranked join challenge".into(),
+            ));
         }
 
         // Stage the independently authenticated host value first. On the initial
@@ -127,13 +137,21 @@ impl BrowserRankedAdmission {
                 PublicKey32::from_bytes(self.browser_auth.durable_public_key),
                 PublicKey32::from_bytes(*self.transport_endpoint.as_bytes()),
             )
-            .map_err(|error| format!("prepare authenticated browser ranked admission: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::ranked_document(
+                    "prepare authenticated browser ranked admission",
+                    error,
+                )
+            })?;
             self.lifecycle
                 .lock()
-                .map_err(|_| "browser ranked lifecycle lock is poisoned".to_string())?
+                .map_err(|_| lifecycle_poisoned())?
                 .install_client_admission(admission)
                 .map_err(|error| {
-                    format!("install authenticated browser ranked admission: {error}")
+                    MultiplayerError::ranked_document(
+                        "install authenticated browser ranked admission",
+                        error,
+                    )
                 })?;
             *self.prepared_setup.borrow_mut() = Some(setup.clone());
             setup
@@ -146,11 +164,17 @@ impl BrowserRankedAdmission {
             let local_document =
                 match crate::leaderboard_ranked_session::encode_ranked_wire_document(local_config)
                     .map_err(|error| {
-                        format!("encode browser ranked-session configuration: {error}")
+                        MultiplayerError::ranked_document(
+                            "encode browser ranked-session configuration",
+                            error,
+                        )
                     })
                     .and_then(|bytes| {
                         RankedSessionConfigDocument::new(bytes).map_err(|error| {
-                            format!("wrap browser ranked-session configuration: {error}")
+                            MultiplayerError::ranked_document(
+                                "wrap browser ranked-session configuration",
+                                MessageError(error.to_owned()),
+                            )
                         })
                     }) {
                     Ok(document) => document,
@@ -168,10 +192,9 @@ impl BrowserRankedAdmission {
             match self.join.arm_expected_session(local_document) {
                 Ok(Some(released)) => released,
                 Ok(None) => {
-                    return Err(
-                        "ranked join setup did not release its already-staged challenge"
-                            .to_string(),
-                    );
+                    return Err(MultiplayerError::LocalState(
+                        "ranked join setup did not release its already-staged challenge".into(),
+                    ));
                 }
                 Err(error) => {
                     tracing::warn!(%error, "browser ranked challenge did not match local setup");
@@ -210,17 +233,25 @@ impl BrowserRankedAdmission {
 
         incoming_tx
             .send(NetEvent::RankedJoinChallenge(released))
-            .map_err(|_| "browser ranked challenge channel is closed".to_string())?;
+            .map_err(|_| closed("browser ranked challenge channel is closed"))?;
         #[cfg(target_arch = "wasm32")]
         let signed = crate::leaderboard_signing::browser_game_sign_named_seat_join(&claim)
             .await
-            .map_err(|error| error.to_string());
+            .map_err(|error| {
+                MultiplayerError::ranked_document("sign browser ranked join claim", error)
+            });
         // Native test builds compile this adapter only to exercise the shared
         // session handler; there is no isolated browser signer outside a browser.
         #[cfg(not(target_arch = "wasm32"))]
-        let signed: Result<robin_run_protocol::NamedSeatJoinAttestationV1, String> = Err(format!(
-            "isolated browser ranked admission signer exists only in browser builds (seat {})",
-            claim.seat
+        let signed: Result<
+            robin_run_protocol::NamedSeatJoinAttestationV1,
+            MultiplayerError,
+        > = Err(MultiplayerError::Unavailable(
+            format!(
+                "isolated browser ranked admission signer exists only in browser builds (seat {})",
+                claim.seat
+            )
+            .into(),
         ));
         let attestation = match signed {
             Ok(attestation) => attestation,
@@ -235,11 +266,19 @@ impl BrowserRankedAdmission {
                 ));
             }
         };
-        let attestation_bytes =
-            crate::leaderboard_ranked_session::encode_ranked_wire_document(&attestation)
-                .map_err(|error| format!("encode browser ranked join attestation: {error}"))?;
-        let attestation_document = RankedJoinAttestationDocument::new(attestation_bytes)
-            .map_err(|error| format!("wrap browser ranked join attestation: {error}"))?;
+        let attestation_bytes = crate::leaderboard_ranked_session::encode_ranked_wire_document(
+            &attestation,
+        )
+        .map_err(|error| {
+            MultiplayerError::ranked_document("encode browser ranked join attestation", error)
+        })?;
+        let attestation_document =
+            RankedJoinAttestationDocument::new(attestation_bytes).map_err(|error| {
+                MultiplayerError::ranked_document(
+                    "wrap browser ranked join attestation",
+                    MessageError(error.to_owned()),
+                )
+            })?;
         Ok((
             RankedJoinResponse::Attestation(attestation_document),
             BrowserAdmissionPhase::AwaitingRankedDecision,
@@ -257,10 +296,10 @@ fn unavailable(reason: RankedJoinUnavailableReason) -> (RankedJoinResponse, Brow
 fn downgrade_ranked_lifecycle(
     lifecycle: &SharedRankedSessionLifecycle,
     reason: &'static str,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     lifecycle
         .lock()
-        .map_err(|_| "browser ranked lifecycle lock is poisoned".to_string())?
+        .map_err(|_| lifecycle_poisoned())?
         .downgrade(reason);
     Ok(())
 }
@@ -288,33 +327,42 @@ fn validate_browser_ranked_challenge(
     browser_auth: &BrowserPeerAuth,
     welcomed_seat: Option<PlayerId>,
     previous_claim: Option<&NamedSeatJoinClaimV1>,
-) -> Result<NamedSeatJoinClaimV1, String> {
+) -> Result<NamedSeatJoinClaimV1, MultiplayerError> {
     let genesis: ReplaySessionGenesisV1 =
         crate::leaderboard_ranked_session::decode_ranked_wire_document(
             challenge.session_genesis.as_bytes(),
         )
-        .map_err(|error| format!("decode browser ranked session genesis: {error}"))?;
+        .map_err(|error| {
+            MultiplayerError::ranked_document("decode browser ranked session genesis", error)
+        })?;
     crate::leaderboard_ranked_session::validate_official_session_genesis(
         &genesis,
         *authenticated_host_endpoint.as_bytes(),
         expected_setup,
     )
-    .map_err(|error| format!("validate browser ranked session genesis: {error}"))?;
+    .map_err(|error| {
+        MultiplayerError::ranked_document("validate browser ranked session genesis", error)
+    })?;
     let claim: NamedSeatJoinClaimV1 =
         crate::leaderboard_ranked_session::decode_ranked_wire_document(
             challenge.join_claim.as_bytes(),
         )
-        .map_err(|error| format!("decode browser ranked join claim: {error}"))?;
-    let expected_genesis = genesis
-        .canonical_digest()
-        .map_err(|error| format!("digest browser ranked session genesis: {error}"))?;
+        .map_err(|error| {
+            MultiplayerError::ranked_document("decode browser ranked join claim", error)
+        })?;
+    let expected_genesis = genesis.canonical_digest().map_err(|error| {
+        MultiplayerError::ranked_document("digest browser ranked session genesis", error)
+    })?;
     let expected_public_key = PublicKey32::from_bytes(browser_auth.durable_public_key);
     let expected_host_endpoint = PublicKey32::from_bytes(*authenticated_host_endpoint.as_bytes());
     let expected_transport_endpoint =
         PublicKey32::from_bytes(*authenticated_transport_endpoint.as_bytes());
     let expected_config = &expected_setup.ranked_session;
-    let expected_seat = welcomed_seat
-        .ok_or_else(|| "ranked challenge arrived before authoritative Welcome seat".to_string())?;
+    let expected_seat = welcomed_seat.ok_or_else(|| {
+        MultiplayerError::Ranked(
+            "ranked challenge arrived before authoritative Welcome seat".into(),
+        )
+    })?;
     if claim.session_genesis_sha256 != expected_genesis
         || claim.public_key != expected_public_key
         || claim.transport_endpoint_id != expected_transport_endpoint
@@ -330,14 +378,16 @@ fn validate_browser_ranked_challenge(
         || claim.seat == 0
         || u8::try_from(claim.seat).ok().map(PlayerId) != Some(expected_seat)
     {
-        return Err(
+        return Err(MultiplayerError::Identity(
             "ranked join claim does not match the durable browser identity, authenticated endpoints, or exact prepared session"
-                .to_string(),
-        );
+                .into(),
+        ));
     }
     match previous_claim {
         None if claim.connection_epoch != 0 => {
-            return Err("initial ranked browser admission has a nonzero connection epoch".into());
+            return Err(MultiplayerError::Ranked(
+                "initial ranked browser admission has a nonzero connection epoch".into(),
+            ));
         }
         Some(previous)
             if claim.seat != previous.seat
@@ -346,10 +396,10 @@ fn validate_browser_ranked_challenge(
                 || previous.connection_epoch.checked_add(1) != Some(claim.connection_epoch)
                 || claim.join_event_ordinal <= previous.join_event_ordinal =>
         {
-            return Err(
+            return Err(MultiplayerError::Ranked(
                 "ranked browser reconnect changed its admitted participant or did not advance its lifecycle"
                     .into(),
-            );
+            ));
         }
         None | Some(_) => {}
     }
@@ -382,11 +432,11 @@ impl ClientRankedAdmission for BrowserRankedAdmission {
         self.welcomed_seat.set(Some(seat));
     }
 
-    fn simulation_release_unresolved(&self) -> Result<bool, String> {
+    fn simulation_release_unresolved(&self) -> Result<bool, MultiplayerError> {
         Ok(!self.admission.get().resolved())
     }
 
-    fn enter_browse_only(&self, reason: RankedBrowseOnlyReason) -> Result<(), String> {
+    fn enter_browse_only(&self, reason: RankedBrowseOnlyReason) -> Result<(), MultiplayerError> {
         self.join.mark_browse_only(reason)?;
         self.admission.set(BrowserAdmissionPhase::BrowseOnly);
         Ok(())
@@ -400,7 +450,7 @@ impl ClientRankedAdmission for BrowserRankedAdmission {
     fn publication_authority(
         &self,
         requires_cosign: bool,
-    ) -> Result<ClientPublicationAuthority, String> {
+    ) -> Result<ClientPublicationAuthority, MultiplayerError> {
         Ok(ClientPublicationAuthority {
             co_sign_allowed: requires_cosign && self.join.is_accepted()?,
             durable_public_key: self.durable_public_key(),
@@ -411,7 +461,7 @@ impl ClientRankedAdmission for BrowserRankedAdmission {
         &self,
         links: &SessionLinks<'_, Self>,
         challenge: RankedJoinChallenge,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         let (response, phase) = self
             .answer_challenge::<Tm>(challenge, links.incoming)
             .await?;
@@ -430,44 +480,60 @@ impl ClientRankedAdmission for BrowserRankedAdmission {
         &self,
         links: &SessionLinks<'_, Self>,
         accepted: RankedJoinAccepted,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         let accepted = self.join.receive_wire_acceptance(accepted)?;
         let genesis: ReplaySessionGenesisV1 =
             crate::leaderboard_ranked_session::decode_ranked_wire_document(
                 accepted.session_genesis.as_bytes(),
             )
-            .map_err(|error| format!("decode accepted browser ranked genesis: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::ranked_document("decode accepted browser ranked genesis", error)
+            })?;
         let attestation: robin_run_protocol::NamedSeatJoinAttestationV1 =
             crate::leaderboard_ranked_session::decode_ranked_wire_document(
                 accepted.join_attestation.as_bytes(),
             )
-            .map_err(|error| format!("decode accepted browser ranked join attestation: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::ranked_document(
+                    "decode accepted browser ranked join attestation",
+                    error,
+                )
+            })?;
         let roster: Vec<robin_run_protocol::ParticipantClaimV1> =
-            serde_json::from_slice(accepted.participant_roster.as_bytes())
-                .map_err(|error| format!("decode accepted browser ranked roster: {error}"))?;
+            serde_json::from_slice(accepted.participant_roster.as_bytes()).map_err(|error| {
+                MultiplayerError::ranked_document("decode accepted browser ranked roster", error)
+            })?;
         let admitted_seat = u8::try_from(attestation.claim.seat)
             .map(PlayerId)
-            .map_err(|_| "ranked browser seat does not fit the gameplay seat".to_string())?;
+            .map_err(|_| {
+                MultiplayerError::Ranked(
+                    "ranked browser seat does not fit the gameplay seat".into(),
+                )
+            })?;
         {
-            let mut lifecycle = self
-                .lifecycle
-                .lock()
-                .map_err(|_| "browser ranked lifecycle lock is poisoned".to_string())?;
+            let mut lifecycle = self.lifecycle.lock().map_err(|_| lifecycle_poisoned())?;
             if lifecycle.client_admission().is_some() {
                 lifecycle
                     .accept_ranked_client(attestation.claim.seat, genesis, roster)
                     .map_err(|error| {
-                        format!("accept authenticated browser ranked client: {error}")
+                        MultiplayerError::ranked_document(
+                            "accept authenticated browser ranked client",
+                            error,
+                        )
                     })?;
             } else if lifecycle.ranked_client().is_some() {
                 lifecycle
                     .update_ranked_client_roster(&genesis, roster)
-                    .map_err(|error| format!("accept browser ranked reconnect roster: {error}"))?;
+                    .map_err(|error| {
+                        MultiplayerError::ranked_document(
+                            "accept browser ranked reconnect roster",
+                            error,
+                        )
+                    })?;
             } else {
-                return Err(
-                    "ranked join acceptance has no pending or admitted browser lifecycle"
-                        .to_string(),
-                );
+                return Err(MultiplayerError::Ranked(
+                    "ranked join acceptance has no pending or admitted browser lifecycle".into(),
+                ));
             }
         }
         self.admitted_seat.set(Some(admitted_seat));
@@ -476,50 +542,52 @@ impl ClientRankedAdmission for BrowserRankedAdmission {
         links
             .incoming
             .send(NetEvent::RankedJoinAccepted(accepted))
-            .map_err(|_| "browser ranked admission channel is closed".to_string())
+            .map_err(|_| closed("browser ranked admission channel is closed"))
     }
 
     fn on_roster(
         &self,
         links: &SessionLinks<'_, Self>,
         document: RankedParticipantRosterDocument,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         let document = self.join.receive_wire_roster_update(document)?;
         let roster: Vec<robin_run_protocol::ParticipantClaimV1> =
-            serde_json::from_slice(document.as_bytes())
-                .map_err(|error| format!("decode browser ranked roster update: {error}"))?;
-        let mut lifecycle = self
-            .lifecycle
-            .lock()
-            .map_err(|_| "browser ranked lifecycle lock is poisoned".to_string())?;
+            serde_json::from_slice(document.as_bytes()).map_err(|error| {
+                MultiplayerError::ranked_document("decode browser ranked roster update", error)
+            })?;
+        let mut lifecycle = self.lifecycle.lock().map_err(|_| lifecycle_poisoned())?;
         let genesis = lifecycle
             .ranked_client()
             .map(|client| client.session_genesis.clone())
             .ok_or_else(|| {
-                "ranked roster update has no accepted browser client lifecycle".to_string()
+                MultiplayerError::Ranked(
+                    "ranked roster update has no accepted browser client lifecycle".into(),
+                )
             })?;
         lifecycle
             .update_ranked_client_roster(&genesis, roster)
-            .map_err(|error| format!("install browser ranked roster update: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::ranked_document("install browser ranked roster update", error)
+            })?;
         drop(lifecycle);
         links
             .incoming
             .send(NetEvent::RankedParticipantRoster(document))
-            .map_err(|_| "browser ranked roster channel is closed".to_string())
+            .map_err(|_| closed("browser ranked roster channel is closed"))
     }
 
     fn on_browse_only(
         &self,
         links: &SessionLinks<'_, Self>,
         reason: RankedBrowseOnlyReason,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         if self.join.mark_browse_only(reason)? {
             downgrade_ranked_lifecycle(&self.lifecycle, ranked_browse_only_reason(reason))?;
             self.admission.set(BrowserAdmissionPhase::BrowseOnly);
             links
                 .incoming
                 .send(NetEvent::RankedBrowseOnly { reason })
-                .map_err(|_| "browser ranked browse-only channel is closed".to_string())?;
+                .map_err(|_| closed("browser ranked browse-only channel is closed"))?;
         }
         Ok(())
     }
@@ -528,42 +596,45 @@ impl ClientRankedAdmission for BrowserRankedAdmission {
         &self,
         links: &SessionLinks<'_, Self>,
         context: RankedCoSignContextDocument,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         if !self.join.is_accepted()? {
-            return Err(
-                "host sent a ranked co-sign context outside an accepted ranked session".to_string(),
-            );
+            return Err(MultiplayerError::RemoteProtocol(
+                "host sent a ranked co-sign context outside an accepted ranked session".into(),
+            ));
         }
         links
             .incoming
             .send(NetEvent::RankedCoSignContext(context))
-            .map_err(|_| "browser ranked co-sign context channel is closed".to_string())
+            .map_err(|_| closed("browser ranked co-sign context channel is closed"))
     }
 
     fn on_submission_accepted(
         &self,
         _links: &SessionLinks<'_, Self>,
         accepted: RankedSubmissionAcceptedDocument,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         // TODO(10/F1): browsers never learned to relay submission
         // acknowledgements; native validates and publishes them.
-        Err(format!(
-            "host sent invalid browser session message {:?}",
-            NetMsg::RankedSubmissionAccepted(accepted)
+        Err(MultiplayerError::RemoteProtocol(
+            format!(
+                "host sent invalid browser session message {:?}",
+                NetMsg::RankedSubmissionAccepted(accepted)
+            )
+            .into(),
         ))
     }
 
-    fn on_session_dropped(&self) -> Result<(), String> {
+    fn on_session_dropped(&self) -> Result<(), MultiplayerError> {
         if self.admission.get().can_reconnect() {
-            self.join.begin_reconnect().map_err(|error| {
-                format!("could not begin authenticated ranked reconnect: {error}")
-            })?;
+            self.join
+                .begin_reconnect()
+                .map_err(|error| error.context("could not begin authenticated ranked reconnect"))?;
             self.admission.set(BrowserAdmissionPhase::AwaitingChallenge);
         }
         Ok(())
     }
 
-    fn reset_after_failed_handshake(&self) -> Result<(), String> {
+    fn reset_after_failed_handshake(&self) -> Result<(), MultiplayerError> {
         if self.admission.get().can_reconnect() {
             self.join.begin_reconnect()?;
             self.admission.set(BrowserAdmissionPhase::AwaitingChallenge);

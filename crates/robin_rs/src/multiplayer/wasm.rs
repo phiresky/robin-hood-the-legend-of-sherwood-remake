@@ -21,12 +21,14 @@ use super::client_session::{
     SessionEnd, StartupFailure, WriterCommand, ranked_setup_channel,
 };
 use super::join_ticket::BrowserJoinTicket;
-use super::{NET_PROTOCOL_VERSION, NetEvent, NetMsg, NetOutbound, RankedJoinResponse};
+use super::{
+    MultiplayerError, NET_PROTOCOL_VERSION, NetEvent, NetMsg, NetOutbound, RankedJoinResponse,
+};
 use crate::leaderboard_ranked_session::OfficialRankedSessionSetupV1;
 use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 use robin_engine::multiplayer::{
-    BrowserPeerAuth, MultiplayerSessionId, browser_seat_proof_message,
+    BrowserPeerAuth, MultiplayerSessionId, NetFatal, browser_seat_proof_message,
 };
 use robin_run_protocol::PublicKey32;
 use std::future::Future;
@@ -111,7 +113,7 @@ async fn run_client_io(
             publish_startup_error(
                 &slots,
                 &incoming_tx,
-                format!("start browser iroh endpoint: {error}"),
+                MultiplayerError::transport("start browser iroh endpoint", error),
             );
             return;
         }
@@ -124,8 +126,10 @@ async fn run_client_io(
         publish_startup_error(
             &slots,
             &incoming_tx,
-            "iroh relay did not become reachable within 15 seconds; browser multiplayer requires WebSocket relay access"
-                .to_string(),
+            MultiplayerError::Unavailable(
+                "iroh relay did not become reachable within 15 seconds; browser multiplayer requires WebSocket relay access"
+                    .into(),
+            ),
         );
         endpoint.close().await;
         return;
@@ -166,15 +170,19 @@ async fn run_client_io(
 
 fn signed_invitation_session(
     browser_auth: &BrowserPeerAuth,
-) -> Result<MultiplayerSessionId, String> {
+) -> Result<MultiplayerSessionId, MultiplayerError> {
     Ok(MultiplayerSessionId(
         BrowserJoinTicket::decode_authenticated(&browser_auth.join_code)?.session_id()?,
     ))
 }
 
-fn publish_startup_error(slots: &ClientSlots, incoming_tx: &Sender<NetEvent>, error: String) {
+fn publish_startup_error(
+    slots: &ClientSlots,
+    incoming_tx: &Sender<NetEvent>,
+    error: MultiplayerError,
+) {
     slots.set_startup_error(error.clone());
-    let _ = incoming_tx.send(NetEvent::Fatal(error));
+    let _ = incoming_tx.send(NetEvent::Fatal(NetFatal::new(error)));
 }
 
 // ─── Transport ───────────────────────────────────────────────────
@@ -294,7 +302,9 @@ impl ClientTransport for BrowserClientTransport {
     }
 
     fn stream_closed() -> SessionEnd {
-        SessionEnd::Drop("host closed the multiplayer stream".to_string())
+        SessionEnd::Drop(MultiplayerError::ChannelClosed(
+            "host closed the multiplayer stream".into(),
+        ))
     }
 
     fn fatal_outbound(outgoing: &NetOutbound) -> bool {
@@ -310,10 +320,9 @@ impl ClientTransport for BrowserClientTransport {
         )
     }
 
-    fn initial_handshake_exhausted(last_error: String) -> String {
-        format!(
-            "could not reach the host through the iroh WebSocket relay within 15 seconds: {last_error}"
-        )
+    fn initial_handshake_exhausted(last_error: MultiplayerError) -> MultiplayerError {
+        last_error
+            .context("could not reach the host through the iroh WebSocket relay within 15 seconds")
     }
 
     /// The browser handle is returned before connecting; mission setup polls
@@ -340,29 +349,33 @@ impl ClientTransport for BrowserClientTransport {
         slots: &ClientSlots,
         incoming: &Sender<NetEvent>,
         _failure: StartupFailure,
-        error: String,
+        error: MultiplayerError,
     ) {
         publish_startup_error(slots, incoming, error);
     }
 
-    async fn after_welcome(&self) -> Result<(), String> {
+    async fn after_welcome(&self) -> Result<(), MultiplayerError> {
         mark_invitation_redeemed(&self.invitation_session_id).await
     }
 }
 
 // ─── Stable shell glue ───────────────────────────────────────────
 
-fn js_error(prefix: &str, error: wasm_bindgen::JsValue) -> String {
-    format!(
+fn js_error(prefix: &str, error: wasm_bindgen::JsValue) -> MultiplayerError {
+    MultiplayerError::Browser(format!(
         "{prefix}: {}",
         error.as_string().unwrap_or_else(|| format!("{error:?}"))
-    )
+    ))
+}
+
+fn shell_error(message: &'static str) -> MultiplayerError {
+    MultiplayerError::Browser(message.to_owned())
 }
 
 async fn browser_peer_auth(
     ticket: &BrowserJoinTicket,
     transport_endpoint_id: EndpointId,
-) -> Result<BrowserPeerAuth, String> {
+) -> Result<BrowserPeerAuth, MultiplayerError> {
     let global = js_sys::global();
     let identity = js_sys::Reflect::get(
         &global,
@@ -370,24 +383,26 @@ async fn browser_peer_auth(
     )
     .map_err(|error| js_error("read browser multiplayer identity", error))?;
     if identity.is_null() || identity.is_undefined() {
-        return Err(
-            "browser multiplayer identity was not installed by the stable shell".to_string(),
-        );
+        return Err(shell_error(
+            "browser multiplayer identity was not installed by the stable shell",
+        ));
     }
     let raw_public = js_sys::Reflect::get(&identity, &wasm_bindgen::JsValue::from_str("publicKey"))
         .map_err(|error| js_error("read durable browser public key", error))?;
     if !raw_public.is_instance_of::<js_sys::Uint8Array>() {
-        return Err("stable shell supplied a malformed durable browser public key".to_string());
+        return Err(shell_error(
+            "stable shell supplied a malformed durable browser public key",
+        ));
     }
     let durable_public_key: [u8; 32] = js_sys::Uint8Array::new(&raw_public)
         .to_vec()
         .try_into()
-        .map_err(|_| "durable browser public key must be 32 bytes".to_string())?;
+        .map_err(|_| shell_error("durable browser public key must be 32 bytes"))?;
     let raw_sign = js_sys::Reflect::get(&identity, &wasm_bindgen::JsValue::from_str("sign"))
         .map_err(|error| js_error("read durable browser signer", error))?;
     let sign = raw_sign
         .dyn_into::<js_sys::Function>()
-        .map_err(|_| "stable shell supplied a malformed durable browser signer".to_string())?;
+        .map_err(|_| shell_error("stable shell supplied a malformed durable browser signer"))?;
     let message = browser_seat_proof_message(
         ticket.session_id()?,
         *ticket.endpoint_addr()?.id.as_bytes(),
@@ -403,14 +418,16 @@ async fn browser_peer_auth(
         .await
         .map_err(|error| js_error("sign durable browser seat proof", error))?;
     if !signature.is_instance_of::<js_sys::Uint8Array>() {
-        return Err("durable browser signer returned a malformed signature".to_string());
+        return Err(shell_error(
+            "durable browser signer returned a malformed signature",
+        ));
     }
     let signature = js_sys::Uint8Array::new(&signature).to_vec();
     if signature.len() != iroh::Signature::LENGTH {
-        return Err(format!(
+        return Err(MultiplayerError::Browser(format!(
             "durable browser signer returned a {}-byte signature",
             signature.len()
-        ));
+        )));
     }
     Ok(BrowserPeerAuth {
         join_code: ticket.encode(),
@@ -419,16 +436,16 @@ async fn browser_peer_auth(
     })
 }
 
-async fn mark_invitation_redeemed(session_id: &str) -> Result<(), String> {
+async fn mark_invitation_redeemed(session_id: &str) -> Result<(), MultiplayerError> {
     let global = js_sys::global();
     let raw_mark = js_sys::Reflect::get(
         &global,
         &wasm_bindgen::JsValue::from_str("robinMarkMultiplayerInvitationRedeemed"),
     )
     .map_err(|error| js_error("read invitation redemption store", error))?;
-    let mark = raw_mark
-        .dyn_into::<js_sys::Function>()
-        .map_err(|_| "stable shell supplied a malformed invitation redemption store".to_string())?;
+    let mark = raw_mark.dyn_into::<js_sys::Function>().map_err(|_| {
+        shell_error("stable shell supplied a malformed invitation redemption store")
+    })?;
     let promise = mark
         .call1(
             &wasm_bindgen::JsValue::UNDEFINED,

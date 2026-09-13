@@ -5,6 +5,7 @@ use super::{ClientHandle, NetEvent, NetOutbound, connect_client};
 use crate::leaderboard_ranked_session::{
     OfficialRankedSessionSetupV1, RankedPreflightLobbyV1, SharedRankedSessionLifecycle,
 };
+use crate::multiplayer::MultiplayerError;
 use robin_engine::player_command::PlayerId;
 use robin_run_protocol::PublicKey32;
 use std::sync::mpsc::{Receiver, Sender};
@@ -34,7 +35,7 @@ impl ServerHandle {
         match *self {}
     }
 
-    pub(crate) fn ranked_local_seat(&self) -> Result<PlayerId, String> {
+    pub(crate) fn ranked_local_seat(&self) -> Result<PlayerId, MultiplayerError> {
         match *self {}
     }
 
@@ -53,7 +54,7 @@ impl ServerHandle {
     pub(crate) fn install_ranked_session_setup(
         &self,
         _setup: Option<OfficialRankedSessionSetupV1>,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         match *self {}
     }
 

@@ -32,8 +32,9 @@ use super::framing::{read_frame, write_frame};
 use super::identity::GAME_ALPN;
 use super::ranked_client::{ClientRankedJoinState, ranked_lifecycle_lock};
 use super::{
-    InboundFramePolicy, NetEvent, NetMsg, NetOutbound, RankedBrowseOnlyReason, RankedJoinChallenge,
-    RankedJoinResponse, RankedJoinUnavailableReason, SharedClientLeaderboardCoSignState,
+    InboundFramePolicy, MultiplayerError, NetEvent, NetMsg, NetOutbound, RankedBrowseOnlyReason,
+    RankedJoinChallenge, RankedJoinResponse, RankedJoinUnavailableReason,
+    SharedClientLeaderboardCoSignState,
 };
 use crate::leaderboard_ranked_session::{
     CampaignContinuationReceiptSelectionRequestV1, OfficialRankedSessionSetupV1,
@@ -44,8 +45,8 @@ use futures::future::{Either, select};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr};
 use robin_engine::multiplayer::{
-    DistributedModOffer, MultiplayerSessionId, RankedCoSignContextDocument, RankedJoinAccepted,
-    RankedParticipantRosterDocument, RankedSubmissionAcceptedDocument,
+    DistributedModOffer, MultiplayerSessionId, NetFatal, RankedCoSignContextDocument,
+    RankedJoinAccepted, RankedParticipantRosterDocument, RankedSubmissionAcceptedDocument,
 };
 use robin_engine::player_command::PlayerId;
 use robin_run_protocol::{CampaignContinuationPreflightRequestClaimV1, PublicKey32, Validate as _};
@@ -63,9 +64,6 @@ const INITIAL_BACKOFF: Duration = Duration::from_millis(50);
 const MAX_INITIAL_BACKOFF: Duration = Duration::from_millis(500);
 const RECONNECT_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_RECONNECT_BACKOFF: Duration = Duration::from_secs(10);
-/// A host reconnect directive ends the session into the reconnect loop
-/// instead of failing it; the reader recognizes it by this prefix.
-const RECONNECT_REQUIRED_PREFIX: &str = "host requires a full-snapshot reconnect:";
 
 // ─── Handle ──────────────────────────────────────────────────────
 
@@ -81,7 +79,7 @@ pub(super) struct ClientSlots {
     /// this exact offer; the transport never silently approves it.
     pub(super) content_offer: Arc<Mutex<Option<DistributedModOffer>>>,
     pub(super) ranked_local_public_key: Arc<Mutex<Option<PublicKey32>>>,
-    pub(super) startup_error: Arc<Mutex<Option<String>>>,
+    pub(super) startup_error: Arc<Mutex<Option<MultiplayerError>>>,
     pub(super) ranked_lifecycle: SharedRankedSessionLifecycle,
     pub(super) cancellation: Arc<AtomicBool>,
 }
@@ -100,7 +98,7 @@ impl ClientSlots {
         }
     }
 
-    pub(super) fn set_startup_error(&self, error: String) {
+    pub(super) fn set_startup_error(&self, error: MultiplayerError) {
         *slot(&self.startup_error) = Some(error);
     }
 
@@ -162,7 +160,7 @@ impl ClientHandle {
     }
 
     /// Error that ended the connection before an authoritative Welcome.
-    pub fn startup_error(&self) -> Option<String> {
+    pub fn startup_error(&self) -> Option<MultiplayerError> {
         slot(&self.slots.startup_error).clone()
     }
 
@@ -172,27 +170,28 @@ impl ClientHandle {
     pub(crate) fn install_ranked_session_setup(
         &self,
         setup: Option<OfficialRankedSessionSetupV1>,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
+        const INSTALLED_TWICE: &str = "ranked client setup was installed more than once";
         if let Some(setup) = setup.as_ref() {
-            setup
-                .validate()
-                .map_err(|error| format!("invalid official ranked client setup: {error}"))?;
+            setup.validate().map_err(|error| {
+                MultiplayerError::ranked_document("invalid official ranked client setup", error)
+            })?;
         }
         // Resolving setup is a one-shot decision, even if its channel send
         // fails. Queue capacity alone cannot enforce this once the first value
         // has been consumed by the worker.
         if self.ranked_setup_sent.swap(true, Ordering::AcqRel) {
-            return Err("ranked client setup was installed more than once".to_string());
+            return Err(MultiplayerError::LocalState(INSTALLED_TWICE.into()));
         }
         self.ranked_setup_tx
             .try_send(setup)
             .map_err(|error| match error {
                 async_channel::TrySendError::Full(_) => {
-                    "ranked client setup was installed more than once".to_string()
+                    MultiplayerError::LocalState(INSTALLED_TWICE.into())
                 }
-                async_channel::TrySendError::Closed(_) => {
-                    "ranked client setup transport is no longer running".to_string()
-                }
+                async_channel::TrySendError::Closed(_) => MultiplayerError::ChannelClosed(
+                    "ranked client setup transport is no longer running".into(),
+                ),
             })
     }
 
@@ -200,10 +199,14 @@ impl ClientHandle {
         Arc::clone(&self.slots.ranked_lifecycle)
     }
 
-    pub(crate) fn ranked_local_seat(&self) -> Result<PlayerId, String> {
+    pub(crate) fn ranked_local_seat(&self) -> Result<PlayerId, MultiplayerError> {
         self.session_metadata()
             .map(|session| session.seat)
-            .ok_or_else(|| "ranked client seat is unavailable before handshake".to_string())
+            .ok_or_else(|| {
+                MultiplayerError::Handshake(
+                    "ranked client seat is unavailable before handshake".into(),
+                )
+            })
     }
 
     pub(crate) fn ranked_local_public_key(&self) -> Option<PublicKey32> {
@@ -262,10 +265,10 @@ pub(super) enum SessionEnd {
     )]
     Graceful,
     /// Network error / unexpected drop — caller should retry.
-    Drop(String),
+    Drop(MultiplayerError),
     /// A direction, session, request, or signature invariant failed. Retrying
     /// the same authenticated session cannot repair this trust violation.
-    Fatal(String),
+    Fatal(MultiplayerError),
     /// The game loop dropped the outgoing channel or shutdown began — stop
     /// the I/O task entirely (no retry).
     OutgoingClosed,
@@ -290,7 +293,7 @@ pub(super) enum WriterCommand {
         target_arch = "wasm32",
         allow(dead_code, reason = "browser writer channels cannot close mid-session")
     )]
-    Fatal(String),
+    Fatal(MultiplayerError),
 }
 
 /// Progress of the first handshake, reported to a caller that blocks on it.
@@ -353,7 +356,7 @@ pub(super) trait ClientTransport {
     // publications as fatal; native only leaderboard co-sign traffic.
     fn fatal_outbound(outgoing: &NetOutbound) -> bool;
     /// Wrap the last failure once the initial connect deadline has passed.
-    fn initial_handshake_exhausted(last_error: String) -> String;
+    fn initial_handshake_exhausted(last_error: MultiplayerError) -> MultiplayerError;
 
     fn publish_initial_handshake(&self, progress: InitialHandshake) -> Result<(), ()>;
     fn startup_failed(
@@ -361,10 +364,10 @@ pub(super) trait ClientTransport {
         slots: &ClientSlots,
         incoming: &Sender<NetEvent>,
         failure: StartupFailure,
-        error: String,
+        error: MultiplayerError,
     );
     /// Platform work between an admitted Welcome and its publication.
-    async fn after_welcome(&self) -> Result<(), String>;
+    async fn after_welcome(&self) -> Result<(), MultiplayerError>;
 }
 
 /// Per-session references the wire handler and ranked admission use.
@@ -397,14 +400,14 @@ impl RankedResponses {
         &self,
         join_state: &ClientRankedJoinState,
         response: RankedJoinResponse,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         join_state.authorize_response(&response)?;
         self.tx.try_send(response).map_err(|error| match error {
             async_channel::TrySendError::Full(_) => {
-                "ranked admission response queue is occupied".to_string()
+                MultiplayerError::LocalState("ranked admission response queue is occupied".into())
             }
             async_channel::TrySendError::Closed(_) => {
-                "ranked response writer queue is closed".to_string()
+                MultiplayerError::ChannelClosed("ranked response writer queue is closed".into())
             }
         })
     }
@@ -432,53 +435,54 @@ pub(super) trait ClientRankedAdmission: Sized {
 
     /// Whether ranked admission is still unresolved (neither admitted nor
     /// browse-only), so the host may not release simulation yet.
-    fn simulation_release_unresolved(&self) -> Result<bool, String>;
+    fn simulation_release_unresolved(&self) -> Result<bool, MultiplayerError>;
     /// Irreversibly record browse-only for this connection's ranking lane.
-    fn enter_browse_only(&self, reason: RankedBrowseOnlyReason) -> Result<(), String>;
-    /// Downgrade the ranked lifecycle; gameplay continues.
+    fn enter_browse_only(&self, reason: RankedBrowseOnlyReason) -> Result<(), MultiplayerError>;
+    /// Downgrade the ranked lifecycle; gameplay continues. `detail` is the
+    /// human-readable lifecycle/log text.
     fn downgrade(&self, reason: RankedBrowseOnlyReason, detail: String);
     fn publication_authority(
         &self,
         requires_cosign: bool,
-    ) -> Result<ClientPublicationAuthority, String>;
+    ) -> Result<ClientPublicationAuthority, MultiplayerError>;
 
     async fn on_challenge<Tm: ClientTimer>(
         &self,
         links: &SessionLinks<'_, Self>,
         challenge: RankedJoinChallenge,
-    ) -> Result<(), String>;
+    ) -> Result<(), MultiplayerError>;
     /// Locally prepared setup delivered through the session writer.
     fn on_setup(&self, responses: &RankedResponses, setup: Option<OfficialRankedSessionSetupV1>);
     fn on_accepted(
         &self,
         links: &SessionLinks<'_, Self>,
         accepted: RankedJoinAccepted,
-    ) -> Result<(), String>;
+    ) -> Result<(), MultiplayerError>;
     fn on_roster(
         &self,
         links: &SessionLinks<'_, Self>,
         document: RankedParticipantRosterDocument,
-    ) -> Result<(), String>;
+    ) -> Result<(), MultiplayerError>;
     fn on_browse_only(
         &self,
         links: &SessionLinks<'_, Self>,
         reason: RankedBrowseOnlyReason,
-    ) -> Result<(), String>;
+    ) -> Result<(), MultiplayerError>;
     fn on_cosign_context(
         &self,
         links: &SessionLinks<'_, Self>,
         context: RankedCoSignContextDocument,
-    ) -> Result<(), String>;
+    ) -> Result<(), MultiplayerError>;
     fn on_submission_accepted(
         &self,
         links: &SessionLinks<'_, Self>,
         accepted: RankedSubmissionAcceptedDocument,
-    ) -> Result<(), String>;
+    ) -> Result<(), MultiplayerError>;
 
     /// A session dropped and the client will reconnect. `Err` is fatal.
-    fn on_session_dropped(&self) -> Result<(), String>;
+    fn on_session_dropped(&self) -> Result<(), MultiplayerError>;
     /// A (re)connect attempt failed before a session started. `Err` is fatal.
-    fn reset_after_failed_handshake(&self) -> Result<(), String>;
+    fn reset_after_failed_handshake(&self) -> Result<(), MultiplayerError>;
 }
 
 // ─── Timing helpers ──────────────────────────────────────────────
@@ -525,27 +529,27 @@ async fn write_frame_within<Tm: ClientTimer>(
     send: &mut SendStream,
     message: &NetMsg,
     timeout: Option<Duration>,
-    phase: &str,
-) -> Result<(), String> {
+    phase: &'static str,
+) -> Result<(), MultiplayerError> {
     match timeout {
         None => write_frame(send, message).await,
         Some(timeout) => with_timeout::<Tm, _>(timeout, write_frame(send, message))
             .await
-            .map_err(|()| format!("{phase} timed out after {timeout:?}"))?,
+            .map_err(|()| MultiplayerError::timeout(phase, timeout))?,
     }
 }
 
 async fn read_frame_within<Tm: ClientTimer>(
     recv: &mut RecvStream,
     timeout: Option<Duration>,
-    phase: &str,
-) -> Result<Option<NetMsg>, String> {
+    phase: &'static str,
+) -> Result<Option<NetMsg>, MultiplayerError> {
     let read = read_frame(recv, InboundFramePolicy::ServerToClient);
     match timeout {
         None => read.await,
         Some(timeout) => with_timeout::<Tm, _>(timeout, read)
             .await
-            .map_err(|()| format!("{phase} timed out after {timeout:?}"))?,
+            .map_err(|()| MultiplayerError::timeout(phase, timeout))?,
     }
 }
 
@@ -575,17 +579,19 @@ pub(super) enum HandshakePrelude {
 }
 
 /// One round of (connect → open stream → Hello → Welcome or content offer).
-async fn handshake<T: ClientTransport>(transport: &T) -> Result<HandshakePrelude, String> {
+async fn handshake<T: ClientTransport>(
+    transport: &T,
+) -> Result<HandshakePrelude, MultiplayerError> {
     let server_addr = transport.server_addr();
     let conn = transport
         .endpoint()
         .connect(server_addr.clone(), GAME_ALPN)
         .await
-        .map_err(|e| format!("connect: {e}"))?;
+        .map_err(|e| MultiplayerError::transport("connect", e))?;
     let (mut send, mut recv) = conn
         .open_bi()
         .await
-        .map_err(|e| format!("open stream: {e}"))?;
+        .map_err(|e| MultiplayerError::transport("open stream", e))?;
     write_frame_within::<T::Timer>(
         &mut send,
         &transport.hello(),
@@ -593,7 +599,7 @@ async fn handshake<T: ClientTransport>(transport: &T) -> Result<HandshakePrelude
         "client Hello",
     )
     .await
-    .map_err(|e| format!("send Hello: {e}"))?;
+    .map_err(|e| e.context("send Hello"))?;
     let message = read_frame_within::<T::Timer>(
         &mut recv,
         T::TIMINGS.handshake_frame,
@@ -619,14 +625,14 @@ async fn handshake<T: ClientTransport>(transport: &T) -> Result<HandshakePrelude
 async fn attempt_handshake<T: ClientTransport>(
     transport: &T,
     timeout: Option<Duration>,
-) -> Option<Result<HandshakePrelude, String>> {
+) -> Option<Result<HandshakePrelude, MultiplayerError>> {
     let attempt = async {
         match timeout {
             None => handshake(transport).await,
             Some(timeout) => with_timeout::<T::Timer, _>(timeout, handshake(transport))
                 .await
                 .unwrap_or_else(|()| {
-                    Err(format!("multiplayer handshake timed out after {timeout:?}"))
+                    Err(MultiplayerError::timeout("multiplayer handshake", timeout))
                 }),
         }
     };
@@ -636,16 +642,16 @@ async fn attempt_handshake<T: ClientTransport>(
 async fn initial_handshake<T: ClientTransport>(
     transport: &T,
     ranked: &T::Ranked,
-) -> Result<HandshakePrelude, String> {
+) -> Result<HandshakePrelude, MultiplayerError> {
     let started = web_time::Instant::now();
     let mut backoff = INITIAL_BACKOFF;
     loop {
         if transport.cancellation().load(Ordering::Acquire) {
-            return Err(T::CANCELLED.to_string());
+            return Err(MultiplayerError::Cancelled(T::CANCELLED.into()));
         }
         let Some(attempt) = attempt_handshake(transport, Some(T::TIMINGS.initial_attempt)).await
         else {
-            return Err(T::CANCELLED.to_string());
+            return Err(MultiplayerError::Cancelled(T::CANCELLED.into()));
         };
         let error = match attempt {
             Ok(prelude) => return Ok(prelude),
@@ -657,7 +663,7 @@ async fn initial_handshake<T: ClientTransport>(
         }
         tracing::debug!("initial multiplayer handshake failed: {error}; retrying");
         if sleep_or_cancel::<T::Timer>(transport.cancellation(), backoff).await {
-            return Err(T::CANCELLED.to_string());
+            return Err(MultiplayerError::Cancelled(T::CANCELLED.into()));
         }
         backoff = (backoff * 2).min(MAX_INITIAL_BACKOFF);
     }
@@ -665,7 +671,7 @@ async fn initial_handshake<T: ClientTransport>(
 
 async fn read_welcome<T: ClientTransport>(
     mut session: ClientSession,
-) -> Result<(ClientSession, WelcomeData), String> {
+) -> Result<(ClientSession, WelcomeData), MultiplayerError> {
     session.protocol.content_ready()?;
     let message = read_frame_within::<T::Timer>(
         &mut session.recv,
@@ -685,19 +691,20 @@ async fn next_admission_outbound<T: ClientTransport>(
     transport: &T,
     outbound: &mut T::Outbound,
     timeout: Option<Duration>,
-    phase: &str,
-) -> Result<NetOutbound, String> {
+    phase: &'static str,
+) -> Result<NetOutbound, MultiplayerError> {
     let received = cancellable::<T::Timer, _>(transport.cancellation(), async {
         match timeout {
             None => Ok(T::recv_outbound(outbound).await),
             Some(timeout) => with_timeout::<T::Timer, _>(timeout, T::recv_outbound(outbound))
                 .await
-                .map_err(|()| format!("{phase} timed out after {timeout:?}")),
+                .map_err(|()| MultiplayerError::timeout(phase, timeout)),
         }
     })
     .await
-    .ok_or_else(|| format!("{phase} cancelled"))??;
-    received.ok_or_else(|| format!("{phase} channel closed"))
+    .ok_or_else(|| MultiplayerError::Cancelled(format!("{phase} cancelled").into()))??;
+    received
+        .ok_or_else(|| MultiplayerError::ChannelClosed(format!("{phase} channel closed").into()))
 }
 
 /// Complete first-use admission under game/menu control. The transport
@@ -715,7 +722,7 @@ async fn complete_content_admission<T: ClientTransport>(
     offer: &DistributedModOffer,
     incoming: &Sender<NetEvent>,
     outbound: &mut T::Outbound,
-) -> Result<ContentAdmissionCompletion, String> {
+) -> Result<ContentAdmissionCompletion, MultiplayerError> {
     let timings = &T::TIMINGS;
     let decision = next_admission_outbound(
         transport,
@@ -735,7 +742,10 @@ async fn complete_content_admission<T: ClientTransport>(
     let mut received = decision.resume_offset()?;
 
     let transfer_started = web_time::Instant::now();
-    let transfer_exceeded = || format!("content transfer exceeded {:?}", timings.content_transfer);
+    let transfer_exceeded = || MultiplayerError::DeadlineExceeded {
+        phase: "content transfer".into(),
+        limit: timings.content_transfer,
+    };
     while received < offer.encoded_bytes {
         let remaining = timings
             .content_transfer
@@ -752,7 +762,7 @@ async fn complete_content_admission<T: ClientTransport>(
             with_timeout::<T::Timer, _>(remaining, read),
         )
         .await
-        .ok_or_else(|| "content transfer cancelled".to_owned())?
+        .ok_or_else(|| MultiplayerError::Cancelled("content transfer cancelled".into()))?
         .map_err(|()| transfer_exceeded())??;
         let (end, event) = accept_chunk(offer, received, message)?;
         deliver(incoming, event)?;
@@ -806,12 +816,13 @@ async fn complete_content_admission<T: ClientTransport>(
                 "content rejection",
             )
             .await?;
-            Err(format!(
-                "downloaded host content failed local admission: {reason}"
+            Err(MultiplayerError::ContentDeclined(
+                format!("downloaded host content failed local admission: {reason}").into(),
             ))
         }
-        other => Err(format!(
-            "expected local ContentReady/ContentPrepared/ContentReject, got {other:?}"
+        other => Err(MultiplayerError::LocalState(
+            format!("expected local ContentReady/ContentPrepared/ContentReject, got {other:?}")
+                .into(),
         )),
     }
 }
@@ -822,7 +833,7 @@ async fn complete_content_admission<T: ClientTransport>(
 async fn resolve_reconnect_prelude<T: ClientTransport>(
     prelude: HandshakePrelude,
     admitted: Option<&DistributedModOffer>,
-) -> Result<(ClientSession, WelcomeData), String> {
+) -> Result<(ClientSession, WelcomeData), MultiplayerError> {
     let offered = match &prelude {
         HandshakePrelude::Welcome { .. } => None,
         HandshakePrelude::Content { offer, .. } => Some(offer),
@@ -908,7 +919,7 @@ pub(super) async fn run_client_io<T: ClientTransport>(
                         slots,
                         &incoming,
                         StartupFailure::Admission,
-                        format!("distributed-mod admission failed: {error}"),
+                        error.context("distributed-mod admission failed"),
                     );
                     return;
                 }
@@ -973,7 +984,7 @@ pub(super) async fn run_client_io<T: ClientTransport>(
             SessionEnd::Graceful => break,
             SessionEnd::Drop(reason) => {
                 if let Err(error) = ranked.on_session_dropped() {
-                    let _ = incoming.send(NetEvent::Fatal(error));
+                    let _ = incoming.send(NetEvent::Fatal(NetFatal::new(error)));
                     return;
                 }
                 let discarded = T::discard_outbound(outbound);
@@ -997,7 +1008,7 @@ pub(super) async fn run_client_io<T: ClientTransport>(
                 }
             }
             SessionEnd::Fatal(error) => {
-                let _ = incoming.send(NetEvent::Fatal(error));
+                let _ = incoming.send(NetEvent::Fatal(NetFatal::new(error)));
                 return;
             }
             SessionEnd::OutgoingClosed => return,
@@ -1028,7 +1039,7 @@ pub(super) async fn run_client_io<T: ClientTransport>(
                                 speech_timing_locale: new_speech_timing_locale,
                                 session_id: new_session_id,
                             } = welcome;
-                            if let Err(message) = validate_reconnect_state(
+                            if let Err(error) = validate_reconnect_state(
                                 your_seat,
                                 &mission_id,
                                 mission_seed,
@@ -1042,7 +1053,7 @@ pub(super) async fn run_client_io<T: ClientTransport>(
                                 new_speech_timing_locale.as_deref(),
                                 new_session_id,
                             ) {
-                                let _ = incoming.send(NetEvent::Fatal(message));
+                                let _ = incoming.send(NetEvent::Fatal(NetFatal::new(error)));
                                 return;
                             }
                             tracing::info!(?new_seat, seed = new_seed, "client reconnected");
@@ -1081,9 +1092,9 @@ pub(super) async fn run_client_io<T: ClientTransport>(
                 Err(error) => ("transport", error),
             };
             if let Err(reset_error) = ranked.reset_after_failed_handshake() {
-                let _ = incoming.send(NetEvent::Fatal(format!(
-                    "could not reset ranked reconnect after {failure_kind} failure: {reset_error}"
-                )));
+                let _ = incoming.send(NetEvent::Fatal(NetFatal::new(reset_error.context(
+                    format!("could not reset ranked reconnect after {failure_kind} failure"),
+                ))));
                 return;
             }
             tracing::warn!("reconnect {failure_kind} failed: {error}; will retry in {backoff:?}");
@@ -1130,7 +1141,7 @@ async fn run_session<T: ClientTransport>(
                     if let Err(error) =
                         handle_client_wire_msg::<T::Ranked, T::Timer>(&links, message).await
                     {
-                        return if error.starts_with(RECONNECT_REQUIRED_PREFIX) {
+                        return if matches!(error, MultiplayerError::ReconnectRequired { .. }) {
                             SessionEnd::Drop(error)
                         } else {
                             SessionEnd::Fatal(error)
@@ -1190,7 +1201,9 @@ async fn run_session<T: ClientTransport>(
 pub(super) async fn handle_client_wire_msg<R: ClientRankedAdmission, Tm: ClientTimer>(
     links: &SessionLinks<'_, R>,
     message: NetMsg,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
+    let remote = |message: &'static str| MultiplayerError::RemoteProtocol(message.into());
+    let closed = |message: &'static str| MultiplayerError::ChannelClosed(message.into());
     let Some(message) = super::client_gameplay::forward(message, links.incoming)? else {
         return Ok(());
     };
@@ -1212,13 +1225,15 @@ pub(super) async fn handle_client_wire_msg<R: ClientRankedAdmission, Tm: ClientT
             )?;
         }
         NetMsg::ModalProposal { .. } => {
-            return Err("server sent a client-only modal proposal".to_string());
+            return Err(remote("server sent a client-only modal proposal"));
         }
         NetMsg::ReconnectRequired { reason } => {
-            return Err(format!("{RECONNECT_REQUIRED_PREFIX} {reason}"));
+            return Err(MultiplayerError::ReconnectRequired { reason });
         }
         NetMsg::SnapshotTransitionReady { .. } => {
-            return Err("server sent a client-only snapshot transition acknowledgement".into());
+            return Err(remote(
+                "server sent a client-only snapshot transition acknowledgement",
+            ));
         }
         NetMsg::LeaderboardCoSignRequest(request) => {
             if ranked_lifecycle_lock(ranked.lifecycle())
@@ -1236,13 +1251,13 @@ pub(super) async fn handle_client_wire_msg<R: ClientRankedAdmission, Tm: ClientT
                 links
                     .incoming
                     .send(NetEvent::LeaderboardCoSignRequest(request))
-                    .map_err(|_| {
-                        "client leaderboard co-sign request channel is closed".to_string()
-                    })?;
+                    .map_err(|_| closed("client leaderboard co-sign request channel is closed"))?;
             }
         }
         NetMsg::LeaderboardCoSignResponse(_) => {
-            return Err("server sent a client-only leaderboard co-sign response".into());
+            return Err(remote(
+                "server sent a client-only leaderboard co-sign response",
+            ));
         }
         NetMsg::RankedJoinChallenge(challenge) => {
             ranked.on_challenge::<Tm>(links, challenge).await?;
@@ -1254,19 +1269,28 @@ pub(super) async fn handle_client_wire_msg<R: ClientRankedAdmission, Tm: ClientT
             decode_canonical_ranked_wire_document::<OfficialRankedSessionWireSetupV1>(
                 document.as_bytes(),
             )
-            .map_err(|error| format!("invalid official ranked wire setup: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::ranked_document("invalid official ranked wire setup", error)
+            })?;
             links
                 .incoming
                 .send(NetEvent::RankedOfficialSessionSetup(document))
-                .map_err(|_| "client official ranked setup channel is closed".to_string())?;
+                .map_err(|_| closed("client official ranked setup channel is closed"))?;
         }
         NetMsg::RankedContinuationReceiptSelectionRequest(document) => {
             let request = decode_ranked_wire_document::<
                 CampaignContinuationReceiptSelectionRequestV1,
             >(document.as_bytes())
-            .map_err(|error| format!("invalid continuation receipt selection request: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::ranked_document(
+                    "invalid continuation receipt selection request",
+                    error,
+                )
+            })?;
             let local_public_key = ranked.durable_public_key().ok_or_else(|| {
-                "continuation receipt selection has no durable ranked identity".to_string()
+                MultiplayerError::Identity(
+                    "continuation receipt selection has no durable ranked identity".into(),
+                )
             })?;
             if request.lobby.host_public_key != ranked.authenticated_host_public_key()
                 || request
@@ -1275,10 +1299,10 @@ pub(super) async fn handle_client_wire_msg<R: ClientRankedAdmission, Tm: ClientT
                     .binary_search(&local_public_key)
                     .is_err()
             {
-                return Err(
+                return Err(MultiplayerError::Identity(
                     "continuation receipt selection request does not bind the authenticated host and local peer"
-                        .to_string(),
-                );
+                        .into(),
+                ));
             }
             links
                 .incoming
@@ -1286,48 +1310,60 @@ pub(super) async fn handle_client_wire_msg<R: ClientRankedAdmission, Tm: ClientT
                     document,
                 ))
                 .map_err(|_| {
-                    "client continuation receipt selection request channel is closed".to_string()
+                    closed("client continuation receipt selection request channel is closed")
                 })?;
         }
         NetMsg::RankedContinuationReceiptSelection(_) => {
-            return Err("server sent a client-only continuation receipt selection".into());
+            return Err(remote(
+                "server sent a client-only continuation receipt selection",
+            ));
         }
         NetMsg::RankedContinuationPreflightClaim(document) => {
             let claim = decode_ranked_wire_document::<CampaignContinuationPreflightRequestClaimV1>(
                 document.as_bytes(),
             )
-            .map_err(|error| format!("invalid continuation preflight claim: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::ranked_document("invalid continuation preflight claim", error)
+            })?;
             let local_public_key = ranked.durable_public_key().ok_or_else(|| {
-                "continuation preflight controller has no durable ranked identity".to_string()
+                MultiplayerError::Identity(
+                    "continuation preflight controller has no durable ranked identity".into(),
+                )
             })?;
             if claim.host_public_key != ranked.authenticated_host_public_key()
                 || claim.campaign_controller_public_key != local_public_key
             {
-                return Err(
+                return Err(MultiplayerError::Identity(
                     "continuation preflight claim does not bind the authenticated host and local controller"
-                        .to_string(),
-                );
+                        .into(),
+                ));
             }
             links
                 .incoming
                 .send(NetEvent::RankedContinuationPreflightClaim(document))
-                .map_err(|_| "client continuation preflight claim channel is closed".to_string())?;
+                .map_err(|_| closed("client continuation preflight claim channel is closed"))?;
         }
         NetMsg::RankedContinuationPreflightSignature(_) => {
-            return Err("server sent a client-only continuation preflight signature".into());
+            return Err(remote(
+                "server sent a client-only continuation preflight signature",
+            ));
         }
         NetMsg::RankedCoSignContext(context) => ranked.on_cosign_context(links, context)?,
         NetMsg::RankedSubmissionAccepted(accepted) => {
             ranked.on_submission_accepted(links, accepted)?;
         }
         NetMsg::RankedJoinResponse(_) => {
-            return Err("server sent a client-only ranked join response".into());
+            return Err(remote("server sent a client-only ranked join response"));
         }
-        NetMsg::Reject { reason } => return Err(format!("host rejected session: {reason}")),
+        NetMsg::Reject { reason } => {
+            return Err(MultiplayerError::HostRejected {
+                stage: "session",
+                reason,
+            });
+        }
         other => {
-            return Err(format!(
-                "host sent invalid {} session message {other:?}",
-                R::LABEL
+            return Err(MultiplayerError::RemoteProtocol(
+                format!("host sent invalid {} session message {other:?}", R::LABEL).into(),
             ));
         }
     }
@@ -1339,7 +1375,7 @@ pub(super) async fn handle_client_wire_msg<R: ClientRankedAdmission, Tm: ClientT
 /// open), irreversibly downgrade to browse-only, publish that, and continue.
 fn downgrade_premature_simulation<R: ClientRankedAdmission>(
     links: &SessionLinks<'_, R>,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     let reason = RankedBrowseOnlyReason::RankedProtocolViolation;
     if let Err(error) = links.responses.queue(
         links.ranked.join_state(),
@@ -1363,16 +1399,16 @@ async fn send_client_outgoing<R: ClientRankedAdmission>(
     send: &mut SendStream,
     outgoing: NetOutbound,
     links: &SessionLinks<'_, R>,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     let requires_cosign = matches!(
         &outgoing,
         NetOutbound::ArmLeaderboardCoSignRequest { .. } | NetOutbound::LeaderboardCoSignResponse(_)
     );
     let authority = links.ranked.publication_authority(requires_cosign)?;
-    // TODO(10/F11): keep `ClientProtocolError` typed through `SessionEnd`.
+    // A refused publication stays a typed `MultiplayerError::Protocol` all the
+    // way into `SessionEnd` and the `NetEvent::Fatal` payload.
     if let Some(message) =
-        super::client_outgoing::prepare(outgoing, links.incoming, links.cosign, authority)
-            .map_err(|error| error.to_string())?
+        super::client_outgoing::prepare(outgoing, links.incoming, links.cosign, authority)?
     {
         write_frame(send, &message).await?;
     }
@@ -1439,10 +1475,13 @@ pub(super) mod tests {
         fn welcomed(&self, seat: PlayerId) {
             self.calls.borrow_mut().push(format!("welcomed {seat:?}"));
         }
-        fn simulation_release_unresolved(&self) -> Result<bool, String> {
+        fn simulation_release_unresolved(&self) -> Result<bool, MultiplayerError> {
             Ok(!self.resolved.get())
         }
-        fn enter_browse_only(&self, reason: RankedBrowseOnlyReason) -> Result<(), String> {
+        fn enter_browse_only(
+            &self,
+            reason: RankedBrowseOnlyReason,
+        ) -> Result<(), MultiplayerError> {
             self.join.mark_browse_only(reason)?;
             self.resolved.set(true);
             self.calls
@@ -1459,7 +1498,7 @@ pub(super) mod tests {
         fn publication_authority(
             &self,
             _requires_cosign: bool,
-        ) -> Result<ClientPublicationAuthority, String> {
+        ) -> Result<ClientPublicationAuthority, MultiplayerError> {
             Ok(ClientPublicationAuthority {
                 co_sign_allowed: false,
                 durable_public_key: None,
@@ -1469,8 +1508,10 @@ pub(super) mod tests {
             &self,
             _links: &SessionLinks<'_, Self>,
             _challenge: RankedJoinChallenge,
-        ) -> Result<(), String> {
-            Err("mock admission has no challenge handler".into())
+        ) -> Result<(), MultiplayerError> {
+            Err(MultiplayerError::LocalState(
+                "mock admission has no challenge handler".into(),
+            ))
         }
         fn on_setup(
             &self,
@@ -1483,41 +1524,51 @@ pub(super) mod tests {
             &self,
             _links: &SessionLinks<'_, Self>,
             _accepted: RankedJoinAccepted,
-        ) -> Result<(), String> {
-            Err("mock admission has no acceptance handler".into())
+        ) -> Result<(), MultiplayerError> {
+            Err(MultiplayerError::LocalState(
+                "mock admission has no acceptance handler".into(),
+            ))
         }
         fn on_roster(
             &self,
             _links: &SessionLinks<'_, Self>,
             _document: RankedParticipantRosterDocument,
-        ) -> Result<(), String> {
-            Err("mock admission has no roster handler".into())
+        ) -> Result<(), MultiplayerError> {
+            Err(MultiplayerError::LocalState(
+                "mock admission has no roster handler".into(),
+            ))
         }
         fn on_browse_only(
             &self,
             _links: &SessionLinks<'_, Self>,
             _reason: RankedBrowseOnlyReason,
-        ) -> Result<(), String> {
-            Err("mock admission has no browse-only handler".into())
+        ) -> Result<(), MultiplayerError> {
+            Err(MultiplayerError::LocalState(
+                "mock admission has no browse-only handler".into(),
+            ))
         }
         fn on_cosign_context(
             &self,
             _links: &SessionLinks<'_, Self>,
             _context: RankedCoSignContextDocument,
-        ) -> Result<(), String> {
-            Err("mock admission has no co-sign context handler".into())
+        ) -> Result<(), MultiplayerError> {
+            Err(MultiplayerError::LocalState(
+                "mock admission has no co-sign context handler".into(),
+            ))
         }
         fn on_submission_accepted(
             &self,
             _links: &SessionLinks<'_, Self>,
             _accepted: RankedSubmissionAcceptedDocument,
-        ) -> Result<(), String> {
-            Err("mock admission has no submission handler".into())
+        ) -> Result<(), MultiplayerError> {
+            Err(MultiplayerError::LocalState(
+                "mock admission has no submission handler".into(),
+            ))
         }
-        fn on_session_dropped(&self) -> Result<(), String> {
+        fn on_session_dropped(&self) -> Result<(), MultiplayerError> {
             Ok(())
         }
-        fn reset_after_failed_handshake(&self) -> Result<(), String> {
+        fn reset_after_failed_handshake(&self) -> Result<(), MultiplayerError> {
             Ok(())
         }
     }
@@ -1539,7 +1590,7 @@ pub(super) mod tests {
         incoming: &Sender<NetEvent>,
         cosign: &SharedClientLeaderboardCoSignState,
         message: NetMsg,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         let (responses, _response_rx) = RankedResponses::channel(R::RESPONSE_QUEUE_CAPACITY);
         let links = SessionLinks {
             ranked,
@@ -1663,6 +1714,7 @@ pub(super) mod tests {
         assert!(
             handle(&ranked, &tx, &cosign, begin_sim())
                 .unwrap_err()
+                .to_string()
                 .contains("channel is closed")
         );
     }
@@ -1690,6 +1742,7 @@ pub(super) mod tests {
             assert!(
                 handle(&ranked, &tx, &cosign, message)
                     .unwrap_err()
+                    .to_string()
                     .contains("client-only")
             );
         }
@@ -1723,6 +1776,7 @@ pub(super) mod tests {
                 },
             )
             .unwrap_err()
+            .to_string()
             .contains("invalid mock session message")
         );
     }
@@ -1749,6 +1803,7 @@ pub(super) mod tests {
             handle
                 .install_ranked_session_setup(None)
                 .unwrap_err()
+                .to_string()
                 .contains("more than once")
         );
         assert!(rx.try_recv().is_err());
@@ -1764,12 +1819,14 @@ pub(super) mod tests {
             handle
                 .install_ranked_session_setup(None)
                 .unwrap_err()
+                .to_string()
                 .contains("no longer running")
         );
         assert!(
             handle
                 .install_ranked_session_setup(None)
                 .unwrap_err()
+                .to_string()
                 .contains("more than once")
         );
     }

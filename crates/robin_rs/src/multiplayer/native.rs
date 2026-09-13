@@ -35,11 +35,11 @@ use super::identity::{
 use super::ranked_client::ranked_lifecycle_lock;
 use super::{
     FrameCursor, INPUT_DELAY_FRAMES, InboundFramePolicy, InitialSnapshot,
-    MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION, MultiplayerSessionId, NET_PROTOCOL_VERSION,
-    NetEvent, NetMsg, NetOutbound, RankedBrowseOnlyReason, RankedJoinAccepted,
-    RankedJoinAttestationDocument, RankedJoinChallenge, RankedJoinClaimDocument,
-    RankedJoinResponse, RankedParticipantRosterDocument, RankedSessionGenesisDocument,
-    SharedClientRankedJoinState, verify_leaderboard_cosign_response,
+    MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION, MultiplayerError, MultiplayerSessionId,
+    NET_PROTOCOL_VERSION, NetEvent, NetMsg, NetOutbound, RankedBrowseOnlyReason,
+    RankedJoinAccepted, RankedJoinAttestationDocument, RankedJoinChallenge,
+    RankedJoinClaimDocument, RankedJoinResponse, RankedParticipantRosterDocument,
+    RankedSessionGenesisDocument, SharedClientRankedJoinState, verify_leaderboard_cosign_response,
 };
 use crate::distributed_mod::{
     DistributedModPackage, ValidatedDistributedMod, make_distributed_mod_offer,
@@ -59,7 +59,7 @@ use super::clock::checked_epoch_ms;
 use super::clock::try_current_epoch_ms;
 use parking_lot::Mutex;
 use robin_engine::multiplayer::{
-    BrowserPeerAuth, LeaderboardCoSignResponse, browser_seat_proof_message,
+    BrowserPeerAuth, LeaderboardCoSignResponse, NetFatal, browser_seat_proof_message,
 };
 use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use robin_run_protocol::{
@@ -97,9 +97,12 @@ pub struct HostedModContent {
 }
 
 impl HostedModContent {
-    pub fn from_encoded(encoded: Vec<u8>) -> Result<Self, String> {
-        let validated = DistributedModPackage::decode(&encoded)
-            .map_err(|error| format!("validate hosted distributed mod: {error}"))?;
+    pub fn from_encoded(encoded: Vec<u8>) -> Result<Self, MultiplayerError> {
+        let validated = DistributedModPackage::decode(&encoded).map_err(|error| {
+            MultiplayerError::ContentMismatch(
+                format!("validate hosted distributed mod: {error}").into(),
+            )
+        })?;
         Ok(Self {
             validated,
             encoded: Arc::from(encoded),
@@ -109,9 +112,13 @@ impl HostedModContent {
     fn offer(
         &self,
         host_endpoint_id: String,
-    ) -> Result<robin_engine::multiplayer::DistributedModOffer, String> {
+    ) -> Result<robin_engine::multiplayer::DistributedModOffer, MultiplayerError> {
         make_distributed_mod_offer(&self.validated, self.encoded.len() as u64, host_endpoint_id)
-            .map_err(|error| format!("build distributed-mod offer: {error}"))
+            .map_err(|error| {
+                MultiplayerError::ContentMismatch(
+                    format!("build distributed-mod offer: {error}").into(),
+                )
+            })
     }
 }
 
@@ -167,8 +174,8 @@ impl MultiplayerCampaignSession {
             .expect("decoded campaign has no live multiplayer authority")
     }
 
-    pub(crate) fn discard_host_continuation(&self) -> Result<(), String> {
-        let _lease = self.reserve_server().map_err(|error| error.to_string())?;
+    pub(crate) fn discard_host_continuation(&self) -> Result<(), MultiplayerError> {
+        let _lease = self.reserve_server()?;
         *self.state().continuation.lock() = None;
         Ok(())
     }
@@ -222,19 +229,21 @@ fn pending_host_session_continuation(
     state: &CampaignTransportState,
     host_endpoint_id: EndpointId,
     expected_players: u32,
-) -> Result<Option<HostSessionContinuation>, String> {
+) -> Result<Option<HostSessionContinuation>, MultiplayerError> {
     let slot = state.continuation.lock();
     let Some(continuation) = slot.as_ref() else {
         return Ok(None);
     };
     if continuation.host_endpoint_id != host_endpoint_id {
-        return Err("pending multiplayer continuation belongs to another host identity".into());
+        return Err(MultiplayerError::LocalState(
+            "pending multiplayer continuation belongs to another host identity".into(),
+        ));
     }
     if continuation.expected_players != expected_players {
-        return Err(format!(
+        return Err(MultiplayerError::LocalState(format!(
             "continued multiplayer session expects {} players, replacement requested {expected_players}",
             continuation.expected_players
-        ));
+        ).into()));
     }
     Ok(slot.clone())
 }
@@ -246,22 +255,22 @@ async fn read_frame_bounded_with_timeout(
     recv: &mut RecvStream,
     policy: InboundFramePolicy,
     timeout: Duration,
-    phase: &str,
-) -> Result<Option<NetMsg>, String> {
+    phase: &'static str,
+) -> Result<Option<NetMsg>, MultiplayerError> {
     tokio::time::timeout(timeout, read_frame(recv, policy))
         .await
-        .map_err(|_| format!("{phase} timed out after {timeout:?}"))?
+        .map_err(|_| MultiplayerError::timeout(phase, timeout))?
 }
 
 async fn write_frame_with_timeout(
     send: &mut SendStream,
     msg: &NetMsg,
     timeout: Duration,
-    phase: &str,
-) -> Result<(), String> {
+    phase: &'static str,
+) -> Result<(), MultiplayerError> {
     tokio::time::timeout(timeout, write_frame(send, msg))
         .await
-        .map_err(|_| format!("{phase} timed out after {timeout:?}"))?
+        .map_err(|_| MultiplayerError::timeout(phase, timeout))?
 }
 
 /// Bridge a std mpsc receiver (game loop side) onto a tokio unbounded

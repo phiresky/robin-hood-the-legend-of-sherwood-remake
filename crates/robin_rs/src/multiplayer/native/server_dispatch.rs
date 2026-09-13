@@ -38,12 +38,14 @@ fn queue_peer_message(
     sender: &UnboundedSender<NetMsg>,
     message: NetMsg,
     delivery: Delivery,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     if sender.send(message).is_ok() {
         return Ok(());
     }
     match delivery {
-        Delivery::Required => Err("authoritative multiplayer writer queue is closed".into()),
+        Delivery::Required => Err(MultiplayerError::ChannelClosed(
+            "authoritative multiplayer writer queue is closed".into(),
+        )),
         Delivery::ReconnectRecoverable => {
             // The writer is owned by drive_server_peer_io, which races it
             // against the reader and releases this generation even if the
@@ -90,7 +92,7 @@ pub(super) fn queue_cached_begin(
 pub(super) async fn run_server_outgoing_pump(
     context: Arc<ServerContext>,
     mut outgoing_async_rx: UnboundedReceiver<NetOutbound>,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     while let Some(msg) = outgoing_async_rx.recv().await {
         let _authority = context.session_dispatch.lock();
         validate_server_gameplay_outbound(&msg)?;
@@ -278,8 +280,10 @@ pub(super) async fn run_server_outgoing_pump(
                         OfficialRankedSessionWireSetupV1,
                     >(setup.as_bytes())
                 {
-                    let error =
-                        format!("host rejected invalid official ranked wire setup: {error}");
+                    let error = MultiplayerError::ranked_document(
+                        "host rejected invalid official ranked wire setup",
+                        error,
+                    );
                     tracing::error!(%error);
                     super::fail_server(&context, error);
                     continue;
@@ -296,8 +300,9 @@ pub(super) async fn run_server_outgoing_pump(
                     CampaignContinuationReceiptSelectionRequestV1,
                 >(request.as_bytes())
                 {
-                    let error = format!(
-                        "host rejected invalid continuation receipt selection request: {error}"
+                    let error = MultiplayerError::ranked_document(
+                        "host rejected invalid continuation receipt selection request",
+                        error,
                     );
                     tracing::error!(%error);
                     super::fail_server(&context, error);
@@ -312,7 +317,10 @@ pub(super) async fn run_server_outgoing_pump(
                 }
             }
             NetOutbound::RankedContinuationReceiptSelection(_) => {
-                let error = "multiplayer host attempted to send a client-only continuation receipt selection".to_string();
+                let error = MultiplayerError::LocalState(
+                    "multiplayer host attempted to send a client-only continuation receipt selection"
+                        .into(),
+                );
                 tracing::error!(%error);
                 super::fail_server(&context, error);
             }
@@ -323,8 +331,11 @@ pub(super) async fn run_server_outgoing_pump(
                 let claim_document = match decoded {
                     Ok(document) => document,
                     Err(error) => {
-                        let error = format!(
-                            "host rejected invalid continuation preflight claim for {to:?}: {error}"
+                        let error = MultiplayerError::ranked_document(
+                            format!(
+                                "host rejected invalid continuation preflight claim for {to:?}"
+                            ),
+                            error,
                         );
                         tracing::error!(%error);
                         super::fail_server(&context, error);
@@ -353,24 +364,27 @@ pub(super) async fn run_server_outgoing_pump(
                             .send(NetMsg::RankedContinuationPreflightClaim(claim))
                             .is_err()
                         {
-                            let error = format!(
+                            let error = MultiplayerError::ChannelClosed(format!(
                                 "continuation preflight controller {to:?} disconnected before claim delivery"
-                            );
+                            ).into());
                             tracing::error!(%error);
                             super::fail_server(&context, error);
                         }
                     }
                     None => {
-                        let error = format!(
+                        let error = MultiplayerError::Ranked(format!(
                             "continuation preflight target {to:?} is not the authenticated controller"
-                        );
+                        ).into());
                         tracing::error!(%error);
                         super::fail_server(&context, error);
                     }
                 }
             }
             NetOutbound::RankedContinuationPreflightSignature(_) => {
-                let error = "multiplayer host attempted to send a client-only continuation preflight signature".to_string();
+                let error = MultiplayerError::LocalState(
+                    "multiplayer host attempted to send a client-only continuation preflight signature"
+                        .into(),
+                );
                 tracing::error!(%error);
                 super::fail_server(&context, error);
             }
@@ -486,9 +500,9 @@ pub(super) async fn run_server_outgoing_pump(
                             .send(NetMsg::LeaderboardCoSignRequest(request))
                             .is_err()
                         {
-                            let error = format!(
+                            let error = MultiplayerError::ChannelClosed(format!(
                                 "authenticated leaderboard co-sign target {to:?} closed before request delivery"
-                            );
+                            ).into());
                             tracing::error!(%error);
                             super::fail_server(&context, error);
                         }
@@ -500,16 +514,18 @@ pub(super) async fn run_server_outgoing_pump(
                 }
             }
             NetOutbound::ArmLeaderboardCoSignRequest { .. } => {
-                let error =
+                let error = MultiplayerError::LocalState(
                     "multiplayer host attempted to arm a client-only leaderboard co-sign request"
-                        .to_string();
+                        .into(),
+                );
                 tracing::error!(%error);
                 super::fail_server(&context, error);
             }
             NetOutbound::LeaderboardCoSignResponse(_) => {
-                let error =
+                let error = MultiplayerError::LocalState(
                     "multiplayer host attempted to send a client-only leaderboard co-sign response"
-                        .to_string();
+                        .into(),
+                );
                 tracing::error!(%error);
                 super::fail_server(&context, error);
             }
@@ -525,7 +541,9 @@ pub(super) async fn run_server_outgoing_pump(
     Ok(())
 }
 
-pub(super) fn validate_server_gameplay_outbound(outgoing: &NetOutbound) -> Result<(), String> {
+pub(super) fn validate_server_gameplay_outbound(
+    outgoing: &NetOutbound,
+) -> Result<(), MultiplayerError> {
     match outgoing {
         NetOutbound::Input { .. }
         | NetOutbound::StateHash { .. }
@@ -556,9 +574,9 @@ pub(super) fn validate_server_gameplay_outbound(outgoing: &NetOutbound) -> Resul
         | NetOutbound::ArmRankedJoin { .. }
         | NetOutbound::RankedJoinResponse(_)
         | NetOutbound::ArmLeaderboardCoSignRequest { .. }
-        | NetOutbound::LeaderboardCoSignResponse(_) => {
-            Err("multiplayer host queued a client-only output".to_owned())
-        }
+        | NetOutbound::LeaderboardCoSignResponse(_) => Err(MultiplayerError::LocalState(
+            "multiplayer host queued a client-only output".into(),
+        )),
     }
 }
 
@@ -605,7 +623,7 @@ fn broadcast_with_delivery(
     context: &ServerContext,
     msg: NetMsg,
     delivery: Delivery,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     assert_eq!(
         Delivery::for_message(&msg),
         delivery,
@@ -627,7 +645,10 @@ fn broadcast_with_delivery(
 
 /// Queue an authoritative message for every currently connected peer. A
 /// closed writer queue is a fatal session split, not a best-effort diagnostic.
-pub(super) fn broadcast_msg_required(context: &ServerContext, msg: NetMsg) -> Result<(), String> {
+pub(super) fn broadcast_msg_required(
+    context: &ServerContext,
+    msg: NetMsg,
+) -> Result<(), MultiplayerError> {
     assert_eq!(
         Delivery::for_message(&msg),
         Delivery::Required,
@@ -643,7 +664,9 @@ pub(super) fn broadcast_msg_required(context: &ServerContext, msg: NetMsg) -> Re
     };
     for (seat, sender) in to_send {
         queue_peer_message(&sender, msg.clone(), Delivery::Required).map_err(|_| {
-            format!("authoritative multiplayer send queue for seat {seat} is closed")
+            MultiplayerError::ChannelClosed(
+                format!("authoritative multiplayer send queue for seat {seat} is closed").into(),
+            )
         })?;
     }
     Ok(())

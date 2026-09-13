@@ -504,15 +504,19 @@ thread_local! {
 pub fn set_pending_browser_join(code: String, redeemed: bool) -> Result<(), String> {
     // Authenticate immediately, before the shell can use ticket-selected
     // mission or relay fields. Time is rechecked when the run starts.
-    let ticket = crate::multiplayer::join_ticket::BrowserJoinTicket::decode_authenticated(&code)?;
-    ticket.validate_use_at(
-        current_epoch_seconds()?,
-        if redeemed {
-            crate::multiplayer::join_ticket::InvitationUse::RedeemedReconnect
-        } else {
-            crate::multiplayer::join_ticket::InvitationUse::Initial
-        },
-    )?;
+    // The JS shell receives the rejection as text.
+    let ticket = crate::multiplayer::join_ticket::BrowserJoinTicket::decode_authenticated(&code)
+        .map_err(|error| error.to_string())?;
+    ticket
+        .validate_use_at(
+            current_epoch_seconds()?,
+            if redeemed {
+                crate::multiplayer::join_ticket::InvitationUse::RedeemedReconnect
+            } else {
+                crate::multiplayer::join_ticket::InvitationUse::Initial
+            },
+        )
+        .map_err(|error| error.to_string())?;
     PENDING_BROWSER_JOIN.with(|pending| {
         let mut pending = pending.borrow_mut();
         if pending.is_some() {
@@ -548,15 +552,18 @@ pub(super) fn resolve_join_ticket(args: &mut MissionLaunch) -> Result<(), String
     if args.server || args.connect.is_some() || args.mission.is_some() {
         return Err("--join cannot be combined with --server, --connect, or --mission".to_string());
     }
-    let ticket = crate::multiplayer::join_ticket::BrowserJoinTicket::decode_authenticated(code)?;
-    ticket.validate_use_at(
-        current_epoch_seconds()?,
-        if args.browser_join_redeemed {
-            crate::multiplayer::join_ticket::InvitationUse::RedeemedReconnect
-        } else {
-            crate::multiplayer::join_ticket::InvitationUse::Initial
-        },
-    )?;
+    let ticket = crate::multiplayer::join_ticket::BrowserJoinTicket::decode_authenticated(code)
+        .map_err(|error| error.to_string())?;
+    ticket
+        .validate_use_at(
+            current_epoch_seconds()?,
+            if args.browser_join_redeemed {
+                crate::multiplayer::join_ticket::InvitationUse::RedeemedReconnect
+            } else {
+                crate::multiplayer::join_ticket::InvitationUse::Initial
+            },
+        )
+        .map_err(|error| error.to_string())?;
     apply_authenticated_join_route(args, &ticket, cfg!(target_arch = "wasm32"))
 }
 
@@ -578,7 +585,8 @@ fn apply_authenticated_join_route(
         return Ok(());
     }
 
-    let connect = serde_json::to_string(&ticket.endpoint_addr()?)
+    let endpoint_addr = ticket.endpoint_addr().map_err(|error| error.to_string())?;
+    let connect = serde_json::to_string(&endpoint_addr)
         .expect("validated iroh EndpointAddr serialization cannot fail");
     args.connect = Some(connect);
     args.mission = Some(ticket.payload().mission_id.clone());

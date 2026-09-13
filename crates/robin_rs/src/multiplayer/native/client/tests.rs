@@ -5,12 +5,12 @@ use super::{
     ClientRankedAdmission as _, ClientTransport, NativeClientTransport, NativeRankedAdmission,
 };
 use crate::leaderboard_ranked_session::RankedSessionLifecycle;
-use crate::multiplayer::SharedClientLeaderboardCoSignState;
 use crate::multiplayer::client_protocol::validate_reconnect_state;
 use crate::multiplayer::client_session::tests::{
     assert_premature_begin_sim_downgrades, assert_premature_cosign_request_downgrades, begin_sim,
     handle,
 };
+use crate::multiplayer::{MultiplayerError, SharedClientLeaderboardCoSignState};
 use robin_engine::multiplayer::{NetEvent, NetMsg, NetOutbound};
 use robin_engine::player_command::PlayerId;
 use robin_run_protocol::LeaderboardCoSignPurposeV1;
@@ -37,11 +37,11 @@ fn handle_native(
     incoming_tx: &Sender<NetEvent>,
     cosign_state: &SharedClientLeaderboardCoSignState,
     message: NetMsg,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     handle(&admission(), incoming_tx, cosign_state, message)
 }
 
-fn client_gameplay_wire_msg(outgoing: NetOutbound) -> Result<NetMsg, String> {
+fn client_gameplay_wire_msg(outgoing: NetOutbound) -> Result<NetMsg, MultiplayerError> {
     let (incoming, _receiver) = std::sync::mpsc::channel();
     crate::multiplayer::client_outgoing::prepare(
         outgoing,
@@ -51,9 +51,8 @@ fn client_gameplay_wire_msg(outgoing: NetOutbound) -> Result<NetMsg, String> {
             co_sign_allowed: false,
             durable_public_key: None,
         },
-    )
-    .map_err(|error| error.to_string())?
-    .ok_or_else(|| "outgoing publication has no wire frame".to_owned())
+    )?
+    .ok_or_else(|| MultiplayerError::LocalState("outgoing publication has no wire frame".into()))
 }
 
 #[test]
@@ -74,6 +73,7 @@ fn begin_sim_requires_a_live_local_receiver() {
     assert!(
         handle_native(&tx, &state, begin_sim())
             .unwrap_err()
+            .to_string()
             .contains("channel is closed")
     );
 }
@@ -108,6 +108,7 @@ fn native_gameplay_rejects_late_content_and_opening_messages() {
             NetMsg::ContentOffer { offer: offer() },
         )
         .unwrap_err()
+        .to_string()
         .contains("invalid native session message")
     );
     assert!(
@@ -132,6 +133,7 @@ fn native_gameplay_rejects_late_content_and_opening_messages() {
             },
         )
         .unwrap_err()
+        .to_string()
         .contains("session revoked")
     );
     assert!(
@@ -149,6 +151,7 @@ fn native_gameplay_rejects_late_content_and_opening_messages() {
             },
         )
         .unwrap_err()
+        .to_string()
         .contains("invalid native session message")
     );
     assert!(handle_native(&incoming_tx, &cosign_state, NetMsg::Note("legal".into())).is_ok());
@@ -168,6 +171,7 @@ fn native_gameplay_rejects_host_only_and_late_content_outbound() {
             ms_until_next_frame: Some(4),
         })
         .unwrap_err()
+        .to_string()
         .contains("host-only")
     );
     assert!(
@@ -175,6 +179,7 @@ fn native_gameplay_rejects_host_only_and_late_content_outbound() {
             full_mod_sha256: [1; 32],
         })
         .unwrap_err()
+        .to_string()
         .contains("after gameplay began")
     );
     assert!(matches!(
@@ -208,6 +213,7 @@ fn client_wire_handler_never_exposes_unarmed_or_wrong_direction_cosign() {
             NetMsg::LeaderboardCoSignResponse(response),
         )
         .unwrap_err()
+        .to_string()
         .contains("client-only")
     );
 }
@@ -334,8 +340,9 @@ fn host_reconnect_directive_ends_the_complete_client_session() {
         },
     )
     .expect_err("directive must unwind the session into the reconnect loop");
-    assert!(error.contains("full-snapshot reconnect"));
-    assert!(error.contains("rollback horizon"));
+    assert!(matches!(error, MultiplayerError::ReconnectRequired { .. }));
+    assert!(error.to_string().contains("full-snapshot reconnect"));
+    assert!(error.to_string().contains("rollback horizon"));
 }
 
 #[test]

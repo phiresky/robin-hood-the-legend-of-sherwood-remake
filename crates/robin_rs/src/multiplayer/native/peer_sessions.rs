@@ -3,8 +3,8 @@
 //! A writer may detach while its generation still owns the seat. Only a
 //! matching owner/generation may release that seat into a reconnect reservation.
 use super::{
-    HostSessionContinuation, InactivePeerSession, NetMsg, PeerDispatchFailure, PeerOwner, PlayerId,
-    RankedPeerIdentity, SeatClaim, SeatClaimKind,
+    HostSessionContinuation, InactivePeerSession, MultiplayerError, NetMsg, PeerDispatchFailure,
+    PeerOwner, PlayerId, RankedPeerIdentity, SeatClaim, SeatClaimKind,
 };
 use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc::UnboundedSender;
@@ -176,9 +176,9 @@ impl PeerSessions {
         seat: u8,
         generation: u64,
         frame: u32,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         self.authorize_session(PlayerId(seat), generation)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| MultiplayerError::PeerSession(std::sync::Arc::new(error)))?;
         let session = self
             .seats
             .get_mut(&seat)
@@ -250,13 +250,13 @@ impl PeerSessions {
         nickname: &str,
         ranked_identity: RankedPeerIdentity,
         sender: UnboundedSender<NetMsg>,
-    ) -> Result<SeatClaim, String> {
+    ) -> Result<SeatClaim, MultiplayerError> {
         // Prepare all fallible counters before consuming a retained reservation
         // or advancing allocation. Failed claims must leave ownership intact.
         let generation = self.next_session_generation;
-        let next_generation = generation
-            .checked_add(1)
-            .ok_or_else(|| "multiplayer session generation overflow".to_string())?;
+        let next_generation = generation.checked_add(1).ok_or_else(|| {
+            MultiplayerError::LocalState("multiplayer session generation overflow".into())
+        })?;
         let (seat, kind) = if let Some(active) = self
             .seats
             .iter()
@@ -275,15 +275,18 @@ impl PeerSessions {
             (disconnected, SeatClaimKind::Reconnect)
         } else {
             if self.next_seat as u32 >= self.expected_players {
-                return Err(format!(
-                    "multiplayer session already has its configured {} players",
-                    self.expected_players
+                return Err(MultiplayerError::Handshake(
+                    format!(
+                        "multiplayer session already has its configured {} players",
+                        self.expected_players
+                    )
+                    .into(),
                 ));
             }
             let next = self.next_seat;
             self.next_seat = next
                 .checked_add(1)
-                .ok_or_else(|| "multiplayer seat overflow".to_string())?;
+                .ok_or_else(|| MultiplayerError::LocalState("multiplayer seat overflow".into()))?;
             (next, SeatClaimKind::Fresh)
         };
         self.next_session_generation = next_generation;
@@ -629,6 +632,7 @@ mod tests {
                 .sessions
                 .record_ready(1, 1, 10)
                 .unwrap_err()
+                .to_string()
                 .contains("has no active authenticated session")
         );
         let (sender, _receiver) = unbounded_channel();
@@ -645,6 +649,7 @@ mod tests {
                 .sessions
                 .record_ready(1, 1, 30)
                 .unwrap_err()
+                .to_string()
                 .contains("has no active authenticated session")
         );
         assert!(peers.sessions.seats.is_empty());
@@ -679,6 +684,7 @@ mod tests {
                         .sessions
                         .claim_seat(candidate, "failed", ranked_identity(8), sender)
                         .unwrap_err()
+                        .to_string()
                         .contains("generation overflow")
                 );
                 assert_eq!(peers.sessions.owner_seats(), owners);

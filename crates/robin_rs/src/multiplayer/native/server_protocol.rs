@@ -3,8 +3,8 @@
 
 use super::{
     LeaderboardCoSignInstanceV1, LeaderboardCoSignRequestV1, LeaderboardCoSignResponse,
-    MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION, PendingRankedAdmission, PlayerId,
-    verify_leaderboard_cosign_response,
+    MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION, MultiplayerError, PendingRankedAdmission,
+    PlayerId, verify_leaderboard_cosign_response,
 };
 use robin_engine::multiplayer::{SnapshotTransitionId, SnapshotTransitionPayload};
 use serde::{Deserialize, Serialize};
@@ -85,21 +85,23 @@ impl SnapshotTransitions {
         &mut self,
         seat: PlayerId,
         id: SnapshotTransitionId,
-    ) -> Result<(), String> {
-        let transition = self
-            .pending
-            .as_mut()
-            .ok_or_else(|| format!("peer {seat:?} acknowledged no active snapshot transition"))?;
+    ) -> Result<(), MultiplayerError> {
+        let remote = |message: String| MultiplayerError::RemoteProtocol(message.into());
+        let transition = self.pending.as_mut().ok_or_else(|| {
+            remote(format!(
+                "peer {seat:?} acknowledged no active snapshot transition"
+            ))
+        })?;
         if transition.id != id {
-            return Err(format!(
+            return Err(remote(format!(
                 "peer {seat:?} acknowledged snapshot transition {id:?}, active is {:?}",
                 transition.id
-            ));
+            )));
         }
         if !transition.awaiting.remove(&seat.0) {
-            return Err(format!(
+            return Err(remote(format!(
                 "peer {seat:?} duplicated or was not expected for snapshot transition {id:?}"
-            ));
+            )));
         }
         Ok(())
     }
@@ -136,23 +138,29 @@ impl CoSignTracker {
         &mut self,
         target: PlayerId,
         request: LeaderboardCoSignRequestV1,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         if target == PlayerId::HOST {
-            return Err("leaderboard co-sign requests to the host must be signed locally".into());
+            return Err(MultiplayerError::Ranked(
+                "leaderboard co-sign requests to the host must be signed locally".into(),
+            ));
         }
-        request
-            .signing_bytes()
-            .map_err(|error| format!("invalid leaderboard co-sign request: {error}"))?;
+        request.signing_bytes().map_err(|error| {
+            MultiplayerError::ranked_document("invalid leaderboard co-sign request", error)
+        })?;
         if self.seen.len() >= MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION {
-            return Err(format!(
-                "leaderboard co-sign request history exceeds the per-session limit of {}",
-                MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION
+            return Err(MultiplayerError::LocalState(
+                format!(
+                    "leaderboard co-sign request history exceeds the per-session limit of {}",
+                    MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION
+                )
+                .into(),
             ));
         }
         let key = (request.instance, target.0);
         if self.seen.contains(&key) {
-            return Err(format!(
-                "duplicate leaderboard co-sign request instance for target {target:?}"
+            return Err(MultiplayerError::Ranked(
+                format!("duplicate leaderboard co-sign request instance for target {target:?}")
+                    .into(),
             ));
         }
         self.seen.push(key);
@@ -168,19 +176,22 @@ impl CoSignTracker {
         from: PlayerId,
         expected_signer: Option<[u8; 32]>,
         response: &LeaderboardCoSignResponse,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         let position = self.pending.iter().position(|pending| {
             pending.target_seat == from.0 && pending.request.instance == response.instance
-        }).ok_or_else(|| format!("peer {from:?} submitted a duplicate, wrong-target, or wrong-session leaderboard co-sign response"))?;
+        }).ok_or_else(|| MultiplayerError::RemoteProtocol(format!("peer {from:?} submitted a duplicate, wrong-target, or wrong-session leaderboard co-sign response").into()))?;
         let expected_signer = expected_signer.ok_or_else(|| {
-            format!(
-                "peer {from:?} has no admitted durable ranked identity for leaderboard co-signing"
+            MultiplayerError::Identity(
+                format!(
+                    "peer {from:?} has no admitted durable ranked identity for leaderboard co-signing"
+                )
+                .into(),
             )
         })?;
         if response.signer_public_key != expected_signer {
-            return Err(format!(
+            return Err(MultiplayerError::Identity(format!(
                 "peer {from:?} signed a leaderboard request with a key other than its admitted durable identity"
-            ));
+            ).into()));
         }
         verify_leaderboard_cosign_response(&self.pending[position].request, response)?;
         self.pending.remove(position);

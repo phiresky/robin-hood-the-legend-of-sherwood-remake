@@ -1491,7 +1491,9 @@ mod tests {
     fn fatal_transport_event_fails_the_mission_drain_loudly() {
         let (mut host, mut manager, mut assets, incoming, _outgoing) = network_drain_fixture();
         incoming
-            .send(NetEvent::Fatal("test transport failure".into()))
+            .send(NetEvent::Fatal(robin_engine::multiplayer::NetFatal::new(
+                crate::multiplayer::MultiplayerError::LocalState("test transport failure".into()),
+            )))
             .expect("queue fatal event");
         let mut rewind = RewindBuffer::new();
         let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();

@@ -42,7 +42,9 @@ pub(super) async fn establish(
         #[cfg(not(target_arch = "wasm32"))]
         {
             if !args.mp_continue_session {
-                campaign.discard_host_continuation()?;
+                campaign
+                    .discard_host_continuation()
+                    .map_err(|error| error.to_string())?;
             }
             let publish_browser_links = resolve_browser_join_publication(args)?;
             let speech_timing_locale = host

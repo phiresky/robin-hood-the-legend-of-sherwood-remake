@@ -10,7 +10,11 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use iroh::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, Signature, TransportAddr};
 use serde::{Deserialize, Serialize};
 
-use super::{MAX_MULTIPLAYER_PLAYERS, NET_PROTOCOL_VERSION};
+use super::{MAX_MULTIPLAYER_PLAYERS, MessageError, MultiplayerError, NET_PROTOCOL_VERSION};
+
+fn invitation(message: impl Into<std::borrow::Cow<'static, str>>) -> MultiplayerError {
+    MultiplayerError::Invitation(message.into())
+}
 
 pub use crate::runtime_contract::{JOIN_CODE_PREFIX, JOIN_TICKET_SCHEMA};
 pub const IROH_RELAY_TRANSPORT: &str = "iroh-relay-websocket";
@@ -75,21 +79,24 @@ impl BrowserJoinTicket {
         mission_id: String,
         mission_profile_id: Option<u32>,
         expected_players: u32,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, MultiplayerError> {
         if endpoint_addr.id != host_key.public() {
-            return Err("browser join ticket host key does not own the advertised endpoint".into());
+            return Err(invitation(
+                "browser join ticket host key does not own the advertised endpoint",
+            ));
         }
         let relay_url = endpoint_addr
             .relay_urls()
             .next()
             .ok_or_else(|| {
-                "browser join ticket requires an iroh relay route; the host is not relay-online"
-                    .to_string()
+                invitation(
+                    "browser join ticket requires an iroh relay route; the host is not relay-online",
+                )
             })?
             .to_string();
         let expires_at_epoch_s = issued_at_epoch_s
             .checked_add(INVITATION_LIFETIME_SECS)
-            .ok_or_else(|| "browser invitation timestamp overflow".to_string())?;
+            .ok_or_else(|| invitation("browser invitation timestamp overflow"))?;
         let payload = BrowserJoinTicketPayload {
             schema: JOIN_TICKET_SCHEMA,
             transport: IROH_RELAY_TRANSPORT.to_string(),
@@ -110,7 +117,10 @@ impl BrowserJoinTicket {
         Self::sign(host_key, payload)
     }
 
-    fn sign(host_key: &SecretKey, payload: BrowserJoinTicketPayload) -> Result<Self, String> {
+    fn sign(
+        host_key: &SecretKey,
+        payload: BrowserJoinTicketPayload,
+    ) -> Result<Self, MultiplayerError> {
         validate_static_payload(&payload)?;
         let canonical_payload = canonical_payload_bytes(&payload)?;
         let signature = host_key.sign(&signing_message(&canonical_payload));
@@ -131,52 +141,64 @@ impl BrowserJoinTicket {
 
     /// Decode and authenticate all non-temporal ticket fields. Call
     /// [`Self::validate_use_at`] before using its mission or relay.
-    pub fn decode_authenticated(encoded: &str) -> Result<Self, String> {
+    pub fn decode_authenticated(encoded: &str) -> Result<Self, MultiplayerError> {
         let encoded = encoded.trim();
         if encoded.len() > MAX_JOIN_CODE_BYTES {
-            return Err(format!(
+            return Err(invitation(format!(
                 "browser join code exceeds the {MAX_JOIN_CODE_BYTES}-byte safety limit"
-            ));
+            )));
         }
-        let envelope = encoded
-            .strip_prefix(JOIN_CODE_PREFIX)
-            .ok_or_else(|| format!("browser join code must start with `{JOIN_CODE_PREFIX}`"))?;
+        let envelope = encoded.strip_prefix(JOIN_CODE_PREFIX).ok_or_else(|| {
+            invitation(format!(
+                "browser join code must start with `{JOIN_CODE_PREFIX}`"
+            ))
+        })?;
         let (payload_part, signature_part) = envelope
             .split_once('.')
-            .ok_or_else(|| "browser join code is missing its host signature".to_string())?;
+            .ok_or_else(|| invitation("browser join code is missing its host signature"))?;
         if payload_part.is_empty() || signature_part.is_empty() || signature_part.contains('.') {
-            return Err("browser join code has a malformed signed envelope".to_string());
+            return Err(invitation(
+                "browser join code has a malformed signed envelope",
+            ));
         }
-        let canonical_payload = URL_SAFE_NO_PAD
-            .decode(payload_part)
-            .map_err(|error| format!("decode browser join ticket payload: {error}"))?;
+        let canonical_payload = URL_SAFE_NO_PAD.decode(payload_part).map_err(|error| {
+            MultiplayerError::invitation_decode("decode browser join ticket payload", error)
+        })?;
         // Refuse alternate encodings of the signed bytes. This keeps one exact
         // artifact representation for shell parsing, tests, and sharing.
         if URL_SAFE_NO_PAD.encode(&canonical_payload) != payload_part {
-            return Err("browser join ticket payload is not canonical base64url".to_string());
+            return Err(invitation(
+                "browser join ticket payload is not canonical base64url",
+            ));
         }
-        let signature_bytes = URL_SAFE_NO_PAD
-            .decode(signature_part)
-            .map_err(|error| format!("decode browser join ticket signature: {error}"))?;
+        let signature_bytes = URL_SAFE_NO_PAD.decode(signature_part).map_err(|error| {
+            MultiplayerError::invitation_decode("decode browser join ticket signature", error)
+        })?;
         let signature_bytes: [u8; Signature::LENGTH] = signature_bytes
             .try_into()
-            .map_err(|_| "browser join ticket signature must be 64 bytes".to_string())?;
+            .map_err(|_| invitation("browser join ticket signature must be 64 bytes"))?;
         if URL_SAFE_NO_PAD.encode(signature_bytes) != signature_part {
-            return Err("browser join ticket signature is not canonical base64url".to_string());
+            return Err(invitation(
+                "browser join ticket signature is not canonical base64url",
+            ));
         }
         let payload: BrowserJoinTicketPayload = serde_json::from_slice(&canonical_payload)
-            .map_err(|error| format!("parse browser join ticket: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::invitation_decode("parse browser join ticket", error)
+            })?;
         validate_static_payload(&payload)?;
         if canonical_payload_bytes(&payload)? != canonical_payload {
-            return Err("browser join ticket JSON is not canonical".to_string());
+            return Err(invitation("browser join ticket JSON is not canonical"));
         }
         let host = payload
             .host_endpoint_id
             .parse::<PublicKey>()
-            .map_err(|error| format!("invalid host endpoint id: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::invalid_address("invalid host endpoint id", error)
+            })?;
         let signature = Signature::from_bytes(&signature_bytes);
         host.verify(&signing_message(&canonical_payload), &signature)
-            .map_err(|_| "browser join ticket host signature is invalid".to_string())?;
+            .map_err(|_| invitation("browser join ticket host signature is invalid"))?;
         Ok(Self {
             payload,
             canonical_payload,
@@ -184,18 +206,27 @@ impl BrowserJoinTicket {
         })
     }
 
-    pub fn decode_for_initial_use(encoded: &str, now_epoch_s: u64) -> Result<Self, String> {
+    pub fn decode_for_initial_use(
+        encoded: &str,
+        now_epoch_s: u64,
+    ) -> Result<Self, MultiplayerError> {
         let ticket = Self::decode_authenticated(encoded)?;
         ticket.validate_use_at(now_epoch_s, InvitationUse::Initial)?;
         Ok(ticket)
     }
 
-    pub fn validate_use_at(&self, now_epoch_s: u64, use_kind: InvitationUse) -> Result<(), String> {
+    pub fn validate_use_at(
+        &self,
+        now_epoch_s: u64,
+        use_kind: InvitationUse,
+    ) -> Result<(), MultiplayerError> {
         if self.payload.issued_at_epoch_s > now_epoch_s.saturating_add(MAX_CLOCK_SKEW_SECS) {
-            return Err("browser invitation was issued too far in the future".to_string());
+            return Err(invitation(
+                "browser invitation was issued too far in the future",
+            ));
         }
         if use_kind == InvitationUse::Initial && now_epoch_s >= self.payload.expires_at_epoch_s {
-            return Err("browser invitation expired before first use".to_string());
+            return Err(invitation("browser invitation expired before first use"));
         }
         Ok(())
     }
@@ -204,32 +235,35 @@ impl BrowserJoinTicket {
         &self.payload
     }
 
-    pub fn session_id(&self) -> Result<[u8; 32], String> {
+    pub fn session_id(&self) -> Result<[u8; 32], MultiplayerError> {
         decode_32("session id", &self.payload.session_id)
     }
 
-    pub fn endpoint_addr(&self) -> Result<EndpointAddr, String> {
+    pub fn endpoint_addr(&self) -> Result<EndpointAddr, MultiplayerError> {
         let endpoint_id = self
             .payload
             .host_endpoint_id
             .parse::<EndpointId>()
-            .map_err(|error| format!("invalid host endpoint id: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::invalid_address("invalid host endpoint id", error)
+            })?;
         let relay = self
             .payload
             .relay_url
             .parse::<RelayUrl>()
-            .map_err(|error| format!("invalid iroh relay URL: {error}"))?;
+            .map_err(|error| MultiplayerError::invalid_address("invalid iroh relay URL", error))?;
         Ok(EndpointAddr::from_parts(
             endpoint_id,
             [TransportAddr::Relay(relay)],
         ))
     }
 
-    pub fn share_url(&self, browser_base_url: &str) -> Result<String, String> {
-        let mut url = url::Url::parse(browser_base_url)
-            .map_err(|error| format!("invalid browser multiplayer base URL: {error}"))?;
+    pub fn share_url(&self, browser_base_url: &str) -> Result<String, MultiplayerError> {
+        let mut url = url::Url::parse(browser_base_url).map_err(|error| {
+            MultiplayerError::invalid_address("invalid browser multiplayer base URL", error)
+        })?;
         if url.scheme() != "https" {
-            return Err("browser multiplayer share URL must use HTTPS".to_string());
+            return Err(invitation("browser multiplayer share URL must use HTTPS"));
         }
         // Fragment data is not sent in HTTP requests or Referrer headers. The
         // stable shell captures it once and immediately replaces browser
@@ -246,65 +280,71 @@ fn signing_message(canonical_payload: &[u8]) -> Vec<u8> {
     message
 }
 
-fn canonical_payload_bytes(payload: &BrowserJoinTicketPayload) -> Result<Vec<u8>, String> {
-    serde_json::to_vec(payload).map_err(|error| format!("serialize browser join ticket: {error}"))
+fn canonical_payload_bytes(
+    payload: &BrowserJoinTicketPayload,
+) -> Result<Vec<u8>, MultiplayerError> {
+    serde_json::to_vec(payload).map_err(|error| {
+        MultiplayerError::invitation_decode("serialize browser join ticket", error)
+    })
 }
 
-fn decode_32(label: &str, encoded: &str) -> Result<[u8; 32], String> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(encoded)
-        .map_err(|error| format!("invalid browser join ticket {label}: {error}"))?;
+fn decode_32(label: &str, encoded: &str) -> Result<[u8; 32], MultiplayerError> {
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|error| {
+        MultiplayerError::invitation_decode(format!("invalid browser join ticket {label}"), error)
+    })?;
     let bytes: [u8; 32] = bytes
         .try_into()
-        .map_err(|_| format!("browser join ticket {label} must be 32 bytes"))?;
+        .map_err(|_| invitation(format!("browser join ticket {label} must be 32 bytes")))?;
     if URL_SAFE_NO_PAD.encode(bytes) != encoded {
-        return Err(format!(
+        return Err(invitation(format!(
             "browser join ticket {label} is not canonical base64url"
-        ));
+        )));
     }
     Ok(bytes)
 }
 
-fn validate_static_payload(payload: &BrowserJoinTicketPayload) -> Result<(), String> {
+fn validate_static_payload(payload: &BrowserJoinTicketPayload) -> Result<(), MultiplayerError> {
     if payload.schema != JOIN_TICKET_SCHEMA {
-        return Err(format!(
+        return Err(invitation(format!(
             "join-code schema mismatch: host uses {}, this game supports {JOIN_TICKET_SCHEMA}",
             payload.schema
-        ));
+        )));
     }
     if payload.transport != IROH_RELAY_TRANSPORT {
-        return Err(format!(
+        return Err(invitation(format!(
             "unsupported browser transport `{}`; expected `{IROH_RELAY_TRANSPORT}`",
             payload.transport
-        ));
+        )));
     }
     if payload.net_protocol != NET_PROTOCOL_VERSION {
-        return Err(format!(
+        return Err(invitation(format!(
             "multiplayer protocol mismatch: host uses {}, this game uses {NET_PROTOCOL_VERSION}",
             payload.net_protocol
-        ));
+        )));
     }
     if payload.engine_version != crate::replay_format::ENGINE_SOURCE_COMMIT {
-        return Err(format!(
+        return Err(invitation(format!(
             "multiplayer build mismatch: host uses `{}`, this game uses `{}`",
             payload.engine_version,
             crate::replay_format::ENGINE_SOURCE_COMMIT
-        ));
+        )));
     }
     let endpoint = payload
         .host_endpoint_id
         .parse::<EndpointId>()
-        .map_err(|error| format!("invalid host endpoint id: {error}"))?;
+        .map_err(|error| MultiplayerError::invalid_address("invalid host endpoint id", error))?;
     if endpoint.to_string() != payload.host_endpoint_id {
-        return Err("host endpoint id is not canonical".to_string());
+        return Err(invitation("host endpoint id is not canonical"));
     }
     if decode_32("host public key", &payload.host_public_key)? != *endpoint.as_bytes() {
-        return Err("host public key does not match the iroh endpoint id".to_string());
+        return Err(invitation(
+            "host public key does not match the iroh endpoint id",
+        ));
     }
     let relay = payload
         .relay_url
         .parse::<RelayUrl>()
-        .map_err(|error| format!("invalid iroh relay URL: {error}"))?;
+        .map_err(|error| MultiplayerError::invalid_address("invalid iroh relay URL", error))?;
     if relay.scheme() != "https"
         || relay.host_str().is_none()
         || !relay.username().is_empty()
@@ -313,34 +353,40 @@ fn validate_static_payload(payload: &BrowserJoinTicketPayload) -> Result<(), Str
         || relay.fragment().is_some()
         || relay.to_string() != payload.relay_url
     {
-        return Err(
-            "iroh relay URL must be canonical HTTPS without credentials, query, or fragment"
-                .to_string(),
-        );
+        return Err(invitation(
+            "iroh relay URL must be canonical HTTPS without credentials, query, or fragment",
+        ));
     }
     if decode_32("session id", &payload.session_id)? == [0; 32] {
-        return Err("browser join ticket session id must be non-zero".to_string());
+        return Err(invitation(
+            "browser join ticket session id must be non-zero",
+        ));
     }
     if payload
         .expires_at_epoch_s
         .checked_sub(payload.issued_at_epoch_s)
         != Some(INVITATION_LIFETIME_SECS)
     {
-        return Err(format!(
+        return Err(invitation(format!(
             "browser invitation lifetime must be exactly {INVITATION_LIFETIME_SECS} seconds"
-        ));
+        )));
     }
     super::content_identity::validate_sha256(
         &payload.content_identity_sha256,
         "browser content identity",
     )?;
-    robin_engine::multiplayer::validate_mission_id(&payload.mission_id)
-        .map_err(|error| format!("invalid browser mission id: {error}"))?;
+    // The engine's mission-id validation reports its reason as text.
+    robin_engine::multiplayer::validate_mission_id(&payload.mission_id).map_err(|error| {
+        MultiplayerError::invitation_decode(
+            "invalid browser mission id",
+            MessageError(error.to_string()),
+        )
+    })?;
     if !(1..=MAX_MULTIPLAYER_PLAYERS).contains(&payload.expected_players) {
-        return Err(format!(
+        return Err(invitation(format!(
             "browser join ticket player count must be between 1 and {}",
             MAX_MULTIPLAYER_PLAYERS
-        ));
+        )));
     }
     Ok(())
 }
@@ -415,6 +461,7 @@ mod tests {
             ticket
                 .validate_use_at(NOW + INVITATION_LIFETIME_SECS, InvitationUse::Initial)
                 .unwrap_err()
+                .to_string()
                 .contains("expired")
         );
         assert!(
@@ -434,6 +481,7 @@ mod tests {
             ticket
                 .validate_use_at(NOW - MAX_CLOCK_SKEW_SECS - 1, InvitationUse::Initial)
                 .unwrap_err()
+                .to_string()
                 .contains("future")
         );
     }
@@ -460,7 +508,7 @@ mod tests {
             2,
         )
         .unwrap_err();
-        assert!(error.contains("canonical HTTPS"));
+        assert!(error.to_string().contains("canonical HTTPS"));
     }
 
     #[test]

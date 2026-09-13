@@ -125,7 +125,7 @@ impl Drop for MultiplayerRuntime {
 pub(super) fn attached_ranked_port(
     runtime: Option<&MultiplayerRuntime>,
     channels: &EngineNetChannels,
-) -> Result<RankedMultiplayerPort, String> {
+) -> Result<RankedMultiplayerPort, MultiplayerError> {
     let (
         role,
         local_seat,
@@ -154,14 +154,15 @@ pub(super) fn attached_ranked_port(
             handle.ranked_local_public_key(),
         ),
         None => {
-            return Err(
-                "ranked multiplayer capability requires an attached authenticated runtime"
-                    .to_string(),
-            );
+            return Err(MultiplayerError::LocalState(
+                "ranked multiplayer capability requires an attached authenticated runtime".into(),
+            ));
         }
     };
     if (role == RankedMultiplayerRole::Host) != (local_seat == PlayerId::HOST) {
-        return Err("attached multiplayer runtime reported an invalid ranked seat role".into());
+        return Err(MultiplayerError::LocalState(
+            "attached multiplayer runtime reported an invalid ranked seat role".into(),
+        ));
     }
     Ok(RankedMultiplayerPort {
         role,
@@ -181,10 +182,12 @@ pub(super) fn attached_ranked_port(
 pub(super) fn install_attached_ranked_session_setup(
     runtime: Option<&MultiplayerRuntime>,
     setup: Option<OfficialRankedSessionSetupV1>,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     match runtime {
         Some(MultiplayerRuntime::Server(handle)) => handle.install_ranked_session_setup(setup),
         Some(MultiplayerRuntime::Client(handle)) => handle.install_ranked_session_setup(setup),
-        None => Err("ranked setup requires an attached authenticated runtime".to_string()),
+        None => Err(MultiplayerError::LocalState(
+            "ranked setup requires an attached authenticated runtime".into(),
+        )),
     }
 }

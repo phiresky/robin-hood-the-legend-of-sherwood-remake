@@ -68,12 +68,18 @@ fn dispatch_test_context() -> (super::ServerContext, Receiver<NetEvent>) {
 fn fatal_server_failure_cancels_and_notifies_once() {
     let (context, events) = dispatch_test_context();
     let shutdown = context.shutdown_tx.subscribe();
-    super::fail_server(&context, "first failure".into());
-    super::fail_server(&context, "later failure".into());
+    super::fail_server(
+        &context,
+        super::MultiplayerError::LocalState("first failure".into()),
+    );
+    super::fail_server(
+        &context,
+        super::MultiplayerError::LocalState("later failure".into()),
+    );
     assert!(context.cancellation.load(super::Ordering::Acquire));
     assert!(*shutdown.borrow());
     assert!(
-        matches!(events.try_recv(), Ok(NetEvent::Fatal(message)) if message == "first failure")
+        matches!(events.try_recv(), Ok(NetEvent::Fatal(message)) if message.to_string() == "first failure")
     );
     assert!(matches!(
         events.try_recv(),
@@ -619,7 +625,7 @@ async fn inactive_reader_bounds_a_stalled_terminal_writer() {
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let writer = async {
         started_tx.send(()).unwrap();
-        std::future::pending::<Result<(), String>>().await
+        std::future::pending::<Result<(), super::MultiplayerError>>().await
     };
     let reader = async {
         started_rx.await.unwrap();
@@ -628,7 +634,11 @@ async fn inactive_reader_bounds_a_stalled_terminal_writer() {
     let error = super::drive_server_peer_io(reader, writer, Duration::from_millis(10))
         .await
         .unwrap_err();
-    assert!(error.contains("timed out draining terminal frames"));
+    assert!(
+        error
+            .to_string()
+            .contains("timed out draining terminal frames")
+    );
 }
 
 #[tokio::test]
@@ -642,10 +652,12 @@ async fn independent_writer_failure_releases_generation_and_allows_snapshot_reco
         .sessions
         .claim_seat(owner, "peer", ranked_identity(1), sender.clone())
         .unwrap();
-    let reader = std::future::pending::<Result<super::PeerReaderExit, String>>();
+    let reader = std::future::pending::<Result<super::PeerReaderExit, super::MultiplayerError>>();
     let writer = async move {
         receiver.close();
-        Err("independent stream write failure".to_string())
+        Err(super::MultiplayerError::LocalState(
+            "independent stream write failure".into(),
+        ))
     };
     let result = tokio::time::timeout(
         Duration::from_secs(1),
@@ -656,6 +668,7 @@ async fn independent_writer_failure_releases_generation_and_allows_snapshot_reco
     assert!(
         result
             .unwrap_err()
+            .to_string()
             .contains("independent stream write failure")
     );
     assert!(sender.is_closed());
@@ -865,6 +878,7 @@ fn native_server_gameplay_rejects_wrong_direction_messages() {
             resume_offset: 0,
         })
         .unwrap_err()
+        .to_string()
         .contains("ordinary peer session")
     );
     assert!(
@@ -875,6 +889,7 @@ fn native_server_gameplay_rejects_wrong_direction_messages() {
             ms_until_next_frame: Some(4),
         })
         .unwrap_err()
+        .to_string()
         .contains("invalid server-session message")
     );
     assert!(
@@ -885,6 +900,7 @@ fn native_server_gameplay_rejects_wrong_direction_messages() {
             ranked_public_key: None,
         })
         .unwrap_err()
+        .to_string()
         .contains("invalid server-session message")
     );
 
@@ -902,6 +918,7 @@ fn native_server_gameplay_rejects_wrong_direction_messages() {
             full_mod_sha256: [1; 32],
         })
         .unwrap_err()
+        .to_string()
         .contains("client-only")
     );
 }
@@ -916,7 +933,7 @@ fn peer_inputs_reject_host_authoritative_commands_before_broadcast() {
         },
     )
     .expect_err("a peer must not author transport seat lifecycle");
-    assert!(error.contains("host-authoritative"));
+    assert!(error.to_string().contains("host-authoritative"));
 
     validate_peer_command_authority(
         PlayerId(2),
@@ -1099,6 +1116,7 @@ fn server_cosign_state_targets_one_authenticated_seat_and_rejects_duplicates() {
         peers
             .complete_leaderboard_cosign(PlayerId(2), &response)
             .unwrap_err()
+            .to_string()
             .contains("wrong-target")
     );
     peers
@@ -1108,12 +1126,14 @@ fn server_cosign_state_targets_one_authenticated_seat_and_rejects_duplicates() {
         peers
             .complete_leaderboard_cosign(PlayerId(1), &response)
             .unwrap_err()
+            .to_string()
             .contains("duplicate")
     );
     assert!(
         peers
             .begin_leaderboard_cosign(PlayerId(1), request)
             .unwrap_err()
+            .to_string()
             .contains("duplicate")
     );
 }
@@ -1150,6 +1170,7 @@ fn invalid_cosign_signature_does_not_consume_the_pending_request() {
         peers
             .complete_leaderboard_cosign(PlayerId(1), &invalid)
             .unwrap_err()
+            .to_string()
             .contains("other than its admitted durable identity")
     );
     assert_eq!(peers.cosigns.pending_count(), 1);

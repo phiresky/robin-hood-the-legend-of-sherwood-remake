@@ -41,8 +41,8 @@ fn admission_phase_caps_fit_max_valid_offer_and_chunk() {
 
 #[test]
 fn native_epoch_conversion_accepts_boundary_and_rejects_overflow() {
-    assert_eq!(checked_epoch_ms(0), Ok(0));
-    assert_eq!(checked_epoch_ms(u128::from(u64::MAX)), Ok(u64::MAX));
+    assert_eq!(checked_epoch_ms(0).ok(), Some(0));
+    assert_eq!(checked_epoch_ms(u128::from(u64::MAX)).ok(), Some(u64::MAX));
     assert!(checked_epoch_ms(u128::from(u64::MAX) + 1).is_err());
 }
 

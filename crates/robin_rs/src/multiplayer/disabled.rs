@@ -35,13 +35,17 @@ pub struct MultiplayerCampaignSession;
 pub(super) fn attached_ranked_port(
     _runtime: Option<&MultiplayerRuntime>,
     _channels: &EngineNetChannels,
-) -> Result<RankedMultiplayerPort, String> {
-    Err("ranked multiplayer capability is unavailable without the multiplayer feature".to_owned())
+) -> Result<RankedMultiplayerPort, MultiplayerError> {
+    Err(MultiplayerError::Unavailable(
+        "ranked multiplayer capability is unavailable without the multiplayer feature".into(),
+    ))
 }
 
 pub(super) fn install_attached_ranked_session_setup(
     _runtime: Option<&MultiplayerRuntime>,
     _setup: Option<OfficialRankedSessionSetupV1>,
-) -> Result<(), String> {
-    Err("ranked multiplayer setup is unavailable without the multiplayer feature".to_owned())
+) -> Result<(), MultiplayerError> {
+    Err(MultiplayerError::Unavailable(
+        "ranked multiplayer setup is unavailable without the multiplayer feature".into(),
+    ))
 }

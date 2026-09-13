@@ -10,8 +10,8 @@
 //! `client_session`, with ranked trust decisions behind its adapter traits.
 
 use super::{
-    InboundFramePolicy, MultiplayerSessionId, NetFrameClass, NetMsg, decode_msg, encode_msg,
-    net_frame_class,
+    FramingError, InboundFramePolicy, MultiplayerError, MultiplayerSessionId, NetFrameClass,
+    NetMsg, decode_msg, encode_msg, net_frame_class,
 };
 use robin_engine::{engine::SimConfig, multiplayer::DistributedModOffer, player_command::PlayerId};
 use serde::{Deserialize, Serialize};
@@ -300,17 +300,17 @@ mod tests {
     }
 }
 
-pub(super) fn encode_frame(message: &NetMsg) -> Result<([u8; 5], Vec<u8>), String> {
+pub(super) fn encode_frame(message: &NetMsg) -> Result<([u8; 5], Vec<u8>), FramingError> {
     let bytes = encode_msg(message);
     let class = net_frame_class(message);
     if bytes.len() > class.absolute_limit() {
-        return Err(format!(
-            "outbound {class:?} frame of {} bytes exceeds {}-byte limit",
-            bytes.len(),
-            class.absolute_limit()
-        ));
+        return Err(FramingError::OutboundTooLarge {
+            class,
+            len: bytes.len(),
+            limit: class.absolute_limit(),
+        });
     }
-    let len = u32::try_from(bytes.len()).map_err(|_| "outbound frame exceeds u32".to_string())?;
+    let len = u32::try_from(bytes.len()).map_err(|_| FramingError::OutboundExceedsU32)?;
     let mut header = [0; 5];
     header[0] = class as u8;
     header[1..].copy_from_slice(&len.to_le_bytes());
@@ -321,27 +321,30 @@ pub(super) fn encode_frame(message: &NetMsg) -> Result<([u8; 5], Vec<u8>), Strin
 pub(super) fn decode_header(
     header: [u8; 5],
     policy: InboundFramePolicy,
-) -> Result<(NetFrameClass, usize), String> {
+) -> Result<(NetFrameClass, usize), FramingError> {
     let class = NetFrameClass::from_byte(header[0])?;
     let len = u32::from_le_bytes(header[1..].try_into().expect("four-byte frame length")) as usize;
     let limit = policy
         .limit(class)
-        .ok_or_else(|| format!("{policy:?} may not send {class:?} frames"))?;
+        .ok_or(FramingError::ClassNotAllowed { policy, class })?;
     if len > limit {
-        return Err(format!(
-            "inbound {class:?} frame of {len} bytes exceeds {limit}-byte {policy:?} limit"
-        ));
+        return Err(FramingError::InboundTooLarge {
+            class,
+            len,
+            limit,
+            policy,
+        });
     }
     Ok((class, len))
 }
 
-pub(super) fn decode_body(class: NetFrameClass, bytes: &[u8]) -> Result<NetMsg, String> {
-    let message = decode_msg(bytes).map_err(|error| format!("decode frame: {error}"))?;
+pub(super) fn decode_body(class: NetFrameClass, bytes: &[u8]) -> Result<NetMsg, FramingError> {
+    let message = decode_msg(bytes).map_err(FramingError::Decode)?;
     if net_frame_class(&message) != class {
-        return Err(format!(
-            "declared {class:?} frame decoded as {:?}",
-            net_frame_class(&message)
-        ));
+        return Err(FramingError::ClassMismatch {
+            declared: class,
+            decoded: net_frame_class(&message),
+        });
     }
     Ok(message)
 }
@@ -384,13 +387,16 @@ impl ClientSessionMetadata {
     pub(super) fn from_welcome(
         welcome: &WelcomeData,
         admitted_content: Option<DistributedModOffer>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, MultiplayerError> {
         if let Some(content) = admitted_content.as_ref()
             && content.mission_basename != welcome.mission_id
         {
-            return Err(format!(
-                "Welcome mission `{}` differs from admitted content mission `{}`",
-                welcome.mission_id, content.mission_basename
+            return Err(MultiplayerError::ContentMismatch(
+                format!(
+                    "Welcome mission `{}` differs from admitted content mission `{}`",
+                    welcome.mission_id, content.mission_basename
+                )
+                .into(),
             ));
         }
         Ok(Self {
@@ -441,19 +447,22 @@ impl ClientHandshake {
 
     /// Advance only after the platform's existing content admission flow has
     /// sent ContentReady. This does not mount content or bypass that flow.
-    pub(super) fn content_ready(&mut self) -> Result<(), String> {
+    pub(super) fn content_ready(&mut self) -> Result<(), MultiplayerError> {
         if self.phase != HandshakePhase::ContentPending {
             let phase = self.phase;
             self.phase = HandshakePhase::Failed;
-            return Err(format!(
-                "content readiness received in {phase:?} handshake phase"
+            return Err(MultiplayerError::Handshake(
+                format!("content readiness received in {phase:?} handshake phase").into(),
             ));
         }
         self.phase = HandshakePhase::Welcome;
         Ok(())
     }
 
-    pub(super) fn receive(&mut self, message: Option<NetMsg>) -> Result<HandshakeAction, String> {
+    pub(super) fn receive(
+        &mut self,
+        message: Option<NetMsg>,
+    ) -> Result<HandshakeAction, MultiplayerError> {
         let result = self.receive_inner(message);
         if result.is_err() {
             self.phase = HandshakePhase::Failed;
@@ -461,14 +470,16 @@ impl ClientHandshake {
         result
     }
 
-    fn receive_inner(&mut self, message: Option<NetMsg>) -> Result<HandshakeAction, String> {
+    fn receive_inner(
+        &mut self,
+        message: Option<NetMsg>,
+    ) -> Result<HandshakeAction, MultiplayerError> {
         if !matches!(
             self.phase,
             HandshakePhase::Prelude | HandshakePhase::Welcome
         ) {
-            return Err(format!(
-                "handshake message received in {:?} phase",
-                self.phase
+            return Err(MultiplayerError::Handshake(
+                format!("handshake message received in {:?} phase", self.phase).into(),
             ));
         }
         match message {
@@ -485,7 +496,9 @@ impl ClientHandshake {
                     .expected_session
                     .is_some_and(|expected| expected != session_id)
                 {
-                    return Err("host Welcome session does not match the signed invitation".into());
+                    return Err(MultiplayerError::Invitation(
+                        "host Welcome session does not match the signed invitation".into(),
+                    ));
                 }
                 tracing::info!(?your_seat, seed = mission_seed, host = %host_nickname, "received authoritative multiplayer Welcome");
                 self.phase = HandshakePhase::Complete;
@@ -499,26 +512,33 @@ impl ClientHandshake {
                 }))
             }
             Some(NetMsg::ContentOffer { offer }) if self.phase == HandshakePhase::Prelude => {
-                offer
-                    .validate()
-                    .map_err(|error| format!("invalid distributed-mod offer: {error}"))?;
+                offer.validate().map_err(|error| {
+                    MultiplayerError::ContentMismatch(
+                        format!("invalid distributed-mod offer: {error}").into(),
+                    )
+                })?;
                 if offer.host_endpoint_id != self.authenticated_host {
-                    return Err(format!(
+                    return Err(MultiplayerError::ContentMismatch(format!(
                         "distributed-mod offer claims host `{}`, but the authenticated iroh endpoint is `{}`",
                         offer.host_endpoint_id, self.authenticated_host
-                    ));
+                    ).into()));
                 }
                 self.phase = HandshakePhase::ContentPending;
                 Ok(HandshakeAction::PrepareContent(offer))
             }
-            Some(NetMsg::Reject { reason }) => Err(format!("host rejected connection: {reason}")),
-            Some(other) => Err(format!(
-                "unexpected message in {:?} handshake phase: {other:?}",
-                self.phase
+            Some(NetMsg::Reject { reason }) => Err(MultiplayerError::HostRejected {
+                stage: "connection",
+                reason,
+            }),
+            Some(other) => Err(MultiplayerError::Handshake(
+                format!(
+                    "unexpected message in {:?} handshake phase: {other:?}",
+                    self.phase
+                )
+                .into(),
             )),
-            None => Err(format!(
-                "connection closed in {:?} handshake phase",
-                self.phase
+            None => Err(MultiplayerError::Handshake(
+                format!("connection closed in {:?} handshake phase", self.phase).into(),
             )),
         }
     }
@@ -528,24 +548,25 @@ impl ClientHandshake {
 pub(super) fn validate_reconnect_content(
     actual: Option<&DistributedModOffer>,
     admitted: Option<&DistributedModOffer>,
-) -> Result<(), String> {
-    match (actual, admitted) {
-        (None, None) => Ok(()),
-        (Some(actual), Some(expected)) if actual == expected => Ok(()),
-        (Some(actual), Some(expected)) => Err(format!(
+) -> Result<(), MultiplayerError> {
+    let message = match (actual, admitted) {
+        (None, None) => return Ok(()),
+        (Some(actual), Some(expected)) if actual == expected => return Ok(()),
+        (Some(actual), Some(expected)) => format!(
             "reconnect host content changed from {} to {}",
             robin_engine::spellforge::hex_hash(&expected.full_mod_sha256),
             robin_engine::spellforge::hex_hash(&actual.full_mod_sha256)
-        )),
-        (Some(actual), None) => Err(format!(
+        ),
+        (Some(actual), None) => format!(
             "reconnect unexpectedly introduced host content {}",
             robin_engine::spellforge::hex_hash(&actual.full_mod_sha256)
-        )),
-        (None, Some(expected)) => Err(format!(
+        ),
+        (None, Some(expected)) => format!(
             "reconnect omitted previously admitted host content {}",
             robin_engine::spellforge::hex_hash(&expected.full_mod_sha256)
-        )),
-    }
+        ),
+    };
+    Err(MultiplayerError::ContentMismatch(message.into()))
 }
 
 pub(super) fn validate_reconnect_state(
@@ -561,7 +582,7 @@ pub(super) fn validate_reconnect_state(
     config: SimConfig,
     speech_timing_locale: Option<&str>,
     session_id: MultiplayerSessionId,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     if seat != expected_seat
         || mission_id != expected_mission_id
         || seed != expected_seed
@@ -569,9 +590,9 @@ pub(super) fn validate_reconnect_state(
         || speech_timing_locale != expected_speech_timing_locale
         || session_id != expected_session_id
     {
-        return Err(format!(
+        return Err(MultiplayerError::Handshake(format!(
             "reconnect joined incompatible seat {seat:?} mission `{mission_id}` seed {seed} config {config:?} speech timing {speech_timing_locale:?} session {session_id:?}; expected seat {expected_seat:?} mission `{expected_mission_id}` seed {expected_seed} config {expected_config:?} speech timing {expected_speech_timing_locale:?} session {expected_session_id:?}"
-        ));
+        ).into()));
     }
     Ok(())
 }

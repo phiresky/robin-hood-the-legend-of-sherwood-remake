@@ -684,7 +684,7 @@ impl MultiplayerMenuState {
                                     match crate::multiplayer::identity::local_endpoint_id_string() {
                                         Ok(id) => id,
                                         Err(error) => {
-                                            self.status = error;
+                                            self.status = error.to_string();
                                             return MultiplayerMenuTick::Refresh;
                                         }
                                     };
@@ -954,7 +954,8 @@ async fn prepare_direct_browser_launch(
     cursor_renderer: &mut crate::cursor::CursorRenderer,
 ) -> Result<MultiplayerLaunch, String> {
     let ticket =
-        crate::multiplayer::join_ticket::BrowserJoinTicket::decode_authenticated(connect_addr)?;
+        crate::multiplayer::join_ticket::BrowserJoinTicket::decode_authenticated(connect_addr)
+            .map_err(|error| error.to_string())?;
     let expected_players = ticket.payload().expected_players;
     let (mut channels, incoming_tx, outgoing_rx, _frame_cursor, _snapshot) =
         crate::multiplayer::NetChannels::new();
@@ -978,7 +979,7 @@ async fn prepare_direct_browser_launch(
         && web_time::Instant::now() < deadline
     {
         match channels.try_recv_event() {
-            Ok(crate::multiplayer::NetEvent::Fatal(error)) => return Err(error),
+            Ok(crate::multiplayer::NetEvent::Fatal(error)) => return Err(error.to_string()),
             Ok(event) => probe_events.push(event),
             Err(std::sync::mpsc::TryRecvError::Empty) => crate::window::sleep_ms(10).await,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -1118,7 +1119,7 @@ async fn await_prepared_confirmation(
             {
                 return Ok(());
             }
-            Ok(crate::multiplayer::NetEvent::Fatal(error)) => return Err(error),
+            Ok(crate::multiplayer::NetEvent::Fatal(error)) => return Err(error.to_string()),
             Ok(_) => {}
             Err(std::sync::mpsc::TryRecvError::Empty) if web_time::Instant::now() < deadline => {
                 crate::window::sleep_ms(10).await;
@@ -1231,7 +1232,7 @@ async fn preflight_host_content(
             {
                 break;
             }
-            Ok(crate::multiplayer::NetEvent::Fatal(error)) => return Err(error),
+            Ok(crate::multiplayer::NetEvent::Fatal(error)) => return Err(error.to_string()),
             Ok(_) => {}
             Err(std::sync::mpsc::TryRecvError::Empty) if web_time::Instant::now() < deadline => {
                 crate::window::sleep_ms(10).await;

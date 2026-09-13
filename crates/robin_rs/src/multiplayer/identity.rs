@@ -13,6 +13,7 @@
 //! iroh's relay + DNS address lookup, so no bind address, port, or NAT
 //! configuration is ever exchanged.
 
+use super::MultiplayerError;
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey, endpoint::presets};
 #[cfg(not(target_arch = "wasm32"))]
 use iroh::{RelayMode, RelayUrl};
@@ -22,10 +23,11 @@ pub const GAME_ALPN: &[u8] = b"robinhood/game/0";
 
 /// The per-install game identity key (created on first use).
 #[cfg(not(target_arch = "wasm32"))]
-pub fn game_secret_key() -> Result<SecretKey, String> {
-    Ok(secret_key_from_seed(
-        crate::native_game_identity::durable_game_identity_seed()?,
-    ))
+pub fn game_secret_key() -> Result<SecretKey, MultiplayerError> {
+    // The identity store reports its failures as text.
+    let seed = crate::native_game_identity::durable_game_identity_seed()
+        .map_err(|error| MultiplayerError::Identity(error.into()))?;
+    Ok(secret_key_from_seed(seed))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -37,13 +39,15 @@ fn secret_key_from_seed(seed: [u8; 32]) -> SecretKey {
 /// stable-shell signer as its one durable identity. Refuse to manufacture a
 /// second durable seed inside game WASM.
 #[cfg(target_arch = "wasm32")]
-pub fn game_secret_key() -> Result<SecretKey, String> {
-    Err("browser hosting has no durable iroh key; use the isolated durable identity signer".into())
+pub fn game_secret_key() -> Result<SecretKey, MultiplayerError> {
+    Err(MultiplayerError::Unavailable(
+        "browser hosting has no durable iroh key; use the isolated durable identity signer".into(),
+    ))
 }
 
 /// The endpoint id other players dial to reach games hosted from this
 /// install.  Stable across restarts.
-pub fn local_endpoint_id_string() -> Result<String, String> {
+pub fn local_endpoint_id_string() -> Result<String, MultiplayerError> {
     Ok(game_secret_key()?.public().to_string())
 }
 
@@ -53,7 +57,7 @@ pub fn local_endpoint_id_string() -> Result<String, String> {
 /// preset (fast when its servers are reachable) plus publish/resolve
 /// on the BitTorrent Mainline DHT, which works with no hosted
 /// infrastructure at all.
-pub async fn bind_endpoint(key: SecretKey, alpn: &[u8]) -> Result<Endpoint, String> {
+pub async fn bind_endpoint(key: SecretKey, alpn: &[u8]) -> Result<Endpoint, MultiplayerError> {
     #[cfg(target_arch = "wasm32")]
     {
         return Endpoint::builder(presets::N0)
@@ -61,7 +65,7 @@ pub async fn bind_endpoint(key: SecretKey, alpn: &[u8]) -> Result<Endpoint, Stri
             .alpns(vec![alpn.to_vec()])
             .bind()
             .await
-            .map_err(|e| format!("bind iroh endpoint: {e}"));
+            .map_err(|e| MultiplayerError::transport("bind iroh endpoint", e));
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -77,7 +81,7 @@ pub async fn bind_endpoint_with_relay(
     key: SecretKey,
     alpn: &[u8],
     relay_url: Option<RelayUrl>,
-) -> Result<Endpoint, String> {
+) -> Result<Endpoint, MultiplayerError> {
     let mut builder = Endpoint::builder(presets::N0)
         .secret_key(key)
         .alpns(vec![alpn.to_vec()])
@@ -88,19 +92,19 @@ pub async fn bind_endpoint_with_relay(
     builder
         .bind()
         .await
-        .map_err(|e| format!("bind iroh endpoint: {e}"))
+        .map_err(|e| MultiplayerError::transport("bind iroh endpoint", e))
 }
 
 /// Bind an endpoint on a fresh throwaway identity (matchmaking swarm
 /// membership, joining clients) with the same lookup layering.
-pub async fn bind_ephemeral_endpoint() -> Result<Endpoint, String> {
+pub async fn bind_ephemeral_endpoint() -> Result<Endpoint, MultiplayerError> {
     let builder = Endpoint::builder(presets::N0).secret_key(SecretKey::generate());
     #[cfg(not(target_arch = "wasm32"))]
     let builder = builder.address_lookup(iroh_mainline_address_lookup::DhtAddressLookup::builder());
     builder
         .bind()
         .await
-        .map_err(|e| format!("bind iroh endpoint: {e}"))
+        .map_err(|e| MultiplayerError::transport("bind iroh endpoint", e))
 }
 
 /// Parse a connect string into an [`EndpointAddr`].
@@ -109,16 +113,17 @@ pub async fn bind_ephemeral_endpoint() -> Result<Endpoint, String> {
 /// resolved through relay/DNS lookup) or a JSON-serialized
 /// [`EndpointAddr`] carrying explicit transport addresses (used by
 /// tests and relay-less setups).
-pub fn parse_connect_addr(raw: &str) -> Result<EndpointAddr, String> {
+pub fn parse_connect_addr(raw: &str) -> Result<EndpointAddr, MultiplayerError> {
     let trimmed = raw.trim();
     if trimmed.starts_with('{') {
-        return serde_json::from_str::<EndpointAddr>(trimmed)
-            .map_err(|e| format!("parse endpoint address `{trimmed}`: {e}"));
+        return serde_json::from_str::<EndpointAddr>(trimmed).map_err(|e| {
+            MultiplayerError::invalid_address(format!("parse endpoint address `{trimmed}`"), e)
+        });
     }
     trimmed
         .parse::<EndpointId>()
         .map(EndpointAddr::from)
-        .map_err(|e| format!("parse endpoint id `{trimmed}`: {e}"))
+        .map_err(|e| MultiplayerError::invalid_address(format!("parse endpoint id `{trimmed}`"), e))
 }
 
 #[cfg(test)]
@@ -157,7 +162,14 @@ mod tests {
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn browser_refuses_a_second_durable_transport_identity() {
         let error = game_secret_key().expect_err("browser must use the isolated durable signer");
-        assert!(error.contains("isolated durable identity signer"));
-        assert_eq!(local_endpoint_id_string().unwrap_err(), error);
+        assert!(
+            error
+                .to_string()
+                .contains("isolated durable identity signer")
+        );
+        assert_eq!(
+            local_endpoint_id_string().unwrap_err().to_string(),
+            error.to_string()
+        );
     }
 }

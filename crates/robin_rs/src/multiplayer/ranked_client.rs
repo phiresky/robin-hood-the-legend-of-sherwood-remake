@@ -78,26 +78,33 @@ pub(crate) fn ranked_lifecycle_lock(
 /// host from growing client replay-protection state without limit.
 pub(crate) const MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION: usize = 1024;
 
-fn decode_ranked_document<T>(bytes: &[u8], description: &str) -> Result<T, String>
+use super::MultiplayerError;
+
+/// A ranked trust rule was violated.
+fn ranked(message: &'static str) -> MultiplayerError {
+    MultiplayerError::Ranked(message.into())
+}
+
+fn decode_ranked_document<T>(bytes: &[u8], description: &str) -> Result<T, MultiplayerError>
 where
     T: serde::de::DeserializeOwned + serde::Serialize + Validate,
 {
     crate::leaderboard_ranked_session::decode_ranked_wire_document(bytes)
-        .map_err(|error| format!("invalid {description}: {error}"))
+        .map_err(|error| MultiplayerError::ranked_document(format!("invalid {description}"), error))
 }
 
 fn validate_ranked_join_challenge(
     challenge: &RankedJoinChallenge,
-) -> Result<(ReplaySessionGenesisV1, NamedSeatJoinClaimV1), String> {
+) -> Result<(ReplaySessionGenesisV1, NamedSeatJoinClaimV1), MultiplayerError> {
     let genesis: ReplaySessionGenesisV1 = decode_ranked_document(
         challenge.session_genesis.as_bytes(),
         "ranked session genesis",
     )?;
     let claim: NamedSeatJoinClaimV1 =
         decode_ranked_document(challenge.join_claim.as_bytes(), "ranked join claim")?;
-    let genesis_digest = genesis
-        .canonical_digest()
-        .map_err(|error| format!("invalid ranked session genesis digest: {error}"))?;
+    let genesis_digest = genesis.canonical_digest().map_err(|error| {
+        MultiplayerError::ranked_document("invalid ranked session genesis digest", error)
+    })?;
     if claim.session_genesis_sha256 != genesis_digest
         || claim.host_endpoint_id != genesis.claim.host_public_key
         || claim.replay_session_id != genesis.claim.replay_session_id
@@ -109,7 +116,9 @@ fn validate_ranked_join_challenge(
         || claim.competition_manifest_sha256
             != genesis.claim.ranked_session.competition_manifest_sha256
     {
-        return Err("ranked join claim does not match its signed session genesis".to_string());
+        return Err(ranked(
+            "ranked join claim does not match its signed session genesis",
+        ));
     }
     Ok((genesis, claim))
 }
@@ -117,14 +126,14 @@ fn validate_ranked_join_challenge(
 fn challenge_matches_expected_session(
     challenge: &RankedJoinChallenge,
     expected: &RankedSessionConfigDocument,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     let expected_config: RankedSessionConfigV1 =
         decode_ranked_document(expected.as_bytes(), "expected ranked session configuration")?;
     let (genesis, _) = validate_ranked_join_challenge(challenge)?;
     if genesis.claim.ranked_session != expected_config {
-        return Err(
-            "ranked join challenge does not match the locally prepared session".to_string(),
-        );
+        return Err(ranked(
+            "ranked join challenge does not match the locally prepared session",
+        ));
     }
     Ok(())
 }
@@ -132,16 +141,17 @@ fn challenge_matches_expected_session(
 pub(super) fn decode_ranked_participant_roster(
     document: &RankedParticipantRosterDocument,
     genesis: &ReplaySessionGenesisV1,
-) -> Result<Vec<ParticipantClaimV1>, String> {
+) -> Result<Vec<ParticipantClaimV1>, MultiplayerError> {
+    const INVALID: &str = "invalid ranked participant roster";
     let roster: Vec<ParticipantClaimV1> = serde_json::from_slice(document.as_bytes())
-        .map_err(|error| format!("invalid ranked participant roster: {error}"))?;
+        .map_err(|error| MultiplayerError::ranked_document(INVALID, error))?;
     let canonical = crate::leaderboard_ranked_session::encode_ranked_wire_document(&roster)
-        .map_err(|error| format!("invalid ranked participant roster: {error}"))?;
+        .map_err(|error| MultiplayerError::ranked_document(INVALID, error))?;
     if canonical != document.as_bytes() {
-        return Err("ranked participant roster is not canonical JSON".to_string());
+        return Err(ranked("ranked participant roster is not canonical JSON"));
     }
     crate::leaderboard_ranked_session::validate_participant_roster(genesis, &roster)
-        .map_err(|error| format!("invalid ranked participant roster: {error}"))?;
+        .map_err(|error| MultiplayerError::ranked_document(INVALID, error))?;
     Ok(roster)
 }
 
@@ -209,10 +219,10 @@ impl Default for ClientRankedJoinState {
 pub(crate) type SharedClientRankedJoinState = std::sync::Arc<ClientRankedJoinState>;
 
 impl ClientRankedJoinState {
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, ClientRankedJoinInner>, String> {
-        self.inner
-            .lock()
-            .map_err(|_| "ranked join client state lock is poisoned".to_string())
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, ClientRankedJoinInner>, MultiplayerError> {
+        self.inner.lock().map_err(|_| {
+            MultiplayerError::LocalState("ranked join client state lock is poisoned".into())
+        })
     }
 
     /// Install the canonical local ranked-session configuration. Returns an
@@ -220,12 +230,12 @@ impl ClientRankedJoinState {
     pub(crate) fn arm_expected_session(
         &self,
         expected: RankedSessionConfigDocument,
-    ) -> Result<Option<RankedJoinChallenge>, String> {
+    ) -> Result<Option<RankedJoinChallenge>, MultiplayerError> {
         let _: RankedSessionConfigV1 =
             decode_ranked_document(expected.as_bytes(), "expected ranked session configuration")?;
         let mut inner = self.lock()?;
         if inner.expected_session.is_some() {
-            return Err("ranked join local session was armed more than once".to_string());
+            return Err(ranked("ranked join local session was armed more than once"));
         }
         match &inner.phase {
             ClientRankedJoinPhase::Empty => {
@@ -239,10 +249,10 @@ impl ClientRankedJoinState {
                 inner.phase = ClientRankedJoinPhase::Delivered(challenge.clone());
                 Ok(Some(challenge))
             }
-            ClientRankedJoinPhase::BrowseOnly(_) => {
-                Err("ranked join cannot be armed after browse-only downgrade".to_string())
-            }
-            _ => Err("ranked join local session was armed more than once".to_string()),
+            ClientRankedJoinPhase::BrowseOnly(_) => Err(ranked(
+                "ranked join cannot be armed after browse-only downgrade",
+            )),
+            _ => Err(ranked("ranked join local session was armed more than once")),
         }
     }
 
@@ -251,18 +261,22 @@ impl ClientRankedJoinState {
     pub(crate) fn receive_wire_challenge(
         &self,
         challenge: RankedJoinChallenge,
-    ) -> Result<Option<RankedJoinChallenge>, String> {
+    ) -> Result<Option<RankedJoinChallenge>, MultiplayerError> {
         validate_ranked_join_challenge(&challenge)?;
         let mut inner = self.lock()?;
         if inner.retired_challenges.contains(&challenge) {
-            return Err("host replayed a ranked join challenge from an earlier stream".to_string());
+            return Err(ranked(
+                "host replayed a ranked join challenge from an earlier stream",
+            ));
         }
         if inner
             .admitted_genesis
             .as_ref()
             .is_some_and(|genesis| *genesis != challenge.session_genesis)
         {
-            return Err("ranked reconnect changed the admitted session genesis".to_string());
+            return Err(ranked(
+                "ranked reconnect changed the admitted session genesis",
+            ));
         }
         match &inner.phase {
             ClientRankedJoinPhase::Empty => {
@@ -275,16 +289,19 @@ impl ClientRankedJoinState {
                     Ok(None)
                 }
             }
-            ClientRankedJoinPhase::BrowseOnly(_) => {
-                Err("ranked join challenge arrived after browse-only downgrade".to_string())
-            }
-            _ => Err("host replayed or replaced a ranked join challenge".to_string()),
+            ClientRankedJoinPhase::BrowseOnly(_) => Err(ranked(
+                "ranked join challenge arrived after browse-only downgrade",
+            )),
+            _ => Err(ranked("host replayed or replaced a ranked join challenge")),
         }
     }
 
     /// Consume the delivered challenge with either its exact attestation or a
     /// typed inability to participate in ranking.
-    pub(crate) fn authorize_response(&self, response: &RankedJoinResponse) -> Result<(), String> {
+    pub(crate) fn authorize_response(
+        &self,
+        response: &RankedJoinResponse,
+    ) -> Result<(), MultiplayerError> {
         let mut inner = self.lock()?;
         match (response, &inner.phase) {
             (
@@ -297,16 +314,17 @@ impl ClientRankedJoinState {
                 )?;
                 let (_, expected_claim) = validate_ranked_join_challenge(challenge)?;
                 if attestation.claim != expected_claim {
-                    return Err(
-                        "ranked join attestation does not consume the delivered challenge"
-                            .to_string(),
-                    );
+                    return Err(ranked(
+                        "ranked join attestation does not consume the delivered challenge",
+                    ));
                 }
                 crate::leaderboard_ranked_session::verify_named_seat_join(
                     &attestation,
                     attestation.claim.transport_endpoint_id.as_bytes(),
                 )
-                .map_err(|error| format!("invalid ranked join attestation: {error}"))?;
+                .map_err(|error| {
+                    MultiplayerError::ranked_document("invalid ranked join attestation", error)
+                })?;
                 inner.phase = ClientRankedJoinPhase::Responded {
                     challenge: challenge.clone(),
                     attestation: attestation_document.clone(),
@@ -318,10 +336,10 @@ impl ClientRankedJoinState {
                 inner.phase = ClientRankedJoinPhase::Unavailable;
                 Ok(())
             }
-            (_, ClientRankedJoinPhase::BrowseOnly(_)) => {
-                Err("ranked join response attempted after browse-only downgrade".to_string())
-            }
-            _ => Err("ranked join response is duplicate or premature".to_string()),
+            (_, ClientRankedJoinPhase::BrowseOnly(_)) => Err(ranked(
+                "ranked join response attempted after browse-only downgrade",
+            )),
+            _ => Err(ranked("ranked join response is duplicate or premature")),
         }
     }
 
@@ -330,7 +348,7 @@ impl ClientRankedJoinState {
     pub(crate) fn receive_wire_acceptance(
         &self,
         accepted: RankedJoinAccepted,
-    ) -> Result<RankedJoinAccepted, String> {
+    ) -> Result<RankedJoinAccepted, MultiplayerError> {
         let genesis: ReplaySessionGenesisV1 = decode_ranked_document(
             accepted.session_genesis.as_bytes(),
             "accepted ranked session genesis",
@@ -347,15 +365,16 @@ impl ClientRankedJoinState {
             attestation,
         } = &inner.phase
         else {
-            return Err("ranked join acknowledgement is duplicate or premature".to_string());
+            return Err(ranked(
+                "ranked join acknowledgement is duplicate or premature",
+            ));
         };
         if accepted.session_genesis != challenge.session_genesis
             || accepted.join_attestation != *attestation
         {
-            return Err(
-                "ranked join acknowledgement does not equal the challenged signed admission"
-                    .to_string(),
-            );
+            return Err(ranked(
+                "ranked join acknowledgement does not equal the challenged signed admission",
+            ));
         }
         match (
             inner.admitted_roster.as_ref(),
@@ -365,19 +384,17 @@ impl ClientRankedJoinState {
                 if accepted_attestation.claim.connection_epoch != 0
                     || !roster_contains_exact_join(&accepted_roster, &accepted_attestation)
                 {
-                    return Err(
-                        "initial ranked acknowledgement does not contain the exact fresh admission"
-                            .to_string(),
-                    );
+                    return Err(ranked(
+                        "initial ranked acknowledgement does not contain the exact fresh admission",
+                    ));
                 }
             }
             (Some(previous_roster), Some(previous_claim)) => {
                 let claim = &accepted_attestation.claim;
                 if &accepted_roster != previous_roster {
-                    return Err(
-                        "ranked reconnect acknowledgement changed the immutable participant roster"
-                            .to_string(),
-                    );
+                    return Err(ranked(
+                        "ranked reconnect acknowledgement changed the immutable participant roster",
+                    ));
                 }
                 if claim.seat != previous_claim.seat
                     || claim.participant_instance_id != previous_claim.participant_instance_id
@@ -386,16 +403,15 @@ impl ClientRankedJoinState {
                         != Some(claim.connection_epoch)
                     || claim.join_event_ordinal <= previous_claim.join_event_ordinal
                 {
-                    return Err(
-                        "ranked reconnect acknowledgement changed its admitted participant or did not advance its lifecycle"
-                            .to_string(),
-                    );
+                    return Err(ranked(
+                        "ranked reconnect acknowledgement changed its admitted participant or did not advance its lifecycle",
+                    ));
                 }
             }
             _ => {
-                return Err(
-                    "ranked join gate retained incomplete prior admission evidence".to_string(),
-                );
+                return Err(MultiplayerError::LocalState(
+                    "ranked join gate retained incomplete prior admission evidence".into(),
+                ));
             }
         }
         inner.admitted_genesis = Some(accepted.session_genesis.clone());
@@ -411,24 +427,26 @@ impl ClientRankedJoinState {
     pub(crate) fn receive_wire_roster_update(
         &self,
         document: RankedParticipantRosterDocument,
-    ) -> Result<RankedParticipantRosterDocument, String> {
+    ) -> Result<RankedParticipantRosterDocument, MultiplayerError> {
         let mut inner = self.lock()?;
         if !matches!(inner.phase, ClientRankedJoinPhase::Accepted(_)) {
-            return Err("ranked participant roster arrived before join acceptance".to_string());
+            return Err(ranked(
+                "ranked participant roster arrived before join acceptance",
+            ));
         }
         let genesis_document = inner
             .admitted_genesis
             .as_ref()
-            .ok_or_else(|| "ranked participant roster has no admitted genesis".to_string())?;
+            .ok_or_else(|| ranked("ranked participant roster has no admitted genesis"))?;
         let genesis: ReplaySessionGenesisV1 =
             decode_ranked_document(genesis_document.as_bytes(), "admitted session genesis")?;
         let roster = decode_ranked_participant_roster(&document, &genesis)?;
         let previous = inner
             .admitted_roster
             .as_ref()
-            .ok_or_else(|| "ranked participant roster has no admitted predecessor".to_string())?;
+            .ok_or_else(|| ranked("ranked participant roster has no admitted predecessor"))?;
         if roster.len() <= previous.len() || previous.iter().any(|claim| !roster.contains(claim)) {
-            return Err("ranked participant roster update is not monotonic".to_string());
+            return Err(ranked("ranked participant roster update is not monotonic"));
         }
         inner.admitted_roster = Some(roster);
         Ok(document)
@@ -438,12 +456,12 @@ impl ClientRankedJoinState {
     /// ended. The locally prepared ranked configuration remains armed, while
     /// every old challenge, response, and acknowledgement is discarded. A
     /// fresh server claim (new endpoint/epoch) is therefore required.
-    pub(crate) fn begin_reconnect(&self) -> Result<(), String> {
+    pub(crate) fn begin_reconnect(&self) -> Result<(), MultiplayerError> {
         let mut inner = self.lock()?;
         match &inner.phase {
-            ClientRankedJoinPhase::BrowseOnly(_) | ClientRankedJoinPhase::Unavailable => {
-                Err("ranked join cannot reconnect after an irreversible downgrade".to_string())
-            }
+            ClientRankedJoinPhase::BrowseOnly(_) | ClientRankedJoinPhase::Unavailable => Err(
+                ranked("ranked join cannot reconnect after an irreversible downgrade"),
+            ),
             _ => {
                 let retired = match &inner.phase {
                     ClientRankedJoinPhase::Accepted(accepted) => {
@@ -456,12 +474,20 @@ impl ClientRankedJoinState {
                                 &attestation.claim,
                             )
                             .map_err(|error| {
-                                format!("encode retired ranked join claim: {error}")
+                                MultiplayerError::ranked_document(
+                                    "encode retired ranked join claim",
+                                    error,
+                                )
                             })?;
                         Some(RankedJoinChallenge {
                             session_genesis: accepted.session_genesis.clone(),
                             join_claim: RankedJoinClaimDocument::new(claim_bytes).map_err(
-                                |error| format!("encode retired ranked join claim: {error}"),
+                                |error| {
+                                    MultiplayerError::ranked_document(
+                                        "encode retired ranked join claim",
+                                        super::MessageError(error.to_string()),
+                                    )
+                                },
                             )?,
                         })
                     }
@@ -480,10 +506,9 @@ impl ClientRankedJoinState {
                 };
                 if let Some(retired) = retired {
                     if inner.retired_challenges.len() >= 1024 {
-                        return Err(
-                            "ranked join reconnect history exceeds the per-session limit"
-                                .to_string(),
-                        );
+                        return Err(MultiplayerError::LocalState(
+                            "ranked join reconnect history exceeds the per-session limit".into(),
+                        ));
                     }
                     inner.retired_challenges.push(retired);
                 }
@@ -495,7 +520,10 @@ impl ClientRankedJoinState {
 
     /// Irreversibly downgrade this connection's ranking lane. Repeated events
     /// retain the first authoritative reason and do not emit again.
-    pub(crate) fn mark_browse_only(&self, reason: RankedBrowseOnlyReason) -> Result<bool, String> {
+    pub(crate) fn mark_browse_only(
+        &self,
+        reason: RankedBrowseOnlyReason,
+    ) -> Result<bool, MultiplayerError> {
         let mut inner = self.lock()?;
         if let ClientRankedJoinPhase::BrowseOnly(existing) = &inner.phase {
             let _ = existing;
@@ -505,7 +533,7 @@ impl ClientRankedJoinState {
         Ok(true)
     }
 
-    pub(crate) fn is_accepted(&self) -> Result<bool, String> {
+    pub(crate) fn is_accepted(&self) -> Result<bool, MultiplayerError> {
         Ok(matches!(
             self.lock()?.phase,
             ClientRankedJoinPhase::Accepted(_)
@@ -557,23 +585,28 @@ pub(crate) struct ClientLeaderboardCoSignState {
 pub(crate) type SharedClientLeaderboardCoSignState = std::sync::Arc<ClientLeaderboardCoSignState>;
 
 impl ClientLeaderboardCoSignState {
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, ClientLeaderboardCoSignInner>, String> {
-        self.inner
-            .lock()
-            .map_err(|_| "leaderboard co-sign client state lock is poisoned".to_string())
+    fn lock(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, ClientLeaderboardCoSignInner>, MultiplayerError> {
+        self.inner.lock().map_err(|_| {
+            MultiplayerError::LocalState("leaderboard co-sign client state lock is poisoned".into())
+        })
     }
 
-    fn validate_request(request: &LeaderboardCoSignRequestV1) -> Result<(), String> {
-        request
-            .validate()
-            .map_err(|error| format!("invalid leaderboard co-sign request: {error}"))
+    fn validate_request(request: &LeaderboardCoSignRequestV1) -> Result<(), MultiplayerError> {
+        request.validate().map_err(|error| {
+            MultiplayerError::ranked_document("invalid leaderboard co-sign request", error)
+        })
     }
 
-    fn reserve(inner: &ClientLeaderboardCoSignInner) -> Result<(), String> {
+    fn reserve(inner: &ClientLeaderboardCoSignInner) -> Result<(), MultiplayerError> {
         if inner.entries.len() >= MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION {
-            return Err(format!(
-                "leaderboard co-sign request history exceeds the per-session limit of {}",
-                MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION
+            return Err(MultiplayerError::LocalState(
+                format!(
+                    "leaderboard co-sign request history exceeds the per-session limit of {}",
+                    MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION
+                )
+                .into(),
             ));
         }
         Ok(())
@@ -585,7 +618,7 @@ impl ClientLeaderboardCoSignState {
     pub(crate) fn arm_request(
         &self,
         request: LeaderboardCoSignRequestV1,
-    ) -> Result<Option<LeaderboardCoSignRequestV1>, String> {
+    ) -> Result<Option<LeaderboardCoSignRequestV1>, MultiplayerError> {
         Self::validate_request(&request)?;
         let mut inner = self.lock()?;
         if let Some(entry) = inner
@@ -598,15 +631,14 @@ impl ClientLeaderboardCoSignState {
                     *entry = ClientLeaderboardCoSignEntry::Delivered(request);
                     Ok(Some(request))
                 }
-                ClientLeaderboardCoSignEntry::Staged(_) => Err(
-                    "leaderboard co-sign host request does not equal the locally reconstructed request"
-                        .to_string(),
-                ),
+                ClientLeaderboardCoSignEntry::Staged(_) => Err(ranked(
+                    "leaderboard co-sign host request does not equal the locally reconstructed request",
+                )),
                 ClientLeaderboardCoSignEntry::Armed(_)
                 | ClientLeaderboardCoSignEntry::Delivered(_)
-                | ClientLeaderboardCoSignEntry::Responded(_) => Err(
-                    "duplicate leaderboard co-sign request instance was armed locally".to_string(),
-                ),
+                | ClientLeaderboardCoSignEntry::Responded(_) => Err(ranked(
+                    "duplicate leaderboard co-sign request instance was armed locally",
+                )),
             };
         }
         if inner.entries.iter().any(|entry| {
@@ -617,10 +649,9 @@ impl ClientLeaderboardCoSignState {
                     | ClientLeaderboardCoSignEntry::Delivered(_)
             )
         }) {
-            return Err(
-                "leaderboard co-sign host request does not equal the locally reconstructed request"
-                    .to_string(),
-            );
+            return Err(ranked(
+                "leaderboard co-sign host request does not equal the locally reconstructed request",
+            ));
         }
         Self::reserve(&inner)?;
         inner
@@ -634,7 +665,7 @@ impl ClientLeaderboardCoSignState {
     pub(crate) fn receive_wire_request(
         &self,
         request: LeaderboardCoSignRequestV1,
-    ) -> Result<Option<LeaderboardCoSignRequestV1>, String> {
+    ) -> Result<Option<LeaderboardCoSignRequestV1>, MultiplayerError> {
         Self::validate_request(&request)?;
         let mut inner = self.lock()?;
         if let Some(entry) = inner
@@ -647,15 +678,14 @@ impl ClientLeaderboardCoSignState {
                     *entry = ClientLeaderboardCoSignEntry::Delivered(request);
                     Ok(Some(request))
                 }
-                ClientLeaderboardCoSignEntry::Armed(_) => Err(
-                    "leaderboard co-sign host request does not equal the locally reconstructed request"
-                        .to_string(),
-                ),
+                ClientLeaderboardCoSignEntry::Armed(_) => Err(ranked(
+                    "leaderboard co-sign host request does not equal the locally reconstructed request",
+                )),
                 ClientLeaderboardCoSignEntry::Staged(_)
                 | ClientLeaderboardCoSignEntry::Delivered(_)
-                | ClientLeaderboardCoSignEntry::Responded(_) => Err(
-                    "host replayed a duplicate leaderboard co-sign request instance".to_string(),
-                ),
+                | ClientLeaderboardCoSignEntry::Responded(_) => Err(ranked(
+                    "host replayed a duplicate leaderboard co-sign request instance",
+                )),
             };
         }
         if inner.entries.iter().any(|entry| {
@@ -666,10 +696,9 @@ impl ClientLeaderboardCoSignState {
                     | ClientLeaderboardCoSignEntry::Delivered(_)
             )
         }) {
-            return Err(
-                "leaderboard co-sign host request does not equal the locally reconstructed request"
-                    .to_string(),
-            );
+            return Err(ranked(
+                "leaderboard co-sign host request does not equal the locally reconstructed request",
+            ));
         }
         Self::reserve(&inner)?;
         inner
@@ -683,19 +712,19 @@ impl ClientLeaderboardCoSignState {
     pub(crate) fn authorize_response(
         &self,
         response: &LeaderboardCoSignResponse,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         let mut inner = self.lock()?;
         let entry = inner
             .entries
             .iter_mut()
             .find(|entry| entry.instance() == response.instance)
             .ok_or_else(|| {
-                "leaderboard co-sign response has no locally delivered request".to_string()
+                ranked("leaderboard co-sign response has no locally delivered request")
             })?;
         let ClientLeaderboardCoSignEntry::Delivered(request) = *entry else {
-            return Err(
-                "duplicate or premature leaderboard co-sign response was rejected".to_string(),
-            );
+            return Err(ranked(
+                "duplicate or premature leaderboard co-sign response was rejected",
+            ));
         };
         verify_leaderboard_cosign_response(&request, response)?;
         *entry = ClientLeaderboardCoSignEntry::Responded(response.instance);
@@ -708,23 +737,29 @@ impl ClientLeaderboardCoSignState {
 pub(crate) fn verify_leaderboard_cosign_response(
     request: &LeaderboardCoSignRequestV1,
     response: &LeaderboardCoSignResponse,
-) -> Result<(), String> {
-    request
-        .validate()
-        .map_err(|error| format!("invalid pending leaderboard co-sign request: {error}"))?;
+) -> Result<(), MultiplayerError> {
+    request.validate().map_err(|error| {
+        MultiplayerError::ranked_document("invalid pending leaderboard co-sign request", error)
+    })?;
     if response.instance != request.instance {
-        return Err("leaderboard co-sign response instance does not match its request".to_string());
+        return Err(ranked(
+            "leaderboard co-sign response instance does not match its request",
+        ));
     }
     if response.signer_public_key == [0; 32] || response.signature == [0; 64] {
-        return Err("leaderboard co-sign response contains zero key material".to_string());
+        return Err(ranked(
+            "leaderboard co-sign response contains zero key material",
+        ));
     }
-    let public_key = ed25519_dalek::VerifyingKey::from_bytes(&response.signer_public_key)
-        .map_err(|error| format!("invalid leaderboard co-sign public key: {error}"))?;
+    let public_key =
+        ed25519_dalek::VerifyingKey::from_bytes(&response.signer_public_key).map_err(|error| {
+            MultiplayerError::ranked_document("invalid leaderboard co-sign public key", error)
+        })?;
     let signature = ed25519_dalek::Signature::from_bytes(&response.signature);
-    let payload = request
-        .signing_bytes()
-        .map_err(|error| format!("invalid leaderboard co-sign signing payload: {error}"))?;
+    let payload = request.signing_bytes().map_err(|error| {
+        MultiplayerError::ranked_document("invalid leaderboard co-sign signing payload", error)
+    })?;
     public_key
         .verify_strict(&payload, &signature)
-        .map_err(|_| "leaderboard co-sign signature does not match the exact request".to_string())
+        .map_err(|_| ranked("leaderboard co-sign signature does not match the exact request"))
 }
