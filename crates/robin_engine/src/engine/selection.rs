@@ -533,7 +533,7 @@ impl EngineInner {
                 &mut pc.pc.life_points,
                 50,
                 false,
-                crate::combat::LIFEPOINTS_PC,
+                crate::pc_status::LIFEPOINTS_PC,
                 false,
             );
         }

@@ -34,8 +34,7 @@ use crate::sprite::MotionState as SpriteMotionState;
 /// HP restored per bandage.
 pub const HEAL_AMOUNT: i16 = 75;
 
-/// Max life points for PCs.
-pub use crate::pc_status::LIFEPOINTS_PC;
+use crate::pc_status::LIFEPOINTS_PC;
 
 /// Max distance² for healing / tying (40² = 1600).
 pub const DISTANCE_MAX_SQ: f32 = 1600.0;

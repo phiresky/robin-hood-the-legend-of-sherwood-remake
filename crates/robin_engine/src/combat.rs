@@ -26,9 +26,6 @@ pub const CONCUSSION_WAKEUP_THRESHOLD: u16 = 30;
 /// Maximum possible concussion value.
 pub const CONCUSSION_MAX: u16 = 300;
 
-/// Default max life points for PCs.
-pub use crate::pc_status::LIFEPOINTS_PC;
-
 /// Experience gained for killing with sword.
 pub const SWORD_KILL_EXPERIENCE_POINTS: u32 = 20;
 

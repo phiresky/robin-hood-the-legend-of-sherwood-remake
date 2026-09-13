@@ -759,11 +759,15 @@ impl Entity {
     }
 
     /// Maximum life points of a human element: the difficulty-scaled
-    /// soldier-profile value for soldiers, a flat `100` for PCs and
-    /// civilians, `0` for everything else.
+    /// soldier-profile value for soldiers, a flat [`LIFEPOINTS_PC`] for PCs
+    /// and civilians, `0` for everything else.
+    ///
+    /// [`LIFEPOINTS_PC`]: crate::pc_status::LIFEPOINTS_PC
     pub fn human_max_life_points(&self) -> i16 {
         match self {
-            Self::Pc(_) | Self::Civilian(_) => 100,
+            // Civilians share the PC maximum by design: `ActorCivilian::max_life_points`
+            // and the `NpcData` default also use `LIFEPOINTS_PC`.
+            Self::Pc(_) | Self::Civilian(_) => crate::pc_status::LIFEPOINTS_PC,
             Self::Soldier(e) => e.soldier.cached_max_life_points,
             _ => 0,
         }
