@@ -117,13 +117,53 @@ fn rejected_gate_routes_launch_nothing_and_consume_no_random_draws() {
 
 #[test]
 fn exact_building_source_identity_consumes_original_gate_wait_draws() {
-    use crate::engine::movement::GoalShape;
+    use crate::fast_find_grid::SectorIndex;
+
+    let (mut engine, owner) = building_exit_route_fixture();
+    let source_sector = crate::position_interface::SectorHandle::new(64)
+        .unwrap()
+        .with_arena_index(SectorIndex::new(0).unwrap());
+    let sim = crate::sim_rng::test_context();
+
+    exact_building_source_draws_exit_wait(&mut engine, &sim, owner, source_sector);
+    number_only_building_source_draws_exit_wait(&mut engine, &sim, owner);
+    indirect_number_only_source_draws_exit_wait(&mut engine, &sim, owner);
+    exact_ordinary_alias_keeps_building_side_draws(&mut engine, &sim, owner);
+    multi_gate_route_draws_only_for_real_building_exit(&mut engine, &sim, owner);
+}
+
+/// Gate route request shared by the building-exit draw scenarios; only the
+/// source, gate path and goal point vary.
+fn building_exit_route_request(
+    owner: crate::element::EntityId,
+    source_sector: Option<crate::position_interface::SectorHandle>,
+    gate_path: Vec<crate::gate::GatePathStep>,
+    goal_point: MapPoint,
+) -> crate::engine::movement::GateRouteRequest {
+    crate::engine::movement::GateRouteRequest {
+        entity_id: owner,
+        source_sector,
+        gate_path,
+        goal: crate::engine::movement::GoalShape::Point {
+            point: goal_point,
+            tolerance: 0.0,
+        },
+        goal_layer: 0,
+        base_action: crate::order::OrderType::WalkingUpright,
+        move_after_last_door: true,
+        speed_factor: 1.0,
+        initial_flags: crate::sequence::MoveFlags::empty(),
+        prefix_elements: Vec::new(),
+        tail_elements: Vec::new(),
+        append_arrival_speech: false,
+        append_recovery: false,
+    }
+}
+
+fn building_exit_route_fixture() -> (EngineInner, crate::element::EntityId) {
     use crate::fast_find_grid::{GridSector, SectorIndex};
-    use crate::gate::{Door, DoorIndex, GatePathStep};
-    use crate::order::OrderType;
+    use crate::gate::Door;
     use crate::sector::{SectorNumber, SectorType};
-    use crate::sequence::{Field, FieldValue, MoveFlags};
-    use crate::sim_rng::RngSite;
 
     let make_sector = |number, sector_type| GridSector {
         points: Vec::new(),
@@ -222,36 +262,32 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         sector_out_index: SectorIndex::new(4),
         ..Door::default()
     });
-    let source_sector = crate::position_interface::SectorHandle::new(64)
-        .unwrap()
-        .with_arena_index(SectorIndex::new(0).unwrap());
-    let sim = crate::sim_rng::test_context();
+    (engine, owner)
+}
+
+fn exact_building_source_draws_exit_wait(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    owner: crate::element::EntityId,
+    source_sector: crate::position_interface::SectorHandle,
+) {
+    use crate::gate::{DoorIndex, GatePathStep};
+    use crate::sequence::{Field, FieldValue};
+    use crate::sim_rng::RngSite;
 
     let (sequence_id, draws) = crate::sim_rng::with_draw_trace(|| {
         engine
             .launch_gate_movement_sequence(
-                &sim,
-                crate::engine::movement::GateRouteRequest {
-                    entity_id: owner,
-                    source_sector: Some(source_sector),
-                    gate_path: vec![GatePathStep {
+                sim,
+                building_exit_route_request(
+                    owner,
+                    Some(source_sector),
+                    vec![GatePathStep {
                         door_index: DoorIndex::new(0).expect("valid door index"),
                         direct: true,
                     }],
-                    goal: GoalShape::Point {
-                        point: MapPoint::new(140.0, 100.0),
-                        tolerance: 0.0,
-                    },
-                    goal_layer: 0,
-                    base_action: OrderType::WalkingUpright,
-                    move_after_last_door: true,
-                    speed_factor: 1.0,
-                    initial_flags: MoveFlags::empty(),
-                    prefix_elements: Vec::new(),
-                    tail_elements: Vec::new(),
-                    append_arrival_speech: false,
-                    append_recovery: false,
-                },
+                    MapPoint::new(140.0, 100.0),
+                ),
             )
             .expect("building-exit route")
     });
@@ -278,31 +314,28 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         random_wait.get_property(Field::Timer),
         Some(FieldValue::Integer(0..=30))
     ));
+}
+
+fn number_only_building_source_draws_exit_wait(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    owner: crate::element::EntityId,
+) {
+    use crate::gate::{DoorIndex, GatePathStep};
+    use crate::sim_rng::RngSite;
 
     let (number_only_sequence, number_only_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.launch_gate_movement_sequence(
-            &sim,
-            crate::engine::movement::GateRouteRequest {
-                entity_id: owner,
-                source_sector: crate::position_interface::SectorHandle::new(64),
-                gate_path: vec![GatePathStep {
+            sim,
+            building_exit_route_request(
+                owner,
+                crate::position_interface::SectorHandle::new(64),
+                vec![GatePathStep {
                     door_index: DoorIndex::new(0).expect("valid door index"),
                     direct: true,
                 }],
-                goal: GoalShape::Point {
-                    point: MapPoint::new(140.0, 100.0),
-                    tolerance: 0.0,
-                },
-                goal_layer: 0,
-                base_action: OrderType::WalkingUpright,
-                move_after_last_door: true,
-                speed_factor: 1.0,
-                initial_flags: MoveFlags::empty(),
-                prefix_elements: Vec::new(),
-                tail_elements: Vec::new(),
-                append_arrival_speech: false,
-                append_recovery: false,
-            },
+                MapPoint::new(140.0, 100.0),
+            ),
         )
     });
     assert_eq!(
@@ -324,31 +357,28 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
             .iter()
             .any(|element| element.command == Command::ChangePosition)
     );
+}
+
+fn indirect_number_only_source_draws_exit_wait(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    owner: crate::element::EntityId,
+) {
+    use crate::gate::{DoorIndex, GatePathStep};
+    use crate::sim_rng::RngSite;
 
     let (indirect_sequence, indirect_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.launch_gate_movement_sequence(
-            &sim,
-            crate::engine::movement::GateRouteRequest {
-                entity_id: owner,
-                source_sector: crate::position_interface::SectorHandle::new(274),
-                gate_path: vec![GatePathStep {
+            sim,
+            building_exit_route_request(
+                owner,
+                crate::position_interface::SectorHandle::new(274),
+                vec![GatePathStep {
                     door_index: DoorIndex::new(3).expect("valid door index"),
                     direct: false,
                 }],
-                goal: GoalShape::Point {
-                    point: MapPoint::new(240.0, 100.0),
-                    tolerance: 0.0,
-                },
-                goal_layer: 0,
-                base_action: OrderType::WalkingUpright,
-                move_after_last_door: true,
-                speed_factor: 1.0,
-                initial_flags: MoveFlags::empty(),
-                prefix_elements: Vec::new(),
-                tail_elements: Vec::new(),
-                append_arrival_speech: false,
-                append_recovery: false,
-            },
+                MapPoint::new(240.0, 100.0),
+            ),
         )
     });
     assert_eq!(
@@ -370,34 +400,32 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
             .iter()
             .any(|element| element.command == Command::ChangePosition)
     );
+}
+
+fn exact_ordinary_alias_keeps_building_side_draws(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    owner: crate::element::EntityId,
+) {
+    use crate::fast_find_grid::SectorIndex;
+    use crate::gate::{DoorIndex, GatePathStep};
+    use crate::sim_rng::RngSite;
 
     let exact_ordinary_alias = crate::position_interface::SectorHandle::new(274)
         .unwrap()
         .with_arena_index(SectorIndex::new(3).unwrap());
     let (_, exact_alias_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.launch_gate_movement_sequence(
-            &sim,
-            crate::engine::movement::GateRouteRequest {
-                entity_id: owner,
-                source_sector: Some(exact_ordinary_alias),
-                gate_path: vec![GatePathStep {
+            sim,
+            building_exit_route_request(
+                owner,
+                Some(exact_ordinary_alias),
+                vec![GatePathStep {
                     door_index: DoorIndex::new(3).expect("valid door index"),
                     direct: false,
                 }],
-                goal: GoalShape::Point {
-                    point: MapPoint::new(240.0, 100.0),
-                    tolerance: 0.0,
-                },
-                goal_layer: 0,
-                base_action: OrderType::WalkingUpright,
-                move_after_last_door: true,
-                speed_factor: 1.0,
-                initial_flags: MoveFlags::empty(),
-                prefix_elements: Vec::new(),
-                tail_elements: Vec::new(),
-                append_arrival_speech: false,
-                append_recovery: false,
-            },
+                MapPoint::new(240.0, 100.0),
+            ),
         )
     });
     assert_eq!(
@@ -408,17 +436,27 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         ],
         "replay-011's retained gate42 building side overrides an overlapping ordinary spatial alias"
     );
+}
+
+fn multi_gate_route_draws_only_for_real_building_exit(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    owner: crate::element::EntityId,
+) {
+    use crate::fast_find_grid::SectorIndex;
+    use crate::gate::{DoorIndex, GatePathStep};
+    use crate::sim_rng::RngSite;
 
     let exact_building_alias = crate::position_interface::SectorHandle::new(66)
         .unwrap()
         .with_arena_index(SectorIndex::new(5).unwrap());
     let (_, multi_gate_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.launch_gate_movement_sequence(
-            &sim,
-            crate::engine::movement::GateRouteRequest {
-                entity_id: owner,
-                source_sector: Some(exact_building_alias),
-                gate_path: vec![
+            sim,
+            building_exit_route_request(
+                owner,
+                Some(exact_building_alias),
+                vec![
                     GatePathStep {
                         door_index: DoorIndex::new(1).expect("valid door index"),
                         direct: true,
@@ -428,20 +466,8 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
                         direct: false,
                     },
                 ],
-                goal: GoalShape::Point {
-                    point: MapPoint::new(380.0, 100.0),
-                    tolerance: 0.0,
-                },
-                goal_layer: 0,
-                base_action: OrderType::WalkingUpright,
-                move_after_last_door: true,
-                speed_factor: 1.0,
-                initial_flags: MoveFlags::empty(),
-                prefix_elements: Vec::new(),
-                tail_elements: Vec::new(),
-                append_arrival_speech: false,
-                append_recovery: false,
-            },
+                MapPoint::new(380.0, 100.0),
+            ),
         )
     });
     assert_eq!(

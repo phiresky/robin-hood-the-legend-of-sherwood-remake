@@ -889,13 +889,56 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
 
 #[test]
 fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authorization_effects() {
-    use crate::element::{Command, Posture};
-    use crate::order::OrderType;
-    use crate::sequence::{SequenceElement, SequenceState};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
-
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
+    let (attacker, victim, assets, hotspot) = add_strangle_placement_failure_scene(&mut engine);
+    let launch = launch_initialized_strangle(&mut engine, attacker, victim, hotspot);
+    let mut display = CameraDisplayState::default();
+
+    let (_, condolation_order) =
+        crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
+            for _ in 0..10 {
+                engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+                if !engine
+                    .get_entity(attacker)
+                    .unwrap()
+                    .actor_data()
+                    .unwrap()
+                    .active_ability
+                    .is_active()
+                {
+                    break;
+                }
+            }
+        });
+    assert_eq!(
+        condolation_order,
+        ["Wait", "Unlock", "EventGotHit", "LookForward"]
+    );
+
+    assert_failed_strangle_cleanup(&engine, attacker, victim, launch);
+    assert_failed_strangle_setup_is_not_repeated(
+        &mut engine,
+        &sim,
+        &mut display,
+        &assets,
+        attacker,
+        victim,
+    );
+}
+
+fn add_strangle_placement_failure_scene(
+    engine: &mut EngineInner,
+) -> (
+    EntityId,
+    EntityId,
+    LevelAssets,
+    crate::coordinates::SpriteLocalPoint,
+) {
+    use crate::element::Posture;
+    use crate::order::OrderType;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
     let _null_handle_slot = engine.add_test_entity(make_test_pc(Posture::Upright));
     let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_test_entity(make_test_soldier(Posture::Upright));
@@ -915,7 +958,7 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
         .element_data_mut()
         .active = true;
     let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    complete_test_runtime_fixture(engine, &mut assets);
     // Keep the synthetic strangle hotspot within the victim's effective
     // sword range after the failed placement. The original game's enemy attack truncates
     // the raw norm to 16 bits and compares it with standard range + 10; the old
@@ -990,6 +1033,33 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
             underlying_sector: None,
         });
     }
+    (attacker, victim, assets, hotspot)
+}
+
+/// Values captured around the Strangle launch that the post-failure
+/// assertions compare against.
+struct StrangleLaunch {
+    seq: crate::sequence::SequenceId,
+    expected_action_point: crate::coordinates::MapPoint,
+    victim_frame_before: u16,
+    sequence_count_before: usize,
+    attacker_topology: (
+        u16,
+        Option<crate::position_interface::SectorHandle>,
+        Option<crate::position_interface::ObstacleHandle>,
+        i16,
+    ),
+}
+
+fn launch_initialized_strangle(
+    engine: &mut EngineInner,
+    attacker: EntityId,
+    victim: EntityId,
+    hotspot: crate::coordinates::SpriteLocalPoint,
+) -> StrangleLaunch {
+    use crate::element::Command;
+    use crate::sequence::SequenceElement;
+
     let expected_action_point = {
         let attacker = engine.get_entity(attacker).unwrap();
         let sprite_pos = attacker.gameplay_sprite_position();
@@ -1040,28 +1110,32 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
         )
     };
     engine.orders.sequence_manager.element_in_progress(seq, 0);
-    let mut display = CameraDisplayState::default();
+    StrangleLaunch {
+        seq,
+        expected_action_point,
+        victim_frame_before,
+        sequence_count_before,
+        attacker_topology,
+    }
+}
 
-    let (_, condolation_order) =
-        crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
-            for _ in 0..10 {
-                engine.tick_ability_for(&sim, &mut display, &assets, attacker);
-                if !engine
-                    .get_entity(attacker)
-                    .unwrap()
-                    .actor_data()
-                    .unwrap()
-                    .active_ability
-                    .is_active()
-                {
-                    break;
-                }
-            }
-        });
-    assert_eq!(
-        condolation_order,
-        ["Wait", "Unlock", "EventGotHit", "LookForward"]
-    );
+fn assert_failed_strangle_cleanup(
+    engine: &EngineInner,
+    attacker: EntityId,
+    victim: EntityId,
+    launch: StrangleLaunch,
+) {
+    use crate::element::Command;
+    use crate::order::OrderType;
+    use crate::sequence::SequenceState;
+
+    let StrangleLaunch {
+        seq,
+        expected_action_point,
+        victim_frame_before,
+        sequence_count_before,
+        attacker_topology,
+    } = launch;
 
     assert!(
         !engine
@@ -1174,13 +1248,23 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
         Some(crate::ai::AiEntityHandle::new(attacker.index())),
         "the victim's EventGotHit handler must observe the attacker at the owner boundary"
     );
+}
 
+fn assert_failed_strangle_setup_is_not_repeated(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    display: &mut CameraDisplayState,
+    assets: &LevelAssets,
+    attacker: EntityId,
+    victim: EntityId,
+) {
+    let victim_entity = engine.get_entity(victim).unwrap();
     let snapshot = (
         victim_entity.element_data().position_map(),
         victim_entity.element_data().sprite.current_frame,
         engine.orders.sequence_manager.sequences_iter().count(),
     );
-    engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+    engine.tick_ability_for(sim, display, assets, attacker);
     let victim_entity = engine.get_entity(victim).unwrap();
     assert_eq!(
         (

@@ -710,6 +710,59 @@ mod suite {
         let new_goal = MapPoint::new(363.0, 794.0);
         let stop_transition = OrderType::TransitionRunningUprightWaitingUpright;
         let start_transition = OrderType::TransitionWaitingUprightRunningUpright;
+        let owner = add_running_soldier_with_transition_sprites(
+            &mut engine,
+            stop_transition,
+            start_transition,
+        );
+        let outgoing_sequence = install_selected_running_move(&mut engine, owner, old_goal);
+
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        stop_all_retains_goal_during_live_stop_transition(
+            &mut engine,
+            &sim,
+            &assets,
+            owner,
+            outgoing_sequence,
+            old_goal,
+            stop_transition,
+        );
+        queue_straight_point_goto(&mut engine, &sim, &assets, owner, new_goal);
+        let mut display = crate::engine::HostDisplayState::default();
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+        let (replacement_sequence, replacement_index) =
+            seed_stale_goal_on_replacement(&mut engine, owner, outgoing_sequence, old_goal);
+        assert_replacement_waits_behind_stop_transition(
+            &engine,
+            owner,
+            outgoing_sequence,
+            old_goal,
+        );
+
+        engine.tick_entity_movement(&sim, &assets);
+        engine.tick_entity_movement(&sim, &assets);
+
+        assert_stop_transition_terminated_and_goal_cleared(&engine, owner, outgoing_sequence);
+
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        promoted_point_move_installs_goal_on_first_execute(
+            &mut engine,
+            &sim,
+            &assets,
+            owner,
+            replacement_sequence,
+            replacement_index,
+            new_goal,
+        );
+    }
+
+    fn add_running_soldier_with_transition_sprites(
+        engine: &mut EngineInner,
+        stop_transition: OrderType,
+        start_transition: OrderType,
+    ) -> crate::element::EntityId {
         let script = |action: OrderType| SpriteScript {
             action_id: action as u16,
             action_done: 1,
@@ -782,7 +835,14 @@ mod suite {
             npc,
             soldier: SoldierData::default(),
         }));
+        owner
+    }
 
+    fn install_selected_running_move(
+        engine: &mut EngineInner,
+        owner: crate::element::EntityId,
+        old_goal: MapPoint,
+    ) -> crate::sequence::SequenceId {
         let mut outgoing = SequenceElement::new_movement(
             1,
             Command::MoveOk,
@@ -808,10 +868,19 @@ mod suite {
             entity.position_iface_mut().set_map_goal(old_goal);
             entity.ai_controller_mut().unwrap().outbox.actor.halt = true;
         }
+        outgoing_sequence
+    }
 
-        let sim = crate::sim_rng::test_context();
-        let assets = LevelAssets::new();
-        engine.launch_pending_orders_for_npc(&sim, &assets, owner);
+    fn stop_all_retains_goal_during_live_stop_transition(
+        engine: &mut EngineInner,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: crate::element::EntityId,
+        outgoing_sequence: crate::sequence::SequenceId,
+        old_goal: MapPoint,
+        stop_transition: OrderType,
+    ) {
+        engine.launch_pending_orders_for_npc(sim, assets, owner);
 
         assert_eq!(
             engine
@@ -845,7 +914,15 @@ mod suite {
             .get_element_mut(outgoing_sequence, 0)
             .unwrap()
             .priority = SequencePriority::Script;
+    }
 
+    fn queue_straight_point_goto(
+        engine: &mut EngineInner,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: crate::element::EntityId,
+        new_goal: MapPoint,
+    ) {
         {
             let ai = engine
                 .get_entity_mut(owner)
@@ -856,10 +933,15 @@ mod suite {
             goto.move_flags = MoveFlags::STRAIGHT.bits() as u16;
             ai.outbox.actor.orders.push(goto);
         }
-        engine.launch_pending_orders_for_npc(&sim, &assets, owner);
-        let mut display = crate::engine::HostDisplayState::default();
-        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        engine.launch_pending_orders_for_npc(sim, assets, owner);
+    }
 
+    fn seed_stale_goal_on_replacement(
+        engine: &mut EngineInner,
+        owner: crate::element::EntityId,
+        outgoing_sequence: crate::sequence::SequenceId,
+        old_goal: MapPoint,
+    ) -> (crate::sequence::SequenceId, usize) {
         // `engine_postpone` intentionally drops the ordinary handoff cache;
         // model the later queue-time replacement snapshot that exposed the
         // replay bug only after the real movement has passed through instruction handling and
@@ -903,7 +985,15 @@ mod suite {
             .get_element_mut(replacement_sequence, replacement_index)
             .unwrap()
             .retained_movement_goal = Some(old_goal);
+        (replacement_sequence, replacement_index)
+    }
 
+    fn assert_replacement_waits_behind_stop_transition(
+        engine: &EngineInner,
+        owner: crate::element::EntityId,
+        outgoing_sequence: crate::sequence::SequenceId,
+        old_goal: MapPoint,
+    ) {
         let replacement = engine
             .orders
             .sequence_manager
@@ -948,10 +1038,13 @@ mod suite {
             old_goal,
             "queuing the point movement does not end the live stop transition"
         );
+    }
 
-        engine.tick_entity_movement(&sim, &assets);
-        engine.tick_entity_movement(&sim, &assets);
-
+    fn assert_stop_transition_terminated_and_goal_cleared(
+        engine: &EngineInner,
+        owner: crate::element::EntityId,
+        outgoing_sequence: crate::sequence::SequenceId,
+    ) {
         assert_eq!(
             engine
                 .orders
@@ -970,8 +1063,17 @@ mod suite {
             MapPoint::ZERO,
             "the selected outgoing Move condolence must remain observable on the replacement-promotion frame"
         );
+    }
 
-        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    fn promoted_point_move_installs_goal_on_first_execute(
+        engine: &mut EngineInner,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: crate::element::EntityId,
+        replacement_sequence: crate::sequence::SequenceId,
+        replacement_index: usize,
+        new_goal: MapPoint,
+    ) {
         // Consume the replacement's authored start transition. Stop at the
         // exact boundary where its point-movement order is selected but has
         // not yet executed; the following tick is its first Execute.
@@ -989,7 +1091,7 @@ mod suite {
             if point_move_selected {
                 break;
             }
-            engine.tick_entity_movement(&sim, &assets);
+            engine.tick_entity_movement(sim, assets);
         }
         assert_eq!(
             engine
@@ -1015,7 +1117,7 @@ mod suite {
                 && (selected_point_order.target_y - new_goal.y).abs() <= 0.02,
             "fixture must select the authored destination endpoint, not the source-side transition-distance continuation"
         );
-        engine.tick_entity_movement(&sim, &assets);
+        engine.tick_entity_movement(sim, assets);
         let installed_goal = engine
             .get_entity(owner)
             .unwrap()
