@@ -5,6 +5,16 @@
 //! Free functions operate on the existing data structs (`HumanData`,
 //! `PcData`, `NpcData`) plus small context structs to pass entity state that
 //! lives in other parts of the hierarchy (action state, weapon profiles, etc.).
+//!
+//! ## Layering
+//!
+//! Three modules deal with fighting; keep new code in the matching layer:
+//! - `combat` (this file): engine-independent damage/concussion/strike rules
+//!   on data structs — melee resolution math, no `Engine` access.
+//! - `engine/melee/`: engine-level swordfight AI and sequencing (evaluation,
+//!   strikes, damage application, effects); calls into this module.
+//! - `engine/archery.rs`: engine-level bow shots, arrow/purse projectiles and
+//!   the ability completion effects that launch them.
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};

@@ -1774,7 +1774,7 @@ impl EngineInner {
         // Inside a building, dead/unconscious bodies get a hulk flash
         // and active status so they stay visible through walls.
         // Mirrors the same fan-out the animated `DropDone` handler
-        // runs in `engine/combat.rs`.
+        // runs in `engine/archery.rs`.
         if in_building && let Some(carried) = self.get_entity_mut(carried_id) {
             let is_dead = carried.is_dead();
             let is_unconscious = carried.is_unconscious();

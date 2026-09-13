@@ -33,7 +33,7 @@
 //! ## UI action-slot refresh
 //!
 //! When ammo reaches 0, the ammo decrement path
-//! (`engine/combat.rs::decrement_bow_ammo`) calls
+//! (`engine/archery.rs::decrement_bow_ammo`) calls
 //! `EngineInner::disable_pc_action`, which resolves Bow through the
 //! PC's profile action list and sets that portrait slot in
 //! `PcData::disabled_actions`.  The HUD action-slot strip is
