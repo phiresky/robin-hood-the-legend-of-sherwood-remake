@@ -3840,6 +3840,42 @@ fn build_entity_views_without_forecast(engine: &EngineInner) -> AiEntityViewMap 
     build_entity_views_and_stamps(engine).0
 }
 
+impl EngineInner {
+    /// Read AI Position directly, including selected door endpoints
+    /// and carried-PC substitution, without constructing an entity-view world.
+    pub(in crate::engine) fn live_ai_position(&self, id: EntityId) -> crate::ai::Position {
+        let entity = self.expect_entity(id, "live AI position");
+        assert!(
+            entity_has_ai_view(entity),
+            "live AI position unavailable for {id:?}"
+        );
+        let doors = self
+            .scripts
+            .mission
+            .as_ref()
+            .map(|_| self.script_domains.interactables.doors.as_slice())
+            .unwrap_or(&[]);
+        resolve_ai_position_with(
+            &self.world.entities,
+            doors,
+            &self.orders.sequence_manager,
+            id,
+            |position_id| {
+                let element = self
+                    .expect_entity(position_id, "live AI position owner")
+                    .element_data();
+                crate::ai::Position {
+                    x: element.position_map().x,
+                    y: element.position_map().y,
+                    sector: ai_view_position_sector(self, element),
+                    level: element.layer(),
+                }
+            },
+        )
+        .effective
+    }
+}
+
 fn entity_views_nets_generation(engine: &EngineInner) -> u64 {
     engine.world.entities.nets().fold(0_u64, |stamp, (id, _)| {
         stamp.rotate_left(7) ^ u64::from(id.index()) ^ engine.world.entities.generation(id)

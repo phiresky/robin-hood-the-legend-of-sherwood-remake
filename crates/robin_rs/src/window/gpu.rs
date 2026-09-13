@@ -175,6 +175,8 @@ fn configure_initial_surface(
     surface.configure(device, &surface_config);
 
     tracing::info!(
+        present_mode = ?surface_config.present_mode,
+        requested_maximum_frame_latency = surface_config.desired_maximum_frame_latency,
         "window: requested={}x{} actual_inner={}x{} surface={}x{} format={:?}",
         logical_w,
         logical_h,

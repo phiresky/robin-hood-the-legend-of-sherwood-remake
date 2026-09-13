@@ -742,7 +742,11 @@ impl GameWindow {
         self.surface_config.present_mode = present_mode;
         self.surface
             .configure(&self.gpu.device, &self.surface_config);
-        tracing::info!(?present_mode, "updated swapchain presentation mode");
+        tracing::info!(
+            ?present_mode,
+            requested_maximum_frame_latency = self.surface_config.desired_maximum_frame_latency,
+            "updated swapchain presentation mode"
+        );
     }
 
     pub fn window_to_logical(&self, x: i32, y: i32) -> (i32, i32) {

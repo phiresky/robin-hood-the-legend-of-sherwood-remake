@@ -1355,7 +1355,7 @@ pub(crate) async fn export_official_mission_headless(
             "official projection requires a headless export request",
         ));
     }
-    crate::lua_session::validate_launch_mode(args, false)?;
+    crate::lua_session::validate_launch_mode(&args.config.cli, false)?;
     let mission_id = campaign.missions[mission_idx]
         .profile(profiles)
         .mission_filename

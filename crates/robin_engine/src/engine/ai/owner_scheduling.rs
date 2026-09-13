@@ -865,153 +865,102 @@ impl EngineInner {
         chief_id: EntityId,
         theoretical: &[EntityId],
     ) {
-        #[derive(Clone, Copy)]
-        struct PatrolSnap {
-            position: crate::ai::Position,
-            raw_position_world: crate::coordinates::WorldPoint3D,
-            detection_position_world: crate::coordinates::WorldPoint3D,
-            direction: u16,
-            posture: crate::element::Posture,
-            is_rider: bool,
-            in_building: bool,
-            ai_state: crate::ai::AiState,
-            is_alive: bool,
-            is_active: bool,
-            is_civilian: bool,
-            is_able_to_fight: bool,
-        }
+        self.assemble_patrol_for_npc(assets, chief_id, theoretical);
+    }
 
-        // Patrol initialization admits members through omnidirectional detection,
-        // whose distance gate is the post-view-refresh real radius, not the
-        // pre-factor base radius the growing cone animates towards.
-        let chief_real_view_radius = self
-            .world
-            .entities
-            .expect_ai_actor_data(
-                chief_id,
-                format_args!("synchronous patrol initialization owner"),
-            )
-            .view_radius;
-
-        let live_views = build_entity_views_without_forecast(self);
-        let snapshot = |id: EntityId| {
-            let view = live_views.get(&id.index()).unwrap_or_else(|| {
-                panic!(
-                    "synchronous patrol initialization owner {} lacks live view for member {}",
-                    chief_id.index(),
-                    id.index()
-                )
-            });
-            let entity = self.world.entities.expect_entity(
-                id,
-                format_args!(
-                    "synchronous patrol initialization owner {} member",
-                    chief_id.index()
-                ),
-            );
-            PatrolSnap {
-                position: view.position,
-                raw_position_world: entity.element_data().position(),
-                detection_position_world: view.detection_position_world,
-                direction: entity.element_data().direction() as u16,
-                posture: entity.element_data().posture(),
-                is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
-                in_building: self.entity_data_in_building_sector(entity.element_data()),
-                ai_state: self
-                    .world
-                    .entities
-                    .expect_ai_controller(
-                        id,
-                        format_args!("patrol member referenced by owner {}", chief_id.index()),
-                    )
-                    .current_state,
-                is_alive: !entity.is_dead(),
-                is_active: entity.is_active(),
-                is_civilian: entity.is_civilian(),
-                is_able_to_fight: match entity {
-                    crate::element::Entity::Soldier(soldier) => {
-                        use crate::element::Human as _;
-                        soldier.is_able_to_fight()
-                    }
-                    crate::element::Entity::Pc(pc) => {
-                        use crate::element::Human as _;
-                        pc.is_able_to_fight()
-                    }
-                    _ => false,
-                },
-            }
+    /// Sort by raw world distance and arrange pairs using AI positions.
+    pub(super) fn assemble_patrol_for_npc(
+        &mut self,
+        assets: &LevelAssets,
+        chief_id: EntityId,
+        theoretical: &[EntityId],
+    ) {
+        let chief_position = self.live_ai_position(chief_id);
+        let geometry = |id| {
+            self.expect_entity(id, "patrol assembly member")
+                .element_data()
+                .position()
         };
-
-        let chief_snap = snapshot(chief_id);
-        let obstacles_owned = self.build_ai_sight_obstacles(assets);
-        let obstacles = obstacles_owned.list();
         let (sorted, missed) = patrol_assembly::assemble_patrol(
             theoretical
                 .iter()
                 .copied()
-                .filter(|&member| member != chief_id)
-                .map(|member| (member, snapshot(member))),
-            |&(_, snap)| {
-                // Original evaluates omnidirectional detection first in the `&&`
-                // chain. An active, outdoor member therefore emits its LOS query
-                // even when its later AI-state / able-to-fight gate rejects it.
-                // Pre-gating visibility on those later predicates loses the
-                // chief-to-member prefix and lets common return-to-duty processing's
-                // reciprocal member queries appear first in the frame trace.
+                .filter(|&id| id != chief_id)
+                .map(|id| (id, self.live_ai_position(id))),
+            |&(id, _)| {
+                let entity = self.expect_entity(id, "patrol assembly member");
+                let ai = self
+                    .world
+                    .entities
+                    .expect_ai_controller(id, format_args!("patrol assembly member"));
+                let able_to_fight = match entity {
+                    Entity::Soldier(soldier) => crate::element::Human::is_able_to_fight(soldier),
+                    Entity::Pc(pc) => crate::element::Human::is_able_to_fight(pc),
+                    _ => false,
+                };
                 let admit = patrol_member_admitted(
-                    chief_snap.is_active && snap.is_active,
-                    || {
-                        patrol_member_visible_from_raw_world(
-                            chief_snap.detection_position_world,
-                            chief_snap.is_rider,
-                            chief_real_view_radius,
-                            chief_snap.in_building,
-                            snap.detection_position_world,
-                            snap.posture,
-                            snap.is_rider,
-                            snap.direction as i16,
-                            snap.in_building,
-                            obstacles,
-                        )
-                    },
-                    snap.ai_state,
-                    snap.is_civilian,
-                    snap.is_able_to_fight,
+                    true,
+                    || self.patrol_member_visible(assets, chief_id, id),
+                    ai.current_state,
+                    entity.is_civilian(),
+                    able_to_fight,
                 );
-                (admit, snap.is_alive)
+                (admit, !entity.is_dead())
             },
-            // Distance uses raw 3D coordinates, not the AI door gate endpoint.
-            |&(_, snap)| (snap.raw_position_world, snap.position),
-            chief_snap.raw_position_world,
-            chief_snap.position,
+            |&(id, position)| (geometry(id), position),
+            geometry(chief_id),
+            chief_position,
         );
-
-        let patrol_ids: Vec<_> = sorted.into_iter().map(|(id, _)| id).collect();
-        {
-            let ai = self.world.entities.expect_ai_controller_mut(
-                chief_id,
-                format_args!(
-                    "synchronous patrol initialization owner {} lost its AI",
-                    chief_id.index()
-                ),
-            );
-            ai.needs_patrol_reinit = false;
-            ai.patrol = patrol_ids.clone();
-            ai.missed_patrol_members = missed.into_iter().map(|(id, _)| id).collect();
-        }
-        for member in patrol_ids {
+        let patrol: Vec<_> = sorted.into_iter().map(|(id, _)| id).collect();
+        for &member in &patrol {
             self.world
                 .entities
-                .expect_ai_controller_mut(
-                    member,
-                    format_args!(
-                        "patrol member {} admitted by owner {} lost its AI",
-                        member.index(),
-                        chief_id.index()
-                    ),
-                )
+                .expect_ai_controller_mut(member, format_args!("admitted patrol member"))
                 .patrol_chief = Some(chief_id);
         }
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(chief_id, format_args!("patrol assembly chief"));
+        ai.needs_patrol_reinit = false;
+        ai.patrol = patrol;
+        ai.missed_patrol_members = missed.into_iter().map(|(id, _)| id).collect();
+    }
+
+    /// Patrol visibility borrows authoritative geometry only for the duration
+    /// of the query; no actor or obstacle projection survives a callback.
+    pub(super) fn patrol_member_visible(
+        &self,
+        assets: &LevelAssets,
+        chief: EntityId,
+        member: EntityId,
+    ) -> bool {
+        let chief = self.expect_entity(chief, "patrol visibility chief");
+        let member = self.expect_entity(member, "patrol visibility member");
+        if !chief.is_active() || !member.is_active() {
+            return false;
+        }
+        let chief_element = chief.element_data();
+        let member_element = member.element_data();
+        patrol_member_visible_from_raw_world(
+            chief_element.position(),
+            chief.soldier_data().is_some_and(|soldier| soldier.rider),
+            chief
+                .ai_actor_data()
+                .expect("patrol chief has no AI actor data")
+                .view_radius,
+            self.entity_data_in_building_sector(chief_element),
+            member_element.position(),
+            member_element.posture(),
+            member.soldier_data().is_some_and(|soldier| soldier.rider),
+            member_element.direction(),
+            self.entity_data_in_building_sector(member_element),
+            crate::sight_obstacle::ObstacleList {
+                static_obstacles: &assets.environment.static_sight_obstacles,
+                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                static_active: &self.world.static_sight_obstacle_active,
+            },
+        )
     }
 
     pub(in crate::engine) fn drain_direct_ai_owner_boundary_mode(
