@@ -46,28 +46,32 @@ impl SaveGameManager {
     }
 
     /// Mirror a successfully loaded save without capturing a new replay marker.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn write_loaded_continue_background(
         &mut self,
         mut save: GameSaveFile,
         profiles: &ProfileManager,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<SaveWriteStatus> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = (&mut save, profiles, thumbnail);
-            anyhow::bail!(
-                "browser manual special-save persistence is unavailable; use durable autosaves"
-            );
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.finish_background()?;
-            self.ensure_no_pending_delete()?;
-            self.reconcile_quick_slots()?;
-            let index = self.ensure_special_slot(save_file::special_slots::CONTINUE, "Continue")?;
-            save.header.display_text = self.catalog[index].text.clone();
-            self.queue_special_save(index, save, profiles, thumbnail)
-        }
+        self.finish_background()?;
+        self.ensure_no_pending_delete()?;
+        self.reconcile_quick_slots()?;
+        let index = self.ensure_special_slot(save_file::special_slots::CONTINUE, "Continue")?;
+        save.header.display_text = self.catalog[index].text.clone();
+        self.queue_special_save(index, save, profiles, thumbnail)
+    }
+
+    /// Browser builds have no manual special-save slots; see the native twin.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn write_loaded_continue_background(
+        &mut self,
+        _save: GameSaveFile,
+        _profiles: &ProfileManager,
+        _thumbnail: Option<&Thumbnail>,
+    ) -> Result<SaveWriteStatus> {
+        anyhow::bail!(
+            "browser manual special-save persistence is unavailable; use durable autosaves"
+        );
     }
 
     /// Save the current engine state to the "QuickSave" slot.
@@ -158,6 +162,7 @@ impl SaveGameManager {
     ///
     /// Captures the level start state so the player can restart without
     /// reloading the whole level from disk.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn write_restart_save(
         &mut self,
         host: &mut Host,
@@ -167,24 +172,31 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = thumbnail;
-            return self.write_session_restart(host, game, engine, mission_id, profiles);
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let idx =
-                self.ensure_special_slot(save_file::special_slots::RESTART, "Restart Point")?;
-            self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)
-                .map(|_| ())
-        }
+        let idx = self.ensure_special_slot(save_file::special_slots::RESTART, "Restart Point")?;
+        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)
+            .map(|_| ())
+    }
+
+    /// Browser builds publish a session-only Restart checkpoint without a
+    /// thumbnail; see the native twin.
+    #[cfg(target_arch = "wasm32")]
+    pub fn write_restart_save(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        _thumbnail: Option<&Thumbnail>,
+    ) -> Result<()> {
+        self.write_session_restart(host, game, engine, mission_id, profiles)
     }
 
     /// Like [`write_restart_save`](Self::write_restart_save), but captures
     /// the engine state on the calling thread and moves the expensive JSON
     /// serialization + disk write to a background thread. Browser builds
     /// publish an immediately loadable session checkpoint without serialization.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn write_restart_save_background(
         &mut self,
         host: &mut Host,
@@ -194,27 +206,35 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<SaveWriteStatus> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = thumbnail;
-            self.write_session_restart(host, game, engine, mission_id, profiles)?;
-            return Ok(SaveWriteStatus::Completed);
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.write_special_save_background(
-                save_file::special_slots::RESTART,
-                "Restart Point",
-                host,
-                game,
-                engine,
-                mission_id,
-                profiles,
-                thumbnail,
-            )
-        }
+        self.write_special_save_background(
+            save_file::special_slots::RESTART,
+            "Restart Point",
+            host,
+            game,
+            engine,
+            mission_id,
+            profiles,
+            thumbnail,
+        )
     }
 
+    /// Browser twin of the native background Restart write: the session
+    /// checkpoint is published synchronously and carries no thumbnail.
+    #[cfg(target_arch = "wasm32")]
+    pub fn write_restart_save_background(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        _thumbnail: Option<&Thumbnail>,
+    ) -> Result<SaveWriteStatus> {
+        self.write_session_restart(host, game, engine, mission_id, profiles)?;
+        Ok(SaveWriteStatus::Completed)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn write_special_save_background(
         &mut self,
         filename: &str,
@@ -228,40 +248,41 @@ impl SaveGameManager {
     ) -> Result<SaveWriteStatus> {
         self.finish_background()?;
         self.ensure_no_pending_delete()?;
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = (
-                filename,
-                display_text,
-                host,
-                game,
-                engine,
-                mission_id,
-                profiles,
-                thumbnail,
-            );
-            anyhow::bail!(
-                "browser manual special-save persistence is unavailable; use durable autosaves"
-            );
-        }
+        self.reconcile_quick_slots()?;
+        let idx = self.ensure_special_slot(filename, display_text)?;
+        let display_text = self.catalog[idx].text.clone();
+        // Capture (clone) on the main thread before starting the writer.
+        let mut save = capture_save(host, game, engine, mission_id, profiles, display_text)?;
+        host.application_context()
+            .replay_recording()
+            .attach_save_boundary(&mut save)?;
+        self.queue_special_save(
+            idx,
+            save,
+            profiles.context("save metadata requires profiles")?,
+            thumbnail,
+        )
+    }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.reconcile_quick_slots()?;
-            let idx = self.ensure_special_slot(filename, display_text)?;
-            let display_text = self.catalog[idx].text.clone();
-            // Capture (clone) on the main thread before starting the writer.
-            let mut save = capture_save(host, game, engine, mission_id, profiles, display_text)?;
-            host.application_context()
-                .replay_recording()
-                .attach_save_boundary(&mut save)?;
-            self.queue_special_save(
-                idx,
-                save,
-                profiles.context("save metadata requires profiles")?,
-                thumbnail,
-            )
-        }
+    /// Browser builds have no manual special-save slots. Pending background
+    /// work is still settled first, exactly as on native.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn write_special_save_background(
+        &mut self,
+        _filename: &str,
+        _display_text: &str,
+        _host: &mut Host,
+        _game: &crate::game::Game,
+        _engine: &Engine,
+        _mission_id: u32,
+        _profiles: Option<&ProfileManager>,
+        _thumbnail: Option<&Thumbnail>,
+    ) -> Result<SaveWriteStatus> {
+        self.finish_background()?;
+        self.ensure_no_pending_delete()?;
+        anyhow::bail!(
+            "browser manual special-save persistence is unavailable; use durable autosaves"
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
