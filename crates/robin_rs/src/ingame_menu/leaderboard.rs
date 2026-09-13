@@ -15,8 +15,8 @@ use crate::widget::FrameWnd;
 use robin_run_protocol::BoardMetricValueV1;
 
 use super::layout::{
-    MENU_W, MenuTransform, TextAlign, dim_screen, draw_screen_background, enter_modal_gpu_phase,
-    render_text_in_box_font, render_text_virt_font,
+    MENU_W, MenuTransform, TextAlign, VAlign, dim_screen, draw_screen_background,
+    enter_modal_gpu_phase, render_clipped_text_in_box_font, render_text_virt_font,
 };
 use super::resources::IngameMenuResources;
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -297,7 +297,7 @@ impl MissionEndLeaderboardScreen {
                 .ui_error
                 .as_deref()
                 .unwrap_or_else(|| submission_status(self.controller.submission_state()));
-            let _ = render_text_in_box_font(
+            render_clipped_text_in_box_font(
                 renderer,
                 font,
                 transform,
@@ -307,6 +307,7 @@ impl MissionEndLeaderboardScreen {
                 TABLE_W,
                 45,
                 TextAlign::Center,
+                VAlign::Top,
             );
         }
         if let Some(cursor) = cursor {
@@ -333,7 +334,7 @@ impl MissionEndLeaderboardScreen {
                 );
             }
             BoardLoadState::Failed(error) => {
-                let _ = render_text_in_box_font(
+                render_clipped_text_in_box_font(
                     renderer,
                     font,
                     transform,
@@ -343,6 +344,7 @@ impl MissionEndLeaderboardScreen {
                     TABLE_W - 20,
                     TABLE_H - 40,
                     TextAlign::Center,
+                    VAlign::Top,
                 );
             }
             BoardLoadState::Ready(page) if page.entries.is_empty() => {

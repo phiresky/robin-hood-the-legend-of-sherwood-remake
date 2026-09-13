@@ -10,8 +10,8 @@ use robin_engine::trading::{
 };
 
 use super::layout::{
-    MENU_W, MenuTransform, TextAlign, dim_screen, draw_screen_background, enter_modal_gpu_phase,
-    render_text_in_box_font, render_text_virt_font,
+    MENU_W, MenuTransform, TextAlign, VAlign, dim_screen, draw_screen_background,
+    enter_modal_gpu_phase, render_clipped_text_in_box_font, render_text_virt_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_SELL_FIVE, MT_BTN_SELL_ONE, MT_STR_TRADE_CONFIRM,
@@ -495,7 +495,7 @@ impl TradingModalState {
                 render_text_virt_font(renderer, font, transform, &line, ROW_X, y);
             }
             if !self.status.is_empty() {
-                let _ = render_text_in_box_font(
+                render_clipped_text_in_box_font(
                     renderer,
                     font,
                     transform,
@@ -505,6 +505,7 @@ impl TradingModalState {
                     ROW_W,
                     48,
                     TextAlign::Left,
+                    VAlign::Top,
                 );
             }
         }

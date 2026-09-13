@@ -45,8 +45,8 @@ use super::blazon_set::{self, BlazonTooltipTracker};
 use super::buy_blazons::{BuyBlazonsModalState, BuyBlazonsOutcome};
 use super::layout::{
     MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, VAlign, dim_screen, draw_background,
-    enter_modal_gpu_phase, render_text_in_box_aligned_font, render_text_in_box_font,
-    render_text_in_box_with_drop_cap_font,
+    enter_modal_gpu_phase, render_clipped_text_in_box_font,
+    render_clipped_text_in_box_with_drop_cap_font,
 };
 use super::resources::{IngameMenuResources, MenuSurface};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -419,7 +419,7 @@ impl MissionDescriptionModalState {
             .title_font_any()
             .or_else(|| resources.popup_font_any())
         {
-            let _ = render_text_in_box_aligned_font(
+            render_clipped_text_in_box_font(
                 renderer,
                 font,
                 transform,
@@ -435,7 +435,7 @@ impl MissionDescriptionModalState {
         if let Some(font) = resources.popup_font_any() {
             if self.screen.requires_blazons {
                 let top = self.pic_y + self.pic_h + layout_consts::DESCRIPTION_PICTURE_GAP;
-                let _ = render_text_in_box_font(
+                render_clipped_text_in_box_font(
                     renderer,
                     font,
                     transform,
@@ -445,6 +445,7 @@ impl MissionDescriptionModalState {
                     layout_consts::DESCRIPTION_RIGHT - layout_consts::DESCRIPTION_X,
                     layout_consts::DESCRIPTION_BOTTOM - top,
                     TextAlign::Justified,
+                    VAlign::Top,
                 );
             } else {
                 let desc_w = layout_consts::DESCRIPTION_RIGHT - layout_consts::DESCRIPTION_X;
@@ -454,7 +455,7 @@ impl MissionDescriptionModalState {
                     .screen
                     .description_drop_cap(self.pic_w, self.pic_h)
                     .unwrap_or((0, 0));
-                let _ = render_text_in_box_with_drop_cap_font(
+                render_clipped_text_in_box_with_drop_cap_font(
                     renderer,
                     font,
                     transform,

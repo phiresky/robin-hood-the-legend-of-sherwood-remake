@@ -1096,7 +1096,7 @@ pub fn draw_frame_labels(
         let Some((vx, vy, w, h)) = virtual_rect(widget.base().bbox) else {
             continue;
         };
-        super::layout::render_text_in_box_font(
+        super::layout::render_clipped_text_in_box_font(
             renderer,
             font,
             transform,
@@ -1106,6 +1106,7 @@ pub fn draw_frame_labels(
             w,
             h,
             align,
+            super::layout::VAlign::Top,
         );
     }
 }

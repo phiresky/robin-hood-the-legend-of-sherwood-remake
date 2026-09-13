@@ -24,7 +24,7 @@ use crate::ui::{UiEvent, UiMsg};
 
 use super::layout::{
     FALLBACK_PANEL_EDGE, FALLBACK_PANEL_FILL, MenuTransform, TextAlign, TooltipState, VAlign,
-    dim_screen, draw_background, enter_modal_gpu_phase, render_text_in_box_aligned_font,
+    dim_screen, draw_background, enter_modal_gpu_phase, render_clipped_text_in_box_font,
 };
 use super::resources::{IngameMenuResources, MT_INFOBULLE_BUTTON_NO, MT_INFOBULLE_BUTTON_YES};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -305,7 +305,7 @@ impl YesNoModalState {
         }
 
         if let Some(font) = resources.popup_font_any() {
-            let _ = render_text_in_box_aligned_font(
+            render_clipped_text_in_box_font(
                 renderer,
                 font,
                 self.transform,

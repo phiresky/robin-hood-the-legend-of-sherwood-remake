@@ -23,7 +23,7 @@ use crate::widget::FrameWnd;
 
 use super::layout::{
     MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, WrappedLine, dim_screen,
-    draw_background, enter_modal_gpu_phase, render_text_in_box_font,
+    draw_background, enter_modal_gpu_phase, render_clipped_text_in_box_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_LOAD, MT_INFOBULLE_BUTTON_OK, MT_INFOBULLE_BUTTON_RECOMMENCER,
@@ -739,7 +739,7 @@ impl DebriefingPageState {
         }
 
         if let Some(font) = resources.title_font_any() {
-            render_text_in_box_font(
+            render_clipped_text_in_box_font(
                 renderer,
                 font,
                 self.transform,
@@ -749,6 +749,7 @@ impl DebriefingPageState {
                 TITLE_W,
                 TITLE_H,
                 TextAlign::Center,
+                super::layout::VAlign::Top,
             );
         }
 

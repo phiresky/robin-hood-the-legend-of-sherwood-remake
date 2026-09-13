@@ -29,7 +29,7 @@ use robin_engine::resource_ids;
 use super::layout::{
     FALLBACK_PANEL_EDGE, FALLBACK_PANEL_FILL, FOCUS_OUTLINE, MENU_H, MENU_W, MenuTransform,
     TextAlign, VAlign, dim_screen, draw_background, enter_modal_gpu_phase,
-    render_text_in_box_aligned_font,
+    render_clipped_text_in_box_font,
 };
 use super::resources::{
     IngameMenuResources, MT_MSG_BUY_BLAZON, MT_STR_BLAZON_PRICE, MT_STR_RANSOM,
@@ -228,7 +228,7 @@ impl BuyBlazonsModalState {
         }
         let font = resources.debrief_font_any();
         if let Some(font) = font {
-            let _ = render_text_in_box_aligned_font(
+            render_clipped_text_in_box_font(
                 renderer,
                 font,
                 transform,

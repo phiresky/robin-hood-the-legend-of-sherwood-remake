@@ -1064,7 +1064,9 @@ fn render_dropped_initial_text(
         let below_y = box_y + beside_h;
         let below_h = (box_h - beside_h).max(0);
         if below_h > 0 {
-            let _ = super::layout::render_text_in_box_font(
+            // Second and final pass: the dialogue box has no further page, so
+            // overflow below the drop cap is clipped by design.
+            super::layout::render_clipped_text_in_box_font(
                 renderer,
                 font,
                 transform,
@@ -1074,6 +1076,7 @@ fn render_dropped_initial_text(
                 box_w,
                 below_h,
                 TextAlign::Justified,
+                super::layout::VAlign::Top,
             );
         }
     }

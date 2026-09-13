@@ -9,8 +9,8 @@ use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use crate::renderer::Renderer;
 
 use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, dim_screen, draw_background, enter_modal_gpu_phase,
-    render_text_in_box_font,
+    MENU_H, MENU_W, MenuTransform, TextAlign, VAlign, dim_screen, draw_background,
+    enter_modal_gpu_phase, render_clipped_text_in_box_font,
 };
 use super::resources::{IngameMenuResources, MT_TTL_MISSION_LOST, MT_TTL_MISSION_WON};
 use super::yesno::YesNoModalState;
@@ -271,7 +271,7 @@ impl MissionStateTransition {
             );
         }
         if let Some(font) = resources.popup_font_any() {
-            let _ = render_text_in_box_font(
+            render_clipped_text_in_box_font(
                 renderer,
                 font,
                 self.transform,
@@ -281,6 +281,7 @@ impl MissionStateTransition {
                 (TEXT_W as f32 * scale_x) as i32,
                 (TEXT_H as f32 * scale_y) as i32,
                 TextAlign::Center,
+                VAlign::Top,
             );
         }
 

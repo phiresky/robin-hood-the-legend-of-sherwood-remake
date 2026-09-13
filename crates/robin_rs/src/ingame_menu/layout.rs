@@ -826,6 +826,7 @@ fn measure_text_height_in_box_by(
     height
 }
 
+#[must_use = "the returned String is text that did not fit; call render_clipped_text_in_box_font to drop it deliberately"]
 pub fn render_text_in_box_font(
     renderer: &mut Renderer,
     font: &Font,
@@ -851,7 +852,49 @@ pub fn render_text_in_box_font(
     )
 }
 
+/// Render text into a single fixed box and deliberately drop whatever does not
+/// fit. Only for boxes that are the text's final bound (no follow-up page or
+/// pass); paginating callers must use [`render_text_in_box_aligned_font`] and
+/// consume the returned remainder.
+pub fn render_clipped_text_in_box_font(
+    renderer: &mut Renderer,
+    font: &Font,
+    transform: MenuTransform,
+    text: &str,
+    box_x: i32,
+    box_y: i32,
+    box_w: i32,
+    box_h: i32,
+    align: TextAlign,
+    valign: VAlign,
+) {
+    let _clipped = render_text_in_box_aligned_font(
+        renderer, font, transform, text, box_x, box_y, box_w, box_h, align, valign,
+    );
+}
+
+/// Drop-cap counterpart of [`render_clipped_text_in_box_font`]: overflow past
+/// the box is intentionally discarded.
+pub fn render_clipped_text_in_box_with_drop_cap_font(
+    renderer: &mut Renderer,
+    font: &Font,
+    transform: MenuTransform,
+    text: &str,
+    box_x: i32,
+    box_y: i32,
+    box_w: i32,
+    box_h: i32,
+    drop_cap_w: i32,
+    drop_cap_h: i32,
+    align: TextAlign,
+) {
+    let _clipped = render_text_in_box_with_drop_cap_font(
+        renderer, font, transform, text, box_x, box_y, box_w, box_h, drop_cap_w, drop_cap_h, align,
+    );
+}
+
 /// Render text around a drop cap, returning the remainder for pagination.
+#[must_use = "the returned String is text that did not fit; call render_clipped_text_in_box_with_drop_cap_font to drop it deliberately"]
 pub fn render_text_in_box_with_drop_cap_font(
     renderer: &mut Renderer,
     font: &Font,
@@ -898,6 +941,7 @@ pub fn render_text_in_box_with_drop_cap_font(
     )
 }
 
+#[must_use = "the returned String is text that did not fit; call render_clipped_text_in_box_font to drop it deliberately"]
 pub fn render_text_in_box_aligned_font(
     renderer: &mut Renderer,
     font: &Font,
