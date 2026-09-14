@@ -155,8 +155,9 @@ workers (`?wasm-threads=N` overrides). The pool
 starts only when the page is `crossOriginIsolated`, which the game document
 gets from `Cross-Origin-Opener-Policy: same-origin` and
 `Cross-Origin-Embedder-Policy: require-corp` in `wasm-www/deploy/public-headers.txt`.
-`/leaderboards/` detaches both (it needs no shared memory). Runtime and datadir
-assets are `Cross-Origin-Resource-Policy: same-origin`; the identity signer
+`/leaderboards/` detaches both (it needs no shared memory). Public and runtime
+assets are `Cross-Origin-Resource-Policy: same-origin` (datadir objects are
+fetched same-origin, which COEP does not check); the identity signer
 document sends COEP `require-corp` and CORP `same-site` so the isolated game can
 still frame it. Where a page is not isolated, the runtime logs that and every
 decode path keeps its serial fallback. The deployment does not install a

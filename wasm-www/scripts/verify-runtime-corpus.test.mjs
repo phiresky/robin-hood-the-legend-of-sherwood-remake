@@ -280,11 +280,23 @@ test('runtime update retains immutable wasm versions and never imports the datad
         existing: null, addition: first, datadirAuthority: release.authority,
         datadirDeployment: release.receipt, output: original,
     });
+    // The deployed corpus predates the current header policy (no CORP). Its
+    // `_headers` is discarded by assembly, so it must not block the release,
+    // while strict verification still rejects it and the output is current.
+    const legacyHeaders = (await readFile(resolve(original, '_headers'), 'utf8'))
+        .replace('  Cross-Origin-Resource-Policy: same-origin\n', '');
+    await rm(resolve(original, '_headers'));
+    await writeFile(resolve(original, '_headers'), legacyHeaders);
+    await assert.rejects(
+        verifyRuntimeCorpus(original, { datadirAuthorityPath: release.authority }),
+        /Cross-Origin-Resource-Policy/u,
+    );
     const result = await assembleRuntimeCorpus({
         existing: original, addition: second, datadirAuthority: release.authority,
         datadirDeployment: release.receipt, output: updated,
     });
     assert.equal(result.assetCount, 22);
+    assert.match(await readFile(resolve(updated, '_headers'), 'utf8'), /Cross-Origin-Resource-Policy: same-origin/u);
     assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/latest.json'))).short, '222222222222');
     assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/111111111111/manifest.json'))).short, '111111111111');
     await assert.rejects(readFile(resolve(updated, DEMO_CONTENT_MANIFEST_PATH)), /ENOENT/u);

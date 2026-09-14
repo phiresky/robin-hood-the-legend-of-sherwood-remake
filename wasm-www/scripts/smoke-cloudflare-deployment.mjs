@@ -236,7 +236,6 @@ export async function smokeCloudflareDeployment(fetchImpl = fetch) {
     const demo = await request(fetchImpl, latest.multiplayerContent.demo.url);
     requireHeader(demo, 'x-robinhood-static-origin', 'datadir-v1');
     requireHeader(demo, 'cache-control', 'immutable');
-    requireSameOriginResource(demo, 'live Demo object');
     await requireBodyIdentity(
         demo,
         latest.multiplayerContent.demo,

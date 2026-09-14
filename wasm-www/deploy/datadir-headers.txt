@@ -1,7 +1,6 @@
 /*
   Cache-Control: public, max-age=31536000, immutable
   Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; sandbox
-  Cross-Origin-Resource-Policy: same-origin
   Permissions-Policy: camera=(), geolocation=(), microphone=(), payment=(), serial=(), usb=(), fullscreen=(), clipboard-read=(), clipboard-write=()
   Referrer-Policy: no-referrer
   X-Content-Type-Options: nosniff

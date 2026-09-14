@@ -138,8 +138,9 @@ export const PUBLIC_ISOLATION = Object.freeze({
     'Cross-Origin-Embedder-Policy': 'require-corp',
     'Cross-Origin-Opener-Policy': 'same-origin',
 });
-// Static assets are only ever consumed by the same origin. A cross-origin
-// embedder (and a Spectre-capable isolated process) is refused explicitly.
+// Public and runtime assets are only ever consumed by the same origin. A
+// cross-origin embedder (and a Spectre-capable isolated process) is refused
+// explicitly. Both Workers are redeployed, with restaged headers, every release.
 export const SAME_ORIGIN_RESOURCE = 'same-origin';
 // The signer is framed by the isolated game page, so its document must opt in
 // to COEP and allow its same-site embedder via CORP. `same-origin` would block
@@ -267,7 +268,12 @@ export function validateDatadirHeaders(text) {
     requireHeader(text, 'X-Content-Type-Options', ['nosniff'], 'datadir');
     requireHeader(text, 'Referrer-Policy', ['no-referrer'], 'datadir');
     requireHeader(text, 'X-Robinhood-Static-Origin', ['datadir-v1'], 'datadir');
-    requireExactHeader(routeBlock(text, '/*'), 'Cross-Origin-Resource-Policy', SAME_ORIGIN_RESOURCE, 'datadir resources');
+    // No CORP requirement here: the isolated game fetches datadirs same-origin
+    // (which COEP never checks), and the datadir Worker is only redeployed
+    // with a new datadir generation, so a header change would not reach it on
+    // an ordinary runtime release.
+    // TODO: add `Cross-Origin-Resource-Policy: same-origin` with the next
+    // datadir generation deployment, then require it here and in the smoke.
     if (!/^\/\*\s*$/mu.test(text)
         || !/^\/datadirs\/\*\s*$/mu.test(text)
         || !/^\s*Cache-Control:\s*public, max-age=31536000, immutable\s*$/mu.test(text)

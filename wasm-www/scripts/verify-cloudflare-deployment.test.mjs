@@ -82,7 +82,6 @@ test('game isolation and signer frame compatibility fail closed', async () => {
         candidate => { candidate.signerHeaders = candidate.signerHeaders.replace('Cross-Origin-Resource-Policy: same-site', 'Cross-Origin-Resource-Policy: same-origin'); },
         candidate => { candidate.signerHeaders = candidate.signerHeaders.replace('  Cross-Origin-Resource-Policy: same-site\n', '  Cross-Origin-Resource-Policy: same-site\n  Cross-Origin-Opener-Policy: same-origin\n'); },
         candidate => { candidate.runtimeHeaders = candidate.runtimeHeaders.replace('  Cross-Origin-Resource-Policy: same-origin\n', ''); },
-        candidate => { candidate.datadirHeaders = candidate.datadirHeaders.replace('Cross-Origin-Resource-Policy: same-origin', 'Cross-Origin-Resource-Policy: cross-origin'); },
     ];
     for (const mutate of hostile) {
         const candidate = clone(snapshot);

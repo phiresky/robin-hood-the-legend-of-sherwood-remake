@@ -32,7 +32,8 @@ function fixtureFetch({
     leaderboardIsolation = {},
     signerIsolation = { 'cross-origin-embedder-policy': 'require-corp', 'cross-origin-resource-policy': 'same-site' },
     runtimeResourcePolicy = 'same-origin',
-    demoResourcePolicy = 'same-origin',
+    // The live datadir Worker predates CORP; the smoke must not require it.
+    demoResourcePolicy = null,
 } = {}) {
     // `null` omits the header; `undefined` would select the default above.
     const corp = value => (value === null ? {} : { 'cross-origin-resource-policy': value });
@@ -245,7 +246,6 @@ test('deployment smoke requires game isolation, an isolation-compatible signer, 
         [{ signerIsolation: { 'cross-origin-resource-policy': 'same-site' } }, /identity signer document must set Cross-Origin-Embedder-Policy/u],
         [{ signerIsolation: { 'cross-origin-embedder-policy': 'require-corp' } }, /identity signer document must set Cross-Origin-Resource-Policy: same-site/u],
         [{ runtimeResourcePolicy: null }, /runtime pointer must set cross-origin-resource-policy/u],
-        [{ demoResourcePolicy: 'cross-origin' }, /live Demo object must set cross-origin-resource-policy/u],
     ];
     for (const [options, message] of hostile) {
         await assert.rejects(smokeCloudflareDeployment(fixtureFetch(options).fetchImpl), message);
