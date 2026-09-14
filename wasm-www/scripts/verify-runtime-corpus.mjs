@@ -304,11 +304,19 @@ async function validateBuildClosure(root, manifest, files) {
     }
 }
 
+/**
+ * `replacedHeaders`: the corpus is an already-deployed input whose `_headers`
+ * assembly discards and restages from the checked-in policy. Its file must
+ * exist, but an older header policy (e.g. from before cross-origin isolation)
+ * must not block assembling the next release; the assembled output is always
+ * verified with the current policy.
+ */
 export async function verifyRuntimeCorpus(directory, {
     addition = false,
     expectedContract,
     datadirAuthorityPath,
     retainedGenerations = [],
+    replacedHeaders = false,
 } = {}) {
     const root = runtimeRoot(directory);
     const facts = await regularFilesBelow(root);
@@ -328,7 +336,7 @@ export async function verifyRuntimeCorpus(directory, {
         if (datadirAuthorityPath === undefined) {
             throw new Error('complete runtime verification requires the external datadir release authority');
         }
-        validateRuntimeHeaders(await readFile(resolve(root, '_headers'), 'utf8'));
+        if (!replacedHeaders) validateRuntimeHeaders(await readFile(resolve(root, '_headers'), 'utf8'));
         datadirDeployment = await verifyDatadirDeploymentReceipt({
             authorityPath: datadirAuthorityPath,
             receiptPath: resolve(root, DATADIR_BINDING_PATH),

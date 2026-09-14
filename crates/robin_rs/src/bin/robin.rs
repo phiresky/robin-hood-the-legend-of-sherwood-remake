@@ -367,13 +367,16 @@ async fn wasm_init_thread_pool() {
         tracing::info!("page is not cross-origin isolated; sprite decode stays single-threaded");
         return;
     }
-    // Cap the pool well below hardwareConcurrency: VQ decode is allocation
-    // heavy and wasm's dlmalloc serializes every thread on one global lock,
-    // so throughput peaks around 4 workers and then INVERTS (measured on the
-    // demo corpus, 12-core Chrome: serial 11.2 s, 4 workers 6.6 s, 8 workers
-    // 11.1 s, 12 workers 12.2 s for H01). `?wasm-threads=N` overrides for
-    // experiments — e.g. after a future allocator swap.
-    const MAX_DECODE_WORKERS: usize = 4;
+    // Pool size is min(hardwareConcurrency, 8). With the talc allocator (the
+    // allocator is ~1.5% of the decode profile) scaling no longer inverts past
+    // 4 workers as it did under dlmalloc's global lock. Dem_Lei_MP VQ
+    // materialize, threaded build, 12-core Chrome, two rounds each:
+    // 0 workers 4.9-5.2 s, 2: 2.1-2.5 s, 4: 1.26-1.39 s, 8: 0.91-1.1 s,
+    // 12: 0.89-1.07 s. Beyond 8 the gain is within noise, so cap there to
+    // bound worker memory/startup. `?wasm-threads=N` overrides for experiments.
+    // The threaded build's serial path (not isolated) is ~8% slower than the
+    // non-threaded build, but remains functional.
+    const MAX_DECODE_WORKERS: usize = 8;
     let threads = wasm_query_thread_override().unwrap_or_else(|| {
         js_sys::Reflect::get(&global, &"navigator".into())
             .and_then(|navigator| js_sys::Reflect::get(&navigator, &"hardwareConcurrency".into()))

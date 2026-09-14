@@ -3674,7 +3674,9 @@ fn native_test_soldier() -> Entity {
 
 #[test]
 fn set_always_attentive_promotes_green_view_when_music_is_already_yellow() {
-    let mut soldier = native_test_soldier();
+    let mut soldier = crate::engine::test_support::actors::make_test_ai_soldier(
+        crate::element::Camp::Lacklandists,
+    );
     let enemy = soldier
         .enemy_ai_mut()
         .expect("native test soldier requires an enemy AI");
@@ -3790,7 +3792,9 @@ fn set_always_attentive_preserves_ordinary_alert_branches() {
     ];
 
     for case in cases {
-        let mut soldier = native_test_soldier();
+        let mut soldier = crate::engine::test_support::actors::make_test_ai_soldier(
+            crate::element::Camp::Lacklandists,
+        );
         let enemy = soldier
             .enemy_ai_mut()
             .expect("native test soldier requires an enemy AI");

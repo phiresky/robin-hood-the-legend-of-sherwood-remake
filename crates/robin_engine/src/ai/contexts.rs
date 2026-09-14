@@ -272,28 +272,6 @@ mod tests;
 #[cfg(test)]
 mod hiking_waypoint_identity_tests;
 
-/// Lightweight view of an entity other than the evaluating NPC, used
-/// by AI stimulus handlers. All fields come from the live entity at
-/// the moment the stimulus is dispatched.
-#[derive(Debug, Clone, Default)]
-pub struct AntagonistInfo {
-    /// The antagonist's map position.
-    pub position: Position,
-    /// The antagonist's camp.
-    pub camp: crate::element::Camp,
-    /// True when the antagonist is in a sword-fighting action state.
-    pub is_swordfighting: bool,
-    /// True when the antagonist is a player character.
-    pub is_pc: bool,
-    /// True when the antagonist is the Robin Hood PC. Civilian reactions
-    /// (`CivAdmiresRobin`) special-case this.
-    pub is_robin: bool,
-    /// True when the antagonist is a VIP civilian / VIP soldier.
-    pub is_vip: bool,
-    /// True when the antagonist is inside a building sector.
-    pub in_building: bool,
-}
-
 // ---------------------------------------------------------------------------
 // ReinforcementDoorInfo — cached door data for forest retreats
 // ---------------------------------------------------------------------------

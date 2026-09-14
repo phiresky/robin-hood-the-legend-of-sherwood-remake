@@ -1,6 +1,8 @@
 /*
   Cache-Control: public, max-age=0, must-revalidate
   Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'none'; style-src 'none'; font-src 'none'; object-src 'none'; media-src 'none'; worker-src 'none'; child-src 'none'; frame-src 'none'; frame-ancestors https://robinhood.phiresky.xyz; base-uri 'none'; form-action 'none'; manifest-src 'none'
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: same-site
   Permissions-Policy: camera=(), geolocation=(), microphone=(), payment=(), serial=(), usb=(), fullscreen=(), clipboard-read=(), clipboard-write=()
   Referrer-Policy: no-referrer
   X-Content-Type-Options: nosniff

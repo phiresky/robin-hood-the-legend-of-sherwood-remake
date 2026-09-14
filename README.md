@@ -148,10 +148,20 @@ builds enable the `simd128` target feature (`.cargo/config.toml`).  The
 two custom profiles force the LLVM codegen backend — cranelift doesn't
 target wasm.
 
-The browser build can use the threaded sprite decoder when the production
-origin supplies cross-origin-isolation headers. Every decode path retains its
-serial fallback. The deployment does not install a service worker to rewrite
-response headers.
+Production runtimes are the threaded build (`node wasm-www/scripts/build-runtime.mjs
+--threads`, which `stage-runtime-addition.mjs` always uses): shared wasm memory
+plus a wasm-bindgen-rayon pool of min(`hardwareConcurrency`, 8) sprite-decode
+workers (`?wasm-threads=N` overrides). The pool
+starts only when the page is `crossOriginIsolated`, which the game document
+gets from `Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp` in `wasm-www/deploy/public-headers.txt`.
+`/leaderboards/` detaches both (it needs no shared memory). Public and runtime
+assets are `Cross-Origin-Resource-Policy: same-origin` (datadir objects are
+fetched same-origin, which COEP does not check); the identity signer
+document sends COEP `require-corp` and CORP `same-site` so the isolated game can
+still frame it. Where a page is not isolated, the runtime logs that and every
+decode path keeps its serial fallback. The deployment does not install a
+service worker to rewrite response headers.
 
 Run `wasm-bindgen --target web` on the produced `.wasm` into
 `wasm-www/pkg/`, then build the web package from `wasm-www/`:
@@ -198,22 +208,24 @@ datadir deployment receipt is metadata, not game bytes:
 
 The dedicated datadir Worker stores only the separately authorized Demo
 closures. Its objects are served `immutable`, so every native datadir format
-is a separate generation directory. The current generation (format 16) is:
+is a separate generation directory, and so is any rebuild that changes bytes.
+The current generation (format 16, second build) is:
 
-    /datadirs/demo-leicester/v16/v16-web-opus-q80.rhdata.zst
-    /datadirs/demo-leicester/v16/robinhood-web-content.json
-    /datadirs/demo-leicester/v16/missions/*.rhmission.zst
-    /datadirs/demo-leicester/v16/rhs/*.rhmission.zst
-    /datadirs/demo-leicester/v16/terrain/*.rhmission.zst
-    /datadirs/demo-leicester/v16/audio/*.rhmission.zst
-    /datadirs/demo-leicester/v16/audio/assets/*.opus
-    /datadirs/demo-leicester/v16/audio/bundles/*.bin
+    /datadirs/demo-leicester/v16r2/v16r2-web-opus-q80.rhdata.zst
+    /datadirs/demo-leicester/v16r2/robinhood-web-content.json
+    /datadirs/demo-leicester/v16r2/missions/*.rhmission.zst
+    /datadirs/demo-leicester/v16r2/rhs/*.rhmission.zst
+    /datadirs/demo-leicester/v16r2/terrain/*.rhmission.zst
+    /datadirs/demo-leicester/v16r2/audio/*.rhmission.zst
+    /datadirs/demo-leicester/v16r2/audio/assets/*.opus
+    /datadirs/demo-leicester/v16r2/audio/bundles/*.bin
 
 Earlier generations stay published byte-for-byte because older wasm builds and
 replay links pin them. They are listed with their digests in
 `RETAINED_DEMO_GENERATIONS` (`wasm-www/scripts/verify-datadir-corpus.mjs`);
 format 15 is the `/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst` closure
-directly under `/datadirs/demo-leicester/`.
+directly under `/datadirs/demo-leicester/`, and the first format-16 build is
+`/datadirs/demo-leicester/v16/`.
 
 The shell fetches `/wasm/latest.json` when no query parameter is present. It
 loads the exact static JavaScript import closure declared by that manifest.
@@ -248,7 +260,7 @@ the wasm-safe zstd window):
         datadirs/demo_leicester_ecoste /tmp/robin-web-shipping
 
 Publish the generated `Data/datadir.bin` as
-`/datadirs/demo-leicester/v16/v16-web-opus-q80.rhdata.zst`, preserving its generated
+`/datadirs/demo-leicester/v16r2/v16r2-web-opus-q80.rhdata.zst`, preserving its generated
 `Data/robinhood-web-content.json`, `Data/missions/`, `Data/rhs/`,
 `Data/terrain/`, and `Data/audio/` closure beside it
 (`node wasm-www/scripts/assemble-datadir-corpus.mjs --update PRIOR_CORPUS

@@ -981,21 +981,6 @@ impl StimulusType {
     }
 }
 
-/// Classification of stimulus types into processing categories.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StimulusCategory {
-    /// Expected events (timer, reachpoint, etc.) — drive state progression.
-    Expected,
-    /// Unexpected events — interruptions that may change behavior.
-    Unexpected,
-    /// Alerting events — high-priority perception events.
-    Alerting,
-    /// Return to duty — special handling.
-    ReturnToDuty,
-    /// Ignored by this AI type.
-    Ignored,
-}
-
 // ---------------------------------------------------------------------------
 // Remark types
 // ---------------------------------------------------------------------------
@@ -1428,64 +1413,6 @@ pub enum AlertSoldiersFailureContinuation {
     ReturnToDuty,
     SeekBody { center: Position, radius: u16 },
     SeekMissedCharly { center: Position },
-}
-
-// ---------------------------------------------------------------------------
-// Panic request (queued by AI, applied by engine)
-// ---------------------------------------------------------------------------
-
-/// Queued `Panic()` request on an [`AiController`].
-///
-/// The AI layer sets this field when a fleeing stimulus kicks in; the
-/// engine consumes it at post-think time and performs the door lookup
-/// against `ai_global.door_seek_infos` (which the AI layer doesn't
-/// see on its call stack).
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct PanicRequest {
-    /// Point to flee *away from*.  `None` means undirected panic — the
-    /// engine picks any reachable door and runs in random directions.
-    pub center: Option<Position>,
-    /// Number of run segments the NPC should execute after the initial
-    /// door fallback fails.
-    pub runs: u8,
-    /// Alert level the drain should install on state entry (default
-    /// `ALERT_RED`).
-    pub alert: AlertLevel,
-    /// `true` when the caller was not already in `FleeingPanic` /
-    /// `FleeingRunToDoor` at the time the request was queued. Lets the
-    /// drain suppress repeated state changes / Say() / `EventReachPoint`
-    /// dispatches when we're already mid-panic.
-    pub is_new_panic: bool,
-}
-
-/// Pending request for a script-driven area search, set from
-/// `SetAIState(actor, STATE_SEEKING)` script natives. The engine
-/// consumes it post-think by dispatching into `EnemyAi::seek_area`
-/// (soldier-only).
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct ScriptSeekAreaRequest {
-    /// Seek center — typically the NPC's current position.
-    pub center: Position,
-    /// Area-search radius (`AI_SCRIPT_SEEK_RADIUS`).
-    pub radius: u16,
 }
 
 /// Patrol-path assignment variants — the three call shapes (sentinel

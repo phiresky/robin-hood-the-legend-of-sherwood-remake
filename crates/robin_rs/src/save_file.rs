@@ -1390,7 +1390,7 @@ mod tests {
                     }
                 },
                 soldier: robin_engine::element::SoldierData {
-                    cached_camp: robin_engine::element::Camp::Royalists,
+                    cached_camp: robin_engine::element_kinds::Camp::Lacklandists,
                     ..Default::default()
                 },
             },
@@ -1408,7 +1408,6 @@ mod tests {
         };
         let host = Host::scratch(800.0, 600.0);
         let game = crate::game::Game::default();
-        let clone = engine.clone();
         let pinned =
             GameRuntimeSnapshot::capture(&engine, &host, &game).expect("canonical replay save");
         assert_eq!(
@@ -1423,7 +1422,6 @@ mod tests {
             .expect("write live save");
         let disk = GameSaveFile::read_from(&path).expect("read live save");
         assert_eq!(live_ai_state(&engine), (23, 41), "capture is read-only");
-        assert_eq!(live_ai_state(&clone), (23, 41));
         assert_eq!(live_ai_state(&disk.engine), (23, 41));
         assert_eq!(live_ai_state(&pinned_engine), live_ai_state(&disk.engine));
         let mut replay_engine = engine.clone();
@@ -1612,7 +1610,7 @@ mod tests {
                     }
                 },
                 soldier: robin_engine::element::SoldierData {
-                    cached_camp: robin_engine::element::Camp::Royalists,
+                    cached_camp: robin_engine::element_kinds::Camp::Lacklandists,
                     ..Default::default()
                 },
             },

@@ -114,51 +114,10 @@ impl ShippingSpriteBank {
     /// conversion lists the base RHS chunk as an explicit dependency, so its
     /// absence means a broken manifest, never something to paper over.
     pub fn materialize_vq_chunks(&mut self, rhs_files: &BTreeMap<String, RhsData>) -> Result<()> {
-        self.validate_resident_budget()?;
-        let mut pending = std::mem::take(&mut self.vq_chunks);
-        while !pending.is_empty() {
-            let mut ready = Vec::new();
-            let mut still_pending = Vec::new();
-            for chunk in pending {
-                if self.vq_chunk_bases_ready(&chunk)? {
-                    ready.push(chunk);
-                } else {
-                    still_pending.push(chunk);
-                }
-            }
-            let made_progress = !ready.is_empty();
-            // Chunks within one fixpoint round are independent (their bases
-            // are already materialized), so decode them in parallel on
-            // native; wasm has no thread pool and stays serial.
-            #[cfg(not(target_arch = "wasm32"))]
-            let decoded: Vec<(SpriteVqChunk, Result<Vec<(u32, Vec<u16>)>>)> = {
-                use rayon::prelude::*;
-                ready
-                    .into_par_iter()
-                    .map(|chunk| {
-                        let grids = self.decode_vq_chunk(&chunk, rhs_files);
-                        (chunk, grids)
-                    })
-                    .collect()
-            };
-            #[cfg(target_arch = "wasm32")]
-            let decoded: Vec<(SpriteVqChunk, Result<Vec<(u32, Vec<u16>)>>)> = ready
-                .into_iter()
-                .map(|chunk| {
-                    let grids = self.decode_vq_chunk(&chunk, rhs_files);
-                    (chunk, grids)
-                })
-                .collect();
-            for (chunk, grids) in decoded {
-                let grids =
-                    grids.with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;
-                self.apply_decoded_vq_chunk(&chunk, grids)?;
-            }
-            if !made_progress {
-                return Err(vq_chunks_stuck_error(&still_pending));
-            }
-            pending = still_pending;
-        }
+        // One unbounded step per fixpoint round: identical to decoding each
+        // whole round at once, which is what this function always did.
+        let mut materializer = SpriteChunkMaterializer::new(self, SpriteChunkKinds::Vq)?;
+        while !materializer.step(self, rhs_files, usize::MAX)? {}
         Ok(())
     }
 
@@ -561,31 +520,19 @@ impl ShippingSpriteBank {
     /// copying pixels out. The packed RLE run format is deliberately not
     /// rebuilt — nothing draws from runs, so every consumer would only
     /// decompress them straight back to this raster.
-    pub(super) fn run_rle_jxl_chunk_decode(
-        chunk: &SpriteRleJxlChunk,
-        dims: &[(u16, u16)],
-    ) -> Result<Vec<(u32, crate::frame_holder::SpriteRaster)>> {
-        Self::run_rle_jxl_chunk_decode_with_parallelism(chunk, dims, true)
-    }
-
+    // Whole-chunk decode for the worker-pool scheduler; install-time decode
+    // uses the per-atlas items of `SpriteChunkMaterializer`.
+    #[cfg_attr(
+        not(any(test, all(target_arch = "wasm32", feature = "wasm-threads"))),
+        allow(dead_code)
+    )]
     pub(super) fn run_rle_jxl_chunk_decode_with_parallelism(
         chunk: &SpriteRleJxlChunk,
         dims: &[(u16, u16)],
         parallel: bool,
     ) -> Result<Vec<(u32, crate::frame_holder::SpriteRaster)>> {
-        use crate::rle_jxl;
-        let decode_atlas = |(index, blob): (usize, &Vec<u8>)| {
-            let (width, height, rgba) = if parallel {
-                rle_jxl::decode_jxl_rgba8_parallel(blob)
-            } else {
-                rle_jxl::decode_jxl_rgba8(blob)
-            }
-            .with_context(|| format!("RLE-JXL blob {index} of {}", chunk.rhs))?;
-            let canvas = rle_jxl::canvas_from_rgba(&rgba).with_context(|| {
-                format!("RLE-JXL blob {index} of {} has invalid classes", chunk.rhs)
-            })?;
-            Ok((width, height, Arc::new(canvas)))
-        };
+        let decode_atlas =
+            |(index, _blob): (usize, &Vec<u8>)| Self::decode_rle_jxl_atlas(chunk, index, parallel);
         // A mission can have only a handful of chunks, with most atlases in
         // one chunk. Let idle workers steal individual atlas decodes too.
         // On wasm, blocking rayon joins are only legal on pool workers.
@@ -618,6 +565,37 @@ impl ShippingSpriteBank {
                 .map(decode_atlas)
                 .collect::<Result<_>>()?
         };
+        Self::place_rle_jxl_rasters(chunk, dims, &atlases)
+    }
+
+    /// Decode atlas `index` of one RLE-JXL chunk into its shared RGB565
+    /// canvas `(width, height, canvas)`. Pure compute; one work item of
+    /// [`SpriteChunkMaterializer`].
+    fn decode_rle_jxl_atlas(
+        chunk: &SpriteRleJxlChunk,
+        index: usize,
+        parallel: bool,
+    ) -> Result<(usize, usize, Arc<Vec<u16>>)> {
+        use crate::rle_jxl;
+        let blob = &chunk.jxl_blobs[index];
+        let (width, height, rgba) = if parallel {
+            rle_jxl::decode_jxl_rgba8_parallel(blob)
+        } else {
+            rle_jxl::decode_jxl_rgba8(blob)
+        }
+        .with_context(|| format!("RLE-JXL blob {index} of {}", chunk.rhs))?;
+        let canvas = rle_jxl::canvas_from_rgba(&rgba).with_context(|| {
+            format!("RLE-JXL blob {index} of {} has invalid classes", chunk.rhs)
+        })?;
+        Ok((width, height, Arc::new(canvas)))
+    }
+
+    /// Window every sprite of one chunk into its decoded atlases.
+    fn place_rle_jxl_rasters(
+        chunk: &SpriteRleJxlChunk,
+        dims: &[(u16, u16)],
+        atlases: &[(usize, usize, Arc<Vec<u16>>)],
+    ) -> Result<Vec<(u32, crate::frame_holder::SpriteRaster)>> {
         let mut out = Vec::with_capacity(chunk.sprite_ids.len());
         for ((&sprite_id, placement), &(width, height)) in chunk
             .sprite_ids
@@ -703,35 +681,371 @@ impl ShippingSpriteBank {
     /// native builds decode them in parallel; wasm (without the worker pool)
     /// stays serial.
     pub fn materialize_rle_jxl_chunks(&mut self) -> Result<()> {
-        self.validate_resident_budget()?;
-        let pending = std::mem::take(&mut self.rle_jxl_chunks);
-        if pending.is_empty() {
-            return Ok(());
+        let mut materializer = SpriteChunkMaterializer::new(self, SpriteChunkKinds::RleJxl)?;
+        while !materializer.step(self, &BTreeMap::new(), usize::MAX)? {}
+        Ok(())
+    }
+}
+
+/// Relative decode cost of one compressed VQ blob byte, in the work units of
+/// [`SpriteMaterializeProgress`].
+pub const VQ_DECODE_WORK_PER_BYTE: u64 = 1;
+/// Relative decode cost of one RLE-JXL atlas byte. JXL decode plus canvas
+/// class reconstruction costs more wall clock per compressed byte than the
+/// VQ context model.
+// TODO: calibrated on native single-threaded decode of the v16r2 Demo; re-measure
+// on wasm if the progress bar visibly speeds up/slows down between the two kinds.
+pub const RLE_JXL_DECODE_WORK_PER_BYTE: u64 = 1;
+
+fn vq_chunk_work(chunk: &SpriteVqChunk) -> u64 {
+    chunk.blob.len() as u64 * VQ_DECODE_WORK_PER_BYTE
+}
+
+fn rle_jxl_atlas_work(blob: &[u8]) -> u64 {
+    blob.len() as u64 * RLE_JXL_DECODE_WORK_PER_BYTE
+}
+
+/// Which chunk families a [`SpriteChunkMaterializer`] consumes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SpriteChunkKinds {
+    Vq,
+    RleJxl,
+    /// VQ first, then RLE-JXL: the mission-install order.
+    All,
+}
+
+/// The chunk family the next [`SpriteChunkMaterializer::step`] works on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SpriteChunkStage {
+    Vq,
+    RleJxl,
+    Done,
+}
+
+/// Observable decode progress. Items are VQ chunks plus RLE-JXL atlases;
+/// work weights each item by its compressed size and decode cost.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpriteMaterializeProgress {
+    pub completed_items: usize,
+    pub total_items: usize,
+    pub completed_work: u64,
+    pub total_work: u64,
+}
+
+impl SpriteMaterializeProgress {
+    /// Weighted completion in `0.0..=1.0`; an empty job is complete.
+    pub fn fraction(&self) -> f32 {
+        if self.total_work == 0 {
+            return if self.completed_items >= self.total_items {
+                1.0
+            } else {
+                0.0
+            };
         }
-        let inputs = pending
-            .iter()
-            .map(|chunk| self.prepare_rle_jxl_chunk_dims(chunk))
-            .collect::<Result<Vec<_>>>()?;
-        #[cfg(not(target_arch = "wasm32"))]
-        let decoded: Vec<Result<Vec<(u32, crate::frame_holder::SpriteRaster)>>> = {
-            use rayon::prelude::*;
-            pending
-                .par_iter()
-                .zip(&inputs)
-                .map(|(chunk, dims)| Self::run_rle_jxl_chunk_decode(chunk, dims))
-                .collect()
-        };
-        #[cfg(target_arch = "wasm32")]
-        let decoded: Vec<Result<Vec<(u32, crate::frame_holder::SpriteRaster)>>> = pending
-            .iter()
-            .zip(&inputs)
-            .map(|(chunk, dims)| Self::run_rle_jxl_chunk_decode(chunk, dims))
-            .collect();
-        for (chunk, rasters) in pending.iter().zip(decoded) {
-            let rasters = rasters
-                .with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
-            self.apply_decoded_rle_jxl_chunk(chunk, rasters)?;
+        (self.completed_work as f64 / self.total_work as f64).min(1.0) as f32
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MaterializerStage {
+    Vq,
+    /// VQ finished; RLE budget validation and chunk takeover happen at the
+    /// start of the next step, exactly where the serial path performed them.
+    RleJxlPending,
+    RleJxl,
+    Done,
+}
+
+/// RLE-JXL decode state: atlases decode as independent items (a mission's
+/// atlases mostly sit in one chunk), chunks apply in list order once all of
+/// their atlases exist.
+struct RleJxlStage {
+    chunks: Vec<SpriteRleJxlChunk>,
+    dims: Vec<Vec<(u16, u16)>>,
+    atlases: Vec<Vec<(usize, usize, Arc<Vec<u16>>)>>,
+    next_chunk: usize,
+    next_atlas: usize,
+    next_apply: usize,
+}
+
+impl RleJxlStage {
+    /// Apply every fully decoded chunk before `limit`, in list order.
+    fn apply_completed(&mut self, bank: &mut ShippingSpriteBank, limit: usize) -> Result<()> {
+        while self.next_apply < limit.min(self.chunks.len())
+            && self.atlases[self.next_apply].len() == self.chunks[self.next_apply].jxl_blobs.len()
+        {
+            let index = self.next_apply;
+            let chunk = &self.chunks[index];
+            let atlases = std::mem::take(&mut self.atlases[index]);
+            let rasters =
+                ShippingSpriteBank::place_rle_jxl_rasters(chunk, &self.dims[index], &atlases)
+                    .with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
+            bank.apply_decoded_rle_jxl_chunk(chunk, rasters)?;
+            self.next_apply += 1;
         }
         Ok(())
     }
+}
+
+/// Incremental, bounded-step form of the serial/rayon install-time sprite
+/// decode, so an async caller can report progress and yield to the browser
+/// between steps.
+///
+/// `step(.., usize::MAX)` reproduces [`ShippingSpriteBank::materialize_vq_chunks`]
+/// / [`ShippingSpriteBank::materialize_rle_jxl_chunks`] exactly (they are
+/// implemented with it). Smaller steps split each VQ fixpoint round into
+/// batches: round membership is still fixed at round start and chunks apply
+/// in the same order, and a batch can only fill still-empty rows that no
+/// other chunk of the round reads, so decoded output is identical.
+/// Transient decode state — deliberately no serde derives.
+pub struct SpriteChunkMaterializer {
+    kinds: SpriteChunkKinds,
+    stage: MaterializerStage,
+    vq_waiting: Vec<SpriteVqChunk>,
+    vq_round: std::collections::VecDeque<SpriteVqChunk>,
+    rle: Option<RleJxlStage>,
+    /// RLE-JXL totals counted from the bank before takeover.
+    rle_estimate: (usize, u64),
+    progress: SpriteMaterializeProgress,
+}
+
+impl SpriteChunkMaterializer {
+    pub fn new(bank: &mut ShippingSpriteBank, kinds: SpriteChunkKinds) -> Result<Self> {
+        let mut this = Self {
+            kinds,
+            stage: MaterializerStage::Vq,
+            vq_waiting: Vec::new(),
+            vq_round: Default::default(),
+            rle: None,
+            rle_estimate: (0, 0),
+            progress: SpriteMaterializeProgress::default(),
+        };
+        if kinds != SpriteChunkKinds::Vq {
+            let (items, work) = rle_jxl_totals(&bank.rle_jxl_chunks);
+            this.rle_estimate = (items, work);
+            this.progress.total_items += items;
+            this.progress.total_work += work;
+        }
+        if kinds == SpriteChunkKinds::RleJxl {
+            this.begin_rle_jxl(bank)?;
+        } else {
+            bank.validate_resident_budget()?;
+            this.vq_waiting = std::mem::take(&mut bank.vq_chunks);
+            for chunk in &this.vq_waiting {
+                this.progress.total_items += 1;
+                this.progress.total_work += vq_chunk_work(chunk);
+            }
+            this.finish_vq_if_empty();
+        }
+        Ok(this)
+    }
+
+    pub fn progress(&self) -> SpriteMaterializeProgress {
+        self.progress
+    }
+
+    pub fn stage(&self) -> SpriteChunkStage {
+        match self.stage {
+            MaterializerStage::Vq => SpriteChunkStage::Vq,
+            MaterializerStage::RleJxlPending | MaterializerStage::RleJxl => {
+                SpriteChunkStage::RleJxl
+            }
+            MaterializerStage::Done => SpriteChunkStage::Done,
+        }
+    }
+
+    /// Decode and apply at most `max_items` work items (at least one) of the
+    /// current stage; never crosses from VQ into RLE-JXL within one call.
+    /// Returns `Ok(true)` once everything is materialized.
+    pub fn step(
+        &mut self,
+        bank: &mut ShippingSpriteBank,
+        rhs_files: &BTreeMap<String, RhsData>,
+        max_items: usize,
+    ) -> Result<bool> {
+        let max_items = max_items.max(1);
+        match self.stage {
+            MaterializerStage::Vq => self.step_vq(bank, rhs_files, max_items)?,
+            MaterializerStage::RleJxlPending => {
+                self.begin_rle_jxl(bank)?;
+                if self.stage == MaterializerStage::RleJxl {
+                    self.step_rle_jxl(bank, max_items)?;
+                }
+            }
+            MaterializerStage::RleJxl => self.step_rle_jxl(bank, max_items)?,
+            MaterializerStage::Done => {}
+        }
+        Ok(self.stage == MaterializerStage::Done)
+    }
+
+    fn finish_vq_if_empty(&mut self) {
+        if self.vq_round.is_empty() && self.vq_waiting.is_empty() {
+            self.stage = if self.kinds == SpriteChunkKinds::All {
+                MaterializerStage::RleJxlPending
+            } else {
+                MaterializerStage::Done
+            };
+        }
+    }
+
+    fn step_vq(
+        &mut self,
+        bank: &mut ShippingSpriteBank,
+        rhs_files: &BTreeMap<String, RhsData>,
+        max_items: usize,
+    ) -> Result<()> {
+        if self.vq_round.is_empty() {
+            let mut ready = Vec::new();
+            let mut still_pending = Vec::new();
+            for chunk in std::mem::take(&mut self.vq_waiting) {
+                if bank.vq_chunk_bases_ready(&chunk)? {
+                    ready.push(chunk);
+                } else {
+                    still_pending.push(chunk);
+                }
+            }
+            if ready.is_empty() {
+                return Err(vq_chunks_stuck_error(&still_pending));
+            }
+            self.vq_round = ready.into();
+            self.vq_waiting = still_pending;
+        }
+        let count = max_items.min(self.vq_round.len());
+        let batch: Vec<SpriteVqChunk> = self.vq_round.drain(..count).collect();
+        let shared: &ShippingSpriteBank = bank;
+        // Chunks within one fixpoint round are independent (their bases are
+        // already materialized), so decode them in parallel on native; wasm
+        // has no thread pool on the calling thread and stays serial.
+        #[cfg(not(target_arch = "wasm32"))]
+        let decoded: Vec<(SpriteVqChunk, Result<Vec<(u32, Vec<u16>)>>)> = {
+            use rayon::prelude::*;
+            batch
+                .into_par_iter()
+                .map(|chunk| {
+                    let grids = shared.decode_vq_chunk(&chunk, rhs_files);
+                    (chunk, grids)
+                })
+                .collect()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let decoded: Vec<(SpriteVqChunk, Result<Vec<(u32, Vec<u16>)>>)> = batch
+            .into_iter()
+            .map(|chunk| {
+                let grids = shared.decode_vq_chunk(&chunk, rhs_files);
+                (chunk, grids)
+            })
+            .collect();
+        for (chunk, grids) in decoded {
+            let grids =
+                grids.with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;
+            bank.apply_decoded_vq_chunk(&chunk, grids)?;
+            self.progress.completed_items += 1;
+            self.progress.completed_work += vq_chunk_work(&chunk);
+        }
+        self.finish_vq_if_empty();
+        Ok(())
+    }
+
+    fn begin_rle_jxl(&mut self, bank: &mut ShippingSpriteBank) -> Result<()> {
+        bank.validate_resident_budget()?;
+        let chunks = std::mem::take(&mut bank.rle_jxl_chunks);
+        let (items, work) = rle_jxl_totals(&chunks);
+        self.progress.total_items = self.progress.total_items - self.rle_estimate.0 + items;
+        self.progress.total_work = self.progress.total_work - self.rle_estimate.1 + work;
+        self.rle_estimate = (items, work);
+        if chunks.is_empty() {
+            self.stage = MaterializerStage::Done;
+            return Ok(());
+        }
+        let dims = chunks
+            .iter()
+            .map(|chunk| bank.prepare_rle_jxl_chunk_dims(chunk))
+            .collect::<Result<Vec<_>>>()?;
+        let atlases = chunks
+            .iter()
+            .map(|chunk| Vec::with_capacity(chunk.jxl_blobs.len()))
+            .collect();
+        self.rle = Some(RleJxlStage {
+            chunks,
+            dims,
+            atlases,
+            next_chunk: 0,
+            next_atlas: 0,
+            next_apply: 0,
+        });
+        self.stage = MaterializerStage::RleJxl;
+        Ok(())
+    }
+
+    fn step_rle_jxl(&mut self, bank: &mut ShippingSpriteBank, max_items: usize) -> Result<()> {
+        let Self {
+            rle,
+            progress,
+            stage,
+            ..
+        } = self;
+        let rle = rle
+            .as_mut()
+            .expect("RLE-JXL stage is initialized before stepping");
+        let mut jobs: Vec<(usize, usize)> = Vec::new();
+        while rle.next_chunk < rle.chunks.len() {
+            if rle.next_atlas >= rle.chunks[rle.next_chunk].jxl_blobs.len() {
+                rle.next_chunk += 1;
+                rle.next_atlas = 0;
+                continue;
+            }
+            if jobs.len() == max_items {
+                break;
+            }
+            jobs.push((rle.next_chunk, rle.next_atlas));
+            rle.next_atlas += 1;
+        }
+        let chunks = &rle.chunks;
+        #[cfg(not(target_arch = "wasm32"))]
+        let decoded: Vec<Result<(usize, usize, Arc<Vec<u16>>)>> = {
+            use rayon::prelude::*;
+            jobs.par_iter()
+                .map(|&(chunk, atlas)| {
+                    ShippingSpriteBank::decode_rle_jxl_atlas(&chunks[chunk], atlas, true)
+                })
+                .collect()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let decoded: Vec<Result<(usize, usize, Arc<Vec<u16>>)>> = jobs
+            .iter()
+            .map(|&(chunk, atlas)| {
+                ShippingSpriteBank::decode_rle_jxl_atlas(&chunks[chunk], atlas, true)
+            })
+            .collect();
+        for (&(chunk, atlas), result) in jobs.iter().zip(decoded) {
+            match result {
+                Ok(decoded) => {
+                    progress.completed_items += 1;
+                    progress.completed_work +=
+                        rle_jxl_atlas_work(&rle.chunks[chunk].jxl_blobs[atlas]);
+                    rle.atlases[chunk].push(decoded);
+                }
+                Err(error) => {
+                    // Earlier chunks apply first, as in the whole-list pass.
+                    rle.apply_completed(bank, chunk)?;
+                    let rhs = &rle.chunks[chunk].rhs;
+                    return Err(error.context(format!("decode RLE-JXL sprite chunk for {rhs}")));
+                }
+            }
+        }
+        rle.apply_completed(bank, usize::MAX)?;
+        if rle.next_apply == rle.chunks.len() {
+            *stage = MaterializerStage::Done;
+        }
+        Ok(())
+    }
+}
+
+fn rle_jxl_totals(chunks: &[SpriteRleJxlChunk]) -> (usize, u64) {
+    chunks
+        .iter()
+        .flat_map(|chunk| chunk.jxl_blobs.iter())
+        .fold((0, 0), |(items, work), blob| {
+            (items + 1, work + rle_jxl_atlas_work(blob))
+        })
 }

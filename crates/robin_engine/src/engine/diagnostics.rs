@@ -168,7 +168,6 @@ pub(super) struct DiagnosticConfig {
     turn_provenance: Option<OwnerFrames>,
     pub motion_latch: Option<ExactOwnerFrame>,
     pub attentive_owner: Option<ExactOwnerFrame>,
-    pub damage_parry: Option<ExactOwnerFrame>,
     pub attentive_mode_caller: Option<ExactOwnerFrame>,
     pub think_stimulus: Option<ExactOwnerFrame>,
     pub corpse_intersection: bool,
@@ -322,11 +321,6 @@ impl DiagnosticConfig {
                 "PARITY_DEBUG_ATTENTIVE_OWNER_HANDOFF",
                 "PARITY_DEBUG_ATTENTIVE_OWNER_FRAME",
                 "PARITY_DEBUG_ATTENTIVE_OWNER_CREATION_ORDER",
-            )?,
-            damage_parry: exact(
-                "PARITY_DEBUG_DAMAGE_PARRY_HANDOFF",
-                "PARITY_DEBUG_DAMAGE_PARRY_HANDOFF_FRAME",
-                "PARITY_DEBUG_DAMAGE_PARRY_HANDOFF_CREATION_ORDER",
             )?,
             attentive_mode_caller: exact(
                 "PARITY_DEBUG_ATTENTIVE_MODE_CALLER",

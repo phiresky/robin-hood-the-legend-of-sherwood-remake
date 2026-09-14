@@ -46,7 +46,7 @@ pub(super) fn prepare_scheduled_ambiances(
             }
             assets_frame_holder::ProgressUpdate::Phase(text, _local) => {
                 if let Some(screen) = loading_screen.as_mut() {
-                    screen.set_status(text, LOADING_MAP_DECODE_PROGRESS);
+                    screen.set_status(text, LoadingPhase::MapDecode.end());
                 }
             }
         };
@@ -134,7 +134,7 @@ pub(super) fn install_mission_sprites(
 ) -> Result<(), MissionError> {
     let (event_pump, loading_screen) = feedback;
     if let Some(ls) = loading_screen.as_mut() {
-        ls.set_status("Loading sprite bank...", 0.56);
+        ls.set_status("Loading sprite bank...", LoadingPhase::SpriteBank.end());
     }
     {
         let cache_owner = match host.application_context().asset_cache() {
@@ -204,7 +204,7 @@ pub(super) fn resolve_background_dims(
             }
             assets_frame_holder::ProgressUpdate::Phase(text, _local) => {
                 if let Some(ls) = loading_screen.as_mut() {
-                    ls.set_status(text, LOADING_MAP_DECODE_PROGRESS);
+                    ls.set_status(text, LoadingPhase::MapDecode.end());
                 }
             }
         };

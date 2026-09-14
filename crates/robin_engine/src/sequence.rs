@@ -2825,27 +2825,9 @@ impl crate::bitcode_adapters::NativeBitcode for OrderedSequences {
 crate::bitcode_adapters::impl_native_bitcode!(OrderedSequences);
 
 #[derive(Debug, Clone, Copy)]
-struct ActorStopSummary {
-    weakest_priority: SequencePriority,
-    /// No live element owned by the actor has a same-sequence next or
-    /// postponed successor. Cross-sequence successors are owner-checked by
-    /// `stop_owner_current_from_root`.
-    cross_only: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
 struct PostponeTailSummary {
     tail: SequenceElementRef,
     hops: usize,
-    weakest_priority: SequencePriority,
-    /// Every node in this cross chain has no same-sequence successor that a
-    /// Stop would additionally traverse.
-    cross_only: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct StopNoopSummary {
-    tail: SequenceElementRef,
 }
 
 #[derive(
@@ -2882,22 +2864,6 @@ pub struct SequenceManager {
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
     actor_live: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
 
-    /// Weakest priority among each actor's live elements.
-    ///
-    /// This is a derived acceleration index for actor stopping. The original game walks
-    /// the selected element's postponed chain even when every element is too
-    /// strong for the requested stop. Large swordfight crowds can append one
-    /// strong postponed element between successive `Stop(PREFERENCE)` calls,
-    /// making that pointer walk triangular. If this index proves that *all*
-    /// of an actor's live work is stronger than the stop, the selected graph
-    /// is necessarily effect-free and can be left untouched.
-    ///
-    /// Snapshots omit the index; it is rebuilt lazily from `actor_live`.
-    #[bitcode(skip)]
-    #[state_hash(skip)]
-    #[serde(skip)]
-    actor_stop_summaries: BTreeMap<EntityId, ActorStopSummary>,
-
     /// Per-owner tails of cross-sequence postponed chains for a prospective
     /// waiter's priority. Equal-priority swordfight instructions repeatedly
     /// append to the same chain; caching the proven `Postpone` prefix turns
@@ -2909,16 +2875,6 @@ pub struct SequenceManager {
     #[serde(skip)]
     postpone_tail_cache:
         BTreeMap<EntityId, BTreeMap<(SequenceElementRef, SequencePriority), PostponeTailSummary>>,
-
-    /// Selected Stop graphs already proven to produce no terminal
-    /// transitions for one stop priority. This is repaired by an exact Stop
-    /// traversal, so unrelated same-owner work cannot force every later call
-    /// to repeat that traversal.
-    #[bitcode(skip)]
-    #[state_hash(skip)]
-    #[serde(skip)]
-    stop_noop_cache:
-        BTreeMap<EntityId, BTreeMap<(SequenceElementRef, SequencePriority), StopNoopSummary>>,
 
     /// Actor → every `SequenceElementRef` whose element is currently
     /// `InProgress` and owned by that actor.
@@ -3028,9 +2984,7 @@ impl SequenceManager {
         let SequenceManager {
             sequences: _,
             actor_live: _,
-            actor_stop_summaries: _,
             postpone_tail_cache: _,
-            stop_noop_cache: _,
             actor_in_progress: _,
             actor_instructing: _,
             actor_translating: _,
@@ -3042,9 +2996,7 @@ impl SequenceManager {
         } = value;
         Self {
             sequences: value.sequences.clone(),
-            actor_stop_summaries: BTreeMap::new(),
             postpone_tail_cache: BTreeMap::new(),
-            stop_noop_cache: BTreeMap::new(),
             actor_live: value.actor_live.clone(),
             actor_in_progress: value.actor_in_progress.clone(),
             actor_instructing: value.actor_instructing.clone(),

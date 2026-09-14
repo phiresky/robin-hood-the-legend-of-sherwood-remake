@@ -1070,6 +1070,47 @@ fn attentive_soldier_enter_swordfight_no_double_alert() {
     );
 }
 
+#[test]
+fn postponed_sword_entry_rebuilds_exit_from_live_moving_state() {
+    let mut engine = EngineInner::new();
+    let assets = crate::engine::LevelAssets::new();
+    let sim = crate::sim_rng::test_context();
+    let owner = engine.add_test_entity(TestActor::pc(P::Upright).action_state(AS::Waiting).build());
+    let (sequence, index) = launch(&mut engine, owner, Command::EnterSwordfight);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, index)
+        .unwrap()
+        .state = crate::sequence::SequenceState::Postponed;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = AS::Moving;
+
+    let mut display = crate::engine::HostDisplayState::default();
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    assert_eq!(
+        orders_for(&engine, sequence, index),
+        vec![
+            OrderType::TransitionWalkingUprightWaitingUpright,
+            OrderType::TransitionRaisingSword,
+        ],
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, index)
+            .unwrap()
+            .action_state_after_transition,
+        AS::Waiting,
+    );
+}
+
 /// A soldier Bored + Wait command shouldn't queue anything: the
 /// transition flags allow CAN_BE_BORED, so the bored→waiting path
 /// is skipped.

@@ -1,5 +1,100 @@
 use super::*;
 
+#[cfg(test)]
+mod resumed_instruction_tests {
+    use super::*;
+
+    #[test]
+    fn resumed_run_restamps_sword_state_before_selecting_movement_animation() {
+        use crate::coordinates::MapPoint;
+        use crate::element::{ActionState, Posture};
+        use crate::order::OrderType;
+        use crate::sequence::{
+            MoveFlags, SequenceAction, SequenceElement, SequenceElementData, SequencePriority,
+        };
+
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        engine.world.fast_grid_mut().size_map(128, 128);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        let sector_index = engine.world.fast_grid_mut().add_sector(
+            crate::engine::test_support::square_sector(
+                1,
+                0,
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(1000.0, 1000.0),
+            ),
+            0,
+        );
+        let sector = crate::position_interface::SectorHandle::new(1)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(sector_index).unwrap());
+        let owner = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
+            Posture::Upright,
+        ));
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(100.0, 100.0, 0.0));
+        entity.element_data_mut().set_sector(Some(sector));
+        entity
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
+        entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+
+        let mut movement =
+            SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::RunningUpright);
+        movement.priority = SequencePriority::Normal;
+        movement.posture_after_transition = Posture::Upright;
+        movement.action_state_after_transition = ActionState::Waiting;
+        let SequenceElementData::Movement {
+            destination, flags, ..
+        } = &mut movement.data
+        else {
+            unreachable!()
+        };
+        *destination = MapPoint::new(120.0, 100.0);
+        flags.insert(MoveFlags::NO_TRANSITIONS);
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sim = crate::sim_rng::test_context();
+        engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence, 0);
+
+        engine
+            .dispatch_script_synchronous_action(
+                &sim,
+                &assets,
+                SequenceAction::InstructOwner {
+                    owner,
+                    sequence_id: sequence,
+                    element_index: 0,
+                },
+                &mut Vec::new(),
+            )
+            .unwrap();
+
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap();
+        assert_eq!(
+            movement.action_state_after_transition,
+            ActionState::WaitingSword
+        );
+        assert_eq!(
+            movement.current_order().unwrap().order_type,
+            OrderType::RunningWithSword
+        );
+        assert_eq!(
+            engine.actor_order_type(owner),
+            Some(OrderType::RunningWithSword)
+        );
+    }
+}
+
 impl EngineInner {
     /// Close only the part of sequence registration that Original executes
     /// on the current script callback stack.
@@ -150,37 +245,36 @@ impl EngineInner {
                 sequence_id,
                 element_index,
             } => {
-                let needs_stamp = self
+                // Direct launch can already have generated a Todo element's
+                // transitions. Postponed work always enters a new instruction
+                // against the live actor, regardless of its earlier stamp.
+                let needs_transition = self
                     .orders
                     .sequence_manager
                     .get_element(sequence_id, element_index)
                     .is_some_and(|element| {
-                        element.posture_after_transition == crate::element::Posture::Undefined
+                        element.state == crate::sequence::SequenceState::Postponed
+                            || (element.state == crate::sequence::SequenceState::Todo
+                                && element.posture_after_transition
+                                    == crate::element::Posture::Undefined)
                     });
-                if needs_stamp {
+                if needs_transition {
                     self.stamp_element_transition_state(owner, sequence_id, element_index);
                 }
-                if needs_stamp {
-                    // Original-game actor instruction checks a selected
-                    // NON_INTERRUPTABLE element before transition generation,
-                    // then generates transitions before ordinary priority
-                    // arbitration. WAIT-priority Go reaches this synchronous
-                    // dispatcher directly at registration, so it must use the
-                    // same admission order as the manager-update path.
-                    if self.non_interruptable_guard(sim, assets, owner, sequence_id, element_index)
-                    {
-                        return Ok(());
-                    }
-                    if !self.generate_transition(sim, assets, owner, sequence_id, element_index) {
-                        self.element_impossible(
-                            sim,
-                            assets,
-                            active_scripts,
-                            sequence_id,
-                            element_index,
-                        );
-                        return Ok(());
-                    }
+                if self.non_interruptable_guard(sim, assets, owner, sequence_id, element_index) {
+                    return Ok(());
+                }
+                if needs_transition
+                    && !self.generate_transition(sim, assets, owner, sequence_id, element_index)
+                {
+                    self.element_impossible(
+                        sim,
+                        assets,
+                        active_scripts,
+                        sequence_id,
+                        element_index,
+                    );
+                    return Ok(());
                 }
                 if self
                     .orders

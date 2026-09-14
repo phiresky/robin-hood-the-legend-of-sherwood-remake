@@ -123,6 +123,37 @@ pub async fn yield_to_display_refresh() {
     }
 }
 
+/// DOM event dispatched on `window` once the runtime has presented its first
+/// meaningful frame (loading-screen artwork, or a mission frame when no
+/// loading screen exists). The page shell keeps its HTML boot overlay up until
+/// then, so the handoff from HTML to canvas has no blank gap.
+pub const FIRST_FRAME_PRESENTED_EVENT: &str = "robin-first-frame-presented";
+
+/// Announce the first meaningful presented frame to the page shell. Only the
+/// first call has an effect; native builds have no shell and do nothing.
+pub fn announce_first_frame_presented() {
+    static ANNOUNCED: AtomicBool = AtomicBool::new(false);
+    if ANNOUNCED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    tracing::debug!("first frame presented");
+    #[cfg(target_arch = "wasm32")]
+    {
+        let Some(window) = web_sys::window() else {
+            tracing::warn!("cannot announce first presented frame: no browser window");
+            return;
+        };
+        match web_sys::Event::new(FIRST_FRAME_PRESENTED_EVENT) {
+            Ok(event) => {
+                if let Err(error) = window.dispatch_event(&event) {
+                    tracing::warn!(?error, "dispatching first presented frame event failed");
+                }
+            }
+            Err(error) => tracing::warn!(?error, "creating first presented frame event failed"),
+        }
+    }
+}
+
 /// Async sleep used by every per-frame pacing point in the game loop.
 /// Native: blocks the dedicated game thread via [`std::thread::sleep`].
 /// Wasm: yields via `setTimeout(<ms>)`, unless a lifecycle autosave edge wakes

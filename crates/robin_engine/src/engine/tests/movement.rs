@@ -2258,8 +2258,7 @@ fn production_owner_final_arrival_delivers_reachpoint_callback_exactly_once() {
     use crate::ai::StimulusType;
     use crate::element::{Command, Posture};
     use crate::engine::soldier_helpers::{
-        capture_condolation_stimuli, capture_owner_boundary_resumes,
-        install_condolation_nested_termination,
+        capture_condolation_stimuli, install_condolation_nested_termination,
     };
     use crate::sequence::SequenceElement;
 
@@ -2302,22 +2301,19 @@ fn production_owner_final_arrival_delivers_reachpoint_callback_exactly_once() {
         foreign_seq,
         0,
     );
-    let ((_, foreign_resumes), foreign_trace) = capture_condolation_stimuli(|| {
-        capture_owner_boundary_resumes(|| {
-            engine.element_terminated(
-                &crate::sim_rng::test_context(),
-                &assets,
-                &mut Vec::new(),
-                foreign_seq,
-                0,
-            );
-        })
+    let (_, foreign_trace) = capture_condolation_stimuli(|| {
+        engine.element_terminated(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            foreign_seq,
+            0,
+        );
     });
     assert_eq!(
         foreign_trace,
         vec![(foreign_owner, StimulusType::EventDone)]
     );
-    assert_eq!(foreign_resumes, vec![foreign_owner]);
     let nested_seq = engine
         .orders
         .sequence_manager
@@ -2332,10 +2328,8 @@ fn production_owner_final_arrival_delivers_reachpoint_callback_exactly_once() {
     install_condolation_nested_termination(mover_id, StimulusType::EventReachPoint, nested_seq, 0);
     let sim = crate::sim_rng::test_context();
 
-    let ((_, resumes), trace) = capture_condolation_stimuli(|| {
-        capture_owner_boundary_resumes(|| {
-            tick_production_owner_coordinator(&mut engine, &sim, &assets)
-        })
+    let (_, trace) = capture_condolation_stimuli(|| {
+        tick_production_owner_coordinator(&mut engine, &sim, &assets)
     });
 
     // The foreign owner's callback already completed on its termination
@@ -2349,9 +2343,14 @@ fn production_owner_final_arrival_delivers_reachpoint_callback_exactly_once() {
         ]
     );
     assert_eq!(
-        resumes,
-        vec![nested_owner, mover_id],
-        "the nested cross-owner state change must close before A resumes readiness/successors"
+        engine
+            .orders
+            .sequence_manager
+            .get_element(nested_seq, 0)
+            .unwrap()
+            .state,
+        crate::sequence::SequenceState::Terminated,
+        "movement completion must finish the nested owner's state change inline"
     );
     assert!(engine.orders.timer_elements.is_empty());
     assert_eq!(

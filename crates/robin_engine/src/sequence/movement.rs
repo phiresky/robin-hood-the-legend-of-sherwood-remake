@@ -32,7 +32,6 @@ impl SequenceManager {
             .retain(|seq_id, seq| retained_sequences.contains(seq_id) || !seq.is_to_be_deleted());
         if self.sequences.len() != sequence_count_before {
             self.postpone_tail_cache.clear();
-            self.stop_noop_cache.clear();
         }
 
         let sequences = &self.sequences;
@@ -514,121 +513,126 @@ impl crate::engine::EngineInner {
         resolver: &dyn Fn(&crate::engine::EngineInner, &SequenceElement) -> SequencePriority,
         call_path: &mut HashSet<SequenceElementRef>,
     ) {
-        assert!(
-            call_path.insert(reference),
-            "cycle in recursive sequence Stop"
-        );
-        self.resolve_live_sequence_stop_priority(reference, resolver);
-        let action = self
-            .orders
-            .sequence_manager
-            .sequences
-            .get(&reference.sequence_id)
-            .expect("stopped sequence missing")
-            .prepare_element_stop(reference.element_index, priority);
-        match action {
-            StopElementAction::InterruptSelf => self.element_interrupted(
-                sim,
-                assets,
-                active_scripts,
-                reference.sequence_id,
-                reference.element_index,
-                CascadeFlags::NEXT_LEVEL,
-            ),
-            StopElementAction::InterruptFollowing | StopElementAction::StopFollowing => {
-                let next = self
-                    .orders
-                    .sequence_manager
-                    .sequences
-                    .get(&reference.sequence_id)
-                    .and_then(|sequence| sequence.live_following_ref(reference.element_index));
-                if let Some(next) = next {
-                    if action == StopElementAction::InterruptFollowing {
-                        self.element_interrupted(
+        // Only traversal return addresses live here. Every state transition and
+        // owner callback completes synchronously before the next link is read.
+        // Keeping deep graph traversal off the machine stack avoids one large
+        // Engine dispatcher frame per postponed element.
+        #[derive(Clone, Copy, Serialize, Deserialize)]
+        enum Frame {
+            Enter(SequenceElementRef),
+            AfterFollowing(SequenceElementRef),
+            Postponed(SequenceElementRef),
+            AfterPostponed(SequenceElementRef),
+        }
+        let mut frames = vec![Frame::Enter(reference)];
+        while let Some(frame) = frames.pop() {
+            match frame {
+                Frame::Enter(reference) => {
+                    assert!(call_path.insert(reference), "cycle in sequence Stop");
+                    self.resolve_live_sequence_stop_priority(reference, resolver);
+                    let sequence = self
+                        .orders
+                        .sequence_manager
+                        .get_sequence(reference.sequence_id)
+                        .expect("stopped sequence missing");
+                    let action = sequence.prepare_element_stop(reference.element_index, priority);
+                    frames.push(Frame::Postponed(reference));
+                    match action {
+                        StopElementAction::InterruptSelf => self.element_interrupted(
                             sim,
                             assets,
                             active_scripts,
-                            next.sequence_id,
-                            next.element_index,
+                            reference.sequence_id,
+                            reference.element_index,
                             CascadeFlags::NEXT_LEVEL,
-                        );
-                    } else {
-                        self.stop_live_sequence_element(
-                            sim,
-                            assets,
-                            active_scripts,
-                            next,
-                            priority,
-                            resolver,
-                            call_path,
-                        );
-                        let current_next = self
-                            .orders
-                            .sequence_manager
-                            .sequences
-                            .get(&reference.sequence_id)
-                            .and_then(|sequence| {
-                                sequence.live_following_ref(reference.element_index)
-                            });
-                        if current_next.is_some_and(|next| {
-                            self.orders
-                                .sequence_manager
-                                .get_element(next.sequence_id, next.element_index)
-                                .is_some_and(|element| element.state == SequenceState::Interrupted)
-                        }) {
-                            self.orders
-                                .sequence_manager
-                                .sequences
-                                .get_mut(&reference.sequence_id)
-                                .expect("stopped sequence missing")
-                                .sever_following_link(reference.element_index);
+                        ),
+                        StopElementAction::InterruptFollowing
+                        | StopElementAction::StopFollowing => {
+                            if let Some(next) = sequence.live_following_ref(reference.element_index)
+                            {
+                                if action == StopElementAction::InterruptFollowing {
+                                    self.element_interrupted(
+                                        sim,
+                                        assets,
+                                        active_scripts,
+                                        next.sequence_id,
+                                        next.element_index,
+                                        CascadeFlags::NEXT_LEVEL,
+                                    );
+                                } else {
+                                    frames.push(Frame::AfterFollowing(reference));
+                                    frames.push(Frame::Enter(next));
+                                }
+                            }
                         }
+                        StopElementAction::NoChange => {}
                     }
                 }
+                Frame::AfterFollowing(reference) => {
+                    let current_next = self
+                        .orders
+                        .sequence_manager
+                        .get_sequence(reference.sequence_id)
+                        .expect("stopped sequence missing")
+                        .live_following_ref(reference.element_index);
+                    if current_next.is_some_and(|next| {
+                        self.orders
+                            .sequence_manager
+                            .get_element(next.sequence_id, next.element_index)
+                            .expect("following Stop target missing")
+                            .state
+                            == SequenceState::Interrupted
+                    }) {
+                        self.orders
+                            .sequence_manager
+                            .get_sequence_mut(reference.sequence_id)
+                            .expect("stopped sequence missing")
+                            .sever_following_link(reference.element_index);
+                    }
+                }
+                Frame::Postponed(reference) => {
+                    let postponed = self
+                        .orders
+                        .sequence_manager
+                        .get_sequence(reference.sequence_id)
+                        .expect("stopped sequence missing")
+                        .live_postponed_ref(reference.element_index);
+                    if let Some(postponed) = postponed {
+                        frames.push(Frame::AfterPostponed(reference));
+                        frames.push(Frame::Enter(postponed));
+                    } else {
+                        call_path.remove(&reference);
+                    }
+                }
+                Frame::AfterPostponed(reference) => {
+                    let current_postponed = self
+                        .orders
+                        .sequence_manager
+                        .get_sequence(reference.sequence_id)
+                        .expect("stopped sequence missing")
+                        .live_postponed_ref(reference.element_index);
+                    if current_postponed.is_some_and(|next| {
+                        self.orders
+                            .sequence_manager
+                            .get_element(next.sequence_id, next.element_index)
+                            .expect("postponed Stop target missing")
+                            .state
+                            == SequenceState::Interrupted
+                    }) {
+                        self.orders
+                            .sequence_manager
+                            .get_sequence_mut(reference.sequence_id)
+                            .expect("stopped sequence missing")
+                            .sever_postponed_link(reference.element_index);
+                    }
+                    call_path.remove(&reference);
+                }
             }
-            StopElementAction::NoChange => {}
         }
-        let postponed = self
-            .orders
-            .sequence_manager
-            .sequences
-            .get(&reference.sequence_id)
-            .and_then(|sequence| sequence.live_postponed_ref(reference.element_index));
-        if let Some(postponed) = postponed {
-            self.stop_live_sequence_element(
-                sim,
-                assets,
-                active_scripts,
-                postponed,
-                priority,
-                resolver,
-                call_path,
-            );
-            let current_postponed = self
-                .orders
-                .sequence_manager
-                .sequences
-                .get(&reference.sequence_id)
-                .and_then(|sequence| sequence.live_postponed_ref(reference.element_index));
-            if current_postponed.is_some_and(|next| {
-                self.orders
-                    .sequence_manager
-                    .get_element(next.sequence_id, next.element_index)
-                    .is_some_and(|element| element.state == SequenceState::Interrupted)
-            }) {
-                self.orders
-                    .sequence_manager
-                    .sequences
-                    .get_mut(&reference.sequence_id)
-                    .expect("stopped sequence missing")
-                    .sever_postponed_link(reference.element_index);
-            }
-        }
-        call_path.remove(&reference);
     }
 
     /// Terminate a sequence by interrupting its first element (cascades to all).
-    pub fn terminate_sequence(
+    pub(crate) fn terminate_sequence(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -669,7 +673,7 @@ impl crate::engine::EngineInner {
     /// to the owner — so successors learn the move became impossible.
     /// (A bare `retain` would drop the queue entries without running
     /// the cascade or queuing the condolation.)
-    pub fn cancel_pending_move_commands(
+    pub(crate) fn cancel_pending_move_commands(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -744,7 +748,7 @@ impl crate::engine::EngineInner {
     /// postponed chain remains reachable even while a terminating injury's
     /// condolence callback is running. Cross-sequence postponed work is the
     /// Rust representation of that same pointer and is stopped explicitly.
-    pub fn stop_owner(
+    pub(crate) fn stop_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -776,7 +780,7 @@ impl crate::engine::EngineInner {
     /// selection, yet the original game has already assigned the selected element by
     /// then and therefore stops through the incoming element — reaching
     /// whatever that element pushed into its postponed slot.
-    pub fn stop_owner_from_root(
+    pub(crate) fn stop_owner_from_root(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -806,7 +810,7 @@ impl crate::engine::EngineInner {
     /// stop not-yet-launched sequence elements. Engine call sites which can
     /// pump that callback use this phase separately, then call
     /// [`SequenceManager::stop_pending_elements`] after the callback has completed.
-    pub fn stop_owner_current_from_root(
+    pub(crate) fn stop_owner_current_from_root(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -841,7 +845,7 @@ impl crate::engine::EngineInner {
     }
 
     /// Stop not-yet-launched elements for a specific actor up to a priority.
-    pub fn stop_pending_elements(
+    pub(crate) fn stop_pending_elements(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -877,7 +881,7 @@ impl crate::engine::EngineInner {
     /// Stop one root from a previously captured pending-list snapshot.
     /// Callers that model actor stopping can close the resulting synchronous
     /// condolence stack before visiting the next captured root.
-    pub fn stop_pending_element_from_root(
+    pub(crate) fn stop_pending_element_from_root(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -942,7 +946,7 @@ impl crate::engine::EngineInner {
     /// element's priority is `>= stop_priority` (weaker or equal).
     /// `resolver` lazily promotes `NotYetSet` priorities (mirroring
     /// `Sequence::stop_element`).
-    pub fn stop_movement_for_owner(
+    pub(crate) fn stop_movement_for_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -969,7 +973,7 @@ impl crate::engine::EngineInner {
     /// [`SequenceManager::stop_movement_for_owner`]: call sites modeling
     /// Stopping the selected element must not rewrite unrelated in-progress
     /// movements owned by the same actor.
-    pub fn stop_movement_from_root(
+    pub(crate) fn stop_movement_from_root(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
