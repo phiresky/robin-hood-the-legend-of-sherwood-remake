@@ -13,6 +13,10 @@
 //!   target/debug/examples/verify_rollback --data-dir datadirs/demo_leicester_ecoste
 //! `ROBINHOOD_DATA_DIR` remains the fallback when `--data-dir` is omitted.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
+// Native-only tool: wasm32 `--tests` builds still compile this example (its
+// unit tests are target-neutral), but the runner itself needs native file
+// system setup, so most items are unused there.
+#![cfg_attr(target_arch = "wasm32", allow(unused))]
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -35,6 +39,12 @@ struct Args {
     data_dir: Option<PathBuf>,
 }
 
+#[cfg(target_arch = "wasm32")]
+fn main() -> anyhow::Result<()> {
+    anyhow::bail!("verify_rollback is a native-only tool")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
