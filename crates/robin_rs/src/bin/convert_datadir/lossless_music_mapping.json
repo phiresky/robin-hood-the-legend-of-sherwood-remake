@@ -1,0 +1,120 @@
+{
+  "schema_version": 2,
+  "about": "Game music -> lossless remaster mapping for convert_datadir --lossless-music-dir. The converter selects the source whose identity.music_sha256 equals the sha256 of every .wav/.ogg file in the datadir's Musics directory, and fails when none matches. Remaster files live in the lossless drop (lossless_root or its top level). A remaster whose duration differs from its game track by more than max(0.25 s, 3%), capped at 2 s, fails the conversion unless the game file is listed in intentional_duration_edits.",
+  "lossless_root": "Music",
+  "correlation_method": "Peak normalized whole-track waveform correlation after FFmpeg decoding, mono downmix, 4000 Hz resampling, and 100 ms edge trimming; recomputed 2026-09-14 (scipy FFT cross-correlation, peak |corr| / (|x||y|))",
+  "todo": [
+    "fullgame_gog (the WAV release this table was first built from) and demo_lincoln were not available on the machine that built schema 2; add their sections (identity + verified correlations) when they are."
+  ],
+  "sources": {
+    "demo_leicester": {
+      "description": "Demo I (Leicester), e.g. datadirs/demo_leicester_ecoste",
+      "game_root": "DATA/Musics",
+      "identity": {
+        "music_sha256": {
+          "Cast_Alarm.wav": "5afd4e30445d0feb2721757f2dcfc976112e0f29ac50b465e761375f7fedd859",
+          "Cast_Fight.wav": "446b97c417022fe80b38278fdf94c837541a929e09f4379c51f1bb78774452d1",
+          "Leicester_D.wav": "280d6faaea05ac1f55539d34c8c62431b82ae2bd6efd99cab8e2a3a809a167c0",
+          "Leicester_NF.wav": "03c5d214dec3140ed6e6cbf8f60aae2e14873db71fa7de8decebeaaa2d6d47fc",
+          "Menu.wav": "0174effb64733ba01045a398a36b45f3775f1476c34cfe1340c05e5a3211b74e"
+        }
+      },
+      "game_to_lossless": {
+        "Cast_Alarm.wav": "Cast_orange.wav",
+        "Cast_Fight.wav": "Castles_red - Alternative.wav",
+        "Leicester_D.wav": "Leicester_Day.wav",
+        "Leicester_NF.wav": "Leicester_Night.wav",
+        "Menu.wav": "Leicester_Day.wav"
+      },
+      "correlation": {
+        "Cast_Alarm.wav": 0.989662,
+        "Cast_Fight.wav": 0.973667,
+        "Leicester_D.wav": 0.980302,
+        "Leicester_NF.wav": 0.982775,
+        "Menu.wav": 0.60194
+      },
+      "intentional_duration_edits": []
+    },
+    "fullgame_linux": {
+      "description": "Full game, Linux release (Ogg Vorbis), e.g. datadirs/fullgame_linux",
+      "game_root": "Data/Musics",
+      "identity": {
+        "music_sha256": {
+          "Cast_Alarm.ogg": "b99029e4e12d310163863fcf42b2135b04c9622ba34f4fd67c673d7f69fbad54",
+          "Cast_Fight.ogg": "9aa6a2280e2396ca1a5ba3bc65fe4ce19518333d1505f744dd09680c95bee945",
+          "Cross_Alarm.ogg": "bae9534c3c23b414fc2fe2b5d1e7626c5ca2bdb21204c206db779b808d1383e9",
+          "Cross_Amb.ogg": "3cd1194af87dbbf628d8623b93c085f101871f666e23bcc9d8c254b3b728f90b",
+          "Cross_Fight.ogg": "4780c3e369dbbe15316641b49973ae07504962fd5c99ea95283223e26bfebf59",
+          "Cross_Tact.ogg": "397c43e9d9771236f8ed6aeae7f869822009ec033b864495adebc8a6041ca1c0",
+          "Derby_D.ogg": "2661d2577aefde636b5b1caa2502b858d883009b3ef64b97c39e538e326d5f36",
+          "Derby_NF.ogg": "600c015d2c8cb6ed58e4d1e3380734d6d4e48e21ad7a4483558c0dc4b67f21b5",
+          "Leicester_D.ogg": "280d6faaea05ac1f55539d34c8c62431b82ae2bd6efd99cab8e2a3a809a167c0",
+          "Leicester_NF.ogg": "9e6aaa08db91645231bdaeebb0f80c98d8a8230bf720fa5b1309a0206cec83b0",
+          "Lincoln_D.ogg": "dd74f045dd538d19a64dc179ae0a68506627f46e3ee20c81e595a1774ee78f15",
+          "Lincoln_NF.ogg": "ef57734d9c3303810108f3c3fce37a833f43e24ee933b1271078bfbd4542d9bb",
+          "Menu.ogg": "44aca806b6da3677d4c3ae4d6ce7ae4dee515f113e94d7effb4e8a2c61559503",
+          "Mission_lost.ogg": "e6a525b6efcb96a0de5b92c07b2bdab4992f485afe59d16707309496d0fad000",
+          "Mission_win.ogg": "1e75511ff40c91dfd7424bd4fcb35d121639bd7f9492df60ac1447fceeb368fe",
+          "Nottingham_D.ogg": "b029f3ecdf6feef38671bbd3a0ddb72f0d4ed95c4a7c45aa1d5964ee7dfbd4c8",
+          "Nottingham_NF.ogg": "157410a24dcfaf1a966faced2b267d8dabb9608bc7034d9707ca7f37870f03d3",
+          "Sherwood.ogg": "b617ab0138b1120a7ec70e3ff8e0a02760a143de744cdcf8d9a8b54033dac1d5",
+          "The_Last_Dance.ogg": "dfd0bfc3a31a875658517eff400e762e08d5e680bd3bba114d547402b06c396a",
+          "York_D.ogg": "eeba71bbbddbae893fa697ee195944c5a4b1e9be9c5b41d663be910ff9212595",
+          "York_NF.ogg": "4ff918c6ee556aed665e070e4f2c14c26512f8373ceef654e8f55443c11e0331"
+        }
+      },
+      "game_to_lossless": {
+        "Cast_Alarm.ogg": "Cast_orange.wav",
+        "Cast_Fight.ogg": "Castles_red.wav",
+        "Cross_Alarm.ogg": "Intersections-orange.wav",
+        "Cross_Amb.ogg": "IntersIntro_7sec.wav",
+        "Cross_Fight.ogg": "Intersections-red-Loop.wav",
+        "Cross_Tact.ogg": "IntersIntro_10sec.wav",
+        "Derby_D.ogg": "Derby_Day.wav",
+        "Derby_NF.ogg": "Derby_Night.wav",
+        "Leicester_D.ogg": "Leicester_Day.wav",
+        "Leicester_NF.ogg": "Leicester_Night.wav",
+        "Lincoln_D.ogg": "Lincoln_Day.wav",
+        "Lincoln_NF.ogg": "Lincoln_Night.wav",
+        "Menu.ogg": "Menü-Soundtrack.wav",
+        "Mission_lost.ogg": null,
+        "Mission_win.ogg": null,
+        "Nottingham_D.ogg": "Nottingham_Day.wav",
+        "Nottingham_NF.ogg": "Nottingham_Night.wav",
+        "Sherwood.ogg": "Sherwood_Level.wav",
+        "The_Last_Dance.ogg": null,
+        "York_D.ogg": "York_The Wedding.wav",
+        "York_NF.ogg": "York_Night.wav"
+      },
+      "correlation": {
+        "Cast_Alarm.ogg": 0.989662,
+        "Cast_Fight.ogg": 0.999782,
+        "Cross_Alarm.ogg": 0.995341,
+        "Cross_Amb.ogg": 0.986799,
+        "Cross_Fight.ogg": 0.968399,
+        "Cross_Tact.ogg": 0.9777,
+        "Derby_D.ogg": 0.986923,
+        "Derby_NF.ogg": 0.987392,
+        "Leicester_D.ogg": 0.980302,
+        "Leicester_NF.ogg": 0.982775,
+        "Lincoln_D.ogg": 0.976646,
+        "Lincoln_NF.ogg": 0.98583,
+        "Menu.ogg": 0.994323,
+        "Mission_lost.ogg": null,
+        "Mission_win.ogg": null,
+        "Nottingham_D.ogg": 0.989897,
+        "Nottingham_NF.ogg": 0.991857,
+        "Sherwood.ogg": 0.992767,
+        "The_Last_Dance.ogg": null,
+        "York_D.ogg": 0.984416,
+        "York_NF.ogg": 0.967536
+      },
+      "intentional_duration_edits": []
+    }
+  },
+  "lossless_only": [
+    "Intersections-green Long.wav",
+    "Sequence Of Motion.wav",
+    "Sherwood-Credits.wav"
+  ]
+}

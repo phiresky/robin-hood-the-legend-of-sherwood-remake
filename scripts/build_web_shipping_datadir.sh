@@ -21,11 +21,43 @@ fi
 # RLE patch/ambient-animation sprite bucket — the latter is WEB ONLY: it
 # breaks framebuffer parity, so native shipping keeps exact RLE).
 # The RLE atlas encode shells out to `cjxl`, which must be on PATH.
+#
+# Opus audio is encoded by opus-tools' opusenc on libopus 1.6.1
+# (docs/COMPRESSION.md, 2026-09-14); ffmpeg only decodes sources to PCM. The
+# converter requires `$opus_tools_dir/bin/opusenc --version` to report libopus
+# 1.6.1, checks that library's version string, and verifies from the loader
+# trace that every opusenc process really used it.
+#
+# Music encodes from the lossless remaster WAVs. The directory is passed
+# explicitly: the converter used to look it up relative to the current
+# directory, which silently fell back to the game files when run from a
+# worktree. Which remaster belongs to which track comes from the tracked
+# crates/robin_rs/src/bin/convert_datadir/lossless_music_mapping.json, selected
+# by the sha256 of the datadir's music files; the drop's own mapping.json is
+# superseded and ignored.
+toolchain=${ROBIN_RELEASE_TOOLCHAIN:-$HOME/.local/share/robin_hood/deployment-toolchain}
+opus_tools_dir=${ROBIN_OPUS_TOOLS_DIR:-$toolchain/opus-tools-0.2}
+main_repo=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+lossless_music_dir=${ROBIN_LOSSLESS_MUSIC_DIR:-$main_repo/datadirs/music-rhmods-lossless}
+if [[ ! -x "$opus_tools_dir/bin/opusenc" ]]; then
+    echo "missing $opus_tools_dir/bin/opusenc (build opus-tools 0.2 on libopus 1.6.1 into the toolchain or set ROBIN_OPUS_TOOLS_DIR)" >&2
+    exit 1
+fi
+if ! "$opus_tools_dir/bin/opusenc" --version | grep -qF '(using libopus 1.6.1)'; then
+    echo "$opus_tools_dir/bin/opusenc does not report libopus 1.6.1: $("$opus_tools_dir/bin/opusenc" --version | head -n 1)" >&2
+    exit 1
+fi
+if [[ ! -d "$lossless_music_dir" ]]; then
+    echo "missing lossless music WAV directory $lossless_music_dir (set ROBIN_LOSSLESS_MUSIC_DIR)" >&2
+    exit 1
+fi
 cargo build --locked --release -p robin_rs --bin convert_datadir --features tools
 target/release/convert_datadir \
     --input "$source_datadir" \
     --output "$output_dir" \
     --format shipping \
+    --opus-tools-dir "$opus_tools_dir" \
+    --lossless-music-dir "$lossless_music_dir" \
     --map-format jxl-q80 \
     --interface-image-format jxl-q80 \
     --rle-sprite-format jxl-q80 \
