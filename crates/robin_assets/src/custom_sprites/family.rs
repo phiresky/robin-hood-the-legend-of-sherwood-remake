@@ -12,7 +12,8 @@ use std::{
     sync::Arc,
 };
 
-const MAGIC: &[u8] = b"RHMODVF3";
+// v4: VQ blobs use the match-gated sprite codec (shipping datadir v17).
+const MAGIC: &[u8] = b"RHMODVF4";
 const GROUP_TILES: usize = 1_048_576;
 
 #[derive(Serialize, Deserialize)]
@@ -620,7 +621,7 @@ mod tests {
 
     #[test]
     fn old_family_format_requires_regeneration_and_json_must_be_complete() {
-        let old = zstd::stream::encode_all(&b"RHMODVF2"[..], 1).unwrap();
+        let old = zstd::stream::encode_all(&b"RHMODVF3"[..], 1).unwrap();
         let error = read_selected_bytes(&old, None).unwrap_err();
         assert!(error.to_string().contains("encode_mod_sprites"));
         let mut bytes =

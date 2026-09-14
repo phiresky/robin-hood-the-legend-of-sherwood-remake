@@ -26,6 +26,16 @@
 //! and each context halves its counts when they saturate, which keeps the
 //! model adaptive and the range-coder totals well inside precision.
 //!
+//! Match gating (shipping datadir v17): standalone tiles have a predictor —
+//! the aligned aux-reference tile, else the tile above. In likely-flat spots
+//! (the previous tile in the row equalled its own predictor, or the predictor
+//! equals the left tile) one adaptive bit first says whether the tile IS the
+//! predictor; a hit skips the PPM chain entirely (no context lookups, no
+//! learning). Family (base-coded) tiles are deliberately not gated (see
+//! [`TilePredictor::at`]). Measured on Dem_Lei_MP: +0.43% bytes for -9.4%
+//! serial-wasm decode instructions; see `docs/COMPRESSION.md` for the
+//! full-game sample.
+//!
 //! The entropy stage is a carry-aware LZMA-style range coder rather than
 //! rANS: rANS emits symbols last-in-first-out, which fights adaptive
 //! context models (the decoder must see updates in encode order), while a
@@ -1236,9 +1246,23 @@ struct Model {
     alphabet: u32,
     excl: Excl,
     see: See,
+    /// Match-gate probabilities (P(tile == predictor), 11-bit), see
+    /// [`Model::match_prob`].
+    match_flag: [u16; 8],
 }
 
 impl Model {
+    /// The adaptive "tile == predictor" probability for a gated tile.
+    /// Contexts: an aux-reference tile is present, above == left, and
+    /// predictor == left.
+    #[inline(always)]
+    fn match_prob(&mut self, tile: &TilePredictor, above: u16, left: u16) -> &mut u16 {
+        let index = usize::from(tile.reference)
+            | usize::from(above == left) << 1
+            | usize::from(tile.pred == left) << 2;
+        &mut self.match_flag[index]
+    }
+
     fn new(alphabet: u16, has_pair: bool, has_aux: bool) -> Self {
         Self {
             // Pre-size the context maps: models routinely end with tens of
@@ -1258,6 +1282,7 @@ impl Model {
             alphabet: alphabet as u32,
             excl: Excl::new(alphabet),
             see: See::new(),
+            match_flag: [PROB_INIT; 8],
         }
     }
 
@@ -1619,21 +1644,7 @@ pub fn encode_grids_multi(
                 return Err(anyhow!("grid {gi}: {label} length mismatch"));
             }
         }
-        for (i, &x) in g.indices.iter().enumerate() {
-            if x as u32 >= alphabet as u32 {
-                return Err(anyhow!("grid {gi}: index {x} >= alphabet {alphabet}"));
-            }
-            let above = if i >= cols { g.indices[i - cols] } else { EDGE };
-            let left = if i % cols > 0 { g.indices[i - 1] } else { EDGE };
-            // The chain falls back specific -> primary -> second, so put the
-            // stronger single predictor first: the base tile for variants,
-            // the above tile standalone (see COMPRESSION.md entropy table).
-            match (b, b2) {
-                (Some(b), Some(b2)) => model.encode_sym3(&mut enc, b[i], b2[i], above, x),
-                (Some(b), None) => model.encode_sym(&mut enc, b[i], above, x),
-                _ => model.encode_sym(&mut enc, above, left, x),
-            }
-        }
+        encode_grid(&mut model, &mut enc, gi, g, b, b2, &None)?;
     }
     Ok(enc.finish())
 }
@@ -1696,15 +1707,7 @@ pub fn encode_grids_auxref(
         {
             return Err(anyhow!("grid {gi}: aux reference dims mismatch"));
         }
-        for (i, &x) in g.indices.iter().enumerate() {
-            if x as u32 >= alphabet as u32 {
-                return Err(anyhow!("grid {gi}: index {x} >= alphabet {alphabet}"));
-            }
-            let above = if i >= cols { g.indices[i - cols] } else { EDGE };
-            let left = if i % cols > 0 { g.indices[i - 1] } else { EDGE };
-            let a = aux_tile(&aux[gi], i, cols);
-            model.encode_sym_aux(&mut enc, a, above, left, x);
-        }
+        encode_grid(&mut model, &mut enc, gi, g, None, None, &aux[gi])?;
     }
     Ok(enc.finish())
 }
@@ -1734,14 +1737,8 @@ pub fn decode_grids_auxref(
         {
             return Err(anyhow!("grid {gi}: aux reference dims mismatch"));
         }
-        let mut g: Vec<u16> = Vec::with_capacity(n);
-        for i in 0..n {
-            let above = if i >= cols { g[i - cols] } else { EDGE };
-            let left = if i % cols > 0 { g[i - 1] } else { EDGE };
-            let a = aux_tile(&aux[gi], i, cols);
-            g.push(model.decode_sym_aux(&mut dec, a, above, left));
-            dec.check()?;
-        }
+        let g = decode_grid(&mut model, &mut dec, cols, rows, None, None, &aux[gi])?;
+        debug_assert_eq!(g.len(), n);
         out.push(g);
     }
     dec.finish()?;
@@ -1840,21 +1837,7 @@ pub fn encode_grids_shipping(
             }
             None => None,
         };
-        for (i, &x) in g.indices.iter().enumerate() {
-            if x as u32 >= alphabet as u32 {
-                return Err(anyhow!("grid {gi}: index {x} >= alphabet {alphabet}"));
-            }
-            let above = if i >= cols { g.indices[i - cols] } else { EDGE };
-            let left = if i % cols > 0 { g.indices[i - 1] } else { EDGE };
-            match (b, b2) {
-                (Some(b), Some(b2)) => model.encode_sym3(&mut enc, b[i], b2[i], above, x),
-                (Some(b), None) => model.encode_sym(&mut enc, b[i], above, x),
-                _ => {
-                    let a = aux_tile(&aux, i, cols);
-                    model.encode_sym_aux(&mut enc, a, above, left, x);
-                }
-            }
-        }
+        encode_grid(&mut model, &mut enc, gi, g, b, b2, &aux)?;
     }
     Ok(enc.finish())
 }
@@ -1934,36 +1917,147 @@ pub fn decode_grids_shipping(
             }
             None => None,
         };
-        let mut g: Vec<u16> = Vec::with_capacity(n);
-        // Walk rows directly: the old flat loop divided by the sprite's
-        // variable width for left/above and again for the shifted reference
-        // at every tile. Row-major order and context updates stay identical.
-        for row in 0..rows as usize {
-            for col in 0..cols {
-                let i = row * cols + col;
-                let above = if row > 0 { g[i - cols] } else { EDGE };
-                let left = if col > 0 { g[i - 1] } else { EDGE };
-                let x = match (b, b2) {
-                    (Some(b), Some(b2)) => model.decode_sym3(&mut dec, b[i], b2[i], above),
-                    (Some(b), None) => model.decode_sym(&mut dec, b[i], above),
-                    _ => model.decode_sym_aux(&mut dec, aux_tile_at(&aux, col, row), above, left),
-                };
-                g.push(x);
-                dec.check()?;
-            }
-        }
+        let g = decode_grid(&mut model, &mut dec, cols, rows, b, b2, &aux)?;
         out.push(g);
     }
     dec.finish()?;
     Ok(out)
 }
 
-/// The reference tile for grid position `i`, or EDGE when absent.
-fn aux_tile(aux: &Option<AuxRef>, i: usize, cols: usize) -> u16 {
-    if aux.is_none() {
-        return EDGE;
+/// One tile's match-gate predictor and its flag context.
+#[derive(Clone, Copy)]
+struct TilePredictor {
+    /// The tile the gate bit predicts (EDGE: no predictor, never gated).
+    pred: u16,
+    /// Aligned aux-reference tile for the standalone chain (EDGE if none).
+    aux: u16,
+    /// Flag context: an aux-reference tile is present.
+    reference: bool,
+}
+
+impl TilePredictor {
+    /// Family (base-coded) tiles have no predictor: gating them on the base
+    /// tile was measured on full-game missions (v16 grids, byte-exact lab
+    /// prototype) at +2.4..3.7% extra VQ bytes on family-heavy missions
+    /// (H01_Lin_VL +3.95% total vs +0.26% ungated; Tac01_FoA_MP +2.71% vs
+    /// +0.29%) for little extra decode saving — their (base, above) PPM
+    /// contexts already resolve hits cheaply.
+    #[inline(always)]
+    fn at(base: Option<&[u16]>, aux: &Option<AuxRef>, col: usize, row: usize, above: u16) -> Self {
+        if base.is_some() {
+            return Self {
+                pred: EDGE,
+                aux: EDGE,
+                reference: false,
+            };
+        }
+        let aux = aux_tile_at(aux, col, row);
+        Self {
+            pred: if aux != EDGE { aux } else { above },
+            aux,
+            reference: aux != EDGE,
+        }
     }
-    aux_tile_at(aux, i % cols, i / cols)
+
+    /// Code the gate bit only in likely-flat spots: the previous tile in the
+    /// row was a predictor hit, or the predictor continues the left tile.
+    #[inline(always)]
+    fn gated(&self, prev_hit: bool, left: u16) -> bool {
+        self.pred != EDGE && (prev_hit || self.pred == left)
+    }
+}
+
+/// Encode one grid's tiles in row-major order (see the module docs for the
+/// match gate). `base`/`base2` select the family chains; otherwise `aux`
+/// supplies the standalone chain's aligned reference. Lengths are validated
+/// by the callers.
+fn encode_grid(
+    model: &mut Model,
+    enc: &mut RangeEncoder,
+    gi: usize,
+    grid: &SpriteGrid,
+    base: Option<&[u16]>,
+    base2: Option<&[u16]>,
+    aux: &Option<AuxRef>,
+) -> Result<()> {
+    let cols = usize::from(grid.cols);
+    for row in 0..usize::from(grid.rows) {
+        let mut prev_hit = false;
+        for col in 0..cols {
+            let i = row * cols + col;
+            let x = grid.indices[i];
+            if u32::from(x) >= model.alphabet {
+                return Err(anyhow!(
+                    "grid {gi}: index {x} >= alphabet {}",
+                    model.alphabet
+                ));
+            }
+            let above = if row > 0 {
+                grid.indices[i - cols]
+            } else {
+                EDGE
+            };
+            let left = if col > 0 { grid.indices[i - 1] } else { EDGE };
+            let tile = TilePredictor::at(base, aux, col, row, above);
+            let hit = x == tile.pred;
+            if tile.gated(prev_hit, left) {
+                // `encode_bit` codes P(false): false = predictor hit.
+                enc.encode_bit(model.match_prob(&tile, above, left), !hit);
+                if hit {
+                    prev_hit = true;
+                    continue;
+                }
+            }
+            prev_hit = hit;
+            // The chain falls back specific -> primary -> second, so put the
+            // stronger single predictor first: the base tile for variants,
+            // the above tile standalone (see COMPRESSION.md entropy table).
+            match (base, base2) {
+                (Some(b), Some(b2)) => model.encode_sym3(enc, b[i], b2[i], above, x),
+                (Some(b), None) => model.encode_sym(enc, b[i], above, x),
+                _ => model.encode_sym_aux(enc, tile.aux, above, left, x),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Decoder mirror of [`encode_grid`]. Walks rows directly so left/above and
+/// the shifted reference need no per-tile division.
+fn decode_grid(
+    model: &mut Model,
+    dec: &mut RangeDecoder,
+    cols: usize,
+    rows: u16,
+    base: Option<&[u16]>,
+    base2: Option<&[u16]>,
+    aux: &Option<AuxRef>,
+) -> Result<Vec<u16>> {
+    let mut g: Vec<u16> = Vec::with_capacity(cols * usize::from(rows));
+    for row in 0..usize::from(rows) {
+        let mut prev_hit = false;
+        for col in 0..cols {
+            let i = row * cols + col;
+            let above = if row > 0 { g[i - cols] } else { EDGE };
+            let left = if col > 0 { g[i - 1] } else { EDGE };
+            let tile = TilePredictor::at(base, aux, col, row, above);
+            let x = if tile.gated(prev_hit, left)
+                && !dec.decode_bit(model.match_prob(&tile, above, left))
+            {
+                tile.pred
+            } else {
+                match (base, base2) {
+                    (Some(b), Some(b2)) => model.decode_sym3(dec, b[i], b2[i], above),
+                    (Some(b), None) => model.decode_sym(dec, b[i], above),
+                    _ => model.decode_sym_aux(dec, tile.aux, above, left),
+                }
+            };
+            prev_hit = x == tile.pred;
+            g.push(x);
+            dec.check()?;
+        }
+    }
+    Ok(g)
 }
 
 #[inline]
@@ -2022,18 +2116,7 @@ pub fn decode_grids_multi(
                 return Err(anyhow!("grid {gi}: {label} length mismatch"));
             }
         }
-        let mut g: Vec<u16> = Vec::with_capacity(n);
-        for i in 0..n {
-            let above = if i >= cols { g[i - cols] } else { EDGE };
-            let left = if i % cols > 0 { g[i - 1] } else { EDGE };
-            let x = match (b, b2) {
-                (Some(b), Some(b2)) => model.decode_sym3(&mut dec, b[i], b2[i], above),
-                (Some(b), None) => model.decode_sym(&mut dec, b[i], above),
-                _ => model.decode_sym(&mut dec, above, left),
-            };
-            g.push(x);
-            dec.check()?;
-        }
+        let g = decode_grid(&mut model, &mut dec, cols, rows, b, b2, &None)?;
         out.push(g);
     }
     dec.finish()?;
@@ -2306,6 +2389,76 @@ mod tests {
                     assert_eq!(See::key(0, sum, 1, top).3, expected, "sum={sum} top={top}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn match_gate_roundtrips_flat_runs_in_every_mode() {
+        // Long flat runs, stripes and sporadic breaks drive the gate through
+        // hits, misses after hits, and `predictor == left` entries in the
+        // standalone and aux self-reference chains, interleaved with the
+        // ungated single-base and two-base chains in one model.
+        let (cols, rows) = (13u16, 11u16);
+        let tiles = usize::from(cols) * usize::from(rows);
+        let flat: Vec<u16> = (0..tiles)
+            .map(|i| match i % 37 {
+                0 => 9,
+                5 | 6 => 3,
+                _ => 1,
+            })
+            .collect();
+        let striped: Vec<u16> = (0..tiles)
+            .map(|i| ((i / usize::from(cols)) % 3) as u16 + u16::from(i % 29 == 0))
+            .collect();
+        let family: Vec<u16> = flat
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| if i % 17 == 0 { (v + 2) % 12 } else { v })
+            .collect();
+        let family2: Vec<u16> = striped
+            .iter()
+            .zip(&flat)
+            .map(|(&s, &f)| if s == 0 { f } else { s })
+            .collect();
+        let grid = |indices| SpriteGrid {
+            cols,
+            rows,
+            indices,
+        };
+        let grids = [grid(&flat), grid(&striped), grid(&family), grid(&family2)];
+        let base: Vec<Option<&[u16]>> = vec![None, None, Some(&flat), Some(&flat)];
+        let base2: Vec<Option<&[u16]>> = vec![None, None, None, Some(&striped)];
+        let selfref = vec![
+            None,
+            Some(SelfRef {
+                grid: 0,
+                dtx: 1,
+                dy: 0,
+            }),
+            None,
+            None,
+        ];
+        let dims = vec![(cols, rows); grids.len()];
+        let blob = encode_grids_shipping(12, &grids, Some(&base), Some(&base2), &selfref).unwrap();
+        let decoded =
+            decode_grids_shipping(12, &dims, Some(&base), Some(&base2), &selfref, &blob).unwrap();
+        for (g, d) in grids.iter().zip(&decoded) {
+            assert_eq!(g.indices, d.as_slice());
+        }
+        // A uniform standalone grid is almost free once its rows gate in.
+        let uniform = vec![4u16; tiles];
+        let uniform_blob = encode_grids(12, &[grid(&uniform)], None).unwrap();
+        assert!(uniform_blob.len() < 32, "{} bytes", uniform_blob.len());
+        assert_eq!(
+            decode_grids(12, &[(cols, rows)], None, &uniform_blob).unwrap(),
+            [uniform.clone()]
+        );
+        for len in 0..blob.len() {
+            assert!(
+                decode_grids_shipping(12, &dims, Some(&base), Some(&base2), &selfref, &blob[..len])
+                    .is_err(),
+                "prefix {len}"
+            );
         }
     }
 
@@ -2595,15 +2748,15 @@ mod tests {
         let blob =
             encode_grids_shipping(4096, &grids, Some(&base), Some(&base2), &selfref).unwrap();
         use sha2::{Digest, Sha256};
-        // Freeze the shipping stream produced before exclusion specialization
-        // and conditional model allocation. Roundtrips alone would not catch
-        // an encoder/decoder pair that accidentally changes the format.
+        // Freeze the shipping stream (schema v17: match-gated coding).
+        // Roundtrips alone would not catch an encoder/decoder pair that
+        // accidentally changes the format.
         if excl_source_cap() == 0 {
             assert_eq!(
                 Sha256::digest(&blob).as_slice(),
                 &[
-                    38, 62, 236, 102, 222, 253, 119, 108, 131, 62, 110, 69, 95, 191, 198, 154, 88,
-                    108, 6, 164, 149, 150, 87, 0, 142, 116, 36, 27, 22, 76, 59, 76
+                    71, 231, 60, 226, 179, 13, 83, 181, 139, 224, 131, 67, 23, 191, 123, 140, 178,
+                    241, 7, 4, 45, 155, 124, 24, 234, 189, 133, 244, 167, 36, 223, 192
                 ],
             );
         }
