@@ -4,7 +4,7 @@ import { fetchWithProgress, fetchJson, fetchRuntimeWasm } from './boot-transport
 import { withAbort } from './cancellation.js';
 import { installCanvasBackingStore } from './canvas-lifecycle.js';
 import { preloadRuntimeAssets } from './asset-preload.js';
-import { bootGame, loadRuntimeInParallel, type BuildSelection, type BrowserJoinContext, type RobinWasmModule } from './boot-lifecycle.js';
+import { bootGame, loadRuntimeInParallel, onFirstRuntimeFrame, type BuildSelection, type BrowserJoinContext, type RobinWasmModule } from './boot-lifecycle.js';
 import { appendLogLine, appendLogLines } from './log.js';
 import {
     authenticateBrowserJoinTicket,
@@ -76,6 +76,25 @@ function bootProgress(phase: BootPhase, label: string, frac: number, detail = ''
 
 function bootProgressDone(): void {
     bpRoot?.remove();
+}
+
+// Launch paths that present nothing for a long time (or a runtime that never
+// announces its first frame) must not keep the overlay over the canvas forever.
+const BOOT_OVERLAY_FALLBACK_MS = 10_000;
+
+/** Keep the HTML overlay up across the handoff until the runtime's first
+ * presented frame (normally the mission loading screen) replaces it, so the
+ * page never shows a blank canvas. */
+function removeBootProgressOnFirstFrame(): void {
+    onFirstRuntimeFrame(window, BOOT_OVERLAY_FALLBACK_MS, outcome => {
+        // A boot failure after handoff keeps its error visible.
+        if (bpRoot?.classList.contains('bp-error') === true) return;
+        logOk(outcome === 'presented'
+            ? '[boot overlay removed: first runtime frame presented]'
+            : `[boot overlay removed: no runtime frame after ${BOOT_OVERLAY_FALLBACK_MS} ms]`);
+        // The frame reaches the compositor at the next rendering opportunity.
+        requestAnimationFrame(() => bootProgressDone());
+    });
 }
 
 function bootProgressError(message: string): void {
@@ -381,7 +400,8 @@ async function main(): Promise<void> {
             // winit may reset the backing store on attachment. Restore it after that turn.
             requestAnimationFrame(() => requestAnimationFrame(syncCanvasBackingStore));
             logOk('[handed off to Rust - winit drives rAF from here]');
-            requestAnimationFrame(() => bootProgressDone());
+            bootProgress('boot', 'starting game…', 1);
+            removeBootProgressOnFirstFrame();
         },
         installReplay: async (rpc, wasm, buildBase) => {
             if (shareReplayButton !== null) {

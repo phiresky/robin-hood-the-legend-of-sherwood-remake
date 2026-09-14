@@ -151,6 +151,37 @@ export function assertMultiplayerWasmCompatibility(
     }
 }
 
+/** Dispatched on `window` by the runtime after its first presented frame.
+ * Must match Rust `crate::window::FIRST_FRAME_PRESENTED_EVENT`. */
+export const FIRST_FRAME_PRESENTED_EVENT = 'robin-first-frame-presented';
+
+export type FirstFrameOutcome = 'presented' | 'timeout';
+
+/** Calls `settle` exactly once: when the runtime announces its first presented
+ * frame, or after `timeoutMs` if it never does. The listener and timer are
+ * released either way. `schedule` returns a cancel function. */
+export function onFirstRuntimeFrame(
+    target: Pick<EventTarget, 'addEventListener' | 'removeEventListener'>,
+    timeoutMs: number,
+    settle: (outcome: FirstFrameOutcome) => void,
+    schedule: (callback: () => void, ms: number) => () => void = (callback, ms) => {
+        const id = setTimeout(callback, ms);
+        return () => clearTimeout(id);
+    },
+): void {
+    let settled = false;
+    const finish = (outcome: FirstFrameOutcome): void => {
+        if (settled) return;
+        settled = true;
+        target.removeEventListener(FIRST_FRAME_PRESENTED_EVENT, onFrame);
+        cancel();
+        settle(outcome);
+    };
+    const onFrame = (): void => finish('presented');
+    target.addEventListener(FIRST_FRAME_PRESENTED_EVENT, onFrame);
+    const cancel = schedule(() => finish('timeout'), timeoutMs);
+}
+
 /** Import URL-based worker glue while fetching the streaming WASM response. */
 export async function loadRuntimeInParallel(
     importModule: (signal: AbortSignal) => Promise<RobinWasmModule>,

@@ -1499,6 +1499,184 @@ fn vq_chunks_roundtrip_and_materialize_in_any_merge_order() {
     );
 }
 
+fn merged_vq_family_fixture() -> ShippingMission {
+    let reload = |mission: &ShippingMission| {
+        let compressed = zstd_compress_with_window(&encode_mission_native(mission), 30).unwrap();
+        decode_mission_compressed(&compressed).unwrap()
+    };
+    let mut merged = ShippingMission::default();
+    merged
+        .merge_part(reload(&second_variant_chunk_mission()))
+        .unwrap();
+    merged.merge_part(reload(&variant_chunk_mission())).unwrap();
+    merged.merge_part(reload(&base_chunk_mission())).unwrap();
+    merged
+}
+
+fn sprite_rows(
+    bank: &ShippingSpriteBank,
+) -> Vec<(u32, Vec<u16>, Option<(u32, u16, u16, Vec<u16>)>)> {
+    bank.sprites
+        .iter()
+        .map(|(id, sprite)| {
+            (
+                *id,
+                sprite.packed_data.as_ref().clone(),
+                sprite.raster.as_ref().map(|raster| {
+                    (
+                        raster.stride,
+                        raster.x,
+                        raster.y,
+                        raster.atlas.as_ref().clone(),
+                    )
+                }),
+            )
+        })
+        .collect()
+}
+
+/// Asserts per-step progress invariants while stepping one item at a time.
+fn step_one_item_at_a_time(
+    bank: &mut ShippingSpriteBank,
+    kinds: SpriteChunkKinds,
+) -> (usize, SpriteMaterializeProgress) {
+    let mut materializer = SpriteChunkMaterializer::new(bank, kinds).unwrap();
+    let initial = materializer.progress();
+    assert_eq!(initial.completed_items, 0);
+    assert_eq!(initial.completed_work, 0);
+    let mut previous = initial;
+    let mut steps = 0;
+    while !materializer.step(bank, &BTreeMap::new(), 1).unwrap() {
+        steps += 1;
+        let current = materializer.progress();
+        assert!(current.completed_items >= previous.completed_items);
+        assert!(current.completed_work >= previous.completed_work);
+        assert!(current.fraction() >= previous.fraction());
+        assert!(current.completed_items <= current.total_items);
+        assert_eq!(current.total_items, initial.total_items);
+        assert_eq!(current.total_work, initial.total_work);
+        previous = current;
+    }
+    assert_eq!(materializer.stage(), SpriteChunkStage::Done);
+    (steps, materializer.progress())
+}
+
+#[test]
+fn stepped_vq_materialization_matches_whole_rounds() {
+    let mut whole = merged_vq_family_fixture();
+    let chunks = whole.sprite_bank.as_ref().unwrap().vq_chunks.len();
+    assert!(chunks >= 3);
+    whole
+        .sprite_bank
+        .as_mut()
+        .unwrap()
+        .materialize_vq_chunks(&BTreeMap::new())
+        .unwrap();
+
+    let mut stepped = merged_vq_family_fixture();
+    let bank = stepped.sprite_bank.as_mut().unwrap();
+    let (steps, progress) = step_one_item_at_a_time(bank, SpriteChunkKinds::Vq);
+    assert!(steps >= chunks - 1, "one chunk per step, got {steps} steps");
+    assert_eq!(progress.completed_items, chunks);
+    assert_eq!(progress.total_items, chunks);
+    assert_eq!(progress.fraction(), 1.0);
+    assert!(bank.vq_chunks.is_empty());
+    assert_eq!(
+        sprite_rows(bank),
+        sprite_rows(whole.sprite_bank.as_ref().unwrap())
+    );
+}
+
+#[test]
+fn stepped_materialization_propagates_stuck_vq_errors() {
+    let mut merged = ShippingMission::default();
+    merged.merge_part(variant_chunk_mission()).unwrap();
+    let bank = merged.sprite_bank.as_mut().unwrap();
+    let mut materializer = SpriteChunkMaterializer::new(bank, SpriteChunkKinds::All).unwrap();
+    let error = materializer.step(bank, &BTreeMap::new(), 1).unwrap_err();
+    assert!(
+        error.to_string().contains("base sprite 0"),
+        "unexpected error: {error}"
+    );
+}
+
+fn two_chunk_rle_jxl_bank() -> ShippingSpriteBank {
+    let sprite = |w: u16, h: u16| ShippingSprite {
+        width: w,
+        height: h,
+        dictionary_index: UNMAPPED_DICT,
+        packed_data: Arc::new(Vec::new()),
+        raster: None,
+    };
+    let chunk = |rhs: &str, ids: [u32; 2]| SpriteRleJxlChunk {
+        rhs: rhs.into(),
+        jxl_blobs: vec![RLE_JXL_FIXTURE.to_vec()],
+        sprite_ids: ids.to_vec(),
+        placements: vec![
+            RleJxlPlacement {
+                blob: 0,
+                x: 0,
+                y: 0,
+            },
+            RleJxlPlacement {
+                blob: 0,
+                x: 4,
+                y: 0,
+            },
+        ],
+    };
+    ShippingSpriteBank {
+        signature: 7,
+        dictionaries: Vec::new(),
+        sprite_count: 16,
+        sprites: vec![
+            (5, sprite(4, 4)),
+            (9, sprite(4, 2)),
+            (11, sprite(4, 4)),
+            (13, sprite(4, 2)),
+        ],
+        vq_chunks: Vec::new(),
+        rle_jxl_chunks: vec![
+            chunk("Animations/Day/a.rhs", [5, 9]),
+            chunk("Animations/Day/b.rhs", [11, 13]),
+        ],
+    }
+}
+
+#[test]
+fn stepped_rle_jxl_materialization_matches_whole_list_per_atlas() {
+    let mut whole = two_chunk_rle_jxl_bank();
+    whole.materialize_rle_jxl_chunks().unwrap();
+
+    let mut stepped = two_chunk_rle_jxl_bank();
+    let (steps, progress) = step_one_item_at_a_time(&mut stepped, SpriteChunkKinds::All);
+    // Two atlases: the first step decodes one, the last one finishes.
+    assert_eq!(steps, 1);
+    assert_eq!(progress.total_items, 2);
+    assert_eq!(progress.completed_items, 2);
+    assert_eq!(
+        progress.total_work,
+        2 * RLE_JXL_FIXTURE.len() as u64 * RLE_JXL_DECODE_WORK_PER_BYTE
+    );
+    assert!(stepped.rle_jxl_chunks.is_empty());
+    assert_eq!(sprite_rows(&stepped), sprite_rows(&whole));
+    assert!(
+        sprite_rows(&stepped)
+            .iter()
+            .all(|(_, _, raster)| raster.is_some())
+    );
+}
+
+#[test]
+fn empty_bank_materializer_is_immediately_complete() {
+    let mut bank = two_chunk_rle_jxl_bank();
+    bank.rle_jxl_chunks.clear();
+    let mut materializer = SpriteChunkMaterializer::new(&mut bank, SpriteChunkKinds::All).unwrap();
+    assert_eq!(materializer.progress().fraction(), 1.0);
+    assert!(materializer.step(&mut bank, &BTreeMap::new(), 1).unwrap());
+    assert!(materializer.step(&mut bank, &BTreeMap::new(), 1).unwrap());
+}
+
 #[test]
 fn variant_vq_chunk_without_base_chunk_is_an_error() {
     let mut merged = ShippingMission::default();

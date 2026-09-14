@@ -17,6 +17,7 @@ mod input_handlers;
 mod interactive;
 pub(crate) mod leaderboard_runtime;
 mod live_gameplay;
+mod loading_progress;
 mod modal_state;
 mod mouse_input;
 mod multiplayer;
