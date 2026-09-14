@@ -94,11 +94,6 @@ pub struct AiReentrantOutbox {
     /// instead of rebuilding a frame-global speech batch.
     pub owner_work: Vec<AiOwnerWork>,
     pub waypoint_script_reach_point: Option<(PathId, u8)>,
-    /// `WonderingBrawlHitting::EVENT_DONE` is suspended while the engine
-    /// performs its inline civilian sweep and synchronous officer callback.
-    /// The enclosing decision frame remains open until the brawler tail completes.
-    #[serde(default)]
-    pub brawl_hitting_completion_pending: bool,
 }
 
 #[derive(
@@ -111,7 +106,6 @@ pub struct AiReentrantOutbox {
     bitcode::Decode,
 )]
 pub enum AiOwnerWork {
-    StateChange(AiStateChangeNotification),
     /// Actor calls completed before a later synchronous owner statement.
     ///
     /// Most actor effects can share the post-Think outbox because their
@@ -126,10 +120,6 @@ pub enum AiOwnerWork {
     /// before/after it and those operations are observably ordered.
     NearbyCiviliansPanic,
     Speech(AiSpeechAttempt),
-    RestoreDetectableObjects {
-        knocked_out_in_money_fight: bool,
-    },
-    InformResurrection,
     LaunchTimer {
         frames: u32,
         current_frame: u32,
@@ -141,10 +131,6 @@ pub enum AiOwnerWork {
     ConsiderToBeginParade {
         attacker: HumanHandle,
     },
-    /// The money-brawl hit completion has a separate, inline civilian sweep
-    /// which uses forward-half-plane detection, unlike the shared
-    /// nearby-civilian panic callback's 360-degree detector.
-    NearbyCiviliansPanic180,
     /// Enter the engine-owned macro interpreter at this statement boundary.
     RunMacro,
 }
@@ -164,34 +150,6 @@ pub enum AiOwnerWork {
 pub struct AiSpeechAttempt {
     pub remark: Remark,
     pub flags: u16,
-}
-
-/// One owner-local state-change script notification.
-///
-/// The AI method has to finish its pure-Rust tail before releasing its entity
-/// borrow, so the engine records both sides of the transition. The callback
-/// barrier temporarily restores `outgoing_*`, invokes `FilterAIEvent`, then
-/// re-resolves the typed AI owner and commits `incoming_*`.
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct AiStateChangeNotification {
-    pub outgoing_state: AiState,
-    pub outgoing_substate: Substate,
-    pub incoming_state: AiState,
-    pub incoming_substate: Substate,
-    pub source: AiStateChangeSource,
-    /// Actor effects issued before the corresponding original-game state change
-    /// call. The live actor outbox then contains only statements executed
-    /// after the state change returned, which must remain hidden until the
-    /// synchronous script callback has completed.
-    pub actor_effects_before_callback: Option<AiActorOutbox>,
 }
 
 #[derive(
@@ -264,53 +222,6 @@ pub struct AttentiveModeEffect {
 pub struct GuardedPcEffect {
     pub old: Option<crate::entity_id::PcId>,
     pub new: Option<crate::entity_id::PcId>,
-}
-
-/// Typed location of an owned shooting point in the global archery tables.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct ReservedShootingPoint {
-    pub sector_index: u16,
-    pub point_index: crate::sector::ArcheryPointIdx,
-}
-
-impl From<(u16, u16)> for ReservedShootingPoint {
-    fn from((sector_index, point_index): (u16, u16)) -> Self {
-        Self {
-            sector_index,
-            point_index: point_index.into(),
-        }
-    }
-}
-
-/// Archery ownership work consumed at the post-refill/pre-unalert actor
-/// barrier in `EngineInner::drain_pending_for_npc`.
-#[derive(
-    Debug,
-    Default,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct ArcheryReservationRelease {
-    pub shooting_point: Option<ReservedShootingPoint>,
-    pub release_sector: bool,
 }
 
 impl AttentiveModeEffect {
@@ -388,21 +299,12 @@ pub struct AiActorOutbox {
     /// already `QUIT_SWORDFIGHT`; the engine owns that live command check.
     #[serde(default)]
     pub retry_quit_swordfight: bool,
-    /// Complete the lost-enemy battle-overview continuation only after an
-    /// explicit QUIT_SWORDFIGHT launch has delivered interruption
-    /// condolations from the command it replaced.
-    #[serde(default)]
-    pub lost_enemy_overview_after_quit: bool,
     pub stop_menace: bool,
     pub lower_shield: bool,
     /// Perform the original game's explicit shield update after an AI facing or
     /// phalanx update.
     #[serde(default)]
     pub refresh_shield: bool,
-    /// Complete EventArrowLaunched's synchronous post-launch
-    /// upright / holding-shield state assignment followed by a shield update.
-    #[serde(default)]
-    pub raise_shield_immediately: bool,
     pub deactivate: bool,
     pub halt: bool,
     /// Additional synchronous `Halt()` calls coalesced into this deferred
@@ -424,19 +326,10 @@ pub struct AiActorOutbox {
     /// Unlike combat targets, this may name an object (for example an ale
     /// bottle that an NPC is considering picking up).
     pub focus: Option<AiEntityHandle>,
-    pub unalert_near_charly_seekers: Option<CharlySeekerTarget>,
-    /// antagonist reference as observed at the synchronous original-game
-    /// nearby-searcher stand-down boundary. The sweep is drained
-    /// engine-side, so reading the owner again there is too late: intervening
-    /// re-entrant speech can return to duty and clear the target.
-    #[serde(default)]
-    pub unalert_near_charly_seekers_antagonist: Option<AiEntityHandle>,
-    pub refill_bow_ammo: bool,
     pub set_reported_to_officer: Vec<(AiEntityHandle, bool)>,
     pub unfocus: bool,
     pub focus_point: Option<Position>,
     pub slowly_open_eyes: bool,
-    pub forget_nearby_coins: Option<Position>,
     pub set_direction: Option<i16>,
     pub set_direction_instantly: Option<i16>,
     pub set_attentive_mode: Option<AttentiveModeEffect>,
@@ -453,7 +346,6 @@ pub struct AiActorOutbox {
     pub posture: Option<crate::element::Posture>,
     pub begin_panic: Option<PanicRequest>,
     pub script_seek_area: Option<ScriptSeekAreaRequest>,
-    pub archery_reservation_release: ArcheryReservationRelease,
 }
 
 impl AiActorOutbox {
@@ -484,23 +376,6 @@ impl AiActorOutbox {
     ) {
         self.detectable_mutations
             .push(DetectableMutation::DeleteEntity(target, kind));
-    }
-
-    pub(crate) fn queue_unalert_near_charly_seekers(
-        &mut self,
-        target: CharlySeekerTarget,
-        antagonist: Option<AiEntityHandle>,
-    ) {
-        self.unalert_near_charly_seekers = Some(target);
-        self.unalert_near_charly_seekers_antagonist = antagonist;
-    }
-
-    pub(crate) fn take_unalert_near_charly_seekers(
-        &mut self,
-    ) -> Option<(CharlySeekerTarget, Option<AiEntityHandle>)> {
-        let target = self.unalert_near_charly_seekers.take()?;
-        let antagonist = self.unalert_near_charly_seekers_antagonist.take();
-        Some((target, antagonist))
     }
 
     /// Queue an owner-local attentive-mode change without replacing an
@@ -614,7 +489,6 @@ pub(crate) struct AiActorCoreEffects {
     pub launch_commands: Vec<crate::element::Command>,
     pub launch_sequences: Vec<crate::sequence::Sequence>,
     pub refresh_shield: bool,
-    pub raise_shield_immediately: bool,
     pub look_sidewards: Option<LookDirection>,
     pub detectable_mutations: Vec<DetectableMutation>,
     pub slowly_open_eyes: bool,
@@ -631,11 +505,9 @@ impl AiActorOutbox {
         !self.orders.is_empty()
             || self.quit_swordfight
             || self.retry_quit_swordfight
-            || self.lost_enemy_overview_after_quit
             || self.stop_menace
             || self.lower_shield
             || self.refresh_shield
-            || self.raise_shield_immediately
             || self.deactivate
             || self.halt
             || self.blink_all_enemies
@@ -648,13 +520,10 @@ impl AiActorOutbox {
             || self.set_principal.is_some()
             || !self.friend_primary_target_swaps.is_empty()
             || self.focus.is_some()
-            || self.unalert_near_charly_seekers.is_some()
-            || self.refill_bow_ammo
             || !self.set_reported_to_officer.is_empty()
             || self.unfocus
             || self.focus_point.is_some()
             || self.slowly_open_eyes
-            || self.forget_nearby_coins.is_some()
             || self.set_direction.is_some()
             || self.set_direction_instantly.is_some()
             || self.has_pending_attentive_mode()
@@ -665,7 +534,6 @@ impl AiActorOutbox {
             || self.posture.is_some()
             || self.begin_panic.is_some()
             || self.script_seek_area.is_some()
-            || self.archery_reservation_release != ArcheryReservationRelease::default()
     }
 
     /// Drain actor halt alone. Its application can re-enter engine sequence
@@ -683,10 +551,6 @@ impl AiActorOutbox {
         }
         1u8.checked_add(std::mem::take(&mut self.additional_halts))
             .expect("actor Halt count overflow")
-    }
-
-    pub(crate) fn take_lost_enemy_overview_after_quit(&mut self) -> bool {
-        std::mem::take(&mut self.lost_enemy_overview_after_quit)
     }
 
     /// Drain a direct direction write before the following stop-all request
@@ -721,18 +585,11 @@ impl AiActorOutbox {
             launch_commands: std::mem::take(&mut self.launch_commands),
             launch_sequences: std::mem::take(&mut self.launch_sequences),
             refresh_shield: std::mem::take(&mut self.refresh_shield),
-            raise_shield_immediately: std::mem::take(&mut self.raise_shield_immediately),
             look_sidewards: self.look_sidewards.take(),
             detectable_mutations: std::mem::take(&mut self.detectable_mutations),
             slowly_open_eyes: std::mem::take(&mut self.slowly_open_eyes),
             posture: self.posture.take(),
         }
-    }
-
-    /// Drain archery ownership work only at its original application point,
-    /// after bow-ammo refill and before the Charly-seeker broadcast barrier.
-    pub(crate) fn take_archery_reservation_release(&mut self) -> ArcheryReservationRelease {
-        std::mem::take(&mut self.archery_reservation_release)
     }
 }
 

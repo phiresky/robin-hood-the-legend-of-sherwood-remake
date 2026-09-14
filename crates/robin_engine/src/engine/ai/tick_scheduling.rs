@@ -222,11 +222,10 @@ impl EngineInner {
         self.drain_pending_swordfight_effects(sim, npc_id, assets, &mut drain);
         self.drain_pending_focus_and_orders(sim, npc_id, assets, &mut drain);
         self.drain_pending_guard_and_archery(npc_id, &drain);
-        self.drain_pending_unalert_charly_seekers(sim, npc_id, assets);
         self.drain_pending_launches(sim, npc_id, assets, &mut drain);
         self.drain_pending_detectable_mutations(npc_id, &drain);
         self.drain_pending_coins_posture_and_alerts(sim, npc_id, assets, &drain);
-        self.drain_pending_panic_and_overview(sim, npc_id, assets, &drain);
+        self.drain_pending_panic_and_search(sim, npc_id, assets);
     }
 
     /// Owner work, direction goal, halt barrier, and the first post-Think
@@ -316,15 +315,12 @@ impl EngineInner {
         // Later barrier groups remain live so re-entrant sequence work can
         // still enqueue effects that this pass observes at their Original
         // application point.
-        let (effects, finish_lost_enemy_overview) = {
+        let effects = {
             let ai = self
                 .world
                 .entities
                 .expect_ai_controller_mut(npc_id, format_args!("pending-drain NPC"));
-            (
-                ai.outbox.actor.take_core(),
-                ai.outbox.actor.take_lost_enemy_overview_after_quit(),
-            )
+            ai.outbox.actor.take_core()
         };
         assert!(
             effects.enter_swordfight_jump_line.is_none()
@@ -339,7 +335,6 @@ impl EngineInner {
             halt_count,
             preemption,
             effects,
-            finish_lost_enemy_overview,
         })
     }
 
@@ -885,201 +880,9 @@ impl EngineInner {
                 )
                 .reported_to_officer = value;
         }
-
-        // Process pending bow-ammo refill — the
-        // `set_ammo_amount(BOW, MAX_NPC_ARROWS)` call inside
-        // `fleeing_run_for_arrow_reserves`.
-        {
-            let refill = {
-                let ai = self.world.entities.expect_ai_controller_mut(
-                    npc_id,
-                    format_args!("bow-ammo owner {} lost its AI", npc_id.index()),
-                );
-                std::mem::take(&mut ai.outbox.actor.refill_bow_ammo)
-            };
-            if refill {
-                self.world
-                    .entities
-                    .expect_ai_actor_data_mut(
-                        npc_id,
-                        format_args!(
-                            "bow-ammo refill owner {} lost AI actor data",
-                            npc_id.index()
-                        ),
-                    )
-                    .number_of_arrows = crate::parameters_ai::MAX_NPC_ARROWS as u16;
-            }
-        }
-
-        // Process the ordered archery-reservation release — the
-        // archery-sector clearing queued from
-        // `EnemyAi::set_state` when the soldier leaves an archer-wait
-        // substate.  Decrement the owner counter on the current
-        // archery sector and clear the index.  The companion
-        // typed effect carries the prior shooting
-        // point's `(sector, point)` so we can also run the
-        // shooting-point and owner clearing here —
-        // the AI layer already cleared its own `my_shooting_point`
-        // field synchronously in `set_state`.
-        {
-            let release = if let Some(enemy) = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::enemy_ai_mut)
-            {
-                let effect = enemy.base.outbox.actor.take_archery_reservation_release();
-                let sector = if effect.release_sector {
-                    enemy.my_archery_sector.take()
-                } else {
-                    None
-                };
-                (sector, effect.shooting_point)
-            } else {
-                (None, None)
-            };
-            if let (_, Some(point)) = release
-                && let Some(sector) = self
-                    .ai
-                    .global
-                    .archery_sectors
-                    .get_mut(point.sector_index as usize)
-                && let Some(pt) = sector.points.get_mut(usize::from(point.point_index))
-            {
-                pt.owner = None;
-            }
-            if let (Some(idx), _) = release
-                && let Some(sector) = self.ai.global.archery_sectors.get_mut(idx as usize)
-            {
-                sector.decrement_owner_counter();
-            }
-        }
     }
 
     /// Nearby-searcher stand-down (`CALL_CHARLY_IS_BACK` delivery).
-    fn drain_pending_unalert_charly_seekers(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: crate::element::EntityId,
-        assets: &LevelAssets,
-    ) {
-        // Process pending nearby-searcher stand-down — walks all
-        // soldier NPCs in the same camp and for each candidate that
-        //   - is alive / active / not the seeker / not the charly,
-        //   - passes the rank/antagonist guard
-        //     `(seeker_rank == OFFICER || cs != antagonist)`,
-        //   - and detects either charly or self within 180°,
-        // dispatches `CALL_CHARLY_IS_BACK` carrying charly's handle.
-        // The pending field's payload selects either self or an
-        // explicit Charly handle.
-        let unalert = self
-            .world
-            .entities
-            .expect_ai_controller_mut(
-                npc_id,
-                format_args!("unalert owner {} lost its AI", npc_id.index()),
-            )
-            .outbox
-            .actor
-            .take_unalert_near_charly_seekers();
-        if let Some((target_charly, my_antagonist)) = unalert {
-            let my_rank = self
-                .get_entity(npc_id)
-                .and_then(Entity::enemy_ai)
-                .map(|enemy| enemy.soldier_profile_rank)
-                .unwrap_or(crate::profiles::ProfileRank::None);
-            let charly_handle = match target_charly {
-                crate::ai::CharlySeekerTarget::SelfNpc => npc_id.index(),
-                crate::ai::CharlySeekerTarget::Npc(handle) => handle.get(),
-            };
-            if self
-                .world
-                .entities
-                .id_at_legacy_slot(charly_handle)
-                .and_then(|charly_id| self.world.entities.get(charly_id))
-                .is_some()
-            {
-                let charly_is_self = charly_handle == npc_id.index();
-                for other_id in self.world.entities.npc_ids().collect::<Vec<_>>() {
-                    if other_id == npc_id {
-                        continue;
-                    }
-                    if other_id.index() == charly_handle {
-                        continue;
-                    }
-                    // Rank/antagonist guard:
-                    //   `rank == Officer || other != antagonist`.
-                    if my_rank != crate::profiles::ProfileRank::Officer
-                        && my_antagonist
-                            .is_some_and(|antagonist| other_id.index() == antagonist.get())
-                    {
-                        continue;
-                    }
-                    let eligible = {
-                        let Some(Entity::Soldier(os)) = self.world.entities.get(other_id) else {
-                            continue;
-                        };
-                        // Forward-half-plane detection checks only the raw active
-                        // flag for the viewer and target. Dead or unconscious
-                        // soldiers are not filtered by the outer Original
-                        // nearby-searcher stand-down walk.
-                        os.element.active
-                    };
-                    if !eligible {
-                        continue;
-                    }
-                    // Original evaluates the full visibility predicate in
-                    // this exact short-circuit order. Besides the cone gate,
-                    // each surviving arm samples the view radius and runs
-                    // opaque LOS, both of which are observable and may affect
-                    // whether CALL_CHARLY_IS_BACK is delivered.
-                    let scratch = self.build_sim_scratch(assets);
-                    let other_ctx = {
-                        let Some(entity) = self.world.entities.get(other_id) else {
-                            continue;
-                        };
-                        let building_sector =
-                            self.entity_building_sector(entity.element_data().sector());
-                        self.ai_context_from_entity(
-                            entity,
-                            self.control.frame_counter,
-                            building_sector,
-                            &scratch,
-                            assets,
-                        )
-                    };
-                    other_ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
-                    let detects_charly = self
-                        .world
-                        .entities
-                        .expect_enemy_ai(
-                            other_id,
-                            format_args!("nearby-searcher stand-down candidate"),
-                        )
-                        .is_detecting_180_degrees(charly_handle, &other_ctx);
-                    let detects_me_branch = !detects_charly
-                        && !charly_is_self
-                        && self
-                            .world
-                            .entities
-                            .expect_enemy_ai(
-                                other_id,
-                                format_args!("nearby-searcher stand-down candidate"),
-                            )
-                            .is_detecting_180_degrees(npc_id.index(), &other_ctx);
-                    other_ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
-                    if !(detects_charly || detects_me_branch) {
-                        continue;
-                    }
-                    let stimulus = crate::ai::Stimulus::with_human(
-                        crate::ai::StimulusType::CallCharlyIsBack,
-                        charly_handle,
-                    );
-                    self.dispatch_think_with_drain(sim, other_id, &stimulus, None, assets);
-                }
-            }
-        }
-    }
 
     /// Sequence/element launches, cross-actor speech, shield refresh,
     /// sideways looks, and beggar detectable stripping.
@@ -1122,16 +925,6 @@ impl EngineInner {
                         npc_id.index()
                     )
                 });
-        }
-
-        if effects.raise_shield_immediately {
-            let entity = self.expect_entity_mut(npc_id, "instant shield owner");
-            entity.set_posture(crate::element::Posture::Upright);
-            entity
-                .actor_data_mut()
-                .expect("instant shield owner is not an actor")
-                .action_state = crate::element::ActionState::HoldingShield;
-            self.refresh_retained_shield_obstacle(assets, npc_id);
         }
 
         if effects.refresh_shield {
@@ -1394,7 +1187,7 @@ impl EngineInner {
         }
     }
 
-    /// Nearby-coin forgetting, posture change, enemy blink reset, and the
+    /// Posture change, enemy blink reset, and the
     /// indoor enemy alert.
     fn drain_pending_coins_posture_and_alerts(
         &mut self,
@@ -1404,74 +1197,6 @@ impl EngineInner {
         drain: &PendingDrainBarrier,
     ) {
         let PendingDrainBarrier { effects, .. } = drain;
-
-        // Process pending nearby-coin forgetting request — the first
-        // half of `forget_all_nearby_coins`: walk the
-        // `DETECTABLE_OBJECT` list and drop every coin entry whose
-        // referenced element is within Chebyshev 500 of `pos`.  The
-        // second half (`other_seen_money.clear()`) is performed
-        // synchronously on the AI side in
-        // `EnemyAi::forget_all_nearby_coins`.
-        let forget_pos = self
-            .world
-            .entities
-            .expect_ai_controller_mut(
-                npc_id,
-                format_args!("pending-drain owner {} lost its AI", npc_id.index()),
-            )
-            .outbox
-            .actor
-            .forget_nearby_coins
-            .take();
-        if let Some(pos) = forget_pos {
-            use crate::element::DetectableType;
-            use crate::element_kinds::ObjectType;
-            const NEARBY_COIN_DISTANCE: f32 = 500.0;
-            let det_idx = DetectableType::Object as usize;
-            // Snapshot the candidate element ids first so we can read
-            // `entities` immutably while iterating, then mutate the
-            // detectable list in a second pass.
-            let mut to_remove: Vec<crate::element::EntityId> = Vec::new();
-            if let Some(ai_actor) = self
-                .world
-                .entities
-                .get(npc_id)
-                .and_then(Entity::ai_actor_data)
-                && det_idx < ai_actor.detectable_lists.len()
-            {
-                for det in &ai_actor.detectable_lists[det_idx] {
-                    let Some(elem_id) = det.element else {
-                        continue;
-                    };
-                    let Some(elem) = self.world.entities.get(elem_id) else {
-                        continue;
-                    };
-                    let Some(obj) = elem.object_data() else {
-                        continue;
-                    };
-                    if obj.object_type != ObjectType::Coin {
-                        continue;
-                    }
-                    let elem_pos = elem.element_data().position_map();
-                    let dx = (elem_pos.x - pos.x).abs();
-                    let dy = (elem_pos.y - pos.y).abs();
-                    if dx.max(dy) < NEARBY_COIN_DISTANCE {
-                        to_remove.push(elem_id);
-                    }
-                }
-            }
-            if !to_remove.is_empty()
-                && let Some(ai_actor) = self
-                    .world
-                    .entities
-                    .get_mut(npc_id)
-                    .and_then(Entity::ai_actor_data_mut)
-                && det_idx < ai_actor.detectable_lists.len()
-            {
-                ai_actor.detectable_lists[det_idx]
-                    .retain(|d| d.element.is_none_or(|id| !to_remove.contains(&id)));
-            }
-        }
 
         // Process pending posture-change request. Like the
         // `set_posture(Sitting/Leisure)` calls in the reference.
@@ -1539,17 +1264,13 @@ impl EngineInner {
         }
     }
 
-    /// Synchronous panic startup/continuation, panic seek fallback,
-    /// script-driven area search, and the lost-enemy battle overview.
-    fn drain_pending_panic_and_overview(
+    /// Complete pending panic and script-driven area searches.
+    fn drain_pending_panic_and_search(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
-        drain: &PendingDrainBarrier,
     ) {
-        let finish_lost_enemy_overview = drain.finish_lost_enemy_overview;
-
         // Drain any pending panic request from the enemy AI — the
         // analogue of the civilian-side drain that runs inside
         // `nearby_civilians_panic`.  Without this, an EnemyAi that
@@ -1584,13 +1305,6 @@ impl EngineInner {
         if has_script_seek {
             self.process_pending_script_seek_area_for(sim, assets, npc_id);
         }
-
-        if finish_lost_enemy_overview {
-            // Swordfight exit's explicit sequence launch above has now
-            // interrupted the old command and delivered its nested
-            // condolence. Resume the outer EVENT_OUTOFVIEW battle overview.
-            self.execute_ai_get_battle_overview(sim, assets, npc_id, 0);
-        }
     }
 }
 
@@ -1602,5 +1316,4 @@ struct PendingDrainBarrier {
     halt_count: u8,
     preemption: crate::ai::AiActorPreemptionEffects,
     effects: crate::ai::AiActorCoreEffects,
-    finish_lost_enemy_overview: bool,
 }

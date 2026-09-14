@@ -5,8 +5,6 @@
 //! [`ai_enemy`](super::ai_enemy) (villain/soldier AI) and
 //! [`ai_friendly`](super::ai_friendly) (civilian AI).
 
-use std::sync::Arc;
-
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
@@ -19,8 +17,8 @@ pub(crate) mod parity_trace;
 mod types;
 pub(crate) use types::optional_ai_handle;
 pub use types::{
-    AiEntityHandle, AiLockFlags, AiStateChangeSource, AlertFlags, CharlySeekerTarget, DoorHandle,
-    DutyFlags, ElementHandle, EnterSwordfightRequest, GotoFlags, HALF_MAX_ATT_VALUE, HumanHandle,
+    AiEntityHandle, AiLockFlags, AiStateChangeSource, AlertFlags, DoorHandle, DutyFlags,
+    ElementHandle, EnterSwordfightRequest, GotoFlags, HALF_MAX_ATT_VALUE, HumanHandle,
     IntoOptionalAiHandle, MAX_ATT_VALUE, NpcHandle, ObjectHandle, QUARTER_MAX_ATT_VALUE,
     RemarkTargetFlags, SectorHandle, SpeechFlags, THREE_QUARTERS_MAX_ATT_VALUE,
 };
@@ -36,37 +34,34 @@ mod model;
 pub use model::{
     AMBUSH_BOX_HALF_SIZE, AiState, AlertLevel, AlertSoldiersFailureContinuation, AmbushPoint,
     Attitude, CombatInfo, CrossNpcAction, Curiosity, Decision, Detection, DoorCombatInfo,
-    DoorSeekInfo, EmoticonType, ForbiddenRemark, Hint, LogLine, LogLineType, LookDirection,
-    LookThereContinuation, Noise, NoiseOrigin, NoiseType, OriginalEnumWord, PanicRequest,
-    PatrolAssignment, PointArchery, ProbabilityDistribution, Question, ReconnaissanceReport,
-    Remark, ReportType, RepulsivePoint, ScreenRemark, ScriptSeekAreaRequest, SectorArchery,
-    SeekPoint, SeekPointDirection, Stimulus, StimulusCategory, StimulusInfo, StimulusType,
-    StolenObject, StoredEnumWord, Substate, TargetType, ThinkResultContinuation, ViewCone,
-    stimulus_to_ai_event_code,
+    DoorSeekInfo, EmoticonType, ForbiddenRemark, Hint, LogLine, LogLineType, LookDirection, Noise,
+    NoiseOrigin, NoiseType, OriginalEnumWord, PanicRequest, PatrolAssignment, PointArchery,
+    ProbabilityDistribution, Question, ReconnaissanceReport, Remark, ReportType, RepulsivePoint,
+    ScreenRemark, ScriptSeekAreaRequest, SectorArchery, SeekPoint, SeekPointDirection, Stimulus,
+    StimulusCategory, StimulusInfo, StimulusType, StolenObject, StoredEnumWord, Substate,
+    TargetType, ViewCone, stimulus_to_ai_event_code,
 };
 pub(crate) use model::{
     QueuedSelfStimulus, SelfStimulusOrigin, cache_npc_villain_authorized_direct,
 };
 
 mod contexts;
-pub(crate) use contexts::ai_position_to_point_3d;
 pub use contexts::{
-    AI_DOOR_RALLY_POINT_DISTANCE, AiContext, AiGlobalState, AiPerTickData, AntagonistInfo,
-    DoorRallyPoint, House, ReinforcementDoorInfo,
+    AI_DOOR_RALLY_POINT_DISTANCE, AiGlobalState, AntagonistInfo, DoorRallyPoint, House,
+    ReinforcementDoorInfo,
 };
+pub(crate) use contexts::{ai_position_to_point_3d, enemy_lift_approach_for_position};
 
 mod duty;
 mod effects;
 pub(crate) use duty::{
-    AiFlow, BodyReaction, DutyCall, DutyTail, EnemyObservation, MoneyFightOperation,
-    OfficerAlertCaller,
+    BodyReaction, EnemyObservation, EnemyRecovery, MoneyFightOperation, OfficerAlertCaller,
 };
 pub(crate) use effects::{AiActorCoreEffects, AiActorPreemptionEffects};
 pub use effects::{
     AiActorOutbox, AiDetectionOutbox, AiMusicOutbox, AiOutbox, AiOwnerWork, AiPatrolOutbox,
-    AiRecoveryOutbox, AiReentrantOutbox, AiSpeechAttempt, AiStateChangeNotification,
-    ArcheryReservationRelease, AttentiveModeEffect, DetectableMutation, GuardedPcEffect,
-    ReservedShootingPoint,
+    AiRecoveryOutbox, AiReentrantOutbox, AiSpeechAttempt, AttentiveModeEffect, DetectableMutation,
+    GuardedPcEffect,
 };
 
 mod controller;

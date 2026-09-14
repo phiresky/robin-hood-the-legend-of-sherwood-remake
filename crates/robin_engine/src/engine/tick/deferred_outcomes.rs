@@ -1428,9 +1428,7 @@ impl EngineInner {
         // Shield-bearers always speak,
         // everyone else only speaks at 1-in-3 odds and only when
         // currently silent. A shield-bearer's sword is a shield
-        // weapon AND the sprite has the `WaitingShield` animation —
-        // the same two-gate check used by the per-tick
-        // FighterSnapshot build (engine/ai/snapshots.rs:619-632).
+        // weapon AND the sprite has the `WaitingShield` animation.
         for speaker in special_remark {
             // Two-step: read weapon/sprite info immutably, then
             // dispatch the remark mutably.  Splitting avoids holding

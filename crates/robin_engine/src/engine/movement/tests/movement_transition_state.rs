@@ -137,22 +137,27 @@ mod suite {
         map_exit.feedback.cutscene_camera.level_size =
             crate::coordinates::MapSize::new(100.0, 100.0);
         let map_owner = make_owner(&mut map_exit);
-        map_exit
-            .get_entity_mut(map_owner)
-            .unwrap()
-            .ai_controller_mut()
-            .unwrap()
-            .run_to_map_exit(destination);
-        let launched = map_exit.launch_pending_orders_for_npc(&sim, &assets, map_owner);
-        assert_eq!(
-            launched.len(),
+        let mut movement = crate::sequence::SequenceElement::new_movement(
             1,
-            "RHMOVE_MAP must launch through the exit point"
+            crate::element::Command::Move,
+            Some(map_owner),
+            OrderType::RunningUpright,
         );
+        let SequenceElementData::Movement {
+            destination: point,
+            flags,
+            ..
+        } = &mut movement.data
+        else {
+            unreachable!("movement constructor must produce movement data");
+        };
+        *point = MapPoint::new(destination.x, destination.y);
+        *flags = MoveFlags::MAP;
+        let launched = map_exit.launch_element(movement);
         let element = map_exit
             .orders
             .sequence_manager
-            .get_element(launched[0], 0)
+            .get_element(launched, 0)
             .expect("map-exit movement must remain registered for the manager update");
         let SequenceElementData::Movement {
             destination: actual,

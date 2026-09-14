@@ -87,6 +87,269 @@ mod tests {
 }
 
 impl EngineInner {
+    pub(in crate::engine) fn execute_ai_enemy_fleeing_event(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        stimulus: &Stimulus,
+    ) -> Option<bool> {
+        let event = stimulus.stimulus_type;
+        if !matches!(
+            event,
+            StimulusType::EventReachPoint
+                | StimulusType::EventDone
+                | StimulusType::EventTimer
+                | StimulusType::CallYourTalk1
+                | StimulusType::CallYourTalk2
+                | StimulusType::CallYourTalk3
+                | StimulusType::EventMyTalk1
+                | StimulusType::EventMyTalk2
+                | StimulusType::EventMyTalk3
+        ) {
+            return None;
+        }
+        match self.observation_ai(owner).base.current_substate {
+            Substate::FleeingRunToAlertSoldiers => {
+                if event == StimulusType::EventReachPoint {
+                    let ai = self.observation_ai(owner);
+                    let center = ai.base.seek_position;
+                    let flags = ai.seek_flags.bits();
+                    if !self.execute_ai_alert_soldiers(sim, assets, owner, center, flags) {
+                        self.duty_set_state(
+                            sim,
+                            assets,
+                            owner,
+                            AiState::Fleeing,
+                            Substate::FleeingRunToDoor,
+                        );
+                        self.execute_ai_callback(
+                            sim,
+                            assets,
+                            owner,
+                            &Stimulus::new(StimulusType::EventReachPoint),
+                        );
+                    }
+                }
+            }
+            Substate::FleeingRetireFromCombat => {
+                if event == StimulusType::EventReachPoint {
+                    self.duty_set_state(
+                        sim,
+                        assets,
+                        owner,
+                        AiState::Fleeing,
+                        Substate::FleeingRetireFromCombatTurn,
+                    );
+                    let position = self.observation_ai(owner).base.seek_position;
+                    self.duty_face_position_signed_elevation(
+                        sim, assets, owner, position, -1, true,
+                    );
+                }
+            }
+            Substate::FleeingRetireFromCombatTurn => {
+                if event == StimulusType::EventDone {
+                    let target = self.observation_ai(owner).base.primary_target;
+                    let sees_target = target.is_some_and(|target| {
+                        let target = self
+                            .expect_human_id_for_ai_handle(target.get(), "retiring primary target");
+                        self.live_ai_detects_180(assets, owner, target)
+                    });
+                    if sees_target {
+                        self.execute_battle_decisions(sim, assets, owner);
+                    } else {
+                        self.execute_ai_get_battle_overview(sim, assets, owner, 0);
+                    }
+                }
+            }
+            Substate::FleeingMerryManRunToLeaveMap => match event {
+                StimulusType::EventTimer => {
+                    if self
+                        .expect_entity(owner, "forest fleeing actor")
+                        .actor_data()
+                        .expect("forest fleeing owner must be actor")
+                        .action_state
+                        != crate::element::ActionState::MovingFast
+                        && self
+                            .observation_ai(owner)
+                            .base
+                            .last_goto_destination
+                            .sector
+                            .is_some()
+                    {
+                        self.observation_stop(sim, assets, owner);
+                        let destination = self.observation_ai(owner).base.last_goto_destination;
+                        self.duty_go_to(sim, assets, owner, destination, GotoFlags::RUN);
+                    }
+                    self.observation_timer(owner, 30);
+                }
+                StimulusType::EventReachPoint => {
+                    let position = self.live_ai_position(owner);
+                    let destination = self.observation_ai(owner).base.last_goto_destination;
+                    if (position.x - destination.x)
+                        .abs()
+                        .max((position.y - destination.y).abs())
+                        < 10.0
+                    {
+                        self.duty_set_state(
+                            sim,
+                            assets,
+                            owner,
+                            AiState::Fleeing,
+                            Substate::FleeingMerryManLeaveMap,
+                        );
+                        let door = self
+                            .observation_ai(owner)
+                            .base
+                            .my_door_index
+                            .expect("forest exit requires selected door");
+                        let point = self
+                            .script_domains
+                            .interactables
+                            .doors
+                            .get(usize::from(door))
+                            .expect("forest exit selected door must exist")
+                            .point_out;
+                        let mut movement = crate::sequence::SequenceElement::new_movement(
+                            1,
+                            crate::element::Command::Move,
+                            Some(owner),
+                            crate::order::OrderType::RunningUpright,
+                        );
+                        let crate::sequence::SequenceElementData::Movement {
+                            destination,
+                            flags,
+                            ..
+                        } = &mut movement.data
+                        else {
+                            unreachable!("movement constructor must produce movement data");
+                        };
+                        *destination = crate::coordinates::MapPoint::new(point.x, point.y);
+                        *flags = crate::sequence::MoveFlags::MAP;
+                        self.launch_element(movement);
+                        self.dispatch_condolations(sim, assets);
+                    } else {
+                        self.duty_go_to(sim, assets, owner, destination, GotoFlags::RUN);
+                        self.observation_timer(owner, 30);
+                    }
+                }
+                _ => {}
+            },
+            Substate::FleeingMerryManLeaveMap => {
+                if event == StimulusType::EventReachPoint {
+                    self.observation_ai_mut(owner)
+                        .base
+                        .non_script_lock(crate::ai::AiLockFlags::FREEZE);
+                    self.world
+                        .entities
+                        .expect_entity_mut(owner, format_args!("forest exit actor"))
+                        .element_data_mut()
+                        .active = false;
+                }
+            }
+            _ => return None,
+        }
+        Some(false)
+    }
+
+    pub(in crate::engine) fn execute_ai_common_fleeing_event(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        stimulus: &Stimulus,
+    ) -> Option<bool> {
+        let event = stimulus.stimulus_type;
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("common fleeing owner"));
+        match ai.current_substate {
+            Substate::FleeingPanic => {
+                let no_runs = ai.lasting_panic_runs == 0;
+                if no_runs {
+                    let entity = self
+                        .world
+                        .entities
+                        .expect_entity_mut(owner, format_args!("panic counter"));
+                    if let Some(friendly) = entity.friendly_ai_mut() {
+                        friendly.fleeing_seen_enemy_counter = 0;
+                    } else if matches!(
+                        event,
+                        StimulusType::EventReachPoint | StimulusType::EventCouldntReachPoint
+                    ) {
+                        entity
+                            .enemy_ai_mut()
+                            .expect("panic owner needs AI role")
+                            .fleeing_seen_enemy_counter = 0;
+                    }
+                }
+                if matches!(
+                    event,
+                    StimulusType::EventReachPoint | StimulusType::EventCouldntReachPoint
+                ) {
+                    self.execute_ai_panic_segment(sim, assets, owner, event);
+                }
+            }
+            Substate::FleeingRunToHide | Substate::FleeingRunToDoor => {
+                if event == StimulusType::EventReachPoint {
+                    self.duty_set_state(
+                        sim,
+                        assets,
+                        owner,
+                        AiState::Fleeing,
+                        Substate::FleeingHiding,
+                    );
+                    let ai = self
+                        .world
+                        .entities
+                        .expect_ai_controller_mut(owner, format_args!("hide alert"));
+                    ai.set_alert_status(AlertLevel::Yellow);
+                    ai.clear_emoticon();
+                    let center = (ai.panic_center_x, ai.panic_center_y);
+                    let position = self.live_ai_position(owner);
+                    let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+                        center.0 - position.x,
+                        center.1 - position.y,
+                    ) as u16;
+                    self.duty_face_direction(sim, assets, owner, direction);
+                    let actor = self
+                        .world
+                        .entities
+                        .expect_ai_actor_data_mut(owner, format_args!("hide blinks"));
+                    for enemy in
+                        &mut actor.detectable_lists[crate::element::DetectableType::Enemy as usize]
+                    {
+                        enemy.seen_now = false;
+                        enemy.seen_last_frame = false;
+                    }
+                    let frames = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
+                        + crate::sim_rng::u32(
+                            sim,
+                            crate::sim_rng::RngSite::AiPanic,
+                            0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
+                        );
+                    self.world
+                        .entities
+                        .expect_ai_controller_mut(owner, format_args!("hide timer"))
+                        .launch_timer(frames, self.control.frame_counter);
+                }
+            }
+            Substate::FleeingHiding => {
+                if event == StimulusType::EventTimer {
+                    self.execute_ai_return_to_duty(
+                        sim,
+                        assets,
+                        owner,
+                        crate::ai::DutyFlags::empty(),
+                    );
+                }
+            }
+            _ => return None,
+        }
+        Some(false)
+    }
+
     pub(in crate::engine) fn execute_ai_panic_segment(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

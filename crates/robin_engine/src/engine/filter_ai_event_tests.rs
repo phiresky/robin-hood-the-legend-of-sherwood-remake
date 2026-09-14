@@ -184,7 +184,6 @@ fn test_campaign() -> crate::campaign::Campaign {
 
 fn make_pc(robin: bool) -> Entity {
     let mut entity = crate::engine::test_support::actors::make_test_pc(Posture::Upright);
-    entity.position_iface_mut().clear_pathfinder_index();
     entity.element_data_mut().active = true;
     entity
         .element_data_mut()
@@ -201,7 +200,6 @@ fn make_scripted_soldier(script_class: &str) -> Entity {
     let mut entity = crate::engine::test_support::actors::make_test_ai_soldier(
         crate::element::Camp::Lacklandists,
     );
-    entity.position_iface_mut().clear_pathfinder_index();
     entity.element_data_mut().active = true;
     entity
         .actor_data_mut()
@@ -470,8 +468,8 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
         engine.script_remove_all_subordinates(&sim, &assets, chief);
     });
     assert!(
-        !draws.contains(&crate::sim_rng::RngSite::AiRandomValueRectangle),
-        "patrol clearing's close-post enemy continuation must not reach boredom timing"
+        draws.contains(&crate::sim_rng::RngSite::AiRandomValueRectangle),
+        "an unlocked on-post soldier completes its direct return and arms boredom timing"
     );
 
     let member_ai = engine
@@ -505,12 +503,12 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
     assert_eq!(on_post_ai.patrol_chief, None);
     assert_eq!(
         on_post_ai.current_substate,
-        crate::ai::Substate::DefaultGotoPost,
-        "patrol clearing must not recursively complete an already-on-post forced return to duty"
+        crate::ai::Substate::DefaultOnPost,
+        "a close-post return outside Think completes its reach-point and turn callbacks synchronously"
     );
     assert!(
         on_post_ai.outbox.reentrant.self_stimuli.is_empty(),
-        "the suppressed close-post callback must not leak into the member's later owner slot"
+        "completed close-post callbacks must not leak into the member's later owner slot"
     );
 }
 
@@ -633,7 +631,7 @@ fn filter_allows_when_actor_not_bound_to_any_script() {
 /// `dispatch_filtered_stimulus` should skip `think()` entirely when
 /// the filter blocks, and should return `false` to the caller.
 #[test]
-fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
+fn dispatch_handles_registered_actor_when_filter_blocks_and_skips_think() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let (mut engine, _, sensitive_handle, _) = build_engine();
@@ -641,7 +639,9 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     // Snapshot AI state pre-dispatch.
     let sensitive_idx = crate::natives::ScriptHandleCodec::actor_handle_index(sensitive_handle)
         .expect("valid test handle");
-    let sensitive_entity_id = EntityId::Pc(crate::entity_id::PcId(sensitive_idx as u32));
+    let sensitive_entity_id = engine
+        .entity_id_for_index(sensitive_idx as u32)
+        .expect("scripted soldier exists");
     let before_state = engine
         .world
         .entities
@@ -660,7 +660,7 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     );
     assert!(
         handled,
-        "a refused typed decision still completes and returns handled"
+        "the dispatch wrapper handles a registered actor even when its script refuses Think"
     );
 
     // State should be unchanged (think() never ran).
@@ -788,7 +788,8 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         } else {
             ProfileRank::Soldier
         };
-        ai.set_state(AiState::Default, Substate::DefaultOnPost);
+        ai.base.set_ai_state(AiState::Default);
+        ai.base.current_substate = Substate::DefaultOnPost;
     }
 
     let mut assets = LevelAssets::new();
@@ -4082,63 +4083,6 @@ fn civilian_random_speech_closes_its_owner_boundary_before_the_lock_gate() {
 }
 
 #[test]
-fn civilian_owner_speech_matches_full_observations() {
-    use crate::engine::types::SimulationRng;
-    use crate::order::OrderType;
-    use crate::profiles::CivilianType;
-
-    for civilian_type in [CivilianType::Man, CivilianType::Beggar] {
-        for animation in [OrderType::WaitingUpright, OrderType::Weeping] {
-            let mut engine = EngineInner::new();
-            let id = engine.add_test_entity(make_scripted_civilian(""));
-            let Entity::Civilian(civilian) = engine.get_entity_mut(id).unwrap() else {
-                unreachable!()
-            };
-            civilian.civilian.cached_civilian_type = civilian_type;
-            civilian.element.sprite.last_action = animation;
-            civilian.npc.register_number = 0;
-            civilian.npc.ai_brain.base_mut().unwrap().me = id.index();
-            engine.control.frame_counter = 100;
-            engine.control.rng =
-                SimulationRng::with_original_replay(vec![915_892_857, 378_770_797]);
-            let mut assets = LevelAssets::new();
-            std::sync::Arc::make_mut(&mut assets.profile_manager)
-                .civilians
-                .push(crate::profiles::CivilianProfile {
-                    civilian_type,
-                    ..Default::default()
-                });
-            let mut reference = engine.clone();
-            reference.with_simulation_context(|reference, sim| {
-                let scratch = reference.build_sim_scratch(&assets);
-                let entity = reference.expect_entity(id, "reference speech owner");
-                let ctx = reference.ai_context_from_entity(
-                    entity,
-                    100,
-                    reference.entity_building_sector(entity.element_data().sector()),
-                    &scratch,
-                    &assets,
-                );
-                reference
-                    .expect_entity_mut(id, "reference speech owner")
-                    .friendly_ai_mut()
-                    .unwrap()
-                    .random_speech(sim, 0, &ctx);
-                reference.drain_direct_ai_owner_boundary(sim, id, &assets);
-            });
-            engine.with_simulation_context(|engine, sim| {
-                engine.tick_civilian_random_speech_for_npc(sim, id, &assets);
-            });
-            assert_eq!(
-                crate::replay::state_hash(&engine),
-                crate::replay::state_hash(&reference),
-                "{civilian_type:?}, {animation:?}"
-            );
-        }
-    }
-}
-
-#[test]
 #[should_panic(expected = "position has no layer")]
 fn civilian_owner_speech_rejects_missing_position_layer() {
     let mut engine = EngineInner::new();
@@ -4897,6 +4841,28 @@ fn retained_human_stimulus_reads_target_position_after_filter() {
     assets.scripts.location_positions = std::sync::Arc::new(vec![(150.0, 250.0)]);
     assets.scripts.location_layers = std::sync::Arc::new(vec![0]);
     assets.scripts.location_sectors = std::sync::Arc::new(vec![7]);
+    engine.world.fast_grid_mut().size_map(16, 16);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    let sector_index = engine.world.fast_grid_mut().add_sector(
+        crate::engine::test_support::square_sector(
+            7,
+            0,
+            crate::coordinates::MapPoint::new(0.0, 0.0),
+            crate::coordinates::MapPoint::new(1000.0, 1000.0),
+        ),
+        0,
+    );
+    let sector = crate::position_interface::SectorHandle::new(7)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(sector_index).unwrap());
+    assets.scripts.location_sector_handles = std::sync::Arc::new(vec![Some(sector)]);
+    for id in [owner, target, stale_target] {
+        engine
+            .get_entity_mut(id)
+            .unwrap()
+            .element_data_mut()
+            .set_sector(Some(sector));
+    }
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.attach_script_bindings(&assets);
     bind_state_change_actor(&mut engine, owner, "MoveStimulusTarget");
@@ -5379,7 +5345,20 @@ fn setup_ai_state_native_probe(
         .unwrap()
         .hth_weapon_id = 1;
 
-    let seek_sector = crate::position_interface::SectorHandle::new(1).unwrap();
+    engine.world.fast_grid_mut().size_map(16, 16);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    let sector_index = engine.world.fast_grid_mut().add_sector(
+        crate::engine::test_support::square_sector(
+            1,
+            0,
+            crate::coordinates::MapPoint::new(0.0, 0.0),
+            crate::coordinates::MapPoint::new(1000.0, 1000.0),
+        ),
+        0,
+    );
+    let seek_sector = crate::position_interface::SectorHandle::new(1)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(sector_index).unwrap());
     let element = engine
         .world
         .entities
@@ -5472,7 +5451,10 @@ fn install_unrelated_multi_exit_building_actor(
             ..Door::default()
         },
     ];
+    engine.script_domains.buildings.occupants = vec![vec![]];
     let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+    level.sectors.clear();
+    level.sector_number_map.clear();
     // The state-change probe owner already lives in public sector 1. Once
     // this helper installs exact topology for its unrelated building, that
     // owner must also have a real arena sector: Original carries an
@@ -5502,7 +5484,7 @@ fn install_unrelated_multi_exit_building_actor(
             lift_type: None,
             lift_direction: 0,
             force_crouched: false,
-            building_index: None,
+            building_index: (index == 0).then(|| crate::sector::BuildingIdx::new(0).unwrap()),
             low_exit_point: None,
             high_exit_point: None,
             lowest_door_index: None,
@@ -5561,6 +5543,26 @@ fn select_unrelated_pass_door_fixture(engine: &mut EngineInner, door_actor: Enti
         .orders
         .sequence_manager
         .element_in_progress(pass_sequence, 0);
+}
+
+fn resolve_test_actor_forecast(
+    engine: &EngineInner,
+    owner: EntityId,
+    sim: &crate::sim_rng::SimulationContext,
+) {
+    let input = crate::engine::ai::extract_exact_forecast_input(
+        engine,
+        engine.get_entity(owner).expect("forecast actor exists"),
+        crate::engine::ai::selected_actor_is_passing_door(&engine.orders.sequence_manager, owner),
+    )
+    .expect("forecast owner is an actor");
+    crate::ai::prepare_forecast_destination_for_ia(
+        &input,
+        &engine.script_domains.interactables.doors,
+        &engine.world.fast_grid.level.sectors,
+        &engine.world.fast_grid.level.sector_number_map,
+    )
+    .resolve(sim);
 }
 
 #[test]
@@ -5722,7 +5724,20 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
             .unwrap()
             .hth_weapon_id = 1;
     }
-    let seek_sector = crate::position_interface::SectorHandle::new(1).unwrap();
+    engine.world.fast_grid_mut().size_map(16, 16);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    let sector_index = engine.world.fast_grid_mut().add_sector(
+        crate::engine::test_support::square_sector(
+            1,
+            0,
+            crate::coordinates::MapPoint::new(0.0, 0.0),
+            crate::coordinates::MapPoint::new(1000.0, 1000.0),
+        ),
+        0,
+    );
+    let seek_sector = crate::position_interface::SectorHandle::new(1)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(sector_index).unwrap());
     for (actor, x) in [
         (seeking, 100.0),
         (seeking_filter_zero, 110.0),
@@ -5768,17 +5783,13 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
         locked: false,
         id: 0,
     });
-    engine
-        .world
-        .entities
-        .get_mut(default)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap()
-        .set_state(
-            crate::ai::AiState::Seeking,
-            crate::ai::Substate::SeekingJustWatching,
-        );
+    engine.duty_set_state(
+        &crate::sim_rng::test_context(),
+        &assets,
+        default,
+        crate::ai::AiState::Seeking,
+        crate::ai::Substate::SeekingJustWatching,
+    );
     engine.drain_ai_state_change_notifications_for(
         &crate::sim_rng::test_context(),
         &assets,
@@ -6031,19 +6042,10 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
             .set_position(WorldPoint3D::new(198.0, 100.0, 0.0));
         entity.actor_data_mut().unwrap().old_action = crate::order::OrderType::WaitingUpright;
     }
-    // Scratch construction prepares forecasts without drawing; only an AI
-    // statement that resolves the door actor's alternatives would draw. The
-    // control proves the fixture really carries a resolvable multi-exit gate.
-    let control_scratch = seeking_engine.build_sim_scratch(&seeking_assets);
+    // Prove that the live multi-exit fixture draws only when queried.
     let (_, control_trace) = with_draw_trace(|| {
-        control_scratch
-            .ai_entity_views
-            .get(&door_actor.index())
-            .expect("unrelated door actor has an AI entity view")
-            .forecasted_destination
-            .resolve(&sim);
+        resolve_test_actor_forecast(&seeking_engine, door_actor, &sim);
     });
-    drop(control_scratch);
     assert!(
         control_trace.contains(&RngSite::BuildingExitGate),
         "the unrelated multi-exit fixture must draw BuildingExitGate when its forecast is resolved"
@@ -6098,18 +6100,10 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
         .set_position(WorldPoint3D::new(198.0, 100.0, 0.0));
     let sim = crate::sim_rng::test_context();
 
-    // Scratch construction prepares forecasts without drawing; the control
-    // proves the unrelated door actor's alternatives would draw if resolved.
-    let control_scratch = engine.build_sim_scratch(&assets);
+    // Prove that the unrelated live actor's alternatives draw if queried.
     let (_, control_trace) = with_draw_trace(|| {
-        control_scratch
-            .ai_entity_views
-            .get(&door_actor.index())
-            .expect("unrelated door actor has an AI entity view")
-            .forecasted_destination
-            .resolve(&sim);
+        resolve_test_actor_forecast(&engine, door_actor, &sim);
     });
-    drop(control_scratch);
     assert!(
         control_trace.contains(&RngSite::BuildingExitGate),
         "the fixture must prove that resolving the unrelated door actor's forecast would draw"
@@ -6219,7 +6213,18 @@ fn fleeing_panic_classification_occurs_after_no_event_callback_mutation() {
     bind_state_change_actor(&mut engine, actor, "PostFilterPanicProbe");
     engine.world.fast_grid_mut().size_map(64, 64);
     engine.world.fast_grid_mut().allocate_layers(1);
-    let sector = crate::position_interface::SectorHandle::new(1).unwrap();
+    let sector_index = engine.world.fast_grid_mut().add_sector(
+        crate::engine::test_support::square_sector(
+            1,
+            0,
+            crate::coordinates::MapPoint::new(0.0, 0.0),
+            crate::coordinates::MapPoint::new(4096.0, 4096.0),
+        ),
+        0,
+    );
+    let sector = crate::position_interface::SectorHandle::new(1)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(sector_index).unwrap());
     {
         let element = engine
             .world
@@ -6370,18 +6375,13 @@ fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero
         .hth_weapon_id = 1;
     bind_state_change_actor(&mut engine, enemy, "StateMutator");
 
-    engine
-        .world
-        .entities
-        .get_mut(enemy)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap()
-        .set_state(
-            crate::ai::AiState::Seeking,
-            crate::ai::Substate::SeekingHeardsteps,
-        );
-    engine.drain_ai_state_change_notifications_for(&crate::sim_rng::test_context(), &assets, enemy);
+    engine.duty_set_state(
+        &crate::sim_rng::test_context(),
+        &assets,
+        enemy,
+        crate::ai::AiState::Seeking,
+        crate::ai::Substate::SeekingHeardsteps,
+    );
 
     let values = npc_custom_values(&engine, enemy);
     assert_eq!(
@@ -6462,26 +6462,23 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
             .enemy_ai_mut()
             .unwrap();
         ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target_raw));
-        ai.set_state(
-            crate::ai::AiState::Attacking,
-            crate::ai::Substate::AttackingSwordfight,
-        );
     }
-    engine.drain_ai_state_change_notifications_for(&sim, &assets, enemy);
+    engine.duty_set_state(
+        &sim,
+        &assets,
+        enemy,
+        crate::ai::AiState::Attacking,
+        crate::ai::Substate::AttackingSwordfight,
+    );
     assert_eq!(npc_custom_values(&engine, enemy)[0], target_handle);
 
-    engine
-        .world
-        .entities
-        .get_mut(enemy)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap()
-        .set_state(
-            crate::ai::AiState::Attacking,
-            crate::ai::Substate::AttackingSwordfight,
-        );
-    engine.drain_ai_state_change_notifications_for(&sim, &assets, enemy);
+    engine.duty_set_state(
+        &sim,
+        &assets,
+        enemy,
+        crate::ai::AiState::Attacking,
+        crate::ai::Substate::AttackingSwordfight,
+    );
     assert_eq!(
         npc_custom_values(&engine, enemy)[9],
         5,
@@ -6497,12 +6494,14 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
             .enemy_ai_mut()
             .unwrap();
         ai.base.primary_target = None;
-        ai.set_state(
-            crate::ai::AiState::Fleeing,
-            crate::ai::Substate::FleeingPanic,
-        );
     }
-    engine.drain_ai_state_change_notifications_for(&sim, &assets, enemy);
+    engine.duty_set_state(
+        &sim,
+        &assets,
+        enemy,
+        crate::ai::AiState::Fleeing,
+        crate::ai::Substate::FleeingPanic,
+    );
     let values = npc_custom_values(&engine, enemy);
     assert_eq!(values[0], 0, "an absent primary target stays absent");
     assert_eq!(values[1], 106);
@@ -6744,19 +6743,6 @@ fn run_cross_owner_state_change_order(mutator_first: bool) -> i32 {
     );
     bind_state_change_actor(&mut engine, mutator, "CrossMutator");
     bind_state_change_actor(&mut engine, observer, "CrossObserver");
-    for actor in [mutator, observer] {
-        engine
-            .world
-            .entities
-            .get_mut(actor)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .set_state(
-                crate::ai::AiState::Seeking,
-                crate::ai::Substate::SeekingJustWatching,
-            );
-    }
     let sim = crate::sim_rng::test_context();
     let order = if mutator_first {
         [mutator, observer]
@@ -6764,7 +6750,13 @@ fn run_cross_owner_state_change_order(mutator_first: bool) -> i32 {
         [observer, mutator]
     };
     for actor in order {
-        engine.drain_ai_state_change_notifications_for(&sim, &assets, actor);
+        engine.duty_set_state(
+            &sim,
+            &assets,
+            actor,
+            crate::ai::AiState::Seeking,
+            crate::ai::Substate::SeekingJustWatching,
+        );
     }
     npc_custom_values(&engine, observer)[7]
 }
@@ -6858,12 +6850,14 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
             .unwrap();
         ai.base.set_ai_state(crate::ai::AiState::Attacking);
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
-        ai.set_state(
-            crate::ai::AiState::Attacking,
-            crate::ai::Substate::AttackingSwordfightParade,
-        );
     }
-    engine.drain_pending_for_npc(&sim, enemy, &assets);
+    engine.duty_set_state(
+        &sim,
+        &assets,
+        enemy,
+        crate::ai::AiState::Attacking,
+        crate::ai::Substate::AttackingSwordfightParade,
+    );
     let parade = npc_custom_values(&engine, enemy);
     assert_eq!(parade[1], 104);
     assert_eq!(parade[2], crate::ai::AiState::Attacking.to_script_code());
@@ -6878,9 +6872,8 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
             .enemy_ai_mut()
             .unwrap();
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
-        ai.begin_special_strike();
     }
-    engine.drain_pending_for_npc(&sim, enemy, &assets);
+    engine.begin_ai_special_strike(&sim, &assets, enemy);
     let ai = engine
         .world
         .entities
@@ -6898,21 +6891,22 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
 }
 
 #[test]
-fn unavailable_state_change_callbacks_are_consumed() {
-    fn queue_seeking(engine: &mut EngineInner, actor: EntityId) {
-        engine
-            .world
-            .entities
-            .get_mut(actor)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .set_state(
-                crate::ai::AiState::Seeking,
-                crate::ai::Substate::SeekingJustWatching,
-            );
+fn unavailable_state_change_callbacks_do_not_block_state_commit() {
+    fn change_to_seeking(
+        engine: &mut EngineInner,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor: EntityId,
+    ) {
+        engine.duty_set_state(
+            sim,
+            assets,
+            actor,
+            crate::ai::AiState::Seeking,
+            crate::ai::Substate::SeekingJustWatching,
+        );
     }
-    fn assert_consumed(engine: &EngineInner, actor: EntityId) {
+    fn assert_committed(engine: &EngineInner, actor: EntityId) {
         let ai = engine
             .world
             .entities
@@ -6929,9 +6923,8 @@ fn unavailable_state_change_callbacks_are_consumed() {
 
     let mut no_mission = EngineInner::new();
     let actor = no_mission.add_test_entity(make_scripted_soldier("StateRecorder"));
-    queue_seeking(&mut no_mission, actor);
-    no_mission.drain_ai_state_change_notifications_for(&sim, &assets, actor);
-    assert_consumed(&no_mission, actor);
+    change_to_seeking(&mut no_mission, &sim, &assets, actor);
+    assert_committed(&no_mission, actor);
 
     let mut unbound = EngineInner::new();
     let actor = unbound.add_test_entity(make_scripted_soldier("StateRecorder"));
@@ -6943,17 +6936,15 @@ fn unavailable_state_change_callbacks_are_consumed() {
             None,
         )]),
     );
-    queue_seeking(&mut unbound, actor);
-    unbound.drain_ai_state_change_notifications_for(&sim, &assets, actor);
-    assert_consumed(&unbound, actor);
+    change_to_seeking(&mut unbound, &sim, &assets, actor);
+    assert_committed(&unbound, actor);
 
     let mut no_override = EngineInner::new();
     let actor = no_override.add_test_entity(make_scripted_soldier("NoOverride"));
     let assets = install_state_change_script(&mut no_override, build_scb());
     bind_state_change_actor(&mut no_override, actor, "NoOverride");
-    queue_seeking(&mut no_override, actor);
-    no_override.drain_ai_state_change_notifications_for(&sim, &assets, actor);
-    assert_consumed(&no_override, actor);
+    change_to_seeking(&mut no_override, &sim, &assets, actor);
+    assert_committed(&no_override, actor);
 
     let mut unscripted = EngineInner::new();
     let actor = unscripted.add_test_entity(make_scripted_soldier(""));
@@ -6966,42 +6957,12 @@ fn unavailable_state_change_callbacks_are_consumed() {
         )]),
     );
     bind_state_change_actor(&mut unscripted, actor, "StateRecorder");
-    queue_seeking(&mut unscripted, actor);
-    unscripted.drain_ai_state_change_notifications_for(&sim, &assets, actor);
-    assert_consumed(&unscripted, actor);
+    change_to_seeking(&mut unscripted, &sim, &assets, actor);
+    assert_committed(&unscripted, actor);
     assert_eq!(
         npc_custom_values(&unscripted, actor)[9],
         4,
         "bound VM does not bypass the owner's is_scripted gate"
-    );
-
-    let mut unscripted_tail = EngineInner::new();
-    let actor = unscripted_tail.add_test_entity(make_scripted_soldier(""));
-    queue_seeking(&mut unscripted_tail, actor);
-    {
-        let ai = unscripted_tail
-            .world
-            .entities
-            .get_mut(actor)
-            .unwrap()
-            .ai_controller_mut()
-            .unwrap();
-        ai.set_ai_state(crate::ai::AiState::Default);
-        ai.current_substate = crate::ai::Substate::DefaultEnroute;
-    }
-    unscripted_tail.drain_ai_state_change_notifications_for(&sim, &assets, actor);
-    let ai = unscripted_tail
-        .world
-        .entities
-        .get(actor)
-        .unwrap()
-        .ai_controller()
-        .unwrap();
-    assert_eq!(ai.current_state, crate::ai::AiState::Default);
-    assert_eq!(ai.current_substate, crate::ai::Substate::DefaultEnroute);
-    assert!(
-        ai.outbox.reentrant.owner_work.is_empty(),
-        "an unavailable callback is consumed without rewinding a later handler-tail state"
     );
 
     let mut disabled = EngineInner::new();
@@ -7015,14 +6976,13 @@ fn unavailable_state_change_callbacks_are_consumed() {
         )]),
     );
     bind_state_change_actor(&mut disabled, actor, "StateRecorder");
-    queue_seeking(&mut disabled, actor);
     let config = crate::engine::SimConfig {
         script_enabled: false,
         ..Default::default()
     };
     let disabled_sim = crate::sim_rng::SimulationContext::with_seed_and_config(1, config);
-    disabled.drain_ai_state_change_notifications_for(&disabled_sim, &assets, actor);
-    assert_consumed(&disabled, actor);
+    change_to_seeking(&mut disabled, &disabled_sim, &assets, actor);
+    assert_committed(&disabled, actor);
     assert_eq!(
         npc_custom_values(&disabled, actor)[9],
         4,

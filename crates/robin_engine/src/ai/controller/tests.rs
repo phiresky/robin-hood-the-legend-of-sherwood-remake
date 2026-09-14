@@ -1,44 +1,36 @@
 use super::*;
 
 #[test]
-fn go_near_uses_live_actor_layer_while_door_position_is_snapped() {
-    let mut ai = AiController::new(183);
+fn approach_tolerance_requires_the_actor_layer_even_when_ai_position_is_snapped() {
     let destination = Position {
         x: 296.64883,
         y: 1408.1284,
-        sector: crate::position_interface::SectorHandle::new(99),
+        sector: SectorHandle::new(99),
         level: 3,
     };
-    let ctx = AiContext {
-        think_depth: 1,
-        // The actor's AI position has already snapped
-        // across the door and is within the 30-unit tolerance.
-        position: Position {
-            x: 320.92307,
-            y: 1423.2,
-            sector: crate::position_interface::SectorHandle::new(99),
-            level: 3,
-        },
-        // The actor itself is still physically on layer 2. Original's
-        // separate location-level versus actor-layer gate fails.
-        self_layer: 2,
-        ..AiContext::test_fixture()
+    let snapped = Position {
+        x: 320.92307,
+        y: 1423.2,
+        sector: SectorHandle::new(99),
+        level: 3,
     };
-
-    ai.go_near(destination, 30, GotoFlags::RUN, &ctx);
-
-    assert!(!ai.already_on_point);
-    assert_eq!(ai.outbox.actor.orders.len(), 1);
-    assert_eq!(ai.outbox.actor.orders[0].target_layer, Some(3));
+    for actor_layer in [2, 3] {
+        let mut ai = AiController::new(183);
+        ai.prepare_approach(30, GotoFlags::RUN, 1);
+        let admitted = ai.prepare_move_request(
+            destination,
+            GotoFlags::RUN | GotoFlags::NEAR,
+            snapped,
+            actor_layer,
+            SectorHandle::new(98),
+            crate::order::OrderType::WalkingUpright,
+            false,
+            1,
+        );
+        assert_eq!(admitted.is_some(), actor_layer == 2);
+        assert_eq!(ai.already_on_point, actor_layer == 3);
+    }
 }
-
-/// The original game dispatches its completion event before
-/// decrementing the decision recursion depth, so a same-frame
-/// completion cascade keeps every ancestor frame open and the depth
-/// climbs one per nested decision until the 100.. return-to-duty failsafe.
-/// The queued-dispatch port must therefore skip the decrement whenever a
-/// completion event is queued and record the open frame for the engine
-/// drain to close.
 
 #[test]
 fn repeated_checkpoint_charly_calls_preserve_immediate_original_order() {

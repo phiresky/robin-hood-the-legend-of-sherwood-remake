@@ -62,9 +62,9 @@ pub(crate) struct WorldState {
     /// priority-sorted portrait bar. Keep it as authoritative hashed state so
     /// first-match scans and synchronous callbacks survive rollback exactly.
     pub(crate) original_pc_registry_ids: Vec<EntityId>,
-    /// Spatial grid, shared copy-on-write: `AiContext` (and rollback
-    /// snapshots) hold `Arc` clones frozen at their creation instant, and
-    /// every mutation goes through [`Self::fast_grid_mut`] so a shared grid
+    /// Spatial grid shared with rollback snapshots, which hold
+    /// `Arc` clones frozen at their creation instant. Mutations
+    /// go through [`Self::fast_grid_mut`] so a shared grid
     /// is copied exactly once before diverging.
     pub(crate) fast_grid: std::sync::Arc<FastFindGrid>,
     pub(crate) pathfinder: PathFinder,
@@ -227,8 +227,8 @@ impl WorldState {
 
     /// Copy-on-write mutable access to the spatial grid.
     ///
-    /// The grid is `Arc`-shared into per-NPC `AiContext`s and rollback
-    /// snapshots; mutating through this accessor copies the runtime grid
+    /// The grid is `Arc`-shared with rollback snapshots.
+    /// Mutating through this accessor copies the runtime grid
     /// state only when such a shared snapshot is still alive, which keeps
     /// every snapshot frozen at the state it observed when it was taken.
     #[inline]

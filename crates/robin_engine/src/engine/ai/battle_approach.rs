@@ -263,7 +263,7 @@ impl EngineInner {
             .expect_entity(owner, "approach lift layer")
             .element_data()
             .layer();
-        if let Some(Some(entry)) = crate::ai::AiContext::enemy_lift_approach_for_position(
+        if let Some(Some(entry)) = crate::ai::enemy_lift_approach_for_position(
             &self.world.fast_grid,
             target_position,
             Some(layer),
@@ -683,6 +683,11 @@ mod tests {
         use crate::gate::{Door, DoorIndex};
         use crate::sector::{LiftType, SectorNumber, SectorType};
         use crate::sequence::{SequenceElement, SequenceElementData};
+        let lower_sector = engine
+            .expect_entity(owner, "lower ladder entry fixture")
+            .element_data()
+            .sector()
+            .unwrap();
         engine.world.fast_grid_mut().allocate_layers(4);
         let entry_index = engine.world.fast_grid_mut().add_sector(
             square_sector(7, 3, MapPoint::new(0.0, 0.0), MapPoint::new(1000.0, 1000.0)),
@@ -699,7 +704,7 @@ mod tests {
         );
         lift.sector_type |= SectorType::LIFT;
         lift.lift_type = Some(LiftType::Ladder);
-        lift.gate_indices = vec![DoorIndex::new(0).unwrap()];
+        lift.gate_indices = vec![DoorIndex::new(0).unwrap(), DoorIndex::new(1).unwrap()];
         let lift_index = engine.world.fast_grid_mut().add_sector(lift, 0);
         let lift_sector = crate::position_interface::SectorHandle::new(42)
             .unwrap()
@@ -708,13 +713,22 @@ mod tests {
             .world
             .fast_grid_mut()
             .level_mut()
-            .door_projection_infos = vec![DoorProjectionInfo {
-            point_out: MapPoint::new(410.0, 120.0),
-            sector_out: SectorNumber::new(7),
-            sector_out_index: entry_sector.arena_index(),
-            layer_out: 3,
-            ..Default::default()
-        }];
+            .door_projection_infos = vec![
+            DoorProjectionInfo {
+                point_out: MapPoint::new(410.0, 120.0),
+                sector_out: SectorNumber::new(7),
+                sector_out_index: entry_sector.arena_index(),
+                layer_out: 3,
+                ..Default::default()
+            },
+            DoorProjectionInfo {
+                point_out: MapPoint::new(410.0, 800.0),
+                sector_out: SectorNumber::new(1),
+                sector_out_index: lower_sector.arena_index(),
+                layer_out: 0,
+                ..Default::default()
+            },
+        ];
         engine.script_domains.interactables.doors = vec![Door {
             active: true,
             sector_out: SectorNumber::new(7),
@@ -727,6 +741,12 @@ mod tests {
             layer_in: 0,
             ..Default::default()
         }];
+        let mut lower_door = engine.script_domains.interactables.doors[0].clone();
+        lower_door.point_out = MapPoint::new(410.0, 800.0);
+        lower_door.sector_out = SectorNumber::new(1);
+        lower_door.sector_out_index = lower_sector.arena_index();
+        lower_door.layer_out = 0;
+        engine.script_domains.interactables.doors.push(lower_door);
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -904,12 +924,14 @@ mod tests {
         move_actor(&mut engine, owner, 250.0, if close { 300.0 } else { 100.0 });
         move_actor(&mut engine, target, 264.0, 700.0);
         if waiting {
-            let element = crate::sequence::SequenceElement::new_movement(
+            let mut element = crate::sequence::SequenceElement::new_movement(
                 1,
                 crate::element::Command::MoveWaiting,
                 Some(owner),
                 crate::order::OrderType::RunningUpright,
             );
+            // Path waiting retains the priority assigned before Move was translated.
+            element.priority = crate::sequence::SequencePriority::Normal;
             let id = engine.orders.sequence_manager.launch_element(element);
             engine.orders.sequence_manager.element_in_progress(id, 0);
         }
@@ -931,6 +953,8 @@ mod tests {
     fn failed_approach_executes_roof_wait_and_preserves_close_and_path_waiter_cases() {
         for (close, waiting) in [(false, false), (true, true), (false, true)] {
             let (mut engine, assets, owner, target, wait) = roof_fixture(close, waiting);
+            let selected_waiter = waiting.then(|| pending_moves(&engine, owner)[0].0);
+            let sequences_before = engine.orders.sequence_manager.sequence_count();
             let target_position = engine.live_ai_position(target);
             engine.execute_ai_reconsider_enemy_approach(
                 &crate::sim_rng::test_context(),
@@ -949,11 +973,28 @@ mod tests {
             assert_eq!(ai.base.stop_before_end_of_path_distance, 50);
             if close {
                 assert!(ai.base.already_on_point);
-                assert!(pending_moves(&engine, owner).is_empty());
+                let pending = pending_moves(&engine, owner);
+                assert_eq!(
+                    pending.len(),
+                    1,
+                    "the already-near shortcut retains the selected path waiter"
+                );
+                assert_eq!(
+                    engine
+                        .orders
+                        .sequence_manager
+                        .get_element(pending[0].0, pending[0].1)
+                        .unwrap()
+                        .command,
+                    crate::element::Command::MoveWaiting,
+                );
             } else if waiting {
+                assert!(engine.orders.sequence_manager.sequence_count() > sequences_before);
                 assert!(
-                    pending_moves(&engine, owner).is_empty(),
-                    "replacing a selected path waiter halts the fallback move after registration"
+                    pending_moves(&engine, owner)
+                        .iter()
+                        .all(|(sequence, _)| Some(*sequence) == selected_waiter),
+                    "the fallback is halted after registration; the old waiter's stop transition may remain"
                 );
             } else {
                 assert_eq!(pending_moves(&engine, owner).len(), 1);

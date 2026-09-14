@@ -13,6 +13,8 @@ fn duty_fixture(
     let mut entity = crate::engine::test_support::actors::make_test_civilian(Posture::Leisure);
     // A civilian already resting at its post needs no navigation fixture.
     ai.base.special_action = true;
+    ai.base.substate_at_last_timer_launch = ai.base.current_substate;
+    ai.base.timer_is_running = false;
     ai.base.outbox = Default::default();
     let Entity::Civilian(civilian) = &mut entity else {
         unreachable!()
@@ -20,6 +22,9 @@ fn duty_fixture(
     civilian.npc.ai_brain = AiBrain::Friendly(Box::new(ai));
     let owner = engine.add_test_entity(entity);
     let mut assets = crate::engine::LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .civilians
+        .push(Default::default());
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     (engine, assets, owner)
 }
@@ -185,6 +190,12 @@ fn think_unexpected_fit_again_returns_to_duty() {
     ai.base.current_substate = Substate::SleepingUnconscious;
     ai.fleeing_seen_enemy_counter = 5;
     let (mut engine, assets, owner) = duty_fixture(ai);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .npc_data_mut()
+        .unwrap()
+        .eye_status = crate::element::EyeStatus::Stare;
     engine.execute_ai_callback(
         &sim,
         &assets,
@@ -195,46 +206,15 @@ fn think_unexpected_fit_again_returns_to_duty() {
     assert_eq!(ai.base.current_state, AiState::Default);
     assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
     assert_eq!(ai.fleeing_seen_enemy_counter, 0);
-}
-
-#[test]
-fn fit_again_returns_duty_after_ordered_resurrection_and_eye_prefix() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    // EVENT_FITAGAIN must fire the resurrection fan-out and
-    // reset the view status to LookForward alongside the
-    // return-to-duty hand-off. They share the owner FIFO with
-    // the return-to-duty state callback so the engine can preserve the
-    // original game's operation order.
-    let mut ai = FriendlyAi::new(1);
-    let mut global = AiGlobalState::default();
-    ai.base.current_state = AiState::Sleeping;
-    ai.base.current_substate = Substate::SleepingUnconscious;
-    ai.base.outbox.reentrant.owner_work.clear();
-
-    let stimulus = Stimulus::new(StimulusType::EventFitAgain);
-    let duty = ai
-        .think_unexpected_event(
-            sim,
-            &stimulus,
-            &mut global,
-            &AiContext::test_fixture(),
-            None,
-            None,
-        )
-        .expect_err("recovery hands duty to the engine after its actor prefix");
-    assert!(!duty.think_result);
-    assert!(duty.flags.is_empty());
-
-    assert!(matches!(
-        ai.base.outbox.reentrant.owner_work.as_slice(),
-        [
-            crate::ai::AiOwnerWork::InformResurrection,
-            crate::ai::AiOwnerWork::SetEyeStatus(crate::element::EyeStatus::LookForward),
-        ]
-    ));
-    assert!(!ai.base.outbox.recovery.inform_resurrection);
-    assert_eq!(ai.base.outbox.recovery.set_eye_status, None);
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .npc_data()
+            .unwrap()
+            .eye_status,
+        crate::element::EyeStatus::LookForward,
+    );
 }
 
 #[test]
@@ -256,78 +236,3 @@ fn fleeing_child_chased_end_returns_to_duty() {
     assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
     assert_eq!(ai.fleeing_seen_enemy_counter, 0);
 }
-
-// ──────────────────────────────────────────────────────────
-// Soldier-alert body-level regression tests
-// ──────────────────────────────────────────────────────────
-
-fn make_soldier_view(
-    pos: Position,
-    camp: crate::element::Camp,
-    ai_state: AiState,
-) -> crate::ai_entity_view::AiEntityView {
-    use crate::ai_entity_view::EntityKind;
-    use crate::element::Posture;
-    use crate::order::OrderType;
-    crate::ai_entity_view::AiEntityView {
-        original_creation_order: 41,
-        position: pos,
-        detection_position: MapPoint::new(pos.x, pos.y),
-        detection_position_world: crate::coordinates::WorldPoint3D::new(pos.x, pos.y, 0.0),
-        direction: 0,
-        posture: Posture::Upright,
-        camp,
-        is_pc: false,
-        is_robin: false,
-        is_vip: false,
-        is_beggar: false,
-        is_child: false,
-        kind: EntityKind::Soldier,
-        is_tower_guard: false,
-        is_swordfighting: false,
-        is_able_to_fight: true,
-        active: true,
-        is_unconscious: false,
-        action_state: crate::element::ActionState::Waiting,
-        is_moving_map: false,
-        passing_door: false,
-        obstacle_idx: None,
-        in_building: false,
-        building_sector: None,
-        ai_state,
-        ai_substate: Substate::DefaultOnPost,
-        script_locked: false,
-        forecasted_destination: crate::ai::PreparedForecastDestination::fixed(pos, 0),
-        current_animation: OrderType::WalkingUpright,
-        elevation: 0.0,
-        object_type: crate::element_kinds::ObjectType::None,
-        is_dead: false,
-        is_carried: false,
-        is_archer: false,
-        is_rider: false,
-        stuck_under_net: false,
-        in_coma: false,
-        guard: None,
-        has_patrol_path: false,
-        initial_position: pos,
-        number_of_arrows: 0,
-        rank: crate::profiles::ProfileRank::None,
-        reported_to_officer: false,
-        looted_after_money_fight: false,
-        current_money: 0,
-        macro_in_progress: false,
-        path_current_waypoint_index: 0,
-        path_last_waypoint_index: 0,
-        path_forward_movement: true,
-        patrol_hiking_path_index: None,
-        interesting_object: None,
-    }
-}
-
-// ──────────────────────────────────────────────────────────
-// Soldier-alert synchronous route-result continuation
-// ──────────────────────────────────────────────────────────
-
-// ──────────────────────────────────────────────────────────
-// Apple-chase flee: full scan, not a single-guess stub
-// ──────────────────────────────────────────────────────────

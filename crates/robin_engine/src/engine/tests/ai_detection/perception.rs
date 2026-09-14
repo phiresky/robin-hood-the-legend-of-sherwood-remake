@@ -57,6 +57,7 @@ fn periodic_smalltalk_commands_advance_watchdog_but_unrelated_commands_preserve_
             .entities
             .expect_ai_controller_mut(owner, format_args!("periodic test"));
         ai.current_substate = Substate::AttackingMovingAroundOldEnemy;
+        ai.current_state = crate::ai::AiState::Attacking;
         ai.stuck_counter = 2;
         let element = crate::sequence::SequenceElement::new_movement(
             1,
@@ -65,6 +66,13 @@ fn periodic_smalltalk_commands_advance_watchdog_but_unrelated_commands_preserve_
             crate::order::OrderType::WaitingAlerted,
         );
         let sequence = engine.orders.sequence_manager.launch_element(element);
+        // Install an already running command. Its initial instruction has
+        // finished before the periodic watchdog inspects it.
+        engine
+            .orders
+            .sequence_manager
+            .take_deferred_owner_action(owner, sequence, 0)
+            .expect("fixture command is registered for its owner");
         engine
             .orders
             .sequence_manager
@@ -208,7 +216,7 @@ fn periodic_bored_roll_reads_installed_order_after_detection_boundary() {
 
 #[test]
 fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surfacing_completion() {
-    use crate::ai::{AiContext, AiState, GotoFlags, Position, Substate};
+    use crate::ai::{AiState, GotoFlags, Position, Substate};
     use crate::element::{Camp, Command, Entity};
     use crate::order::OrderType;
     use crate::position_interface::SectorHandle;
@@ -228,13 +236,6 @@ fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surf
             sector: SectorHandle::new(0),
             ..Position::default()
         };
-        let ctx = AiContext {
-            position,
-            think_depth: engine.ai_think_depth(),
-            self_animation: OrderType::WaitingAlerted,
-            self_is_soldier: true,
-            ..AiContext::test_fixture()
-        };
         let Entity::Soldier(soldier) = engine.get_entity_mut(owner).unwrap() else {
             unreachable!()
         };
@@ -242,6 +243,10 @@ fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surf
             .element
             .set_position_map(MapPoint::new(position.x, position.y));
         soldier.element.set_sector(position.sector);
+        soldier.actor.installed_order = Some(crate::element::InstalledActorOrder {
+            order_id: std::num::NonZeroU32::new(1).unwrap(),
+            order_type: OrderType::WaitingAlerted,
+        });
         let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
         ai.base.me = owner.index();
         ai.base.current_state = AiState::Attacking;
@@ -260,7 +265,7 @@ fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surf
             },
             _ => unreachable!(),
         };
-        ai.base.go_to(destination, GotoFlags::RUN, &ctx);
+        engine.duty_go_to(&sim, &assets, owner, destination, GotoFlags::RUN);
 
         engine.finish_enemy_periodic_stuck_suffix_after_refresh(&sim, owner, &assets, 0);
         let pending = engine
@@ -1058,7 +1063,11 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
         } else {
             Posture::Upright
         });
-        soldier.element.set_position_map(position);
+        // Keep the scan geometry but place its movement destinations above
+        // the reserved zero-coordinate boundary.
+        soldier
+            .element
+            .set_position_map(MapPoint::new(position.x, position.y + 100.0));
         soldier.npc.life_points = life_points;
         soldier.human.unconscious = unconscious;
         let ai = soldier
@@ -1075,8 +1084,8 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
         .expect("owner has Enemy AI");
     owner.base.current_state = AiState::Wondering;
     owner.base.current_substate = Substate::WonderingWatchingForMoreMoney;
-    // A sleeping AI substate is not itself unconscious: Original reads the
-    // raw unconscious flag. Keep this raw-false control out of the list.
+    // A sleeping AI substate is not itself unconscious. Keep this control
+    // with its raw unconscious flag unset out of the list.
     engine
         .get_entity_mut(conscious)
         .and_then(Entity::enemy_ai_mut)
@@ -1089,6 +1098,31 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
     // now occupied by a civilian and must fail current typed validation.
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.world.fast_grid_mut().size_map(128, 128);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    let sector_index = engine.world.fast_grid_mut().add_sector(
+        crate::engine::test_support::square_sector(
+            1,
+            0,
+            MapPoint::new(-100.0, -100.0),
+            MapPoint::new(1000.0, 1000.0),
+        ),
+        0,
+    );
+    let index = crate::fast_find_grid::SectorIndex::new(sector_index).unwrap();
+    let sector = crate::position_interface::SectorHandle::new(1)
+        .unwrap()
+        .with_arena_index(index);
+    for (id, _, _, _, _, _) in fixtures {
+        engine
+            .get_entity_mut(id)
+            .unwrap()
+            .element_data_mut()
+            .set_sector_topology(Some(sector), Some(index));
+    }
+    engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+        "money_victims.scs",
+    ));
     engine.ai.global.all_soldier_handles = std::sync::Arc::new(vec![
         victim_middle.index(),
         stale_soldier_slot.index(),
@@ -2395,8 +2429,14 @@ fn npc_detection_queues_every_rising_enemy_in_detectable_order() {
 
     assert_eq!(far_then_near_latches, vec![true, true]);
     assert_eq!(near_then_far_latches, vec![true, true]);
-    assert_eq!(far_then_near, far_then_near_expected);
-    assert_eq!(near_then_far, near_then_far_expected);
+    // The first VIEW rebuilds from every newly seen detectable. The second
+    // VIEW then appends its actor during reaction time, retaining duplicates.
+    let expected_list = |mut order: Vec<u32>| {
+        order.push(order[1]);
+        order
+    };
+    assert_eq!(far_then_near, expected_list(far_then_near_expected));
+    assert_eq!(near_then_far, expected_list(near_then_far_expected));
 }
 
 #[test]

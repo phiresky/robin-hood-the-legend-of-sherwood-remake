@@ -241,13 +241,12 @@ impl EngineInner {
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
         let admission = self.ai_admission(owner);
-        let admitted = if let Some(enemy) = self
-            .world
-            .entities
-            .expect_entity_mut(owner, format_args!("patrol arrival"))
-            .enemy_ai_mut()
+        let admitted = if self
+            .expect_entity(owner, "patrol arrival")
+            .enemy_ai()
+            .is_some()
         {
-            enemy.begin_think(&admission, stimulus, &mut self.ai.global)
+            self.begin_enemy_think(sim, assets, owner, stimulus, &admission)
         } else {
             self.begin_friendly_think(sim, assets, owner, stimulus, &admission)
         };
@@ -1073,120 +1072,148 @@ impl EngineInner {
     // slot status vector and may transition the AI substate via
     // `check_ambush_point`.
 
-    pub(in crate::engine) fn ambush_point_context(
-        &self,
-        npc_id: EntityId,
-    ) -> crate::ai_enemy::AmbushPointContext {
-        let owner = self.expect_entity(npc_id, "ambush-refresh NPC");
-        let enemy = owner.enemy_ai().unwrap_or_else(|| {
-            panic!(
-                "soldier {} has no enemy AI for ambush refresh",
-                npc_id.index()
-            )
-        });
-        let element = owner.element_data();
-        // Match AiContext's owner position: ordinary actors use their literal
-        // position; a door-passing actor uses its committed AI gate side.
-        let position = if owner
-            .actor_data()
-            .is_some_and(|actor| actor.active_door_pass.is_some())
-        {
-            assert!(
-                entity_has_ai_view(owner),
-                "door-passing ambush owner lacks an AI position"
-            );
-            let doors = self
-                .scripts
-                .mission
-                .as_ref()
-                .map(|_| self.script_domains.interactables.doors.as_slice())
-                .unwrap_or(&[]);
-            resolve_ai_position_with(
-                &self.world.entities,
-                doors,
-                &self.orders.sequence_manager,
-                npc_id,
-                |id| {
-                    let element = self
-                        .expect_entity(id, "ambush AI position owner")
-                        .element_data();
-                    crate::ai::Position {
-                        x: element.position_map().x,
-                        y: element.position_map().y,
-                        sector: ai_view_position_sector(self, element),
-                        level: element.layer(),
-                    }
-                },
-            )
-            .effective
-        } else {
-            crate::ai::Position {
-                x: element.position_map().x,
-                y: element.position_map().y,
-                sector: element.sector(),
-                level: element.layer(),
-            }
-        };
-        crate::ai_enemy::AmbushPointContext {
-            frame: self.control.frame_counter,
-            position,
-            direction: element.direction() as u16,
-            intelligence: enemy.iq_for_difficulty(
-                self.control.sim_config.difficulty,
-                self.mission_domain
-                    .diplomacy
-                    .relationship_to_player(owner.camp())
-                    == crate::diplomacy::Relationship::Hostile,
-            ),
-        }
-    }
-
     pub(in crate::engine) fn tick_refresh_ambush_points_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
     ) {
-        if self.actors_frozen() {
+        use crate::ai::{AiState, LookDirection, Substate};
+        use crate::ai_enemy::AmbushPointStatus;
+        if self.actors_frozen() || self.ai.global.ambush_points.is_empty() {
             return;
         }
-        if self.ai.global.ambush_points.is_empty() {
-            return;
-        }
-
-        // Civilian ambush-point refresh is a no-op in the original game.
         let owner = self.expect_entity(npc_id, "ambush-refresh NPC");
         if matches!(owner, Entity::Civilian(_)) {
             return;
         }
-        assert!(
-            owner.enemy_ai().is_some(),
-            "soldier {} has no enemy AI for ambush refresh",
-            npc_id.index()
+        let ai = owner.enemy_ai().expect("ambush refresh requires enemy AI");
+        let iq = ai.iq_for_difficulty(
+            self.control.sim_config.difficulty,
+            self.mission_domain
+                .diplomacy
+                .relationship_to_player(owner.camp())
+                == crate::diplomacy::Relationship::Hostile,
         );
-        let eyes = owner.compute_eyes_point(None).unwrap_or_else(|| {
-            panic!(
-                "soldier {} has no eye point for ambush refresh",
-                npc_id.index()
-            )
-        });
-        let ctx = self.ambush_point_context(npc_id);
-
-        // Build the obstacle view from individual disjoint fields
-        // so the borrow checker can split it from the mut borrow
-        // on `self.world.entities` below.
-        let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
-        let ambush_points = self.ai.global.ambush_points.as_slice();
-
-        self.world
-            .entities
-            .expect_enemy_ai_mut(npc_id, format_args!("ambush-refresh NPC before apply"))
-            .refresh_ambush_points(&ctx, eyes, ambush_points, sight_obstacles);
-        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
+        if iq <= crate::parameters_ai::AI_MIN_IQ_TO_CONTROL_AMBUSH_POINTS as u16 {
+            return;
+        }
+        let substate = ai.base.current_substate;
+        if !matches!(
+            substate,
+            Substate::SeekingSeekpoint
+                | Substate::SeekingSeekpointPassedAmbushPointLeft
+                | Substate::SeekingSeekpointPassedAmbushPointRight
+        ) {
+            let ai = self.observation_ai_mut(npc_id);
+            if !ai.ambush_point_array_reset {
+                ai.ambush_point_status.fill(AmbushPointStatus::Far);
+                ai.ambush_point_array_reset = true;
+            }
+            return;
+        }
+        let more_than_one = substate == Substate::SeekingSeekpoint
+            && ai
+                .ambush_point_status
+                .iter()
+                .filter(|s| **s == AmbushPointStatus::Near)
+                .count()
+                > 1;
+        let element = owner.element_data();
+        let point = element.position_map();
+        let level = element.layer();
+        let sector = element.sector();
+        let count = self.ai.global.ambush_points.len();
+        assert_eq!(
+            ai.ambush_point_status.len(),
+            count,
+            "ambush status slots must match authored points"
+        );
+        for idx in 0..count {
+            let near = self.ai.global.ambush_points[idx].is_near(point, level, sector);
+            let status = self.observation_ai(npc_id).ambush_point_status[idx];
+            if !near {
+                if status != AmbushPointStatus::Far {
+                    self.observation_ai_mut(npc_id).ambush_point_status[idx] =
+                        AmbushPointStatus::Far;
+                }
+                continue;
+            }
+            if status == AmbushPointStatus::Checked {
+                continue;
+            }
+            let eyes = self
+                .expect_entity(npc_id, "ambush eyes")
+                .compute_eyes_point(None)
+                .expect("ambush owner requires eyes");
+            let anchor = self.ai.global.ambush_points[idx].position_3d;
+            let reachable = crate::sight_obstacle::is_reachable_3d(
+                crate::sight_obstacle::ObstacleList {
+                    static_obstacles: &assets.environment.static_sight_obstacles,
+                    dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                    static_active: &self.world.static_sight_obstacle_active,
+                },
+                [eyes.x, eyes.y, eyes.z],
+                [anchor.x, anchor.y, anchor.z],
+                crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+            );
+            if status == AmbushPointStatus::Far {
+                let ai = self.observation_ai_mut(npc_id);
+                ai.ambush_point_status[idx] = if reachable {
+                    AmbushPointStatus::Checked
+                } else {
+                    AmbushPointStatus::Near
+                };
+                ai.ambush_point_array_reset = false;
+            } else if reachable {
+                let position = self.live_ai_position(npc_id);
+                let direction = self
+                    .expect_entity(npc_id, "ambush direction")
+                    .element_data()
+                    .direction();
+                let (dx, dy) = crate::element::direction_vector_16(direction as i16);
+                let ambush = self.ai.global.ambush_points[idx].position;
+                let right = dx * (ambush.y - position.y) - dy * (ambush.x - position.x) > 0.0;
+                let substate = self.observation_ai(npc_id).base.current_substate;
+                let opposite = if right {
+                    Substate::SeekingSeekpointPassedAmbushPointLeft
+                } else {
+                    Substate::SeekingSeekpointPassedAmbushPointRight
+                };
+                let look = if substate == opposite {
+                    Some(LookDirection::LeftRight)
+                } else if !more_than_one {
+                    Some(if right {
+                        LookDirection::Right
+                    } else {
+                        LookDirection::Left
+                    })
+                } else {
+                    None
+                };
+                let next = if look.is_some() {
+                    Substate::SeekingSeekpointCheckingAmbushPoint
+                } else if right {
+                    Substate::SeekingSeekpointPassedAmbushPointRight
+                } else {
+                    Substate::SeekingSeekpointPassedAmbushPointLeft
+                };
+                self.duty_set_state(sim, assets, npc_id, AiState::Seeking, next);
+                if let Some(look) = look {
+                    self.observation_ai_mut(npc_id)
+                        .base
+                        .outbox
+                        .actor
+                        .look_sidewards = Some(look);
+                    self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
+                } else {
+                    let frame = self.control.frame_counter;
+                    self.observation_ai_mut(npc_id).base.launch_timer(3, frame);
+                }
+                self.observation_ai_mut(npc_id).ambush_point_status[idx] =
+                    AmbushPointStatus::Checked;
+            }
+        }
     }
 
     // ── Macro timer hourglass ────────────────────────────────────

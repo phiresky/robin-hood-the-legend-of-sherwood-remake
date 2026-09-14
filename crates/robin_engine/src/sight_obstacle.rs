@@ -164,54 +164,6 @@ impl<'a> ObstacleList<'a> {
     }
 }
 
-/// Per-tick `Arc`-shareable snapshot of the engine's static + dynamic
-/// sight obstacles plus the static-active flag array.  Built once at
-/// the top of each AI dispatch pass by
-/// [`crate::engine::EngineInner::build_sim_scratch`] and
-/// embedded into every [`crate::ai::AiContext`] so AI helpers can run
-/// `ai_vision::los_clear` without re-borrowing the engine.
-///
-/// Same `Arc<HashMap>` pattern used for
-/// [`crate::ai_entity_view::SharedAiEntityViews`]: cloning is a single
-/// atomic increment per `AiContext`.
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct SharedSightObstacles {
-    pub static_obstacles: std::sync::Arc<Vec<SightObstacle>>,
-    pub dynamic_obstacles: std::sync::Arc<Vec<SightObstacle>>,
-    pub static_active: std::sync::Arc<Vec<bool>>,
-}
-
-impl Default for SharedSightObstacles {
-    fn default() -> Self {
-        Self {
-            static_obstacles: std::sync::Arc::new(Vec::new()),
-            dynamic_obstacles: std::sync::Arc::new(Vec::new()),
-            static_active: std::sync::Arc::new(Vec::new()),
-        }
-    }
-}
-
-impl SharedSightObstacles {
-    /// Borrowed [`ObstacleList`] view over the snapshot — the shape that
-    /// `ai_vision::los_clear` and the per-obstacle visibility helpers
-    /// already accept.
-    pub fn list(&self) -> ObstacleList<'_> {
-        ObstacleList {
-            static_obstacles: &self.static_obstacles,
-            dynamic_obstacles: &self.dynamic_obstacles,
-            static_active: &self.static_active,
-        }
-    }
-}
-
 // ---- Obstacle type flags ----
 
 /// Bitflag constants for `SightObstacle::obstacle_type`. Stored as a

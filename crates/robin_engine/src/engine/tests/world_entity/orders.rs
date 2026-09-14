@@ -532,10 +532,11 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
             .get_entity_mut(officer_id)
             .and_then(Entity::enemy_ai_mut)
             .expect("report officer has EnemyAi");
-        officer.set_state(
-            AiState::Seeking,
-            Substate::SeekingOfficerWaitForInstructedSoldier,
-        );
+        {
+            let base = &mut officer.base;
+            base.set_ai_state(AiState::Seeking);
+            base.current_substate = Substate::SeekingOfficerWaitForInstructedSoldier;
+        };
         officer.base.antagonist = Some(crate::ai::AiEntityHandle::new(soldier_id.index()));
         officer.base.my_reconnaissance_report.report_type = ReportType::Body;
         officer.base.my_reconnaissance_report.seek_position = Position {

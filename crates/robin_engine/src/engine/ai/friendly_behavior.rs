@@ -6,6 +6,56 @@ use crate::ai::{
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
+    pub(in crate::engine) fn execute_friendly_remaining_event(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        stimulus: &Stimulus,
+    ) -> bool {
+        use StimulusType::*;
+        match stimulus.stimulus_type {
+            EventReachPoint | EventDone | EventTimer | CallYourTalk1 | CallYourTalk2
+            | CallYourTalk3 | EventMyTalk1 | EventMyTalk2 | EventMyTalk3 => {
+                if let Some(result) =
+                    self.execute_ai_common_fleeing_event(sim, assets, owner, stimulus)
+                {
+                    return result;
+                }
+                if let Some(result) =
+                    self.execute_ai_common_expected_event(sim, assets, owner, stimulus)
+                {
+                    return result;
+                }
+            }
+            EventCouldntReachPoint => {
+                if self.friendly_brain(owner).base.current_substate == Substate::FleeingPanic {
+                    self.execute_ai_common_fleeing_event(sim, assets, owner, stimulus)
+                        .expect("panic failure requires common fleeing handler");
+                } else {
+                    self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+                }
+            }
+            EventFitAgain => {
+                self.broadcast_resurrection(owner);
+                let actor = self
+                    .world
+                    .entities
+                    .expect_ai_actor_data_mut(owner, format_args!("civilian recovery eyes"));
+                crate::ai_vision::set_view_status(actor, crate::element::EyeStatus::LookForward);
+                self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+            }
+            EventReturnToDuty => {
+                self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty())
+            }
+            EventOutOfView | EventSeesShadow | EventSeesSoldier => {}
+            _ => {
+                tracing::warn!(event = ?stimulus.stimulus_type, "unhandled civilian stimulus");
+            }
+        }
+        false
+    }
+
     pub(in crate::engine) fn begin_friendly_think(
         &mut self,
         sim: &SimulationContext,

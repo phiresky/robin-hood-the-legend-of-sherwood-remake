@@ -893,38 +893,6 @@ impl EngineInner {
         }
     }
 
-    fn dispatch_script_ai_native_moves(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: crate::element::EntityId,
-        move_boundary: u32,
-        active: &mut Vec<ActiveScriptCall>,
-    ) -> Result<(), ScriptDriverError> {
-        let launched_moves = self
-            .orders
-            .sequence_manager
-            .deferred_owner_moves_since(owner, move_boundary);
-        for sequence_id in launched_moves {
-            let action = self
-                .orders
-                .sequence_manager
-                .take_deferred_owner_action(owner, sequence_id, 0)
-                .map_err(|detail| {
-                    ScriptDriverError::new(format!(
-                        "SetAIState owner {} Move dispatch failed: {detail}",
-                        owner.index()
-                    ))
-                })?;
-            if let Some(action) = action {
-                self.dispatch_script_synchronous_action(sim, assets, action, active)?;
-                self.drain_script_synchronous_actions(sim, assets, active)?;
-            }
-        }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
-        Ok(())
-    }
-
     fn execute_synchronous_script_request(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -941,7 +909,6 @@ impl EngineInner {
                         "SetAIState owner handle {actor} became stale before its synchronous effect barrier"
                     )
                 })?;
-                let move_boundary = self.orders.sequence_manager.sequence_launch_boundary();
                 let entity = self.get_entity(owner).ok_or_else(|| {
                     format!(
                         "SetAIState owner {} disappeared before its synchronous effect barrier",
@@ -1068,7 +1035,6 @@ impl EngineInner {
                 }
 
                 self.drain_direct_ai_owner_boundary(sim, owner, assets);
-                self.dispatch_script_ai_native_moves(sim, assets, owner, move_boundary, active)?;
                 if matches!(
                     effect,
                     crate::interp::ScriptAiStateNativeEffect::Seeking
@@ -1076,13 +1042,6 @@ impl EngineInner {
                 ) {
                     self.end_script_ai_native_think(sim, assets, owner);
                     self.drain_direct_ai_owner_boundary(sim, owner, assets);
-                    self.dispatch_script_ai_native_moves(
-                        sim,
-                        assets,
-                        owner,
-                        move_boundary,
-                        active,
-                    )?;
                 }
                 Ok(0)
             }
@@ -3770,73 +3729,68 @@ impl EngineInner {
             {
                 self.execute_civilian_after_script(sim, assets, entity_id);
             } else if completed {
-                let fresh_scratch = self.build_sim_scratch(assets);
-                let fresh_entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
-                    panic!(
-                        "AfterScript owner {} disappeared before outer tail",
-                        entity_id.index()
-                    )
-                });
-                let mut fresh_ctx = super::ai::build_ai_context_from_entity(
-                    fresh_entity,
-                    self.control.frame_counter,
-                    self.entity_building_sector(fresh_entity.element_data().sector()),
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &fresh_scratch.ai_entity_views,
-                    &fresh_scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
-                    u8::try_from(self.ai.think_call_stack.len())
-                        .expect("think recursion depth overflow"),
-                );
-                fresh_ctx.enter_swordfight_pending = self
-                    .orders
-                    .sequence_manager
-                    .element_is_about_to_be_launched_or_postponed_by_current(
-                        entity_id,
-                        crate::element::Command::EnterSwordfight,
-                    );
-                self.refresh_selected_default_wait_identity(entity_id, &mut fresh_ctx);
-                fresh_ctx.in_uninterruptible_command = self.is_very_very_busy(entity_id);
-                fresh_ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
-                let fresh_enemy_tick = fresh_entity
-                    .enemy_ai()
-                    .is_some()
-                    .then(|| self.build_npc_tick_data_without_forecasts(sim, entity_id, assets));
-                let ai_global = &mut self.ai.global;
-                let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
-                    panic!(
-                        "AfterScript owner {} disappeared at outer tail",
-                        entity_id.index()
-                    )
-                });
-                let outcome = if let Some(enemy) = entity.enemy_ai_mut() {
-                    enemy.think_unexpected_event(
-                        crate::ai_enemy::ThinkEnv::new(
+                let ai = self
+                    .world
+                    .entities
+                    .expect_enemy_ai(entity_id, format_args!("AfterScript enemy patrol"));
+                if ai.base.current_state == crate::ai::AiState::Default {
+                    let has_path = ai
+                        .base
+                        .patrol_path
+                        .as_ref()
+                        .and_then(|path| path.current_waypoint(&assets.navigation.hiking_paths))
+                        .is_some();
+                    if !has_path {
+                        self.execute_ai_return_to_duty(
                             sim,
-                            &fresh_ctx,
-                            fresh_enemy_tick
-                                .as_ref()
-                                .expect("AfterScript Enemy tick data"),
-                            Some(&self.world.fast_grid),
-                        ),
-                        stimulus,
-                        ai_global,
-                    )
-                } else {
-                    panic!(
-                        "AfterScript owner has invalid kind {:?}",
-                        entity.element_data().kind
-                    )
-                };
-                fresh_ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
-                if let Err(call) = outcome {
-                    self.execute_ai_duty_call(sim, assets, entity_id, call);
+                            assets,
+                            entity_id,
+                            crate::ai::DutyFlags::empty(),
+                        );
+                    } else {
+                        self.world
+                            .entities
+                            .expect_enemy_ai_mut(
+                                entity_id,
+                                format_args!("AfterScript patrol advance"),
+                            )
+                            .base
+                            .patrol_path
+                            .as_mut()
+                            .expect("AfterScript patrol path")
+                            .advance();
+                        self.duty_set_state(
+                            sim,
+                            assets,
+                            entity_id,
+                            crate::ai::AiState::Default,
+                            crate::ai::Substate::DefaultEnroute,
+                        );
+                        let ai = self.world.entities.expect_enemy_ai(
+                            entity_id,
+                            format_args!("AfterScript route after state callback"),
+                        );
+                        let path = ai
+                            .base
+                            .patrol_path
+                            .as_ref()
+                            .expect("AfterScript route after state callback");
+                        let waypoint = path
+                            .current_waypoint(&assets.navigation.hiking_paths)
+                            .expect("AfterScript waypoint after state callback");
+                        let destination = crate::ai::Position {
+                            x: waypoint.x as f32,
+                            y: waypoint.y as f32,
+                            sector: assets.navigation.hiking_waypoint_sector(
+                                usize::from(path.hiking_path_index),
+                                usize::from(path.current_waypoint_index),
+                                waypoint.sector,
+                            ),
+                            level: waypoint.level,
+                        };
+                        let flags = ai.base.default_path_walking_flags;
+                        self.duty_go_to(sim, assets, entity_id, destination, flags);
+                    }
                 }
             }
             self.execute_ai_end_think(sim, assets, entity_id);
@@ -3862,16 +3816,7 @@ impl EngineInner {
         })
     }
 
-    /// Drain one AI owner's queued state-change callbacks in FIFO order.
-    ///
-    /// Every queue entry is consumed even when scripts are disabled, no
-    /// mission is installed, the actor VM is unbound, or its class inherits
-    /// the default `FilterAIEvent`. Callback return values are informational
-    /// and deliberately ignored. A callback may append more transitions to
-    /// this same owner; those are observed without taking the whole queue.
-    /// The temporary outgoing restore covers only base state/substate: an
-    /// The enemy state-change tail already applied before this callback remains visible.
-    /// Friendly alert is intentionally pre-callback, matching Original.
+    /// Drain one AI owner's effects and reentrant calls in statement order.
     pub(crate) fn drain_ai_owner_work_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -3908,8 +3853,7 @@ impl EngineInner {
                 ai.outbox.reentrant.owner_work.remove(0)
             };
 
-            let notification = match work {
-                crate::ai::AiOwnerWork::StateChange(notification) => notification,
+            match work {
                 crate::ai::AiOwnerWork::ActorEffects(prefix) => {
                     self.owner_work_actor_effects(sim, assets, owner, prefix);
                     continue;
@@ -3923,10 +3867,6 @@ impl EngineInner {
                     self.nearby_civilians_panic(sim, assets, owner);
                     continue;
                 }
-                crate::ai::AiOwnerWork::NearbyCiviliansPanic180 => {
-                    self.owner_work_nearby_civilians_panic180(sim, assets, owner);
-                    continue;
-                }
                 crate::ai::AiOwnerWork::ConsiderToBeginParade { attacker } => {
                     self.owner_work_consider_to_begin_parade(sim, assets, owner, attacker);
                     continue;
@@ -3937,16 +3877,6 @@ impl EngineInner {
                 }
                 crate::ai::AiOwnerWork::Speech(attempt) => {
                     self.owner_work_speech(sim, assets, owner, attempt);
-                    continue;
-                }
-                crate::ai::AiOwnerWork::RestoreDetectableObjects {
-                    knocked_out_in_money_fight,
-                } => {
-                    self.restore_detectable_objects_for_npc(owner, knocked_out_in_money_fight);
-                    continue;
-                }
-                crate::ai::AiOwnerWork::InformResurrection => {
-                    self.broadcast_resurrection(owner);
                     continue;
                 }
                 crate::ai::AiOwnerWork::LaunchTimer {
@@ -3979,8 +3909,6 @@ impl EngineInner {
                     continue;
                 }
             };
-
-            self.settle_ai_owner_state_change(sim, assets, owner, work_index, notification);
         }
 
         let still_pending = self
@@ -4059,40 +3987,6 @@ impl EngineInner {
         ai.outbox.reentrant.owner_work = later_work;
         ai.outbox.reentrant.self_stimuli = later_self_stimuli;
         ai.outbox.reentrant.cross_npc_actions = prefix_cross_npc_actions;
-    }
-
-    fn owner_work_nearby_civilians_panic180(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        tracing::trace!(
-            target: "parity_nearby_panic",
-            owner = owner.index(),
-            "drain synchronous brawl NearbyCiviliansPanic180 callback"
-        );
-        self.nearby_civilians_panic_180(sim, assets, owner);
-
-        self.execute_maybe_officer_sees_me_fighting(sim, assets, owner);
-        self.execute_money_fight(
-            sim,
-            assets,
-            owner,
-            crate::ai::MoneyFightOperation::FinishHitAfterOfficer,
-        );
-        let ai = self
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "brawl-hitting owner {} lost AI at completion",
-                    owner.index()
-                )
-            });
-        ai.outbox.reentrant.brawl_hitting_completion_pending = false;
     }
 
     fn owner_work_consider_to_begin_parade(
@@ -4292,312 +4186,6 @@ impl EngineInner {
                 %error,
                 "AI state-change FilterAIEvent callback failed"
             );
-        }
-    }
-
-    fn settle_ai_owner_state_change(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        work_index: usize,
-        notification: crate::ai::AiStateChangeNotification,
-    ) {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        enum OwnerAiKind {
-            Enemy,
-            Friendly,
-        }
-        let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
-        // Work produced by a FilterAIEvent callback belongs inside this
-        // state change and therefore precedes statements the outer
-        // Rust handler queued after the state change. Detach that later tail
-        // while the VM runs, then splice recursively produced work ahead
-        // of it.
-        let (
-            owner_kind,
-            is_scripted,
-            caller_tail_state,
-            later_work,
-            later_actor_effects,
-            later_self_stimuli,
-            later_cross_npc_actions,
-        ) = {
-            let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
-                panic!(
-                    "AI state-change owner {} disappeared before callback {}",
-                    owner.index(),
-                    work_index
-                )
-            });
-            let owner_kind = if entity.enemy_ai().is_some() {
-                OwnerAiKind::Enemy
-            } else if entity.friendly_ai().is_some() {
-                OwnerAiKind::Friendly
-            } else {
-                panic!(
-                    "AI state-change owner {} drifted to invalid kind {:?}",
-                    owner.index(),
-                    entity.element_data().kind
-                )
-            };
-            let ai = entity
-                .ai_controller_mut()
-                .unwrap_or_else(|| panic!("AI state-change owner {} lost its AI", owner.index()));
-            // The Rust caller continues after the state change returns before
-            // this deferred callback can run. Preserve any later direct
-            // state assignment made by that caller (for example,
-            // next-macro-command execution immediately completing an empty
-            // restored macro after first entering DefaultInMacro).
-            let caller_tail_state = (ai.current_state, ai.current_substate);
-            let later_work = std::mem::take(&mut ai.outbox.reentrant.owner_work);
-            let (later_actor_effects, later_self_stimuli, later_cross_npc_actions) =
-                if let Some(prefix) = notification.actor_effects_before_callback.clone() {
-                    (
-                        Some(std::mem::replace(&mut ai.outbox.actor, prefix)),
-                        Some(std::mem::take(&mut ai.outbox.reentrant.self_stimuli)),
-                        Some(std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions)),
-                    )
-                } else {
-                    (None, None, None)
-                };
-            let is_scripted = entity
-                .actor_data()
-                .is_some_and(|actor| !actor.script_class.is_empty());
-            (
-                owner_kind,
-                is_scripted,
-                caller_tail_state,
-                later_work,
-                later_actor_effects,
-                later_self_stimuli,
-                later_cross_npc_actions,
-            )
-        };
-
-        let mut caller_tail_completion_flags = None;
-
-        // Effects issued before the state change are already inside the Original
-        // call stack. Settle that prefix while keeping the pure-Rust
-        // caller tail detached from the synchronous script callback.
-        if later_actor_effects.is_some() {
-            // Decision-tick completion flags belong to the caller tail too.
-            // In Original, the state change's FilterAIEvent runs before the
-            // surrounding area seeking/movement returns to tick completion, so movement
-            // issued after the state change cannot surface reach-point events while
-            // we settle stop/facing effects issued before the state change.
-            // Keep both existing and prefix-produced flags pending for
-            // the enclosing decision-tick completion boundary.
-            caller_tail_completion_flags = Some({
-                let ai = self
-                    .world
-                    .entities
-                    .get_mut(owner)
-                    .and_then(Entity::ai_controller_mut)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "AI state-change owner {} lost its AI before prefix effects",
-                            owner.index()
-                        )
-                    });
-                let flags = (
-                    ai.couldnt_reachpoint,
-                    ai.already_on_point,
-                    ai.already_turned,
-                );
-                ai.couldnt_reachpoint = false;
-                ai.already_on_point = false;
-                ai.already_turned = false;
-                flags
-            });
-            // These effects precede the state change in the
-            // original-game call order. Directional facing registers its turn before
-            // The state change registers the attentive transition, but neither
-            // ordinary element is instructed until the later global
-            // sequence-manager update. Preserve that FIFO rather than
-            // making this owner boundary execute either element early.
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
-            let ai = self
-                .world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "AI state-change owner {} lost its AI after prefix effects",
-                        owner.index()
-                    )
-                });
-            let flags = caller_tail_completion_flags
-                .as_mut()
-                .expect("state-change prefix completion flags were captured");
-            flags.0 |= ai.couldnt_reachpoint;
-            flags.1 |= ai.already_on_point;
-            flags.2 |= ai.already_turned;
-            ai.couldnt_reachpoint = false;
-            ai.already_on_point = false;
-            ai.already_turned = false;
-        }
-
-        let should_call = is_scripted
-            && sim.config().script_enabled
-            && self.scripts.mission.as_ref().is_some_and(|script| {
-                script.actor_has_function(handle, "FilterAIEvent")
-                    || (assets.attachments.spellforge_runtime.is_some()
-                        && script.has_script_vm(ScriptVmKey::Actor(handle)))
-            });
-        if !should_call {
-            // With no observable synchronous callback, consuming the
-            // deferred notification must not rewind canonical AI state.
-            // The pure-Rust handler may already have performed a later
-            // direct state mutation after the state change returned (Original's
-            // one-point macro completion does this before re-entering
-            // EVENT_REACHPOINT).
-            let ai = self
-                .world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "AI state-change owner {} vanished while consuming callback {}",
-                        owner.index(),
-                        work_index
-                    )
-                });
-            if let Some(flags) = caller_tail_completion_flags {
-                ai.couldnt_reachpoint |= flags.0;
-                ai.already_on_point |= flags.1;
-                ai.already_turned |= flags.2;
-            }
-            ai.outbox.reentrant.owner_work.extend(later_work);
-            if let Some(later_actor_effects) = later_actor_effects {
-                ai.outbox
-                    .reentrant
-                    .self_stimuli
-                    .extend(later_self_stimuli.expect("isolated state-change self-stimulus tail"));
-                ai.outbox
-                    .reentrant
-                    .cross_npc_actions
-                    .extend(later_cross_npc_actions.expect("isolated state-change cross-NPC tail"));
-                debug_assert!(
-                    !ai.outbox.actor.has_boundary_work(),
-                    "non-scripted state-change prefix left undrained actor effects"
-                );
-                ai.outbox.actor = later_actor_effects;
-            }
-            return;
-        }
-
-        {
-            let ai = self
-                .world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "AI state-change owner {} vanished before callback rewind {}",
-                        owner.index(),
-                        work_index
-                    )
-                });
-            ai.set_ai_state(notification.outgoing_state);
-            ai.current_substate = notification.outgoing_substate;
-        }
-        self.call_live_ai_state_change_filter(
-            sim,
-            assets,
-            owner,
-            notification.incoming_state,
-            notification.source,
-        );
-        // Native calls made by FilterAIEvent are still inside the state change
-        // and therefore observe the outgoing pair. Close callback-local
-        // recursive stimuli before committing the incoming pair.
-        if later_actor_effects.is_some() {
-            self.drain_self_stimuli_for_npc(sim, owner, assets);
-        }
-
-        let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
-            panic!(
-                "AI state-change owner {} disappeared during callback {} ({:?} -> {:?})",
-                owner.index(),
-                work_index,
-                notification.outgoing_state,
-                notification.incoming_state
-            )
-        });
-        let ai = match owner_kind {
-            OwnerAiKind::Enemy => {
-                &mut entity
-                    .enemy_ai_mut()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "AI state-change owner {} lost EnemyAi during callback {}",
-                            owner.index(),
-                            work_index
-                        )
-                    })
-                    .base
-            }
-            OwnerAiKind::Friendly => {
-                &mut entity
-                    .friendly_ai_mut()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "AI state-change owner {} lost FriendlyAi during callback {}",
-                            owner.index(),
-                            work_index
-                        )
-                    })
-                    .base
-            }
-        };
-        ai.set_ai_state(notification.incoming_state);
-        ai.current_substate = notification.incoming_substate;
-        if caller_tail_state != (notification.incoming_state, notification.incoming_substate) {
-            // The original game has already returned from this state change and run
-            // these caller-tail assignments by now. Reapply the captured
-            // canonical pair after the callback's outgoing→incoming
-            // transaction instead of letting the deferred transaction
-            // rewind newer state.
-            ai.set_ai_state(caller_tail_state.0);
-            ai.current_substate = caller_tail_state.1;
-        }
-
-        let ai = self
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "AI state-change owner {} vanished after callback settlement {}",
-                    owner.index(),
-                    work_index
-                )
-            });
-        if let Some(flags) = caller_tail_completion_flags {
-            ai.couldnt_reachpoint |= flags.0;
-            ai.already_on_point |= flags.1;
-            ai.already_turned |= flags.2;
-        }
-        ai.outbox.reentrant.owner_work.extend(later_work);
-        if let Some(later_actor_effects) = later_actor_effects {
-            ai.outbox
-                .reentrant
-                .self_stimuli
-                .extend(later_self_stimuli.expect("isolated state-change self-stimulus tail"));
-            ai.outbox
-                .reentrant
-                .cross_npc_actions
-                .extend(later_cross_npc_actions.expect("isolated state-change cross-NPC tail"));
-            debug_assert!(
-                !ai.outbox.actor.has_boundary_work(),
-                "state-change callback left actor effects outside its synchronous barrier"
-            );
-            ai.outbox.actor = later_actor_effects;
         }
     }
 

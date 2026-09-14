@@ -1,0 +1,197 @@
+//! Checkpoint searches retain their route while querying the current actor state.
+use super::*;
+use crate::ai::{
+    AiState, AlertLevel, DutyFlags, EmoticonType, GotoFlags, Position, Remark, ReportType, Substate,
+};
+use crate::ai_enemy::{SeekFlags, task_priority};
+use crate::profiles::ProfileRank;
+use crate::sim_rng::SimulationContext;
+
+impl EngineInner {
+    pub(in crate::engine) fn execute_ai_search_charly(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        self.observation_ai_mut(owner)
+            .base
+            .set_emoticon(EmoticonType::QuestionMark);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        if self.observation_ai(owner).get_rank() == ProfileRank::Officer {
+            self.execute_ai_missed_charly_alert(sim, assets, owner);
+            return;
+        }
+        self.observation_say(sim, assets, owner, Remark::MissesCharly);
+        let ai = self.observation_ai_mut(owner);
+        ai.search_charly_way.clear();
+        ai.base.macro_in_progress = false;
+        ai.current_task_priority = task_priority::MISSED_FRIEND;
+        ai.seeking_charly = true;
+        let Some(charly) = ai.base.checkpoint_charly else {
+            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+            return;
+        };
+        let charly = self.expect_human_id_for_ai_handle(charly.get(), "missing checkpoint");
+        let checkpoint = self
+            .world
+            .entities
+            .expect_ai_controller(charly, format_args!("checkpoint search path"));
+        if checkpoint.has_patrol_path {
+            let path = checkpoint
+                .patrol_path
+                .as_ref()
+                .map(|p| p.hiking_path_index)
+                .or(checkpoint.detached_patrol_path_status.hiking_path_index)
+                .expect("checkpoint path must resolve")
+                .get() as usize;
+            let here = self.live_ai_position(owner);
+            let points = &assets.navigation.hiking_paths[path].waypoints;
+            let mut best = None;
+            let mut distance = 65432.0_f32;
+            for (index, point) in points.iter().enumerate() {
+                let d = (point.x as f32 - here.x)
+                    .abs()
+                    .max((point.y as f32 - here.y).abs());
+                if d < distance {
+                    best = Some(index);
+                    distance = d;
+                }
+            }
+            let best = best.expect("checkpoint route requires a waypoint within search range");
+            let checkpoint = self
+                .world
+                .entities
+                .expect_ai_controller_mut(charly, format_args!("checkpoint nearest waypoint"));
+            if let Some(path) = checkpoint.patrol_path.as_mut() {
+                path.last_waypoint_index = path.current_waypoint_index;
+                path.current_waypoint_index = best as u8;
+            } else {
+                checkpoint.detached_patrol_path_status.last_waypoint_index = checkpoint
+                    .detached_patrol_path_status
+                    .current_waypoint_index;
+                checkpoint
+                    .detached_patrol_path_status
+                    .current_waypoint_index = best as u8;
+            }
+            let next = (best + 1) % points.len();
+            let a = &points[best];
+            let b = &points[next];
+            let dot = (a.x as f32 - here.x) * (b.x as f32 - a.x as f32)
+                + (a.y as f32 - here.y) * (b.y as f32 - a.y as f32);
+            let start = if dot < 0.0 { next } else { best };
+            for offset in 0..points.len() {
+                let index = (start + offset) % points.len();
+                let point = &points[index];
+                self.observation_ai_mut(owner)
+                    .search_charly_way
+                    .push(Position {
+                        x: point.x as f32,
+                        y: point.y as f32,
+                        sector: assets
+                            .navigation
+                            .hiking_waypoint_sector(path, index, point.sector),
+                        level: point.level,
+                    });
+            }
+        } else {
+            let position = checkpoint.initial_position;
+            self.observation_ai_mut(owner)
+                .search_charly_way
+                .push(position);
+        }
+        self.duty_set_state(
+            sim,
+            assets,
+            owner,
+            AiState::Seeking,
+            Substate::SeekingCharly,
+        );
+        self.observation_ai_mut(owner)
+            .set_alert_status(AlertLevel::Yellow);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let ai = self.observation_ai(owner);
+        let position = ai.search_charly_way[0];
+        let flags = GotoFlags::RUN
+            | if ai.search_charly_way.len() > 1 {
+                GotoFlags::DONT_STOP
+            } else {
+                GotoFlags::empty()
+            };
+        self.duty_go_to(sim, assets, owner, position, flags);
+    }
+
+    pub(in crate::engine) fn execute_ai_missed_charly_alert(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        self.observation_say(sim, assets, owner, Remark::DidntFindCharly);
+        let here = self.live_ai_position(owner);
+        let frame = self.control.frame_counter;
+        let ai = self.observation_ai_mut(owner);
+        ai.base.seek_position = here;
+        ai.base
+            .my_reconnaissance_report
+            .update(ReportType::MissedCharly, here);
+        ai.base.my_reconnaissance_report.charly = ai.base.checkpoint_charly;
+        ai.base.frame_when_enemy_detected = frame;
+        let charly = ai
+            .base
+            .checkpoint_charly
+            .expect("missed checkpoint alert requires checkpoint");
+        let charly = self.expect_human_id_for_ai_handle(charly.get(), "missed checkpoint alert");
+        self.world
+            .entities
+            .expect_enemy_ai_mut(charly, format_args!("checkpoint reporting status"))
+            .reported_to_officer = false;
+        match self.observation_ai(owner).get_rank() {
+            ProfileRank::Soldier => {
+                if self.execute_ai_alert_officer(sim, assets, owner) {
+                    return;
+                }
+            }
+            ProfileRank::Officer => {
+                let here = self.live_ai_position(owner);
+                if self.execute_ai_alert_soldiers(
+                    sim,
+                    assets,
+                    owner,
+                    here,
+                    SeekFlags::CHARLY_SEEK.bits(),
+                ) {
+                    return;
+                }
+            }
+            _ => {}
+        }
+        let checkpoint = self
+            .observation_ai(owner)
+            .base
+            .checkpoint_charly
+            .expect("failed checkpoint alert requires checkpoint");
+        let checkpoint =
+            self.expect_human_id_for_ai_handle(checkpoint.get(), "failed checkpoint alert");
+        let radius = if self
+            .world
+            .entities
+            .expect_ai_controller(checkpoint, format_args!("failed checkpoint path"))
+            .has_patrol_path
+        {
+            crate::parameters_ai::AI_PATROL_CHARLY_SEEK_RADIUS
+        } else {
+            crate::parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS
+        };
+        let here = self.live_ai_position(owner);
+        self.execute_ai_seek_area(
+            sim,
+            assets,
+            owner,
+            here,
+            radius as u16,
+            SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
+            crate::ai_enemy::UNDEFINED_DIRECTION,
+        );
+    }
+}

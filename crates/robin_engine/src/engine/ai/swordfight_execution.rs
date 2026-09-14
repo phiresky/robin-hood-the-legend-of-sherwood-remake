@@ -7,6 +7,9 @@ use crate::ai_enemy::{AiMapVec, CombatFighterAccess, SwordfightLists};
 use crate::sim_rng::SimulationContext;
 
 #[cfg(test)]
+mod nearest_opponent_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
@@ -597,65 +600,7 @@ impl EngineInner {
         ai.pc_missed = true;
         ai.base.outbox.actor.quit_swordfight = true;
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("lost swordfight focus"))
-            .outbox
-            .actor
-            .set_unfocus();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("lost pursuit policy"));
-        let missed = self.expect_human_id_for_ai_handle(
-            ai.missed_pc.expect("lost opponent").get(),
-            "lost opponent",
-        );
-        let entity = self.expect_entity(owner, "lost pursuit owner");
-        let follow = ai.base.blood_alcohol as i32
-            <= crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
-            && (!(entity.is_active()
-                && !self.entity_data_in_building_sector(entity.element_data()))
-                || (!ai.combat_trainer && ai.company_number != 100));
-        if self.expect_entity(missed, "lost pursuit target").is_pc() && follow {
-            self.owner_work_speech(
-                sim,
-                assets,
-                owner,
-                crate::ai::AiSpeechAttempt {
-                    remark: crate::ai::Remark::HuntsEnemy,
-                    flags: 0,
-                },
-            );
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("lost target search"));
-            let center = ai.base.seek_position;
-            let direction = ai.pc_gone_away_in_this_direction;
-            self.execute_ai_seek_area(
-                sim,
-                assets,
-                owner,
-                center,
-                crate::parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
-                crate::ai_enemy::SeekFlags::LOCATION_FIRST | crate::ai_enemy::SeekFlags::HOUSE,
-                direction,
-            );
-        } else {
-            let direction = (self.live_ai_position(missed).map_point()
-                - self.live_ai_position(owner).map_point())
-            .sector_with_aspect(crate::position_interface::ASPECT_RATIO);
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("lost target direction"))
-                .outbox
-                .actor
-                .set_direction_instantly = Some(direction as i16);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
-            self.execute_ai_get_battle_overview(sim, assets, owner, 0);
-        }
+        self.finish_live_lost_enemy_pursuit(sim, assets, owner);
     }
 
     fn nearest_live_opponent(&self, maurice: EntityId, rene: EntityId) -> Option<EntityId> {

@@ -161,9 +161,7 @@ fn golden_friendly() -> FriendlyAi {
 }
 
 fn golden_reentrant() -> AiReentrantOutbox {
-    let mut value = populated_outbox().reentrant;
-    value.brawl_hitting_completion_pending = true;
-    value
+    populated_outbox().reentrant
 }
 
 #[test]
@@ -290,8 +288,6 @@ const ENEMY_DEFAULTED_KEYS: &[&str] = &[
     "right_combat_neighbour",
 ];
 
-const REENTRANT_DEFAULTED_KEYS: &[&str] = &["brawl_hitting_completion_pending"];
-
 #[test]
 fn enemy_ai_missing_defaulted_fields_decode_to_type_defaults() {
     let json = include_str!("goldens/enemy_ai.json");
@@ -323,13 +319,8 @@ fn enemy_ai_missing_defaulted_fields_decode_to_type_defaults() {
 }
 
 #[test]
-fn reentrant_outbox_missing_defaulted_fields_decode_to_type_defaults() {
+fn reentrant_outbox_requires_work_and_allows_an_absent_optional_waypoint() {
     let json = include_str!("goldens/ai_reentrant_outbox.json");
-    let decoded: AiReentrantOutbox = decode_without(json, REENTRANT_DEFAULTED_KEYS).unwrap();
-    let mut expected = golden_reentrant();
-    scrub_reentrant(&mut expected);
-    expected.brawl_hitting_completion_pending = false;
-    assert_eq!(format!("{decoded:?}"), format!("{expected:?}"));
     for required in ["cross_npc_actions"] {
         assert!(
             decode_without::<AiReentrantOutbox>(json, &[required]).is_err(),

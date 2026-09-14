@@ -653,7 +653,7 @@ impl EngineInner {
         }
     }
 
-    pub(in crate::engine) fn take_nearest_live_money(&mut self, owner: EntityId) -> Option<u32> {
+    pub(in crate::engine) fn clean_live_seen_money(&mut self, owner: EntityId) {
         for index in (0..self.money_ai(owner).other_seen_money.len()).rev() {
             let handle = self.money_ai(owner).other_seen_money[index];
             let target = self.expect_entity_id_for_index(handle, "remembered coin");
@@ -667,6 +667,10 @@ impl EngineInner {
                 self.money_ai_mut(owner).base.interesting_object = None;
             }
         }
+    }
+
+    pub(in crate::engine) fn take_nearest_live_money(&mut self, owner: EntityId) -> Option<u32> {
+        self.clean_live_seen_money(owner);
         if self.money_ai(owner).other_seen_money.is_empty() {
             return None;
         }

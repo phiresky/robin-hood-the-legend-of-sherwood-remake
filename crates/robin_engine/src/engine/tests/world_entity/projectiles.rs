@@ -463,7 +463,7 @@ fn one_shot_hearing_uses_authoritative_world_y_at_uword_volume_boundary() {
 }
 
 #[test]
-fn fighter_snapshot_recovers_exact_duplicate_pc_sector_for_combat_routes() {
+fn live_combat_position_recovers_exact_duplicate_pc_sector() {
     use crate::coordinates::{MapBBox, MapPoint};
     use crate::fast_find_grid::{GridSector, SectorIndex};
     use crate::sector::{SectorNumber, SectorType};
@@ -520,12 +520,10 @@ fn fighter_snapshot_recovers_exact_duplicate_pc_sector_for_combat_routes() {
     target_element.set_sector(crate::position_interface::SectorHandle::new(88));
     assert_eq!(target_element.sector().unwrap().arena_index(), None);
 
-    let registry = engine.build_full_fighter_registry_for_test(owner, &assets);
-    let target_sector = registry
-        .iter()
-        .find(|fighter| fighter.handle == target.index())
-        .and_then(|fighter| fighter.position.sector)
-        .expect("target fighter snapshot has a sector");
+    let target_sector = engine
+        .live_ai_position(target)
+        .sector
+        .expect("live combat target has a sector");
     assert_eq!(u16::from(target_sector), 88);
     assert_eq!(target_sector.arena_index(), SectorIndex::new(1));
 }
@@ -566,7 +564,7 @@ fn bow_interaction_accepts_a_target_that_died_while_aiming() {
 }
 
 #[test]
-fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
+fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::gate::{Door, DoorIndex, DoorType};
     use crate::order::OrderType;
@@ -673,22 +671,18 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
         expected_optical_point.z.to_bits()
     );
 
-    let fighters = engine.build_nearby_fighters_for(self_id, &assets);
-    let target = fighters
-        .iter()
-        .find(|fighter| fighter.handle == target_id.index())
-        .expect("door-passing target remains inside the fighter radius");
-    assert_eq!(target.position.x, 120.0);
-    assert_eq!(target.position.y, 5.0);
+    let target = engine.live_ai_position(target_id);
+    assert_eq!(target.x, 120.0);
+    assert_eq!(target.y, 5.0);
     assert_eq!(
-        target.position.sector,
+        target.sector,
         crate::position_interface::SectorHandle::new(7)
     );
-    assert_eq!(target.position.level, 3);
+    assert_eq!(target.level, 3);
 }
 
 #[test]
-fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapshots() {
+fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::gate::{Door, DoorIndex, DoorType};
@@ -739,7 +733,8 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
         .get_entity_mut(owner_id)
         .and_then(Entity::enemy_ai_mut)
         .expect("observation owner has enemy AI");
-    owner.set_state(AiState::Attacking, Substate::AttackingObserve);
+    owner.base.current_state = AiState::Attacking;
+    owner.base.current_substate = Substate::AttackingObserve;
     owner.base.launch_timer(0, frame);
     // The engine clears the running latch when the due timer is emitted; the
     // launch substate remains as the stale-event guard consumed by Think.
@@ -805,21 +800,8 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
-
-    assert!(
-        !tick
-            .nearby_fighters
-            .iter()
-            .any(|fighter| fighter.handle == raw_near_id.index()),
-        "generic nearby scan must reject the raw-near fighter at its door-resolved far side"
-    );
-    assert!(
-        tick.nearby_fighters
-            .iter()
-            .any(|fighter| fighter.handle == raw_far_id.index()),
-        "generic nearby scan must retain the raw-far fighter at its door-resolved near side"
-    );
+    assert_eq!(engine.live_ai_position(raw_near_id).x, 600.0);
+    assert_eq!(engine.live_ai_position(raw_far_id).x, 20.0);
 
     engine.dispatch_think_with_drain(
         &sim,

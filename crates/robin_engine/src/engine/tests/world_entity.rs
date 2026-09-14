@@ -391,7 +391,11 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             .and_then(Entity::enemy_ai_mut)
             .expect("test Charly has enemy AI");
         charly.base.antagonist = Some(crate::ai::AiEntityHandle::new(officer_id.index()));
-        charly.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficer);
+        {
+            let base = &mut charly.base;
+            base.set_ai_state(AiState::Seeking);
+            base.current_substate = Substate::SeekingCharlyGoToOfficer;
+        };
         charly.base.launch_timer(0, 100);
         charly.base.timer_is_running = false;
     }
@@ -405,7 +409,11 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             AiState::Attacking => Substate::AttackingSwordfight,
             other => panic!("unsupported Charly-report officer state: {other:?}"),
         };
-        officer.set_state(officer_state, officer_substate);
+        {
+            let base = &mut officer.base;
+            base.set_ai_state(officer_state);
+            base.current_substate = officer_substate;
+        };
     }
 
     assert!(matches!(
@@ -506,14 +514,15 @@ fn run_synchronous_civilian_alert(
         .expect("test soldier has EnemyAi");
     enemy.base.me = soldier_id.index();
     enemy.base.owner_entity_id = Some(soldier_id);
-    enemy.set_state(
-        soldier_state,
-        if soldier_state == AiState::Default {
+    {
+        let base = &mut enemy.base;
+        base.set_ai_state(soldier_state);
+        base.current_substate = if soldier_state == AiState::Default {
             Substate::DefaultOnPost
         } else {
             Substate::AttackingSwordfight
-        },
-    );
+        };
+    };
 
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -580,7 +589,11 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
             .expect("review2 soldier has EnemyAi");
         ai.base.me = id.index();
         ai.soldier_profile_rank = rank;
-        ai.set_state(AiState::Default, Substate::DefaultOnPost);
+        {
+            let base = &mut ai.base;
+            base.set_ai_state(AiState::Default);
+            base.current_substate = Substate::DefaultOnPost;
+        };
     }
     complete_test_runtime_fixture(&mut engine, &mut assets);
     (engine, officer_id, soldier_id, assets)
@@ -601,31 +614,6 @@ fn start_review_command_soldiers(
             ..Default::default()
         },
     )
-}
-
-fn queue_review2_wrong_kind_think(
-    engine: &mut EngineInner,
-    officer_id: EntityId,
-    civilian_id: EntityId,
-    stimulus_type: crate::ai::StimulusType,
-    continuation: crate::ai::ThinkResultContinuation,
-) {
-    engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("review2 wrong-kind caller has AI")
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(crate::ai::CrossNpcAction::RequestThinkResult {
-            target: civilian_id.index(),
-            caller: officer_id.index(),
-            stimulus_type,
-            info: crate::ai::StimulusInfo::Human(crate::ai::AiEntityHandle::new(
-                officer_id.index(),
-            )),
-            continuation,
-        });
 }
 
 mod combat;

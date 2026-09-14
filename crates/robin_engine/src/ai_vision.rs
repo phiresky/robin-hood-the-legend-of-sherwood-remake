@@ -469,9 +469,10 @@ pub struct VisibilityQuery<'a> {
     pub sight_obstacles: crate::sight_obstacle::ObstacleList<'a>,
     pub fast_grid: &'a crate::fast_find_grid::FastFindGrid,
     pub layer: u16,
-    /// `true` when the target is unconscious.  Short-circuits the
-    /// same-building branch to 0.  Callers filter dead upstream, so
-    /// only the unconscious part is exposed here.
+    /// A dead target is invisible to an observer inside a building.
+    pub target_dead: bool,
+    /// `true` when the target is unconscious. Short-circuits the
+    /// same-building branch to 0.
     pub target_unconscious: bool,
     /// `true` when the target is mid-`Command::PassDoor` — used
     /// alongside `target_unconscious` to short-circuit the
@@ -537,7 +538,11 @@ pub fn compute_visibility_with_effective_radius(
     //     else                         return 0.5;
     //   }
     if q.viewer_in_building {
-        if !q.target_in_same_building || q.target_unconscious || q.target_passing_door {
+        if !q.target_in_same_building
+            || q.target_dead
+            || q.target_unconscious
+            || q.target_passing_door
+        {
             return 0.0;
         }
         return 0.5;
@@ -1509,10 +1514,7 @@ pub fn los_clear_spatial(
 }
 
 /// Standalone radius + cone (or close-range halfcircle) + opaque-LOS
-/// check from raw 2D inputs — no [`VisibilityQuery`] required.  Used
-/// by AI populators that snapshot the result on per-tick records
-/// (e.g. `CampSoldierInfo::is_detecting_cone`) so per-call sites
-/// don't redo the geometry per fighter pair.
+/// check from raw 2D inputs — no [`VisibilityQuery`] required.
 ///
 /// Caller is responsible for the eye-blind / viewer-in-building /
 /// target-in-building short-circuits; those depend on state outside
@@ -2227,6 +2229,7 @@ mod tests {
             sight_obstacles: crate::sight_obstacle::ObstacleList::from_slice_all_active(obstacles),
             fast_grid: fast_grid_for_obstacles(obstacles),
             layer: 0,
+            target_dead: false,
             target_unconscious: false,
             target_passing_door: false,
         }

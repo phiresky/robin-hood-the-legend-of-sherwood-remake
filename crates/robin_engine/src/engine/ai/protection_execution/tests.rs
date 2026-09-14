@@ -14,6 +14,9 @@ fn phalanx_arrival_reads_target_position_after_state_callback() {
     assets.scripts.location_positions = std::sync::Arc::new(vec![(600.0, 700.0)]);
     assets.scripts.location_layers = std::sync::Arc::new(vec![0]);
     assets.scripts.location_sectors = std::sync::Arc::new(vec![1]);
+    assets.scripts.location_sector_handles = std::sync::Arc::new(vec![
+        engine.get_entity(target).unwrap().element_data().sector(),
+    ]);
     engine
         .world
         .entities
@@ -892,6 +895,13 @@ fn periodic_phalanx_fixture(
     let selected = engine.orders.sequence_manager.launch_element(
         crate::sequence::SequenceElement::new_generic(1, command, Some(owner)),
     );
+    // The fixture installs this order directly, so consume its registration
+    // before marking it current, as the manager does before instruction.
+    engine
+        .orders
+        .sequence_manager
+        .take_deferred_owner_action(owner, selected, 0)
+        .unwrap();
     engine
         .orders
         .sequence_manager
@@ -984,8 +994,8 @@ fn periodic_phalanx_move_keeps_attentive_command_classification() {
 fn periodic_phalanx_already_on_point_does_not_register_a_move() {
     let (mut engine, assets, owner) =
         periodic_phalanx_fixture(575.0, crate::element::Command::Wait);
-    // Hold the arrival decision so the watchdog observes the already-on-point
-    // movement result independently of the subsequent face-and-raise sequence.
+    // Script lock discards the synchronous arrival decision so the watchdog
+    // observes the movement result before any face-and-raise sequence.
     engine
         .world
         .entities
@@ -1012,9 +1022,27 @@ fn periodic_phalanx_already_on_point_does_not_register_a_move() {
     );
     assert!(
         ai.base
-            .stimulus_queue
+            .ai_log
             .iter()
-            .any(|stimulus| stimulus.stimulus_type == crate::ai::StimulusType::EventReachPoint)
+            .any(|line| line.line_type == crate::ai::LogLineType::Event
+                && line.info == crate::ai::StimulusType::EventReachPoint as u16)
     );
-    assert_eq!(ai.base.stuck_counter, 3);
+    assert!(ai.base.stimulus_queue.is_empty());
+    assert!(
+        ai.base
+            .ai_log
+            .iter()
+            .any(|line| line.line_type == crate::ai::LogLineType::EventRefused && line.info == 2)
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched(owner, crate::element::Command::EnterAttentiveMode,),
+        "the state change still registers its attentive transition"
+    );
+    assert_eq!(
+        ai.base.stuck_counter, 0,
+        "the watchdog sees the pending attentive transition even though GoTo registers no Move"
+    );
 }

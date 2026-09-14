@@ -128,7 +128,9 @@ fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId, EntityId) {
     let target = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
     for id in [left, right, target] {
         let entity = engine.world.entities.get_mut(id).unwrap();
-        entity.element_data_mut().set_sector(Some(sector));
+        entity
+            .element_data_mut()
+            .set_sector_topology(Some(sector), sector.arena_index());
         entity
             .element_data_mut()
             .set_position_map(MapPoint::new(0.0, 0.0));
@@ -136,6 +138,7 @@ fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId, EntityId) {
         let npc = entity.npc_data_mut().unwrap();
         npc.life_points = 100;
         npc.view_radius = 1000;
+        entity.ai_controller_mut().unwrap().owner_entity_id = Some(id);
     }
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);

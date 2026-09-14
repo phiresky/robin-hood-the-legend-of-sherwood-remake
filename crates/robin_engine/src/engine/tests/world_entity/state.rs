@@ -1,4 +1,126 @@
 use super::*;
+use crate::element::Human as _;
+
+#[test]
+fn live_state_changes_preserve_formation_links_then_clear_both_reciprocals() {
+    use crate::ai::{AiEntityHandle, AiState, Substate};
+    let mut engine = EngineInner::new();
+    engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let left = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let right = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    {
+        let ai = engine
+            .get_entity_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap();
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingOverviewLookLeft;
+        ai.left_combat_neighbour = Some(AiEntityHandle::new(left.index()));
+        ai.right_combat_neighbour = Some(AiEntityHandle::new(right.index()));
+    }
+    engine
+        .get_entity_mut(left)
+        .and_then(Entity::enemy_ai_mut)
+        .unwrap()
+        .right_combat_neighbour = Some(AiEntityHandle::new(owner.index()));
+    engine
+        .get_entity_mut(right)
+        .and_then(Entity::enemy_ai_mut)
+        .unwrap()
+        .left_combat_neighbour = Some(AiEntityHandle::new(owner.index()));
+    let sim = crate::sim_rng::test_context();
+    engine.duty_set_state(
+        &sim,
+        &assets,
+        owner,
+        AiState::Attacking,
+        Substate::AttackingRunningToPhalanx,
+    );
+    let ai = engine.get_entity(owner).and_then(Entity::enemy_ai).unwrap();
+    assert_eq!(
+        ai.left_combat_neighbour,
+        Some(AiEntityHandle::new(left.index()))
+    );
+    assert_eq!(
+        ai.right_combat_neighbour,
+        Some(AiEntityHandle::new(right.index()))
+    );
+    engine.duty_set_state(
+        &sim,
+        &assets,
+        owner,
+        AiState::Attacking,
+        Substate::AttackingOverviewLookLeft,
+    );
+    let ai = engine.get_entity(owner).and_then(Entity::enemy_ai).unwrap();
+    assert_eq!(ai.left_combat_neighbour, None);
+    assert_eq!(ai.right_combat_neighbour, None);
+    assert_eq!(
+        engine
+            .get_entity(left)
+            .and_then(Entity::enemy_ai)
+            .unwrap()
+            .right_combat_neighbour,
+        None
+    );
+    assert_eq!(
+        engine
+            .get_entity(right)
+            .and_then(Entity::enemy_ai)
+            .unwrap()
+            .left_combat_neighbour,
+        None
+    );
+}
+
+#[test]
+fn live_state_change_releases_archery_ownership_without_clearing_special_strike() {
+    use crate::ai::{AiState, PointArchery, SectorArchery, Substate};
+    use crate::sector::{ArcheryPointIdx, SectorNumber};
+    let mut engine = EngineInner::new();
+    engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.ai.global.archery_sectors.push(SectorArchery {
+        points: vec![PointArchery {
+            position: Default::default(),
+            direction: 0,
+            is_shooting_point: true,
+            sector_index: SectorNumber::new(1),
+            owner: Some(owner),
+        }],
+        polygon: Vec::new(),
+        layer: 0,
+        index_first_shooting_point: Some(ArcheryPointIdx(0)),
+        index_last_shooting_point: Some(ArcheryPointIdx(0)),
+        num_shooting_points: 1,
+        num_owners: 1,
+    });
+    let ai = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .unwrap();
+    ai.my_shooting_point = Some((0, 0));
+    ai.my_archery_sector = Some(0);
+    ai.pending_special_strike = true;
+    engine.duty_set_state(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        AiState::Default,
+        Substate::DefaultOnPost,
+    );
+    let ai = engine.get_entity(owner).and_then(Entity::enemy_ai).unwrap();
+    assert_eq!(ai.my_shooting_point, None);
+    assert_eq!(ai.my_archery_sector, None);
+    assert!(ai.pending_special_strike);
+    assert_eq!(engine.ai.global.archery_sectors[0].points[0].owner, None);
+    assert_eq!(engine.ai.global.archery_sectors[0].num_owners, 0);
+}
 
 #[test]
 fn removal_revalidates_stimuli_detached_across_a_synchronous_boundary() {
@@ -263,84 +385,8 @@ fn zero_duration_resolution_completes_mytalk_at_current_boundary() {
 }
 
 #[test]
-fn set_state_halt_prefix_retains_detached_goto_until_engine_rejection() {
-    use crate::ai::{
-        AiActorOutbox, AiOwnerWork, AiState, AiStateChangeNotification, AiStateChangeSource,
-        Substate,
-    };
-    use crate::element::{AiBrain, Posture};
-    use crate::order::{AiOrderIntent, OrderType};
-
-    let sim = crate::sim_rng::test_context();
-    let assets = LevelAssets::new();
-    let mut engine = EngineInner::new();
-    engine.feedback.cutscene_camera.level_size = crate::coordinates::MapSize::new(100.0, 100.0);
-
-    let mut soldier_entity = make_test_soldier(Posture::Upright);
-    let Entity::Soldier(soldier) = &mut soldier_entity else {
-        unreachable!();
-    };
-    soldier.element.active = true;
-    soldier
-        .element
-        .set_position_map(crate::coordinates::MapPoint::new(90.0, 90.0));
-    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
-    let owner = engine.add_test_entity(soldier_entity);
-
-    {
-        let ai = engine
-            .get_entity_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("test soldier has Enemy AI");
-
-        // Seeking a point halts, changes state, then moves. The state change stores
-        // the Halt in its pre-callback prefix while the later movement remains in
-        // the caller tail until that prefix has settled.
-        let mut halt_prefix = AiActorOutbox::default();
-        halt_prefix.queue_halt();
-        ai.outbox
-            .reentrant
-            .owner_work
-            .push(AiOwnerWork::StateChange(AiStateChangeNotification {
-                outgoing_state: AiState::Seeking,
-                outgoing_substate: Substate::SeekingGroupGetInstructedByOfficer,
-                incoming_state: AiState::Seeking,
-                incoming_substate: Substate::SeekingSeekpoint,
-                source: AiStateChangeSource::SelfActor,
-                actor_effects_before_callback: Some(halt_prefix),
-            }));
-        ai.outbox
-            .actor
-            .orders
-            .push(AiOrderIntent::new(OrderType::RunningUpright, 100.0, 90.0));
-    }
-
-    engine.drain_ai_owner_work_for(&sim, &assets, owner);
-    {
-        let ai = engine
-            .get_entity(owner)
-            .and_then(Entity::ai_controller)
-            .expect("test soldier retains AI after state-change prefix");
-        assert_eq!(ai.outbox.actor.orders.len(), 1);
-        assert!(ai.outbox.reentrant.self_stimuli.is_empty());
-    }
-
-    // Route construction settles the failure before decision completion.
-    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
-    let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::ai_controller)
-        .expect("test soldier retains AI after rejected movement");
-    assert!(ai.couldnt_reachpoint);
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
-}
-
-#[test]
 fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo() {
-    use crate::ai::{
-        AiActorOutbox, AiOwnerWork, AiState, AiStateChangeNotification, AiStateChangeSource,
-        AttentiveModeEffect, Substate,
-    };
+    use crate::ai::{AiActorOutbox, AiOwnerWork, AiState, AttentiveModeEffect, Substate};
     use crate::element::{AiBrain, Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::SequenceState;
@@ -373,14 +419,20 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
         ai.outbox
             .reentrant
             .owner_work
-            .push(AiOwnerWork::StateChange(AiStateChangeNotification {
-                outgoing_state: AiState::Default,
-                outgoing_substate: Substate::DefaultGotoPost,
-                incoming_state: AiState::Default,
-                incoming_substate: Substate::DefaultGotoPostTurn,
-                source: AiStateChangeSource::SelfActor,
-                actor_effects_before_callback: Some(face_prefix),
-            }));
+            .push(AiOwnerWork::ActorEffects(face_prefix));
+    }
+    engine.duty_set_state(
+        &sim,
+        &assets,
+        owner,
+        AiState::Default,
+        Substate::DefaultGotoPostTurn,
+    );
+    {
+        let ai = engine
+            .get_entity_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap();
         ai.outbox
             .actor
             .queue_set_attentive_mode(AttentiveModeEffect::new(false, false));
@@ -505,13 +557,23 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
     enemy.base.current_state = AiState::Seeking;
     enemy.base.current_substate = Substate::SeekingSeekpoint;
     enemy.base.stop_all();
-    enemy.set_state(AiState::Attacking, Substate::AttackingReactiontime);
-    enemy.set_state(
+    let owner = engine.add_test_entity(soldier_entity);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine.duty_set_state(
+        &sim,
+        &assets,
+        owner,
+        AiState::Attacking,
+        Substate::AttackingReactiontime,
+    );
+    engine.duty_set_state(
+        &sim,
+        &assets,
+        owner,
         AiState::Attacking,
         Substate::AttackingTooProudToAttackApproach,
     );
-    let owner = engine.add_test_entity(soldier_entity);
-    complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
@@ -835,7 +897,7 @@ fn repeated_checkpoint_charly_drains_only_the_last_target() {
 }
 
 #[test]
-fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
+fn fighter_registry_keeps_inactive_and_tied_members_with_live_ineligibility() {
     use crate::element::Posture;
 
     let mut engine = EngineInner::new();
@@ -876,13 +938,17 @@ fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
     };
     other_soldier.element.publish_order_posture(Posture::Tied);
 
-    let fighters = engine.build_nearby_fighters_for(self_id, &assets);
-    assert_eq!(fighters.len(), 1);
-    assert_eq!(fighters[0].handle, self_id.index());
-    assert!(!fighters[0].is_able_to_fight);
-    assert!(!fighters[0].is_dead);
-    assert!(!fighters[0].is_unconscious);
-    assert!(!fighters[0].is_carried);
+    let registry = engine.world.fighter_registry_order();
+    assert!(registry.contains(&self_id));
+    assert!(registry.contains(&other_id));
+    for id in [self_id, other_id] {
+        let Entity::Soldier(soldier) = engine.get_entity(id).expect("registered fighter") else {
+            panic!("fighter changed kind")
+        };
+        assert!(!soldier.is_able_to_fight());
+        assert!(!engine.get_entity(id).unwrap().is_dead());
+        assert!(!soldier.human.unconscious);
+    }
 }
 
 #[test]
@@ -918,20 +984,15 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    let nearby = engine.build_nearby_fighters_for(self_id, &assets);
-    assert!(
-        !nearby
-            .iter()
-            .any(|fighter| fighter.handle == dead_pc_id.index())
-    );
-
-    let registry = engine.build_full_fighter_registry_for_test(self_id, &assets);
-    let dead_snapshot = registry
-        .iter()
-        .find(|fighter| fighter.handle == dead_pc_id.index())
-        .expect("Original fighter registry retains dead PC objects");
-    assert!(dead_snapshot.is_dead);
-    assert!(!dead_snapshot.is_able_to_fight);
+    assert!(engine.world.fighter_registry_order().contains(&dead_pc_id));
+    let entity = engine
+        .get_entity(dead_pc_id)
+        .expect("held dead fighter remains live");
+    assert!(entity.is_dead());
+    let Entity::Pc(pc) = entity else {
+        panic!("dead fighter changed kind")
+    };
+    assert!(!pc.is_able_to_fight());
 }
 
 #[test]
@@ -978,7 +1039,11 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
             .and_then(Entity::enemy_ai_mut)
             .expect("test soldier has Enemy AI");
         enemy.base.me = id.index();
-        enemy.set_state(AiState::Attacking, substate);
+        {
+            let ai = &mut enemy.base;
+            ai.set_ai_state(AiState::Attacking);
+            ai.current_substate = substate;
+        }
         enemy.base.primary_target = Some(crate::ai::AiEntityHandle::new(old_target_id.index()));
     }
     engine
@@ -996,31 +1061,11 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
-    let stale_friend = tick
-        .camp_soldiers
-        .iter()
-        .find(|friend| friend.handle == friend_id.index())
-        .expect("stale tick includes the admitted friend");
-    assert_eq!(
-        stale_friend.primary_target,
-        Some(crate::ai::AiEntityHandle::new(old_target_id.index()))
-    );
-    let captured_position = stale_friend.position;
-
     let friend = engine
         .get_entity_mut(friend_id)
         .and_then(Entity::enemy_ai_mut)
         .expect("friend has Enemy AI");
     friend.base.primary_target = Some(crate::ai::AiEntityHandle::new(new_target_id.index()));
-    // Geometry remains owner-boundary data even when the live entity moves
-    // after the tick snapshot was constructed.
-    engine
-        .get_entity_mut(friend_id)
-        .expect("friend exists")
-        .element_data_mut()
-        .set_position_map(MapPoint::new(900.0, 900.0));
-
     engine.dispatch_think_with_drain(
         &sim,
         owner_id,
@@ -1034,15 +1079,6 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         .and_then(Entity::enemy_ai)
         .expect("owner retains Enemy AI");
     assert!(owner.list_them.contains(&new_target_id.index()));
-    assert_eq!(
-        tick.camp_soldiers
-            .iter()
-            .find(|friend| friend.handle == friend_id.index())
-            .expect("original tick remains intact")
-            .position,
-        captured_position,
-        "live claim refresh must not replace captured geometry"
-    );
 }
 
 #[test]
@@ -1128,11 +1164,15 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
     officer_ai.will_be_attentive = true;
     officer_ai.base.current_state = AiState::Seeking;
     officer_ai.base.current_substate = Substate::SeekingOfficerCallSoldier;
-    engine
-        .get_entity_mut(soldier_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("call rejector has EnemyAi")
-        .set_state(AiState::Attacking, Substate::AttackingSwordfight);
+    {
+        let ai = &mut engine
+            .get_entity_mut(soldier_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("call rejector has EnemyAi")
+            .base;
+        ai.set_ai_state(AiState::Attacking);
+        ai.current_substate = Substate::AttackingSwordfight;
+    }
 
     assert_eq!(
         engine.execute_ai_officer_rendezvous_event(

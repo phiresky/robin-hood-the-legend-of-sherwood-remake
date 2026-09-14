@@ -812,6 +812,7 @@ impl NativeContext<'_, '_> {
                     sight_obstacles: sight_obstacle_list,
                     fast_grid: &self.fast_grid,
                     layer: npc_layer,
+                    target_dead: target_entity.is_dead(),
                     target_unconscious: tgt_unconscious,
                     target_passing_door: tgt_passing_door,
                 };

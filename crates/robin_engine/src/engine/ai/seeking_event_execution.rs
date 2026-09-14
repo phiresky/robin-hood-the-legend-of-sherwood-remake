@@ -394,12 +394,12 @@ impl EngineInner {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::ai::{AiEntityHandle, AlertLevel, PathId, PatrolPath};
     use crate::coordinates::{MapPoint, WorldPoint3D};
 
-    fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId) {
+    pub(in crate::engine::ai) fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId) {
         let mut engine = EngineInner::new();
         engine.control.frame_counter = 100;
         engine.world.fast_grid_mut().size_map(128, 128);
@@ -560,13 +560,19 @@ mod tests {
             ),
             Some(false)
         );
-        let (_, _, order) = engine
+        let turn = engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
-            .expect("chief facing order");
-        assert_eq!(order.order_type, crate::order::OrderType::Turning);
-        assert_eq!(order.explicit_direction, Some(5));
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .find(|element| {
+                element.owner == Some(owner) && element.command == crate::element::Command::Turn
+            })
+            .expect("registered chief facing turn");
+        assert!(matches!(
+            turn.get_property(crate::sequence::Field::Direction),
+            Some(crate::sequence::FieldValue::Integer(5))
+        ));
         assert_eq!(
             engine.seek_enemy(owner).base.current_substate,
             Substate::DefaultPatrolEnrouteWaiting
@@ -656,15 +662,21 @@ mod tests {
         let ai = engine.seek_enemy(owner);
         assert_eq!(ai.base.current_substate, Substate::SeekingSeekpointWatching);
         assert_eq!(ai.seek_point_view_directions.len(), 1);
-        let (_, _, order) = engine
+        let turn = engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
-            .expect("first search facing");
-        let mut directions = vec![
-            order.explicit_direction.unwrap() as u16,
-            ai.seek_point_view_directions[0],
-        ];
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .find(|element| {
+                element.owner == Some(owner) && element.command == crate::element::Command::Turn
+            })
+            .expect("registered first search facing turn");
+        let Some(crate::sequence::FieldValue::Integer(direction)) =
+            turn.get_property(crate::sequence::Field::Direction)
+        else {
+            panic!("search turn requires authored direction")
+        };
+        let mut directions = vec![*direction as u16, ai.seek_point_view_directions[0]];
         directions.sort_unstable();
         assert_eq!(directions, vec![2, 4]);
         assert_eq!(

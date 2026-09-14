@@ -411,10 +411,7 @@ mod tests {
         element.set_layer(2);
         element.set_sector(crate::position_interface::SectorHandle::new(88));
 
-        let position = super::super::build_entity_views(&engine)
-            .get(&target.index())
-            .expect("target requires live AI view")
-            .position;
+        let position = engine.live_ai_position(target);
         assert_eq!(
             position.sector.and_then(|sector| sector.arena_index()),
             SectorIndex::new(exact)

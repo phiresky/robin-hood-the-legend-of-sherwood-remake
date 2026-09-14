@@ -3163,19 +3163,7 @@ impl EngineInner {
                 }
             }
 
-            let release = enemy.base.outbox.actor.take_archery_reservation_release();
-            let mut shooting_points = Vec::new();
-            for shooting_point in [
-                enemy.my_shooting_point.take().map(Into::into),
-                release.shooting_point,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                if !shooting_points.contains(&shooting_point) {
-                    shooting_points.push(shooting_point);
-                }
-            }
+            let shooting_points = enemy.my_shooting_point.take();
 
             let archery_sector = enemy.my_archery_sector.take();
             // Entering the sleeping-forever enemy state leaves every
@@ -3254,10 +3242,6 @@ impl EngineInner {
                     _ => {}
                 }
             }
-            debug_assert!(
-                !release.release_sector || archery_sector.is_some(),
-                "queued archery-sector release has no owned sector on death"
-            );
 
             (
                 guarded_pcs,
@@ -3335,29 +3319,26 @@ impl EngineInner {
             }
         }
 
-        for shooting_point in shooting_points {
+        for (sector_index, point_index) in shooting_points.into_iter() {
             let Some(sector) = self
                 .ai
                 .global
                 .archery_sectors
-                .get_mut(shooting_point.sector_index as usize)
+                .get_mut(sector_index as usize)
             else {
                 tracing::warn!(
                     ?victim_id,
-                    sector = shooting_point.sector_index,
-                    point = usize::from(shooting_point.point_index),
+                    sector = sector_index,
+                    point = usize::from(point_index),
                     "dead soldier's shooting-point sector no longer exists"
                 );
                 continue;
             };
-            let Some(point) = sector
-                .points
-                .get_mut(usize::from(shooting_point.point_index))
-            else {
+            let Some(point) = sector.points.get_mut(usize::from(point_index)) else {
                 tracing::warn!(
                     ?victim_id,
-                    sector = shooting_point.sector_index,
-                    point = usize::from(shooting_point.point_index),
+                    sector = sector_index,
+                    point = usize::from(point_index),
                     "dead soldier's shooting point no longer exists"
                 );
                 continue;
@@ -3368,8 +3349,8 @@ impl EngineInner {
                 tracing::warn!(
                     ?victim_id,
                     ?owner,
-                    sector = shooting_point.sector_index,
-                    point = usize::from(shooting_point.point_index),
+                    sector = sector_index,
+                    point = usize::from(point_index),
                     "dead soldier's shooting point is owned by another entity"
                 );
             }

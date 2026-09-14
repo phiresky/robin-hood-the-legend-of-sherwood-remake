@@ -1416,8 +1416,7 @@ impl EngineInner {
     /// PCs hit the campaign-side PcStatus; NPC soldiers
     /// saturate-decrement `npc.number_of_arrows` so the
     /// `FleeingRunForArrowReserves` refill loop has a chance to trigger
-    /// (the AI gates on `ctx.remaining_arrows > 0` and
-    /// `pending_refill_bow_ammo` restocks).
+    /// when the live arrow count reaches zero.
     fn decrement_bow_ammo(&mut self, assets: &LevelAssets, shooter_id: EntityId) {
         // Soldier branch — saturating sub on the live NPC field.
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(shooter_id) {

@@ -415,16 +415,8 @@ fn special_strike_cancellation_closes_its_set_state_callback_boundary() {
     let mut engine = make_engine();
     let (attacker, _) = make_enemy_strike_pair(&mut engine, false);
     let assets = assets_with_sword_profile(7, 30);
-    {
-        let ai = engine
-            .get_entity_mut(attacker)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap();
-        ai.begin_special_strike();
-        ai.base.outbox.reentrant.owner_work.clear();
-    }
-
     engine.with_simulation_context(|engine, sim| {
+        engine.begin_ai_special_strike(sim, &assets, attacker);
         engine.tick_enemy_sword_attacks(sim, &assets);
     });
 

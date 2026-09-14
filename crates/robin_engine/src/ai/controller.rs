@@ -1,14 +1,5 @@
 use super::*;
 
-fn panic_debug_matches(frame: u32) -> bool {
-    use crate::engine::diagnostics::ParityGate;
-    static GATE: std::sync::OnceLock<ParityGate<1>> = std::sync::OnceLock::new();
-    let gate = GATE.get_or_init(|| {
-        ParityGate::from_env("PARITY_DEBUG_AI_PANIC", ["PARITY_DEBUG_AI_PANIC_FRAME"])
-    });
-    gate.enabled() && gate.matches_required([Some(frame)])
-}
-
 #[derive(Debug)]
 struct BoredBoundaryDebugConfig {
     gate: crate::engine::diagnostics::ParityGate<1>,
@@ -49,13 +40,6 @@ impl BoredBoundaryDebugConfig {
             && self.owner_from.is_none_or(|from| owner >= from)
             && self.owner_through.is_none_or(|through| owner <= through)
     }
-}
-
-fn point_to_debug_enabled() -> bool {
-    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<0>> =
-        std::sync::OnceLock::new();
-    GATE.get_or_init(|| crate::ai::parity_gate::switch_gate("PARITY_DEBUG_POINT_TO"))
-        .enabled()
 }
 
 fn consider_report_debug_config() -> &'static crate::engine::diagnostics::ParityGate<2> {
@@ -936,13 +920,6 @@ impl AiController {
 
     // -- Bored time --
 
-    /// Returns the time until this NPC gets bored and does something.
-    /// Officers and high-pride soldiers use longer intervals; everyone
-    /// else uses the short default.
-    pub fn get_bored_time(&self, sim: &crate::sim_rng::SimulationContext, ctx: &AiContext) -> u16 {
-        self.get_bored_time_for(sim, ctx.frame, ctx.self_rank, ctx.self_pride)
-    }
-
     pub(crate) fn get_bored_time_for(
         &self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1055,12 +1032,7 @@ impl AiController {
                 action,
                 CrossNpcAction::SendStimulus { .. }
                     | CrossNpcAction::RegisterSynchronizingActor { .. }
-                    | CrossNpcAction::RequestAlert { .. }
-                    | CrossNpcAction::RequestThinkResult { .. }
-                    | CrossNpcAction::ReportBackToOfficer { .. }
                     | CrossNpcAction::ConsiderReport { .. }
-                    | CrossNpcAction::BroadcastLookThere { .. }
-                    | CrossNpcAction::ResumeAfterLookThere { .. }
                     | CrossNpcAction::UpdateLeftCombatNeighbour { .. }
                     | CrossNpcAction::UpdateRightCombatNeighbour { .. }
                     | CrossNpcAction::SetLeftCombatNeighbour { .. }
@@ -1088,12 +1060,7 @@ impl AiController {
                     action,
                     CrossNpcAction::SendStimulus { .. }
                         | CrossNpcAction::RegisterSynchronizingActor { .. }
-                        | CrossNpcAction::RequestAlert { .. }
-                        | CrossNpcAction::RequestThinkResult { .. }
-                        | CrossNpcAction::ReportBackToOfficer { .. }
                         | CrossNpcAction::ConsiderReport { .. }
-                        | CrossNpcAction::BroadcastLookThere { .. }
-                        | CrossNpcAction::ResumeAfterLookThere { .. }
                         | CrossNpcAction::UpdateLeftCombatNeighbour { .. }
                         | CrossNpcAction::UpdateRightCombatNeighbour { .. }
                         | CrossNpcAction::SetLeftCombatNeighbour { .. }
@@ -1103,39 +1070,6 @@ impl AiController {
                         | CrossNpcAction::Say { .. }
                 )
             })
-    }
-
-    /// Drain only result-bearing officer reports, leaving ordinary deferred
-    /// cross-NPC actions queued for the end-of-frame batch.
-    pub fn take_pending_officer_reports(&mut self) -> Vec<CrossNpcAction> {
-        let mut reports = Vec::new();
-        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
-        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
-            if matches!(action, CrossNpcAction::ReportBackToOfficer { .. }) {
-                reports.push(action);
-            } else {
-                deferred.push(action);
-            }
-        }
-        self.outbox.reentrant.cross_npc_actions = deferred;
-        reports
-    }
-
-    /// Drain result-bearing `CALL_ALERT` requests while leaving ordinary
-    /// cross-NPC work queued. These calls must close before the sender's
-    /// handler continuation, matching direct original-game handler re-entry.
-    pub fn take_pending_alert_requests(&mut self) -> Vec<CrossNpcAction> {
-        let mut requests = Vec::new();
-        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
-        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
-            if matches!(action, CrossNpcAction::RequestAlert { .. }) {
-                requests.push(action);
-            } else {
-                deferred.push(action);
-            }
-        }
-        self.outbox.reentrant.cross_npc_actions = deferred;
-        requests
     }
 
     /// Drain direct recipient `Think` calls while leaving non-stimulus
@@ -1207,15 +1141,6 @@ impl AiController {
 
     // -- Break macro --
 
-    pub(crate) fn debug_macro_lifecycle(
-        &self,
-        ctx: &AiContext,
-        phase: &str,
-        reason: impl std::fmt::Debug,
-    ) {
-        self.debug_macro_lifecycle_at(ctx.frame, ctx.original_creation_order, phase, reason);
-    }
-
     pub(crate) fn debug_macro_lifecycle_at(
         &self,
         frame: u32,
@@ -1246,18 +1171,6 @@ impl AiController {
             reason: &(reason),
         }
         .emit();
-    }
-
-    pub(crate) fn break_macro_debug(&mut self, ctx: &AiContext, reason: &str) {
-        self.debug_macro_lifecycle(ctx, "break_before", reason);
-        self.break_macro();
-        self.debug_macro_lifecycle(ctx, "break_after", reason);
-    }
-
-    pub(crate) fn finish_patrol_macro_debug(&mut self, ctx: &AiContext, reason: &str) {
-        self.debug_macro_lifecycle(ctx, "finish_before", reason);
-        self.finish_patrol_macro();
-        self.debug_macro_lifecycle(ctx, "finish_after", reason);
     }
 
     pub fn break_macro(&mut self) {
@@ -1663,7 +1576,7 @@ impl AiController {
     /// The per-minion call iterates `patrol` and writes
     /// `patrol_direction` on each minion; if the minion is in
     /// default patrol en-route waiting, it also faces the requested direction
-    /// on the minion. Each minion call needs an `AiContext` which the
+    /// on the minion. Each minion call needs live actor access which the
     /// chief's `AiController` doesn't have access to, so the directive is
     /// handed to the engine-facing owner drain that runs before the macro
     /// call returns.
@@ -1717,15 +1630,14 @@ impl AiController {
     ///     bytes...                        (the opcode stream)
     /// ```
     ///
-    /// Returns `true` if a macro was launched (execution proceeded),
+    /// Returns `true` if a macro stream was prepared for execution,
     /// `false` if the waypoint should be skipped via
-    /// `proceed_on_path` (no matching direction block, or all
+    /// path continuation (no matching direction block, or all
     /// probability weights fell below the roll).
-    pub fn launch_waypoint_macro(
+    pub(crate) fn prepare_waypoint_macro(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         macro_data: &[u8],
-        ctx: &AiContext,
     ) -> bool {
         tracing::trace!(
             me = self.me,
@@ -1881,28 +1793,10 @@ impl AiController {
             .map(|path| (path.hiking_path_index, path.current_waypoint_index));
         self.number_of_remaining_macro_bytes = macro_byte_count;
 
-        // Start the macro machine.
-        self.debug_macro_lifecycle(ctx, "start_before", "launch_waypoint_macro");
-        self.set_ai_state(AiState::Default);
-        self.current_substate = Substate::DefaultInMacro;
-        self.macro_started_in_this_frame = true;
-        self.debug_macro_lifecycle(ctx, "start_armed", "launch_waypoint_macro");
-        self.execute_next_macro_command(sim, ctx);
-        self.debug_macro_lifecycle(ctx, "start_return", "launch_waypoint_macro");
         true
     }
 
     // -- Macro VM --
-
-    /// Request execution at the engine boundary, where nested callbacks can
-    /// finish before the following opcode or macro tail.
-    pub fn execute_next_macro_command(
-        &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
-        _ctx: &AiContext,
-    ) {
-        self.outbox.reentrant.owner_work.push(AiOwnerWork::RunMacro);
-    }
 
     /// Apply the tail of Original's completed patrol macro without erasing a
     /// deadline written by a synchronous nested reach-point handler.
@@ -2084,147 +1978,6 @@ impl AiController {
         }
     }
 
-    /// Number of synchronously requested original-game halts waiting anywhere in the
-    /// owner-local effect FIFO. State changes move the current actor prefix into
-    /// a state-change notification, so checking only the live actor outbox
-    /// misses halts issued earlier in the same Think call.
-    fn pending_actor_halt_count(&self) -> u16 {
-        let count = |effects: &crate::ai::effects::AiActorOutbox| {
-            u16::from(effects.halt) + u16::from(effects.additional_halts)
-        };
-        count(&self.outbox.actor)
-            + self
-                .outbox
-                .reentrant
-                .owner_work
-                .iter()
-                .map(|work| match work {
-                    AiOwnerWork::StateChange(notification) => notification
-                        .actor_effects_before_callback
-                        .as_ref()
-                        .map_or(0, count),
-                    AiOwnerWork::ActorEffects(effects) => count(effects),
-                    _ => 0,
-                })
-                .sum::<u16>()
-    }
-
-    /// Predict whether deferred synchronous `Halt()` calls leave the actor in
-    /// one of the original game's three accepted idle animations for movement.
-    ///
-    /// Stopping movement retains exactly three base
-    /// movement actions by rewriting them to their transition-to-wait twins.
-    /// An already-installed upright transition is not one of those switch
-    /// cases: it falls through to `RHSEQ_INTERRUPTED`, and the actor's
-    /// synchronous condolence installs its upright default Wait before the
-    /// following original-game movement reads the animation. A crouched transition
-    /// instead resolves to a crouched Wait, which is not accepted by movement's
-    /// idle switch. Every other interruptible upright action likewise exposes
-    /// `WAITING_UPRIGHT`, `WAITING_ALERTED`, or `NONANIMATION_END`. A second
-    /// Halt interrupts any transition installed by the first.
-    pub(crate) fn pending_halt_exposes_goto_idle(&self, ctx: &AiContext) -> bool {
-        let halt_count = self.pending_actor_halt_count();
-        if halt_count == 0
-            || ctx.posture != crate::element::Posture::Upright
-            || ctx.in_uninterruptible_command
-        {
-            return false;
-        }
-        let selected_element_is_default_wait = ctx
-            .self_selected_element_is_default_wait
-            .unwrap_or_else(|| {
-                panic!(
-                    "pending Halt projection for AI {} requires selected default-Wait identity",
-                    self.me
-                )
-            });
-        if selected_element_is_default_wait {
-            return false;
-        }
-        let selected_priority = ctx.self_selected_element_priority.unwrap_or_else(|| {
-            panic!(
-                "pending Halt projection for AI {} requires selected element priority",
-                self.me
-            )
-        });
-        let Some(selected_priority) = selected_priority else {
-            // Original-game actor stopping does nothing when the selected sequence element is
-            // null, so the Halt cannot expose an idle animation.
-            return false;
-        };
-        assert!(
-            !matches!(
-                selected_priority,
-                crate::sequence::SequencePriority::None
-                    | crate::sequence::SequencePriority::NotYetSet
-            ),
-            "selected element for AI {} has unresolved priority {selected_priority:?}",
-            self.me
-        );
-        if selected_priority < crate::sequence::SequencePriority::Preference {
-            // Stop(PREFERENCE) cannot interrupt Injury, Script, lethal, KO,
-            // or the still stronger priorities. Their live animation remains
-            // visible to the following original-game movement request.
-            return false;
-        }
-        if halt_count >= 2 {
-            return true;
-        }
-        !matches!(
-            ctx.self_animation,
-            crate::order::OrderType::WalkingUpright
-                | crate::order::OrderType::RunningUpright
-                | crate::order::OrderType::WalkingCrouched
-                | crate::order::OrderType::TransitionWalkingCrouchedWaitingCrouched
-        )
-    }
-
-    /// Queue movement using the owner values available at this call boundary.
-    pub fn go_to(&mut self, destination: Position, flags: GotoFlags, ctx: &AiContext) {
-        self.request_move(
-            destination,
-            flags,
-            1.0,
-            ctx.position,
-            ctx.self_layer,
-            ctx.position.sector,
-            ctx.self_animation,
-            ctx.self_action_state,
-            !ctx.self_is_soldier,
-            ctx.think_depth,
-        );
-    }
-
-    /// Shared movement setup. Engine-owned callers pass live actor values after
-    /// completing preceding state and movement callbacks.
-    pub(crate) fn request_move(
-        &mut self,
-        destination: Position,
-        flags: GotoFlags,
-        speed: f32,
-        position: Position,
-        layer: u16,
-        sector: Option<crate::position_interface::SectorHandle>,
-        animation: crate::order::OrderType,
-        action_state: crate::element::ActionState,
-        civilian: bool,
-        depth: u8,
-    ) {
-        self.begin_move_request(destination, flags);
-        if let Some(flags) = self.prepare_move_request(
-            destination,
-            flags,
-            position,
-            layer,
-            sector,
-            animation,
-            civilian,
-            depth,
-        ) {
-            self.queue_prepared_move(destination, flags, speed, action_state);
-        }
-    }
-
     pub(crate) fn begin_move_request(&mut self, destination: Position, flags: GotoFlags) {
         self.last_goto_destination = destination;
         self.last_goto_flags = flags;
@@ -2383,57 +2136,11 @@ impl AiController {
         }
     }
 
-    pub fn go_to_speed(
-        &mut self,
-        destination: Position,
-        flags: GotoFlags,
-        speed: f32,
-        ctx: &AiContext,
-    ) {
-        self.request_move(
-            destination,
-            flags,
-            speed,
-            ctx.position,
-            ctx.self_layer,
-            ctx.position.sector,
-            ctx.self_animation,
-            ctx.self_action_state,
-            !ctx.self_is_soldier,
-            ctx.think_depth,
-        );
-    }
-
     /// Queue the direct map-exit movement used by
     /// `SUBSTATE_FLEEING_MERRY_MAN_RUN_TO_LEAVE_MAP` after the NPC
     /// reaches the reinforcement door. The original game launches a
     /// a movement sequence element using the running-upright animation,
     /// output point, no target, zero radius, map movement) rather than regular movement.
-    pub fn run_to_map_exit(&mut self, destination: Position) {
-        self.last_goto_destination = destination;
-        self.last_goto_flags = GotoFlags::RUN;
-        self.couldnt_reachpoint = false;
-
-        let mut order = Self::make_move_order(&destination, GotoFlags::RUN);
-        // This is deliberately a local map-movement element, not the full
-        // full-position movement path.
-        order.target_sector = None;
-        order.target_layer = None;
-        order.move_flags |= crate::sequence::MoveFlags::MAP.bits() as u16;
-        self.outbox.actor.orders.push(order);
-    }
-
-    /// Set approach tolerance, then run ordinary movement with the near flag.
-    pub fn go_near(
-        &mut self,
-        destination: Position,
-        distance: i32,
-        flags: GotoFlags,
-        ctx: &AiContext,
-    ) {
-        self.prepare_approach(distance, flags, ctx.think_depth);
-        self.go_to(destination, flags | GotoFlags::NEAR, ctx);
-    }
 
     pub(crate) fn prepare_approach(&mut self, distance: i32, flags: GotoFlags, depth: u8) {
         let effective_distance = if depth < 10 {
@@ -2447,229 +2154,6 @@ impl AiController {
     }
 
     // -- Facing commands --
-
-    /// Turn to face a position, without an `AiContext` available.
-    ///
-    /// Queues a plain Turn order; does not honour the same-frame
-    /// `already_turned` short-circuit (no access to the current
-    /// direction / action state). Prefer [`Self::face_position_with_ctx`]
-    /// at call sites that have a ctx.
-    pub fn face_position(&mut self, pos: Position) {
-        let mut intent = AiOrderIntent::face_toward(pos.x, pos.y);
-        intent.after_attentive_mode = self.outbox.actor.has_pending_attentive_mode();
-        self.outbox.actor.orders.push(intent);
-    }
-
-    /// Internal helper — all `face_*_with_ctx` / `face_entity[_fast]`
-    /// variants funnel through this so the short-circuit and elevation
-    /// handling live in exactly one place.
-    ///
-    /// - `elevation_delta`: `target_elevation - ctx.elevation`. Pass
-    ///   `0.0` for 2D-only faces. The target's elevation shifts the
-    ///   effective dy before the aspect-ratio scale.
-    pub(super) fn face_position_impl(
-        &mut self,
-        pos: Position,
-        ctx: &AiContext,
-        elevation_delta: f32,
-        fast: bool,
-    ) {
-        self.face_point_impl(pos.x, pos.y, ctx, elevation_delta, fast);
-    }
-
-    /// Coordinate-only facing tail for stimuli whose original-game position
-    /// deliberately has no sector/layer pointer. Keeping this separate avoids
-    /// manufacturing a ground-layer [`Position`] merely to reuse the vector
-    /// arithmetic.
-    fn face_point_impl(
-        &mut self,
-        x: f32,
-        y: f32,
-        ctx: &AiContext,
-        elevation_delta: f32,
-        fast: bool,
-    ) {
-        let dx = x - ctx.position.x;
-        let dy = (y - ctx.position.y) + elevation_delta;
-        let target_dir = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
-        tracing::trace!(
-            me = self.me,
-            target_dir,
-            current_dir = ctx.direction,
-            elevation_delta,
-            "face_position_impl"
-        );
-        self.face_to_sector(target_dir, ctx, fast);
-    }
-
-    /// Direction-facing behavior is the shared tail every facing action
-    /// overload reaches once it has resolved a 16-sector direction.
-    pub(super) fn face_to_sector(&mut self, target_dir: i16, ctx: &AiContext, fast: bool) {
-        // Original-game facing only short-circuits same-direction turns while
-        // WAITING or BORED. Other action states still launch Turn so
-        // Halt() semantics are preserved.
-        let may_short_circuit = Self::face_to_same_direction_can_short_circuit(ctx);
-        tracing::trace!(
-            me = self.me,
-            target_dir,
-            current_dir = ctx.direction,
-            ?ctx.posture,
-            ctx.is_swordfighting,
-            ?ctx.self_action_state,
-            may_short_circuit,
-            already_matches = (target_dir as u16 == ctx.direction),
-            "face_to_sector"
-        );
-        if target_dir as u16 == ctx.direction && may_short_circuit {
-            self.already_turned = true;
-            return;
-        }
-        let mut intent = AiOrderIntent::face_direction(target_dir);
-        intent.after_attentive_mode = self.outbox.actor.has_pending_attentive_mode();
-        intent.fast_turn = fast;
-        self.outbox.actor.orders.push(intent);
-    }
-
-    /// Turn to face a position (2D — no elevation adjustment). Honours
-    /// the `already_turned` same-frame short-circuit.
-    pub fn face_position_with_ctx(&mut self, pos: Position, ctx: &AiContext) {
-        self.face_position_impl(pos, ctx, 0.0, false);
-    }
-
-    /// Turn quickly to face a 2D position (`Face(position, true)`).
-    pub fn face_position_fast_with_ctx(&mut self, pos: Position, ctx: &AiContext) {
-        self.face_position_impl(pos, ctx, 0.0, true);
-    }
-
-    /// Face a stored position through the original game's 3D conversion
-    /// projection. Unlike the explicitly 2D overload above, this preserves
-    /// the target sector/layer elevation in world-horizontal Y before
-    /// selecting the isometric direction.
-    ///
-    /// Position-facing behavior uses two *different* origins. The
-    /// missing-elevation branch subtracts the actor's raw 3D
-    /// point, the location's 3D position minus the actor position, while the
-    /// explicit-elevation branch subtracts the actor's body point. Those
-    /// disagree whenever the actor's AI position is
-    /// overridden — most visibly during a door pass, where the AI-facing
-    /// position snaps to the committed gate side while the sprite is still
-    /// interpolating along the rail (see `engine/ai/mod.rs`'s `self_position`).
-    /// Subtract the body point here, not `ctx.position`.
-    pub fn face_position_3d_with_ctx(&mut self, pos: Position, ctx: &AiContext) {
-        let target = ctx.position_to_point_3d(pos);
-        let body = ctx.self_body_position_world;
-        let target_dir = crate::position_interface::vector_to_sector_0_to_15_iso(
-            target.x - body.x,
-            target.y - body.y,
-        );
-        self.face_to_sector(target_dir, ctx, false);
-    }
-
-    /// Face a position whose authoritative elevation travels separately.
-    ///
-    /// A noise record stores both an origin and elevation. The original game can
-    /// normally recover the same height through the origin sector when it
-    /// performs full-position facing, but replay-normalized positions do not retain
-    /// that pointer identity. Use the recorded elevation instead of treating
-    /// a sector-less noise position as ground level.
-    pub fn face_position_at_elevation_with_ctx(
-        &mut self,
-        pos: Position,
-        elevation: f32,
-        ctx: &AiContext,
-    ) {
-        self.face_position_impl(pos, ctx, elevation - ctx.elevation, false);
-    }
-
-    /// Face a noise origin, retaining original-game sector projection when
-    /// that identity survived and using the noise elevation
-    /// for a replay-normalized position without exact sector identity.
-    ///
-    /// The original game faces the noise origin, whose 3D conversion
-    /// recovers height through the origin sector. A schema trace cannot
-    /// reconstruct that pointer for every transient noise, but it records the
-    /// same noise elevation separately. A valid layer tells those normalized
-    /// positions apart from an authoritative missing position: the original game
-    /// AI conversion to a 3D point treats a missing sector as
-    /// ground level regardless of the separately stored noise elevation
-    /// during projectile handling. Projectile impact positions
-    /// retain the `0xffff` layer sentinel when their sector really was null.
-    pub fn face_noise_origin_with_ctx(&mut self, noise: &Noise, ctx: &AiContext) {
-        if noise
-            .origin
-            .sector
-            .is_some_and(|sector| sector.arena_index().is_some())
-        {
-            self.face_position_3d_with_ctx(
-                noise.origin.position().unwrap_or_else(|| {
-                    panic!("sector-attached noise origin has no required layer")
-                }),
-                ctx,
-            );
-        } else if noise.origin.layer.is_none() {
-            // A genuinely missing original-game position is projected onto the
-            // ground plane and measured from the actor's raw 3D body point.
-            // This is distinct from a replay-normalized sector-less position,
-            // whose separately recorded elevation remains authoritative.
-            let body = ctx.self_body_position_world;
-            let target_dir = crate::position_interface::vector_to_sector_0_to_15_iso(
-                noise.origin.x - body.x,
-                noise.origin.y - body.y,
-            );
-            self.face_to_sector(target_dir, ctx, false);
-        } else {
-            let elevation_delta = noise
-                .origin
-                .layer
-                .map_or(0.0, |_| f32::from(noise.elevation) - ctx.elevation);
-            self.face_point_impl(noise.origin.x, noise.origin.y, ctx, elevation_delta, false);
-        }
-    }
-
-    /// Turn to face another entity. Feeds the target's elevation into
-    /// the 2D projection so the face accounts for height differences.
-    ///
-    /// Silently drops if the handle is `0` or the entity is no longer
-    /// present in the snapshot.
-    pub fn face_entity(&mut self, handle: impl IntoOptionalAiHandle, ctx: &AiContext) {
-        let Some(view) = ctx.entity_view(handle) else {
-            return;
-        };
-        // The inline original-game path forwards
-        // the element's narrowed elevation to position-based facing.
-        // Preserve that truncation before subtracting the viewer elevation;
-        // fractional projection-plane Z can move a boundary vector into the
-        // adjacent 16-sector direction.
-        let elevation_delta = (view.elevation as i16) as f32 - ctx.elevation;
-        let target_pos = view.position;
-        self.face_position_impl(target_pos, ctx, elevation_delta, false);
-    }
-
-    /// Turn quickly to face another entity (`Face(element, true)`).
-    pub fn face_entity_fast(&mut self, handle: impl IntoOptionalAiHandle, ctx: &AiContext) {
-        let Some(view) = ctx.entity_view(handle) else {
-            return;
-        };
-        let elevation_delta = (view.elevation as i16) as f32 - ctx.elevation;
-        self.face_position_impl(view.position, ctx, elevation_delta, true);
-    }
-
-    /// Match direct original-game direction selection toward an entity:
-    /// update only the progressive direction goal and do not launch a Turn
-    /// sequence. The currently selected animation may perform the turn itself.
-    pub fn set_direction_toward_entity(
-        &mut self,
-        handle: impl IntoOptionalAiHandle,
-        ctx: &AiContext,
-    ) {
-        let Some(view) = ctx.entity_view(handle) else {
-            return;
-        };
-        let dx = view.position.x - ctx.position.x;
-        let dy = view.position.y - ctx.position.y;
-        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
-        self.set_direction_goal(direction as u16);
-    }
 
     /// Match direct original-game direction selection.
     ///
@@ -2701,16 +2185,6 @@ impl AiController {
             .push(stimulus_type.into());
     }
 
-    /// Turn to face a direction (0–15 sector).
-    ///
-    /// Honours the same-direction short-circuit: if the actor is
-    /// already facing the requested sector **and** WAITING or BORED,
-    /// set `already_turned` so `end_think` fires a same-frame
-    /// `EVENT_DONE` re-entry instead of queuing a no-op Turn order.
-    pub fn face_direction(&mut self, direction: u16, ctx: &AiContext) {
-        self.face_direction_from_actor(direction, ctx.direction, ctx.self_action_state);
-    }
-
     pub(crate) fn face_direction_from_actor(
         &mut self,
         direction: u16,
@@ -2737,13 +2211,6 @@ impl AiController {
             .actor
             .orders
             .push(AiOrderIntent::face_direction(direction as i16));
-    }
-
-    fn face_to_same_direction_can_short_circuit(ctx: &AiContext) -> bool {
-        matches!(
-            ctx.self_action_state,
-            crate::element::ActionState::Waiting | crate::element::ActionState::Bored
-        )
     }
 
     // -- Speech commands --
@@ -2775,43 +2242,6 @@ impl AiController {
     }
 
     // -- Pointing command --
-
-    /// Point at a position (animation command).
-    ///
-    /// Queues two sequence elements back-to-back — TURN then POINT —
-    /// so the actor first finishes the turn and only then plays the
-    /// pointing animation. The order-drain / animation layer runs
-    /// them in order.
-    ///
-    /// This does not bias head tracking toward the point, matching the
-    /// original game's behavior.
-    pub fn point_to(&mut self, pos: Position, ctx: &AiContext) {
-        let owner = self
-            .owner_entity_id
-            .expect("pointing requires an AI controller bound to an owner");
-        // The actor-to-target vector uses target position minus actor position
-        // during facing. The origin is the raw element
-        // body point, not the AI position that snaps to a gate
-        // endpoint during a door pass.
-        let target = ctx.position_to_point_3d(pos);
-        let me = ctx.self_body_position_world;
-        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
-            target.x - me.x,
-            target.y - me.y,
-        );
-        if point_to_debug_enabled() {
-            crate::ai::parity_trace::PointTo {
-                frame: &(ctx.frame),
-                owner: &(owner),
-                pos: &(pos),
-                target: &(target),
-                me: &(me),
-                direction: &(direction),
-            }
-            .emit();
-        }
-        self.point_direction(direction);
-    }
 
     pub(crate) fn point_direction(&mut self, direction: i16) {
         use crate::element::Command;
@@ -2901,22 +2331,6 @@ impl AiController {
         hiking_paths: &[crate::level_data::RawHikingPath],
     ) -> bool {
         self.will_stop_at_next_waypoint_inner(sim, hiking_paths)
-    }
-
-    pub(crate) fn will_stop_at_next_waypoint_debug(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        hiking_paths: &[crate::level_data::RawHikingPath],
-        ctx: &AiContext,
-        caller: WillStopCaller,
-    ) -> bool {
-        self.will_stop_at_next_waypoint_at(
-            sim,
-            hiking_paths,
-            ctx.frame,
-            ctx.original_creation_order,
-            caller,
-        )
     }
 
     pub(crate) fn will_stop_at_next_waypoint_at(
@@ -3120,130 +2534,6 @@ impl AiController {
         }
     }
 
-    // -- Common expected event handling --
-
-    /// Handle expected events common to both soldiers and civilians.
-    /// Handles default patrol, waypoint processing, macro execution,
-    /// and fleeing behavior.
-    pub fn think_expected_event_common_stuff(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        stimulus: &Stimulus,
-        ctx: &AiContext,
-    ) -> AiFlow<bool> {
-        let stimulus_type = stimulus.stimulus_type;
-
-        match self.current_substate {
-            // ─── Return to post ─────────────────────────────────────
-            Substate::DefaultGotoPost => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    // Reached post — turn to face initial direction.
-                    self.face_direction(self.initial_view_direction, ctx);
-                    self.set_ai_state(AiState::Default);
-                    self.current_substate = Substate::DefaultGotoPostTurn;
-                }
-            }
-
-            Substate::DefaultGotoPostTurn => {
-                if stimulus_type == StimulusType::EventDone {
-                    // movement with GOTO_SPECIAL_ACTION already appended the
-                    // authored Turn and SitDown/EnterLeisure commands. This
-                    // EventDone is their completion callback; Original
-                    // writes the final posture directly instead of launching
-                    // a second transition sequence.
-                    if self.likes_to_sit_around {
-                        self.outbox.actor.posture = Some(crate::element::Posture::Sitting);
-                    } else if self.special_action {
-                        self.outbox.actor.posture = Some(crate::element::Posture::Leisure);
-                    }
-                    self.set_ai_state(AiState::Default);
-                    self.current_substate = Substate::DefaultOnPost;
-                    let bored = self.get_bored_time(sim, ctx);
-                    self.launch_timer(bored as u32, ctx.frame);
-                }
-            }
-
-            // ─── On post (idle) ─────────────────────────────────────
-            Substate::DefaultOnPost => {
-                if stimulus_type == StimulusType::EventTimer {
-                    // Enemy AI intercepts this in EnemyAi::think_expected_event
-                    // and runs default bored-state processing before delegating.
-                    // The override only exists for soldier AI (friendlies
-                    // return false), so the base-class fall-through is
-                    // correct: re-launch the bored timer.
-                    let bored = self.get_bored_time(sim, ctx);
-                    self.launch_timer(bored as u32, ctx.frame);
-                }
-            }
-
-            Substate::DefaultGotoRoute => {
-                assert_ne!(
-                    stimulus_type,
-                    StimulusType::EventReachPoint,
-                    "patrol arrival must execute through the engine-owned Think boundary"
-                );
-            }
-
-            // ─── Walking along route ────────────────────────────────
-            Substate::DefaultGotoRouteTurn | Substate::DefaultEnroute => {
-                return self.expected_common_default_goto_route_turn(sim, stimulus, ctx);
-            }
-
-            // ─── In macro ───────────────────────────────────────────
-            Substate::DefaultInMacro => {
-                // Ignore all Done events while executing macros.
-            }
-
-            Substate::DefaultInMacroWaitingForDone => {
-                if stimulus_type == StimulusType::EventDone {
-                    self.execute_next_macro_command(sim, ctx);
-                }
-            }
-
-            // ─── Fleeing ────────────────────────────────────────────
-            Substate::FleeingRunToHide | Substate::FleeingRunToDoor => {
-                return Ok(self.expected_common_fleeing_run_to_hide(sim, stimulus, ctx));
-            }
-
-            // ─── Panic-run state machine ────────────────────────────
-            // On each arrival (or failed path) we either transition
-            // into `FleeingHiding` (panic is spent) or pick a new run
-            // direction and move along it.
-            Substate::FleeingPanic => {
-                if matches!(
-                    stimulus_type,
-                    StimulusType::EventReachPoint | StimulusType::EventCouldntReachPoint
-                ) {
-                    return Err(DutyCall {
-                        flags: DutyFlags::empty(),
-                        think_result: false,
-                        tail: super::DutyTail::PanicSegment {
-                            stimulus: stimulus_type,
-                        },
-                        after: Vec::new(),
-                    });
-                }
-            }
-
-            Substate::FleeingHiding => {
-                if stimulus_type == StimulusType::EventTimer {
-                    // Dispatch through the actor's duty implementation so
-                    // civilians also reset their fleeing-enemy counter.
-                    return Err(DutyCall::new(DutyFlags::empty(), false));
-                }
-            }
-
-            _ => {
-                tracing::trace!(
-                    "AiController::think_expected_event_common_stuff: unhandled substate {:?}",
-                    self.current_substate,
-                );
-            }
-        }
-
-        Ok(false)
-    }
-
     /// Resolve the turn authored by route arrival using the post-callback path.
     /// The live --path/++path pair must retain its endpoint direction change.
     pub(crate) fn route_arrival_turn_direction(
@@ -3267,59 +2557,6 @@ impl AiController {
                 position.y - y as f32,
             ) as u16
         })
-    }
-
-    /// Advance past the current waypoint and continue walking.
-    /// Called when a waypoint's command is handled (or skipped).
-    fn proceed_on_path(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        hiking_paths: &[crate::level_data::RawHikingPath],
-        ctx: &AiContext,
-    ) {
-        self.set_ai_state(AiState::Default);
-        self.current_substate = Substate::DefaultEnroute;
-
-        if let Some(ref mut path) = self.patrol_path {
-            // One-waypoint path means "you are already there" — flag
-            // `already_on_point` so the outer state machine re-fires
-            // `EventReachPoint`. Do *not* advance and don't queue a
-            // move.
-            if path.size <= 1 {
-                self.already_on_point = true;
-                return;
-            }
-            path.advance();
-            if let Some(wp) = path.current_waypoint(hiking_paths) {
-                let wp = wp.clone();
-                let path_index = path.hiking_path_index;
-                let waypoint_index = path.current_waypoint_index;
-                // Always pass `GOTO_STRAIGHT` here because macro-to-
-                // macro waypoint transitions are straight-line (no
-                // path-finder). Without this, the engine's movement
-                // layer falls through to the routed direction branch.
-                let mut walk_flags = self.default_path_walking_flags | GotoFlags::STRAIGHT;
-                if !self.will_stop_at_next_waypoint_debug(
-                    sim,
-                    hiking_paths,
-                    ctx,
-                    WillStopCaller::ProceedOnPath,
-                ) {
-                    walk_flags |= GotoFlags::DONT_STOP;
-                }
-                let dest = Position {
-                    x: wp.x as f32,
-                    y: wp.y as f32,
-                    sector: ctx.hiking_waypoint_sector(
-                        usize::from(path_index),
-                        usize::from(waypoint_index),
-                        wp.sector,
-                    ),
-                    level: wp.level,
-                };
-                self.go_to(dest, walk_flags, ctx);
-            }
-        }
     }
 }
 
@@ -3545,253 +2782,5 @@ impl AiController {
         }
 
         true
-    }
-
-    pub(crate) fn queue_state_change(
-        &mut self,
-        state: AiState,
-        substate: Substate,
-        source: AiStateChangeSource,
-        actor_effects_before_callback: Option<AiActorOutbox>,
-    ) {
-        self.queue_state_transition(
-            (self.current_state, self.current_substate),
-            (state, substate),
-            source,
-            actor_effects_before_callback,
-        );
-    }
-
-    /// Like [`AiController::queue_state_change`], for callers which have
-    /// already mutated the live state and captured the outgoing
-    /// `(state, substate)` beforehand.
-    pub(crate) fn queue_state_transition(
-        &mut self,
-        (outgoing_state, outgoing_substate): (AiState, Substate),
-        (incoming_state, incoming_substate): (AiState, Substate),
-        source: AiStateChangeSource,
-        actor_effects_before_callback: Option<AiActorOutbox>,
-    ) {
-        self.outbox
-            .reentrant
-            .owner_work
-            .push(AiOwnerWork::StateChange(AiStateChangeNotification {
-                outgoing_state,
-                outgoing_substate,
-                incoming_state,
-                incoming_substate,
-                source,
-                actor_effects_before_callback,
-            }));
-    }
-}
-
-impl AiController {
-    fn expected_common_default_goto_route_turn(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        stimulus: &Stimulus,
-        ctx: &AiContext,
-    ) -> AiFlow<bool> {
-        let stimulus_type = stimulus.stimulus_type;
-        let hiking_paths = &ctx.hiking_paths;
-        let is_route_turn = self.current_substate == Substate::DefaultGotoRouteTurn;
-        let is_enroute = self.current_substate == Substate::DefaultEnroute;
-
-        if (stimulus_type == StimulusType::EventDone && is_route_turn)
-            || (stimulus_type == StimulusType::EventReachPoint && is_enroute)
-        {
-            if let Some(ref mut path) = self.patrol_path {
-                if path.size == 0 {
-                    // Path was eliminated (by script?) — return to duty.
-                    return Err(DutyCall::new(DutyFlags::empty(), false));
-                }
-
-                // Dispatch `EventSyncCharly` to every
-                // synchronizing actor waiting on this NPC's patrol.
-                // Drop entries whose substate has already advanced
-                // away from `DefaultSynchronizing`. We dispatch
-                // via the pending-cross-npc drain so the
-                // post-dispatch re-check happens on the next
-                // arrival rather than inline. Net effect: at
-                // worst an extra redundant `EventSyncCharly`
-                // fires one cycle after the actor has left the
-                // wait state.
-                if !self.synchronizing_actors.is_empty() {
-                    let wp_idx = path.current_waypoint_index;
-                    let mut keep = Vec::with_capacity(self.synchronizing_actors.len());
-                    for &guy in &self.synchronizing_actors {
-                        let substate = ctx
-                            .entity_view(guy)
-                            .map(|v| v.ai_substate)
-                            .unwrap_or(Substate::DefaultGotoPost);
-                        if substate == Substate::DefaultSynchronizing {
-                            self.outbox.reentrant.cross_npc_actions.push(
-                                CrossNpcAction::SendStimulus {
-                                    target: guy,
-                                    stimulus_type: StimulusType::EventSyncCharly,
-                                    info: StimulusInfo::Index(wp_idx.into()),
-                                    fallback_to_sender: None,
-                                    to_whole_patrol: false,
-                                },
-                            );
-                            keep.push(guy);
-                        }
-                    }
-                    self.synchronizing_actors = keep;
-                }
-
-                let wp_command = path
-                    .current_waypoint(hiking_paths)
-                    .map(|wp| wp.command.clone())
-                    .unwrap_or(crate::level_data::WaypointCommand::None);
-
-                match wp_command {
-                    crate::level_data::WaypointCommand::None => {
-                        // Simple waypoint — advance to next.
-                        path.advance();
-
-                        // Default boredom processing only applies while
-                        // on post. Turning toward or following the route
-                        // therefore requires no boredom response here.
-
-                        if let Some(next_wp) = path.current_waypoint(hiking_paths) {
-                            if path.size == 1 {
-                                // One-point path → treat as post.
-                                // Snap the post anchor to the
-                                // current location; otherwise
-                                // returning to duty would walk back to the
-                                // level-load spawn.
-                                self.has_patrol_path = false;
-                                self.initial_position = ctx.position;
-                                // Storing initial NPC position parameters
-                                // stores a unit vector with the default
-                                // aspect, then return-to-post facing bins
-                                // that vector with ASPECT_RATIO. Diagonal
-                                // body sectors therefore do not always
-                                // round-trip (sector 3 becomes 2).
-                                let initial_view_vector =
-                                    crate::shadow_polygon::sector_to_direction(
-                                        (ctx.direction & 0x0F) as i16,
-                                    );
-                                self.initial_view_direction =
-                                    crate::position_interface::vector_to_sector_0_to_15(
-                                        initial_view_vector[0]
-                                            * crate::position_interface::ASPECT_RATIO,
-                                        initial_view_vector[1],
-                                    ) as u16;
-                                return Err(DutyCall::new(DutyFlags::empty(), false));
-                            } else {
-                                let next_wp = next_wp.clone();
-                                let path_index = path.hiking_path_index;
-                                let waypoint_index = path.current_waypoint_index;
-                                let mut walk_flags = self.default_path_walking_flags;
-                                if !self.will_stop_at_next_waypoint_debug(
-                                    sim,
-                                    hiking_paths,
-                                    ctx,
-                                    WillStopCaller::SimpleWaypoint,
-                                ) {
-                                    walk_flags |= GotoFlags::DONT_STOP;
-                                }
-                                if is_enroute {
-                                    walk_flags |= GotoFlags::STRAIGHT;
-                                }
-                                self.set_ai_state(AiState::Default);
-                                self.current_substate = Substate::DefaultEnroute;
-                                let dest = Position {
-                                    x: next_wp.x as f32,
-                                    y: next_wp.y as f32,
-                                    sector: ctx.hiking_waypoint_sector(
-                                        usize::from(path_index),
-                                        usize::from(waypoint_index),
-                                        next_wp.sector,
-                                    ),
-                                    level: next_wp.level,
-                                };
-                                self.go_to(dest, walk_flags, ctx);
-                            }
-                        } else {
-                            // No next waypoint — done.
-                            return Err(DutyCall::new(DutyFlags::empty(), false));
-                        }
-                    }
-                    crate::level_data::WaypointCommand::Script(_script) => {
-                        // Hand off to the per-waypoint VM.
-                        // `execute_waypoint_script` queues a
-                        // `ReachPoint(actor)` dispatch against
-                        // the instance bound at level load;
-                        // the engine closes it at the raw Think
-                        // boundary and fires `EventAfterScriptGoOn`
-                        // if the script didn't lock us into
-                        // `DefaultScriptDriven`.
-                        let path_idx = path.hiking_path_index;
-                        let wp_idx = path.current_waypoint_index;
-                        self.execute_waypoint_script(path_idx, wp_idx);
-                    }
-                    crate::level_data::WaypointCommand::Macro(macro_data) => {
-                        // Full waypoint-macro dispatch. If
-                        // `launch_waypoint_macro` returns false,
-                        // no section matched this traversal
-                        // direction / roll — proceed along the
-                        // path like a simple waypoint.
-                        let launched = self.launch_waypoint_macro(sim, &macro_data, ctx);
-                        if !launched {
-                            self.proceed_on_path(sim, hiking_paths, ctx);
-                        }
-                    }
-                }
-            } else {
-                // No patrol path — fall back to post.
-                return Err(DutyCall::new(DutyFlags::empty(), false));
-            }
-        }
-        Ok(false)
-    }
-
-    fn expected_common_fleeing_run_to_hide(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        stimulus: &Stimulus,
-        ctx: &AiContext,
-    ) -> bool {
-        let stimulus_type = stimulus.stimulus_type;
-        if stimulus_type == StimulusType::EventReachPoint {
-            if panic_debug_matches(ctx.frame) {
-                crate::ai::parity_trace::Aihide {
-                    frame: &(ctx.frame),
-                    co: &(ctx.original_creation_order),
-                    substate: &(self.current_substate),
-                }
-                .emit();
-            }
-            self.set_ai_state(AiState::Fleeing);
-            self.current_substate = Substate::FleeingHiding;
-            self.set_alert_status(AlertLevel::Yellow);
-            self.clear_emoticon();
-            // The original game clears the blinking enemy
-            // unconditionally on entry to FleeingHiding. Clearing
-            // both visibility latches makes a still-visible enemy a
-            // fresh EVENT_VIEW on the next detection pass.
-            self.outbox.actor.blink_all_enemies = true;
-            // Face panic center and wait.
-            self.face_position_with_ctx(
-                Position {
-                    x: self.panic_center_x,
-                    y: self.panic_center_y,
-                    sector: None,
-                    level: 0,
-                },
-                ctx,
-            );
-            let hiding_time = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
-                + crate::sim_rng::u32(
-                    sim,
-                    crate::sim_rng::RngSite::AiPanic,
-                    0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
-                );
-            self.launch_timer(hiding_time, ctx.frame);
-        }
-        false
     }
 }

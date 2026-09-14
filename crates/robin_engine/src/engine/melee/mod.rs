@@ -1639,10 +1639,8 @@ pub(crate) fn nearest_jump_line_from_sector(
 /// given the attacker's and victim's sector + position, plus the
 /// attacker's maximal weapon range.
 ///
-/// Intended for AI callers that operate on `FighterSnapshot`s /
-/// `AiContext`s rather than raw entities.  Returns the aggressor's
-/// (PC/caller's side) jump-line index, or `None` when no pair reaches
-/// across the gap.
+/// Returns the aggressor's jump-line index, or `None` when no pair reaches
+/// across the gap. Geometry is borrowed from the live spatial grid.
 pub(crate) fn table_swordfight_jump_line(
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     attacker_sector_number: i16,

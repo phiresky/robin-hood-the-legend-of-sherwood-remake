@@ -4,10 +4,7 @@
 mod tests;
 
 use super::*;
-use crate::ai::{
-    AiEntityHandle, AiState, CharlySeekerTarget, EmoticonType, HumanHandle, Remark, ReportType,
-    Substate,
-};
+use crate::ai::{AiEntityHandle, AiState, EmoticonType, HumanHandle, Remark, ReportType, Substate};
 use crate::element::Human as _;
 use crate::profiles::ProfileRank;
 use crate::sim_rng::SimulationContext;
@@ -135,12 +132,9 @@ impl EngineInner {
         owner: EntityId,
         body: HumanHandle,
     ) {
-        let ai = self.seek_enemy_mut(owner);
-        ai.base.outbox.actor.queue_unalert_near_charly_seekers(
-            CharlySeekerTarget::Npc(AiEntityHandle::new(body)),
-            ai.base.antagonist,
-        );
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let body = self.expect_human_id_for_ai_handle(body, "body checkpoint seekers");
+        self.unalert_live_charly_seekers(sim, assets, owner, body);
     }
 
     fn react_to_seen_body(&mut self, sim: &SimulationContext, owner: EntityId) {

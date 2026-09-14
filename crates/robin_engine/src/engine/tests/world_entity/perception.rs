@@ -142,10 +142,7 @@ fn mytalk_uses_concrete_sound_manager_resolution_duration() {
 
 #[test]
 fn actor_effect_prefix_does_not_consume_caller_tail_self_stimulus() {
-    use crate::ai::{
-        AiActorOutbox, AiOwnerWork, AiState, AiStateChangeNotification, AiStateChangeSource,
-        StimulusType, Substate,
-    };
+    use crate::ai::{AiActorOutbox, AiOwnerWork, StimulusType};
     use crate::element::AiBrain;
 
     let mut engine = EngineInner::new();
@@ -168,14 +165,7 @@ fn actor_effect_prefix_does_not_consume_caller_tail_self_stimulus() {
     ai.outbox
         .reentrant
         .owner_work
-        .push(AiOwnerWork::StateChange(AiStateChangeNotification {
-            outgoing_state: AiState::Default,
-            outgoing_substate: Substate::DefaultOnPost,
-            incoming_state: AiState::Seeking,
-            incoming_substate: Substate::SeekingBody,
-            source: AiStateChangeSource::SelfActor,
-            actor_effects_before_callback: Some(halt_before_callback),
-        }));
+        .push(AiOwnerWork::ActorEffects(halt_before_callback));
     ai.outbox
         .reentrant
         .self_stimuli
@@ -1370,7 +1360,7 @@ fn review_direct_owner_self_stimulus_closes_nested_alert_request() {
     );
     assert!(
         !civilian.base.has_pending_synchronous_cross_npc_actions(),
-        "nested RequestAlert must not escape the direct-owner fixed point"
+        "nested alert callback must finish before returning to the caller"
     );
 }
 
@@ -1419,7 +1409,11 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
             .expect("test soldier has EnemyAi");
         enemy.base.me = id.index();
         enemy.soldier_profile_rank = rank;
-        enemy.set_state(state, substate);
+        {
+            let ai = &mut enemy.base;
+            ai.set_ai_state(state);
+            ai.current_substate = substate;
+        }
     }
     engine
         .get_entity_mut(officer_id)
@@ -1449,8 +1443,7 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
 }
 
 #[test]
-#[should_panic(expected = "EVENT_SEES_SOLDIER target 1 must have soldier rank")]
-fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
+fn review_officer_sees_soldier_accepts_officer_rank_target() {
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::profiles::ProfileRank;
 
@@ -1469,7 +1462,11 @@ fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
             .expect("officer test entity has EnemyAi");
         enemy.base.me = id.index();
         enemy.soldier_profile_rank = ProfileRank::Officer;
-        enemy.set_state(AiState::Default, Substate::DefaultOnPost);
+        {
+            let ai = &mut enemy.base;
+            ai.set_ai_state(AiState::Default);
+            ai.current_substate = Substate::DefaultOnPost;
+        }
     }
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.dispatch_think_with_drain(
@@ -1478,6 +1475,43 @@ fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
         &Stimulus::with_human(StimulusType::EventSeesSoldier, target_id.index()),
         None,
         &assets,
+    );
+    assert_eq!(
+        engine
+            .get_entity(officer_id)
+            .and_then(Entity::enemy_ai)
+            .expect("officer retains EnemyAi")
+            .base
+            .current_substate,
+        Substate::DefaultOnPost,
+    );
+    let caller = engine
+        .get_entity(officer_id)
+        .and_then(Entity::enemy_ai)
+        .unwrap();
+    assert!(
+        caller
+            .base
+            .ai_log
+            .iter()
+            .any(|line| line.line_type == crate::ai::LogLineType::ChangeState
+                && line.info == Substate::SeekingOfficerCallSoldier as u16)
+    );
+    let target = engine
+        .get_entity(target_id)
+        .and_then(Entity::enemy_ai)
+        .unwrap();
+    assert_eq!(
+        target.base.antagonist,
+        Some(crate::ai::AiEntityHandle::new(officer_id.index()))
+    );
+    assert!(
+        target
+            .base
+            .ai_log
+            .iter()
+            .any(|line| line.line_type == crate::ai::LogLineType::Event
+                && line.info == StimulusType::CallHey as u16)
     );
 }
 
@@ -1490,6 +1524,21 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
     let sim = &sim_context;
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 100;
+    engine.world.fast_grid_mut().size_map(128, 128);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    let arena = engine.world.fast_grid_mut().add_sector(
+        crate::engine::test_support::square_sector(
+            1,
+            0,
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(2000.0, 2000.0),
+        ),
+        0,
+    );
+    let sector_index = crate::fast_find_grid::SectorIndex::new(arena).unwrap();
+    let sector = crate::position_interface::SectorHandle::new(1)
+        .unwrap()
+        .with_arena_index(sector_index);
     engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = crate::element::ElementData::default();
@@ -1509,9 +1558,9 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     for (id, x, rank) in [
-        (reporter_id, 0.0, ProfileRank::Soldier),
-        (officer_id, 40.0, ProfileRank::Officer),
-        (callback_officer_id, 80.0, ProfileRank::Officer),
+        (reporter_id, 100.0, ProfileRank::Soldier),
+        (officer_id, 140.0, ProfileRank::Officer),
+        (callback_officer_id, 900.0, ProfileRank::Officer),
     ] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("alert soldier exists")
         else {
@@ -1521,7 +1570,10 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
         soldier.element.sprite.position_iface.set_move_box(
             crate::coordinates::MoveBox::from_coords(-5.0, -5.0, 5.0, 5.0),
         );
-        soldier.element.set_position_map(MapPoint::new(x, 0.0));
+        soldier
+            .element
+            .set_sector_topology(Some(sector), Some(sector_index));
+        soldier.element.set_position_map(MapPoint::new(x, 100.0));
         let ai = soldier
             .npc
             .ai_brain
@@ -1529,7 +1581,11 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
             .expect("alert soldier has EnemyAi");
         ai.base.me = id.index();
         ai.soldier_profile_rank = rank;
-        ai.set_state(AiState::Default, Substate::DefaultOnPost);
+        {
+            let ai = &mut ai.base;
+            ai.set_ai_state(AiState::Default);
+            ai.current_substate = Substate::DefaultOnPost;
+        }
     }
 
     engine
@@ -1572,7 +1628,7 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
         "recipient callback must be allowed to mutate the suspended caller"
     );
     assert_eq!(
-        reporter.base.last_goto_destination.x, 80.0,
+        reporter.base.last_goto_destination.x, 900.0,
         "outer continuation must resume from the caller's live antagonist"
     );
     let officer = engine
@@ -1597,10 +1653,11 @@ fn blipped_report_speech_callback_precedes_give_report_state_and_timer() {
             .get_entity_mut(officer_id)
             .and_then(Entity::enemy_ai_mut)
             .expect("report officer has EnemyAi");
-        officer.set_state(
-            AiState::Seeking,
-            Substate::SeekingOfficerWaitForInstructedGroup,
-        );
+        {
+            let ai = &mut officer.base;
+            ai.set_ai_state(AiState::Seeking);
+            ai.current_substate = Substate::SeekingOfficerWaitForInstructedGroup;
+        }
     }
     {
         let Entity::Soldier(soldier) = engine
@@ -1616,7 +1673,11 @@ fn blipped_report_speech_callback_precedes_give_report_state_and_timer() {
             .enemy_mut()
             .expect("reporting soldier has EnemyAi");
         reporter.base.antagonist = Some(crate::ai::AiEntityHandle::new(officer_id.index()));
-        reporter.set_state(AiState::Seeking, Substate::SeekingSoldierReturnToOfficer);
+        {
+            let ai = &mut reporter.base;
+            ai.set_ai_state(AiState::Seeking);
+            ai.current_substate = Substate::SeekingSoldierReturnToOfficer;
+        }
     }
 
     engine.dispatch_think_with_drain(
@@ -1668,14 +1729,23 @@ fn review2_call_instruction_uses_refusal_to_prune_group_synchronously() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
     {
+        let soldier = engine
+            .get_entity_mut(soldier_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("refusing soldier has EnemyAi");
+        soldier.base.current_state = AiState::Attacking;
+        soldier.base.current_substate = Substate::AttackingSwordfight;
+    }
+    {
         let officer = engine
             .get_entity_mut(officer_id)
             .and_then(Entity::enemy_ai_mut)
             .expect("review2 officer has EnemyAi");
-        officer.set_state(
-            AiState::Seeking,
-            Substate::SeekingOfficerInstructGroupPointing,
-        );
+        {
+            let ai = &mut officer.base;
+            ai.set_ai_state(AiState::Seeking);
+            ai.current_substate = Substate::SeekingOfficerInstructGroupPointing;
+        }
         officer.alerted_us = vec![soldier_id.index()];
     }
 
@@ -1706,20 +1776,22 @@ fn review2_accepted_group_instruction_closes_officer_state_callback() {
             .get_entity_mut(officer_id)
             .and_then(Entity::enemy_ai_mut)
             .expect("review2 officer has EnemyAi");
-        officer.set_state(
-            AiState::Seeking,
-            Substate::SeekingOfficerInstructGroupPointing,
-        );
+        {
+            let ai = &mut officer.base;
+            ai.set_ai_state(AiState::Seeking);
+            ai.current_substate = Substate::SeekingOfficerInstructGroupPointing;
+        }
         officer.alerted_us = vec![soldier_id.index()];
     }
-    engine
-        .get_entity_mut(soldier_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("review2 instructed soldier has EnemyAi")
-        .set_state(
-            AiState::Seeking,
-            Substate::SeekingGroupGetInstructedByOfficer,
-        );
+    {
+        let ai = &mut engine
+            .get_entity_mut(soldier_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("review2 instructed soldier has EnemyAi")
+            .base;
+        ai.set_ai_state(AiState::Seeking);
+        ai.current_substate = Substate::SeekingGroupGetInstructedByOfficer;
+    }
 
     engine.dispatch_think_with_drain(
         &sim,
@@ -1761,11 +1833,15 @@ fn review2_alert_soldiers_uses_state_refusal_and_does_not_consider_report() {
             ..Default::default()
         };
     }
-    engine
-        .get_entity_mut(soldier_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("review2 alerted soldier has EnemyAi")
-        .set_state(AiState::Attacking, Substate::AttackingSwordfight);
+    {
+        let ai = &mut engine
+            .get_entity_mut(soldier_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("review2 alerted soldier has EnemyAi")
+            .base;
+        ai.set_ai_state(AiState::Attacking);
+        ai.current_substate = Substate::AttackingSwordfight;
+    }
     assert!(!engine.execute_ai_alert_soldiers(
         &sim,
         &assets,
@@ -1799,7 +1875,7 @@ fn review2_alert_soldiers_uses_state_refusal_and_does_not_consider_report() {
 
 #[test]
 fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order() {
-    use crate::ai::{AiState, CharlySeekerTarget, StimulusType, Substate};
+    use crate::ai::{AiState, StimulusType, Substate};
     use crate::coordinates::WorldPoint3D;
     use crate::element::{AiBrain, Command, Detectable, DetectableType, Posture};
     use crate::position_interface::Direction;
@@ -1895,7 +1971,11 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
             .ai_brain
             .enemy_mut()
             .expect("Charly-seeker candidate has EnemyAi");
-        enemy.set_state(AiState::Seeking, Substate::SeekingBody);
+        {
+            let ai = &mut enemy.base;
+            ai.set_ai_state(AiState::Seeking);
+            ai.current_substate = Substate::SeekingBody;
+        }
         enemy.base.my_reconnaissance_report.charly =
             Some(crate::ai::AiEntityHandle::new(charly.index()));
         enemy.base.checkpoint_charly = Some(crate::ai::AiEntityHandle::new(charly.index()));
@@ -1914,17 +1994,6 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
         owner_ai.soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
         owner_ai.base.antagonist =
             Some(crate::ai::AiEntityHandle::new(excluded_antagonist.index()));
-        owner_ai
-            .base
-            .outbox
-            .actor
-            .queue_unalert_near_charly_seekers(
-                CharlySeekerTarget::Npc(crate::ai::AiEntityHandle::new(charly.index())),
-                owner_ai.base.antagonist,
-            );
-        // Model rejected speech returning to duty after the original-game action
-        // but before Rust drains the engine-side sweep.
-        owner_ai.base.antagonist = None;
     }
 
     let mut wall = SightObstacle::new_default(1);
@@ -1967,8 +2036,15 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     crate::sight_obstacle::begin_parity_visibility_capture();
-    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
+    engine.unalert_live_charly_seekers(&sim, &assets, owner, charly);
     let queries = crate::sight_obstacle::take_parity_visibility_capture();
+    // Later speech may end the conversation only after the synchronous sweep.
+    engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .unwrap()
+        .base
+        .antagonist = None;
 
     assert_eq!(
         queries.iter().map(|query| query.result).collect::<Vec<_>>(),
@@ -1981,17 +2057,6 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
     assert_eq!(queries[1].destination[1], 100.0);
     assert_eq!(queries[2].destination[0], 200.0);
     assert_eq!(queries[2].destination[1], 0.0);
-    assert!(
-        engine
-            .get_entity(owner)
-            .and_then(Entity::ai_controller)
-            .expect("Unalert owner retains AI")
-            .outbox
-            .actor
-            .unalert_near_charly_seekers
-            .is_none(),
-        "the real pending action must be consumed"
-    );
     for candidate in [second_arm, first_arm, near_side] {
         let soldier = engine
             .get_entity(candidate)
@@ -2076,16 +2141,24 @@ fn final_review_alert_all_refused_resumes_caller_failure() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("alert caller has EnemyAi")
-        .set_state(AiState::Seeking, Substate::SeekingArrowJustWatching);
-    engine
-        .get_entity_mut(soldier_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("alert recipient has EnemyAi")
-        .set_state(AiState::Attacking, Substate::AttackingSwordfight);
+    {
+        let ai = &mut engine
+            .get_entity_mut(officer_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("alert caller has EnemyAi")
+            .base;
+        ai.set_ai_state(AiState::Seeking);
+        ai.current_substate = Substate::SeekingArrowJustWatching;
+    }
+    {
+        let ai = &mut engine
+            .get_entity_mut(soldier_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("alert recipient has EnemyAi")
+            .base;
+        ai.set_ai_state(AiState::Attacking);
+        ai.current_substate = Substate::AttackingSwordfight;
+    }
 
     engine.execute_ai_alert_soldiers_with_failure(
         &sim,
@@ -2155,7 +2228,11 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
         .expect("partial alert acceptor has EnemyAi");
     accepted_ai.base.me = accepted_id.index();
     accepted_ai.soldier_profile_rank = ProfileRank::Soldier;
-    accepted_ai.set_state(AiState::Default, Substate::DefaultOnPost);
+    {
+        let ai = &mut accepted_ai.base;
+        ai.set_ai_state(AiState::Default);
+        ai.current_substate = Substate::DefaultOnPost;
+    }
     complete_test_runtime_fixture(&mut engine, &mut assets);
     install_test_open_field_bbox(&mut engine);
     engine
@@ -2166,11 +2243,15 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
             -5.0, -5.0, 5.0, 5.0,
         ));
 
-    engine
-        .get_entity_mut(refused_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("partial alert rejector has EnemyAi")
-        .set_state(AiState::Attacking, Substate::AttackingSwordfight);
+    {
+        let ai = &mut engine
+            .get_entity_mut(refused_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("partial alert rejector has EnemyAi")
+            .base;
+        ai.set_ai_state(AiState::Attacking);
+        ai.current_substate = Substate::AttackingSwordfight;
+    }
 
     engine.execute_ai_alert_soldiers_with_failure(
         &sim,
@@ -2220,11 +2301,15 @@ fn search_charly_caller_timer_follows_inline_alert_completion() {
         Substate::DefaultLookingSidewardsForCharly,
     ] {
         let (mut engine, officer_id, _soldier_id, assets) = setup_review2_officer_and_soldier();
-        engine
-            .get_entity_mut(officer_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("alert caller has EnemyAi")
-            .set_state(AiState::Default, suspended_substate);
+        {
+            let ai = &mut engine
+                .get_entity_mut(officer_id)
+                .and_then(Entity::enemy_ai_mut)
+                .expect("alert caller has EnemyAi")
+                .base;
+            ai.set_ai_state(AiState::Default);
+            ai.current_substate = suspended_substate;
+        }
         let position = engine.live_ai_position(officer_id);
         let frame = engine.control.frame_counter;
         engine.execute_ai_alert_soldiers_with_failure(
@@ -2485,12 +2570,18 @@ fn review2_go_to_officer_to_civilian_panics_contextually() {
     let (mut engine, officer_id, _, mut assets) = setup_review2_officer_and_soldier();
     let civilian_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    queue_review2_wrong_kind_think(
-        &mut engine,
+    let caller = engine
+        .get_entity_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .unwrap();
+    caller.base.current_state = crate::ai::AiState::Seeking;
+    caller.base.current_substate = crate::ai::Substate::SeekingSendCharlyToOfficer;
+    caller.base.friend_in_trouble = Some(crate::ai::AiEntityHandle::new(civilian_id.index()));
+    caller.base.antagonist = Some(crate::ai::AiEntityHandle::new(officer_id.index()));
+    engine.execute_ai_officer_rpc(
+        &sim,
+        &assets,
         officer_id,
-        civilian_id,
-        crate::ai::StimulusType::CallGoToOfficer,
-        crate::ai::ThinkResultContinuation::OfficerSentCharlyToOfficer,
+        &crate::ai::Stimulus::new(crate::ai::StimulusType::EventMyTalk1),
     );
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 }

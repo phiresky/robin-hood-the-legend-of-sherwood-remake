@@ -16,7 +16,8 @@ fn add_ale(engine: &mut EngineInner, owner: EntityId, x: f32, y: f32) -> EntityI
     element.kind = ElementKind::ObjectOther;
     element.active = true;
     element.set_position(WorldPoint3D::new(x, y, 0.0));
-    element.set_sector(engine.live_ai_position(owner).sector);
+    let sector = engine.live_ai_position(owner).sector;
+    element.set_sector_topology(sector, sector.and_then(|sector| sector.arena_index()));
     engine.add_test_entity(Entity::Bonus(ElementBonus {
         element,
         object: ObjectData {
@@ -39,7 +40,9 @@ fn ale_competition_uses_first_qualifying_npc_registration_and_one_los_query() {
     for (id, x) in [(first, 200.0), (second, 300.0)] {
         let entity = engine.get_entity_mut(id).unwrap();
         entity.element_data_mut().active = true;
-        entity.element_data_mut().set_sector(sector);
+        entity
+            .element_data_mut()
+            .set_sector_topology(sector, sector.and_then(|sector| sector.arena_index()));
         entity
             .element_data_mut()
             .set_position(WorldPoint3D::new(x, 100.0, 0.0));
@@ -94,7 +97,7 @@ fn inactive_ale_approach_faces_current_bottle_position() {
     };
     assert_eq!(
         engine.unavailable_ale_position(&assets, owner),
-        Some(engine.live_ai_position(bottle))
+        Some(engine.observation_object_position(bottle))
     );
     engine.execute_ai_enemy_observation(
         &crate::sim_rng::test_context(),
@@ -528,7 +531,7 @@ fn runtime_objects_trigger_reactions_but_bonus_variants_are_ignored() {
         let mut element = ElementData::default();
         element.kind = ElementKind::ObjectOther;
         element.active = true;
-        element.set_sector(sector);
+        element.set_sector_topology(sector, sector.and_then(|sector| sector.arena_index()));
         element.set_position(WorldPoint3D::new(300.0, 400.0, 0.0));
         let object = engine.add_test_entity(Entity::Bonus(ElementBonus {
             element,
@@ -587,6 +590,8 @@ fn moving_sighting_rereads_target_after_state_callback() {
     assets.scripts.location_positions = std::sync::Arc::new(vec![(600.0, 700.0)]);
     assets.scripts.location_layers = std::sync::Arc::new(vec![0]);
     assets.scripts.location_sectors = std::sync::Arc::new(vec![1]);
+    assets.scripts.location_sector_handles =
+        std::sync::Arc::new(vec![engine.live_ai_position(target).sector]);
     engine.scripts.mission = Some(
         MissionScript::from_scb(ScbFile {
             version: crate::scb::SCB_VERSION,

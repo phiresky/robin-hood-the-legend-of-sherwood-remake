@@ -1017,10 +1017,19 @@ mod suite {
 
     #[test]
     fn npc_orphaned_sword_movement_stops_linked_turn_before_quit() {
-        let (mut engine, owner, movement_sequence, _order_id, _start) =
+        let (mut engine, owner, movement_sequence, order_id, _start) =
             install_sword_movement_for_kind(false, true);
         let sim = crate::sim_rng::test_context();
         let assets = assets_with_test_pc_profile();
+        // Keep the sequence cleanup under test independent of subsequent
+        // duty navigation in this fixture without a navigation map. Both
+        // callbacks still enter Think and are logged before script refusal.
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .ai_controller_mut()
+            .unwrap()
+            .script_locked = true;
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -1051,7 +1060,16 @@ mod suite {
             .launch_element(SequenceElement::new(1, Command::LookLeft, Some(owner)));
 
         let ((), cards) = crate::engine::soldier_helpers::capture_condolation_cards(|| {
-            engine.tick_entity_movement(&sim, &assets);
+            assert!(engine.abort_orphaned_sword_movement(
+                &sim,
+                &assets,
+                owner,
+                MovementOwnerSelection {
+                    seq_id: movement_sequence,
+                    elem_idx: 0,
+                    order_id,
+                },
+            ));
         });
 
         assert_eq!(

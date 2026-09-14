@@ -338,22 +338,6 @@ impl EngineInner {
                     SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
                 )
             }
-            Failure::FleeingRunToDoor => {
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Fleeing,
-                    Substate::FleeingRunToDoor,
-                );
-                self.execute_ai_callback(
-                    sim,
-                    assets,
-                    owner,
-                    &Stimulus::new(StimulusType::EventReachPoint),
-                );
-                return;
-            }
         };
         self.execute_ai_seek_area(
             sim,

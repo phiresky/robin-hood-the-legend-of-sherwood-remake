@@ -3015,6 +3015,13 @@ impl EngineInner {
             entity
                 .position_iface_mut()
                 .set_map_goal(crate::coordinates::MapPoint::ZERO);
+            // Detaching the selected element clears its order at the same
+            // boundary as its goal. A live query immediately after Halt must
+            // see no order, even before the deferred removal card is drained.
+            entity
+                .actor_data_mut()
+                .expect("halted selected element requires actor data")
+                .installed_order = None;
         }
 
         // Path-request cancellation fires from movement-element

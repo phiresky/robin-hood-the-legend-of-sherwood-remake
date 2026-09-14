@@ -216,10 +216,7 @@ fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() 
 
 #[test]
 fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
-    use crate::ai::{
-        AiState, AlertLevel, ArcheryReservationRelease, GuardedPcEffect, PointArchery,
-        ReservedShootingPoint, SectorArchery, Substate,
-    };
+    use crate::ai::{AiState, AlertLevel, GuardedPcEffect, PointArchery, SectorArchery, Substate};
     use crate::entity_id::PcId;
     use crate::sector::{ArcheryPointIdx, SectorNumber};
     use crate::sound::MusicMode;
@@ -281,17 +278,9 @@ fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
         old: Some(PcId(old_guarded_pc_typed.0)),
         new: Some(PcId(current_guarded_pc_typed.0)),
     });
-    // Model the state change having synchronously cleared the AI-side shooting
-    // point while its reciprocal/global release is still queued.
-    enemy.my_shooting_point = None;
+    enemy.my_shooting_point = Some((0, 0));
     enemy.my_archery_sector = Some(0);
-    enemy.base.outbox.actor.archery_reservation_release = ArcheryReservationRelease {
-        shooting_point: Some(ReservedShootingPoint {
-            sector_index: 0,
-            point_index: ArcheryPointIdx(0),
-        }),
-        release_sector: true,
-    };
+
     enemy.base.current_state = AiState::Menacing;
     enemy.base.current_substate = Substate::MenacingPcInComa;
     enemy.base.current_music_alert_status = AlertLevel::Red;
@@ -326,10 +315,7 @@ fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
     assert_eq!(enemy.base.current_state, AiState::Sleeping);
     assert_eq!(enemy.base.current_substate, Substate::SleepingForever);
     assert!(!enemy.base.outbox.actor.halt);
-    assert_eq!(
-        enemy.base.outbox.actor.archery_reservation_release,
-        ArcheryReservationRelease::default()
-    );
+    assert_eq!(enemy.my_shooting_point, None);
     assert!(enemy.base.outbox.music.instant_change);
 
     engine.update_overall_villain_alert(&assets.profile_manager);
@@ -725,11 +711,15 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    engine
-        .get_entity_mut(soldier_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("combat-alert recipient has EnemyAi")
-        .set_state(AiState::Fleeing, Substate::FleeingRunToDoor);
+    {
+        let base = &mut engine
+            .get_entity_mut(soldier_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("combat-alert recipient has EnemyAi")
+            .base;
+        base.set_ai_state(AiState::Fleeing);
+        base.current_substate = Substate::FleeingRunToDoor;
+    };
 
     engine.execute_ai_combat_alert_decision(
         &sim,
@@ -793,7 +783,11 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
         .expect("partial-refusal acceptor has EnemyAi");
     accepted_ai.base.me = accepted_id.index();
     accepted_ai.soldier_profile_rank = ProfileRank::Soldier;
-    accepted_ai.set_state(AiState::Default, Substate::DefaultOnPost);
+    {
+        let base = &mut accepted_ai.base;
+        base.set_ai_state(AiState::Default);
+        base.current_substate = Substate::DefaultOnPost;
+    };
     accepted_ai.gather_direction = 10;
     complete_test_runtime_fixture(&mut engine, &mut assets);
     install_test_open_field_bbox(&mut engine);
@@ -805,11 +799,15 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
             -5.0, -5.0, 5.0, 5.0,
         ));
 
-    engine
-        .get_entity_mut(refused_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("partial-refusal rejector has EnemyAi")
-        .set_state(AiState::Fleeing, Substate::FleeingRunToDoor);
+    {
+        let base = &mut engine
+            .get_entity_mut(refused_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("partial-refusal rejector has EnemyAi")
+            .base;
+        base.set_ai_state(AiState::Fleeing);
+        base.current_substate = Substate::FleeingRunToDoor;
+    };
 
     engine.execute_ai_combat_alert_decision(
         &sim,
@@ -926,38 +924,58 @@ fn closure_review_combat_alert_uses_exact_is_able_to_fight_under_retained_lock()
             .base
             .locks_flag_field = AiLockFlags::BUSY | AiLockFlags::FREEZE;
         match case {
-            Ineligible::Fleeing => soldier
-                .npc
-                .ai_brain
-                .enemy_mut()
-                .expect("eligibility recipient has EnemyAi")
-                .set_state(AiState::Fleeing, Substate::FleeingRunToDoor),
-            Ineligible::Menacing => soldier
-                .npc
-                .ai_brain
-                .enemy_mut()
-                .expect("eligibility recipient has EnemyAi")
-                .set_state(AiState::Menacing, Substate::MenacingPcInComa),
+            Ineligible::Fleeing => {
+                let base = &mut soldier
+                    .npc
+                    .ai_brain
+                    .enemy_mut()
+                    .expect("eligibility recipient has EnemyAi")
+                    .base;
+                base.set_ai_state(AiState::Fleeing);
+                base.current_substate = Substate::FleeingRunToDoor;
+            }
+            Ineligible::Menacing => {
+                let base = &mut soldier
+                    .npc
+                    .ai_brain
+                    .enemy_mut()
+                    .expect("eligibility recipient has EnemyAi")
+                    .base;
+                base.set_ai_state(AiState::Menacing);
+                base.current_substate = Substate::MenacingPcInComa;
+            }
             Ineligible::Tied => soldier.element.publish_order_posture(Posture::Tied),
             Ineligible::Carried => soldier.human.carrier = Some(officer_id),
-            Ineligible::GotHit => soldier
-                .npc
-                .ai_brain
-                .enemy_mut()
-                .expect("eligibility recipient has EnemyAi")
-                .set_state(AiState::Attacking, Substate::AttackingGotHit),
-            Ineligible::GotHitStandingUp => soldier
-                .npc
-                .ai_brain
-                .enemy_mut()
-                .expect("eligibility recipient has EnemyAi")
-                .set_state(AiState::Attacking, Substate::AttackingGotHitStandingUp),
-            Ineligible::Hitting => soldier
-                .npc
-                .ai_brain
-                .enemy_mut()
-                .expect("eligibility recipient has EnemyAi")
-                .set_state(AiState::Attacking, Substate::AttackingHitting),
+            Ineligible::GotHit => {
+                let base = &mut soldier
+                    .npc
+                    .ai_brain
+                    .enemy_mut()
+                    .expect("eligibility recipient has EnemyAi")
+                    .base;
+                base.set_ai_state(AiState::Attacking);
+                base.current_substate = Substate::AttackingGotHit;
+            }
+            Ineligible::GotHitStandingUp => {
+                let base = &mut soldier
+                    .npc
+                    .ai_brain
+                    .enemy_mut()
+                    .expect("eligibility recipient has EnemyAi")
+                    .base;
+                base.set_ai_state(AiState::Attacking);
+                base.current_substate = Substate::AttackingGotHitStandingUp;
+            }
+            Ineligible::Hitting => {
+                let base = &mut soldier
+                    .npc
+                    .ai_brain
+                    .enemy_mut()
+                    .expect("eligibility recipient has EnemyAi")
+                    .base;
+                base.set_ai_state(AiState::Attacking);
+                base.current_substate = Substate::AttackingHitting;
+            }
         }
 
         let accepted = start_review_command_soldiers(&mut engine, &sim, &assets, officer_id);

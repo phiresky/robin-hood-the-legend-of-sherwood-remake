@@ -102,18 +102,32 @@ mod tests {
                 ));
             duty(&mut engine, &assets, owner);
             let ai = enemy(&engine, owner);
-            assert!(!ai.attentive);
+            assert_eq!(ai.attentive, attentive);
             assert!(!ai.will_be_attentive);
             assert!(ai.base.outbox.actor.orders.is_empty());
             assert_eq!(ai.base.last_goto_destination.x, 400.0);
-            assert!(
-                engine
-                    .orders
-                    .sequence_manager
-                    .sequences_iter()
-                    .flat_map(|s| s.elements.iter())
-                    .any(|e| e.owner == Some(owner) && e.command == crate::element::Command::Move)
-            );
+            let commands: Vec<_> = engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|s| s.elements.iter())
+                .filter(|e| e.owner == Some(owner))
+                .map(|e| e.command)
+                .collect();
+            let movement = commands
+                .iter()
+                .position(|command| *command == crate::element::Command::Move)
+                .expect("duty launches return movement");
+            if attentive {
+                let leave = commands
+                    .iter()
+                    .position(|command| *command == crate::element::Command::LeaveAttentiveMode)
+                    .expect("attentive exit is registered");
+                assert!(
+                    leave < movement,
+                    "attentive exit must be registered before movement"
+                );
+            }
         }
     }
 
@@ -134,7 +148,7 @@ mod tests {
             entity
                 .element_data_mut()
                 .set_position_map(MapPoint::new(chief_x, 100.0));
-            let sector = entity.element_data().sector().unwrap();
+            let sector = engine.live_ai_position(chief).sector.unwrap();
             engine
                 .script_domains
                 .interactables
@@ -260,20 +274,20 @@ mod tests {
     }
 
     #[test]
-    fn refused_officer_report_finishes_duty_on_engine_stack() {
+    fn reaching_officer_without_report_finishes_duty_on_engine_stack() {
         let (mut engine, assets, ids) = fixture(2);
         let (owner, officer) = (ids[0], ids[1]);
-        let scratch = engine.build_sim_scratch(&assets);
-        let ctx = engine.ai_context_for(owner, engine.control.frame_counter, &scratch, &assets);
         let sim = crate::sim_rng::test_context();
         let ai = enemy_mut(&mut engine, owner);
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingCharlyGoToOfficer;
         ai.base.antagonist = Some(AiEntityHandle::new(officer.index()));
-        let call = ai
-            .resolve_charly_officer_report(ctx.frame, false)
-            .expect_err("refused report requests duty");
-        engine.execute_ai_duty_call(&sim, &assets, owner, call);
+        engine.execute_ai_officer_rpc(
+            &sim,
+            &assets,
+            owner,
+            &Stimulus::new(StimulusType::EventReachPoint),
+        );
         let ai = enemy(&engine, owner);
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
@@ -284,11 +298,14 @@ mod tests {
     fn special_strike_freeze_retains_event_and_unfreeze_completes_strike() {
         let (mut engine, assets, ids) = fixture(1);
         let owner = ids[0];
+        let sim = crate::sim_rng::test_context();
         let ai = enemy_mut(&mut engine, owner);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
-        ai.begin_special_strike();
-        ai.reconcile_special_strike(true, 40);
+        engine.control.frame_counter = 40;
+        engine.begin_ai_special_strike(&sim, &assets, owner);
+        engine.reconcile_ai_special_strike(&sim, &assets, owner, true);
+        let ai = enemy(&engine, owner);
         assert!(ai.pending_special_strike);
         assert_eq!(
             ai.base.current_substate,
@@ -299,15 +316,17 @@ mod tests {
             AiLockFlags::FREEZE,
             AiLockFlags::BUSY | AiLockFlags::FREEZE,
         ] {
-            ai.base.locks_flag_field = locks;
-            ai.reconcile_special_strike(false, 41);
+            enemy_mut(&mut engine, owner).base.locks_flag_field = locks;
+            engine.control.frame_counter = 41;
+            engine.reconcile_ai_special_strike(&sim, &assets, owner, false);
+            let ai = enemy(&engine, owner);
             assert!(ai.pending_special_strike);
             assert_eq!(
                 ai.base.current_substate,
                 Substate::AttackingSwordfightSpecialStrike
             );
         }
-        ai.base.locks_flag_field = AiLockFlags::FREEZE;
+        enemy_mut(&mut engine, owner).base.locks_flag_field = AiLockFlags::FREEZE;
         engine.control.frame_counter = 41;
         engine.execute_ai_callback(
             &crate::sim_rng::test_context(),
@@ -315,8 +334,8 @@ mod tests {
             owner,
             &Stimulus::new(StimulusType::EventDone),
         );
+        engine.reconcile_ai_special_strike(&sim, &assets, owner, false);
         let ai = enemy_mut(&mut engine, owner);
-        ai.reconcile_special_strike(false, 41);
         assert!(ai.pending_special_strike);
         assert_eq!(
             ai.base
@@ -338,9 +357,17 @@ mod tests {
         assert!(!ai.pending_special_strike);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
         assert_eq!(ai.next_sword_strike_frame, 62);
-        ai.begin_special_strike();
-        ai.set_state(AiState::Attacking, Substate::AttackingSwordfightParade);
-        ai.reconcile_special_strike(false, 62);
+        engine.control.frame_counter = 62;
+        engine.begin_ai_special_strike(&sim, &assets, owner);
+        engine.duty_set_state(
+            &sim,
+            &assets,
+            owner,
+            AiState::Attacking,
+            Substate::AttackingSwordfightParade,
+        );
+        engine.reconcile_ai_special_strike(&sim, &assets, owner, false);
+        let ai = enemy(&engine, owner);
         assert!(!ai.pending_special_strike);
         assert_eq!(
             ai.base.current_substate,
@@ -541,6 +568,10 @@ mod tests {
     fn duty_deletes_beggars_added_before_call_and_retains_enemies() {
         let (mut engine, assets, ids) = fixture(2);
         let (owner, target) = (ids[0], ids[1]);
+        let Entity::Soldier(soldier) = engine.world.entities.get_mut(target).unwrap() else {
+            unreachable!()
+        };
+        soldier.soldier.cached_camp = Camp::Royalists;
         let ai = enemy_mut(&mut engine, owner);
         ai.base
             .outbox
@@ -602,55 +633,65 @@ mod tests {
 
     #[test]
     fn state_tail_reads_callback_mutations_but_keeps_entry_forced_attentive() {
-        let (mut engine, _assets, ids) = fixture(1);
-        let ai = enemy_mut(&mut engine, ids[0]);
+        let (mut engine, assets, ids) = fixture(1);
+        let owner = ids[0];
+        let ai = enemy_mut(&mut engine, owner);
         ai.base.current_state = AiState::Default;
         ai.base.current_substate = Substate::DefaultOnPost;
         ai.forced_attentive = false;
-        let forced = ai.begin_state_change(AiState::Default, Substate::DefaultInMacro);
-        // Model writes performed by the synchronous state filter.
+        let forced = engine.begin_live_enemy_state(
+            &assets,
+            owner,
+            AiState::Default,
+            Substate::DefaultInMacro,
+        );
+        let ai = enemy_mut(&mut engine, owner);
         ai.forced_attentive = true;
         ai.base.current_state = AiState::Sleeping;
-        ai.finish_state_change(AiState::Default, Substate::DefaultInMacro, forced);
-        assert!(
-            !ai.base
-                .outbox
-                .actor
-                .set_attentive_mode
-                .as_ref()
-                .unwrap()
-                .target
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .ai_actor_data_mut()
+            .unwrap()
+            .eye_status = crate::element::EyeStatus::Closed;
+        engine.finish_live_enemy_state(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            AiState::Default,
+            Substate::DefaultInMacro,
+            forced,
         );
-        assert!(
-            ai.base
-                .outbox
-                .reentrant
-                .owner_work
-                .iter()
-                .any(|work| matches!(
-                    work,
-                    AiOwnerWork::SetEyeStatus(crate::element::EyeStatus::LookForward)
-                ))
-        );
-        assert!(
-            !ai.base
-                .outbox
-                .reentrant
-                .owner_work
-                .iter()
-                .any(|work| matches!(work, AiOwnerWork::StateChange(_)))
-        );
+        let ai = enemy(&engine, owner);
+        assert!(!ai.will_be_attentive);
         assert_eq!(ai.base.current_substate, Substate::DefaultInMacro);
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .ai_actor_data()
+                .unwrap()
+                .eye_status,
+            crate::element::EyeStatus::LookForward
+        );
     }
 
     #[test]
     fn under_net_state_tail_restores_green_alert() {
-        let (mut engine, _assets, ids) = fixture(1);
-        let ai = enemy_mut(&mut engine, ids[0]);
-        ai.set_alert_status(AlertLevel::Red);
-        let forced = ai.begin_state_change(AiState::Wondering, Substate::WonderingUnderNet);
-        ai.finish_state_change(AiState::Wondering, Substate::WonderingUnderNet, forced);
-        assert_eq!(ai.base.view_alert_status, AlertLevel::Green);
+        let (mut engine, assets, ids) = fixture(1);
+        let owner = ids[0];
+        enemy_mut(&mut engine, owner).set_alert_status(AlertLevel::Red);
+        engine.duty_set_state(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            AiState::Wondering,
+            Substate::WonderingUnderNet,
+        );
+        assert_eq!(
+            enemy(&engine, owner).base.view_alert_status,
+            AlertLevel::Green
+        );
     }
 
     #[test]
@@ -695,8 +736,19 @@ mod tests {
     #[test]
     fn duty_clears_reciprocal_shield_pair_from_either_side() {
         for returning_archer in [false, true] {
-            let (mut engine, assets, ids) = fixture(3);
+            let (mut engine, mut assets, ids) = fixture(3);
             let (archer, bearer) = (ids[0], ids[1]);
+            std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].shield = true;
+            let entity = engine.get_entity_mut(bearer).unwrap();
+            let mut conversion = (*entity.element_data().sprite.conversion).clone();
+            conversion.resize(
+                conversion
+                    .len()
+                    .max(crate::order::OrderType::WaitingShield as usize + 1),
+                u16::MAX,
+            );
+            conversion[crate::order::OrderType::WaitingShield as usize] = 0;
+            entity.element_data_mut().sprite.conversion = std::sync::Arc::new(conversion);
             let ai = enemy_mut(&mut engine, archer);
             ai.is_archer_unit = true;
             ai.base.current_state = AiState::Attacking;
@@ -715,6 +767,15 @@ mod tests {
             assert_eq!(enemy(&engine, archer).shield_bearer_before_me, None);
             assert_eq!(enemy(&engine, bearer).archer_behind_me, None);
             if returning_archer {
+                engine
+                    .world
+                    .entities
+                    .get_mut(bearer)
+                    .unwrap()
+                    .actor_data_mut()
+                    .unwrap()
+                    .action_state = crate::element::ActionState::HoldingShield;
+                enemy_mut(&mut engine, bearer).base.launch_timer(0, 0);
                 engine.execute_ai_callback(
                     &crate::sim_rng::test_context(),
                     &assets,
@@ -745,20 +806,22 @@ impl EngineInner {
         substate: Substate,
     ) {
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
-        let forced_attentive = {
+        let forced_attentive = if self
+            .expect_entity(owner, "state-change owner")
+            .enemy_ai()
+            .is_some()
+        {
+            Some(self.begin_live_enemy_state(assets, owner, state, substate))
+        } else {
             let entity = self
                 .world
                 .entities
                 .expect_entity_mut(owner, format_args!("state-change owner"));
-            if let Some(enemy) = entity.enemy_ai_mut() {
-                Some(enemy.begin_state_change(state, substate))
-            } else {
-                entity
-                    .friendly_ai_mut()
-                    .expect("state-change owner has no role")
-                    .begin_state_change(state, substate);
-                None
-            }
+            entity
+                .friendly_ai_mut()
+                .expect("state-change owner has no role")
+                .begin_state_change(state, substate);
+            None
         };
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let ai = self
@@ -777,15 +840,7 @@ impl EngineInner {
             self.drain_self_stimuli_for_npc(sim, owner, assets);
         }
         if let Some(forced_attentive) = forced_attentive {
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("state-change callback owner"))
-                .prepare_state_change_tail(state, substate);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("state-change commit owner"))
-                .commit_state_change(state, substate, forced_attentive);
+            self.finish_live_enemy_state(sim, assets, owner, state, substate, forced_attentive);
         } else {
             let entity = self
                 .world

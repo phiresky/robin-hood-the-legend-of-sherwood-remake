@@ -444,20 +444,25 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     }];
     engine.control.frame_counter = (quiet_owner.index() + 101) & 255;
 
-    // Building scratch no longer burns BuildingExitGate eagerly: the
-    // prepared forecast defers the gate selection draw until an AI statement
-    // actually resolves it. Prove the fixture is armed by resolving the
-    // door-passing actor's prepared forecast directly.
-    let control_scratch = engine.build_sim_scratch(&assets);
+    // Prove the door-passing fixture draws when its live forecast is queried.
     let (_, control_trace) = with_draw_trace(|| {
-        control_scratch
-            .ai_entity_views
-            .get(&door_actor.index())
-            .expect("door-passing actor has an AI entity view")
-            .forecasted_destination
-            .resolve(sim);
+        let input = crate::engine::ai::extract_exact_forecast_input(
+            &engine,
+            engine.get_entity(door_actor).expect("door actor exists"),
+            crate::engine::ai::selected_actor_is_passing_door(
+                &engine.orders.sequence_manager,
+                door_actor,
+            ),
+        )
+        .expect("door forecast requires actor data");
+        crate::ai::prepare_forecast_destination_for_ia(
+            &input,
+            &engine.script_domains.interactables.doors,
+            &engine.world.fast_grid.level.sectors,
+            &engine.world.fast_grid.level.sector_number_map,
+        )
+        .resolve(sim);
     });
-    drop(control_scratch);
     assert!(
         control_trace.contains(&RngSite::BuildingExitGate),
         "the fixture must exercise BuildingExitGate when its prepared forecast is resolved"
@@ -505,6 +510,9 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+        "patrol_door.scs",
+    ));
     engine.script_domains.interactables.doors = vec![Door {
         door_type: DoorType::LiftLow,
         sector_out: SectorNumber::new(89),
@@ -532,14 +540,13 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
     } else {
         unreachable!("PassDoor fixture must be a movement element")
     }
-    crate::sim_rng::with_seed(0xA013_0518, |sim| {
+    {
         // AI position resolves the chief from live committed PassDoor state.
         let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
         engine
             .orders
             .sequence_manager
             .element_in_progress(pass_sequence, 0);
-        let tick = engine.build_npc_tick_data(sim, minion_id, &assets);
         assert_eq!(engine.live_ai_position(chief_id).x, 821.0);
         assert_eq!(engine.live_ai_position(chief_id).y, 1124.0);
         assert_eq!(engine.live_ai_position(chief_id).level, 2);
@@ -549,7 +556,7 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
                 handle.with_arena_index(crate::fast_find_grid::SectorIndex::new(89).unwrap())
             })
         );
-    });
+    }
 }
 
 #[test]
@@ -1094,7 +1101,9 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
 }
 
 #[test]
-#[should_panic(expected = "Enemy detectable target 999999 for NPC 0 is missing")]
+#[should_panic(
+    expected = "Enemy detectable target Soldier(SoldierId(999999)) for NPC Soldier(SoldierId(0)) is missing or is not a PC/soldier"
+)]
 fn mixed_enemy_walk_rejects_missing_detectable_target_with_context() {
     use crate::element::{DetectableType, Entity};
 

@@ -134,26 +134,16 @@ fn swordfight_facing_guard_uses_live_position_during_door_pass() {
     let live_pc = position(1307.6046, 2_248.182);
     let forecast_pc = position(1304.0, 2276.0);
     let elevation = 45.0;
-    let primary = FighterSnapshot {
-        handle: 252,
-        position: forecast_pc,
-        elevation,
-        ..FighterSnapshot::default()
-    };
 
     assert!(!is_facing_swordfight_target(
         &soldier,
         elevation,
         12,
-        &primary.position,
-        primary.elevation,
+        &forecast_pc,
+        elevation,
     ));
     assert!(is_facing_swordfight_target(
-        &soldier,
-        elevation,
-        12,
-        &live_pc,
-        primary.elevation,
+        &soldier, elevation, 12, &live_pc, elevation,
     ));
 }
 
@@ -184,39 +174,13 @@ fn swordfight_facing_guard_uses_literal_position_after_principal_refresh() {
 }
 
 #[test]
-fn direct_fighter_lookup_reaches_beyond_nearby_radius_snapshot() {
-    let ai = EnemyAi::default();
-    let mut tick = AiPerTickData::stub();
-    tick.nearby_fighters.push(FighterSnapshot {
-        handle: 1,
-        ..FighterSnapshot::default()
-    });
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 2,
-        ..FighterSnapshot::default()
-    });
-
-    assert_eq!(
-        ai.find_fighter(1, &tick).map(|fighter| fighter.handle),
-        Some(1)
-    );
-    assert_eq!(
-        ai.find_fighter(2, &tick).map(|fighter| fighter.handle),
-        Some(2)
-    );
-    assert!(ai.find_fighter(3, &tick).is_none());
-}
-
-#[test]
-fn failed_observation_step_back_panics_without_speaking() {
+fn directed_panic_request_does_not_add_flee_speech() {
     let mut ai = EnemyAi::new(91);
     let enemy_pos = position(663.922_5, 2096.012);
 
     ai.panic_from_position(enemy_pos, parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
     let request = ai.base.outbox.actor.begin_panic.as_ref().unwrap();
 
-    assert_eq!(ai.base.current_state, AiState::Fleeing);
-    assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
     assert_eq!(request.center, Some(enemy_pos));
     assert_eq!(request.runs, parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
     assert!(

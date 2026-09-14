@@ -219,61 +219,6 @@ fn think_with_drain_rejects_a_soldier_missing_its_required_ai() {
 }
 
 #[test]
-fn ambush_owner_inputs_match_fresh_context_after_diplomacy_and_difficulty_changes() {
-    use crate::diplomacy::Relationship;
-    use crate::element::Camp;
-    use crate::player_profile::DifficultyLevel;
-
-    let mut engine = EngineInner::new();
-    let npc_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.mission_domain.diplomacy.set_enabled(true);
-    engine.control.frame_counter = 123;
-    let soldier = engine.get_entity_mut(npc_id).unwrap();
-    soldier
-        .element_data_mut()
-        .set_position_map(MapPoint::new(17.0, 29.0));
-    soldier.element_data_mut().set_direction_instantly(5);
-    soldier.enemy_ai_mut().unwrap().soldier_profile_iq = 40;
-
-    for difficulty in [
-        DifficultyLevel::Easy,
-        DifficultyLevel::Medium,
-        DifficultyLevel::Hard,
-    ] {
-        engine.control.sim_config.difficulty = difficulty;
-        for relationship in [
-            Relationship::Hostile,
-            Relationship::Neutral,
-            Relationship::Allied,
-        ] {
-            engine
-                .mission_domain
-                .diplomacy
-                .set_relationship(Camp::Lacklandists, Camp::Royalists, relationship)
-                .unwrap();
-            let scratch = engine.build_sim_scratch(&assets);
-            let full =
-                engine.ai_context_for(npc_id, engine.control.frame_counter, &scratch, &assets);
-            let narrow = engine.ambush_point_context(npc_id);
-            assert_eq!(narrow.position, full.position);
-            assert_eq!(narrow.direction, full.direction);
-            assert_eq!(narrow.frame, full.frame);
-            assert_eq!(
-                narrow.intelligence,
-                engine
-                    .get_entity(npc_id)
-                    .unwrap()
-                    .enemy_ai()
-                    .unwrap()
-                    .get_iq(&full)
-            );
-        }
-    }
-}
-
-#[test]
 fn ambush_owner_inputs_preserve_committed_door_side() {
     use crate::element::{ActiveDoorPass, Camp, Command};
     use crate::gate::{Door, DoorIndex, DoorType};
@@ -348,12 +293,9 @@ fn ambush_owner_inputs_preserve_committed_door_side() {
             .sequence_manager
             .element_in_progress(sequence, 0);
 
-        let scratch = engine.build_sim_scratch(&assets);
-        let full = engine.ai_context_for(npc_id, 0, &scratch, &assets);
-        let narrow = engine.ambush_point_context(npc_id);
-        assert_eq!(narrow.position, full.position);
+        let position = engine.live_ai_position(npc_id);
         assert_eq!(
-            (narrow.position.x, narrow.position.y, narrow.position.level),
+            (position.x, position.y, position.level),
             if direction == 0 {
                 (10.0, 20.0, 2)
             } else {

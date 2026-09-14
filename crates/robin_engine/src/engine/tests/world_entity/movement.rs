@@ -589,7 +589,6 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
 
 #[test]
 fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fallback() {
-    use crate::ai::{AiState, Substate};
     use crate::coordinates::MapPoint;
     use crate::fast_find_grid::GridSector;
     use crate::gate::{Door, DoorIndex};
@@ -597,7 +596,6 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     use crate::sector::{SectorNumber, SectorType};
     use crate::sequence::{SequenceElement, SequenceElementData};
 
-    let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     {
         let level = engine.world.fast_grid_mut().level_mut();
@@ -713,28 +711,6 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     assert_eq!(wait.y, 100.0);
     assert_eq!(wait.sector, me_sector);
 
-    // The staged lift failure has not published couldnt_reachpoint when its
-    // EventCouldnt tick is built. The exact RunningToLadder timer provenance
-    // must still make the live gate lookup available to the handler.
-    let owner = engine
-        .get_entity_mut(owner_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("roof-wait owner retains Enemy AI");
-    owner.base.current_state = AiState::Attacking;
-    owner.base.current_substate = Substate::AttackingRunningToLadder;
-    owner.base.couldnt_reachpoint = false;
-    owner.base.timer_is_running = true;
-    owner.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
-    owner.base.when_does_timer_ring = 30;
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
-    assert_eq!(
-        tick.avenger_wait_position_for(target_id.index()),
-        Some(wait),
-        "pending lift provenance must precompute the source-synchronous roof wait"
-    );
-
     engine
         .orders
         .sequence_manager
@@ -789,24 +765,6 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
             &|_| None,
         )
         .is_none()
-    );
-
-    // Same false-latch timer provenance with no blocking gate is the f7938
-    // no-roof control: no synthetic wait may be added.
-    let owner = engine
-        .get_entity_mut(owner_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("roof-wait owner retains Enemy AI");
-    owner.base.current_state = AiState::Attacking;
-    owner.base.current_substate = Substate::AttackingRunningToLadder;
-    owner.base.couldnt_reachpoint = false;
-    owner.base.timer_is_running = true;
-    owner.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
-    owner.base.when_does_timer_ring = 30;
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
-    assert!(
-        tick.avenger_wait_position_for(target_id.index()).is_none(),
-        "pending lift provenance must preserve the no-blocking-gate control"
     );
 }
 
@@ -997,25 +955,4 @@ fn optical_ai_position_follows_carrier_but_detects_target_stored_world_point() {
     let (moved_ai, unmoved_optical) = engine.enemy_optical_geometry_for_test(&assets, target);
     assert_eq!((moved_ai.x, moved_ai.y), (999.0, 999.0));
     assert_eq!(unmoved_optical, expected_optical_point);
-}
-
-#[test]
-fn ai_entity_views_keep_inactive_humans_for_same_building_detection() {
-    let mut engine = EngineInner::new();
-    let soldier_id =
-        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("inactive snapshot soldier exists")
-    else {
-        panic!("inactive snapshot entity changed kind")
-    };
-    soldier.element.active = false;
-
-    let scratch = engine.build_sim_scratch(&LevelAssets::new());
-    let view = scratch
-        .ai_entity_views
-        .get(&soldier_id.index())
-        .expect("inactive human must remain available to same-building detection");
-    assert!(!view.active);
 }

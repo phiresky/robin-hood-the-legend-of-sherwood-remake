@@ -1460,27 +1460,31 @@ fn golden_human_fixture() -> HumanData {
     }
 }
 
-/// Save (JSON), native snapshot (bitcode) and state-hash encodings of
-/// `HumanData` are frozen; the digests were recorded from the hand-written
-/// `HumanDataWireRef` serializer before it was replaced by
-/// `#[serde(into, try_from)]`.
+/// Guard the current save, native snapshot and state-hash encodings.
+/// Sorting scratch is excluded from persisted values, while the state-hash
+/// derive writes its fixed skipped-field marker into the structural byte stream.
 #[test]
 fn human_data_encodings_match_golden_digests() {
     const GOLDEN: [&str; 3] = [
         "a345fdbeef1bcbcb73438cea08f98ac7a1e3ff2854d4d6cd536fcd9c02ec7a5b",
         "eeda54a748e35f4dd3e7832493ef4ea7dbef53349ac5c5ebc01648a33e206e98",
-        "6a3bfa3bc9246a58205abe81f5ccb062bb711cea51e1b23af7bf9f61ff01b400",
+        "5573d930aa658f93bfc0723ccfd4db8920912011d9ee7bc98129338b7ea8a551",
     ];
 
-    let human = golden_human_fixture();
+    let mut human = golden_human_fixture();
+    assert_eq!(human_golden_digests(&human), GOLDEN);
+
+    human.sorting_distance = 1234.5;
     assert_eq!(human_golden_digests(&human), GOLDEN);
 
     let json = serde_json::to_string(&human).unwrap();
     let from_json: HumanData = serde_json::from_str(&json).unwrap();
+    assert_eq!(from_json.sorting_distance, 0.0);
     assert_eq!(from_json.opponents, human.opponents);
     assert_eq!(human_golden_digests(&from_json), GOLDEN);
 
     let from_bitcode: HumanData = bitcode::decode(&bitcode::encode(&human)).unwrap();
+    assert_eq!(from_bitcode.sorting_distance, 0.0);
     assert_eq!(human_golden_digests(&from_bitcode), GOLDEN);
 }
 

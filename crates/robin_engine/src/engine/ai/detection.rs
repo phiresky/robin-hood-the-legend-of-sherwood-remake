@@ -64,7 +64,6 @@ fn observe_heard_callback(engine: &EngineInner, target_id: EntityId) {
 fn observe_heard_callback(_engine: &EngineInner, _target_id: EntityId) {}
 
 use super::*;
-use crate::ai::AiPerTickData;
 use crate::ai_vision;
 use crate::coordinates::{GroundPoint, MapPoint};
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId, Posture};
@@ -2673,7 +2672,7 @@ impl EngineInner {
         match entity {
             Entity::Pc(pc) => {
                 let entity_id: EntityId = id.into();
-                let dead = pc.pc.life_points <= 0;
+                let dead = entity.is_dead();
                 let character = assets
                     .profile_manager
                     .get_character(pc.pc.profile_index)
@@ -2744,7 +2743,7 @@ impl EngineInner {
                 let entity_id: EntityId = id.into();
                 let posture = soldier.element.posture();
                 let is_rider = soldier.soldier.rider;
-                let dead = soldier.npc.life_points <= 0;
+                let dead = entity.is_dead();
                 let stored_map = (&soldier.element).position_map();
                 let stored_world = (&soldier.element).position();
                 let position = stored_map;
@@ -2955,6 +2954,7 @@ impl EngineInner {
             sight_obstacles,
             fast_grid: &self.world.fast_grid,
             layer: viewer.layer,
+            target_dead: target.is_dead(),
             target_unconscious,
             target_passing_door,
         };
@@ -3592,6 +3592,7 @@ impl EngineInner {
                     sight_obstacles: *ctx.sight_obstacles,
                     fast_grid: ctx.fast_grid,
                     layer: ctx.layer,
+                    target_dead: target.dead,
                     target_unconscious: target.unconscious,
                     target_passing_door: target.passing_door,
                 };
@@ -4873,10 +4874,6 @@ fn scan_enemy_detectable(
         //     if target in same building AND target
         //       alive / conscious / NOT passing door → 0.5
         //     else → 0.0
-        // Dead PCs are filtered upstream at
-        // `pc_snapshots` build-time; unconscious and
-        // door-passing targets are still in the
-        // snapshot and must be gated here.
         let target_in_same_building =
             viewer_in_building && viewer_building_sector == target.building_sector;
         // Posture-based Z offsets for the 3D close-range
@@ -4941,6 +4938,7 @@ fn scan_enemy_detectable(
             sight_obstacles,
             fast_grid: fast_grid,
             layer,
+            target_dead: target.dead,
             target_unconscious: target.unconscious,
             target_passing_door: target.passing_door,
         };

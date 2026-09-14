@@ -183,116 +183,6 @@ impl Default for CombatPosition {
 
 const NOT_YET_COMPUTED: i16 = 6666;
 
-// ---------------------------------------------------------------------------
-// FighterSnapshot — engine-provided state for combat position evaluation
-// ---------------------------------------------------------------------------
-
-/// Lightweight snapshot of a same-camp soldier used by alert functions
-/// (`alert_officer`, `alert_soldiers`).  Populated by the engine each tick
-/// for all soldiers in the same camp, regardless of combat state.
-#[derive(Debug, Clone)]
-pub struct CampSoldierInfo {
-    pub handle: NpcHandle,
-    /// Raw element-active state. Global camp registries retain
-    /// inactive soldiers, but candidate scans such as nearest-fighter selection
-    /// reject them explicitly.
-    pub active: bool,
-    pub position: Position,
-    /// The same snapshot position in stored 3D world coordinates, which is
-    /// what detection-point calculation builds on.
-    pub position_world: crate::coordinates::WorldPoint3D,
-    pub direction: u16,
-    pub rank: ProfileRank,
-    pub ai_state: AiState,
-    pub ai_substate: Substate,
-    pub is_able_to_fight: bool,
-    /// Life points exhausted.  Narrower than `!is_able_to_fight`: the
-    /// money-fight scans reject only the dead, not everyone temporarily
-    /// unable to fight.
-    pub is_dead: bool,
-    /// Live money-fight knockout flag. Money-fight morale scans
-    /// classify the soldier only after their single ordered visibility query.
-    pub knocked_out_in_money_fight: bool,
-    /// Live primary target used when battle planning merges an attacking
-    /// friend's target into its persistent Them list.
-    pub primary_target: Option<AiEntityHandle>,
-    /// Soldier-profile pride used by battle planning's side-strength and
-    /// too-proud-to-attack calculations.
-    pub pride: u16,
-    /// Narrower than `is_able_to_fight`: sleeping / attacking /
-    /// menacing / fleeing soldiers cannot be pulled into officer
-    /// coordination, while default, wondering, and specific
-    /// report-to-officer seeking substates can.
-    pub is_able_to_help: bool,
-    pub script_locked: bool,
-    /// Dynamic `AILOCK_FREEZE` snapshot used by non-result-bearing candidate
-    /// checks. The original game's direct AI update retains a locked stimulus and returns
-    /// true, so bool-consuming call sites must dispatch instead of predicting.
-    pub ai_lock_frozen: bool,
-    pub layer: u16,
-    /// The soldier's alert-soldiers point.
-    pub alert_soldiers_point: Position,
-    /// This soldier's patrol chief.
-    /// Used by soldier-call eligibility and the patrol-chief fallback in the
-    /// AlertSoldiers eligibility predicate.
-    pub patrol_chief: Option<EntityId>,
-    /// This soldier's current antagonist.
-    /// Used by soldier-call eligibility to reject a soldier already in a
-    /// conversation with someone other than the calling officer.
-    pub antagonist: Option<AiEntityHandle>,
-    /// Body currently selected by this soldier's AI. The instructed-soldier
-    /// conversation reads this from the officer before delivering
-    /// `CALL_YOURTALK_2`.
-    pub detected_body: Option<AiEntityHandle>,
-    /// Current blood-alcohol debility. Values above
-    /// `AI_DEBILITY_ALCOHOL_LIMIT` force `Q_SHALL_I_STAY_ON_MY_POST` true
-    /// before the active/outdoor branch is considered.
-    pub blood_alcohol: u8,
-    /// Whether this soldier has the duty soldier-profile flag set.
-    /// Combined with `is_tower_guard` and `company_number == 100` it drives
-    /// `Q_SHALL_I_STAY_ON_MY_POST` and permission to leave the post.
-    pub duty_flag: bool,
-    /// Whether this soldier is a tower guard. Used when deciding whether
-    /// an outdoor soldier may leave the post.
-    pub is_tower_guard: bool,
-    /// Soldier's company number — company 100 stays on post.
-    pub company_number: u16,
-    /// Whether this soldier is currently inside a building sector.
-    /// Used by officer alerting to gate the layer-change penalty.
-    pub in_building: bool,
-    /// Body handles still on this soldier's detectable-body list —
-    /// i.e. corpses they have *not yet* reacted to.  An officer
-    /// who has *already* processed a body has dropped it from this
-    /// list, gating the search for a nearby informed officer. Live
-    /// data, refreshed every tick from
-    /// `Soldier::detectable_lists[DetectableType::Body]`.
-    pub detectable_bodies: Vec<HumanHandle>,
-    /// Live current task priority from the soldier's AI brain.  Used
-    /// by the officer's AlertSoldiers gate to predict whether the
-    /// soldier's `Think(CALL_ALERT)` would have returned true (the
-    /// `Q_HAS_THE_NEW_TASK_PRIORITY` arm).
-    pub current_task_priority: u16,
-    /// Live minimal task priority from the soldier's AI brain — the
-    /// floor under which `Q_HAS_THE_NEW_TASK_PRIORITY` may admit a
-    /// downgrade in the non-Seeking/non-Wondering state arm.
-    pub minimal_task_priority: u16,
-    /// Refreshed view direction — the unit forward
-    /// vector after head-turn / stare / lean modifiers. Used by
-    /// the officer-witness check's ≥350² band to evaluate the
-    /// officer's cone (the triangle test in visibility calculation)
-    /// without re-borrowing the engine for a `VisibilityQuery`.
-    pub view_direction: [f32; 2],
-    /// Refreshed view radius — radius gate for the
-    /// cone+LOS detection.
-    pub view_radius: u16,
-    /// Refreshed half-aperture — half-angle of the vision
-    /// cone after stare / drunk / lean-out modifiers.
-    pub real_half_aperture: f32,
-    /// Whether the eyes are blind (closed / dying / unconscious), so
-    /// the cone+LOS gate skips blind officers.
-    pub eye_blind: bool,
-}
-
 #[track_caller]
 /// The world-space half of all-around detection: the original game passes
 /// the upright eye point and detection point straight into the
@@ -404,29 +294,7 @@ pub fn soldier_is_able_to_help_state(
     }
 }
 
-pub(super) fn soldier_detects_position_180(
-    viewer: &CampSoldierInfo,
-    target: Position,
-    sq_standard_view_radius: f32,
-) -> bool {
-    if viewer.in_building || !viewer.is_able_to_fight {
-        return false;
-    }
-    detects_position_180_raw(
-        viewer.position,
-        viewer.direction,
-        target,
-        sq_standard_view_radius,
-    )
-}
-
-/// Free-function form of [`soldier_detects_position_180`] taking raw
-/// position/direction inputs.  Used by the engine-side
-/// nearby-searcher stand-down sweep, which has access to the entity
-/// store but doesn't construct a [`CampSoldierInfo`] for the candidates.
-///
-/// 180° forward cone on the viewer's direction, bounded by the standard
-/// view radius squared.
+/// Forward-half-plane detection using live position and direction values.
 pub(crate) fn detects_position_180_raw(
     viewer_pos: Position,
     viewer_direction: u16,
@@ -484,111 +352,6 @@ pub(super) fn half_plane_180(dx: f32, dy: f32, sq_distance: f32, direction: u16)
 
     HalfPlane180::NotBeside {
         forward_dot: dx * fx + dy * fy,
-    }
-}
-
-/// Snapshot of entity-level data (position, direction, sword range,
-/// opponents, etc.) read by combat AI evaluation.
-#[derive(
-    Debug,
-    Clone,
-    Default,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct FighterSnapshot {
-    pub handle: HumanHandle,
-    pub position: Position,
-    /// The fighter's own raw element position, before AI position
-    /// in the original game snaps an
-    /// actor in door transit onto the gate endpoint or substitutes the
-    /// carrier of an `ON_SHOULDERS` PC.
-    ///
-    /// The AI reads fighters through both accessors and they are not
-    /// interchangeable: squared, Euclidean, and maximum-norm distances
-    /// all take
-    /// the object's position directly, so any range gate written in
-    /// terms of them must use this field, not [`Self::position`].
-    pub raw_position: Position,
-    pub direction: u16,
-    /// True if this fighter is on the same side as the evaluating AI.
-    pub is_friendly: bool,
-    pub is_swordfighting: bool,
-    pub is_able_to_fight: bool,
-    /// True when the fighter's posture is `Tied` — they cannot be
-    /// targeted by rider charges or counted in friendly-presence polygon checks.
-    pub is_tied: bool,
-    /// True when the fighter is unconscious. Distinct from
-    /// `is_able_to_fight`, which folds inactivity, life-points, and
-    /// disguise postures into one bit.
-    pub is_unconscious: bool,
-    /// True when the fighter is dead (`life_points <= 0` or
-    /// `posture == Dead/DeadBack`).
-    pub is_dead: bool,
-    /// True when the fighter is being carried (e.g. PC slung over
-    /// another character's shoulders).
-    pub is_carried: bool,
-    pub is_pc: bool,
-    pub is_soldier: bool,
-    pub rank: ProfileRank,
-    /// Soldier AI `primary_target` / PC melee target. For soldiers this is the
-    /// selected attack target, which differs from the principal
-    /// swordfight opponent while approaching a target.
-    pub primary_target: Option<AiEntityHandle>,
-    pub principal_opponent: Option<AiEntityHandle>,
-    pub number_of_opponents: u16,
-    /// All handles this fighter is currently engaged with.
-    pub opponent_handles: Vec<HumanHandle>,
-    pub sword_range_default: u16,
-    pub sword_range_maximal: u16,
-    /// Extended weapon range used for line-position enemy reachability.
-    pub sword_range_uber: u16,
-    pub fighting_ability: u16,
-    /// Whether this fighter is a VIP (important character) — from
-    /// `CharacterProfile::vip` for PCs, `SoldierProfile::vip` for soldiers.
-    pub is_vip: bool,
-    /// Soldier profile pride value. PCs get 0 (they contribute a flat 100
-    /// to friendly strength during battle planning).
-    pub soldier_profile_pride: u16,
-    /// Whether this fighter is Robin Hood (the main hero). Only true for PCs.
-    pub is_robin: bool,
-    /// True if in a recovery animation (being hit, dying, unconscious, etc.).
-    pub is_in_recovery_animation: bool,
-    /// True if in a valid sword combat action state.
-    pub in_sword_action_state: bool,
-    /// Fighter's ground-plane elevation (world Z). Used by the
-    /// archer run-to-archery-point path to remember the enemy's Z
-    /// when picking a bow posture, and to rebuild the fighter's world
-    /// position for the max-norm consideration radius. Kept at full
-    /// float precision: truncating it moved cross-layer fighters by up
-    /// to a unit and flipped boundary distance gates.
-    pub elevation: f32,
-    /// Position the fighter is moving to (or current position for stationary
-    /// fighters). Used by `propose_good_combat_position` to score friends at
-    /// their *intended* combat position rather than their current pose.
-    pub seek_position: Position,
-    /// Substate snapshot — used by combat-position semantics: when this is
-    /// `AttackingApproachingNewEnemy` or `AttackingMovingAroundOldEnemy`, the
-    /// scorer treats the fighter as moving toward `position`; otherwise it
-    /// scores at `seek_position`.
-    pub current_substate: Substate,
-    /// Snapshots keep the stable 1-based weapon profile id and resolve
-    /// it through the tick's shared `ProfileManager` when strike
-    /// damage is evaluated, avoiding per-fighter `HtHWeaponProfile`
-    /// clones.
-    pub hth_weapon_id: u32,
-    /// The fighter's current action state — used by phalanx tick handlers
-    /// to check `HoldingShield`/`ParryingShield` and bow states.
-    pub action_state: crate::element::ActionState,
-}
-
-impl FighterSnapshot {
-    /// Checks if this fighter lists `handle` as an opponent.
-    pub fn has_as_opponent(&self, handle: HumanHandle) -> bool {
-        self.opponent_handles.contains(&handle)
     }
 }
 
@@ -687,8 +450,7 @@ pub(super) fn ai_max_norm_distance(
 /// in the original game subtracts the two
 /// raw element world points, stretches Y by
 /// `INVERSE_ASPECT_RATIO` and takes the 3D Chebyshev norm. Use this variant
-/// wherever the raw body points are available (`AiContext::self_body_position_world`
-/// / `AiEntityView::detection_position_world`): AI `Position()` snaps a
+/// wherever the raw body points are available: AI `Position()` snaps a
 /// door-passing actor to the gate endpoint and is not interchangeable.
 pub(super) fn ai_max_norm_distance_world(
     target: &crate::coordinates::WorldPoint3D,
@@ -868,31 +630,6 @@ pub struct DoorBattlePosition {
 // when called from &mut self methods that also mutate CombatPositions.)
 // ---------------------------------------------------------------------------
 
-/// The fighters a combat-position evaluation may refer to.
-///
-/// The us/them lists that seed the friend and enemy position lists are
-/// membership-tested against detection and swordfight state, not against the
-/// radius-limited per-tick neighbour snapshot: an enemy can be visible (and
-/// therefore listed) while standing outside that radius, and a listed friend
-/// can stop being able to fight without leaving the list. Evaluation must be
-/// able to read every fighter those lists can name, so it resolves through the
-/// neighbour snapshot first and falls back to the full registry — the same
-/// order the list-building code uses.
-#[derive(Clone, Copy)]
-pub(super) struct FighterView<'a> {
-    pub near: &'a [FighterSnapshot],
-    pub registry: &'a [FighterSnapshot],
-}
-
-impl<'a> FighterView<'a> {
-    fn get(&self, handle: HumanHandle) -> Option<&'a FighterSnapshot> {
-        self.near
-            .iter()
-            .find(|f| f.handle == handle)
-            .or_else(|| self.registry.iter().find(|f| f.handle == handle))
-    }
-}
-
 /// Borrowed combat facts used by the shared candidate damage calculation.
 pub(crate) trait CombatFighterAccess: Copy {
     fn position(self, handle: HumanHandle) -> Position;
@@ -908,54 +645,6 @@ pub(crate) trait CombatFighterAccess: Copy {
     fn rank(self, handle: HumanHandle) -> ProfileRank;
     fn is_pc(self, handle: HumanHandle) -> bool;
     fn is_friendly(self, handle: HumanHandle) -> bool;
-}
-
-impl CombatFighterAccess for FighterView<'_> {
-    fn position(self, handle: HumanHandle) -> Position {
-        self.get(handle)
-            .expect("combat fighter is absent from tactical registry")
-            .position
-    }
-    fn elevation(self, handle: HumanHandle) -> f32 {
-        self.get(handle)
-            .expect("combat fighter is absent from tactical registry")
-            .elevation
-    }
-    fn direction(self, handle: HumanHandle) -> u16 {
-        self.get(handle)
-            .expect("combat fighter is absent from tactical registry")
-            .direction
-    }
-    fn hth_weapon_id(self, handle: HumanHandle) -> u32 {
-        self.get(handle)
-            .expect("combat fighter is absent from tactical registry")
-            .hth_weapon_id
-    }
-    fn sword_range_maximal(self, handle: HumanHandle) -> u16 {
-        self.get(handle)
-            .expect("combat fighter is absent from tactical registry")
-            .sword_range_maximal
-    }
-    fn fighting_ability(self, handle: HumanHandle) -> u16 {
-        self.get(handle)
-            .expect("combat fighter is absent from tactical registry")
-            .fighting_ability
-    }
-    fn rank(self, handle: HumanHandle) -> ProfileRank {
-        self.get(handle)
-            .expect("combat fighter is absent from tactical registry")
-            .rank
-    }
-    fn is_pc(self, handle: HumanHandle) -> bool {
-        self.get(handle)
-            .expect("combat fighter is absent from tactical registry")
-            .is_pc
-    }
-    fn is_friendly(self, handle: HumanHandle) -> bool {
-        self.get(handle)
-            .expect("combat fighter is absent from tactical registry")
-            .is_friendly
-    }
 }
 
 /// Estimates damage the attacker can deal to the target in the
@@ -1251,51 +940,6 @@ pub(crate) fn evaluate_combat_position_full(
 
     (combat::EGOISM_FACTOR * my_points as f32 + friends_points as f32 + general_points as f32)
         as i32
-}
-
-/// Finds the opponent of `maurice` who is nearest (maximum norm) to `rene_pos`.
-///
-/// Find the opponent nearest to the paired fighter.
-/// in the original game. The original game walks
-/// the actor's indexed opponents and dereferences those live references directly, so
-/// the scan is not restricted to the caller's proximity-limited fighter list:
-/// an opponent standing outside the 500-unit `nearby_fighters` radius still
-/// competes for "nearest". `lookup` must therefore resolve handles through the
-/// complete fighter registry (see `EnemyAi::find_fighter`), not just the
-/// nearby snapshot.
-pub(super) fn calculate_opponent_nearest_to_rene<'a>(
-    lookup: impl Fn(HumanHandle) -> Option<&'a FighterSnapshot>,
-    maurice_handle: HumanHandle,
-    rene_pos: &Position,
-) -> Option<AiEntityHandle> {
-    let maurice = lookup(maurice_handle).unwrap_or_else(|| {
-        panic!(
-            "CalculateOpponentOfMauriceWhoIsNearestToRene: Maurice {maurice_handle} is absent \
-             from the fighter registry"
-        )
-    });
-
-    let mut nearest = None;
-    let mut min_dist = u16::MAX;
-
-    for &opp_handle in &maurice.opponent_handles {
-        let opp = lookup(opp_handle).unwrap_or_else(|| {
-            panic!(
-                "CalculateOpponentOfMauriceWhoIsNearestToRene: Maurice {maurice_handle}'s \
-                 opponent {opp_handle} is absent from the fighter registry"
-            )
-        });
-        // The original game subtracts raw map-space positions and stores the 2D
-        // maximum norm in an unsigned 16-bit value before the strict comparison. Fractional
-        // ties therefore retain Maurice's first opponent.
-        let dist = (rene_pos.map_point() - opp.position.map_point()).max_norm() as u16;
-        if dist < min_dist {
-            min_dist = dist;
-            nearest = Some(AiEntityHandle::new(opp_handle));
-        }
-    }
-
-    nearest
 }
 
 // ---------------------------------------------------------------------------

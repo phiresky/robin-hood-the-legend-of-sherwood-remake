@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn pc_noise_refresh_invalidates_an_earlier_npc_tactical_snapshot() {
+fn later_npc_hears_the_pc_noise_from_its_completed_creation_slot() {
     use crate::element::{Camp, Detectable, DetectableType};
 
     let mut engine = EngineInner::new();
@@ -9,8 +9,8 @@ fn pc_noise_refresh_invalidates_an_earlier_npc_tactical_snapshot() {
     let pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let later_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
 
-    // The earlier NPC builds the lazy tactical snapshot before the PC's live
-    // human-update slot. The later NPC's cadence is open at frame zero:
+    // The earlier NPC runs before the PC's live human-update slot.
+    // The later NPC's cadence is open at frame zero:
     // (0 + 31 hidden creations + slot 2) % 3 == 0.
     engine.control.frame_counter = 0;
     for npc_id in [earlier_npc, later_npc] {
@@ -89,13 +89,12 @@ fn pc_noise_refresh_invalidates_an_earlier_npc_tactical_snapshot() {
 
 #[test]
 fn arrow_reaction_with_null_interesting_object_clears_stale_look_there_focus() {
-    use crate::ai::{AiState, CrossNpcAction, Position, StimulusInfo, StimulusType, Substate};
+    use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
     use crate::element::{Camp, Entity, EyeStatus};
 
     let mut engine = EngineInner::new();
-    let source_id = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
     let receiver_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    for id in [source_id, receiver_id] {
+    for id in [receiver_id] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
             panic!("arrow-focus test NPC changed kind")
         };
@@ -110,23 +109,13 @@ fn arrow_reaction_with_null_interesting_object_clears_stale_look_there_focus() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine
-        .get_entity_mut(source_id)
-        .and_then(Entity::ai_controller_mut)
-        .unwrap()
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::SendStimulus {
-            target: receiver_id.index(),
-            stimulus_type: StimulusType::EventGetArrow,
-            info: StimulusInfo::Position(Position::default()),
-            fallback_to_sender: None,
-            to_whole_patrol: false,
-        });
-
     crate::sim_rng::with_seed(0xA013_1091, |sim| {
-        engine.process_synchronous_reentrant_actions_for(sim, source_id, &assets);
+        engine.execute_ai_callback(
+            sim,
+            &assets,
+            receiver_id,
+            &Stimulus::with_position(StimulusType::EventGetArrow, Position::default()),
+        );
     });
 
     let receiver_ai = engine.get_entity(receiver_id).unwrap().enemy_ai().unwrap();

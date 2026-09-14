@@ -9,10 +9,9 @@ fn set_test_soldier_brawl_got_hit(engine: &mut EngineInner, soldier: EntityId) {
     let npc = entity.npc_data_mut().expect("test soldier is an NPC");
     npc.ai_brain =
         crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(soldier.index())));
-    npc.ai_brain
-        .enemy_mut()
-        .expect("enemy brain installed")
-        .set_state(AiState::Wondering, Substate::WonderingBrawlGotHit);
+    let ai = npc.ai_brain.enemy_mut().expect("enemy brain installed");
+    ai.base.set_ai_state(AiState::Wondering);
+    ai.base.current_substate = Substate::WonderingBrawlGotHit;
 }
 
 #[test]
@@ -100,7 +99,7 @@ fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
             .outbox
             .reentrant
             .self_stimuli
-            .push(StimulusType::EventPanic.into());
+            .push(StimulusType::EventGaloppLoopEnd.into());
     }
 
     let mut assets = LevelAssets::new();
@@ -115,9 +114,26 @@ fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
             .outbox
             .reentrant
             .self_stimuli,
-        [StimulusType::EventPanic],
+        [StimulusType::EventGaloppLoopEnd],
         "unrelated sibling C must remain queued until explicit virtual tail B has returned"
     );
+    {
+        let friendly = engine
+            .get_entity(civilian)
+            .and_then(Entity::friendly_ai)
+            .expect("test civilian retains Friendly AI");
+        assert_eq!(friendly.fleeing_seen_enemy_counter, 0);
+        assert!(!friendly.base.macro_in_progress);
+        assert!(!friendly.base.macro_timer_is_running);
+        assert!(
+            !friendly
+                .base
+                .ai_log
+                .iter()
+                .any(|line| line.line_type == crate::ai::LogLineType::Event
+                    && line.info == StimulusType::EventGaloppLoopEnd as u16)
+        );
+    }
     engine.drain_self_stimuli_for_npc(sim, civilian, &assets);
 
     let friendly = engine
@@ -132,6 +148,16 @@ fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
         "the delayed opcode tail must execute its explicit second macro interruption"
     );
     assert!(friendly.base.outbox.reentrant.self_stimuli.is_empty());
+    assert_eq!(
+        friendly
+            .base
+            .ai_log
+            .iter()
+            .filter(|line| line.line_type == crate::ai::LogLineType::Event
+                && line.info == StimulusType::EventGaloppLoopEnd as u16)
+            .count(),
+        1
+    );
 }
 
 #[test]

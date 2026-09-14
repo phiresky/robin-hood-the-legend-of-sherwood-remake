@@ -238,7 +238,6 @@ fn classify_ai_reentrant_outbox(value: &AiReentrantOutbox) {
                 self_stimuli,
                 owner_work,
                 waypoint_script_reach_point,
-                brawl_hitting_completion_pending,
             ],
             skipped: [engine_drains_after_script_go_on],
         }

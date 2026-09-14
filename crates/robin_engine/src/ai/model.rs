@@ -1429,25 +1429,6 @@ impl Decision {
     bitcode::Decode,
 )]
 pub enum CrossNpcAction {
-    /// Synchronously deliver `CALL_ALERT` and resume the caller with the
-    /// recipient's actual `Think` result. The original uses the returned bool
-    /// to decide whether the reporting NPC may enter its approach/report
-    /// handshake; predicting from a recipient snapshot loses script-filter and
-    /// re-entrant callback effects.
-    RequestAlert {
-        target: NpcHandle,
-        caller: NpcHandle,
-    },
-    /// Synchronously deliver a direct `Think` call whose boolean controls a
-    /// caller-side continuation. The recipient may re-enter and mutate the
-    /// caller before returning, so the continuation resumes on live fields.
-    RequestThinkResult {
-        target: NpcHandle,
-        caller: NpcHandle,
-        stimulus_type: StimulusType,
-        info: StimulusInfo,
-        continuation: ThinkResultContinuation,
-    },
     /// Deliver a stimulus to the target NPC (e.g. `CALL_COORDINATE`).
     SendStimulus {
         target: NpcHandle,
@@ -1539,33 +1520,6 @@ pub enum CrossNpcAction {
     /// PC-sighting processing when the reuniting soldier
     /// still needs to wait at the sync waypoint for its macro friend.
     RegisterSynchronizingActor { target: NpcHandle, actor: NpcHandle },
-    /// Run the look-there broadcast's soldier-registry walk at the owner boundary.
-    /// Each recipient's live state is tested immediately before its direct
-    /// `Think(CALL_LOOKTHERE)`, because an earlier recipient can re-enter and
-    /// mutate a later one during the same broadcast.
-    BroadcastLookThere {
-        caller: NpcHandle,
-        position: Position,
-        radius: u16,
-        continuation: LookThereContinuation,
-    },
-    /// Resume the procedure that requested the look-there broadcast once every
-    /// `CALL_LOOKTHERE` it emitted has been delivered and its cascade has
-    /// closed. The look-there broadcast is a plain synchronous call in the
-    /// Original, so the caller's own state transition happens *after* the
-    /// friends have thought. A friend that relays the call back to the sender
-    /// must therefore still observe the sender's pre-transition state.
-    ResumeAfterLookThere {
-        caller: NpcHandle,
-        continuation: LookThereContinuation,
-    },
-    /// Synchronously deliver `CALL_MR_OFFICER_I_AM_BACK` and feed the
-    /// target officer's actual `Think` return value back into Charly's
-    /// state machine before the originating dispatch completes.
-    ReportBackToOfficer {
-        officer: NpcHandle,
-        charly: NpcHandle,
-    },
 }
 
 #[derive(
@@ -1583,37 +1537,6 @@ pub enum AlertSoldiersFailureContinuation {
     ReturnToDuty,
     SeekBody { center: Position, radius: u16 },
     SeekMissedCharly { center: Position },
-    FleeingRunToDoor,
-}
-
-/// The tail of a procedure that broadcast `CALL_LOOKTHERE`, parked until the
-/// broadcast's synchronous delivery has finished.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum LookThereContinuation {
-    SeekingArrowReactiontime,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum ThinkResultContinuation {
-    OfficerSentCharlyToOfficer,
 }
 
 // ---------------------------------------------------------------------------

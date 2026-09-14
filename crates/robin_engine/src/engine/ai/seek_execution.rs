@@ -1059,8 +1059,8 @@ mod tests {
         ai.actual_seek_point = Some(0);
 
         ai.positions_of_beggars_to_control.push(Position {
-            x: 50.0,
-            y: 60.0,
+            x: 350.0,
+            y: 360.0,
             sector: Some(test_sector()),
             ..Position::default()
         });

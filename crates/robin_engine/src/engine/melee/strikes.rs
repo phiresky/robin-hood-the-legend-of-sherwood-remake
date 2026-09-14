@@ -3174,14 +3174,7 @@ impl EngineInner {
                     .has_live_element_for_actor_matching(npc_id, |cmd| {
                         cmd.is_swordstrike() || cmd == crate::element::Command::WaitTimer
                     });
-                if let Some(ai) = self
-                    .world
-                    .entities
-                    .get_mut(npc_id)
-                    .and_then(Entity::enemy_ai_mut)
-                {
-                    ai.reconcile_special_strike(has_active, current_frame);
-                }
+                self.reconcile_ai_special_strike(sim, assets, npc_id, has_active);
                 // `reconcile_special_strike` stands in for cancellation paths
                 // whose Original sequence teardown synchronously reaches
                 // completion-event decision tick. Any resulting state change therefore also
@@ -3619,11 +3612,11 @@ impl EngineInner {
             // observable legacy special-strike substate; the
             // immediate stop-all side effect stays engine-side so it
             // runs before the new strike sequence is queued.
+            self.begin_ai_special_strike(sim, assets, attack.soldier_id);
             let ai = self.world.entities.expect_enemy_ai_mut(
                 attack.soldier_id,
                 format_args!("special-strike owner before begin"),
             );
-            ai.begin_special_strike();
             ai.base.stop_all();
             if special_debug {
                 self.trace_special_strike_state(current_frame, attack.soldier_id, "after_begin");

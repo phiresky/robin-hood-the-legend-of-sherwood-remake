@@ -1,101 +1,31 @@
-//! Borrowed decision handlers return engine calls before decision completion.
+//! Typed arguments for live enemy decision operations.
 
 use serde::{Deserialize, Serialize};
 
-use super::DutyFlags;
-
-pub(crate) type AiFlow<T> = Result<T, DutyCall>;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct DutyCall {
-    pub flags: DutyFlags,
-    /// Boolean result of the enclosing Think after the engine call completes.
-    pub think_result: bool,
-    pub tail: DutyTail,
-    /// Enclosing caller statements, executed after the innermost tail returns.
-    pub after: Vec<DutyTail>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum DutyTail {
-    EnemyObservation {
-        operation: EnemyObservation,
-    },
-    None,
-    PanicSegment {
-        stimulus: super::StimulusType,
-    },
-    BodyReaction {
-        operation: BodyReaction,
-    },
-    AlertOfficer {
-        caller: OfficerAlertCaller,
-    },
-    TowerGuardAlert {
-        center: super::Position,
-    },
-    OfficerLookForSoldier {
-        reason: super::ReportType,
-    },
-    BattleDecisions,
-    BattleOverview {
-        flags: u16,
-    },
-    ReconsiderEnemyApproach {
-        reachpoint: bool,
-    },
-    AttackEnemy {
-        target: super::HumanHandle,
-    },
-    RiderAttack,
-    ReconsiderSwordfight {
-        enemy_weak: bool,
-    },
-    ReconsiderSwordfightObservation,
-    CommandSoldiersToAttack {
-        center: super::Position,
-    },
-    AlertSoldiers {
-        center: super::Position,
-        flags: u16,
-        failure: super::AlertSoldiersFailureContinuation,
-    },
-    MoneyFight {
-        operation: MoneyFightOperation,
-    },
-    FinishSeek,
-    SeekArea {
-        center: super::Position,
-        standard_radius: u16,
-        flags: crate::ai_enemy::SeekFlags,
-        seek_direction: u16,
-    },
-    SeekNextPoint,
-    ScanSleepingEnemies {
-        observer_camp: crate::element::Camp,
-    },
-    ApproachSleepingEnemies {
-        targets: Vec<super::HumanHandle>,
-    },
-    SearchCharlyTimer,
-    AfterCombatInjury,
-    GotHitViewStatus,
-    DispatchPatrol {
-        stimulus: super::Stimulus,
-    },
-    Think {
-        stimulus: crate::ai::Stimulus,
-    },
+pub(crate) enum EnemyRecovery {
+    FitAgain,
+    WaspAway,
+    NetAway,
+    Stop,
+    Apple { position: super::Position },
+    Stone { position: super::Position },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum EnemyObservation {
+    Noise { noise: super::Noise },
+    LookThere { position: super::Position },
+    TowerGuardAlert { hint: super::Hint },
+    TowerGuardCalls { hint: super::Hint },
+    CombatAlert { position: super::Position },
     ArcherEnemy { target: super::HumanHandle },
     Enemy { target: super::HumanHandle },
     Charly { target: super::HumanHandle },
     Shadow { position: super::Position },
     Object { target: super::ObjectHandle },
     Arrow { origin: super::Position },
+    ArrowReaction,
     AleReaction,
     AleApproach { arrived: bool },
 }
@@ -140,25 +70,4 @@ pub(crate) enum MoneyFightOperation {
     FinishHitAfterOfficer,
     RecoverBrawl,
     AwakeNextVictim,
-}
-
-impl DutyCall {
-    pub(crate) fn new(flags: DutyFlags, think_result: bool) -> Self {
-        Self {
-            flags,
-            think_result,
-            tail: DutyTail::None,
-            after: Vec::new(),
-        }
-    }
-
-    pub(crate) fn with_think_result(mut self, result: bool) -> Self {
-        self.think_result = result;
-        self
-    }
-
-    pub(crate) fn then(mut self, tail: DutyTail) -> Self {
-        self.after.push(tail);
-        self
-    }
 }

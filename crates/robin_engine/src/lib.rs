@@ -14,7 +14,6 @@ pub mod actor_state;
 pub mod ai;
 pub mod ai_detectable_filter;
 pub mod ai_enemy;
-pub mod ai_entity_view;
 pub mod ai_friendly;
 pub mod ai_vision;
 pub mod alert_colors;

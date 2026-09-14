@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn look_there_broadcast_skips_attacking_chief_and_reacts_on_eligible_member() {
-    use crate::ai::{AiState, CrossNpcAction, LookThereContinuation, Position, Substate};
+    use crate::ai::{AiState, Position, Substate};
     use crate::element::{Camp, Entity};
 
     let mut engine = EngineInner::new();
@@ -33,22 +33,8 @@ fn look_there_broadcast_skips_attacking_chief_and_reacts_on_eligible_member() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine
-        .get_entity_mut(source_id)
-        .and_then(Entity::ai_controller_mut)
-        .unwrap()
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::BroadcastLookThere {
-            caller: source_id.index(),
-            position: Position::default(),
-            radius: 100,
-            continuation: LookThereContinuation::SeekingArrowReactiontime,
-        });
-
     crate::sim_rng::with_seed(0xA013_1090, |sim| {
-        engine.process_synchronous_reentrant_actions_for(sim, source_id, &assets);
+        engine.execute_ai_look_there(sim, &assets, source_id, Position::default(), 100);
     });
 
     let chief = engine

@@ -9,8 +9,7 @@ use crate::sim_rng::SimulationContext;
 use super::map_vec_ext::AiMapVec;
 use super::util::vec_to_sector;
 use super::{
-    EnemyAi, FighterSnapshot, PrimaryTargetFlags, ProfileRank, SeekFlags, ThinkEnv,
-    UNDEFINED_DIRECTION, archer, combat,
+    EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, archer, combat,
 };
 use crate::coordinates::MapVec;
 
@@ -136,43 +135,6 @@ fn battle_friend_primary_target(
 }
 
 impl EnemyAi {
-    // -----------------------------------------------------------------------
-    // Attack nearby sleeping enemies
-    // -----------------------------------------------------------------------
-
-    /// Release the actor borrow before duty and the following live fighter scan.
-    fn kill_nearby_sleeping_enemies(&mut self, env: ThinkEnv<'_>) -> crate::ai::AiFlow<()> {
-        Err(crate::ai::DutyCall {
-            flags: DutyFlags::empty(),
-            think_result: false,
-            tail: crate::ai::DutyTail::ScanSleepingEnemies {
-                observer_camp: env.ctx.camp,
-            },
-            after: Vec::new(),
-        })
-    }
-
-    // -----------------------------------------------------------------------
-    // Battle overview
-    // -----------------------------------------------------------------------
-
-    pub(crate) fn get_battle_overview(
-        &mut self,
-        flags: u16,
-        _env: ThinkEnv<'_>,
-    ) -> crate::ai::AiFlow<()> {
-        Err(crate::ai::DutyCall {
-            flags: DutyFlags::empty(),
-            think_result: false,
-            tail: DutyTail::BattleOverview { flags },
-            after: Vec::new(),
-        })
-    }
-
-    // -----------------------------------------------------------------------
-    // Battle predecisions — offensive or defensive?
-    // -----------------------------------------------------------------------
-
     pub(crate) fn battle_predecision_from_points(
         &self,
         sim: &SimulationContext,
@@ -208,57 +170,6 @@ impl EnemyAi {
         } else {
             Decision::PredecisionOffensive
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // Battle decisions — the heart of tactical AI
-    // -----------------------------------------------------------------------
-
-    pub(crate) fn battle_decisions(
-        &mut self,
-        _env: ThinkEnv<'_>,
-        _global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<()> {
-        let mut call = crate::ai::DutyCall::new(crate::ai::DutyFlags::empty(), false);
-        call.tail = crate::ai::DutyTail::BattleDecisions;
-        Err(call)
-    }
-
-    // -----------------------------------------------------------------------
-    // Engage an enemy
-    // -----------------------------------------------------------------------
-
-    pub(crate) fn attack_enemy(
-        &mut self,
-        enemy: HumanHandle,
-        _env: ThinkEnv<'_>,
-    ) -> crate::ai::AiFlow<()> {
-        let mut call = crate::ai::DutyCall::new(crate::ai::DutyFlags::empty(), false);
-        call.tail = crate::ai::DutyTail::AttackEnemy { target: enemy };
-        Err(call)
-    }
-
-    // -----------------------------------------------------------------------
-    // Reconsider the enemy approach for melee
-    // Simplified enemy-approach reconsideration.
-    // -----------------------------------------------------------------------
-
-    /// Decide how to approach the primary target: run when far, walk
-    /// when close, fight when in melee range.
-    ///
-    /// Distance is sampled here from the target-specific live position.
-    /// `seek_position` must already be set to the target's position
-    /// before calling.
-    ///
-    /// Geometry and rider charge are resolved by the engine when this operation runs.
-    pub(crate) fn reconsider_enemy_approach(
-        &mut self,
-        reachpoint: bool,
-        _env: ThinkEnv<'_>,
-    ) -> crate::ai::AiFlow<()> {
-        let mut call = crate::ai::DutyCall::new(crate::ai::DutyFlags::empty(), false);
-        call.tail = crate::ai::DutyTail::ReconsiderEnemyApproach { reachpoint };
-        Err(call)
     }
 
     /// Compute the approach point on `line_idx` closest to the victim.
@@ -300,21 +211,6 @@ impl EnemyAi {
     const RIDER_CHARGE_LATERAL_DISTANCE: f32 = 40.0;
     const RIDER_CHARGE_SQR_LATERAL_DISTANCE: f32 = 1600.0;
     const RIDER_CHARGE_LOOP_DISTANCE: f32 = 80.0;
-
-    // -----------------------------------------------------------------------
-    // End swordfight
-    // -----------------------------------------------------------------------
-
-    pub fn end_swordfight(&mut self, ctx: &AiContext) {
-        // If the entity is still swordfighting, launch a QUIT_SWORDFIGHT
-        // sequence element to clear the opponent list and transition
-        // action state. We can't call the engine directly, so we set a
-        // pending flag that the engine picks up after the AI tick.
-        if !ctx.is_swordfighting {
-            return;
-        }
-        self.base.outbox.actor.quit_swordfight = true;
-    }
 }
 
 /// Accepted output of [`rider_charge_goal_geometry`].

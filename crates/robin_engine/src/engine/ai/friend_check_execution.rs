@@ -359,9 +359,9 @@ mod tests {
             npc.life_points = 100;
             npc.view_radius = 1000;
         }
-        engine.ai.global.all_soldier_handles = std::sync::Arc::new(vec![target.index()]);
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.ai.global.all_soldier_handles = std::sync::Arc::new(vec![target.index()]);
         assets.navigation.hiking_paths = std::sync::Arc::new(vec![RawHikingPath {
             waypoints: vec![RawWaypoint {
                 x: 20,

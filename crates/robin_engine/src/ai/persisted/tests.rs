@@ -338,7 +338,7 @@ fn populated_outbox() -> AiOutbox {
     ];
     value.reentrant.waypoint_script_reach_point = Some((PathId::new(7).unwrap(), 2));
     value.reentrant.owner_work = vec![
-        AiOwnerWork::NearbyCiviliansPanic180,
+        AiOwnerWork::SetEyeStatus(crate::element::EyeStatus::LookForward),
         AiOwnerWork::LaunchTimer {
             frames: 17,
             current_frame: 198,
@@ -424,7 +424,7 @@ fn outbox_projection_preserves_fifo_and_only_reconstructs_runtime_provenance() {
     );
     assert!(matches!(
         restored.reentrant.owner_work[0],
-        AiOwnerWork::NearbyCiviliansPanic180
+        AiOwnerWork::SetEyeStatus(crate::element::EyeStatus::LookForward)
     ));
     assert!(matches!(
         restored.reentrant.owner_work[1],

@@ -356,6 +356,7 @@ pub enum RngSite {
     CombatReposition,
     CombatObserveSideStep,
     EnemyWonderingLook,
+    EnemyBrawlExcuse,
     EnemySeekDirectionShuffle,
     EnemySeekLook,
     TooProudLook,

@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 impl EngineInner {
     pub(in crate::engine) fn live_ai_detects_180(
         &mut self,

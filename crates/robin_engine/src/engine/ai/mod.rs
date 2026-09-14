@@ -1,7 +1,7 @@
 //! Enemy AI engine integration.
 //!
 //! Tick orchestration and engine-owned side effects are grouped by domain:
-//!  - [`tick_data`] and [`snapshots`] build owner-boundary tactical views.
+//!  - [`owner_debug`] exposes actor lifecycle diagnostics.
 //!  - [`tick_scheduling`] and [`owner_scheduling`] drive per-NPC work.
 //!  - [`detection`] and [`post_detection`] implement the visibility phases.
 //!  - [`event_dispatch`] handles animation, noise, detection, and speech events.
@@ -22,14 +22,24 @@ mod battle_execution;
 mod body_execution;
 mod body_observation;
 mod charly_observation;
+mod charly_search;
 mod combat_events;
+mod combat_impact;
 mod cross_npc_actions;
+mod default_event_execution;
 mod detection;
 mod duty_callers;
 mod duty_common;
 mod duty_execution;
+mod enemy_admission;
+mod enemy_alert_observation;
+mod enemy_event_execution;
+#[cfg(test)]
+mod enemy_event_migration_tests;
 mod enemy_observation;
+mod enemy_recovery;
 mod enemy_report_execution;
+mod enemy_state_execution;
 mod event_dispatch;
 #[cfg(test)]
 mod event_handler_live_tests;
@@ -40,8 +50,11 @@ mod friendly_execution;
 mod initialization;
 mod live_visibility;
 mod macro_execution;
+mod money_event_execution;
 mod money_execution;
 mod officer_rendezvous_execution;
+mod officer_rpc;
+mod out_of_view_execution;
 mod owner_scheduling;
 mod panic_execution;
 mod patrol_assembly;
@@ -49,18 +62,21 @@ mod patrol_coordination;
 mod patrol_dispatch;
 mod phalanx_execution;
 mod protection_execution;
+mod reachability_execution;
 mod seek_execution;
 mod seeking_event_execution;
+mod seeking_remaining;
 mod shot_selection;
 mod swordfight_candidates;
 mod swordfight_execution;
 mod wondering_execution;
+mod wondering_remaining;
 #[cfg(test)]
 pub(crate) use detection::capture_heard_callbacks;
 pub(crate) use detection::debug_detectable_mutation_load_snapshot;
+mod owner_debug;
 mod post_detection;
 mod snapshots;
-mod tick_data;
 mod tick_scheduling;
 
 #[cfg(test)]
@@ -69,15 +85,15 @@ pub(crate) use post_detection::{
 };
 
 use super::*;
-use crate::ai::{AiContext, StimulusType};
-use crate::ai_entity_view::{self, AiEntityViewMap, AiEntityViews, SharedAiEntityViews};
+use crate::ai::StimulusType;
 use crate::ai_vision;
 use crate::coordinates::MapPoint;
-use crate::element::{
-    Camp, Detectable, DetectableType, Entity, EntityId, Human as _, PcId, SoldierId,
-};
-use crate::engine::SimScratch;
+#[cfg(test)]
+use crate::element::PcId;
+use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId, Human as _, SoldierId};
+#[cfg(test)]
 use crate::entities::Entities;
+#[cfg(test)]
 use serde::{Deserialize, Serialize};
 
 fn beam_door_waypoints_into_houses(
@@ -395,65 +411,6 @@ fn patrol_turn_lifecycle_debug_gate() -> &'static crate::engine::diagnostics::Pa
             ],
         )
     })
-}
-
-/// `[frame, creation order, owner handle]`, all optional.
-fn archer_step_back_lifecycle_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<3> {
-    use crate::engine::diagnostics::ParityGate;
-    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
-    GATE.get_or_init(|| {
-        ParityGate::from_env(
-            "PARITY_DEBUG_ARCHER_STEP_BACK_LIFECYCLE",
-            [
-                "PARITY_DEBUG_ARCHER_STEP_BACK_FRAME",
-                "PARITY_DEBUG_ARCHER_STEP_BACK_CREATION_ORDER",
-                "PARITY_DEBUG_ARCHER_STEP_BACK_OWNER_HANDLE",
-            ],
-        )
-    })
-}
-
-/// Opt-in, stderr-only trace for the Save049 timer-driven archer step-back.
-/// The original game executes the actor update before the NPC timer tail, so
-/// the authoritative installed order and sprite completion counters at context
-/// construction distinguish a late actor retirement from an AI movement issue.
-fn archer_step_back_lifecycle_debug_matches(
-    frame: u32,
-    creation_order: Option<u32>,
-    owner_handle: u32,
-) -> bool {
-    archer_step_back_lifecycle_debug_gate().matches_required([
-        Some(frame),
-        creation_order,
-        Some(owner_handle),
-    ])
-}
-
-/// `[installed, concrete]` animations.
-#[inline(never)]
-fn trace_archer_step_back_context(
-    frame: u32,
-    original_creation_order: Option<u32>,
-    elem: &crate::element::ElementData,
-    actor: Option<&crate::element::ActorData>,
-    [self_animation, concrete_self_animation]: [crate::order::OrderType; 2],
-    self_action_state: impl std::fmt::Debug,
-    self_animation_reached_action_done: bool,
-) {
-    let sprite = &elem.sprite;
-    eprintln!(
-        "[ARCHERSTEP frame={frame} co={original_creation_order:?} me={} phase=context installed={self_animation:?} concrete={concrete_self_animation:?} action_state={self_action_state:?} motion_state={:?} order_id={:?} last_execute_order_id={:?} sprite_action={:?} row={} sprite_frame={} frame_count={} done_frame={} done_counter={} reached_done={self_animation_reached_action_done}]",
-        elem.index_in_elements_list,
-        actor.map(|actor| actor.continuation.motion_state),
-        actor.and_then(|actor| actor.installed_order.map(|order| order.order_id)),
-        actor.and_then(|actor| actor.last_execute_order_id),
-        sprite.last_action,
-        sprite.current_row,
-        sprite.current_frame,
-        sprite.frame_count,
-        sprite.action_done_frame,
-        sprite.action_done_counter,
-    );
 }
 
 impl EngineInner {
@@ -781,11 +738,12 @@ mod panic_boundary_tests {
         let mut engine = EngineInner::new();
         let pc_id = engine.add_test_entity(enemy_ai_hero());
 
-        engine.set_typed_npc_state(
+        engine.duty_set_state(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
             pc_id,
             crate::ai::AiState::Fleeing,
             crate::ai::Substate::FleeingPanic,
-            "Panic run entry",
         );
 
         let ai = engine
@@ -970,7 +928,7 @@ mod panic_boundary_tests {
             .hth_weapons
             .push(crate::profiles::HtHWeaponProfile::default());
         let request = crate::ai::PanicRequest {
-            center: Some(AiContext::test_fixture().position),
+            center: Some(crate::ai::Position::default()),
             runs: crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
             alert: crate::ai::AlertLevel::Red,
             is_new_panic: true,
@@ -1810,7 +1768,7 @@ mod parity_tests {
         // never by the authored door-type tags. In this fixture the door at
         // (10, 20) / layer 1 is therefore the high door even though it is
         // tagged LiftLow.
-        let high = crate::ai::AiContext::enemy_lift_approach_for_position(&grid, target, Some(1))
+        let high = crate::ai::enemy_lift_approach_for_position(&grid, target, Some(1))
             .expect("target is in a lift")
             .expect("ladder has an approach entry");
         assert_eq!((high.x, high.y, high.level), (10.0, 20.0, 1));
@@ -1823,13 +1781,10 @@ mod parity_tests {
         // Every layer other than the high door's layer falls back to the low
         // entry, including layers matching neither door.
         for attacker_layer in [2, 3] {
-            let low = crate::ai::AiContext::enemy_lift_approach_for_position(
-                &grid,
-                target,
-                Some(attacker_layer),
-            )
-            .expect("target is in a lift")
-            .expect("ladder has an approach entry");
+            let low =
+                crate::ai::enemy_lift_approach_for_position(&grid, target, Some(attacker_layer))
+                    .expect("target is in a lift")
+                    .expect("ladder has an approach entry");
             assert_eq!((low.x, low.y, low.level), (30.0, 40.0, 3));
             assert_eq!(low.sector.map(u16::from), Some(8));
         }
@@ -1866,7 +1821,7 @@ mod parity_tests {
 
         let public = crate::position_interface::SectorHandle::new(42).unwrap();
         let exact = public.with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap());
-        let exact_entry = crate::ai::AiContext::enemy_lift_approach_for_position(
+        let exact_entry = crate::ai::enemy_lift_approach_for_position(
             &grid,
             crate::ai::Position {
                 sector: Some(exact),
@@ -1882,7 +1837,7 @@ mod parity_tests {
             crate::fast_find_grid::SectorIndex::new(5)
         );
 
-        let numeric_entry = crate::ai::AiContext::enemy_lift_approach_for_position(
+        let numeric_entry = crate::ai::enemy_lift_approach_for_position(
             &grid,
             crate::ai::Position {
                 sector: Some(public),
@@ -1909,12 +1864,12 @@ mod parity_tests {
             ..crate::ai::Position::default()
         };
 
-        let high = crate::ai::AiContext::enemy_lift_approach_for_position(&grid, target, Some(3))
+        let high = crate::ai::enemy_lift_approach_for_position(&grid, target, Some(3))
             .expect("target is in a lift")
             .expect("ladder has an approach entry");
         assert_eq!((high.x, high.y, high.level), (30.0, 40.0, 3));
 
-        let low = crate::ai::AiContext::enemy_lift_approach_for_position(&grid, target, Some(1))
+        let low = crate::ai::enemy_lift_approach_for_position(&grid, target, Some(1))
             .expect("target is in a lift")
             .expect("ladder has an approach entry");
         assert_eq!((low.x, low.y, low.level), (10.0, 20.0, 1));
@@ -1928,17 +1883,9 @@ mod parity_tests {
             ..crate::ai::Position::default()
         };
         assert_eq!(
-            crate::ai::AiContext::enemy_lift_approach_for_position(&grid, target, Some(3)),
+            crate::ai::enemy_lift_approach_for_position(&grid, target, Some(3)),
             Some(None)
         );
-    }
-
-    #[test]
-    fn generic_owner_zero_context_may_lack_an_ai_entity_view() {
-        let views = crate::ai_entity_view::shared_entity_views(
-            crate::ai_entity_view::AiEntityViewMap::new(),
-        );
-        assert_eq!(context_original_creation_order(0, &views), None);
     }
 
     #[test]
@@ -1949,7 +1896,7 @@ mod parity_tests {
             sector: crate::position_interface::SectorHandle::new(42),
             ..crate::ai::Position::default()
         };
-        let _ = crate::ai::AiContext::enemy_lift_approach_for_position(&grid, target, Some(3));
+        let _ = crate::ai::enemy_lift_approach_for_position(&grid, target, Some(3));
     }
 
     #[test]
@@ -2230,408 +2177,6 @@ impl EngineInner {
             .expect("bored timer requires AI")
             .get_bored_time_for(sim, self.control.frame_counter, rank, pride)
     }
-
-    /// Build a dispatch context from the selected observation, preserving the
-    /// caller's frame and building-sector boundary rather than resampling them.
-    pub(in crate::engine) fn ai_context_from_entity(
-        &self,
-        entity: &Entity,
-        frame: u32,
-        building_sector: Option<crate::position_interface::SectorHandle>,
-        scratch: &SimScratch,
-        assets: &LevelAssets,
-    ) -> AiContext {
-        build_ai_context_from_entity(
-            entity,
-            frame,
-            building_sector,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-            self.ai_think_depth(),
-        )
-    }
-
-    /// Resolve an NPC and its current building sector at the dispatch boundary.
-    /// Split-borrow translators continue to use the entity-based primitive.
-    #[track_caller]
-    pub(in crate::engine) fn ai_context_for(
-        &self,
-        npc_id: EntityId,
-        frame: u32,
-        scratch: &SimScratch,
-        assets: &LevelAssets,
-    ) -> AiContext {
-        let entity = self.expect_entity(npc_id, "building AI dispatch context");
-        let building_sector = self.entity_building_sector(entity.element_data().sector());
-        self.ai_context_from_entity(entity, frame, building_sector, scratch, assets)
-    }
-}
-
-/// Build an [`AiContext`] from a generic [`Entity`] reference.
-///
-/// Extracts position, direction, posture, camp, building status, and
-/// swordfighting flag from the live human opponent list so the AI think method
-/// sees a consistent, non-stale snapshot each call.
-///
-/// Also threads the per-tick [`SharedAiEntityViews`] map into the
-/// context so handlers can resolve arbitrary entity handles to live
-/// position / state without a mutable engine borrow.  Callers grab
-/// the map from [`SimScratch`], built by
-/// [`EngineInner::build_sim_scratch`] before each dispatch pass.
-pub(super) fn build_ai_context_from_entity(
-    entity: &Entity,
-    frame: u32,
-    building_sector: Option<crate::position_interface::SectorHandle>,
-    is_forest_level: bool,
-    ambiance: crate::engine::types::Ambiance,
-    standard_view_polygon_radius: u16,
-    entity_views: &SharedAiEntityViews,
-    sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
-    fast_grid: &std::sync::Arc<crate::fast_find_grid::FastFindGrid>,
-    hiking_paths: &std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
-    hiking_waypoint_sectors: &Option<
-        std::sync::Arc<Vec<Vec<crate::position_interface::SectorHandle>>>,
-    >,
-    all_soldier_handles: &std::sync::Arc<Vec<u32>>,
-    difficulty: crate::player_profile::DifficultyLevel,
-    think_depth: u8,
-) -> AiContext {
-    let elem = entity.element_data();
-    let actor = entity.actor_data();
-    let original_creation_order =
-        context_original_creation_order(elem.index_in_elements_list as u32, entity_views);
-    // The actor's AI position uses the committed gate
-    // side while the sprite interpolates along a door rail. The shared view
-    // has already applied that override; raw sprite coordinates here made
-    // self-relative AI geometry disagree with target lookups during PassDoor.
-    let self_position = if actor.is_some_and(|actor| actor.active_door_pass.is_some()) {
-        entity_views
-            .get(&(elem.index_in_elements_list as u32))
-            .unwrap_or_else(|| {
-                panic!(
-                    "door-passing AI owner {} is missing its required entity view",
-                    elem.index_in_elements_list
-                )
-            })
-            .position
-    } else {
-        crate::ai::Position {
-            x: elem.position_map().x,
-            y: elem.position_map().y,
-            sector: elem.sector(),
-            level: elem.layer(),
-        }
-    };
-    build_ai_owner_scalars(
-        entity,
-        self_position,
-        original_creation_order,
-        frame,
-        building_sector,
-        is_forest_level,
-        ambiance,
-        standard_view_polygon_radius,
-        entity_views,
-        sight_obstacles,
-        fast_grid,
-        hiking_paths,
-        hiking_waypoint_sectors,
-        all_soldier_handles,
-        difficulty,
-        think_depth,
-    )
-}
-
-fn build_ai_owner_scalars(
-    entity: &Entity,
-    self_position: crate::ai::Position,
-    original_creation_order: Option<u32>,
-    frame: u32,
-    building_sector: Option<crate::position_interface::SectorHandle>,
-    is_forest_level: bool,
-    ambiance: crate::engine::types::Ambiance,
-    standard_view_polygon_radius: u16,
-    entity_views: &SharedAiEntityViews,
-    sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
-    fast_grid: &std::sync::Arc<crate::fast_find_grid::FastFindGrid>,
-    hiking_paths: &std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
-    hiking_waypoint_sectors: &Option<
-        std::sync::Arc<Vec<Vec<crate::position_interface::SectorHandle>>>,
-    >,
-    all_soldier_handles: &std::sync::Arc<Vec<u32>>,
-    difficulty: crate::player_profile::DifficultyLevel,
-    think_depth: u8,
-) -> AiContext {
-    let elem = entity.element_data();
-    let camp = entity.camp();
-    let actor = entity.actor_data();
-    // `is_swordfighting` is "opponents list is non-empty"; do not proxy
-    // it through action_state.
-    let is_swordfighting = entity
-        .human_data()
-        .map(|h| !h.opponents.is_empty())
-        .unwrap_or(false);
-    let move_box = if actor.is_some() {
-        *entity.position_iface().get_move_box()
-    } else {
-        Default::default()
-    };
-    let remaining_arrows = entity
-        .ai_actor_data()
-        .map(|ai| ai.number_of_arrows)
-        .unwrap_or(0);
-    // `self_is_beggar` / `self_is_child` are civilian-type checks.
-    // Non-civilian NPCs always read false (callers cast to civilian
-    // first).
-    let (self_is_beggar, self_is_child) = match entity {
-        Entity::Civilian(c) => (
-            c.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar,
-            c.civilian.cached_civilian_type == crate::profiles::CivilianType::Child,
-        ),
-        _ => (false, false),
-    };
-    // Soldier vs civilian — drives the soldier-only macro opcodes
-    // (CMD_CHECK_4, CMD_LOOK_LEFT, CMD_BEND, CMD_PATROL_*) which error
-    // on civilians.
-    let self_is_soldier = entity.enemy_ai().is_some();
-    // `self_is_rider` is the cached `SoldierData.rider` flag from the
-    // soldier profile, set at level load.  Non-soldier NPCs are never
-    // riders.
-    let self_is_rider = matches!(entity, Entity::Soldier(s) if s.soldier.rider);
-    // `self_rank` / `self_pride` are the soldier's profile rank and
-    // pride, used by the bored-time picker for longer officer/pride
-    // bored intervals.  `ProfileRank::None` for non-soldiers makes the
-    // officer check fall through.
-    let (self_rank, self_pride) = entity
-        .enemy_ai()
-        .map(|ai| (ai.soldier_profile_rank, ai.soldier_profile_pride))
-        .unwrap_or((crate::profiles::ProfileRank::None, 0));
-    // Number of detectables of type Friend — the
-    // `return_to_duty_common_stuff` guard uses this to decide whether
-    // to clear the stashed detected body.
-    let self_detectable_friend_count = entity
-        .ai_actor_data()
-        .and_then(|npc| {
-            npc.detectable_lists
-                .get(crate::element::DetectableType::Friend as usize)
-        })
-        .map(|lst| lst.len() as u16)
-        .unwrap_or(0);
-    // Number of detectables of type MissedFriend — enemy
-    // `return_to_duty` uses this to know whether to record the
-    // abandoned checkpoint Charly in the missed-in-action list.
-    let self_detectable_missed_friend_count = entity
-        .ai_actor_data()
-        .and_then(|npc| {
-            npc.detectable_lists
-                .get(crate::element::DetectableType::MissedFriend as usize)
-        })
-        .map(|lst| lst.len() as u16)
-        .unwrap_or(0);
-    let self_seen_enemy_handles = entity
-        .ai_actor_data()
-        .and_then(|npc| {
-            npc.detectable_lists
-                .get(crate::element::DetectableType::Enemy as usize)
-        })
-        .into_iter()
-        .flatten()
-        .filter(|detectable| detectable.seen_now)
-        .filter_map(|detectable| detectable.element.map(|target| target.index()))
-        .collect();
-    // Actor animation selection reads the current order, not the
-    // sprite's background animation. In particular, boredom can play a
-    // WAITING_UPRIGHT_BORED sprite while the authoritative actor order remains
-    // WAITING_UPRIGHT; movement's close-point shortcut must still recognize that
-    // idle order and synchronously advance the patrol waypoint.
-    //
-    // `installed_order` is Rust's exact current-order pointer mirror. A null
-    // pointer is the NonanimationEnd sentinel; sequence selection and the
-    // visible sprite are not substitutes for an installed actor order.
-    let self_animation = actor
-        .and_then(|actor| actor.installed_order)
-        .map(|order| order.order_type)
-        .unwrap_or(crate::order::OrderType::NonanimationEnd);
-    let self_action_state = actor.map(|a| a.action_state).unwrap_or_default();
-    let concrete_self_animation = match entity {
-        Entity::Soldier(soldier) => super::animation::soldier_movement_animation(
-            self_animation,
-            soldier
-                .npc
-                .ai_brain
-                .enemy()
-                .is_some_and(|enemy| enemy.attentive),
-            self_action_state,
-        ),
-        _ => self_animation,
-    };
-    let self_animation_reached_action_done = installed_animation_has_reached_action_done(
-        concrete_self_animation,
-        &entity.element_data().sprite,
-    );
-    if archer_step_back_lifecycle_debug_matches(
-        frame,
-        original_creation_order,
-        elem.index_in_elements_list as u32,
-    ) {
-        trace_archer_step_back_context(
-            frame,
-            original_creation_order,
-            elem,
-            actor,
-            [self_animation, concrete_self_animation],
-            self_action_state,
-            self_animation_reached_action_done,
-        );
-    }
-    tracing::trace!(
-        target: "robin_engine::ai::goto",
-        me = elem.index_in_elements_list,
-        frame,
-        ?self_animation,
-        "build_ai_context: installed mpOrder animation"
-    );
-    // Only soldiers can be forced-attentive; civilians always read
-    // `false`.  Threaded into AiContext so
-    // `set_alert_status_with_flags` can apply the view-override from
-    // inside shared `AiController` paths.
-    let self_forced_attentive = entity
-        .enemy_ai()
-        .is_some_and(|enemy| enemy.forced_attentive);
-    let self_view_radius = entity
-        .ai_actor_data()
-        .map(|npc| npc.view_radius as f32)
-        .unwrap_or(standard_view_polygon_radius as f32);
-    let self_eye = entity.compute_eyes_point(None);
-    let self_eye_position = self_eye
-        .map(|eye| {
-            crate::coordinates::MapPoint::from_world_xyz(
-                eye.x,
-                eye.y,
-                entity.element_data().position().z,
-            )
-        })
-        .unwrap_or_else(|| elem.position_map());
-    let self_eye_z = self_eye.map(|eye| eye.z).unwrap_or(elem.position().z);
-    let self_upright_eye_world = entity
-        .compute_eyes_point(Some(crate::element::Posture::Upright))
-        .unwrap_or(elem.position());
-    let self_stare_point = entity
-        .ai_actor_data()
-        .map(|npc| npc.stare_point)
-        .unwrap_or_else(|| {
-            crate::coordinates::GroundPoint::from_map_and_z(elem.position_map(), elem.position().z)
-        });
-    let self_view_direction = entity
-        .ai_actor_data()
-        .map(|npc| npc.view_direction)
-        .unwrap_or_else(|| {
-            let (x, y) = crate::ai_vision::sector_to_forward(elem.direction());
-            [x, y]
-        });
-    let self_real_half_aperture = entity
-        .ai_actor_data()
-        .map(|npc| npc.real_half_aperture)
-        .unwrap_or(crate::ai_vision::NORMAL_HALF_APERTURE);
-    let self_eye_status = entity
-        .ai_actor_data()
-        .map(|npc| npc.eye_status)
-        .unwrap_or_default();
-    AiContext {
-        think_depth,
-        difficulty,
-        original_creation_order,
-        position: self_position,
-        self_layer: elem.layer(),
-        self_body_position_world: elem.position(),
-        frame,
-        direction: elem.direction() as u16,
-        posture: elem.posture(),
-        self_eye_position,
-        self_eye_z,
-        self_upright_eye_world,
-        self_stare_point,
-        self_view_direction,
-        self_view_radius: self_view_radius as u16,
-        self_real_half_aperture,
-        self_eye_status,
-        is_night_or_fog: matches!(
-            ambiance,
-            crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
-        ),
-        in_uninterruptible_command: false,
-        // Every AI-side building test resolves the actor's *sector*: the
-        // indoor early-outs, the 180°/360° detection short-circuits, and the
-        // outdoor question gate all ask whether the current sector is a
-        // building. A soldier standing on a door rail has no building sector
-        // yet and must still behave as an outdoor actor, so the door-transit
-        // branch (which only governs whether the view polygon is drawn) must
-        // not leak into this flag.
-        in_building: building_sector.is_some(),
-        self_is_active: elem.active,
-        building_sector,
-        camp,
-        is_swordfighting,
-        enter_swordfight_pending: false,
-        is_forest_level,
-        move_box,
-        remaining_arrows,
-        sq_standard_view_radius: (standard_view_polygon_radius as f32)
-            * (standard_view_polygon_radius as f32),
-        sq_self_view_radius: self_view_radius * self_view_radius,
-        elevation: if actor.is_some() {
-            entity.position_iface().get_elevation()
-        } else {
-            elem.position().z
-        },
-        self_is_beggar,
-        self_is_child,
-        self_is_soldier,
-        self_is_rider,
-        self_action_state,
-        self_rank,
-        self_pride,
-        self_life_points: entity.human_life_points(),
-        self_max_life_points: entity.human_max_life_points(),
-        self_is_dead: entity.is_dead(),
-        self_is_unconscious: entity.is_unconscious(),
-        self_detectable_friend_count,
-        self_detectable_missed_friend_count,
-        self_seen_enemy_handles,
-        self_forced_attentive,
-        self_animation_reached_action_done,
-        self_animation,
-        self_animation_motion_state: actor
-            .map(|actor| actor.continuation.motion_state)
-            .unwrap_or_default(),
-        self_selected_element_is_default_wait: None,
-        self_selected_element_priority: None,
-        antagonist: None,
-        entity_views: entity_views.clone(),
-        sight_obstacles: sight_obstacles.clone(),
-        view_radius_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
-        fast_grid: fast_grid.clone(),
-        hiking_paths: hiking_paths.clone(),
-        hiking_waypoint_sectors: hiking_waypoint_sectors.clone(),
-        all_soldier_handles: all_soldier_handles.clone(),
-    }
-}
-
-fn context_original_creation_order(
-    entity_index: u32,
-    entity_views: &SharedAiEntityViews,
-) -> Option<u32> {
-    entity_views
-        .get(&entity_index)
-        .map(|view| view.original_creation_order)
 }
 
 pub(super) struct AiPositionResolution {
@@ -2882,70 +2427,6 @@ impl EngineInner {
     }
 }
 
-fn build_one_entity_view(
-    engine: &EngineInner,
-    doors_ref: &[crate::gate::Door],
-    entity_id: EntityId,
-    entity: &Entity,
-) -> ai_entity_view::AiEntityView {
-    let building_sector = engine.entity_building_sector(entity.element_data().sector());
-    let current_animation = engine
-        .live_actor_animation(entity_id)
-        .unwrap_or(crate::order::OrderType::NonanimationEnd);
-    let selected_door = matches!(
-        entity,
-        Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
-    )
-    .then(|| selected_pass_door_movement(&engine.orders.sequence_manager, entity_id))
-    .flatten();
-    let mut view = ai_entity_view::entity_view_from_entity(
-        entity,
-        engine.world.original_creation_order(entity_id),
-        building_sector.is_some(),
-        building_sector,
-        Some(&engine.mission_domain.campaign),
-        current_animation,
-    );
-
-    if matches!(
-        entity,
-        Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
-    ) {
-        view.position = resolve_ai_position_with_selected(
-            &engine.world.entities,
-            doors_ref,
-            entity_id,
-            selected_door,
-            |position_id| {
-                let position_element = engine
-                    .expect_entity(position_id, "AI entity-view position owner")
-                    .element_data();
-                crate::ai::Position {
-                    x: position_element.position_map().x,
-                    y: position_element.position_map().y,
-                    sector: ai_view_position_sector(engine, position_element),
-                    level: position_element.layer(),
-                }
-            },
-        )
-        .effective;
-    }
-
-    if matches!(
-        entity,
-        Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
-    ) && let Some(input) = extract_exact_forecast_input(engine, entity, selected_door.is_some())
-    {
-        view.forecasted_destination = crate::ai::prepare_forecast_destination_for_ia(
-            &input,
-            doors_ref,
-            &engine.world.fast_grid.level.sectors,
-            &engine.world.fast_grid.level.sector_number_map,
-        );
-    }
-    view
-}
-
 /// Preserve the sector identity carried by original-game element position
 /// when constructing an AI-visible `Position(element)`.
 ///
@@ -3124,8 +2605,7 @@ mod ai_view_position_sector_tests {
         element.set_layer(2);
         element.set_sector(crate::position_interface::SectorHandle::new(88));
 
-        let views = build_entity_views(&engine);
-        let goal_position = views.get(&target.index()).expect("PC view exists").position;
+        let goal_position = engine.live_ai_position(target);
         assert_eq!(
             goal_position.sector.and_then(|sector| sector.arena_index()),
             SectorIndex::new(goal)
@@ -3337,41 +2817,16 @@ mod ai_view_position_sector_tests {
     }
 }
 
-/// Capture spatial entities for callers that still need a complete observation.
-pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
-    let _detail =
-        super::tick::entity_system_detail_guard(super::tick::EntitySystemDetail::BuildEntityViews);
-    // Scratch views are also built by empty/pre-script engine fixtures.  Door
-    // state is intentionally unavailable during that phase; `init_ai` emits a
-    // warning when a real level reaches AI initialization without a script.
-    let doors_ref = engine
-        .scripts
-        .mission
-        .as_ref()
-        .map(|_| engine.script_domains.interactables.doors.as_slice())
-        .unwrap_or(&[]);
-
-    let mut map = ai_entity_view::take_entity_view_map(engine.world.entities.len());
-    for (entity_id, entity) in engine.world.entities.occupied() {
-        if !entity_has_ai_view(entity) {
-            continue;
-        }
-        let view = build_one_entity_view(engine, doors_ref, entity_id, entity);
-
-        // AI handle == entity slot index (see `FighterSnapshot.handle =
-        // target_id.index()` elsewhere, and `self.world.entities.get_mut(target as
-        // usize)` for `CrossNpcAction` handlers).
-        map.insert(entity_id.index(), view);
-    }
-    map
-}
-
 fn entity_has_ai_view(entity: &Entity) -> bool {
     // A cleared Original layer (0xFFFF) means the entity is outside spatial
     // membership. This occurs transiently for projectiles and can be retained
     // by loaded actor state; neither has a valid AI Position until a real
     // layer is installed again.
-    crate::ai_entity_view::entity_view_unavailable(entity).is_none()
+    entity.element_data().optional_layer().is_some()
+        && (matches!(
+            entity,
+            Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
+        ) || entity.object_data().is_some() && entity.element_data().active)
 }
 
 impl EngineInner {
@@ -3603,216 +3058,79 @@ impl EngineInner {
         self.nearby_civilians_panic_generic(sim, assets, source);
     }
 
-    pub(crate) fn nearby_civilians_panic_180(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        source: EntityId,
-    ) {
-        self.brawl_nearby_civilians_panic_exact(sim, assets, source);
-    }
-
-    /// Exact inline sweep from `WonderingBrawlHitting::EVENT_DONE`.
-    /// Unlike the shared callback, Original has no standard-view AABB and
-    /// does not require the brawler to be outdoors; every civilian delegates
-    /// directly to its own forward-half-plane detection.
-    fn brawl_nearby_civilians_panic_exact(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        source: EntityId,
-    ) {
-        let scratch = self.build_sim_scratch(assets);
-        let Some(source_entity) = self.world.entities.get(source) else {
-            tracing::trace!(target: "parity_nearby_panic", "brawl source missing");
-            return;
-        };
-        let source_map = source_entity.element_data().position_map();
-        let panic_center = crate::ai::Position {
-            x: source_map.x,
-            y: source_map.y,
-            sector: None,
-            level: 0,
-        };
-
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
-        for npc_id in npc_ids {
-            let ctx = {
-                let Some(Entity::Civilian(civilian)) = self.world.entities.get(npc_id) else {
-                    continue;
-                };
-                // Forward-half-plane detection checks both actors' raw active
-                // flags. The target/source check remains inside the shared
-                // detector so its gate ordering stays source-exact.
-                if !civilian.element.active {
-                    continue;
-                }
-                let building_sector = self.entity_building_sector(civilian.element.sector());
-                self.ai_context_from_entity(
-                    self.world
-                        .entities
-                        .get(npc_id)
-                        .expect("civilian disappeared"),
-                    self.control.frame_counter,
-                    building_sector,
-                    &scratch,
-                    assets,
-                )
-            };
-            ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
-            let detected =
-                crate::ai_enemy::context_detects_180_degrees(npc_id.index(), source.index(), &ctx);
-            ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
-            if !detected {
-                continue;
-            }
-
-            let stimulus = crate::ai::Stimulus::with_position(
-                crate::ai::StimulusType::EventPanic,
-                panic_center,
-            );
-            self.dispatch_think_with_drain(sim, npc_id, &stimulus, None, assets);
-        }
-    }
-
     fn nearby_civilians_panic_generic(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         source: EntityId,
     ) {
-        let scratch = self.build_sim_scratch(assets);
-        let view_radius = if self.ai.standard_view_polygon_radius > 0 {
-            self.ai.standard_view_polygon_radius as f32
-        } else {
-            ai_vision::DEFAULT_VIEW_RADIUS as f32
-        };
-        // `nearby_civilians_panic` builds an aspect-ratio-stretched
-        // axis-aligned box (radius, radius * ASPECT_RATIO) around
-        // self, then walks every NPC asking:
-        // The shared callback uses omnidirectional detection. The separate
-        // money-brawl completion sweep uses forward-half-plane detection. Both use
-        // the civilian's upright eye point, the source actor's detection
-        // point, the civilian's live view radius, and opaque 3D LOS.
-        let radius_y = view_radius * crate::position_interface::ASPECT_RATIO;
-
-        let (source_map, source_ground, source_detection_point) = {
-            let Some(entity) = self.world.entities.get(source) else {
-                tracing::trace!(target: "parity_nearby_panic", "source missing");
-                return;
+        let panic_center = self.live_ai_position(source);
+        let box_center = self
+            .expect_entity(source, "civilian panic source")
+            .ground_position();
+        let radius = f32::from(self.ai.standard_view_polygon_radius);
+        let radius_y = radius * crate::position_interface::ASPECT_RATIO;
+        let count = self.world.entities.len();
+        for index in 0..count {
+            let Some((npc_id, Entity::Civilian(civilian))) =
+                self.world.entities.get_legacy_slot(index as u32)
+            else {
+                continue;
             };
-            // Source must be active and outside a building for
-            // Either actor detector requires an active, outdoor source.
-            if !entity.element_data().active {
-                tracing::trace!(target: "parity_nearby_panic", "source inactive");
-                return;
-            }
-            if self
-                .entity_building_sector(entity.element_data().sector())
-                .is_some()
+            let entity = self.expect_entity(npc_id, "civilian panic viewer");
+            let point = entity.ground_position();
+            if (box_center.x - point.x).abs() > radius || (box_center.y - point.y).abs() > radius_y
             {
-                tracing::trace!(target: "parity_nearby_panic", sector = ?entity.element_data().sector(), "source classified in building");
-                return;
-            }
-            let Some(detection_point) = entity.compute_detection_point() else {
-                tracing::trace!(target: "parity_nearby_panic", "source has no detection point");
-                return;
-            };
-            (
-                entity.element_data().position_map(),
-                entity.ground_position(),
-                detection_point,
-            )
-        };
-
-        let panic_center = crate::ai::Position {
-            x: source_map.x,
-            y: source_map.y,
-            sector: None,
-            level: 0,
-        };
-
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
-        // Clone the Arc-shared snapshot so the per-civilian filter can
-        // call `los_clear` without holding an immutable borrow on
-        // `self.ai.global` across the later `process_pending_*` mutable
-        // borrows.
-        let obstacles_owned = scratch.ai_sight_obstacles.clone();
-        for npc_id in npc_ids {
-            let obstacles = obstacles_owned.list();
-            let eligible = {
-                let Some(entity) = self.world.entities.get(npc_id) else {
-                    continue;
-                };
-                let Entity::Civilian(c) = entity else {
-                    continue;
-                };
-                // Both actor detectors test only active/outside-building
-                // lifecycle here. In particular, it does not reject dead or
-                // unconscious civilians before its distance and LOS work.
-                let civilian_in_building =
-                    self.entity_building_sector(c.element.sector()).is_some();
-                if !nearby_panic_civilian_reaches_visibility(c.element.active, civilian_in_building)
-                {
-                    continue;
-                }
-                // Ground position is the cached world-space X/Y pair,
-                // not map-space X/Y. Elevation therefore contributes to Y
-                // before the aspect-ratio bounding-box test.
-                let p = entity.ground_position();
-                let dx = source_ground.x - p.x;
-                let dy = source_ground.y - p.y;
-                // Aspect-ratio bounding box: |dx| <= r,
-                // |dy| <= r * ASPECT_RATIO.
-                if dx.abs() > view_radius || dy.abs() > radius_y {
-                    continue;
-                }
-                let Some(viewer_eye) =
-                    entity.compute_eyes_point(Some(crate::element::Posture::Upright))
-                else {
-                    continue;
-                };
-                // omnidirectional actor detection's stretched-Y 3D distance
-                // gate: civilian upright eye to source detection point,
-                // clamped by the civilian's live real view radius.
-                let dx = source_detection_point.x - viewer_eye.x;
-                let dy = (source_detection_point.y - viewer_eye.y)
-                    * crate::position_interface::INVERSE_ASPECT_RATIO;
-                let dz = source_detection_point.z - viewer_eye.z;
-                let sq_view_radius = {
-                    let radius = c.npc.view_radius as f32;
-                    radius * radius
-                };
-                if dx * dx + dy * dy + dz * dz > sq_view_radius {
-                    continue;
-                }
-                crate::sight_obstacle::is_reachable_3d(
-                    obstacles,
-                    [viewer_eye.x, viewer_eye.y, viewer_eye.z],
-                    [
-                        source_detection_point.x,
-                        source_detection_point.y,
-                        source_detection_point.z,
-                    ],
-                    crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
-                )
-            };
-            if !eligible {
                 continue;
             }
-
-            let stimulus = crate::ai::Stimulus::with_position(
-                crate::ai::StimulusType::EventPanic,
-                panic_center,
+            let civilian_in_building = self
+                .entity_building_sector(civilian.element.sector())
+                .is_some();
+            if !nearby_panic_civilian_reaches_visibility(
+                civilian.element.active,
+                civilian_in_building,
+            ) {
+                continue;
+            }
+            let source_entity = self.expect_entity(source, "civilian panic detection source");
+            if !source_entity.element_data().active
+                || self
+                    .entity_building_sector(source_entity.element_data().sector())
+                    .is_some()
+            {
+                continue;
+            }
+            let detection = source_entity
+                .compute_detection_point()
+                .expect("civilian panic source requires a detection point");
+            let eye = entity
+                .compute_eyes_point(Some(crate::element::Posture::Upright))
+                .expect("civilian panic viewer requires eyes");
+            let dx = detection.x - eye.x;
+            let dy = (detection.y - eye.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let dz = detection.z - eye.z;
+            let view_radius = f32::from(civilian.npc.view_radius);
+            if dx * dx + dy * dy + dz * dz > view_radius * view_radius {
+                continue;
+            }
+            if !crate::sight_obstacle::is_reachable_3d(
+                self.sight_obstacles(assets),
+                [eye.x, eye.y, eye.z],
+                [detection.x, detection.y, detection.z],
+                crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+            ) {
+                continue;
+            }
+            self.dispatch_think_with_drain(
+                sim,
+                npc_id,
+                &crate::ai::Stimulus::with_position(
+                    crate::ai::StimulusType::EventPanic,
+                    panic_center,
+                ),
+                None,
+                assets,
             );
-            // nearby-civilian panic directly sends the stimulus to the NPC.
-            // Close that recipient's complete owner-local Think boundary:
-            // EVENT_PANIC chooses a door and queues movement, whose
-            // element and synchronous path request must exist before the
-            // caller resumes. A raw dispatch plus manual PanicRequest drain
-            // left the movement stranded in the civilian outbox until its next
-            // owner slot.
-            self.dispatch_think_with_drain(sim, npc_id, &stimulus, None, assets);
         }
     }
 
@@ -3898,6 +3216,37 @@ impl EngineInner {
         else {
             return;
         };
+        // Keep enclosing deferred events outside the complete synchronous
+        // panic call, including state callbacks and its recursive reach point.
+        let deferred_self_stimuli = std::mem::take(
+            &mut self
+                .world
+                .entities
+                .expect_ai_controller_mut(
+                    npc_id,
+                    format_args!("panic enclosing self-stimulus backlog"),
+                )
+                .outbox
+                .reentrant
+                .self_stimuli,
+        );
+        self.execute_ai_panic_request(sim, assets, npc_id, request);
+        self.world
+            .entities
+            .expect_ai_controller_mut(npc_id, format_args!("panic enclosing boundary"))
+            .outbox
+            .reentrant
+            .self_stimuli
+            .extend(deferred_self_stimuli);
+    }
+
+    fn execute_ai_panic_request(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        npc_id: EntityId,
+        request: crate::ai::PanicRequest,
+    ) {
         let directed = request.center.is_some();
         let mut door = self.nearest_panic_door(npc_id, request.center);
         {
@@ -4200,20 +3549,14 @@ impl EngineInner {
                     crate::ai::Remark::Panic
                 });
             self.drain_ai_owner_work_for(sim, assets, npc_id);
-            let deferred_self_stimuli = {
+            {
                 let ai = self
                     .world
                     .entities
                     .expect_ai_controller_mut(npc_id, format_args!("panic owner after speech"));
                 ai.set_alert_status(request.alert);
                 ai.lasting_panic_runs = request.runs.wrapping_add(1);
-
-                // A pre-existing Rust self-stimulus is deferred work from an
-                // enclosing boundary. It is not part of the original game's panic handling
-                // direct recursive Think call and must not be pulled into it.
-                let deferred = std::mem::take(&mut ai.outbox.reentrant.self_stimuli);
-                deferred
-            };
+            }
 
             // AI panic calls
             // `Think(EVENT_REACHPOINT)` directly here.  This is a recursive
@@ -4228,19 +3571,6 @@ impl EngineInner {
                 npc_id,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReachPoint),
             );
-            self.world
-                .entities
-                .expect_ai_controller_mut(
-                    npc_id,
-                    format_args!(
-                        "panic owner {} lost AI after recursive Think",
-                        npc_id.index()
-                    ),
-                )
-                .outbox
-                .reentrant
-                .self_stimuli
-                .extend(deferred_self_stimuli);
         } else {
             // Not new: upgrade-only bump of `lasting_panic_runs`
             // (`if lasting_panic_runs < runs`).  No state change, no
@@ -4253,31 +3583,6 @@ impl EngineInner {
                 ai.lasting_panic_runs = request.runs;
             }
         }
-    }
-
-    /// Enter an enemy/friendly state change after releasing the
-    /// engine's prior controller borrow. Dispatch follows the actor's AI brain,
-    /// not its entity kind: custom-mission PCs may own the same [`EnemyAi`] as
-    /// soldiers. Required callers must not degrade a missing owner or
-    /// mismatched brain into a silent no-op.
-    #[cfg(test)]
-    pub(super) fn set_typed_npc_state(
-        &mut self,
-        npc_id: EntityId,
-        state: crate::ai::AiState,
-        substate: crate::ai::Substate,
-        context: &'static str,
-    ) {
-        let entity = self.expect_entity_mut(npc_id, context);
-        if let Some(enemy) = entity.enemy_ai_mut() {
-            enemy.set_state(state, substate);
-            return;
-        }
-        panic!(
-            "{context} owner {} has entity kind {:?} but no typed AI brain",
-            npc_id.index(),
-            entity.element_data().kind
-        );
     }
 
     /// Enter the pre-filter half of typed no-event decision-tick admission.

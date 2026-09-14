@@ -586,7 +586,9 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
             .orders
             .sequence_manager
             .deferred_elements_to_go()
-            .len(),
+            .into_iter()
+            .filter(|&(sequence, _)| sequence != movement_sequence)
+            .count(),
         1,
         "movement remains registered behind the preserved stop transition"
     );

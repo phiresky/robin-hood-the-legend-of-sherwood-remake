@@ -36,7 +36,6 @@ impl EngineInner {
     /// direct access to the titbit manager.
     pub(super) fn sync_titbits(&mut self, assets: &LevelAssets) {
         self.sync_emoticon_titbits();
-        self.sync_apple_sauce_titbits();
         self.sync_hidden_titbits(assets);
         self.sync_apple_smell_titbits();
         self.sync_speak_titbits();
@@ -151,8 +150,7 @@ impl EngineInner {
     // such a path is wired.
     /// Add a WeakStunned titbit for the given entity.
     /// Called from `tick_melee_combat` when a BeingWeakSword or
-    /// BeingStunnedSword animation begins, and from `sync_apple_sauce_titbits`
-    /// for the apple-in-visor AI substate.
+    /// BeingStunnedSword animation begins, and when an apple hits a visor.
     pub(super) fn add_weak_stunned(&mut self, entity_id: EntityId) {
         let handle = ElementHandle(entity_id.index());
         if self
@@ -701,32 +699,6 @@ impl EngineInner {
                         break;
                     }
                 }
-            }
-        }
-    }
-
-    /// Sync WeakStunned titbits for soldiers in the apple-sauce AI substate.
-    ///
-    /// Combat-driven WeakStunned (BeingWeakSword/BeingStunnedSword) is
-    /// created event-driven in `tick_melee_combat`.  Only the apple-sauce
-    /// case is synced here because the AI code doesn't have direct access
-    /// to the titbit manager.
-    ///
-    /// Removal is handled by `update()` via `is_weak_or_stunned` query.
-    fn sync_apple_sauce_titbits(&mut self) {
-        use crate::ai::Substate;
-
-        // Only soldiers can enter the apple-sauce substate.
-        let npc_ids: Vec<EntityId> = self.world.entities.npc_ids().collect();
-        for npc_id in npc_ids {
-            let Some(Entity::Soldier(s)) = self.world.entities.get(npc_id) else {
-                continue;
-            };
-            if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
-                continue;
-            }
-            if s.npc.ai_substate() == Substate::WonderingAppleSauceInTheVisor {
-                self.add_weak_stunned(npc_id);
             }
         }
     }

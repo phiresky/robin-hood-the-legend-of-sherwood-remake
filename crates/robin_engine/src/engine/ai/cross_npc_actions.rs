@@ -385,23 +385,6 @@ impl EngineInner {
 
         for action in all_actions {
             match action {
-                crate::ai::CrossNpcAction::RequestAlert { caller, target, .. } => {
-                    panic!(
-                        "result-bearing CALL_ALERT {caller}->{target} escaped its owner boundary"
-                    )
-                }
-                crate::ai::CrossNpcAction::RequestThinkResult { caller, target, .. } => {
-                    panic!(
-                        "result-bearing Think request {caller}->{target} escaped its owner boundary"
-                    )
-                }
-                crate::ai::CrossNpcAction::ResumeAfterLookThere { caller, .. } => {
-                    panic!("look-there resume for caller {caller} escaped its owner boundary")
-                }
-                crate::ai::CrossNpcAction::BroadcastLookThere { caller, .. } => {
-                    panic!("look-there broadcast for caller {caller} escaped its owner boundary")
-                }
-
                 crate::ai::CrossNpcAction::SendStimulus {
                     target,
                     stimulus_type,
@@ -512,9 +495,6 @@ impl EngineInner {
 
                 crate::ai::CrossNpcAction::RegisterSynchronizingActor { target, actor } => {
                     self.register_synchronizing_actor(target, actor);
-                }
-                crate::ai::CrossNpcAction::ReportBackToOfficer { .. } => {
-                    panic!("synchronous officer report leaked into deferred cross-NPC actions")
                 }
             }
         }
@@ -691,30 +671,6 @@ impl EngineInner {
                             self.expect_human_id_for_ai_handle(target, "report transfer target");
                         self.consider_live_ai_report(sim, assets, target_id, source_id, flags);
                     }
-                    crate::ai::CrossNpcAction::ResumeAfterLookThere {
-                        caller,
-                        continuation,
-                    } => self.process_synchronous_look_there_resume(
-                        sim,
-                        source_id,
-                        caller,
-                        continuation,
-                        assets,
-                    ),
-                    crate::ai::CrossNpcAction::BroadcastLookThere {
-                        caller,
-                        position,
-                        radius,
-                        continuation,
-                    } => self.process_synchronous_look_there_broadcast(
-                        sim,
-                        source_id,
-                        caller,
-                        position,
-                        radius,
-                        continuation,
-                        assets,
-                    ),
                     crate::ai::CrossNpcAction::UpdateLeftCombatNeighbour {
                         target,
                         old_left,
@@ -762,18 +718,6 @@ impl EngineInner {
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_stimuli_for(sim, source_id, assets)
-                    }
-                    crate::ai::CrossNpcAction::RequestAlert { .. } => {
-                        self.requeue_isolated_synchronous_action(source_id, action.clone());
-                        self.process_synchronous_alert_requests_for(sim, source_id, assets)
-                    }
-                    crate::ai::CrossNpcAction::RequestThinkResult { .. } => {
-                        self.requeue_isolated_synchronous_action(source_id, action.clone());
-                        self.process_synchronous_think_results_for(sim, source_id, assets)
-                    }
-                    crate::ai::CrossNpcAction::ReportBackToOfficer { .. } => {
-                        self.requeue_isolated_synchronous_action(source_id, action.clone());
-                        self.process_synchronous_officer_reports_for(sim, source_id, assets)
                     }
                     crate::ai::CrossNpcAction::Say { target, remark } => {
                         let target_id =
@@ -830,32 +774,7 @@ impl EngineInner {
             .push(action);
     }
 
-    /// Resume the statement immediately following Original
-    /// tower-guard alerts. The alert routine directly enters every
-    /// recipient's Think before returning, so rebuilding the caller context
-    /// here is necessary: battle planning can synchronously start an area search,
-    /// whose nearby-friend multiplier reads the recipients' new alert status.
-
-    fn process_synchronous_look_there_broadcast(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        source_id: EntityId,
-        caller: u32,
-        position: crate::ai::Position,
-        radius: u16,
-        continuation: crate::ai::LookThereContinuation,
-        assets: &LevelAssets,
-    ) {
-        assert_eq!(
-            source_id.index(),
-            caller,
-            "look-there caller must be its owner"
-        );
-        self.execute_ai_look_there(sim, assets, source_id, position, radius);
-        self.process_synchronous_look_there_resume(sim, source_id, caller, continuation, assets);
-    }
-
-    pub(super) fn execute_ai_look_there(
+    pub(in crate::engine) fn execute_ai_look_there(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -916,30 +835,6 @@ impl EngineInner {
                 self.execute_ai_callback(sim, assets, target_id, &stimulus);
             }
         }
-    }
-
-    fn process_synchronous_look_there_resume(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        source_id: EntityId,
-        caller: u32,
-        continuation: crate::ai::LookThereContinuation,
-        assets: &LevelAssets,
-    ) {
-        assert_eq!(
-            source_id.index(),
-            caller,
-            "look-there resume caller must be its owner"
-        );
-        match continuation {
-            crate::ai::LookThereContinuation::SeekingArrowReactiontime => {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(source_id, format_args!("look-there timer owner"))
-                    .launch_timer(200, self.control.frame_counter);
-            }
-        }
-        self.drain_direct_ai_owner_boundary(sim, source_id, assets);
     }
 
     fn process_synchronous_stimuli_for(

@@ -29,6 +29,30 @@ impl EngineInner {
         operation: EnemyObservation,
     ) {
         match operation {
+            EnemyObservation::ArrowReaction => {
+                self.observation_say(sim, assets, owner, Remark::Arrow);
+                self.duty_set_state(sim, assets, owner, AiState::Seeking, Substate::SeekingArrow);
+                let position = self.observation_ai(owner).base.seek_position;
+                self.duty_go_to(sim, assets, owner, position, GotoFlags::RUN);
+                let position = self.observation_ai(owner).base.seek_position;
+                self.execute_ai_look_there(sim, assets, owner, position, 100);
+                self.observation_timer(owner, 200);
+            }
+            EnemyObservation::Noise { noise } => {
+                self.execute_ai_heard_noise(sim, assets, owner, &noise)
+            }
+            EnemyObservation::LookThere { position } => {
+                self.execute_ai_look_there_reaction(sim, assets, owner, position)
+            }
+            EnemyObservation::TowerGuardAlert { hint } => {
+                self.execute_ai_tower_alert_reaction(sim, assets, owner, &hint)
+            }
+            EnemyObservation::TowerGuardCalls { hint } => {
+                self.execute_ai_tower_call_reaction(sim, assets, owner, &hint)
+            }
+            EnemyObservation::CombatAlert { position } => {
+                self.execute_ai_combat_alert_reaction(sim, assets, owner, position)
+            }
             EnemyObservation::AleApproach { arrived } => {
                 self.execute_ai_ale_approach(sim, assets, owner, arrived)
             }
@@ -122,7 +146,7 @@ impl EngineInner {
             .set_focus(target);
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
-    fn observation_emoticon(
+    pub(super) fn observation_emoticon(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
@@ -528,7 +552,7 @@ impl EngineInner {
             .interesting_object
             .expect("ale availability requires bottle");
         let object_id = self.expect_entity_id_for_index(object.get(), "ale availability bottle");
-        let position = self.live_ai_position(object_id);
+        let position = self.observation_object_position(object_id);
         if !self
             .expect_entity(object_id, "ale availability active")
             .element_data()
@@ -666,7 +690,7 @@ impl EngineInner {
                 .interesting_object
                 .expect("ale reaction requires retained bottle");
             let target = self.expect_entity_id_for_index(target.get(), "ale reaction bottle");
-            let position = self.live_ai_position(target);
+            let position = self.observation_object_position(target);
             self.duty_go_near(
                 sim,
                 assets,
@@ -696,6 +720,21 @@ impl EngineInner {
         }
     }
 
+    fn observation_object_position(&self, object: EntityId) -> Position {
+        let entity = self.expect_entity(object, "retained observation object");
+        entity
+            .object_data()
+            .expect("observation object handle requires an object");
+        let element = entity.element_data();
+        let point = element.position_map();
+        Position {
+            x: point.x,
+            y: point.y,
+            sector: element.sector(),
+            level: element.layer(),
+        }
+    }
+
     fn observation_face_object(
         &mut self,
         sim: &SimulationContext,
@@ -703,7 +742,7 @@ impl EngineInner {
         owner: EntityId,
         object: EntityId,
     ) {
-        let position = self.live_ai_position(object);
+        let position = self.observation_object_position(object);
         let elevation = self
             .expect_entity(object, "object facing elevation")
             .element_data()

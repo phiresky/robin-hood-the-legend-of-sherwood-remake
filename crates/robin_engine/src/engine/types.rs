@@ -137,18 +137,6 @@ pub use camera_state::*;
 mod level_assets;
 pub use level_assets::*;
 
-/// Per-simulation-stream scratch rebuilt from canonical engine state.
-///
-/// This is deliberately outside [`LevelAssets`] and outside serialized
-/// [`super::EngineInner`] state. AI code uses these borrow-breaking
-/// snapshots while dispatching a tick, but they are derived data and
-/// must not be shared between live simulation and rollback replay.
-#[derive(Clone, Default)]
-pub struct SimScratch {
-    pub ai_entity_views: crate::ai_entity_view::SharedAiEntityViews,
-    pub ai_sight_obstacles: crate::sight_obstacle::SharedSightObstacles,
-}
-
 // ─── Level-load staging data ────────────────────────────────────────
 
 /// Raw data stashed during `initialize_from_mission` and consumed later

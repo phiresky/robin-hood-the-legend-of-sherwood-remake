@@ -239,7 +239,7 @@ impl EngineInner {
         let hiking_paths = assets.navigation.hiking_paths.clone();
         // For "get soldier from all by id" in the AI tick: copy the
         // level's soldier load-order array onto AiGlobalState so
-        // AiContext can resolve script-baked friend IDs.
+        // live queries can resolve script-baked friend IDs.
         self.ai.global.all_soldier_handles = std::sync::Arc::new(
             assets
                 .entities

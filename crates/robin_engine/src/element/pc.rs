@@ -274,8 +274,7 @@ pub struct PcData {
     /// The PC's current melee target (sword opponent).
     ///
     /// Set when the PC enters a swordfight, cleared when the fight
-    /// ends.  Used to populate `FighterSnapshot.principal_opponent` so
-    /// the enemy AI can reason about PC combat pairings.
+    /// ends. Enemy combat decisions read this pairing directly.
     pub melee_target: Option<EntityId>,
 
     /// Initial action set from level data (beam-me `actionInitial`).

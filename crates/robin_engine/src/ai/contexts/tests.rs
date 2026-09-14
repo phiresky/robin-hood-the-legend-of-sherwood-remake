@@ -1,146 +1,20 @@
 use super::*;
 
-impl AiContext {
-    /// Complete the minimal synthetic owner identity used by AI unit tests.
-    ///
-    /// Production contexts are assembled from loaded actors and never use
-    /// `Default`. Keeping `Camp::default()` as the invalid sentinel remains
-    /// important: explicit incomplete fixtures must still fail strict
-    /// diplomacy validation. Tests which need an ordinary enemy owner should
-    /// opt into this valid Lacklandist fixture instead.
-    pub(crate) fn test_fixture() -> Self {
-        Self {
-            camp: crate::element::Camp::Lacklandists,
-            ..Self::default()
-        }
-    }
-
-    /// Build a minimal loaded-world fixture containing one flat motion
-    /// sector. Tests which exercise world-point conversion must provide sector
-    /// geometry just as a loaded level does; an exact arena index into an
-    /// empty grid is intentionally rejected by the runtime.
-    pub(crate) fn test_fixture_with_motion_sector(sector_number: i16, layer: u16) -> Self {
-        let mut fast_grid = crate::fast_find_grid::FastFindGrid::new();
-        fast_grid.add_sector(
-            crate::fast_find_grid::GridSector {
-                points: Vec::new(),
-                bounding_box: crate::coordinates::MapBBox::new(),
-                sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
-                layer,
-                sector_number: crate::sector::SectorNumber::new(sector_number),
-                door_index: None,
-                lift_type: None,
-                lift_direction: 0,
-                force_crouched: false,
-                building_index: None,
-                low_exit_point: None,
-                high_exit_point: None,
-                lowest_door_index: None,
-                jump_line_indices: Vec::new(),
-                gate_indices: Vec::new(),
-                underlying_sector: None,
-            },
-            layer,
-        );
-        Self {
-            fast_grid: std::sync::Arc::new(fast_grid),
-            ..Self::test_fixture()
-        }
-    }
-}
-
 #[test]
-fn view_radius_cache_zero_replaces_alternating_viewers() {
+fn view_radius_zero_replaces_alternating_viewers_and_expires_each_frame() {
     let first = crate::element::EntityId::from(crate::entity_id::SoldierId(7));
     let second = crate::element::EntityId::from(crate::entity_id::SoldierId(9));
-    let ctx = AiContext::test_fixture();
+    let mut cache = crate::ai_vision::ViewRadiusCache::default();
     for surface in [None, crate::position_interface::ObstacleHandle::new(3)] {
-        assert_eq!(
-            ctx.compute_view_radius_cached(first, surface, || 125.0),
-            125.0
-        );
-        assert_eq!(ctx.compute_view_radius_cached(second, surface, || 0.0), 0.0);
-        // Zero is a miss even for its writer; A must also recompute after B.
-        let recomputed = std::cell::Cell::new(false);
-        assert_eq!(
-            ctx.compute_view_radius_cached(second, surface, || {
-                recomputed.set(true);
-                0.0
-            }),
-            0.0
-        );
-        assert!(recomputed.get());
-        assert_eq!(
-            ctx.compute_view_radius_cached(first, surface, || 90.0),
-            90.0
-        );
-        assert_eq!(
-            ctx.compute_view_radius_cached(first, surface, || panic!("cache hit")),
-            90.0
-        );
+        cache.set(surface, first, 40, 125.0);
+        assert_eq!(cache.get(surface, first, 40), Some(125.0));
+        cache.set(surface, second, 40, 0.0);
+        assert_eq!(cache.get(surface, first, 40), None);
+        assert_eq!(cache.get(surface, second, 40), None);
+        cache.set(surface, first, 40, 90.0);
+        assert_eq!(cache.get(surface, first, 40), Some(90.0));
+        assert_eq!(cache.get(surface, first, 41), None);
     }
-}
-
-#[test]
-fn view_radius_cache_zero_survives_seed_clone_absorb_and_publication() {
-    let first = crate::element::EntityId::from(crate::entity_id::SoldierId(7));
-    let second = crate::element::EntityId::from(crate::entity_id::SoldierId(9));
-    let ctx = AiContext {
-        frame: 40,
-        ..AiContext::test_fixture()
-    };
-    let mut persistent = crate::ai_vision::ViewRadiusCache::default();
-    let surfaces = [None, crate::position_interface::ObstacleHandle::new(3)];
-    for surface in surfaces {
-        persistent.set(surface, first, 40, 125.0);
-    }
-    ctx.seed_view_radius_cache(&persistent);
-    let nested = ctx.clone();
-    for surface in surfaces {
-        assert_eq!(
-            nested.compute_view_radius_cached(second, surface, || 0.0),
-            0.0
-        );
-        // Clones stay isolated until the caller explicitly absorbs them.
-        assert_eq!(
-            ctx.compute_view_radius_cached(first, surface, || panic!("isolated parent")),
-            125.0
-        );
-        assert_eq!(persistent.get(surface, first, 40), Some(125.0));
-    }
-    ctx.absorb_view_radius_cache(&nested);
-    ctx.commit_view_radius_cache(&mut persistent);
-    for surface in surfaces {
-        assert_eq!(persistent.get(surface, first, 40), None);
-        assert_eq!(persistent.get(surface, second, 40), None);
-        assert_eq!(ctx.view_radius_cache.borrow()[&surface], (second, 0.0));
-    }
-    let next = AiContext {
-        frame: 40,
-        ..AiContext::test_fixture()
-    };
-    next.seed_view_radius_cache(&persistent);
-    for surface in surfaces {
-        assert_eq!(next.view_radius_cache.borrow()[&surface], (second, 0.0));
-        assert_eq!(
-            next.compute_view_radius_cached(second, surface, || 0.0),
-            0.0
-        );
-        assert_eq!(
-            next.compute_view_radius_cached(first, surface, || 90.0),
-            90.0
-        );
-    }
-    next.commit_view_radius_cache(&mut persistent);
-    for surface in surfaces {
-        assert_eq!(persistent.get(surface, first, 40), Some(90.0));
-    }
-    let later = AiContext {
-        frame: 41,
-        ..AiContext::test_fixture()
-    };
-    later.seed_view_radius_cache(&persistent);
-    assert!(later.view_radius_cache.borrow().is_empty());
 }
 
 fn seek_point(x: f32) -> SeekPoint {
@@ -204,7 +78,7 @@ fn near_seek_layer_penalty_wraps_as_uword() {
 }
 
 #[test]
-fn initialized_soldier_camps_control_hostility_after_snapshots() {
+fn initialized_soldier_camps_control_hostility_after_serialization() {
     use crate::diplomacy::{DiplomacyDefinition, DiplomacyRule, DiplomacyState, Relationship};
     use crate::element::Camp;
 

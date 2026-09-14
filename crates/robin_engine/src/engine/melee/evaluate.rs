@@ -2803,8 +2803,6 @@ impl EngineInner {
     ) -> std::ops::ControlFlow<()> {
         let ParadeVictim {
             victim_fighting_ability,
-            victim_pos,
-            victim_layer,
             ..
         } = victim;
         const MIN_CAPACITY_AVOID_PUSH_BACK: u16 = 50;
@@ -2822,102 +2820,29 @@ impl EngineInner {
             );
         }
 
-        // Stopping actions interrupts the selected element, but the original game does
-        // not install an idle sprite order before this method's
-        // following movement reads the animation/action state. Rust's
-        // halt cleanup normalizes that actor state eagerly, so retain
-        // the complete live owner context across the narrow barrier.
-        let mut step_back_ctx =
-            if victim_fighting_ability >= MIN_CAPACITY_AVOID_PUSH_BACK && push_back_distance != 0 {
-                let scratch = self.build_sim_scratch(assets);
-                let victim_sector = self
-                    .expect_entity(victim_id, "ConsiderToBeginParade step-back victim")
-                    .element_data()
-                    .sector();
-                let building_sector = self.entity_building_sector(victim_sector);
-                let mut ctx = {
-                    let victim =
-                        self.expect_entity(victim_id, "ConsiderToBeginParade step-back victim");
-                    self.ai_context_from_entity(
-                        victim,
-                        self.control.frame_counter,
-                        building_sector,
-                        &scratch,
-                        assets,
-                    )
-                };
-                self.refresh_selected_default_wait_identity(victim_id, &mut ctx);
-                Some(ctx)
-            } else {
-                None
-            };
-
-        // Stop the victim's current actions.
-        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
-            && let Some(ai) = s.npc.ai_brain.base_mut()
-        {
-            ai.stop_all();
-            // Stopping movement only preserves the three ordinary
-            // upright/crouched locomotion actions. Sword movement and
-            // every other interruptible order are cleared, so the
-            // immediately following original-game movement observes
-            // the end-of-animation state rather than the pre-stop animation.
-            // Rust installs its fallback Wait eagerly during the halt
-            // drain, so project that narrow null-order boundary onto
-            // the retained call-site context before using it below.
-            if let Some(ctx) = step_back_ctx.as_mut()
-                && ai.pending_halt_exposes_goto_idle(ctx)
-            {
-                ctx.self_animation = crate::order::OrderType::NonanimationEnd;
-            }
-        }
-        // Enemy parry consideration performs
-        // an action stop synchronously before either movement or the parry
-        // sequence launch. Close the callback boundary and then apply
-        // that narrow halt barrier now, so it cannot interrupt the
-        // replacement work below.
+        self.world
+            .entities
+            .expect_enemy_ai_mut(victim_id, format_args!("parry stop owner"))
+            .base
+            .stop_all();
         self.drain_ai_owner_halt_boundary(sim, assets, victim_id);
 
-        // Step-back dodge for push-back strikes if
-        // fighting ability is high enough.
         if victim_fighting_ability >= MIN_CAPACITY_AVOID_PUSH_BACK && push_back_distance != 0 {
-            let attacker_pos_map = self
-                .get_entity(attacker_id)
-                .map(|e| e.element_data().position_map())
-                .unwrap_or(victim_pos);
-            let (victim_sector, victim_move_box) = self
-                .get_entity(victim_id)
-                .map(|e| {
-                    let sector = e.element_data().sector();
-                    let mbox = if e.actor_data().is_some() {
-                        *e.position_iface().get_move_box()
-                    } else {
-                        Default::default()
-                    };
-                    (sector, mbox)
-                })
-                .unwrap_or((None, Default::default()));
-            let victim_ai_pos = crate::ai::Position {
-                x: victim_pos.x,
-                y: victim_pos.y,
-                sector: victim_sector,
-                level: victim_layer,
-            };
-            let attacker_ai_pos = crate::ai::Position {
-                x: attacker_pos_map.x,
-                y: attacker_pos_map.y,
-                sector: None,
-                level: victim_layer,
-            };
-            let good_dist = push_back_distance + 20;
-            let min_dist = push_back_distance + 10;
+            let victim_ai_pos = self.live_ai_position(victim_id);
+            let attacker_ai_pos = self.live_ai_position(attacker_id);
+            let victim_move_box = self
+                .expect_entity(victim_id, "parry retreat body")
+                .position_iface()
+                .get_move_box();
+            let good_dist = push_back_distance.wrapping_add(20);
+            let min_dist = push_back_distance.wrapping_add(10);
             // The push-back geometry is resolved in
             // un-isometric sword-fight space, so pass
             // `SWORDFIGHT_ASPECT_RATIO` (= 1.0) instead of
             // the default `ASPECT_RATIO` (0.5735).
             let step_back_goal = crate::ai_enemy::propose_good_step_back_goal(
                 victim_ai_pos,
-                &victim_move_box,
+                victim_move_box,
                 attacker_ai_pos,
                 good_dist,
                 min_dist,
@@ -2934,39 +2859,34 @@ impl EngineInner {
                 );
             }
             if let Some(step_back_goal) = step_back_goal {
-                let ctx = step_back_ctx.take().unwrap_or_else(|| {
-                    panic!(
-                        "parry-consideration step-back victim {} has no retained movement context",
-                        victim_id.index()
-                    )
-                });
-
-                // Step back to avoid strike.
-                if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
-                    && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
-                {
-                    use crate::ai::AiRole;
-                    let flags = if ctx.self_is_rider {
-                        crate::ai::GotoFlags::SWORD
-                    } else {
-                        crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::SWORD
-                    };
-                    ai.go_to(
-                        crate::ai::AiState::Attacking,
-                        crate::ai::Substate::AttackingSwordfightStepBack,
+                self.duty_set_state(
+                    sim,
+                    assets,
+                    victim_id,
+                    crate::ai::AiState::Attacking,
+                    crate::ai::Substate::AttackingSwordfightStepBack,
+                );
+                let rider = self
+                    .expect_entity(victim_id, "parry retreat rider")
+                    .soldier_data()
+                    .expect("parry retreat requires soldier")
+                    .rider;
+                let flags = if rider {
+                    crate::ai::GotoFlags::SWORD
+                } else {
+                    crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::SWORD
+                };
+                self.duty_go_to(sim, assets, victim_id, step_back_goal, flags);
+                if let Some(debug) = step_back_debug {
+                    trace_reactive_step_back_after_goto(
+                        debug,
+                        victim_id,
+                        self.world
+                            .entities
+                            .expect_enemy_ai(victim_id, format_args!("parry retreat result")),
                         step_back_goal,
                         flags,
-                        &ctx,
                     );
-                    if let Some(debug) = step_back_debug {
-                        trace_reactive_step_back_after_goto(
-                            debug,
-                            victim_id,
-                            ai,
-                            step_back_goal,
-                            flags,
-                        );
-                    }
                 }
                 // This branch returns immediately after requesting movement; close the
                 // owner-local callback boundary before the caller resumes.
@@ -3003,28 +2923,18 @@ impl EngineInner {
         seq.append_element(parry_elem);
         self.launch_sequence(seq);
 
-        // Timer: attacker's strike duration + 10-frame
-        // buffer.  Hoist the sprite read before the mutable
-        // borrow below.
-        let attacker_anim_frames: u16 = match self
-            .get_entity(attacker_id)
-            .map(|e| &e.element_data().sprite)
-            .map(|sprite| {
-                sprite.frames_from_start_till_action_done(strike_to_animation(animation_strike))
-            }) {
-            Some(f) => f,
-            None => {
-                tracing::warn!(
-                    ?attacker_id,
-                    ?animation_strike,
-                    "ConsiderToBeginParade: no sprite data for attacker, using estimated strike frames for parade timer"
-                );
-                crate::combat::STRIKE_STARTUP_FRAMES
-                    .get(animation_strike as usize)
-                    .copied()
-                    .unwrap_or(25) as u16
-            }
-        };
+        self.duty_set_state(
+            sim,
+            assets,
+            victim_id,
+            crate::ai::AiState::Attacking,
+            crate::ai::Substate::AttackingSwordfightParade,
+        );
+        let sprite = &self
+            .expect_entity(attacker_id, "parry attacker after state callback")
+            .element_data()
+            .sprite;
+        let attacker_anim_frames = sprite.frames_from_start_till_action_done(sprite.last_action);
         let strike_frames = attacker_anim_frames as u32 + 10;
 
         // Opt-in trace for the reactive-parade heartbeat timer.
@@ -3046,16 +2956,6 @@ impl EngineInner {
             );
         }
 
-        // Set substate to parade
-        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
-            && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
-        {
-            ai.set_state(
-                crate::ai::AiState::Attacking,
-                crate::ai::Substate::AttackingSwordfightParade,
-            );
-        }
-        self.drain_ai_owner_work_for(sim, assets, victim_id);
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
             && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
         {
@@ -3095,9 +2995,14 @@ impl EngineInner {
             && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
         {
             ai.base.set_emoticon(crate::ai::EmoticonType::XMark);
-            ai.begin_special_strike();
-            ai.base.stop_all();
         }
+        self.drain_direct_ai_owner_boundary(sim, victim_id, assets);
+        self.begin_ai_special_strike(sim, assets, victim_id);
+        self.world
+            .entities
+            .expect_enemy_ai_mut(victim_id, format_args!("counter-strike owner"))
+            .base
+            .stop_all();
         self.drain_ai_owner_halt_boundary(sim, assets, victim_id);
 
         // Launch counter-strike sequence
