@@ -1948,15 +1948,47 @@ fn repeated_postpone_and_stop_preserve_append_order() {
     let root = engine.orders.sequence_manager.launch_element(root);
     let mut previous = root;
     for _ in 0..3 {
-        let mut waiter = SequenceElement::new(1, crate::element::Command::EnterSwordfight, Some(owner));
+        let mut waiter =
+            SequenceElement::new(1, crate::element::Command::EnterSwordfight, Some(owner));
         waiter.priority = SequencePriority::PostponeEverythingButInjuries;
         let waiter = engine.orders.sequence_manager.launch_element(waiter);
         engine.engine_postpone(&sim, &assets, &mut Vec::new(), root, 0, waiter, 0);
-        engine.stop_owner_current_from_root(&sim, &assets, &mut Vec::new(), owner,
-            Some((root, 0)), SequencePriority::Preference, &|_, element| element.priority);
-        assert_eq!(engine.orders.sequence_manager.get_element(previous, 0).unwrap().cross_postponed, Some((waiter, 0)));
-        assert_eq!(engine.orders.sequence_manager.get_element(waiter, 0).unwrap().state, SequenceState::Postponed);
-        assert_eq!(engine.orders.sequence_manager.get_element(waiter, 0).unwrap().cross_postponed, None);
+        engine.stop_owner_current_from_root(
+            &sim,
+            &assets,
+            &mut Vec::new(),
+            owner,
+            Some((root, 0)),
+            SequencePriority::Preference,
+            &|_, element| element.priority,
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(previous, 0)
+                .unwrap()
+                .cross_postponed,
+            Some((waiter, 0))
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(waiter, 0)
+                .unwrap()
+                .state,
+            SequenceState::Postponed
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(waiter, 0)
+                .unwrap()
+                .cross_postponed,
+            None
+        );
         previous = waiter;
     }
 }

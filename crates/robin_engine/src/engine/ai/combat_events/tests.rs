@@ -108,7 +108,11 @@ fn after_combat_injury_speaks_once_only_after_a_rejected_strike_proposal() {
         assert_eq!(engine.control.rng.original_replay_cursor(), Some(3));
         assert_eq!(
             engine.control.rng.original_replay_sites(0..3).unwrap(),
-            vec![RngSite::DrunkCombatFreeze, RngSite::DrunkCombatFreeze, RngSite::SwordStrikeSelection]
+            vec![
+                RngSite::DrunkCombatFreeze,
+                RngSite::DrunkCombatFreeze,
+                RngSite::SwordStrikeSelection
+            ]
         );
         engine.with_simulation_context(|_, sim| {
             assert_eq!(crate::sim_rng::u32(sim, RngSite::ScriptRand, 0..100), 37);
