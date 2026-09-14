@@ -438,6 +438,16 @@ async fn wasm_main(
     .shared();
     let _ = pool_init.clone().now_or_never();
     wasm_bindgen_futures::spawn_local(pool_init.clone());
+    // Every AVIF interface / loading-screen picture of the boot payload must
+    // have browser-decoded pixels before any synchronous resource loader
+    // (menus, loading screen, HUD) touches it.
+    robin_rs::browser_image_decode::predecode(
+        &shipping.boot_browser_image_blobs(),
+        robin_assets::browser_images::ImageScope::Boot,
+        |_, _| {},
+    )
+    .await
+    .context("decode boot AVIF images")?;
     let args = robin_rs::main_entry::LaunchConfig::from(robin_rs::main_entry::parse_cli());
     let init_start = web_time::Instant::now();
     let (campaign, profiles, shipping) =
