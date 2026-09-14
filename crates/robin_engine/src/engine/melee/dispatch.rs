@@ -1557,7 +1557,10 @@ mod shield_order_tests {
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData::default(),
-            soldier: SoldierData::default(),
+            soldier: SoldierData {
+                cached_camp: crate::element_kinds::Camp::Lacklandists,
+                ..SoldierData::default()
+            },
         })
     }
 

@@ -476,6 +476,12 @@ fn lost_target_moveok_stop_transition_publishes_waiting_before_terminal_handoff(
         .get_element_mut(sequence_id, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine
+        .orders
+        .sequence_manager
+        .get_sequence_mut(sequence_id)
+        .unwrap()
+        .increase_elements_in_progress();
     engine.orders.sequence_manager.rebuild_indices();
     {
         let actor = engine
@@ -583,7 +589,7 @@ fn minimal_mission() -> crate::engine::MissionScript {
         version: SCB_VERSION,
         classes: vec![ClassEntry {
             source_file: "refresh_seek_test.scs".into(),
-            class_name: "StartUp".into(),
+            class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
             size_of_member_variables: 0,
             member_variables: Vec::new(),
             functions: vec![Function {
@@ -829,6 +835,12 @@ fn refresh_seek_recovers_moved_owner_and_target_sectors_before_indexed_route() {
         .get_element_mut(seek_id, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine
+        .orders
+        .sequence_manager
+        .get_sequence_mut(seek_id)
+        .unwrap()
+        .increase_elements_in_progress();
     engine.orders.sequence_manager.rebuild_indices();
 
     assert!(engine.try_dispatch_cross_sector_entity_seek(
@@ -920,6 +932,12 @@ fn cross_sector_refresh_seek_does_not_append_pc_posture_recovery() {
         .get_element_mut(seek_id, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine
+        .orders
+        .sequence_manager
+        .get_sequence_mut(seek_id)
+        .unwrap()
+        .increase_elements_in_progress();
     engine.orders.sequence_manager.rebuild_indices();
 
     assert!(engine.try_dispatch_cross_sector_entity_seek(
@@ -1021,7 +1039,6 @@ fn resolve_stop_npc_seek_with_target_at(
 ) -> (crate::ai::AiState, crate::ai::Substate) {
     let sim = crate::sim_rng::test_context();
     let mut engine = crate::engine::EngineInner::new();
-    let mut assets = LevelAssets::new();
     let mut owner_entity = test_pc_at(0.0, 0.0, 1);
     owner_entity
         .element_data_mut()
@@ -1034,7 +1051,7 @@ fn resolve_stop_npc_seek_with_target_at(
     owner_entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
     let owner = engine.add_test_entity(owner_entity);
     let target = engine.add_test_entity(test_moving_soldier_at(target_position));
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let _ = engine.resolve_entity_seek(
         &sim,
@@ -1115,6 +1132,12 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
         .get_element_mut(seek_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine
+        .orders
+        .sequence_manager
+        .get_sequence_mut(seek_seq)
+        .unwrap()
+        .increase_elements_in_progress();
     engine.orders.sequence_manager.rebuild_indices();
     {
         // Seek translation stamps the owner's base seek distance before
@@ -1142,6 +1165,12 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
         .get_element_mut(pass_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine
+        .orders
+        .sequence_manager
+        .get_sequence_mut(pass_seq)
+        .unwrap()
+        .increase_elements_in_progress();
     engine.orders.sequence_manager.rebuild_indices();
     engine
         .get_entity_mut(target)
@@ -1225,6 +1254,12 @@ fn assert_moved_target_refresh_returns_explicit_in_progress(
         .get_element_mut(seek_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine
+        .orders
+        .sequence_manager
+        .get_sequence_mut(seek_seq)
+        .unwrap()
+        .increase_elements_in_progress();
     engine.orders.sequence_manager.rebuild_indices();
     {
         let owner_entity = engine.get_entity_mut(owner).unwrap();
@@ -1374,6 +1409,12 @@ fn climbing_seek_flag_does_not_run_perform_seek_refresh() {
         .get_element_mut(seek_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine
+        .orders
+        .sequence_manager
+        .get_sequence_mut(seek_seq)
+        .unwrap()
+        .increase_elements_in_progress();
     engine.orders.sequence_manager.rebuild_indices();
     {
         let actor = engine
@@ -1432,6 +1473,12 @@ fn moved_target_refresh_uses_actor_owned_seek_target_over_element_target() {
         .get_element_mut(seek_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine
+        .orders
+        .sequence_manager
+        .get_sequence_mut(seek_seq)
+        .unwrap()
+        .increase_elements_in_progress();
     engine.orders.sequence_manager.rebuild_indices();
     {
         let actor = engine
@@ -1508,6 +1555,12 @@ fn sword_walk_seek_refresh_still_faces_the_opponent() {
         .get_element_mut(seek_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine
+        .orders
+        .sequence_manager
+        .get_sequence_mut(seek_seq)
+        .unwrap()
+        .increase_elements_in_progress();
     engine.orders.sequence_manager.rebuild_indices();
     {
         let actor = engine
@@ -1557,6 +1610,12 @@ fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacemen
         .get_element_mut(seek_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine
+        .orders
+        .sequence_manager
+        .get_sequence_mut(seek_seq)
+        .unwrap()
+        .increase_elements_in_progress();
     engine.orders.sequence_manager.rebuild_indices();
     {
         let entity = engine.get_entity_mut(owner).unwrap();

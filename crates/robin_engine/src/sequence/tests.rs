@@ -120,8 +120,15 @@ fn termination_starts_postponed_link_selected_by_owner_callback() {
             .get_element(replacement, 0)
             .unwrap()
             .state,
-        SequenceState::Todo
+        SequenceState::Postponed
     );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .is_registered_to_go(replacement, 0)
+    );
+    assert!(!engine.orders.sequence_manager.is_registered_to_go(old, 0));
     assert_eq!(
         engine
             .orders
@@ -1112,7 +1119,7 @@ fn released_cross_postponed_action_keeps_owner_fifo_behind_ready_successor() {
 }
 
 #[test]
-fn released_cross_postponed_assert_frontier_leaves_old_terminal_move_last() {
+fn released_cross_postponed_assertions_keep_ready_before_postponed_fifo() {
     let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
@@ -1141,20 +1148,9 @@ fn released_cross_postponed_assert_frontier_leaves_old_terminal_move_last() {
 
     engine.element_terminated(&sim, &assets, &mut Vec::new(), old_id, 0);
 
-    // The replacement assertion runs first. Both assertions terminate in
-    // Translate and publish their following Move at the live FIFO tail, so
-    // the old route's terminal Move is instructed last and reclaims the
-    // actor's destination.
-    assert!(matches!(
-        engine.orders.sequence_manager.pop_next_hourglass_action(),
-        Some(SequenceAction::InstructOwner {
-            sequence_id,
-            element_index: 0,
-            ..
-        }) if sequence_id == replacement_id
-    ));
-    engine.element_terminated(&sim, &assets, &mut Vec::new(), replacement_id, 0);
-
+    // Ready registers the current sequence's assertion before postponed
+    // startup registers the replacement assertion. Completing either appends
+    // its following Move after the other work already in the manager FIFO.
     assert!(matches!(
         engine.orders.sequence_manager.pop_next_hourglass_action(),
         Some(SequenceAction::InstructOwner {
@@ -1169,10 +1165,12 @@ fn released_cross_postponed_assert_frontier_leaves_old_terminal_move_last() {
         engine.orders.sequence_manager.pop_next_hourglass_action(),
         Some(SequenceAction::InstructOwner {
             sequence_id,
-            element_index: 1,
+            element_index: 0,
             ..
         }) if sequence_id == replacement_id
     ));
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), replacement_id, 0);
+
     assert!(matches!(
         engine.orders.sequence_manager.pop_next_hourglass_action(),
         Some(SequenceAction::InstructOwner {
@@ -1180,6 +1178,14 @@ fn released_cross_postponed_assert_frontier_leaves_old_terminal_move_last() {
             element_index: 2,
             ..
         }) if sequence_id == old_id
+    ));
+    assert!(matches!(
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
+        Some(SequenceAction::InstructOwner {
+            sequence_id,
+            element_index: 1,
+            ..
+        }) if sequence_id == replacement_id
     ));
 }
 
@@ -1498,157 +1504,175 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
 
 #[test]
 fn stop_owner_batches_cleanup_for_long_cross_postponed_chain() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
-    let sim = test_context();
-    let fixture_owner_1 = engine.add_test_entity(
-        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
-            .build(),
-    );
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    // Match the native game thread's stack budget for this deep recursive graph.
+    std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+            let sim = test_context();
+            let fixture_owner_1 = engine.add_test_entity(
+                crate::engine::test_support::actors::TestActor::pc(
+                    crate::element::Posture::Upright,
+                )
+                .build(),
+            );
+            crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    let owner = fixture_owner_0;
-    let unrelated_owner = fixture_owner_1;
+            let owner = fixture_owner_0;
+            let unrelated_owner = fixture_owner_1;
 
-    // Replays retain a large amount of historical sequence state until the
-    // Friday cleanup pass. Keep enough unrelated sequences here to catch a
-    // regression that scans the whole manager for every stopped chain node.
-    for _ in 0..4096 {
-        engine
-            .orders
-            .sequence_manager
-            .launch_element(make_simple_element(1, Command::Wait, Some(unrelated_owner)));
-    }
+            // Replays retain a large amount of historical sequence state until the
+            // Friday cleanup pass. Keep enough unrelated sequences here to catch a
+            // regression that scans the whole manager for every stopped chain node.
+            for _ in 0..4096 {
+                engine
+                    .orders
+                    .sequence_manager
+                    .launch_element(make_simple_element(1, Command::Wait, Some(unrelated_owner)));
+            }
 
-    let mut chain = Vec::with_capacity(4096);
-    for _ in 0..4096 {
-        let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
-        element.priority = SequencePriority::Normal;
-        let sequence = engine.orders.sequence_manager.launch_element(element);
-        engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence, 0);
-        if let Some(&previous) = chain.last() {
-            engine
-                .orders
-                .sequence_manager
-                .get_element_mut(previous, 0)
-                .unwrap()
-                .cross_postponed = Some((sequence, 0));
-        }
-        chain.push(sequence);
-    }
+            let mut chain = Vec::with_capacity(4096);
+            for _ in 0..4096 {
+                let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
+                element.priority = SequencePriority::Normal;
+                let sequence = engine.orders.sequence_manager.launch_element(element);
+                engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence, 0);
+                if let Some(&previous) = chain.last() {
+                    engine
+                        .orders
+                        .sequence_manager
+                        .get_element_mut(previous, 0)
+                        .unwrap()
+                        .cross_postponed = Some((sequence, 0));
+                }
+                chain.push(sequence);
+            }
 
-    engine.stop_owner_current_from_root(
-        &sim,
-        &assets,
-        &mut Vec::new(),
-        owner,
-        Some((chain[0], 0)),
-        SequencePriority::Preference,
-        &|_, element| element.priority,
-    );
+            engine.stop_owner_current_from_root(
+                &sim,
+                &assets,
+                &mut Vec::new(),
+                owner,
+                Some((chain[0], 0)),
+                SequencePriority::Preference,
+                &|_, element| element.priority,
+            );
 
-    for sequence in chain {
-        let element = engine
-            .orders
-            .sequence_manager
-            .get_element(sequence, 0)
-            .unwrap();
-        assert_eq!(element.state, SequenceState::Interrupted);
-        assert_eq!(element.cross_postponed, None);
-    }
+            for sequence in chain {
+                let element = engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, 0)
+                    .unwrap();
+                assert_eq!(element.state, SequenceState::Interrupted);
+                assert_eq!(element.cross_postponed, None);
+            }
+        })
+        .expect("spawn deep sequence test")
+        .join()
+        .expect("deep sequence test failed");
 }
 
 #[test]
 fn repeated_preference_stops_skip_growing_strong_postponed_prefix() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
-    let sim = test_context();
+    // Match the native game thread's stack budget for this deep recursive graph.
+    std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+            let sim = test_context();
 
-    let owner = fixture_owner_0;
+            let owner = fixture_owner_0;
 
-    let mut root_element = make_simple_element(1, Command::QuitSwordfight, Some(owner));
-    root_element.priority = SequencePriority::PostponeEverythingButInjuries;
-    let root = engine.orders.sequence_manager.launch_element(root_element);
-    engine.element_in_progress(&sim, &assets, &mut Vec::new(), root, 0);
+            let mut root_element = make_simple_element(1, Command::QuitSwordfight, Some(owner));
+            root_element.priority = SequencePriority::PostponeEverythingButInjuries;
+            let root = engine.orders.sequence_manager.launch_element(root_element);
+            engine.element_in_progress(&sim, &assets, &mut Vec::new(), root, 0);
 
-    // EnterSwordfight can add one equal-priority postponed element between
-    // successive preference-priority stops while preparing for swordfights. The original game's
-    // pointer walk is effect-free for this graph; rescanning the full prefix
-    // after every append makes the Rust representation triangular.
-    let mut tail = root;
-    let mut chain = Vec::with_capacity(8192);
-    for _ in 0..8192 {
-        let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
-        element.priority = SequencePriority::PostponeEverythingButInjuries;
-        let sequence = engine.orders.sequence_manager.launch_element(element);
-        engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence, 0);
-        engine
-            .orders
-            .sequence_manager
-            .get_element_mut(tail, 0)
-            .unwrap()
-            .cross_postponed = Some((sequence, 0));
-        tail = sequence;
-        chain.push(sequence);
+            // EnterSwordfight can add one equal-priority postponed element between
+            // successive preference-priority stops while preparing for swordfights. The original game's
+            // pointer walk is effect-free for this graph; rescanning the full prefix
+            // after every append makes the Rust representation triangular.
+            let mut tail = root;
+            let mut chain = Vec::with_capacity(8192);
+            for _ in 0..8192 {
+                let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
+                element.priority = SequencePriority::PostponeEverythingButInjuries;
+                let sequence = engine.orders.sequence_manager.launch_element(element);
+                engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence, 0);
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(tail, 0)
+                    .unwrap()
+                    .cross_postponed = Some((sequence, 0));
+                tail = sequence;
+                chain.push(sequence);
 
-        engine.stop_owner_current_from_root(
-            &sim,
-            &assets,
-            &mut Vec::new(),
-            owner,
-            Some((root, 0)),
-            SequencePriority::Preference,
-            &|_, element| element.priority,
-        );
-    }
+                engine.stop_owner_current_from_root(
+                    &sim,
+                    &assets,
+                    &mut Vec::new(),
+                    owner,
+                    Some((root, 0)),
+                    SequencePriority::Preference,
+                    &|_, element| element.priority,
+                );
+            }
 
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .get_element(root, 0)
-            .unwrap()
-            .state,
-        SequenceState::InProgress
-    );
-    assert!(chain.iter().all(|sequence| {
-        engine
-            .orders
-            .sequence_manager
-            .get_element(*sequence, 0)
-            .unwrap()
-            .state
-            == SequenceState::Postponed
-    }));
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(root, 0)
+                    .unwrap()
+                    .state,
+                SequenceState::InProgress
+            );
+            assert!(chain.iter().all(|sequence| {
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(*sequence, 0)
+                    .unwrap()
+                    .state
+                    == SequenceState::Postponed
+            }));
 
-    // The ceiling is only an admission shortcut. A newly linked weak tail
-    // must disable it and remain observable to the exact Original traversal.
-    let mut weak = make_simple_element(1, Command::Turn, Some(owner));
-    weak.priority = SequencePriority::Normal;
-    let weak = engine.orders.sequence_manager.launch_element(weak);
-    engine.postpone_element(&sim, &assets, &mut Vec::new(), weak, 0);
-    engine
-        .orders
-        .sequence_manager
-        .get_element_mut(tail, 0)
-        .unwrap()
-        .cross_postponed = Some((weak, 0));
-    engine.stop_owner_current_from_root(
-        &sim,
-        &assets,
-        &mut Vec::new(),
-        owner,
-        Some((root, 0)),
-        SequencePriority::Preference,
-        &|_, element| element.priority,
-    );
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .get_element(weak, 0)
-            .unwrap()
-            .state,
-        SequenceState::Interrupted
-    );
+            // The ceiling is only an admission shortcut. A newly linked weak tail
+            // must disable it and remain observable to the exact Original traversal.
+            let mut weak = make_simple_element(1, Command::Turn, Some(owner));
+            weak.priority = SequencePriority::Normal;
+            let weak = engine.orders.sequence_manager.launch_element(weak);
+            engine.postpone_element(&sim, &assets, &mut Vec::new(), weak, 0);
+            engine
+                .orders
+                .sequence_manager
+                .get_element_mut(tail, 0)
+                .unwrap()
+                .cross_postponed = Some((weak, 0));
+            engine.stop_owner_current_from_root(
+                &sim,
+                &assets,
+                &mut Vec::new(),
+                owner,
+                Some((root, 0)),
+                SequencePriority::Preference,
+                &|_, element| element.priority,
+            );
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(weak, 0)
+                    .unwrap()
+                    .state,
+                SequenceState::Interrupted
+            );
+        })
+        .expect("spawn deep sequence test")
+        .join()
+        .expect("deep sequence test failed");
 }
 
 #[test]
@@ -1745,77 +1769,6 @@ fn repeated_selected_stops_do_not_scan_unrelated_retained_sequences() {
                 .unwrap()
                 .state,
             SequenceState::Interrupted
-        );
-    }
-}
-
-#[test]
-fn stop_pending_matching_batches_terminal_link_cleanup() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
-    let sim = test_context();
-    let fixture_owner_1 = engine.add_test_entity(
-        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
-            .build(),
-    );
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-
-    let owner = fixture_owner_0;
-    let unrelated_owner = fixture_owner_1;
-
-    for _ in 0..4096 {
-        engine
-            .orders
-            .sequence_manager
-            .launch_element(make_simple_element(1, Command::Wait, Some(unrelated_owner)));
-    }
-
-    let mut matching = Vec::with_capacity(4096);
-    for _ in 0..4096 {
-        let mut element = make_simple_element(1, Command::ShootBow, Some(owner));
-        element.priority = SequencePriority::Normal;
-        matching.push(engine.orders.sequence_manager.launch_element(element));
-    }
-
-    assert_eq!(
-        engine.stop_pending_elements_matching(
-            &sim,
-            &assets,
-            &mut Vec::new(),
-            owner,
-            Command::ShootBow,
-            SequencePriority::Preference,
-            &|_, element| element.priority,
-        ),
-        matching.len(),
-    );
-    for sequence in matching {
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(sequence, 0)
-                .unwrap()
-                .state,
-            SequenceState::Interrupted
-        );
-    }
-
-    // EnterSwordfight performs this check for every queued entry even when
-    // there is no bow work left. Keep the retained manager large enough that
-    // an accidental all-sequence terminal-link cleanup per no-op call is
-    // immediately visible in this stress regression.
-    for _ in 0..4096 {
-        assert_eq!(
-            engine.stop_pending_elements_matching(
-                &sim,
-                &assets,
-                &mut Vec::new(),
-                owner,
-                Command::ShootBow,
-                SequencePriority::Preference,
-                &|_, element| element.priority,
-            ),
-            0,
         );
     }
 }
@@ -2128,78 +2081,6 @@ fn postpone_element_consumes_its_existing_manager_registration() {
             .unwrap()
             .state,
         SequenceState::Postponed
-    );
-}
-
-#[test]
-fn stop_pending_elements_matching_clears_cross_postponed_shoot_bow() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
-    let sim = test_context();
-
-    let owner = fixture_owner_0;
-
-    let mut current = make_simple_element(1, Command::ShootBow, Some(owner));
-    current.priority = SequencePriority::Preference;
-    current
-        .orders
-        .push_back(Order::test_new(OrderType::ShootingWithBow, 10.0, 0.0));
-    let current_seq = engine.orders.sequence_manager.launch_element(current);
-    engine.element_in_progress(&sim, &assets, &mut Vec::new(), current_seq, 0);
-
-    let mut queued = make_simple_element(1, Command::ShootBow, Some(owner));
-    queued.priority = SequencePriority::Preference;
-    let queued_seq = engine.orders.sequence_manager.launch_element(queued);
-
-    engine
-        .orders
-        .sequence_manager
-        .get_element_mut(current_seq, 0)
-        .unwrap()
-        .cross_postponed = Some((queued_seq, 0));
-    engine.postpone_element(&sim, &assets, &mut Vec::new(), queued_seq, 0);
-
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .queued_element_exists(owner, Command::ShootBow)
-    );
-
-    let resolver = |_: &EngineInner, _elem: &SequenceElement| SequencePriority::Preference;
-    let stopped = engine.stop_pending_elements_matching(
-        &sim,
-        &assets,
-        &mut Vec::new(),
-        owner,
-        Command::ShootBow,
-        SequencePriority::Preference,
-        &resolver,
-    );
-
-    assert_eq!(stopped, 1);
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .get_element(queued_seq, 0)
-            .unwrap()
-            .state,
-        SequenceState::Interrupted
-    );
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .get_element(current_seq, 0)
-            .unwrap()
-            .cross_postponed,
-        None
-    );
-    assert!(
-        !engine
-            .orders
-            .sequence_manager
-            .queued_element_exists(owner, Command::ShootBow)
     );
 }
 

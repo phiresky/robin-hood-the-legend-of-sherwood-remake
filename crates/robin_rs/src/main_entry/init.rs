@@ -195,8 +195,17 @@ pub const CORE_OVERLAY_DIR: &str = "assets/core-datadir";
 /// executable, then the dev layout (executable in `target/<profile>/`,
 /// resources at the workspace root). The game may be launched from any
 /// working directory since the datadir is resolved independently.
+///
+/// An explicit `install_root` (tests and tools that must not depend on the
+/// process working directory) is the only candidate when given.
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn resolve_install_resource_dir(name: &str) -> Option<std::path::PathBuf> {
+pub(super) fn resolve_install_resource_dir(
+    install_root: Option<&Path>,
+    name: &str,
+) -> Option<std::path::PathBuf> {
+    if let Some(root) = install_root {
+        return Some(root.join(name)).filter(|path| path.is_dir());
+    }
     let mut candidates = vec![PathBuf::from(name)];
     if let Ok(exe) = std::env::current_exe()
         && let Some(exe_dir) = exe.parent()
@@ -208,15 +217,19 @@ pub(super) fn resolve_install_resource_dir(name: &str) -> Option<std::path::Path
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitError> {
-    let core_dir = resolve_install_resource_dir(CORE_OVERLAY_DIR).ok_or_else(|| {
-        InitError::PlatformCoreOverlay {
-            path: PathBuf::from(CORE_OVERLAY_DIR),
-            source: anyhow::anyhow!(
-                "required core overlay directory was not found next to the game"
-            ),
-        }
-    })?;
+pub(super) fn add_overlay_data_dirs(
+    files: &SbFileSystem,
+    install_root: Option<&Path>,
+) -> Result<(), InitError> {
+    let core_dir =
+        resolve_install_resource_dir(install_root, CORE_OVERLAY_DIR).ok_or_else(|| {
+            InitError::PlatformCoreOverlay {
+                path: PathBuf::from(CORE_OVERLAY_DIR),
+                source: anyhow::anyhow!(
+                    "required core overlay directory was not found next to the game"
+                ),
+            }
+        })?;
     let manifest = crate::core_overlay::mount_validated_native_directory(
         &core_dir,
         |path| files.add_overlay_path(path),
@@ -238,7 +251,7 @@ pub(super) fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitErro
     );
 
     let mut mod_roots = Vec::new();
-    if let Some(root) = resolve_install_resource_dir(MODS_DIR) {
+    if let Some(root) = resolve_install_resource_dir(install_root, MODS_DIR) {
         mod_roots.push(root);
     }
     let configured_root = crate::mod_pack::default_mods_root();
@@ -378,6 +391,14 @@ pub fn register_language_data_paths_for_tool() {
     add_language_folder();
 }
 
+/// Register the shipped language-data directories on a tool's own explicit
+/// file system (same order as normal startup), without touching the
+/// process-global legacy reader or the working directory.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn register_language_data_paths_with_files(files: &SbFileSystem) -> Result<(), InitError> {
+    add_language_folder_with_files(files)
+}
+
 /// Result tuple for [`rust_init`] / [`rust_init_with_shipping`] /
 /// [`rust_init_finish`]: the loaded campaign, mission profile manager, and
 /// explicit application context (player profiles, key bindings, options,
@@ -396,11 +417,21 @@ pub fn rust_init() -> Result<RustInit, InitError> {
 /// [`rust_init`] with an explicit primary datadir (e.g. from a tool's
 /// `--data-dir` flag), taking priority over `ROBINHOOD_DATA_DIR`.
 pub fn rust_init_with_data_dir(data_dir: Option<&Path>) -> Result<RustInit, InitError> {
+    rust_init_with_roots(data_dir, None)
+}
+
+/// [`rust_init_with_data_dir`] with an explicit installation root for the
+/// engine-shipped `assets/core-datadir` and `mods/` directories, instead of
+/// probing the working directory and executable location.
+pub(crate) fn rust_init_with_roots(
+    data_dir: Option<&Path>,
+    install_root: Option<&Path>,
+) -> Result<RustInit, InitError> {
     crate::init_tracing();
     let files = std::sync::Arc::new(SbFileSystem::new(std::sync::Arc::new(
         robin_util::asset_fs::AssetVfs::new(),
     )));
-    super::platform::setup_data_dir(data_dir, &files)?;
+    super::platform::setup_data_dir(data_dir, install_root, &files)?;
     tracing::info!("Robin Hood — Rust entry point");
 
     // Load the shipping datadir if one exists. When present, subsystem
@@ -593,7 +624,7 @@ pub fn rust_init_with_shipping(
             .map(|shipping| shipping.asset_vfs().clone())
             .unwrap_or_else(|| robin_util::asset_fs::global().clone()),
     ));
-    super::platform::setup_data_dir(None, &files)?;
+    super::platform::setup_data_dir(None, None, &files)?;
     tracing::info!("Robin Hood — Rust entry point (preinstalled shipping data)");
     rust_init_finish(shipping, files)
 }

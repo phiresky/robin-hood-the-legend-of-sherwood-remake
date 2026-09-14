@@ -274,8 +274,7 @@ fn original_pc_registry_is_independent_from_portrait_priority_order() {
     engine.world.pc_ids = vec![first, second];
     assert_eq!(engine.world.original_pc_registry_ids, vec![second, first]);
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     assert_eq!(
         engine.world.original_pc_registry(),
         &[second, first],
@@ -293,7 +292,6 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
 
     let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let near = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
@@ -313,7 +311,7 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
         .element_data_mut()
         .set_position_map(MapPoint::new(1_000.0, 0.0));
     let far_partner = engine.add_test_entity(far_partner_entity);
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     {
         let human = engine
@@ -375,8 +373,7 @@ fn terminal_callbacks_finish_in_call_order_across_owners() {
     let owners: Vec<_> = (0..3)
         .map(|_| engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists)))
         .collect();
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let (_, stimuli) = crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
         for &owner in &owners {
             let sequence = engine
@@ -414,8 +411,7 @@ fn resumed_return_to_duty_uses_live_position_and_translates_its_goto() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let sector = crate::position_interface::SectorHandle::new(1);
     let entity = engine

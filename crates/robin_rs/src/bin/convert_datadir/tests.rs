@@ -457,6 +457,71 @@ fn opus_membership_only_dependency_is_written_and_decodes() {
 }
 
 #[test]
+#[ignore = "requires cjxl on PATH"]
+fn lossy_minimap_jxl_keeps_the_exact_transparent_key() {
+    use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
+    use robin_engine::minimap::HitMask;
+
+    // A minimap-shaped picture: a keyed border around an opaque playfield
+    // whose colours include near-key greens that lossy coding could land on
+    // the key, plus an interior keyed hole.
+    let (width, height) = (48u16, 32u16);
+    let source: Vec<u16> = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let border = x < 4 || y < 3 || x >= width - 5 || y >= height - 4;
+            let hole = (20..26).contains(&x) && (12..18).contains(&y);
+            if border || hole {
+                TRANSPARENT_COLOR_16
+            } else if (x + y) % 7 == 0 {
+                0x07A0 // near-key green
+            } else {
+                ((x & 0x1f) << 11) | ((y * 2) << 5) | ((x + y) & 0x1f)
+            }
+        })
+        .collect();
+    let picture = Picture {
+        width,
+        height,
+        pitch: width * 2,
+        pixel_format: PixelFormat::Rgb16,
+        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
+        palette: None,
+    };
+
+    let encoded = super::encode_minimap_picture_to_jxl(&picture, Some(80)).unwrap();
+    let decoded = Picture::load_minimap_from_bytes(&encoded).unwrap();
+    assert_eq!((decoded.width, decoded.height), (width, height));
+    assert_eq!(
+        Picture::terrain_dimensions(&encoded).unwrap(),
+        (width, height)
+    );
+    let pixels: Vec<u16> = decoded
+        .data
+        .chunks_exact(2)
+        .map(|word| u16::from_le_bytes([word[0], word[1]]))
+        .collect();
+    for (index, (&want, &got)) in source.iter().zip(&pixels).enumerate() {
+        assert_eq!(
+            want == TRANSPARENT_COLOR_16,
+            got == TRANSPARENT_COLOR_16,
+            "pixel {index}: source {want:#06x} decoded {got:#06x}"
+        );
+    }
+    let expected_mask = HitMask::from_pixels_u16(width, height, &source, TRANSPARENT_COLOR_16);
+    let decoded_mask = HitMask::from_pixels_u16(width, height, &pixels, TRANSPARENT_COLOR_16);
+    for y in 0..height {
+        for x in 0..width {
+            assert_eq!(
+                decoded_mask.is_opaque(x, y),
+                expected_mask.is_opaque(x, y),
+                "hit mask differs at ({x}, {y})"
+            );
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires ffmpeg with libopus"]
 fn opus_transcode_is_byte_deterministic() {
     let sample_rate = 8_000u32;
@@ -575,6 +640,37 @@ fn authentic_demo_start_sxt_is_a_sixteen_picture() {
     assert_eq!((decoded.width, decoded.height), (1024, 768));
     assert_eq!(decoded.data.len(), 1024 * 768 * 2);
     assert_eq!(u32::from_le_bytes(converted[4..8].try_into().unwrap()), 0);
+}
+
+#[test]
+fn locale_resource_archives_never_serialize_converter_host_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let text = temp.path().join("Text");
+    fs::create_dir(&text).unwrap();
+    let mut archive = b"SRES".to_vec();
+    archive.extend_from_slice(&0x0100u32.to_le_bytes());
+    archive.extend_from_slice(&1u32.to_le_bytes());
+    archive.extend_from_slice(b"TEXT");
+    archive.extend_from_slice(&7u32.to_le_bytes());
+    archive.extend_from_slice(&0u32.to_le_bytes()); // flags
+    archive.extend_from_slice(&1u16.to_le_bytes()); // string count
+    archive.extend_from_slice(&1u16.to_le_bytes()); // UTF-16 length
+    archive.extend_from_slice(&u16::from(b'X').to_le_bytes());
+    fs::write(text.join("Level.res"), archive).unwrap();
+
+    let mut locale = ShippingLocale::default();
+    walk_and_bundle_locale(
+        &mut locale,
+        temp.path(),
+        temp.path(),
+        InterfaceImageFormat::Raw,
+    )
+    .unwrap();
+
+    let manager = &locale.res_files["text/level.res"];
+    assert!(!manager.has_recovery_file_entries());
+    assert!(!manager.recovery_enabled());
+    assert_eq!(manager.resident_string_count(7), Some(1));
 }
 
 #[test]

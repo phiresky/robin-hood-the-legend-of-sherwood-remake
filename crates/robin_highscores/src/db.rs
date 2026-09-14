@@ -4216,7 +4216,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn campaign_orphans_are_claimed_and_backup_lock_blocks_gc() {
+    async fn campaign_orphans_are_claimed_once() {
         let (_directory, database) = test_database().await;
         database
             .register_campaign_object(&[44; 32], 100)
@@ -4226,10 +4226,12 @@ mod tests {
             .execute(database.fixture_pool())
             .await
             .unwrap();
-        let lock = database
-            .acquire_backup_lock("test", Duration::from_secs(60))
+        let claimed = database
+            .claim_campaign_gc_candidates(10_000, 1, 10)
             .await
             .unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].sha256, [44; 32]);
         assert!(
             database
                 .claim_campaign_gc_candidates(10_000, 1, 10)
@@ -4237,36 +4239,13 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert!(
-            database
-                .refresh_backup_lock(&lock, Duration::from_secs(60))
-                .await
-                .unwrap()
-        );
-        assert!(
-            database
-                .claimed_campaign_purges(10)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        assert!(database.release_backup_lock(&lock).await.unwrap());
-        let claimed = database
-            .claim_campaign_gc_candidates(10_000, 1, 10)
-            .await
-            .unwrap();
-        assert_eq!(claimed.len(), 1);
-        assert_eq!(claimed[0].sha256, [44; 32]);
-        assert!(matches!(
-            database
-                .acquire_backup_lock("blocked", Duration::from_secs(60))
-                .await,
-            Err(DbError::QueueFull)
-        ));
+        let resumed = database.claimed_campaign_purges(10).await.unwrap();
+        assert_eq!(resumed.len(), 1);
+        assert_eq!(resumed[0].claim_token, claimed[0].claim_token);
     }
 
     #[tokio::test]
-    async fn backup_gate_closes_before_writer_drain_and_writer_heartbeats_remain_visible() {
+    async fn writer_heartbeats_keep_maintenance_write_lease_visible() {
         let (_directory, database) = test_database().await;
         let writer = database
             .acquire_maintenance_write_lease(
@@ -4276,11 +4255,6 @@ mod tests {
             )
             .await
             .unwrap();
-        let backup = database
-            .acquire_backup_lock("backup", Duration::from_secs(60))
-            .await
-            .unwrap();
-        assert!(database.backup_lock_active().await.unwrap());
         assert_eq!(
             database
                 .active_maintenance_write_lease_count()
@@ -4288,16 +4262,6 @@ mod tests {
                 .unwrap(),
             1
         );
-        assert!(matches!(
-            database
-                .acquire_maintenance_write_lease(
-                    MaintenanceWriteClass::ApiSensitive,
-                    "late-arrival",
-                    Duration::from_secs(60),
-                )
-                .await,
-            Err(DbError::QueueFull)
-        ));
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(
             database
@@ -4312,7 +4276,7 @@ mod tests {
                 .await
                 .unwrap(),
             1,
-            "a long writer which heartbeats must remain visible to backup drain"
+            "a long writer which heartbeats must remain visible"
         );
         assert!(
             database
@@ -4327,11 +4291,10 @@ mod tests {
                 .unwrap(),
             0
         );
-        assert!(database.release_backup_lock(&backup).await.unwrap());
         let after = database
             .acquire_maintenance_write_lease(
                 MaintenanceWriteClass::ApiSensitive,
-                "after-backup",
+                "after-release",
                 Duration::from_secs(60),
             )
             .await

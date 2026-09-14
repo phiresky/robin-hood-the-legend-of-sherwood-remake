@@ -7,7 +7,8 @@ use crate::order::OrderType;
 fn after_combat_injury_speaks_once_only_after_a_rejected_strike_proposal() {
     use crate::ai::{LogLineType, Remark, Stimulus};
     use crate::element::ActionState;
-    use crate::sim_rng::{RngSite, SimulationRng};
+    use crate::engine::SimulationRng;
+    use crate::sim_rng::RngSite;
 
     for (roll, accepted) in [(85, false), (0, true)] {
         let (mut engine, mut assets, owner, target) = fixture(Substate::AttackingSwordfight);
@@ -15,7 +16,8 @@ fn after_combat_injury_speaks_once_only_after_a_rejected_strike_proposal() {
         for (id, opponent, dx) in [(owner, target, 10.0), (target, owner, -10.0)] {
             let entity = engine.get_entity_mut(id).unwrap();
             entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
-            entity.human_data_mut().unwrap().opponents = vec![opponent];
+            entity.human_data_mut().unwrap().opponents.clear();
+            entity.human_data_mut().unwrap().opponents.push(opponent);
             entity.element_data_mut().set_direction_instantly(
                 crate::position_interface::vector_to_sector_0_to_15_iso(dx, 0.0) as i16,
             );

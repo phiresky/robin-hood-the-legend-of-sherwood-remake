@@ -804,18 +804,15 @@ fn sword_strike_honour_reads_live_animation_not_action_change_history() {
         let target = engine.get_entity_mut(target).unwrap();
         let actor = target.actor_data_mut().unwrap();
         actor.old_action = OrderType::Invalid;
-        // The live animation is the installed order (the Original's
-        // actor order), not the action-change history in `old_action`.
+        // Recovery admission reads the installed animation while the
+        // action-change history can still be invalid.
         actor.installed_order = Some(crate::element::InstalledActorOrder {
             order_id: std::num::NonZeroU32::new(1).unwrap(),
             order_type: OrderType::BeingHitSword,
         });
         target.element_data_mut().sprite.last_action = OrderType::BeingHitSword;
     }
-    assert_eq!(
-        engine.enemy_reconsider_sword_strike_time_limit_for_actor(attacker, target),
-        None
-    );
+    assert!(engine.actor_is_in_sword_recovery(target));
 
     engine.with_simulation_context(|engine, sim| {
         engine.execute_reconsider_swordfight(sim, &assets, attacker, false);
@@ -2347,8 +2344,6 @@ fn lethal_push_runs_npc_kill_cascade_before_owning_the_fall() {
         ai.hth_weapon_id = 1;
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
-        ai.base.current_music_alert_status = AlertLevel::Red;
-        ai.base.view_alert_status = AlertLevel::Red;
     }
     engine
         .get_entity_mut(attacker)
@@ -2384,6 +2379,12 @@ fn lethal_push_runs_npc_kill_cascade_before_owning_the_fall() {
     }
 
     let mut assets = assets_with_sword_profile_effects(1, 50, 100, 0);
+    engine.execute_ai_set_alert_status(
+        &assets,
+        victim,
+        AlertLevel::Red,
+        crate::ai::AlertFlags::empty(),
+    );
     let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].thrusts
         [SwordStrike::A as usize];
     thrust.kind = crate::profiles::WeaponThrustKind::PushAside;

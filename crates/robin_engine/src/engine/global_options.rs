@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::gameplay_config::ItemGameplayConfig;
 use crate::player_profile::DifficultyLevel;
-use robin_run_protocol::{
+use robin_run_types::{
     RankedSimulationDifficultyV1, RankedSimulationPolicyV1, RankedSimulationPresetV1, Validate as _,
 };
 
@@ -201,7 +201,7 @@ pub struct RankedSimulationPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RankedSimulationPolicyError {
     #[error("unsupported ranked simulation-policy document: {0}")]
-    InvalidIdentity(robin_run_protocol::ValidationError),
+    InvalidIdentity(robin_run_types::ValidationError),
     #[error("custom ranked policies require their complete validated simulation configuration")]
     MissingCustomConfiguration,
     #[error("invalid custom ranked simulation configuration: {0}")]

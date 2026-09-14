@@ -39,8 +39,7 @@ fn bind_animation(engine: &mut EngineInner, actor: EntityId, action: OrderType) 
 
 fn bind_animations(engine: &mut EngineInner, actor: EntityId, actions: &[OrderType]) {
     let action = *actions.first().expect("test animation set is not empty");
-    let mut conversion =
-        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     for &mapped_action in actions {
         conversion[mapped_action as usize] = 0;
     }

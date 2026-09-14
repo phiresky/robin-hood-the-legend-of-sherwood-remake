@@ -25,13 +25,12 @@ fn make_aiming_pc(action_state: ActionState) -> Entity {
 
 fn launch_bow_command_and_tick(command: Command, action_state: ActionState) -> EngineInner {
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let pc_id = engine.add_test_entity(make_aiming_pc(action_state));
     engine.launch_element(SequenceElement::new(1, command, Some(pc_id)));
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    super::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     engine
 }
@@ -106,7 +105,6 @@ fn install_test_lift_sector(
 #[test]
 fn bow_lean_out_commands_keep_transition_order_live() {
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let soldier_id = engine.add_test_entity(make_bow_soldier(
         Posture::Upright,
         ActionState::AimingWithBow,
@@ -119,7 +117,7 @@ fn bow_lean_out_commands_keep_transition_order_live() {
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    super::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let elem = engine
@@ -159,7 +157,6 @@ fn pre_timer_condolation_starts_successor_timer_before_the_scan() {
     use crate::sequence::{Field, FieldValue, Sequence};
 
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let pc_id = engine.add_test_entity(make_aiming_pc(ActionState::AimingWithBow));
     let mut sequence = Sequence::new();
     sequence.append_element(SequenceElement::new(1, Command::EquipBow, Some(pc_id)));
@@ -170,7 +167,7 @@ fn pre_timer_condolation_starts_successor_timer_before_the_scan() {
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    super::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(engine.orders.timer_elements.len(), 1);
@@ -185,7 +182,6 @@ fn timer_expiry_condolation_starts_successor_after_the_scan() {
     use crate::sequence::{Field, FieldValue, Sequence};
 
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let pc_id = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
     let mut sequence = Sequence::new();
     let mut expiring = SequenceElement::new_generic(1, Command::Timer, Some(pc_id));
@@ -198,7 +194,7 @@ fn timer_expiry_condolation_starts_successor_after_the_scan() {
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    super::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(engine.orders.timer_elements.len(), 1);
@@ -533,8 +529,7 @@ fn wait_timer_wraps_beggar_execute_and_generic_execute_once_each() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
         let mut owner_entity = make_aiming_pc(ActionState::Waiting);
-        let mut conversion =
-            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[order_type as usize] = 0;
         owner_entity.element_data_mut().sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
@@ -613,8 +608,7 @@ fn lazy_wait_publishes_start_before_preexisting_owner_instruction() {
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
     let mut owner_entity = make_aiming_pc(ActionState::Moving);
-    let mut conversion =
-        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::TransitionWalkingUprightWaitingUpright as usize] = 0;
     conversion[OrderType::WalkingUpright as usize] = 1;
     conversion[OrderType::WaitingUpright as usize] = 2;
@@ -739,13 +733,12 @@ fn owner_local_stop_movement_new_id_preserves_execute_start() {
             // A LINE_SCRIPT EnterZone callback can invoke StopActor here,
             // after execution has produced START but before the actor update
             // performs its completion projection.
-            engine.stop_owner(
+            engine.stop_actor_orders(
                 &crate::sim_rng::test_context(),
                 &assets,
                 &mut Vec::new(),
                 owner,
                 crate::sequence::SequencePriority::Script,
-                &|engine, element| EngineInner::priority_resolver(&engine.world.entities)(element),
             );
         },
         |_, _, _| {},
@@ -1030,7 +1023,6 @@ fn stealth_termination_splices_timer_successor_before_same_tick_scan() {
     use crate::sequence::{Field, FieldValue, Sequence};
 
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
     // Crouch bodies now stay live until their transition animation
     // completes, so use LeaveSpy — the stealth context still snaps the
@@ -1056,7 +1048,7 @@ fn stealth_termination_splices_timer_successor_before_same_tick_scan() {
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    super::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(engine.orders.timer_elements.len(), 1);

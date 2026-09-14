@@ -13,6 +13,7 @@ mod after_script_tests {
     fn retained_callbacks_skip_duplicate_markers_and_finish_the_outer_think() {
         let (mut engine, assets, owner, _) =
             super::super::battle_decision_observation_tests::fixture(false);
+        let outer_frames = engine.ai.think_call_stack.clone();
         let ai = engine
             .world
             .entities
@@ -36,7 +37,7 @@ mod after_script_tests {
             .expect_ai_controller(owner, format_args!("retained events result"));
         assert!(ai.stimulus_queue.is_empty());
         assert_eq!(ai.current_substate, Substate::WonderingOfficerSeeingBrawl);
-        assert!(engine.ai.think_call_stack.is_empty());
+        assert_eq!(engine.ai.think_call_stack, outer_frames);
     }
 }
 

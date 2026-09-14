@@ -212,11 +212,7 @@ impl EngineInner {
                     })
                     .map(|entity| entity.position_iface().get_position())
             {
-                let obstacles = crate::sight_obstacle::ObstacleList {
-                    static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-                    dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                    static_active: &self.world.static_sight_obstacle_active,
-                };
+                let obstacles = self.world.sight_obstacles(assets);
                 if !abilities::can_carry_on_shoulders(helper_position, obstacles) {
                     // This retained interaction is a
                     // cross-actor validity retry. Retail

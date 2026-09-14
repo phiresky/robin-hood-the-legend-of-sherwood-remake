@@ -7,10 +7,10 @@ use super::*;
 /// The macro/quick-action paths write back through the owner's `PcData`, so
 /// these fixtures need a real entity rather than a synthetic `PcId` handle.
 fn add_test_pc(engine: &mut EngineInner) -> crate::element::EntityId {
-    let mut actor = make_test_pc(crate::element::Posture::Upright);
-    actor.position_iface_mut().clear_pathfinder_index();
-    actor.element_data_mut().active = true;
-    actor.pc_data_mut().expect("PC fixture").life_points = 100;
+    let actor =
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .life_points(100)
+            .build();
     let pc = engine.add_test_entity(actor);
     // Macro playback dispatches real group-move commands, whose formation
     // geometry reads the mover's map position and move box. A default

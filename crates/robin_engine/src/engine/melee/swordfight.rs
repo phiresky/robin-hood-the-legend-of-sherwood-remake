@@ -861,26 +861,6 @@ impl EngineInner {
         // The original game clears pending shots before the
         // validity gates.
         self.clear_pc_shoot_list(initiator);
-        if initiator_is_pc {
-            // Repeated PC bow clicks have not necessarily reached the
-            // retained pointer FIFO yet, so remove their eager Rust manager
-            // registrations too. NPC ShootBow elements are different: they
-            // remain linked through the sequence's postponed pointer even
-            // after the original game clears the queued shooting sequences. Interrupting one
-            // here invents a condolation/EventDone and severs the link.
-            let resolver = |engine: &EngineInner, element: &crate::sequence::SequenceElement| {
-                Self::priority_resolver(&engine.world.entities)(element)
-            };
-            self.stop_pending_elements_matching(
-                sim,
-                assets,
-                &mut Vec::new(),
-                initiator,
-                crate::element::Command::ShootBow,
-                crate::sequence::SequencePriority::Preference,
-                &resolver,
-            );
-        }
 
         // ENTER_SWORDFIGHT translation prepares the opponent before entering
         // the fight. Swordfight reconsideration enters the fight directly,

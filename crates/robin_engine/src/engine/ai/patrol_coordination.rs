@@ -71,8 +71,12 @@ mod tests {
             };
             ai.attentive = attentive;
             ai.will_be_attentive = attentive;
-            ai.base.current_music_alert_status = AlertLevel::Yellow;
-            ai.base.view_alert_status = AlertLevel::Yellow;
+            engine.execute_ai_set_alert_status(
+                &assets,
+                owner,
+                AlertLevel::Yellow,
+                crate::ai::AlertFlags::empty(),
+            );
 
             engine.execute_ai_coordinate_patrol(
                 &crate::sim_rng::test_context(),

@@ -63,8 +63,7 @@ fn patrol_member_thinks_before_the_chief_applies_its_direction() {
     let mut engine = EngineInner::new();
     let chief = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let member = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     for id in [chief, member] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("patrol soldier exists")
         else {
@@ -160,8 +159,7 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
     let mut engine = EngineInner::new();
     let chief = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let member = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let Entity::Soldier(chief_entity) = engine.get_entity_mut(chief).unwrap() else {
         unreachable!()
     };
@@ -201,46 +199,22 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
 }
 
 #[test]
-#[should_panic(expected = "missing its required AI controller while applying recovery state")]
-fn think_with_drain_rejects_a_soldier_missing_its_required_ai() {
-    use crate::ai::{Stimulus, StimulusType};
-
-    let sim = &crate::sim_rng::test_context();
-    let mut engine = EngineInner::new();
-    let npc_id = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
-
-    engine.dispatch_think_with_drain(
-        sim,
-        npc_id,
-        &Stimulus::new(StimulusType::EventDone),
-        None,
-        &LevelAssets::new(),
-    );
-}
-
-#[test]
 fn ambush_owner_inputs_preserve_committed_door_side() {
     use crate::element::{ActiveDoorPass, Camp, Command};
     use crate::gate::{Door, DoorIndex, DoorType};
-    use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
+    use crate::scb::{SCB_VERSION, ScbFile};
     use crate::sector::SectorNumber;
 
     for direction in [0, 1] {
         let mut engine = EngineInner::new();
         let npc_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
         engine.scripts.mission = Some(
             MissionScript::from_scb(ScbFile {
                 version: SCB_VERSION,
-                classes: vec![ClassEntry {
-                    source_file: "ambush_position.scs".into(),
-                    class_name: "StartUp".into(),
-                    size_of_member_variables: 0,
-                    member_variables: Vec::new(),
-                    functions: Vec::new(),
-                    quads: Vec::new(),
-                }],
+                classes: vec![crate::engine::test_support::asm::empty_startup_class(
+                    "ambush_position.scs".into(),
+                )],
             })
             .unwrap(),
         );
@@ -315,8 +289,7 @@ fn ambush_idle_reset_preserves_the_low_intelligence_gate() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.ai.global.ambush_points = vec![AmbushPoint {
         position: Default::default(),
         direction: 0,
@@ -356,8 +329,7 @@ fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("ambush owner exists")
     else {
         panic!("ambush owner changed kind")
@@ -412,8 +384,7 @@ fn normal_timer_uses_unsigned_wrapped_overflow_guard() {
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.control.frame_counter = u32::MAX - 10;
     let ai = engine
         .get_entity_mut(npc_id)
@@ -442,8 +413,7 @@ fn retained_fifo_stops_when_first_think_acquires_busy_lock() {
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("FIFO owner exists") else {
         panic!("FIFO owner changed kind")
     };
@@ -485,8 +455,7 @@ fn panic_generated_reachpoint_precedes_retained_panic_sibling_and_draws_twice() 
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .civilians
         .push(crate::profiles::CivilianProfile::default());
@@ -606,8 +575,7 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
             receiver.current_state = AiState::Seeking;
             receiver.current_substate = Substate::SeekingGroupCalledByOfficer;
         }
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
 
         let hint = Hint {
             seek_point: Position {
@@ -667,13 +635,12 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
     engine
         .get_entity_mut(npc_id)
         .unwrap()
         .element_data_mut()
         .active = true;
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[0].wake_up = 1;
 
     let Entity::Soldier(npc) = engine.get_entity_mut(npc_id).unwrap() else {
@@ -736,8 +703,7 @@ fn consecutive_combat_callbacks_commit_unconscious_eyes_inline() {
 
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let stimuli = [
         Stimulus::new(StimulusType::EventQuitSwordfight),
         Stimulus::new(StimulusType::EventLoseConsciousness),
@@ -782,8 +748,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
                 observer,
                 waker_before_observer,
             );
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let mut assets = engine.test_runtime_assets();
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
         profiles
             .soldiers
@@ -901,8 +866,7 @@ fn nonserialized_primary_target_multiplicity_starts_empty_after_restore() {
     ai.base.current_substate = Substate::AttackingSwordfight;
     ai.base.primary_target = Some(AiEntityHandle::new(target_id.index()));
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.prepare_npc_owner_pass();
 
     assert!(engine.ai.global.primary_target_multiplicity_initialized);
@@ -934,8 +898,7 @@ fn royalist_blip_auto_reveal_obeys_the_common_sixteen_frame_cadence() {
     observer.element.blipped = true;
     observer.npc.life_points = 100;
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     // Slot 0 has Original creation order 31. Frame 2 is closed; frame 1 below
     // is open for the common modulo-16 blip cadence.
@@ -1149,8 +1112,7 @@ fn bonus_refresh_discovered_is_live_bonus_owned_freeze_safe_and_rng_free() {
         .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
     pc.element.set_position_map(MapPoint::new(0.0, 0.0));
     engine.set_actors_frozen(true);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let (_, trace) = with_draw_trace(|| run_owner_envelopes(&mut engine, &assets));
 
@@ -1202,8 +1164,7 @@ fn bonus_refresh_discovered_uses_live_pc_eligibility_and_original_shoulders_fact
         pc.element
             .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
         pc.element.set_position_map(MapPoint::new(0.0, 0.0));
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
         let eye_z = engine
             .get_entity(pc_id)
             .unwrap()

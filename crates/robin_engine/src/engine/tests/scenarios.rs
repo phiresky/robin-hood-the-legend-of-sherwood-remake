@@ -6,7 +6,7 @@ pub(in crate::engine) use crate::engine::test_support::actors::{
     make_test_ai_soldier, make_test_civilian, make_test_pc, make_test_soldier,
 };
 use crate::order::OrderType;
-use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+use crate::sprite_script::SpriteScript;
 
 pub(super) fn assets_with_test_pc_profile() -> super::LevelAssets {
     let mut profiles = crate::profiles::ProfileManager::new();
@@ -37,7 +37,7 @@ pub(super) fn bind_walking_sprite(
         offsets: vec![SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
     let mut sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),

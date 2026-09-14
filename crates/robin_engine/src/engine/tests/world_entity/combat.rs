@@ -4,10 +4,9 @@ use super::*;
 fn reciprocal_swordfight_entry_preserves_existing_opponent_strength() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let initiator = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let opponent = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     engine
         .get_entity_mut(initiator)
@@ -53,11 +52,10 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
     // point-seek SpeakHeroReachDestination tail.
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let old_principal = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let promoted = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
 
     let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
     let weapon = profiles
@@ -153,11 +151,10 @@ fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() 
     // principal can therefore disappear before the START initiative handoff.
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let old_principal = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let promoted = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
 
     let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
     let weapon = profiles
@@ -304,8 +301,7 @@ fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
         Some(victim_id)
     );
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.handle_death(&crate::sim_rng::test_context(), &assets, victim_id);
 
     for guarded_pc in [old_guarded_pc, current_guarded_pc] {
@@ -404,8 +400,7 @@ fn soldier_death_detaches_both_combat_neighbours_without_touching_another_line()
         enemy.right_combat_neighbour = right_neighbour;
     }
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
 
     let links = |engine: &EngineInner, handle: u32| {
@@ -492,8 +487,7 @@ fn soldier_death_clears_live_reciprocal_combat_neighbours() {
     victim_enemy.left_combat_neighbour = Some(crate::ai::AiEntityHandle::new(old_left_handle));
     victim_enemy.right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(old_right_handle));
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
 
     let links = |engine: &EngineInner, handle: u32| {
@@ -549,8 +543,7 @@ fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
             .base
             .me = id.index();
     }
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.apply_update_left_combat_neighbour(
         owner.index(),
         None,

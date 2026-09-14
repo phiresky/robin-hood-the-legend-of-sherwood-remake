@@ -32,8 +32,8 @@ Currently only tested on a Linux host. Bare builds use no optional client
 features. Use `--features desktop` for the normal native game (audio, OS
 data-directory lookup/dialogs, gamepads, and hardware reporting). Large
 integrations are opt-in: `multiplayer` (iroh/DHT matchmaking), `video`
-(intro/outro via ffmpeg-next) and `retroarch-shaders` (librashader; run
-`scripts/fetch-slang-shaders.sh` first for the preset collection). Custom
+(intro/outro via ffmpeg-next) and `retroarch-shaders` (librashader; presets
+come from the tracked `vendor/slang-shaders/` collection). Custom
 Spellforge missions always use the built-in pure-Rust Lua VM; the `lua` feature
 only enables legacy mlua comparison tests. Packaged desktop builds additionally
 enable `auto-update` (Velopack). Enable every runtime integration with:
@@ -440,6 +440,7 @@ On my machine, several pre-laid-out datadirs live under `datadirs/` for developm
     crates/robin_assets/       asset decoders (sprites, sounds, scripts, levels)
     crates/robin_replay_format/ bounded replay transport and admission formats
     crates/robin_replay_admission_wasm/ isolated browser replay decoder
+    crates/robin_run_types/    plain run-identity types shared by the engine and run protocol
     crates/robin_run_protocol/ signed run, query, content and build contracts
     crates/robin_ranked_verification/ approved-content and campaign validation
     crates/robin_replay_verifier/ authenticated replay worker

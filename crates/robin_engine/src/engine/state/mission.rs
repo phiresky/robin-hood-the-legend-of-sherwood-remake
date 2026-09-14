@@ -1,8 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    achievement::MissionAchievementState, campaign::Campaign, diplomacy::DiplomacyState,
-    element::EntityId, engine::MissionState, mission_stat::MissionStat,
+    achievement::MissionAchievementState,
+    campaign::{Campaign, CampaignValue},
+    diplomacy::DiplomacyState,
+    element::EntityId,
+    engine::{MissionState, SideEffects, SoundCommand},
+    mission_stat::MissionStat,
     short_briefings::ShortBriefings,
 };
 
@@ -54,15 +58,95 @@ impl MissionDomain {
         &mut self.campaign
     }
 
-    /// Borrow the required campaign and mission statistics as disjoint parts
-    /// of their common owner.
-    pub(crate) fn campaign_and_stat_mut(&mut self) -> (&mut Campaign, &mut MissionStat) {
-        let Self {
-            campaign,
-            mission_stat,
-            ..
-        } = self;
-        (campaign, mission_stat)
+    /// Mutate a campaign value with the usual addition side effects.
+    /// In addition to the raw field write, RANSOM credits to the
+    /// per-mission collected-money counter and (for positive deltas
+    /// after the first frame) emits the `CashWon` jingle; SCORE credits
+    /// to the per-mission added-score counter.  Other campaign values
+    /// have no extra side effects.
+    pub(crate) fn add_campaign_value(
+        &mut self,
+        side_effects: &mut SideEffects,
+        frame_counter: u32,
+        name: CampaignValue,
+        amount: i32,
+    ) {
+        self.campaign.values[name] += amount;
+        // Credit the mission-stat counters unconditionally for
+        // RANSOM/SCORE — only the CashWon jingle is gated on
+        // `amount > 0 && frame_counter > 0`.
+        match name {
+            CampaignValue::Ransom => {
+                self.mission_stat.add_collected_money(amount);
+                if amount > 0 && frame_counter > 0 {
+                    side_effects
+                        .sounds
+                        .push(SoundCommand::Jingle(crate::sound::Jingle::CashWon));
+                }
+            }
+            CampaignValue::Score => {
+                self.mission_stat.add_score(amount);
+            }
+            _ => {}
+        }
+    }
+
+    /// Campaign-only tail of a won mission's teardown, run after the
+    /// entity/coma phases: soldier and score bonuses, post-mission peasant
+    /// recruitment, and blazon consumption.
+    pub(crate) fn apply_won_updates(
+        &mut self,
+        side_effects: &mut SideEffects,
+        frame_counter: u32,
+        sim: &crate::sim_rng::SimulationContext,
+        profiles: &crate::profiles::ProfileManager,
+        living: u32,
+        dead: u32,
+        tied_score: i32,
+        difficulty: crate::player_profile::DifficultyLevel,
+    ) {
+        // The original game adds the counts from this exit-time NPC scan when quitting a mission
+        // directly to the campaign. `mStat.ulTotalSoldierCount` is the
+        // load-time mission total and is not a source for either delta.
+        self.add_campaign_value(
+            side_effects,
+            frame_counter,
+            CampaignValue::LivingSoldiers,
+            living as i32,
+        );
+        self.add_campaign_value(
+            side_effects,
+            frame_counter,
+            CampaignValue::DeadSoldiers,
+            dead as i32,
+        );
+
+        self.add_campaign_value(
+            side_effects,
+            frame_counter,
+            CampaignValue::Score,
+            tied_score,
+        );
+
+        let idx = self
+            .campaign
+            .current_mission_idx
+            .expect("quit-mission updates: current mission disappeared");
+        let mission_type = self.campaign.missions[idx].profile(profiles).mission_type;
+        if mission_type != crate::profiles::MissionType::Ambush {
+            self.add_campaign_value(side_effects, frame_counter, CampaignValue::Score, 1000);
+        }
+
+        // The original game applies difficulty to recruitment only after the score updates
+        // above. The application resolves that difficulty into the command,
+        // so replay and multiplayer execution cannot consult ambient state.
+        let recruited = self
+            .campaign
+            .recruit_post_mission_peasants(sim, living, dead, difficulty, profiles);
+        self.mission_stat.new_peasant_count = recruited;
+        tracing::info!("Post-mission warcrime recruitment: {recruited} new peasants");
+
+        self.campaign.consume_blazons_post_mission(profiles);
     }
 }
 

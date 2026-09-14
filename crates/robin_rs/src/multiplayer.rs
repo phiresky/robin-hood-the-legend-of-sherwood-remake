@@ -147,7 +147,7 @@ impl Deref for NetChannels {
 }
 
 #[cfg(all(test, feature = "multiplayer", not(target_arch = "wasm32")))]
-mod tests {
+pub(crate) mod tests {
     use super::ranked_client::{ClientLeaderboardCoSignState, ClientRankedJoinState};
     use super::ranked_port::require_admitted_remote_ranked_claim;
     use super::*;
@@ -260,16 +260,19 @@ mod tests {
         }
     }
 
-    struct RankedJoinFixture {
-        expected: RankedSessionConfigDocument,
-        challenge: RankedJoinChallenge,
-        response: RankedJoinResponse,
-        accepted: RankedJoinAccepted,
+    /// One host-signed ranked join: the local expectation, the challenge, the
+    /// guest's attestation and the host acknowledgement. Shared with the client
+    /// session policy tests.
+    pub(crate) struct RankedJoinFixture {
+        pub(crate) expected: RankedSessionConfigDocument,
+        pub(crate) challenge: RankedJoinChallenge,
+        pub(crate) response: RankedJoinResponse,
+        pub(crate) accepted: RankedJoinAccepted,
         host: RankedSessionHost,
         guest_key: iroh::SecretKey,
     }
 
-    fn ranked_join_fixture() -> RankedJoinFixture {
+    pub(crate) fn ranked_join_fixture() -> RankedJoinFixture {
         let config = ranked_config();
         let expected =
             RankedSessionConfigDocument::new(encode_ranked_wire_document(&config).unwrap())

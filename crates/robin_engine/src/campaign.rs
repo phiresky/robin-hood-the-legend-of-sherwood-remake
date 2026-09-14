@@ -2711,7 +2711,7 @@ impl Campaign {
         });
     }
 
-    pub(crate) fn create_gang_from_pcs_with_file_exists(
+    pub fn create_gang_from_pcs_with_file_exists(
         &mut self,
         pcs: &str,
         profiles: &ProfileManager,

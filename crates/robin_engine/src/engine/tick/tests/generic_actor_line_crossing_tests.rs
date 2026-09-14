@@ -7,7 +7,7 @@ use crate::element::{
 use crate::fast_find_grid::GridLine;
 use crate::order::{Order, OrderType};
 use crate::sequence::SequenceElement;
-use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+use crate::sprite_script::SpriteScript;
 
 fn dying_sprite() -> crate::sprite::Sprite {
     let action = OrderType::DyingSword;
@@ -23,7 +23,7 @@ fn dying_sprite() -> crate::sprite::Sprite {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
     crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script]),

@@ -22,7 +22,9 @@ impl From<TruncatedRead> for String {
     }
 }
 
-fn array_at<const N: usize>(
+/// Copy the `N` bytes at `offset` (fixed-size name/tag fields); `kind`
+/// labels the field in the [`TruncatedRead`] diagnostic.
+pub fn array_at<const N: usize>(
     data: &[u8],
     offset: usize,
     kind: &'static str,

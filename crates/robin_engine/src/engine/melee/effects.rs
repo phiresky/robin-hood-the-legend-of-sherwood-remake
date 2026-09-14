@@ -181,11 +181,7 @@ impl EngineInner {
         let thrust = &profile.thrusts[strike as usize];
         let min_dist = thrust.minimal_distance as f32;
         let max_dist = thrust.maximal_distance as f32;
-        let obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
+        let obstacles = self.world.sight_obstacles(assets);
         let query = StrikeVictimQuery {
             entities: &self.world.entities,
             attacker_id,
@@ -1423,11 +1419,7 @@ impl EngineInner {
         let max_dist = thrust.maximal_distance as f32;
         let kind = thrust.kind;
 
-        let obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
+        let obstacles = self.world.sight_obstacles(assets);
         let query = StrikeVictimQuery {
             entities: &self.world.entities,
             attacker_id,

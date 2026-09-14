@@ -3563,11 +3563,7 @@ impl EngineInner {
                     origin.y - 20.0 * forward.1 + 80.0 * sidewards.1,
                 ),
             ];
-            let obstacles = crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                static_active: &self.world.static_sight_obstacle_active,
-            };
+            let obstacles = self.world.sight_obstacles(assets);
             let mut pending_victims = Vec::new();
             for (victim_id, victim) in self.world.entities.humans() {
                 let victim_id: EntityId = victim_id.into();
@@ -7549,11 +7545,8 @@ impl EngineInner {
         //   obstacle clip on that first leg.)
         let mut rewritten_installed_order = None;
         {
-            let next_order_id = &mut self.orders.next_order_id;
-            if let Some(elem) = self
-                .orders
-                .sequence_manager
-                .get_element_mut(seq_id, elem_idx)
+            if let Some((elem, next_order_id)) =
+                self.orders.element_with_order_ids_mut(seq_id, elem_idx)
             {
                 // Fresh Rust movement elements retain their generated
                 // transition prefix through `num_transition_orders`. A
@@ -7623,12 +7616,9 @@ impl EngineInner {
                 })
                 .unwrap_or_default();
             if blood_alcohol > 0 {
-                let grid = self.world.fast_grid.clone();
-                let next_order_id = &mut self.orders.next_order_id;
-                if let Some(element) = self
-                    .orders
-                    .sequence_manager
-                    .get_element_mut(seq_id, elem_idx)
+                let grid = &self.world.fast_grid;
+                if let Some((element, next_order_id)) =
+                    self.orders.element_with_order_ids_mut(seq_id, elem_idx)
                 {
                     crate::engine::tick::apply_drunken_order_deviation(
                         sim,

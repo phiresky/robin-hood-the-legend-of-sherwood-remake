@@ -1099,7 +1099,7 @@ fn bored_soldier_wait_no_transition() {
 #[test]
 fn throw_purse_keeps_bored_until_exit_transition_completes() {
     use crate::coordinates::MapPoint;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let sim = crate::sim_rng::test_context();
     let assets = crate::engine::LevelAssets::new();
@@ -1162,7 +1162,7 @@ fn throw_purse_keeps_bored_until_exit_transition_completes() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
         sound_ids: vec![0; 3],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[transition as usize] = 0;
     engine
         .get_entity_mut(owner)

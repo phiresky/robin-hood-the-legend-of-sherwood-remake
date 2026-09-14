@@ -36,8 +36,12 @@ pub use launch::{
     PendingLuaMission,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use init::register_language_data_paths_with_files;
 #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
 pub use init::rust_init_official_projection;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use init::rust_init_with_roots;
 pub use init::{
     FALLBACK_LOCALE_FOLDER, InitError, InitErrorCategory, LANGUAGE_FOLDERS, OVERLAY_DATA_DIRS_ENV,
     RustInit, register_language_data_paths_for_tool, rust_init, rust_init_with_data_dir,

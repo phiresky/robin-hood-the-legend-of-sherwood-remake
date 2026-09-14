@@ -24,8 +24,7 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
     fried_pc.actor.produced_noise = None;
     engine.set_actors_frozen(true);
     engine.control.frame_counter = engine.world.original_creation_order(inactive) & 31;
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .characters
         .get_mut(0)
@@ -97,8 +96,7 @@ fn patrol_refresh_uses_owner_relative_member_positions_and_spawn_fallback() {
                 .then(|| engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists)));
             (chief, member)
         };
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
         let member = initial_member
             .unwrap_or_else(|| engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists)));
 
@@ -170,8 +168,7 @@ fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
     let mut engine = EngineInner::new();
     let locked = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let unlocked = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     for id in [locked, unlocked] {
         let entity = engine.get_entity_mut(id).expect("gate owner exists");
         entity.element_data_mut().active = true;
@@ -233,8 +230,7 @@ fn sampled_open_gate_does_not_recheck_lock_or_global_freeze_inside_suffix() {
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.control.frame_counter = 100;
 
     assert!(
@@ -283,7 +279,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     use crate::element::ActiveDoorPass;
     use crate::fast_find_grid::GridSector;
     use crate::gate::{Door, DoorIndex, DoorType};
-    use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
+    use crate::scb::{SCB_VERSION, ScbFile};
     use crate::sector::{SectorNumber, SectorType};
     use crate::sim_rng::{RngSite, with_draw_trace};
     use std::collections::VecDeque;
@@ -292,8 +288,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     let mut engine = EngineInner::new();
     let quiet_owner = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
     let door_actor = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let Entity::Civilian(civilian) = engine
         .get_entity_mut(quiet_owner)
@@ -428,14 +423,9 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     engine.scripts.mission = Some(
         MissionScript::from_scb(ScbFile {
             version: SCB_VERSION,
-            classes: vec![ClassEntry {
-                source_file: "pa013_rng_test.scs".into(),
-                class_name: "StartUp".into(),
-                size_of_member_variables: 0,
-                member_variables: Vec::new(),
-                functions: Vec::new(),
-                quads: Vec::new(),
-            }],
+            classes: vec![crate::engine::test_support::asm::empty_startup_class(
+                "pa013_rng_test.scs".into(),
+            )],
         })
         .expect("minimal mission script builds"),
     );
@@ -504,8 +494,7 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
         .unwrap()
         .patrol_chief = Some(chief_id);
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
         "patrol_door.scs",
     ));
@@ -584,8 +573,7 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
             let observer = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
             (observer, Some(target))
         };
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let mut assets = engine.test_runtime_assets();
         let target_id = initial_target
             .unwrap_or_else(|| engine.add_test_entity(make_test_pc(Posture::Upright)));
         if spawn_after_snapshot {
@@ -767,7 +755,7 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
             0,
         );
 
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        assets = engine.test_runtime_assets();
         let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
             .characters
             .get_mut(0)
@@ -942,8 +930,7 @@ fn inactive_npc_blip_detection_requires_door_or_building_eligibility() {
             .set_position(crate::coordinates::WorldPoint3D::new(20.0, 0.0, 0.0));
         pc.element.set_position_map(MapPoint::new(20.0, 0.0));
 
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
         engine
             .get_entity_mut(observer_id)
             .expect("blipped observer exists after fixture")
@@ -1033,7 +1020,7 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
         0,
     );
 
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    assets = engine.test_runtime_assets();
 
     let Entity::Soldier(observer) = engine
         .get_entity_mut(observer_id)
@@ -1154,8 +1141,7 @@ fn mixed_enemy_walk_rejects_missing_observer_ai_with_context() {
     pc.element.active = true;
     pc.pc.life_points = 100;
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let Entity::Civilian(civilian) = engine
         .get_entity_mut(civilian_id)
         .expect("missing-AI civilian exists after fixture completion")
@@ -1181,8 +1167,7 @@ fn mixed_enemy_walk_rejects_friendly_ai_on_a_soldier() {
     };
     soldier.element.active = true;
     soldier.npc.life_points = 100;
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let _assets = engine.test_runtime_assets();
     let Entity::Soldier(soldier) = engine
         .get_entity_mut(soldier_id)
         .expect("wrong-AI soldier survives fixture setup")
@@ -1336,8 +1321,7 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
     pc.element.set_position_map(MapPoint::new(80.0, 0.0));
     pc.pc.life_points = 100;
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
         .characters
         .get_mut(0)

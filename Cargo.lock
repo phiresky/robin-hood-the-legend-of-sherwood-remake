@@ -5893,7 +5893,7 @@ dependencies = [
  "robin_engine_types",
  "robin_legacy_save",
  "robin_level_data",
- "robin_run_protocol",
+ "robin_run_types",
  "robin_script_types",
  "robin_state_hash_derive",
  "robin_test_support",
@@ -6279,7 +6279,7 @@ dependencies = [
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "ed25519-dalek",
  "hex",
- "robin_display_text",
+ "robin_run_types",
  "semver",
  "serde",
  "serde_json",
@@ -6287,6 +6287,19 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror 2.0.20",
  "zstd",
+]
+
+[[package]]
+name = "robin_run_types"
+version = "0.0.0"
+dependencies = [
+ "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "hex",
+ "robin_display_text",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

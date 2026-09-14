@@ -7,8 +7,9 @@ use super::{
 use crate::leaderboard_ranked_session::RankedSessionLifecycle;
 use crate::multiplayer::client_protocol::{ReconnectIdentity, validate_reconnect_state};
 use crate::multiplayer::client_session::tests::{
-    assert_premature_begin_sim_downgrades, assert_premature_cosign_request_downgrades, begin_sim,
-    handle,
+    assert_premature_begin_sim_downgrades, assert_premature_cosign_request_downgrades,
+    assert_ranked_violation_downgrades, assert_reconnect_reset_policy, begin_sim, handle,
+    invalid_ranked_messages,
 };
 use crate::multiplayer::{MultiplayerError, SharedClientLeaderboardCoSignState};
 use robin_engine::multiplayer::{NetEvent, NetMsg, NetOutbound};
@@ -16,6 +17,122 @@ use robin_engine::player_command::PlayerId;
 use robin_run_protocol::LeaderboardCoSignPurposeV1;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
+
+/// 10/F1 case 1 on the native adapter: the same browse-only downgrade as the
+/// browser, now also published as `RankedBrowseOnly` (it used to be a silent
+/// lifecycle-only downgrade).
+#[test]
+fn native_invalid_ranked_messages_downgrade_to_browse_only() {
+    for (message, reason) in invalid_ranked_messages() {
+        let ranked = admission();
+        assert_ranked_violation_downgrades(&ranked, message, reason);
+        assert!(!ranked.simulation_release_unresolved().unwrap());
+    }
+}
+
+/// 10/F1 case 3 on the native adapter.
+#[test]
+fn native_reconnect_reset_follows_the_shared_policy() {
+    assert_reconnect_reset_policy(admission);
+}
+
+/// 10/F1 case 2 through the real native transport: a host that finishes its
+/// stream cleanly at a frame boundary (no `Reject`) is a transport drop. The
+/// client publishes `Disconnected` and reconnects; the old native policy ended
+/// the connection there instead.
+#[test]
+fn clean_host_stream_close_reconnects() {
+    use crate::multiplayer::InboundFramePolicy;
+    use crate::multiplayer::framing::{read_frame, write_frame};
+    use crate::multiplayer::identity::{GAME_ALPN, bind_endpoint};
+    use std::time::{Duration, Instant};
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("fake host runtime");
+    let endpoint = runtime
+        .block_on(bind_endpoint(iroh::SecretKey::generate(), GAME_ALPN))
+        .expect("bind fake host endpoint");
+    runtime
+        .block_on(async { tokio::time::timeout(Duration::from_secs(15), endpoint.online()).await })
+        .expect("fake host endpoint online");
+    let connect = serde_json::to_string(&endpoint.addr()).unwrap();
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+    let host = runtime.spawn(async move {
+        let welcome = || NetMsg::Welcome {
+            your_seat: PlayerId(1),
+            mission_id: "Dem_Lei_MP".into(),
+            mission_seed: 7,
+            sim_config: robin_engine::engine::SimConfig::default(),
+            speech_timing_locale: None,
+            host_nickname: "host".into(),
+            session_id: robin_engine::multiplayer::MultiplayerSessionId([6; 32]),
+        };
+        let mut streams = Vec::new();
+        for attempt in 0..2 {
+            let incoming = endpoint.accept().await.expect("client connection");
+            let conn = incoming.await.expect("client QUIC handshake");
+            let (mut send, mut recv) = conn.accept_bi().await.expect("client game stream");
+            let hello = read_frame(&mut recv, InboundFramePolicy::ClientHello)
+                .await
+                .expect("read Hello");
+            assert!(
+                matches!(hello, Some(NetMsg::Hello { .. })),
+                "attempt {attempt}: {hello:?}"
+            );
+            write_frame(&mut send, &welcome())
+                .await
+                .expect("write Welcome");
+            if attempt == 0 {
+                // A clean FIN at a frame boundary while the connection stays open.
+                send.finish().expect("finish host stream");
+            }
+            streams.push((conn, send, recv));
+        }
+        // Hold both connections until the client has observed the reconnect.
+        let _ = done_rx.await;
+        drop(streams);
+        endpoint.close().await;
+    });
+
+    let (client_in_tx, client_in_rx) = std::sync::mpsc::channel();
+    let (_client_out_tx, client_out_rx) = std::sync::mpsc::channel();
+    let mut client = super::connect_client_with_key(
+        iroh::SecretKey::generate(),
+        connect,
+        "alice".into(),
+        client_in_tx,
+        client_out_rx,
+    )
+    .expect("connect to fake host");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut observed = Vec::new();
+    let mut disconnected = false;
+    loop {
+        let event = client_in_rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap_or_else(|error| {
+                panic!(
+                    "no reconnect after a clean host stream close: {error}; observed {observed:?}"
+                )
+            });
+        match &event {
+            NetEvent::Disconnected => disconnected = true,
+            NetEvent::Reconnected => {
+                assert!(disconnected, "Reconnected before Disconnected");
+                break;
+            }
+            NetEvent::Fatal(error) => panic!("clean host stream close ended the session: {error}"),
+            _ => {}
+        }
+        observed.push(format!("{event:?}"));
+    }
+    client.shutdown();
+    let _ = done_tx.send(());
+    runtime.block_on(host).expect("fake host task");
+}
 
 /// A welcomed native admission with no prepared ranked setup yet.
 fn admission() -> NativeRankedAdmission {
@@ -195,13 +312,18 @@ fn client_wire_handler_never_exposes_unarmed_or_wrong_direction_cosign() {
     let request = leaderboard_request(LeaderboardCoSignPurposeV1::Submission, 73);
     let state: SharedClientLeaderboardCoSignState = Arc::new(Default::default());
     let (incoming_tx, incoming_rx) = std::sync::mpsc::channel();
-    // Before ranked admission the host request is dropped, never exposed.
+    // Before ranked admission the host request is dropped, never exposed; only
+    // the resulting browse-only downgrade is published.
     handle_native(
         &incoming_tx,
         &state,
         NetMsg::LeaderboardCoSignRequest(request),
     )
     .unwrap();
+    assert!(matches!(
+        incoming_rx.try_recv(),
+        Ok(NetEvent::RankedBrowseOnly { .. })
+    ));
     assert!(incoming_rx.try_recv().is_err());
     // The co-sign gate itself exposes only an exact locally armed request.
     assert_eq!(state.receive_wire_request(request).unwrap(), None);

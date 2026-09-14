@@ -12,7 +12,7 @@ fn minimal_movement_test_mission() -> crate::engine::MissionScript {
         version: SCB_VERSION,
         classes: vec![ClassEntry {
             source_file: "movement_test.scs".into(),
-            class_name: "StartUp".into(),
+            class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
             size_of_member_variables: 0,
             member_variables: Vec::new(),
             functions: vec![Function {
@@ -652,8 +652,7 @@ fn completed_step_back_publishes_history_at_motion_terminal() {
         .unwrap()
         .opponents
         .push(mover_id);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let action = OrderType::WalkingWithSword;
     let script = SpriteScript {
@@ -776,8 +775,7 @@ fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history
         .unwrap()
         .opponents
         .push(mover_id);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let action = OrderType::WalkingWithSword;
     let script = SpriteScript {
@@ -882,7 +880,7 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
     use crate::order::{Order, OrderType};
     use crate::sequence::{MoveFlags, SequenceElement};
     use crate::sprite::Sprite;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
     use std::sync::Arc;
 
     let mut engine = EngineInner::new();
@@ -894,8 +892,7 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
         4,
     );
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let script = SpriteScript {
         action_id: OrderType::WalkingWithCorpse as u16,
@@ -909,7 +906,7 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
         offsets: vec![SpriteFrameOffset::ZERO; 2],
         sound_ids: vec![0; 2],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::WalkingWithCorpse as usize] = 0;
     let mut scripts = Vec::new();
     for _ in 0..16 {
@@ -1084,7 +1081,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
     let minimal_mission = || {
         let startup = ClassEntry {
             source_file: "test.scs".into(),
-            class_name: "StartUp".into(),
+            class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
             size_of_member_variables: 0,
             member_variables: Vec::new(),
             functions: vec![Function {
@@ -1355,8 +1352,7 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
     let first_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let dead_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let last_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     // The fixture graph has no nodes, so every A* search fails; it still needs
     // the request's sector in its conversion table to be searched at all.
     {
@@ -1485,8 +1481,7 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
     let earlier_timer_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let expired_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let nonexpired_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let launch_failed_move = |engine: &mut EngineInner, owner| {
         let mut movement = SequenceElement::new_movement(
@@ -2030,7 +2025,7 @@ fn install_rider_charge_fixture(
     use crate::order::Order;
     use crate::profiles::{CharacterProfile, HtHWeaponProfile, SoldierProfile};
     use crate::sequence::{MoveFlags, SequenceElement};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
     profiles.soldiers.push(SoldierProfile {
@@ -2085,7 +2080,7 @@ fn install_rider_charge_fixture(
     let running = make_script(crate::order::OrderType::RunningUpright);
     let mut scripts = vec![transition; 16];
     scripts.extend(vec![running; 16]);
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[crate::order::OrderType::TransitionCharging as usize] = 0;
     conversion[crate::order::OrderType::RunningUpright as usize] = 16;
     soldier.element.sprite = crate::sprite::Sprite::new(
@@ -2136,7 +2131,7 @@ fn install_galopp_fixture(
     frame_delays: Vec<u16>,
 ) -> (EntityId, crate::sequence::SequenceId, std::num::NonZeroU32) {
     use crate::order::OrderType;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let result =
         install_rider_charge_fixture(engine, assets, OrderType::RunningUpright, vec![20, 20]);
@@ -2153,7 +2148,7 @@ fn install_galopp_fixture(
         offsets: vec![SpriteFrameOffset::ZERO; frames],
         sound_ids: vec![0; frames],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::RunningUpright as usize] = 0;
     let rider = engine.get_entity_mut(result.0).unwrap();
     rider
@@ -2204,7 +2199,7 @@ fn install_charge_victim_motion(
     use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let action = OrderType::WalkingUpright;
     let script = SpriteScript {
@@ -2219,7 +2214,7 @@ fn install_charge_victim_motion(
         offsets: vec![SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
     let entity = engine.get_entity_mut(victim_id).unwrap();
     entity.element_data_mut().sprite = crate::sprite::Sprite::new(
@@ -2261,7 +2256,7 @@ fn install_charge_victim_motion(
 }
 
 #[test]
-fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
+fn production_owner_final_arrival_delivers_reachpoint_callback_exactly_once() {
     use crate::ai::StimulusType;
     use crate::element::{Command, Posture};
     use crate::engine::soldier_helpers::{
@@ -2309,13 +2304,22 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
         foreign_seq,
         0,
     );
-    engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        foreign_seq,
-        0,
+    let ((_, foreign_resumes), foreign_trace) = capture_condolation_stimuli(|| {
+        capture_owner_boundary_resumes(|| {
+            engine.element_terminated(
+                &crate::sim_rng::test_context(),
+                &assets,
+                &mut Vec::new(),
+                foreign_seq,
+                0,
+            );
+        })
+    });
+    assert_eq!(
+        foreign_trace,
+        vec![(foreign_owner, StimulusType::EventDone)]
     );
+    assert_eq!(foreign_resumes, vec![foreign_owner]);
     let nested_seq = engine
         .orders
         .sequence_manager
@@ -2336,20 +2340,19 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
         })
     });
 
-    // The foreign owner's pre-existing card is not stolen by the mover's
-    // boundary; it drains at that owner's own actor slot later in the same
-    // tick, matching synchronous state-change removal notifications.
+    // The foreign owner's callback already completed on its termination
+    // stack. Movement completion now delivers only its own callback and the
+    // nested state change, without repeating the earlier notification.
     assert_eq!(
         trace,
         vec![
             (mover_id, StimulusType::EventReachPoint),
             (nested_owner, StimulusType::EventDone),
-            (foreign_owner, StimulusType::EventDone),
         ]
     );
     assert_eq!(
         resumes,
-        vec![nested_owner, mover_id, foreign_owner],
+        vec![nested_owner, mover_id],
         "the nested cross-owner state change must close before A resumes readiness/successors"
     );
     assert!(engine.orders.timer_elements.is_empty());
@@ -3539,10 +3542,7 @@ fn rider_charge_requires_transition_animation() {
         .unwrap()
         .element_data_mut()
         .sprite
-        .conversion = std::sync::Arc::new(vec![
-        crate::sprite_script::UNMAPPED;
-        crate::sprite_script::NONANIMATION_END
-    ]);
+        .conversion = std::sync::Arc::new(crate::engine::test_support::unmapped_conversion());
     engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
 }
 
@@ -3571,7 +3571,7 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
     use crate::sprite::MotionOrderContext;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let start = MapPoint::new(100.0, 100.0);
@@ -3594,7 +3594,7 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
         offsets: vec![SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
     let mut sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
@@ -3679,7 +3679,7 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
     use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let position = MapPoint::new(1352.0, 246.0);
@@ -3702,7 +3702,7 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
         sound_ids: vec![0; 2],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[preserved_action as usize] = 0;
     conversion[OrderType::WaitingUpright as usize] = 16;
     let mut sprite = crate::sprite::Sprite::new(
@@ -3843,8 +3843,7 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
         };
         crate::ai_vision::focus_entity(&mut observer.npc, target_id);
 
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
         engine.tick_actor_owner_envelopes_with_test_owner_hook(
             &crate::sim_rng::test_context(),
             &assets,
@@ -4239,7 +4238,7 @@ fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snappin
     use crate::order::{Order, OrderType};
     use crate::position_interface::SectorHandle;
     use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let start = MapPoint::new(0.0, 0.0);
@@ -4265,7 +4264,7 @@ fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snappin
         offsets: vec![SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
     let mut sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
@@ -4405,9 +4404,8 @@ fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let soldier_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let ai = engine
         .get_entity_mut(soldier_id)

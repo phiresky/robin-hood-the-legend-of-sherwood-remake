@@ -51,7 +51,20 @@ impl ScriptCallStack {
 ///
 /// One global engine-script instance plus one per-actor instance, each
 /// with its own persistent heap.
-#[derive(Clone, robin_state_hash_derive::StateHash)]
+///
+/// Persistence is derived directly on this type. `remote = "Self"` turns the
+/// derived serde code into inherent functions so the trait impls below can
+/// reject active callback stacks before delegating. The bitcode wire of
+/// `call_stack` is empty and asserts the same invariant.
+#[derive(
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[serde(remote = "Self")]
 pub struct MissionScript {
     /// Mission base filename used to reattach immutable bytecode from
     /// [`LevelAssets`] after snapshot deserialization.
@@ -64,6 +77,8 @@ pub struct MissionScript {
     /// leaves this detached; the engine's snapshot adoption/restore boundary
     /// restores it from [`LevelAssets`] before the VM can resume.
     #[state_hash(skip)]
+    #[serde(skip)]
+    #[bitcode(skip)]
     pub(crate) bindings: crate::natives::AttachedScriptBindings,
     /// Concrete script-native state. VMs borrow this through their
     /// transient trait-object host field only while a script call is
@@ -71,8 +86,11 @@ pub struct MissionScript {
     /// behind `Vm::host`'s serde skip.
     pub script_effects: ScriptEffects,
     /// Active callback receivers. This is runtime control state, excluded from
-    /// serialization and hashing; snapshots are rejected while it is nonempty.
+    /// serialization and hashing; snapshots are rejected while it is nonempty
+    /// (serde: `MissionScript::check_snapshot_safe`; bitcode: the empty
+    /// `NativeBitcode` wire of `ScriptCallStack`).
     #[state_hash(skip)]
+    #[serde(skip)]
     call_stack: ScriptCallStack,
     pub(in crate::engine) instance: ScriptInstance,
     /// Per-actor script instances, keyed by actor script handle.
@@ -112,222 +130,46 @@ pub struct MissionScript {
     /// waypoint (dispatched from `execute_waypoint_script`). Each
     /// waypoint is its own VM instance so the heap persists across
     /// traversals.
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub(in crate::engine) waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
     /// Entity callbacks implemented only by the attached Spellforge package.
     /// These identities are serialized so event routing survives save/load
     /// even when the companion class intentionally has no SCB equivalent.
-    spellforge_virtual_instances: BTreeSet<ScriptVmKey>,
-    spellforge_virtual_bindings_enabled: bool,
-}
-
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-/// This is not a field-skipping alias of `MissionScript`: the save boundary
-/// normalizes the manager to `ScriptManagerSnapshot` and rejects active
-/// callback stacks. A derived serializer with `call_stack` skipped would
-/// silently save an incomplete synchronous callback instead of rejecting it.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedMissionScript {
-    script_name: String,
-
-    manager: crate::script_manager::ScriptManagerSnapshot,
-
-    state: ScriptState,
-
-    script_effects: ScriptEffects,
-
-    instance: ScriptInstance,
-
-    actor_instances: BTreeMap<i32, ScriptInstance>,
-
-    zone_instances: BTreeMap<usize, ScriptInstance>,
-
-    target_instances: BTreeMap<i32, ScriptInstance>,
-
-    scroll_instances: BTreeMap<i32, ScriptInstance>,
-
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
-
     #[serde(default)]
     spellforge_virtual_instances: BTreeSet<ScriptVmKey>,
-
     #[serde(default)]
     spellforge_virtual_bindings_enabled: bool,
 }
 
-impl PersistedMissionScript {
-    pub(crate) fn capture(value: &MissionScript) -> Result<Self, String> {
-        if !value.call_stack.is_empty() {
-            return Err("cannot snapshot MissionScript during an active script callback".into());
-        }
-        let MissionScript {
-            script_name: _,
-            manager: _,
-            state: _,
-            bindings: _,
-            script_effects: _,
-            call_stack: _,
-            instance: _,
-            actor_instances: _,
-            zone_instances: _,
-            target_instances: _,
-            scroll_instances: _,
-            waypoint_instances: _,
-            spellforge_virtual_instances: _,
-            spellforge_virtual_bindings_enabled: _,
-        } = value;
-        Ok(Self {
-            script_name: value.script_name.clone(),
-            manager: crate::script_manager::ScriptManagerSnapshot::capture(&value.manager),
-            state: value.state.clone(),
-            script_effects: value.script_effects.clone(),
-            instance: value.instance.clone(),
-            actor_instances: value.actor_instances.clone(),
-            zone_instances: value.zone_instances.clone(),
-            target_instances: value.target_instances.clone(),
-            scroll_instances: value.scroll_instances.clone(),
-            waypoint_instances: value.waypoint_instances.clone(),
-            spellforge_virtual_instances: value.spellforge_virtual_instances.clone(),
-            spellforge_virtual_bindings_enabled: value.spellforge_virtual_bindings_enabled,
-        })
+const ACTIVE_CALLBACK_SNAPSHOT_ERROR: &str =
+    "cannot snapshot MissionScript during an active script callback";
+
+/// Native snapshots carry no call-stack bytes (the same empty encoding as a
+/// skipped field) but must never capture a synchronous callback in flight.
+impl crate::bitcode_adapters::NativeBitcode for ScriptCallStack {
+    type Wire = std::marker::PhantomData<()>;
+
+    fn to_wire(&self) -> Self::Wire {
+        assert!(self.is_empty(), "{ACTIVE_CALLBACK_SNAPSHOT_ERROR}");
+        std::marker::PhantomData
     }
 
-    pub(crate) fn into_runtime(self) -> MissionScript {
-        MissionScript {
-            script_name: self.script_name,
-            manager: self.manager.into_runtime(),
-            state: self.state,
-            bindings: crate::natives::AttachedScriptBindings::default(),
-            script_effects: self.script_effects,
-            call_stack: ScriptCallStack::default(),
-            instance: self.instance,
-            actor_instances: self.actor_instances,
-            zone_instances: self.zone_instances,
-            target_instances: self.target_instances,
-            scroll_instances: self.scroll_instances,
-            waypoint_instances: self.waypoint_instances,
-            spellforge_virtual_instances: self.spellforge_virtual_instances,
-            spellforge_virtual_bindings_enabled: self.spellforge_virtual_bindings_enabled,
-        }
+    fn from_wire(_wire: Self::Wire) -> Self {
+        Self::default()
     }
 }
 
-/// Borrowed raw snapshot encoding avoids cloning the script manager. Keep it
-/// separate from the save-owned projection's normalized manager representation.
-#[derive(Serialize)]
-struct MissionScriptSnapshotRef<'a> {
-    script_name: &'a str,
-    manager: &'a ScriptManager,
-    state: &'a ScriptState,
-    script_effects: &'a ScriptEffects,
-    instance: &'a ScriptInstance,
-    actor_instances: &'a BTreeMap<i32, ScriptInstance>,
-    zone_instances: &'a BTreeMap<usize, ScriptInstance>,
-    target_instances: &'a BTreeMap<i32, ScriptInstance>,
-    scroll_instances: &'a BTreeMap<i32, ScriptInstance>,
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
-    spellforge_virtual_instances: &'a BTreeSet<ScriptVmKey>,
-    spellforge_virtual_bindings_enabled: bool,
-}
+crate::bitcode_adapters::impl_native_bitcode!(ScriptCallStack);
 
 impl Serialize for MissionScript {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        if !self.call_stack.is_empty() {
-            return Err(serde::ser::Error::custom(
-                "cannot snapshot MissionScript during an active script callback",
-            ));
-        }
-        MissionScriptSnapshotRef {
-            script_name: &self.script_name,
-            manager: &self.manager,
-            state: &self.state,
-            script_effects: &self.script_effects,
-            instance: &self.instance,
-            actor_instances: &self.actor_instances,
-            zone_instances: &self.zone_instances,
-            target_instances: &self.target_instances,
-            scroll_instances: &self.scroll_instances,
-            waypoint_instances: self.waypoint_instances.clone(),
-            spellforge_virtual_instances: &self.spellforge_virtual_instances,
-            spellforge_virtual_bindings_enabled: self.spellforge_virtual_bindings_enabled,
-        }
-        .serialize(serializer)
-    }
-}
-
-#[derive(Deserialize, bitcode::Encode, bitcode::Decode)]
-pub struct MissionScriptSnapshot {
-    script_name: String,
-    manager: ScriptManager,
-    state: ScriptState,
-    script_effects: ScriptEffects,
-    instance: ScriptInstance,
-    actor_instances: BTreeMap<i32, ScriptInstance>,
-    zone_instances: BTreeMap<usize, ScriptInstance>,
-    target_instances: BTreeMap<i32, ScriptInstance>,
-    scroll_instances: BTreeMap<i32, ScriptInstance>,
-    #[serde(with = "serde_json_any_key::any_key_map")]
-    waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
-    #[serde(default)]
-    spellforge_virtual_instances: BTreeSet<ScriptVmKey>,
-    #[serde(default)]
-    spellforge_virtual_bindings_enabled: bool,
-}
-
-impl crate::bitcode_adapters::NativeBitcode for MissionScript {
-    type Wire = MissionScriptSnapshot;
-
-    fn to_wire(&self) -> Self::Wire {
-        assert!(
-            self.call_stack.is_empty(),
-            "cannot snapshot MissionScript during an active script callback"
-        );
-        MissionScriptSnapshot {
-            script_name: self.script_name.clone(),
-            manager: self.manager.clone(),
-            state: self.state.clone(),
-            script_effects: self.script_effects.clone(),
-            instance: self.instance.clone(),
-            actor_instances: self.actor_instances.clone(),
-            zone_instances: self.zone_instances.clone(),
-            target_instances: self.target_instances.clone(),
-            scroll_instances: self.scroll_instances.clone(),
-            waypoint_instances: self.waypoint_instances.clone(),
-            spellforge_virtual_instances: self.spellforge_virtual_instances.clone(),
-            spellforge_virtual_bindings_enabled: self.spellforge_virtual_bindings_enabled,
-        }
-    }
-
-    fn from_wire(snapshot: Self::Wire) -> Self {
-        Self::from_snapshot(snapshot)
-    }
-}
-
-crate::bitcode_adapters::impl_native_bitcode!(MissionScript);
-
-impl MissionScript {
-    fn from_snapshot(snapshot: MissionScriptSnapshot) -> Self {
-        Self {
-            script_name: snapshot.script_name,
-            manager: snapshot.manager,
-            state: snapshot.state,
-            bindings: crate::natives::AttachedScriptBindings::default(),
-            script_effects: snapshot.script_effects,
-            call_stack: ScriptCallStack::default(),
-            instance: snapshot.instance,
-            actor_instances: snapshot.actor_instances,
-            zone_instances: snapshot.zone_instances,
-            target_instances: snapshot.target_instances,
-            scroll_instances: snapshot.scroll_instances,
-            waypoint_instances: snapshot.waypoint_instances,
-            spellforge_virtual_instances: snapshot.spellforge_virtual_instances,
-            spellforge_virtual_bindings_enabled: snapshot.spellforge_virtual_bindings_enabled,
-        }
+        self.check_snapshot_safe()
+            .map_err(serde::ser::Error::custom)?;
+        // Inherent function generated by `#[serde(remote = "Self")]`.
+        MissionScript::serialize(self, serializer)
     }
 }
 
@@ -336,7 +178,51 @@ impl<'de> Deserialize<'de> for MissionScript {
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(PersistedMissionScript::deserialize(deserializer)?.into_runtime())
+        // Inherent function generated by `#[serde(remote = "Self")]`.
+        MissionScript::deserialize(deserializer)
+    }
+}
+
+impl MissionScript {
+    /// Saves and snapshots are rejected while a synchronous callback is active:
+    /// skipping `call_stack` would otherwise silently persist a half-run VM.
+    pub(crate) fn check_snapshot_safe(&self) -> Result<(), String> {
+        if self.call_stack.is_empty() {
+            Ok(())
+        } else {
+            Err(ACTIVE_CALLBACK_SNAPSHOT_ERROR.into())
+        }
+    }
+
+    /// In-memory equivalent of a save round trip, without running a codec.
+    ///
+    /// This exhaustive destructure is the single persistence decision point:
+    /// `_` fields survive a save verbatim, bound fields are process-local and
+    /// reset to what deserialization reconstructs.
+    pub(crate) fn persisted_clone(&self) -> Result<Self, String> {
+        self.check_snapshot_safe()?;
+        let mut clone = self.clone();
+        let Self {
+            script_name: _,
+            manager,
+            state: _,
+            bindings,
+            script_effects: _,
+            call_stack,
+            instance: _,
+            actor_instances: _,
+            zone_instances: _,
+            target_instances: _,
+            scroll_instances: _,
+            waypoint_instances: _,
+            spellforge_virtual_instances: _,
+            spellforge_virtual_bindings_enabled: _,
+        } = &mut clone;
+        // Only the static area is saved; bytecode reattaches from LevelAssets.
+        *manager = crate::script_manager::ScriptManagerSnapshot::capture(manager).into_runtime();
+        *bindings = crate::natives::AttachedScriptBindings::default();
+        *call_stack = ScriptCallStack::default();
+        Ok(clone)
     }
 }
 

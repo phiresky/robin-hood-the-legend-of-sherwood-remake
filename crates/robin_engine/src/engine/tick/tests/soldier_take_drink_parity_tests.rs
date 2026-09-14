@@ -54,7 +54,6 @@ fn launch_interaction_and_tick(
     antagonist: Entity,
 ) -> (EngineInner, EntityId) {
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let actor_id = engine.add_test_entity(actor);
     let antagonist_id = engine.add_test_entity(antagonist);
     engine.launch_element(SequenceElement::new_interaction(
@@ -66,7 +65,7 @@ fn launch_interaction_and_tick(
 
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    super::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert_eq!(
         engine
@@ -147,7 +146,6 @@ fn crouched_pc_take_uses_stamped_crouched_animation() {
 #[test]
 fn nearby_pc_does_not_pick_up_bonus_without_take_command() {
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     // TODO: soldier variant tagged `ActorPc`, as in the crouched-take test.
     engine.add_test_entity(
         TestActor::soldier(Posture::Upright)
@@ -160,7 +158,7 @@ fn nearby_pc_does_not_pick_up_bonus_without_take_command() {
 
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    super::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let bonus = engine.get_entity(bonus_id).unwrap();

@@ -320,6 +320,53 @@ impl WorldState {
         &self.original_pc_registry_ids
     }
 
+    /// Combined static + dynamic sight obstacles. Static come from
+    /// `LevelAssets::static_sight_obstacles` (Arc-shared, populated at
+    /// level load); dynamic are this frame's shields. Returns a
+    /// `ObstacleList` view that exposes the flat global indexing used
+    /// by patches and per-actor obstacle references.
+    pub(crate) fn sight_obstacles<'a>(
+        &'a self,
+        assets: &'a LevelAssets,
+    ) -> crate::sight_obstacle::ObstacleList<'a> {
+        crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.dynamic_sight_obstacles,
+            static_active: &self.static_sight_obstacle_active,
+        }
+    }
+
+    /// The mutable entity table beside the read-only sight-obstacle view and
+    /// spatial grid, for systems that ray-cast while mutating an entity.
+    pub(crate) fn entities_mut_with_sight<'a>(
+        &'a mut self,
+        assets: &'a LevelAssets,
+    ) -> (
+        &'a mut Entities,
+        crate::sight_obstacle::ObstacleList<'a>,
+        &'a std::sync::Arc<FastFindGrid>,
+        &'a [EntityId],
+    ) {
+        let Self {
+            entities,
+            fast_grid,
+            dynamic_sight_obstacles,
+            static_sight_obstacle_active,
+            actor_registry_ids,
+            ..
+        } = self;
+        (
+            entities,
+            crate::sight_obstacle::ObstacleList {
+                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
+                dynamic_obstacles: dynamic_sight_obstacles,
+                static_active: static_sight_obstacle_active,
+            },
+            fast_grid,
+            actor_registry_ids,
+        )
+    }
+
     /// The projectile helper plus thirty Original object masters are
     /// constructed before the first mission element.
     pub(crate) const FIRST_MISSION_CREATION_ORDER: u32 = 31;
@@ -925,23 +972,17 @@ mod tests {
 
     #[test]
     fn retired_pc_may_be_absent_from_original_registry() {
-        // A retired actor remains a valid world even without a live registry entry.
-        let mut world = WorldState::new();
-        let id = EntityId::Pc(crate::entity_id::PcId(0));
-        world
-            .entities
-            .push(Some(Entity::Pc(crate::element::ActorPc {
-                element: {
-                    let mut initial_element = crate::element::ElementData::default();
-                    initial_element.kind = crate::element::ElementKind::ActorPc;
-                    initial_element
-                },
-                actor: Default::default(),
-                human: Default::default(),
-                pc: Default::default(),
-            })));
-        world.pc_ids.push(id);
-        world.validate_level_attachments(&LevelAssets::new(), 0);
+        let mut engine = crate::engine::EngineInner::new();
+        let id = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
+            crate::element::Posture::Upright,
+        ));
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.retire_replaced_pc(id);
+        assert!(!engine.world.original_pc_registry_ids.contains(&id));
+        assert!(engine.world.actor_registry_ids.contains(&id));
+        assert!(engine.world.fighter_registry_ids.contains(&id));
+        engine.world.validate_level_attachments(&assets, 0);
     }
 
     #[test]

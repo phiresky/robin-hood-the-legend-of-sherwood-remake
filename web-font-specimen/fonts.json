@@ -1,0 +1,142 @@
+[
+  {
+    "source": "Debrief.bfn",
+    "file": "Debrief.woff2",
+    "family": "Robin Hood Debrief",
+    "internal_name": "Scroll",
+    "height": 19,
+    "baseline": 13,
+    "glyphs": 161,
+    "embedded_png_glyphs": 158,
+    "color": "#481800",
+    "kind": "Native bitmap conversion"
+  },
+  {
+    "source": "EditFields.bfn",
+    "file": "EditFields.woff2",
+    "family": "Robin Hood Edit Fields",
+    "internal_name": "Scroll",
+    "height": 22,
+    "baseline": 13,
+    "glyphs": 161,
+    "embedded_png_glyphs": 158,
+    "color": "#301008",
+    "kind": "Native bitmap conversion"
+  },
+  {
+    "source": "InfoScroll.bfn",
+    "file": "InfoScroll.woff2",
+    "family": "Robin Hood Info Scroll",
+    "internal_name": "Lydian",
+    "height": 19,
+    "baseline": 12,
+    "glyphs": 162,
+    "embedded_png_glyphs": 161,
+    "color": "#f8f0a8",
+    "kind": "Native bitmap conversion"
+  },
+  {
+    "source": "MenuButtonDisabled.bfn",
+    "file": "MenuButtonDisabled.woff2",
+    "family": "Robin Hood Menu Button Disabled",
+    "internal_name": "Scroll",
+    "height": 22,
+    "baseline": 13,
+    "glyphs": 161,
+    "embedded_png_glyphs": 158,
+    "color": "#787888",
+    "kind": "Native bitmap conversion"
+  },
+  {
+    "source": "MenuButtonEnabled.bfn",
+    "file": "MenuButtonEnabled.woff2",
+    "family": "Robin Hood Menu Button Enabled",
+    "internal_name": "Scroll",
+    "height": 22,
+    "baseline": 13,
+    "glyphs": 161,
+    "embedded_png_glyphs": 158,
+    "color": "#301008",
+    "kind": "Native bitmap conversion"
+  },
+  {
+    "source": "Scroll.bfn",
+    "file": "Scroll.woff2",
+    "family": "Robin Hood Scroll",
+    "internal_name": "Scroll",
+    "height": 18,
+    "baseline": 13,
+    "glyphs": 161,
+    "embedded_png_glyphs": 158,
+    "color": "#603010",
+    "kind": "Native bitmap conversion"
+  },
+  {
+    "source": "ShortBriefingActive.bfn",
+    "file": "ShortBriefingActive.woff2",
+    "family": "Robin Hood Short Briefing Active",
+    "internal_name": "ShortBriefing",
+    "height": 13,
+    "baseline": 11,
+    "glyphs": 161,
+    "embedded_png_glyphs": 160,
+    "color": "#f8f098",
+    "kind": "Native bitmap conversion"
+  },
+  {
+    "source": "ShortBriefingInactive.bfn",
+    "file": "ShortBriefingInactive.woff2",
+    "family": "Robin Hood Short Briefing Inactive",
+    "internal_name": "ShortBriefing",
+    "height": 13,
+    "baseline": 11,
+    "glyphs": 161,
+    "embedded_png_glyphs": 160,
+    "color": "#60a890",
+    "kind": "Native bitmap conversion"
+  },
+  {
+    "source": "Title.bfn",
+    "file": "Title.woff2",
+    "family": "Robin Hood Title",
+    "internal_name": "Title",
+    "height": 29,
+    "baseline": 25,
+    "glyphs": 162,
+    "embedded_png_glyphs": 161,
+    "color": "#281810",
+    "kind": "Native bitmap conversion"
+  },
+  {
+    "source": "dialog.fnt",
+    "file": "dialog.woff2",
+    "family": "Robin Hood dialog",
+    "internal_name": "Lydian",
+    "height": 30,
+    "baseline": 19,
+    "glyphs": 162,
+    "embedded_png_glyphs": 161,
+    "color": "#e0c058",
+    "kind": "Native bitmap conversion"
+  },
+  {
+    "source": "tooltips.bfn",
+    "file": "tooltips.woff2",
+    "family": "Robin Hood tooltips",
+    "internal_name": "Lydian",
+    "height": 20,
+    "baseline": 12,
+    "glyphs": 162,
+    "embedded_png_glyphs": 161,
+    "color": "#080000",
+    "kind": "Native bitmap conversion"
+  },
+  {
+    "source": "arial.ttf",
+    "file": "arial.woff2",
+    "family": "Arial",
+    "internal_name": "Arial",
+    "glyphs": 655,
+    "kind": "TrueType"
+  }
+]

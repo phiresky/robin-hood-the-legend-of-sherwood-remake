@@ -129,7 +129,9 @@ impl EngineInner {
         // repeating the decision (which would double-postpone / double-
         // interrupt on cascading priorities).
         match new_elem.state {
-            SequenceState::Todo => { /* fall through — normal case */ }
+            // Re-registering postponed work preserves its state until Go
+            // instructs the owner. It must pass the same admission as new work.
+            SequenceState::Todo | SequenceState::Postponed => {}
             SequenceState::Terminated if allow_terminated_shoot => {
                 // The actor instruction's terminal-state check is an
                 // assert only. Retail saves can retain such a pointer in
@@ -149,7 +151,6 @@ impl EngineInner {
                 }
             }
             SequenceState::Impossible
-            | SequenceState::Postponed
             | SequenceState::Interrupted
             | SequenceState::Terminated
             | SequenceState::Done => {

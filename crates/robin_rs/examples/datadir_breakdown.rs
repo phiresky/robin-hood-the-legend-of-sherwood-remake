@@ -175,7 +175,12 @@ fn main() -> Result<()> {
             // unified terrain loader to verify the JXL path works.
             let decode = if k.ends_with(".map") || k.ends_with(".min") {
                 let bytes = dd.raw.get(k).unwrap();
-                match robin_assets::picture::Picture::load_terrain_from_bytes(bytes) {
+                let load = if k.ends_with(".min") {
+                    robin_assets::picture::Picture::load_minimap_from_bytes
+                } else {
+                    robin_assets::picture::Picture::load_terrain_from_bytes
+                };
+                match load(bytes) {
                     Ok(p) => format!("{}×{} ok", p.width, p.height),
                     Err(e) => format!("err: {e}"),
                 }

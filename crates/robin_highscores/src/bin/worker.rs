@@ -566,9 +566,9 @@ async fn process_jobs(runtime: WorkerRuntime) -> anyhow::Result<()> {
                 {
                     Ok(lease) => lease,
                     Err(error) => {
-                        tracing::debug!(
+                        tracing::warn!(
                             error_code = error.safe_log_code(),
-                            "worker write admission is quiesced for backup"
+                            "skipping job lease: could not acquire write lease"
                         );
                         return Ok(None);
                     }
@@ -1522,15 +1522,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn active_backup_gate_prevents_worker_startup_from_creating_storage_roots() {
+    async fn unavailable_write_lease_prevents_worker_startup_from_creating_storage_roots() {
         let directory = tempfile::tempdir().unwrap();
         let mut server = ServerConfig::default();
         server.database_path = directory.path().join("highscores.sqlite3");
         server.replay_directory = directory.path().join("objects/replays");
         server.campaign_state_directory = directory.path().join("objects/campaigns");
         let database = Database::migrate(&server).await.unwrap();
-        let backup = database
-            .acquire_backup_lock("worker-startup-gate-test", Duration::from_secs(60))
+        let held = database
+            .acquire_maintenance_write_lease(
+                robin_highscores::db::MaintenanceWriteClass::Worker,
+                "worker-startup-gate-test-holder",
+                Duration::from_secs(60),
+            )
             .await
             .unwrap();
 
@@ -1547,7 +1551,12 @@ mod tests {
         assert!(!server.replay_directory.exists());
         assert!(!server.campaign_state_directory.exists());
         assert!(!directory.path().join("objects").exists());
-        assert!(database.release_backup_lock(&backup).await.unwrap());
+        assert!(
+            database
+                .release_maintenance_write_lease(&held)
+                .await
+                .unwrap()
+        );
     }
 
     #[test]

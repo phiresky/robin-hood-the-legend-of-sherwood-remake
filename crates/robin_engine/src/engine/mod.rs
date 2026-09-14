@@ -244,70 +244,6 @@ pub struct EngineInner {
     // patch_entity_handles, scroll_entity_ids, all_soldier_entity_ids}`.)
 }
 
-/// Disjoint engine-owned state needed after the entity/coma phases of mission
-/// teardown. The campaign remains borrowed in place from `MissionDomain` for
-/// the entire update; this context owns nothing and needs no unwind repair.
-struct QuitMissionContext<'a> {
-    campaign: &'a mut crate::campaign::Campaign,
-    mission_stat: &'a mut MissionStat,
-    pending_side_effects: &'a mut SideEffects,
-    frame_counter: u32,
-}
-
-impl QuitMissionContext<'_> {
-    fn apply_won_updates(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        profiles: &crate::profiles::ProfileManager,
-        living: u32,
-        dead: u32,
-        tied_score: i32,
-        difficulty: crate::player_profile::DifficultyLevel,
-    ) {
-        // The original game adds the counts from this exit-time NPC scan when quitting a mission
-        // directly to the campaign. `mStat.ulTotalSoldierCount` is the
-        // load-time mission total and is not a source for either delta.
-        self.add_campaign_value(
-            crate::campaign::CampaignValue::LivingSoldiers,
-            living as i32,
-        );
-        self.add_campaign_value(crate::campaign::CampaignValue::DeadSoldiers, dead as i32);
-
-        self.add_campaign_value(crate::campaign::CampaignValue::Score, tied_score);
-
-        let idx = self
-            .campaign
-            .current_mission_idx
-            .expect("quit-mission updates: current mission disappeared");
-        let mission_type = self.campaign.missions[idx].profile(profiles).mission_type;
-        if mission_type != crate::profiles::MissionType::Ambush {
-            self.add_campaign_value(crate::campaign::CampaignValue::Score, 1000);
-        }
-
-        // The original game applies difficulty to recruitment only after the score updates
-        // above. The application resolves that difficulty into the command,
-        // so replay and multiplayer execution cannot consult ambient state.
-        let recruited = self
-            .campaign
-            .recruit_post_mission_peasants(sim, living, dead, difficulty, profiles);
-        self.mission_stat.new_peasant_count = recruited;
-        tracing::info!("Post-mission warcrime recruitment: {recruited} new peasants");
-
-        self.campaign.consume_blazons_post_mission(profiles);
-    }
-
-    fn add_campaign_value(&mut self, name: crate::campaign::CampaignValue, amount: i32) {
-        EngineInner::add_campaign_value_to(
-            self.campaign,
-            self.mission_stat,
-            self.pending_side_effects,
-            self.frame_counter,
-            name,
-            amount,
-        );
-    }
-}
-
 /// Sample duration in sim frames (40 ms each), keyed by sound-source
 /// sample id.  Populated host-side from the decoded WAV length in the
 /// sound cache; consulted by [`EngineInner`] when an `Activate` /
@@ -987,8 +923,16 @@ impl EngineInner {
             // `mission_won` — a lost mission must NOT accumulate these
             // totals onto the campaign.
             let tied_score = self.score_tied_unconscious_soldiers();
-            self.quit_mission_context()
-                .apply_won_updates(sim, profiles, living, dead, tied_score, difficulty);
+            self.mission_domain.apply_won_updates(
+                &mut self.feedback.pending_side_effects,
+                self.control.frame_counter,
+                sim,
+                profiles,
+                living,
+                dead,
+                tied_score,
+                difficulty,
+            );
         } else {
             // Explicitly zero on the lost path.
             self.mission_domain.mission_stat.new_peasant_count = 0;
@@ -1035,24 +979,6 @@ impl EngineInner {
             &stat,
             achievements,
         );
-    }
-
-    /// Split-borrow the engine owners used by the campaign-only tail of
-    /// mission teardown. This deliberately cannot expose `&mut EngineInner`.
-    fn quit_mission_context(&mut self) -> QuitMissionContext<'_> {
-        let Self {
-            mission_domain,
-            control,
-            feedback,
-            ..
-        } = self;
-        let (campaign, mission_stat) = mission_domain.campaign_and_stat_mut();
-        QuitMissionContext {
-            campaign,
-            mission_stat,
-            pending_side_effects: &mut feedback.pending_side_effects,
-            frame_counter: control.frame_counter,
-        }
     }
 
     /// Compute score bonus for living enemy soldiers that are tied or

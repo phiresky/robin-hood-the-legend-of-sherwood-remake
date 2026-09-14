@@ -20,7 +20,7 @@ use crate::sequence::{
     Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
 };
 use crate::sprite::Sprite;
-use crate::sprite_script::{SpriteScript, UNMAPPED};
+use crate::sprite_script::SpriteScript;
 use crate::titbit::{ElementHandle, INVALID_ID, TitbitKind};
 
 #[test]
@@ -2025,7 +2025,7 @@ fn bind_single_action_point(
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    let mut conversion = vec![UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
     let mut sprite = Sprite::new(
         std::sync::Arc::new(vec![script]),
@@ -4332,7 +4332,7 @@ fn minimal_script() -> crate::engine::types::MissionScript {
 
     let startup = ClassEntry {
         source_file: "test.scs".into(),
-        class_name: "StartUp".into(),
+        class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
         size_of_member_variables: 0,
         member_variables: Vec::new(),
         functions: vec![Function {
@@ -6518,7 +6518,6 @@ fn configure_valid_bow_quick_action(
 ) {
     use crate::coordinates::{SpriteFrameOffset, SpriteLocalPoint};
     use crate::profiles::{BowProfile, BowShootMode};
-    use crate::sprite_script::NONANIMATION_END;
 
     engine.mission_domain.campaign.characters[0]
         .status
@@ -6547,7 +6546,7 @@ fn configure_valid_bow_quick_action(
         offsets: vec![SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
     engine.get_entity_mut(pc).unwrap().element_data_mut().sprite = Sprite::new(
         std::sync::Arc::new(vec![script; 16]),

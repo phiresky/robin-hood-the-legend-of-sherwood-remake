@@ -803,7 +803,7 @@ fn bound_bow_transition_advances_through_production_owner_coordinator() {
     use crate::movement::ActiveShot;
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
     use crate::weapons::ShootMode;
 
     let mut engine = EngineInner::new();
@@ -820,7 +820,7 @@ fn bound_bow_transition_advances_through_production_owner_coordinator() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
         sound_ids: vec![0; 3],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::TransitionEquipBow as usize] = 0;
     engine
         .get_entity_mut(owner)
@@ -872,7 +872,7 @@ fn unbound_bow_transition_still_uses_generic_execute() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
@@ -888,7 +888,7 @@ fn unbound_bow_transition_still_uses_generic_execute() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
         sound_ids: vec![0; 3],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::TransitionEquipBow as usize] = 0;
     engine
         .get_entity_mut(owner)
@@ -972,8 +972,7 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
     // actor update would have done.
     actor.last_execute_order_id = Some(bow_order_id);
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let initial_action = engine
         .get_entity(owner)
         .unwrap()
@@ -1124,14 +1123,13 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let sim = crate::sim_rng::test_context();
-    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let target = engine.add_test_entity(make_test_pc(Posture::Upright));
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine
         .get_entity_mut(target)
         .unwrap()
@@ -1156,7 +1154,7 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
         sound_ids: vec![0; 3],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::ThrowingApple as usize] = 0;
     engine
         .get_entity_mut(owner)

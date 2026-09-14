@@ -96,7 +96,6 @@ fn periodic_smalltalk_commands_advance_watchdog_but_unrelated_commands_preserve_
 #[test]
 fn primary_target_tracking_precedes_view_refresh() {
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
 
@@ -125,7 +124,7 @@ fn primary_target_tracking_precedes_view_refresh() {
         pc.element.set_position_map(target_pos);
     }
 
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let expected = crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -184,8 +183,7 @@ fn periodic_bored_roll_reads_installed_order_after_detection_boundary() {
 
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     // Model a synchronous detection decision replacing the order after the actor update
     // selected its tail order. The sequence manager deliberately has no selected
@@ -368,7 +366,7 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
             0,
         );
 
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        assets = engine.test_runtime_assets();
 
         crate::sim_rng::with_seed(0xA013_0015, |sim| {
             engine.tick_actor_owner_envelopes(sim, &assets)
@@ -413,8 +411,7 @@ fn npc_post_detection_tail_is_wholly_creation_ordered_even_without_detection() {
     let mut engine = EngineInner::new();
     let first = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let second = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     for id in [first, second] {
         let entity = engine.get_entity_mut(id).expect("tail owner exists");
         entity.element_data_mut().active = true;
@@ -460,8 +457,7 @@ fn post_detection_tail_clears_only_unlocked_expired_emoticon() {
     let mut engine = EngineInner::new();
     let unlocked = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let locked = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.control.frame_counter = 200;
     for id in [unlocked, locked] {
         let ai = engine
@@ -499,8 +495,7 @@ fn post_detection_tail_clears_only_unlocked_expired_emoticon() {
 fn post_detection_tail_refreshes_deafness_off_acoustic_cadence() {
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.control.frame_counter = 7;
     assert_ne!((engine.control.frame_counter + npc_id.index()) % 3, 0);
     let npc = engine
@@ -530,8 +525,7 @@ fn post_detection_tail_preserves_ladder_threshold_and_macro_stop_semantics() {
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let mut wait = SequenceElement::new_generic(1, Command::Wait, Some(npc_id));
     wait.state = SequenceState::InProgress;
     engine.orders.sequence_manager.launch_element(wait);
@@ -578,8 +572,7 @@ fn normal_timer_does_not_turn_alerted_soldier_toward_primary_target() {
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     engine
         .get_entity_mut(target)
@@ -620,8 +613,7 @@ fn civilian_macro_break_drains_missed_friend_detectables_immediately() {
     let civilian_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
     let friend_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let Entity::Civilian(civilian) = engine
         .get_entity_mut(civilian_id)
@@ -739,8 +731,7 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
         body.element.publish_order_posture(Posture::Lying);
         body.npc.inform_my_friends = true;
 
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
 
         // Isolate BODY detection and retain its raw stimulus so handler state
         // changes do not obscure whether this creation slot actually saw it.
@@ -852,8 +843,7 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
     let mut engine = EngineInner::new();
     let recovering_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let Entity::Soldier(recovering) = engine.get_entity_mut(recovering_id).unwrap() else {
         panic!("recovering NPC changed kind")
@@ -964,8 +954,7 @@ fn subordinate_handles_shadow_locally_when_detected_chief_has_empty_patrol() {
         subordinate.patrol_chief = Some(chief_id);
     }
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let mut stimulus = crate::ai::Stimulus::new(StimulusType::EventSeesShadow);
     stimulus.info = StimulusInfo::Position(Position {
         x: 100.0,
@@ -1090,8 +1079,7 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
     // Deliberately differ from entity-slot order. This is the authored
     // camp soldier order, including one stale handle whose slot is
     // now occupied by a civilian and must fail current typed validation.
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.world.fast_grid_mut().size_map(128, 128);
     engine.world.fast_grid_mut().allocate_layers(1);
     let sector_index = engine.world.fast_grid_mut().add_sector(
@@ -1180,8 +1168,7 @@ fn wake_callback_observes_preceding_loss_of_consciousness() {
 
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let ai = engine
         .get_entity_mut(npc_id)
         .and_then(Entity::ai_controller_mut)
@@ -1299,8 +1286,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
         pc.element.set_position_map(MapPoint::new(175.0, 0.0));
         pc.pc.life_points = 100;
 
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let mut assets = engine.test_runtime_assets();
         let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
             .characters
             .get_mut(0)
@@ -1484,7 +1470,7 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
         0,
     );
 
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    assets = engine.test_runtime_assets();
     let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
         .characters
         .get_mut(0)
@@ -1570,8 +1556,7 @@ fn detection_tick_preserves_authoritative_enemy_membership() {
     pc.element.active = true;
     pc.pc.life_points = 100;
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let Entity::Soldier(observer) = engine
         .get_entity_mut(observer_id)
@@ -1603,8 +1588,7 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
     let ids = add_locked_detection_scene(&mut engine);
     launch_running_noise_for(&mut engine, ids.first_visible);
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
         .characters
         .get_mut(0)
@@ -2059,8 +2043,7 @@ fn retained_detection_view_rebuilds_the_live_enemy_scan_on_replay() {
         pc.pc.life_points = 100;
     }
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
         .characters
         .get_mut(0)
@@ -2211,8 +2194,7 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
     body.element.set_position_map(MapPoint::new(80.0, 0.0));
     body.pc.life_points = 0;
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
         .characters
         .get_mut(0)
@@ -2323,8 +2305,7 @@ fn npc_detection_delivers_each_rising_view_and_keeps_ordered_unique_enemies() {
             pc.pc.life_points = 100;
         }
 
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let mut assets = engine.test_runtime_assets();
         let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
             .characters
             .get_mut(0)
@@ -2463,8 +2444,7 @@ fn royalist_detection_alert_does_not_bypass_strict_cadence() {
             }
         }
 
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
 
         for id in [source_id, listener_id] {
             let Entity::Soldier(soldier) = engine
@@ -2639,8 +2619,7 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
     observer.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
     observer.npc.eye_status = crate::element::EyeStatus::Stare;
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let Entity::Soldier(lost) = engine
         .get_entity_mut(lost_id)
@@ -2787,8 +2766,7 @@ fn royalist_enemy_cadence_stays_strict_when_staring_following_or_alerted() {
             soldier.npc.life_points = 100;
         }
 
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
 
         let Entity::Soldier(observer) = engine
             .get_entity_mut(observer_id)
@@ -2903,8 +2881,7 @@ fn royalist_civilian_enemy_list_accepts_pc_but_not_lacklandist_soldier() {
         }
     }
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
         .characters
         .get_mut(0)

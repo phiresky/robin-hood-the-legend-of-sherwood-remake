@@ -24,8 +24,7 @@ fn completion_callback_recurses_before_returning() {
     let soldier = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     set_test_soldier_brawl_got_hit(&mut engine, soldier);
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.execute_ai_callback(
         sim,
         &assets,
@@ -350,8 +349,7 @@ fn condolation_reenters_think_before_dispatch_returns() {
         .orders
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::LookLeft, Some(soldier)));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -941,8 +939,7 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
 
     let initial = engine.orders.sequence_manager.hourglass();
     assert_eq!(initial.len(), 1);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

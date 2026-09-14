@@ -5,15 +5,13 @@ mod suite {
         ActionState, ActorData, ActorPc, ActorSoldier, Command, ElementData, ElementKind, Entity,
         HumanData, NpcData, PcData, Posture, SoldierData,
     };
+    use crate::engine::test_support::actors::TestActor;
+    use crate::engine::test_support::unmapped_conversion;
     use crate::order::Order;
     use crate::sequence::{
         MoveFlags, SequenceElement, SequenceElementData, SequencePriority, SequenceState,
     };
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
-
-    fn make_test_pc(posture: Posture) -> Entity {
-        Entity::Pc(crate::engine::test_support::actors::unbound_pc(posture))
-    }
+    use crate::sprite_script::SpriteScript;
 
     fn assets_with_test_pc_profile() -> LevelAssets {
         let mut profiles = crate::profiles::ProfileManager::new();
@@ -55,7 +53,7 @@ mod suite {
         ] {
             scripts.extend(vec![directional_script(action); 16]);
         }
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = unmapped_conversion();
         conversion[OrderType::WalkingShield as usize] = 0;
         conversion[OrderType::WalkingBackwardsShield as usize] = 16;
         conversion[OrderType::StrafingRightShield as usize] = 32;
@@ -73,7 +71,7 @@ mod suite {
         action_state: ActionState,
     ) -> EntityId {
         let assets = LevelAssets::new();
-        let mut pc = make_test_pc(Posture::Upright);
+        let mut pc = TestActor::pc(Posture::Upright).build();
         pc.element_data_mut().sprite = shield_movement_sprite();
         pc.element_data_mut().sprite.position_iface.set_move_box(
             crate::coordinates::MoveBox::from_coords(-4.0, -4.0, 4.0, 4.0),
@@ -365,7 +363,7 @@ mod suite {
     fn frozen_all_pc_walking_with_shield_still_refreshes_retained_box() {
         let mut engine = EngineInner::new();
         let assets = assets_with_test_pc_profile();
-        let mut pc = make_test_pc(Posture::Upright);
+        let mut pc = TestActor::pc(Posture::Upright).build();
         pc.element_data_mut().sprite = shield_movement_sprite();
         pc.element_data_mut()
             .set_position_map(MapPoint::new(100.0, 100.0));
@@ -447,7 +445,7 @@ mod suite {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
             sound_ids: vec![0],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = unmapped_conversion();
         conversion[action as usize] = 0;
         let mut element = {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
@@ -611,7 +609,7 @@ mod suite {
         ]);
         scripts.extend(vec![directional_script(OrderType::StrafingRightSword); 16]);
         scripts.extend(vec![directional_script(OrderType::StrafingLeftSword); 16]);
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = unmapped_conversion();
         conversion[OrderType::WalkingSword as usize] = 0;
         conversion[OrderType::WalkingBackwardsSword as usize] = 16;
         conversion[OrderType::StrafingRightSword as usize] = 32;
@@ -757,7 +755,7 @@ mod suite {
         // opponent facing and seeking, so seek refresh must never replace it.
         let (mut engine, owner, movement_sequence, order_id, _start) =
             install_sword_movement(false);
-        let target = engine.add_test_entity(make_test_pc(Posture::Upright));
+        let target = engine.add_test_entity(TestActor::pc(Posture::Upright).build());
         engine
             .get_entity_mut(target)
             .unwrap()

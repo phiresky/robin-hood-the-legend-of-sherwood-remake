@@ -20,6 +20,10 @@ def main():
         ("robin_level_data", {"robin_engine", "robin_rs", "robin_assets", "robin_spellforge"}, []),
         ("robin_legacy_save", {"robin_engine", "robin_rs", "robin_assets", "robin_spellforge"}, []),
         ("robin_engine_types", {"robin_engine", "robin_rs", "robin_assets", "robin_spellforge"}, []),
+        # The simulation layer uses plain run-identity types, never the signed
+        # leaderboard protocol or its Ed25519 implementation.
+        ("robin_engine", {"robin_run_protocol", "ed25519-dalek", "robin_rs", "robin_assets"}, []),
+        ("robin_run_types", {"robin_run_protocol", "robin_engine", "robin_util", "ed25519-dalek"}, []),
         ("robin_assets", {"robin_engine"}, []),
         ("robin_asset_codecs", {"robin_engine", "robin_assets"}, []),
         ("robin_script_types", {"robin_engine", "robin_spellforge"}, []),

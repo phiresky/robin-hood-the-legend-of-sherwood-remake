@@ -2589,11 +2589,7 @@ impl EngineInner {
         // `INVERSE_SWORDFIGHT_ASPECT_RATIO` (= 1.0 in the shipping
         // game).
         let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        let obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
+        let obstacles = self.world.sight_obstacles(assets);
         let frame = self.control.frame_counter;
         let debug = reactive_sword_debug_frame_matches(frame)
             .then(|| {
@@ -2769,7 +2765,6 @@ impl EngineInner {
     /// action stop and, for skilled victims of push-back strikes, the
     /// step-back dodge. `Break` means the step-back dodge was requested and
     /// the parade must not be launched.
-    #[allow(clippy::too_many_arguments)]
     fn parade_try_step_back(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

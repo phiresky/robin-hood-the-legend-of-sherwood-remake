@@ -3711,32 +3711,19 @@ mod sequence_phase_context_tests {
         use crate::sequence::{Field, FieldValue, SequenceElement};
 
         let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let sim = crate::sim_rng::test_context();
         let owner = engine.add_test_entity(shield_pc(crate::element::ActionState::Waiting));
         let mut character =
             SequenceElement::new_generic(1, Command::CharacterAvailable, Some(owner));
         character.set_property(Field::CharacterAvailable, FieldValue::Bool(false));
-        let character_sequence = engine.orders.sequence_manager.launch_element(character);
+        engine.launch_element(character);
+        engine.drain_pending_immediate_actions_sync(&sim, &assets);
         let mut action = SequenceElement::new_generic(1, Command::ActionAvailable, Some(owner));
         action.set_property(Field::ActionId, FieldValue::Integer(12));
         action.set_property(Field::ActionAvailable, FieldValue::Bool(true));
-        let action_sequence = engine.orders.sequence_manager.launch_element(action);
-
-        engine.dispatch_availability_immediate(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
-            &mut Vec::new(),
-            Command::CharacterAvailable,
-            character_sequence,
-            0,
-        );
-        engine.dispatch_availability_immediate(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
-            &mut Vec::new(),
-            Command::ActionAvailable,
-            action_sequence,
-            0,
-        );
+        engine.launch_element(action);
+        engine.drain_pending_immediate_actions_sync(&sim, &assets);
 
         let messages = engine.orders.messenger.drain();
         assert!(matches!(

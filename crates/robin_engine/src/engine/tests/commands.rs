@@ -1240,7 +1240,7 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
     use crate::element_kinds::ActionState;
     use crate::order::{Order, OrderType};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     fn run_case(
         current_priority: SequencePriority,
@@ -1338,7 +1338,7 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
             offsets: vec![SpriteFrameOffset::ZERO; 2],
             sound_ids: vec![0, 0],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[waiting as usize] = 0;
         engine
             .get_entity_mut(attacker)
@@ -2088,7 +2088,6 @@ fn resize_aborts_zoom() {
 fn dead_pc_triggers_failure() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
 
@@ -2109,7 +2108,7 @@ fn dead_pc_triggers_failure() {
     engine.mission_domain.dead_pc = Some(id);
     // The portrait refresh reads every registered PC's character profile and
     // campaign description each frame, dead or not.
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let result = engine
         .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
@@ -2121,7 +2120,6 @@ fn dead_pc_triggers_failure() {
 fn non_playable_pc_does_not_prevent_default_loss() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
 
     let entity = Entity::Pc(crate::element::ActorPc {
@@ -2141,7 +2139,7 @@ fn non_playable_pc_does_not_prevent_default_loss() {
         },
     });
     engine.add_test_entity(entity);
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let result = engine
         .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
@@ -2154,7 +2152,6 @@ fn non_playable_pc_does_not_prevent_default_loss() {
 fn playable_rescue_pc_prevents_default_loss_after_player_party_defeat() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
 
     for (mission_role, playable) in [
@@ -2180,7 +2177,7 @@ fn playable_rescue_pc_prevents_default_loss_after_player_party_defeat() {
             },
         }));
     }
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let result = engine
         .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
@@ -2193,7 +2190,6 @@ fn playable_rescue_pc_prevents_default_loss_after_player_party_defeat() {
 fn all_enemy_ai_hero_battle_does_not_trigger_default_loss() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
 
     for _ in 0..2 {
@@ -2217,7 +2213,7 @@ fn all_enemy_ai_hero_battle_does_not_trigger_default_loss() {
             },
         }));
     }
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let result = engine
         .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)

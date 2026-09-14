@@ -2,11 +2,9 @@
 
 use super::*;
 use crate::coordinates::{MapVec, SpriteFrameOffset, SpriteLocalPoint};
-use crate::element::{
-    ActorData, ElementKind, ElementTarget, FxData, HumanData, TargetData, TargetFilter,
-};
-use crate::element::{ActorPc, ActorSoldier, NpcData, PcData, SoldierData};
-use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
+use crate::engine::test_support::actors::TestActor;
+use crate::sprite_script::SpriteScript;
 
 trait TestEntityIndexAccess {
     fn get_at_index(&self, index: u32) -> Option<(EntityId, &Entity)>;
@@ -32,19 +30,9 @@ fn entity_table(slots: Vec<Option<Entity>>) -> Entities {
 }
 
 fn make_pc(x: f32, y: f32) -> Entity {
-    let mut element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::ActorPc;
-        initial_element.active = true;
-        initial_element
-    };
-    element.set_position_map(MapPoint { x, y });
-    Entity::Pc(ActorPc {
-        element,
-        actor: ActorData::default(),
-        human: HumanData::default(),
-        pc: PcData::default(),
-    })
+    TestActor::pc(Posture::Undefined)
+        .map_position(MapPoint { x, y })
+        .build()
 }
 
 fn make_anonymous_pc(x: f32, y: f32) -> Entity {
@@ -59,27 +47,11 @@ fn make_soldier(x: f32, y: f32) -> Entity {
 }
 
 fn make_soldier_with_camp(x: f32, y: f32, camp: crate::element::Camp) -> Entity {
-    let mut element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::ActorSoldier;
-        initial_element.active = true;
-        initial_element
-    };
-    element.set_position_map(MapPoint { x, y });
-    let npc = NpcData {
-        life_points: 100,
-        ..Default::default()
-    };
-    Entity::Soldier(ActorSoldier {
-        element,
-        actor: ActorData::default(),
-        human: HumanData::default(),
-        npc,
-        soldier: SoldierData {
-            cached_camp: camp,
-            ..SoldierData::default()
-        },
-    })
+    TestActor::soldier(Posture::Undefined)
+        .map_position(MapPoint { x, y })
+        .life_points(100)
+        .camp(camp)
+        .build()
 }
 
 /// Savegame_Nescafe/Profile_002/Continue replay-007 reaches these exact
@@ -211,7 +183,7 @@ fn set_test_action_state_after_transition(
 }
 
 fn bind_test_bow_release_rows(entity: &mut Entity, order_type: OrderType) {
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     let base_row = 0u16;
     conversion[order_type as usize] = base_row;
 

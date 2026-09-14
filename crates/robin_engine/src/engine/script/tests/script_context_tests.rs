@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::test_support::asm::empty_mission_script;
+use crate::engine::test_support::asm::{STARTUP_CLASS, empty_mission_script};
 use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
 
 #[test]
@@ -149,7 +149,7 @@ fn target_callback_discovers_two_patch_bindings_and_restores_them_from_save() {
     quads.push(instruction(Opcode::EndFunction, 0, 0));
     let class = ClassEntry {
         source_file: "patch_trigger_test.scs".into(),
-        class_name: "StartUp".into(),
+        class_name: STARTUP_CLASS.into(),
         size_of_member_variables: 0,
         member_variables: Vec::new(),
         functions: vec![crate::scb::Function {
@@ -168,7 +168,7 @@ fn target_callback_discovers_two_patch_bindings_and_restores_them_from_save() {
         classes: vec![class],
     })
     .unwrap();
-    let instance = script.manager.create_instance("StartUp").unwrap();
+    let instance = script.manager.create_instance(STARTUP_CLASS).unwrap();
     script.target_instances.insert(42, instance);
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);

@@ -129,6 +129,23 @@ impl OrderRuntime {
         crate::order::alloc_order_id(&mut self.next_order_id)
     }
 
+    /// Borrow one sequence element together with the order-id counter, so
+    /// order rewrites on that element can stamp fresh ids.
+    pub(crate) fn element_with_order_ids_mut(
+        &mut self,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> Option<(&mut crate::sequence::SequenceElement, &mut u32)> {
+        let Self {
+            next_order_id,
+            sequence_manager,
+            ..
+        } = self;
+        sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+            .map(|element| (element, next_order_id))
+    }
+
     /// Split the exact scheduler-owned leaves used by the path barrier.
     ///
     /// The sequence manager is read-only here. Path completion consequences

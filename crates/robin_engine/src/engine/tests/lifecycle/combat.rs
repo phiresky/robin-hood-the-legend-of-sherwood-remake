@@ -266,8 +266,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
             sound_ids: vec![0; 3],
         };
-        let mut conversion =
-            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[sprite_action as usize] = 0;
         let element = engine.get_entity_mut(healer).unwrap().element_data_mut();
         let position = element.position_map();
@@ -417,8 +416,7 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
         unreachable!()
     };
     victim_soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine
         .get_entity_mut(attacker)
         .unwrap()
@@ -642,8 +640,7 @@ fn moving_hit_victim_receives_synchronous_event_stop_and_blinks_enemy() {
         ..Detectable::default()
     });
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let seq = engine
         .orders
         .sequence_manager
@@ -694,7 +691,7 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequenceState};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     fn bind_hitting(engine: &mut EngineInner, attacker: EntityId) {
         let script = SpriteScript {
@@ -709,7 +706,7 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 4],
             sound_ids: vec![0; 4],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::Hitting as usize] = 0;
         engine
             .get_entity_mut(attacker)
@@ -754,8 +751,7 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
         victim_soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
     }
     bind_hitting(&mut engine, attacker);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let seq = engine
         .orders
@@ -934,7 +930,7 @@ fn add_strangle_placement_failure_scene(
 ) {
     use crate::element::Posture;
     use crate::order::OrderType;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let _null_handle_slot = engine.add_test_entity(make_test_pc(Posture::Upright));
     let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
@@ -974,7 +970,7 @@ fn add_strangle_placement_failure_scene(
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
         sound_ids: vec![0; 3],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::Strangling as usize] = 0;
     let attacker_sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
@@ -1447,7 +1443,6 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
     use crate::weapons::SwordStrike;
 
     let sim = crate::sim_rng::test_context();
-    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_test_entity(super::super::scenarios::make_test_ai_soldier(
@@ -1464,6 +1459,8 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
         enemy.base.current_music_alert_status = crate::ai::AlertLevel::Red;
         enemy.base.view_alert_status = crate::ai::AlertLevel::Red;
     }
+
+    let assets = engine.test_runtime_assets();
 
     let mut damage = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data = SequenceElementData::new_sword_damage(attacker, SwordStrike::E, 0);

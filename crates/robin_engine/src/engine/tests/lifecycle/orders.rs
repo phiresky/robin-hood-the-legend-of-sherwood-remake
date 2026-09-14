@@ -128,9 +128,8 @@ fn pending_sequence_animation_starts_after_entity_hourglass_boundary() {
     let sequence_id = engine.orders.sequence_manager.launch_element(element);
 
     let mut display = HostDisplayState::default();
-    let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let element = engine
@@ -200,7 +199,7 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
     use crate::movement::AbilityKind;
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     // The body owns an earlier legacy creation slot, as in the replay. Its
@@ -232,7 +231,7 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    let mut dropped_conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut dropped_conversion = crate::engine::test_support::unmapped_conversion();
     dropped_conversion[dropped as usize] = 0;
     let dropped_sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![dropped_script; 16]),
@@ -257,7 +256,7 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[transition as usize] = 0;
     let sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
@@ -348,7 +347,7 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
     use crate::order::{Order, OrderType};
     use crate::player_command::PlayerCommand;
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let body = engine.add_test_entity(make_test_soldier(Posture::Tied));
@@ -375,7 +374,7 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
             sound_ids: vec![0],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[tied as usize] = 0;
         let body_entity = engine.get_entity_mut(body).unwrap();
         body_entity.element_data_mut().sprite = crate::sprite::Sprite::new(
@@ -456,7 +455,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
     use crate::sprite::MotionState;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
@@ -505,7 +504,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 4],
         sound_ids: vec![0; 4],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::WaitingUpright as usize] = 0;
     let entity = engine.get_entity_mut(animated).unwrap();
     entity.element_data_mut().active = false;
@@ -558,7 +557,7 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
     use crate::sprite::MotionState;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Tied));
@@ -587,7 +586,7 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::BeingTied as usize] = 0;
     let entity = engine.get_entity_mut(owner).unwrap();
     entity.human_data_mut().unwrap().unconscious = true;
@@ -843,8 +842,7 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
         0,
     );
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let sprite_before = {
         let sprite = engine.get_entity(owner).unwrap().sprite();
         (
@@ -1032,7 +1030,7 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
     use crate::movement::{AbilityKind, ActiveAbility};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let beggar = engine.add_test_entity(make_test_civilian(Posture::Upright));
@@ -1052,7 +1050,7 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
         sound_ids: vec![0; 2],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::WaitingWithPurse as usize] = 0;
     engine
         .get_entity_mut(beggar)
@@ -1298,7 +1296,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     fn bind(engine: &mut EngineInner, id: EntityId, action: OrderType) {
         let script = SpriteScript {
@@ -1313,7 +1311,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
             sound_ids: vec![0; 3],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[action as usize] = 0;
         engine.get_entity_mut(id).unwrap().element_data_mut().sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![script; 16]),
@@ -1655,7 +1653,7 @@ fn unbound_ability_catalog_order_still_uses_generic_execute() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
@@ -1671,7 +1669,7 @@ fn unbound_ability_catalog_order_still_uses_generic_execute() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
         sound_ids: vec![0; 3],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::ThrowingApple as usize] = 0;
     engine
         .get_entity_mut(owner)
@@ -1731,7 +1729,7 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
         crate::coordinates::SpriteAnchor::ZERO,
     );
     {
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use crate::sprite_script::SpriteScript;
         let script = SpriteScript {
             action_id: OrderType::Eating as u16,
             action_done: 1,
@@ -1744,7 +1742,7 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
             sound_ids: vec![0; 3],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::Eating as usize] = 0;
         engine
             .get_entity_mut(owner)
@@ -1789,8 +1787,7 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
         .unwrap()
         .active_ability
         .order_id;
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let mut done_count = 0;
     loop {

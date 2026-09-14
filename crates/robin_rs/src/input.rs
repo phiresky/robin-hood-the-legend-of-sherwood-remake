@@ -72,6 +72,12 @@ pub struct ThreadedInput {
     /// Defaults to `true`.
     enabled: bool,
     synthetic_events: Vec<GameEvent>,
+    /// Key transitions carried to the next [`feed_events`](Self::feed_events)
+    /// call because the same physical key already changed state earlier in
+    /// that batch. Consumers sample `keyboard_state` once per frame, so a
+    /// press and release drained together (a tap shorter than one slow
+    /// frame) would otherwise cancel out and lose the press/release edge.
+    deferred_key_events: Vec<GameEvent>,
 }
 
 impl Default for ThreadedInput {
@@ -85,6 +91,7 @@ impl Default for ThreadedInput {
             ended: false,
             enabled: true,
             synthetic_events: Vec::new(),
+            deferred_key_events: Vec::new(),
         }
     }
 }
@@ -236,20 +243,34 @@ impl ThreadedInput {
         }
 
         let mut wheel_delta = 0i128;
+        // Keys whose held state already changed during this call. A further
+        // transition of the same key waits for the next frame so the
+        // once-per-frame edge detectors observe both the press and the release.
+        let mut changed_keys = BTreeSet::new();
+        let deferred = std::mem::take(&mut self.deferred_key_events);
 
-        for event in events {
+        for event in deferred.iter().chain(events) {
             match event {
                 GameEvent::KeyDown {
                     physical_key: Some(physical_key),
                     ..
-                } => {
-                    self.keyboard_state.keys.insert(*physical_key);
                 }
-                GameEvent::KeyUp {
+                | GameEvent::KeyUp {
                     physical_key: Some(physical_key),
                     ..
                 } => {
-                    self.keyboard_state.keys.remove(physical_key);
+                    if changed_keys.contains(physical_key) {
+                        self.deferred_key_events.push(event.clone());
+                        continue;
+                    }
+                    let changed = if matches!(event, GameEvent::KeyDown { .. }) {
+                        self.keyboard_state.keys.insert(*physical_key)
+                    } else {
+                        self.keyboard_state.keys.remove(physical_key)
+                    };
+                    if changed {
+                        changed_keys.insert(*physical_key);
+                    }
                 }
                 GameEvent::KeyDown {
                     physical_key: None, ..
@@ -326,6 +347,7 @@ impl ThreadedInput {
     /// returns to the gameplay loop.
     pub fn reset_input_state(&mut self) {
         self.keyboard_state.keys.clear();
+        self.deferred_key_events.clear();
         self.wheel_delta = 0;
         self.synthetic_events.clear();
     }
@@ -408,6 +430,71 @@ mod tests {
         // A fresh frame resets the accumulator even when no wheel arrives.
         ti.feed_events(&[]);
         assert_eq!(ti.wheel_delta(), 0);
+    }
+
+    /// A tap shorter than one frame arrives as press+release in a single
+    /// drained batch (e.g. F5 while a slow paused frame renders). The edge
+    /// detectors sample once per frame, so the release must reach the next
+    /// frame instead of cancelling the press.
+    #[test]
+    fn tap_within_one_batch_keeps_press_and_release_edges() {
+        use crate::input_translator::{GameAction, InputTranslator, TranslationFlags};
+        use crate::key_config::KeyConfig;
+
+        let mut input = ThreadedInput::new();
+        let mut translator = InputTranslator::new(640.0, 480.0, &KeyConfig::default_preset());
+        let f5 = |down| {
+            let keycode = Keycode::F5;
+            let physical_key = Some(KeyCode::F5);
+            if down {
+                GameEvent::KeyDown {
+                    keycode,
+                    physical_key,
+                }
+            } else {
+                GameEvent::KeyUp {
+                    keycode,
+                    physical_key,
+                }
+            }
+        };
+
+        input.feed_events(&[f5(true), f5(false)]);
+        assert!(input.keyboard_state().is_pressed(KeyCode::F5));
+        assert!(
+            translator
+                .translate_keyboard(&input.keyboard_state().keys, TranslationFlags::ALL)
+                .is_empty()
+        );
+
+        input.feed_events(&[]);
+        assert!(!input.keyboard_state().is_pressed(KeyCode::F5));
+        assert_eq!(
+            translator.translate_keyboard(&input.keyboard_state().keys, TranslationFlags::ALL),
+            vec![GameAction::QuickLoad]
+        );
+
+        // Repeated taps in one batch replay one transition per frame, in order.
+        input.feed_events(&[f5(true), f5(false), f5(true), f5(false)]);
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            held.push(input.keyboard_state().is_pressed(KeyCode::F5));
+            input.feed_events(&[]);
+        }
+        assert_eq!(held, [true, false, true, false]);
+        assert!(input.deferred_key_events.is_empty());
+
+        // Redundant transitions do not delay unrelated or idempotent input.
+        input.feed_events(&[f5(false), f5(true)]);
+        assert!(input.keyboard_state().is_pressed(KeyCode::F5));
+        input.feed_events(&[f5(true), f5(false)]);
+        assert!(!input.keyboard_state().is_pressed(KeyCode::F5));
+
+        // Clearing input state also discards transitions still in flight.
+        input.feed_events(&[f5(true), f5(false)]);
+        input.reset_input_state();
+        input.feed_events(&[]);
+        assert!(!input.keyboard_state().is_pressed(KeyCode::F5));
     }
 
     #[test]

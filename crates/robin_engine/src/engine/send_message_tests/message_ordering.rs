@@ -371,8 +371,7 @@ fn send_message_callback_precedes_later_move_translation() {
     sequence.append_element(movement);
     let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
 
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.hourglass_phase_sequences(
         &crate::sim_rng::test_context(),
         &mut crate::engine::HostDisplayState::default(),

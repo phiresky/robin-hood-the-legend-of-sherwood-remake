@@ -103,8 +103,7 @@ fn fresh_selected_strike_uses_captured_stale_impossible_row_residue() {
             .unwrap()
             .element_data_mut()
             .sprite;
-        let mut conversion =
-            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::StrikingRightSword as usize] = 0;
         sprite.scripts = std::sync::Arc::new(vec![selected_row, stale_row]);
         sprite.conversion = std::sync::Arc::new(conversion);
@@ -2617,8 +2616,7 @@ fn parried_true_circle_still_queues_push_fall() {
         sound_ids: vec![0, 0],
         ..Default::default()
     };
-    let mut fall_conversion =
-        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    let mut fall_conversion = crate::engine::test_support::unmapped_conversion();
     fall_conversion[OrderType::FallingBackSword as usize] = 0;
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();

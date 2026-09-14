@@ -1,12 +1,12 @@
 //! Browser asset fetch/decode/cache owner. Voice lifecycle stays in the parent.
 use super::BrowserAudioSession;
 use crate::audio_bundle_cache::AudioBundleCache;
+use crate::byte_budget_lru::ByteBudgetLru;
 use crate::web_audio_state::should_cache_decoded;
 use futures::{
     FutureExt as _,
     future::{AbortHandle, Abortable, LocalBoxFuture, Shared},
 };
-use lru::LruCache;
 use robin_assets::shipping_datadir::RemoteAudioAsset;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -19,19 +19,17 @@ use web_sys::AudioBuffer;
 
 const MAX_DECODED_PCM_BYTES: u64 = 96 * 1024 * 1024;
 
-struct CachedBuffer {
-    buffer: AudioBuffer,
-    bytes: u64,
+fn decoded_buffer_cache() -> ByteBudgetLru<String, AudioBuffer> {
+    // Decoded residency is limited by bytes, not the number of buffers.
+    ByteBudgetLru::new(MAX_DECODED_PCM_BYTES)
 }
 
 /// Content-addressed buffers survive mission transitions; active voices own
 /// their buffer references independently of LRU retention.
 #[derive(Serialize, Deserialize)]
 pub(super) struct AudioAssets {
-    #[serde(skip, default = "LruCache::unbounded")]
-    buffers: LruCache<String, CachedBuffer>,
-    #[serde(skip)]
-    cached_bytes: u64,
+    #[serde(skip, default = "decoded_buffer_cache")]
+    buffers: ByteBudgetLru<String, AudioBuffer>,
     #[serde(skip)]
     bundles: AudioBundleCache<js_sys::ArrayBuffer>,
     #[serde(skip)]
@@ -48,9 +46,7 @@ pub(super) struct AudioAssets {
 impl Default for AudioAssets {
     fn default() -> Self {
         Self {
-            // Decoded residency is limited by bytes, not the number of buffers.
-            buffers: LruCache::unbounded(),
-            cached_bytes: 0,
+            buffers: decoded_buffer_cache(),
             bundles: Default::default(),
             encoded_loads: Default::default(),
             retain_encoded: Default::default(),
@@ -69,13 +65,7 @@ impl Drop for AudioAssets {
 }
 
 fn cached_buffer(session: &BrowserAudioSession, key: &str) -> Result<Option<AudioBuffer>, String> {
-    session.with_audio(|audio| {
-        audio
-            .assets
-            .buffers
-            .get(key)
-            .map(|cached| cached.buffer.clone())
-    })
+    session.with_audio(|audio| audio.assets.buffers.get(key).cloned())
 }
 
 fn cache_buffer(
@@ -88,41 +78,37 @@ fn cache_buffer(
         // the resident buffer even if this candidate has a different size.
         // Native path-keyed samples instead invalidate an old entry on replace.
         if let Some(existing) = audio.assets.buffers.get(&key) {
-            return existing.buffer.clone();
+            return existing.clone();
         }
         let bytes = u64::from(buffer.length())
             .saturating_mul(u64::from(buffer.number_of_channels()))
             .saturating_mul(std::mem::size_of::<f32>() as u64);
-        if !should_cache_decoded(bytes, MAX_DECODED_PCM_BYTES) {
+        let budget_bytes = audio.assets.buffers.budget_bytes();
+        if !should_cache_decoded(bytes, budget_bytes) {
             tracing::debug!(
                 key,
                 pcm_bytes = bytes,
-                budget_bytes = MAX_DECODED_PCM_BYTES,
+                budget_bytes,
                 "decoded browser audio exceeds the shared PCM budget; leaving it voice-owned"
             );
             return buffer;
         }
-        while audio.assets.cached_bytes > MAX_DECODED_PCM_BYTES - bytes {
-            let (victim, removed) = audio
-                .assets
-                .buffers
-                .pop_lru()
-                .expect("positive decoded audio residency requires a buffer");
-            audio.assets.cached_bytes -= removed.bytes;
+        let insertion = audio.assets.buffers.insert(key, bytes, buffer.clone());
+        debug_assert!(
+            insertion.replaced.is_none() && insertion.rejected.is_none(),
+            "duplicate and oversized decoded buffers are handled before insertion"
+        );
+        for victim in insertion.evicted {
             tracing::debug!(
-                key = victim,
-                pcm_bytes = removed.bytes,
+                key = victim.key,
+                pcm_bytes = victim.bytes,
+                resident_bytes = audio.assets.buffers.resident_bytes(),
+                entries = audio.assets.buffers.len(),
                 "evicted decoded browser audio under PCM budget"
             );
+            // Releases only the cache's JS reference; voices hold their own.
+            drop(victim.value);
         }
-        audio.assets.cached_bytes += bytes;
-        audio.assets.buffers.put(
-            key,
-            CachedBuffer {
-                buffer: buffer.clone(),
-                bytes,
-            },
-        );
         buffer
     })
 }
@@ -412,7 +398,17 @@ mod browser_ownership_tests {
         cache_buffer(&session, "b".into(), buffer.clone()).unwrap();
         cached_buffer(&session, "a").unwrap().unwrap();
         session
-            .with_audio(|audio| assert_eq!(audio.assets.buffers.iter().next().unwrap().0, "a"))
+            .with_audio(|audio| {
+                assert_eq!(
+                    audio
+                        .assets
+                        .buffers
+                        .keys_most_recent_first()
+                        .next()
+                        .unwrap(),
+                    "a"
+                )
+            })
             .unwrap();
         let replacement = session
             .with_audio(|audio| audio.context.create_buffer(1, 4, 8000.0).unwrap())
@@ -421,16 +417,25 @@ mod browser_ownership_tests {
         assert!(js_sys::Object::is(existing.as_ref(), buffer.as_ref()));
         session
             .with_audio(|audio| {
-                assert_eq!(audio.assets.buffers.iter().next().unwrap().0, "b");
+                assert_eq!(
+                    audio
+                        .assets
+                        .buffers
+                        .keys_most_recent_first()
+                        .next()
+                        .unwrap(),
+                    "b"
+                );
                 assert_eq!(audio.assets.buffers.len(), 3);
                 assert_eq!(
-                    audio.assets.cached_bytes,
+                    audio.assets.buffers.resident_bytes(),
                     u64::from(buffer.length()) * 4 * 3
                 );
                 let restored: AudioAssets =
                     serde_json::from_value(serde_json::to_value(&audio.assets).unwrap()).unwrap();
                 assert!(restored.buffers.is_empty());
-                assert_eq!(restored.cached_bytes, 0);
+                assert_eq!(restored.buffers.resident_bytes(), 0);
+                assert_eq!(restored.buffers.budget_bytes(), MAX_DECODED_PCM_BYTES);
             })
             .unwrap();
         session.retire();

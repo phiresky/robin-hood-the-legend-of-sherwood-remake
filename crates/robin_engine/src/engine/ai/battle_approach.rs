@@ -1511,7 +1511,19 @@ mod tests {
                     .entities
                     .expect_ai_actor_data(owner, format_args!("rider focus"))
                     .follow_target,
-                if passing { None } else { Some(target) }
+                Some(target)
+            );
+            assert_eq!(
+                engine
+                    .world
+                    .entities
+                    .expect_ai_actor_data(owner, format_args!("rider eyes"))
+                    .eye_status,
+                if passing {
+                    crate::element::EyeStatus::LookForward
+                } else {
+                    crate::element::EyeStatus::Follow
+                }
             );
         }
     }

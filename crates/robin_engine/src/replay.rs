@@ -149,7 +149,7 @@ pub struct ReplayHeader {
 /// second replay representation. There is deliberately no Rust-schema
 /// compatibility adapter; earlier incompatible layouts are rejected at the
 /// header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 41;
+pub const REPLAY_SCHEMA_VERSION: u32 = 42;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

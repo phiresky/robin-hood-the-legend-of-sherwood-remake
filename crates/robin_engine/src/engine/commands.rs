@@ -234,7 +234,9 @@ impl EngineInner {
                 self.set_as_new_principal_opponent(assets, *actor, *opponent_id)
             }
 
-            ClearShootList { pc_id } => self.apply_clear_shoot_list_command(sim, assets, *pc_id),
+            ClearShootList { pc_id } => {
+                self.clear_pc_shoot_list(*pc_id);
+            }
             DropAmmo { .. } => self.apply_drop_ammo_command(cmd),
             DropAleAt { .. } => self.apply_drop_ale_at_command(cmd),
             ShieldSelectProtected { protected_pc, .. } => {
@@ -1265,30 +1267,6 @@ impl EngineInner {
             gesture_quality,
             with_seek,
             seek_distance,
-        );
-    }
-
-    fn apply_clear_shoot_list_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        pc_id: EntityId,
-    ) {
-        // Clear the retained human-instruction FIFO. Keep the
-        // broader pending-element cleanup for pre-instruction work that
-        // has not reached that FIFO yet.
-        self.clear_pc_shoot_list(pc_id);
-        let resolver = |engine: &EngineInner, element: &crate::sequence::SequenceElement| {
-            Self::priority_resolver(&engine.world.entities)(element)
-        };
-        self.stop_pending_elements_matching(
-            sim,
-            assets,
-            &mut Vec::new(),
-            pc_id,
-            Command::ShootBow,
-            crate::sequence::SequencePriority::Preference,
-            &resolver,
         );
     }
 
