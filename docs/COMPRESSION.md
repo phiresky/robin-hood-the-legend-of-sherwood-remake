@@ -135,7 +135,7 @@ saved vs v2 q80                                                 7,229,849 B
 ```
 
 The canonical browser converter path for the published web Demo artifact
-(currently `datadirs/demo-leicester/v17/v17-web-opus-q80.rhdata.zst`; see the
+(currently `datadirs/demo-leicester/v17r2/v17r2-web-opus-q80.rhdata.zst`; see the
 README deployment section) is the checked-in wrapper:
 
 ```sh

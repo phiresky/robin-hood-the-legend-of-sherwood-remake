@@ -211,14 +211,14 @@ closures. Its objects are served `immutable`, so every native datadir format
 is a separate generation directory, and so is any rebuild that changes bytes.
 The current generation (format 17) is:
 
-    /datadirs/demo-leicester/v17/v17-web-opus-q80.rhdata.zst
-    /datadirs/demo-leicester/v17/robinhood-web-content.json
-    /datadirs/demo-leicester/v17/missions/*.rhmission.zst
-    /datadirs/demo-leicester/v17/rhs/*.rhmission.zst
-    /datadirs/demo-leicester/v17/terrain/*.rhmission.zst
-    /datadirs/demo-leicester/v17/audio/*.rhmission.zst
-    /datadirs/demo-leicester/v17/audio/assets/*.opus
-    /datadirs/demo-leicester/v17/audio/bundles/*.bin
+    /datadirs/demo-leicester/v17r2/v17r2-web-opus-q80.rhdata.zst
+    /datadirs/demo-leicester/v17r2/robinhood-web-content.json
+    /datadirs/demo-leicester/v17r2/missions/*.rhmission.zst
+    /datadirs/demo-leicester/v17r2/rhs/*.rhmission.zst
+    /datadirs/demo-leicester/v17r2/terrain/*.rhmission.zst
+    /datadirs/demo-leicester/v17r2/audio/*.rhmission.zst
+    /datadirs/demo-leicester/v17r2/audio/assets/*.opus
+    /datadirs/demo-leicester/v17r2/audio/bundles/*.bin
 
 Earlier generations stay published byte-for-byte because older wasm builds and
 replay links pin them. They are listed with their digests in
@@ -261,7 +261,7 @@ the wasm-safe zstd window):
         datadirs/demo_leicester_ecoste /tmp/robin-web-shipping
 
 Publish the generated `Data/datadir.bin` as
-`/datadirs/demo-leicester/v17/v17-web-opus-q80.rhdata.zst`, preserving its generated
+`/datadirs/demo-leicester/v17r2/v17r2-web-opus-q80.rhdata.zst`, preserving its generated
 `Data/robinhood-web-content.json`, `Data/missions/`, `Data/rhs/`,
 `Data/terrain/`, and `Data/audio/` closure beside it
 (`node wasm-www/scripts/assemble-datadir-corpus.mjs --update PRIOR_CORPUS
