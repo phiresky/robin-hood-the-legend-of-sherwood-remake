@@ -81,9 +81,15 @@ pub(super) fn fixture(disconnected: bool) -> (EngineInner, LevelAssets, EntityId
     (engine, assets, owner, target)
 }
 
-fn stop_on_state(engine: &mut EngineInner, owner: EntityId) {
+fn stop_on_state(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId) {
     use crate::engine::test_support::asm::*;
     use crate::natives::NativeFn;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .script_class = "ObserveStop".into();
     let quads = vec![
         q_begin_function(0, 3),
         q_native_call(NativeFn::ThisActor as u32),
@@ -126,6 +132,7 @@ fn stop_on_state(engine: &mut EngineInner, owner: EntityId) {
         crate::natives::ScriptHandleCodec::actor_handle(owner),
         "ObserveStop",
     );
+    engine.attach_script_bindings(assets);
 }
 
 fn pending_moves(
@@ -166,7 +173,7 @@ fn observe_movement_is_registered_before_the_state_callback() {
             .base
             .seek_position = previous_seek;
         if stops_move {
-            stop_on_state(&mut engine, owner);
+            stop_on_state(&mut engine, &assets, owner);
         }
         let decision = engine.execute_live_battle_decision(
             &crate::sim_rng::test_context(),

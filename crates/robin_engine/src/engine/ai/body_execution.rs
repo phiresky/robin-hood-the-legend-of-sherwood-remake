@@ -377,6 +377,12 @@ mod tests {
             entity.element_data_mut().set_sector(Some(sector));
             entity.element_data_mut().active = true;
             entity.npc_data_mut().unwrap().life_points = 50;
+            entity
+                .position_iface_mut()
+                .set_move_box(crate::coordinates::MoveBox::from_corners(
+                    crate::coordinates::MapVec::new(-10.0, -5.0),
+                    crate::coordinates::MapVec::new(10.0, 5.0),
+                ));
         }
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
@@ -567,22 +573,32 @@ mod tests {
     #[test]
     fn dead_body_alert_uses_live_soldier_duty_radius_after_failed_officer_alert() {
         for duty in [false, true] {
-            let (mut engine, assets, owner, _) = fixture();
+            let (mut engine, mut assets, owner, _) = fixture();
             engine.world.fast_grid_mut().level_mut().sectors[0].sector_type |=
                 crate::sector::SectorType::BUILDING;
             let center = engine.live_ai_position(owner);
-            engine.ai.global.seek_points.push(SeekPoint {
-                id: 0,
-                position: Position {
-                    x: center.x + 200.0,
-                    ..center
-                },
-                frame_when_full_interest: 0,
-                directions: vec![4],
-                last_calculated_interest: 100,
-                locked: false,
-            });
+            for id in 0..3 {
+                engine.ai.global.seek_points.push(SeekPoint {
+                    id,
+                    position: Position {
+                        x: center.x + 200.0 + f32::from(id) * 20.0,
+                        ..center
+                    },
+                    frame_when_full_interest: 0,
+                    directions: vec![4],
+                    last_calculated_interest: 100,
+                    locked: false,
+                });
+            }
             engine.seek_enemy_mut(owner).soldier_profile_duty = duty;
+            let profile = engine
+                .get_entity(owner)
+                .unwrap()
+                .soldier_data()
+                .unwrap()
+                .soldier_profile_index;
+            std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[usize::from(profile)]
+                .duty = duty;
             engine.execute_ai_body_reaction(
                 &crate::sim_rng::test_context(),
                 &assets,
@@ -601,9 +617,9 @@ mod tests {
             );
             assert_eq!(ai.personal_seek_point_2.as_ref().unwrap().position, center);
             assert_eq!(
-                ai.my_seek_points.contains(&0),
-                !duty,
-                "the point 200 units away fits the ordinary 300 radius but not the duty 150 radius"
+                ai.my_seek_points.iter().filter(|id| **id < 3).count(),
+                if duty { 1 } else { 3 },
+                "standard radius sets the expected point count, not a hard membership boundary"
             );
             assert_eq!(
                 ai.base.current_substate,

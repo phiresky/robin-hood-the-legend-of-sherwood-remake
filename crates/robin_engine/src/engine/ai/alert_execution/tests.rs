@@ -1,5 +1,5 @@
 use super::*;
-use crate::ai::{AiLockFlags, PathId, PatrolPath, ReportType};
+use crate::ai::{PathId, PatrolPath, ReportType};
 use crate::ai_enemy::SeekFlags;
 use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
@@ -55,7 +55,7 @@ fn group_fixture() -> (EngineInner, LevelAssets, [EntityId; 4]) {
         .world
         .entities
         .expect_ai_controller_mut(refused, format_args!("refusing member"))
-        .locks_flag_field = AiLockFlags::FREEZE;
+        .current_substate = Substate::SeekingJustWatching;
     (engine, assets, ids)
 }
 
@@ -77,10 +77,7 @@ fn officer_group_instruction_retries_location_first_after_refusal() {
         .world
         .entities
         .expect_enemy_ai(refused, format_args!("refused member"));
-    assert_eq!(
-        refused.base.current_substate,
-        Substate::SeekingGroupGetInstructedByOfficer
-    );
+    assert_eq!(refused.base.current_substate, Substate::SeekingJustWatching);
     assert_eq!(refused.base.alert_soldiers_point, Position::default());
     let second = engine
         .world
@@ -233,7 +230,7 @@ fn officer_group_path_reassignment_uses_live_waypoints_with_initial_stride() {
                         q_native_param(0xC000),
                         q_native_param(0xC004),
                         q_native_call(NativeFn::AssignPath as u32),
-                        q_aff0_iconstant(0xC000, 0),
+                        q_aff0_iconstant(0xC000, 1),
                         q_return_val(0xC000),
                         q_end_function(),
                     ],

@@ -1011,9 +1011,19 @@ mod tests {
             .collect()
     }
 
-    fn install_stopping_state_callback(engine: &mut EngineInner, owner: EntityId) {
+    fn install_stopping_state_callback(
+        engine: &mut EngineInner,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
         use crate::engine::test_support::asm::*;
         use crate::natives::NativeFn;
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .script_class = "StopOnState".into();
         let quads = vec![
             q_begin_function(0, 4),
             q_native_call(NativeFn::ThisActor as u32),
@@ -1061,6 +1071,7 @@ mod tests {
             crate::natives::ScriptHandleCodec::actor_handle(owner),
             "StopOnState",
         );
+        engine.attach_script_bindings(assets);
     }
 
     #[test]
@@ -1139,7 +1150,7 @@ mod tests {
             } else {
                 Substate::AttackingTooProudToAttackApproach
             };
-            install_stopping_state_callback(&mut engine, owner);
+            install_stopping_state_callback(&mut engine, &assets, owner);
             engine.execute_ai_reconsider_enemy_approach(
                 &crate::sim_rng::test_context(),
                 &assets,
