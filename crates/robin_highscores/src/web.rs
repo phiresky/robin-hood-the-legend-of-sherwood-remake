@@ -1419,12 +1419,6 @@ async fn submission_offer(
 ) -> Result<(StatusCode, Json<SubmissionOfferV1>), ApiError> {
     rate_limit_challenge(&state, &client, ChallengePurpose::Submission).await?;
     request.validate()?;
-    if usize::from(request.participant_instance_count) != request.participant_claims.len() {
-        return Err(ApiError::BadRequest(
-            "every ranked participant instance must have a distinct authenticated key and attestation"
-                .to_owned(),
-        ));
-    }
     verify_session_attestations(&request)?;
     let session_genesis_sha256 = request
         .session_genesis
@@ -3528,11 +3522,16 @@ async fn starting_state(
     request: &SubmissionOfferRequestV1,
     profile: &AdmissionProfile,
 ) -> Result<InitialStateExpectationV1, ApiError> {
-    let fresh = fresh_start_artifact(
-        &state.config,
-        profile,
-        &request.session_genesis.claim.ranked_session,
-    )?;
+    let ranked = &request.session_genesis.claim.ranked_session;
+    let fresh = if ranked.recorded_replay.is_some() {
+        robin_run_protocol::ArtifactRefV1 {
+            sha256: ranked.starting_campaign_sha256,
+            byte_length: ranked.starting_campaign_byte_length,
+            media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
+        }
+    } else {
+        fresh_start_artifact(&state.config, profile, ranked)?
+    };
     match &request.scope_request {
         ScopeRequestV1::IndividualLevel => Ok(InitialStateExpectationV1::IndividualLevel {
             template_id: opaque(&profile.template_id)?,
@@ -4369,12 +4368,14 @@ fn verify_request_signature(
 }
 
 fn verify_session_attestations(request: &SubmissionOfferRequestV1) -> Result<(), ApiError> {
-    let genesis_bytes = request.session_genesis.signing_bytes()?;
-    verify_request_signature(
-        request.session_genesis.claim.host_public_key.as_bytes(),
-        request.session_genesis.host_signature.as_bytes(),
-        &genesis_bytes,
-    )?;
+    if let Some(signature) = request.session_genesis.host_signature {
+        let genesis_bytes = request.session_genesis.signing_bytes()?;
+        verify_request_signature(
+            request.session_genesis.claim.host_public_key.as_bytes(),
+            signature.as_bytes(),
+            &genesis_bytes,
+        )?;
+    }
 
     for claim in request.participant_claims.iter().skip(1) {
         let attestation = claim.join_attestation.as_ref().ok_or_else(|| {

@@ -35,7 +35,7 @@ pub struct ValidatedJobConfig {
     raw_content: ValidatedRawContentMount,
     build_manifest_sha256: Digest32,
     campaign_content_manifest_sha256: Option<Digest32>,
-    prepared_mission_inputs_seal_sha256: Digest32,
+    prepared_mission_inputs_seal_sha256: Option<Digest32>,
     rules_config_sha256: Digest32,
     ruleset_manifest_sha256: Digest32,
 }
@@ -79,7 +79,7 @@ impl ValidatedJobConfig {
         self.campaign_content_manifest_sha256
     }
 
-    pub const fn prepared_mission_inputs_seal_sha256(&self) -> Digest32 {
+    pub const fn prepared_mission_inputs_seal_sha256(&self) -> Option<Digest32> {
         self.prepared_mission_inputs_seal_sha256
     }
 
@@ -227,11 +227,7 @@ pub fn validate_job_config(
         || config.expected_prepared_inputs_projection_sha256
             != ranked.prepared_inputs_projection_sha256
     {
-        return Err(JobConfigError::IdentityMismatch {
-            document: "prepared_mission_inputs",
-            expected: ranked.prepared_mission_inputs_seal_sha256,
-            actual: config.expected_prepared_mission_inputs_seal_sha256,
-        });
+        return Err(JobConfigError::RulesetMismatch("prepared_mission_inputs"));
     }
     let prepared_mission_inputs_seal_sha256 = config.expected_prepared_mission_inputs_seal_sha256;
     let rules_config_sha256 = require_identity(
@@ -588,11 +584,17 @@ fn validate_campaign_state_binding(
     match offer.starting_state {
         InitialStateExpectationV1::IndividualLevel { .. }
         | InitialStateExpectationV1::CampaignGenesis { .. } => {
-            if config
-                .template
-                .ruleset_manifest
-                .canonical_start_policy
-                .requires_exact_operator_artifact()
+            if offer
+                .session_genesis
+                .claim
+                .ranked_session
+                .recorded_replay
+                .is_none()
+                && config
+                    .template
+                    .ruleset_manifest
+                    .canonical_start_policy
+                    .requires_exact_operator_artifact()
                 && (pin.artifact != submission.artifacts.starting_campaign
                     || pin.artifact.sha256 != offer.starting_state.campaign_sha256()
                     || pin.artifact.byte_length

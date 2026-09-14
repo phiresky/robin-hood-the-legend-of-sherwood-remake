@@ -178,10 +178,10 @@ async fn campaign_owner_authorization_authentic_genesis_and_full_aggregate_cross
     .await;
     let mut substituted_session = authorized_for_adversarial_checks.clone();
     substituted_session.session_genesis.claim.replay_session_id = Digest32::from_bytes([0xe3; 32]);
-    substituted_session.session_genesis.host_signature = sign(
+    substituted_session.session_genesis.host_signature = Some(sign(
         &owner,
         &substituted_session.session_genesis.signing_bytes().unwrap(),
-    );
+    ));
     assert!(substituted_session.validate().is_err());
 
     let mut forged_authority = authorized_for_adversarial_checks.clone();
@@ -192,10 +192,10 @@ async fn campaign_owner_authorization_authentic_genesis_and_full_aggregate_cross
         .as_mut()
         .unwrap()
         .authority_signature = Signature64::from_bytes([0xe4; 64]);
-    forged_authority.session_genesis.host_signature = sign(
+    forged_authority.session_genesis.host_signature = Some(sign(
         &owner,
         &forged_authority.session_genesis.signing_bytes().unwrap(),
-    );
+    ));
     let forged_authority_response = rig
         .app
         .clone()
@@ -222,8 +222,10 @@ async fn campaign_owner_authorization_authentic_genesis_and_full_aggregate_cross
         &SigningKey::from_bytes(&[0x46; 32]),
         &expired_grant.signing_bytes().unwrap(),
     );
-    expired.session_genesis.host_signature =
-        sign(&owner, &expired.session_genesis.signing_bytes().unwrap());
+    expired.session_genesis.host_signature = Some(sign(
+        &owner,
+        &expired.session_genesis.signing_bytes().unwrap(),
+    ));
     expired.validate().unwrap();
     let expired_response = rig
         .app

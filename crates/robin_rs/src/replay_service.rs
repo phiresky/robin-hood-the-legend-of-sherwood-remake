@@ -17,9 +17,6 @@ pub struct ReplayService {
     pending: Mutex<Option<PendingReplay>>,
     spool: ReplaySpool,
     capture_recorder: Mutex<Option<crate::replay_recording::SharedReplayRecorder>>,
-    ranked_source: Mutex<Option<crate::game_session::leaderboard_runtime::RankedMissionAdmission>>,
-    restored_ranked:
-        Mutex<Option<Result<crate::leaderboard_mission_end::MissionEndSubmissionInput, String>>>,
     #[cfg(not(target_arch = "wasm32"))]
     export_worker: Mutex<NativeExportWorker>,
     #[cfg(target_arch = "wasm32")]
@@ -33,8 +30,6 @@ impl Default for ReplayService {
         Self {
             pending: Mutex::new(None),
             capture_recorder: Mutex::new(None),
-            ranked_source: Mutex::new(None),
-            restored_ranked: Mutex::new(None),
             spool: ReplaySpool::new(MAX_ACTIVE_REPLAY_BYTES),
             #[cfg(not(target_arch = "wasm32"))]
             export_worker: Mutex::new(NativeExportWorker::default()),
@@ -263,61 +258,6 @@ impl ReplayRecordingControl {
         recorder: Option<crate::replay_recording::SharedReplayRecorder>,
     ) {
         *lock(&self.0.capture_recorder) = recorder;
-        *lock(&self.0.ranked_source) = None;
-        *lock(&self.0.restored_ranked) = None;
-    }
-
-    pub(crate) fn set_ranked_source(
-        &self,
-        source: crate::game_session::leaderboard_runtime::RankedMissionAdmission,
-    ) {
-        *lock(&self.0.ranked_source) = Some(source);
-        self.checkpoint_ranked_input();
-    }
-
-    pub(crate) fn restore_ranked_input(
-        &self,
-        input: Result<crate::leaderboard_mission_end::MissionEndSubmissionInput, String>,
-    ) {
-        *lock(&self.0.ranked_source) = input
-            .as_ref()
-            .ok()
-            .cloned()
-            .map(crate::game_session::leaderboard_runtime::RankedMissionAdmission::Authorized);
-        *lock(&self.0.restored_ranked) = Some(input);
-    }
-
-    pub(crate) fn checkpoint_ranked_input(&self) {
-        let source = lock(&self.0.ranked_source).clone();
-        let Some(source) = source else {
-            return;
-        };
-        let result = (|| -> Result<(), String> {
-            let Some(recorder) = self
-                .capture_recorder()
-                .filter(|recorder| recorder.has_archive())
-            else {
-                return Ok(());
-            };
-            let replay = self.0.snapshot()?.parse_sync()?;
-            // Sherwood has no Restart checkpoint. The first save will retry
-            // once its marker supplies a real frame for the signed transcript.
-            if replay.frame_count() == 0 {
-                return Ok(());
-            }
-            if let Some(input) = source
-                .archive_input(&replay)
-                .map_err(|error| error.to_string())?
-            {
-                recorder
-                    .persist_ranked_input(&input)
-                    .map_err(|error| format!("{error:#}"))?;
-            }
-            Ok(())
-        })();
-        if let Err(error) = result {
-            tracing::warn!("could not persist original ranked admission: {error}");
-        }
     }
 
     pub(crate) fn capture_recorder(&self) -> Option<crate::replay_recording::SharedReplayRecorder> {
@@ -342,7 +282,6 @@ impl ReplayRecordingControl {
         save.validate_current_schema()?;
         if let Some(recorder) = self.capture_recorder() {
             save.header.replay = recorder.persist_save_boundary(save)?;
-            self.checkpoint_ranked_input();
         }
         Ok(())
     }
@@ -355,12 +294,6 @@ impl ReplayRecordingControl {
     }
 }
 impl ReplayExports {
-    pub(crate) fn restored_ranked_input(
-        &self,
-    ) -> Option<Result<crate::leaderboard_mission_end::MissionEndSubmissionInput, String>> {
-        lock(&self.0.restored_ranked).clone()
-    }
-
     pub(crate) fn same_service(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }

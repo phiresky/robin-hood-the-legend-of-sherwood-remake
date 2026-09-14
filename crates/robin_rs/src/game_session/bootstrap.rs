@@ -310,26 +310,6 @@ impl MissionBootstrap {
         }
     }
 
-    async fn sign_ranked_session_before_frame_zero(
-        &mut self,
-        args: &crate::main_entry::MissionRequest,
-    ) {
-        let custom_package_present = self.host.scripting.lua_session.is_some()
-            || args.content.custom_mission.is_some()
-            || args.content.pending_lua_mission.is_some();
-        if let Some(net) = self.host.transport.net() {
-            self.loaded
-                .ranked_admission
-                .install_multiplayer_before_frame_zero(net, custom_package_present)
-                .await;
-        } else {
-            self.loaded
-                .ranked_admission
-                .sign_before_frame_zero(custom_package_present)
-                .await;
-        }
-    }
-
     /// Install the exact asset identity before any restart save can capture the game.
     fn install_mission_assets(&mut self, args: &crate::main_entry::MissionRequest) {
         let campaign = self.loaded.engine.campaign();
@@ -404,31 +384,8 @@ impl MissionBootstrap {
             .expect("mission assets must be installed before runtime construction")
             .clone();
         let mission_id = mission_assets.mission_basename.clone();
-        let ranked_admission = self.loaded.ranked_admission.take_mission_admission();
-        args.config
-            .global_options
-            .replay_recording()
-            .set_ranked_source(ranked_admission.clone());
-        let ranked_multiplayer_port =
-            self.host
-                .transport
-                .net()
-                .and_then(|net| match net.ranked_port() {
-                    Ok(port) => Some(port),
-                    Err(error) => {
-                        tracing::warn!("ranked multiplayer mission-end port unavailable: {error}");
-                        None
-                    }
-                });
-        let leaderboard = (contract == FrameContract::Graphical).then(|| {
-            super::leaderboard_runtime::MissionLeaderboardRuntime::new(
-                &self.loaded.replay_campaign,
-                mission_id.clone(),
-                self.host.transport.net().is_some(),
-                ranked_admission,
-                ranked_multiplayer_port,
-            )
-        });
+        let leaderboard = (contract == FrameContract::Graphical)
+            .then(super::leaderboard_runtime::MissionLeaderboardRuntime::new);
         let assets = Arc::new(self.loaded.assets);
         let replay = match init_replay_and_rollback(
             &self.loaded.replay_campaign,
@@ -885,7 +842,6 @@ impl InteractiveLoadStage {
         profiles: &ProfileManager,
         start: super::MissionStart,
         args: &crate::main_entry::MissionRequest,
-        ranked_plan: super::leaderboard_runtime::RankedPreFramePlan,
     ) -> Result<LoadedInteractiveStage, MissionLoadError> {
         let super::MissionStart {
             mission_idx,
@@ -924,7 +880,6 @@ impl InteractiveLoadStage {
             MissionLaunchSetup {
                 rng_seed,
                 sim_config,
-                ranked_plan,
             },
         )?;
         let constructed = prepared.construct_engine(args, &mut feedback)?;
@@ -1282,9 +1237,6 @@ impl HeadlessLoadStage {
             MissionLaunchSetup {
                 rng_seed,
                 sim_config,
-                ranked_plan: super::leaderboard_runtime::RankedPreFramePlan::browse_only(
-                    "headless and replay-runner missions are not eligible for leaderboard submission",
-                ),
             },
         )?;
         let constructed = prepared.construct_engine(args, &mut feedback)?;
@@ -1638,7 +1590,7 @@ impl InteractiveMissionBuilder {
         }
         let campaign = super::establish_mission_restart_boundary(campaign, rng_seed, sim_config);
         let mut timer = super::setup::PhaseTimer::new("mission bootstrap");
-        let mut loading = match InteractiveLoadStage::begin(
+        let loading = match InteractiveLoadStage::begin(
             window,
             MultiplayerSessionEntry {
                 campaign: &callbacks.multiplayer_campaign,
@@ -1672,60 +1624,26 @@ impl InteractiveMissionBuilder {
             }
         };
         timer.step("load stage begin");
-        loading.loading.status(
-            "Checking ranked mission authority...",
-            LoadingPhase::RankedAuthority.end(),
-        );
-        let ranked_plan = if args.replay.is_some() || args.replay_data.is_some() {
-            super::leaderboard_runtime::RankedPreFramePlan::browse_only(
-                "replay playback cannot submit a new ranked run",
-            )
-        } else if loading.host.scripting.lua_session.is_some()
-            || args.content.custom_mission.is_some()
-            || args.content.pending_lua_mission.is_some()
-        {
-            super::leaderboard_runtime::RankedPreFramePlan::browse_only(
-                "custom or Spellforge mission content is outside the official demo/full ranked policy",
-            )
-        } else {
-            match super::leaderboard_runtime::fetch_single_player_authority(
-                &mission_id,
-                sim_config,
-                &campaign,
-            )
-            .await
-            {
-                Ok(authority) => {
-                    super::leaderboard_runtime::RankedPreFramePlan::Authority(authority)
-                }
-                Err(reason) => {
-                    tracing::warn!("mission is browse-only: {reason}");
-                    // The browse-only reason is retained admission data.
-                    super::leaderboard_runtime::RankedPreFramePlan::browse_only(reason.to_string())
-                }
+        let stage = match loading.load_level(window, campaign, profiles, start, args) {
+            Ok(stage) => stage,
+            Err(error) => {
+                return InteractiveBuildOutcome::Finished(MissionOutcome::new(
+                    error.campaign,
+                    rng_seed,
+                    sim_config,
+                    Err(error.message),
+                ));
             }
         };
-        let mut stage =
-            match loading.load_level(window, campaign, profiles, start, args, ranked_plan) {
-                Ok(stage) => stage,
-                Err(error) => {
-                    return InteractiveBuildOutcome::Finished(MissionOutcome::new(
-                        error.campaign,
-                        rng_seed,
-                        sim_config,
-                        Err(error.message),
-                    ));
-                }
-            };
         timer.step("level load");
 
         stage.bootstrap.report_spellforge_startup();
         timer.step("spellforge startup");
-        stage
-            .bootstrap
-            .sign_ranked_session_before_frame_zero(args)
-            .await;
-        timer.step("ranked genesis signing");
+        if let Some(net) = stage.bootstrap.host.transport.net()
+            && let Err(error) = net.install_ranked_session_setup(None)
+        {
+            tracing::warn!("could not clear the transport's pre-game ranking slot: {error}");
+        }
         let stage = match stage.prepare_audio(profiles) {
             Ok(stage) => stage,
             Err((bootstrap, error)) => {
@@ -1895,10 +1813,6 @@ mod tests {
                 pre_decoded_ambience_minimaps: Vec::new(),
                 engine_rng_seed: 0,
                 engine_sim_config: sim_config,
-                ranked_admission:
-                    super::super::leaderboard_runtime::PreparedRankedAdmission::BrowseOnly {
-                        reason: "test fixture".into(),
-                    },
             },
             &crate::main_entry::MissionRequest::default(),
         )

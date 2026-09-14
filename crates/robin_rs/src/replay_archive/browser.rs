@@ -852,7 +852,6 @@ pub async fn prepare_directory(directory: &Path) -> Result<()> {
         // real revision before synchronous creation checks the cache, so a
         // retry rejects the collision without journaling a replacement.
         load_file(&directory.join(next_chunk), false).await?;
-        load_file(&directory.join("ranked.json"), false).await?;
         flush_pending().await
     }
     .await;

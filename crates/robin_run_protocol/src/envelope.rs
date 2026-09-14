@@ -822,7 +822,7 @@ fn validate_participants(
         return Err(ValidationError::EmptyPlayerCount);
     }
     if max_concurrent_players > participant_instance_count
-        || claims.len() != usize::from(participant_instance_count)
+        || claims.len() > usize::from(participant_instance_count)
     {
         return Err(ValidationError::TooManyParticipantClaims);
     }
@@ -1051,6 +1051,13 @@ impl Validate for SubmissionOfferRequestV1 {
                 .claim
                 .campaign_continuation_preflight_grant,
         ) {
+            (ScopeRequestV1::IndividualLevel, None, None)
+                if self
+                    .session_genesis
+                    .claim
+                    .ranked_session
+                    .recorded_replay
+                    .is_some() => {}
             (ScopeRequestV1::IndividualLevel, Some(grant), None) => {
                 grant.validate_offer_request(self, FreshRunScopeV1::IndividualLevel)?;
             }
@@ -1466,6 +1473,13 @@ impl Validate for SubmissionOfferV1 {
                 .claim
                 .campaign_continuation_preflight_grant,
         ) {
+            (InitialStateExpectationV1::IndividualLevel { .. }, None, None)
+                if self
+                    .session_genesis
+                    .claim
+                    .ranked_session
+                    .recorded_replay
+                    .is_some() => {}
             (InitialStateExpectationV1::IndividualLevel { .. }, Some(grant), None) => {
                 grant.validate_offer(self, FreshRunScopeV1::IndividualLevel)?;
             }
@@ -1859,6 +1873,19 @@ impl Validate for SubmissionEnvelopeV1 {
         self.offer.validate()?;
         self.replay_session_transcript.validate()?;
         self.artifacts.validate()?;
+        if self
+            .offer
+            .session_genesis
+            .claim
+            .ranked_session
+            .recorded_replay
+            .as_ref()
+            .is_some_and(|replay| replay != &self.artifacts.replay)
+        {
+            return Err(ValidationError::ClaimMismatch {
+                field: "submission.recorded_replay",
+            });
+        }
         let session_genesis_sha256 =
             self.offer.session_genesis.canonical_digest().map_err(|_| {
                 ValidationError::ClaimMismatch {
@@ -2251,9 +2278,8 @@ pub struct VerifiedRunV1 {
     pub participant_instance_count: u16,
     pub named_participant_instance_count: u16,
     pub anonymous_participant_instance_count: u16,
-    /// Every seat whose authenticated replay-session binding the verifier
-    /// matched to the co-signed submission. Anonymous display is disclosure
-    /// metadata only and never removes a key or required signature.
+    /// Account claims authenticated by the upload. Recorded seats without an
+    /// account claim are counted as anonymous participants.
     pub authenticated_participant_claims: Vec<ParticipantClaimV1>,
     pub replay_session_transcript: ReplaySessionTranscriptV1,
     pub outcome: TerminalOutcomeV1,
@@ -2326,7 +2352,7 @@ impl Validate for VerifiedRunV1 {
             .iter()
             .filter(|claim| claim.public_disclosure == ParticipantPublicDisclosureV1::NamedProfile)
             .count();
-        let anonymous_claims = self.authenticated_participant_claims.len() - named_claims;
+        let anonymous_claims = usize::from(self.participant_instance_count) - named_claims;
         if usize::from(self.named_participant_instance_count) != named_claims
             || usize::from(self.anonymous_participant_instance_count) != anonymous_claims
             || self

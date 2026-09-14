@@ -532,8 +532,9 @@ fn admit_authenticated_job(
     if ranked
         .validate_prepared_inputs_seal(preparation.seal())
         .is_err()
-        || preparation.run_projection_sha256().ok()
-            != Some(ranked.prepared_inputs_projection_sha256)
+        || ranked
+            .prepared_inputs_projection_sha256
+            .is_some_and(|expected| preparation.run_projection_sha256().ok() != Some(expected))
     {
         return authenticated_output_with_provenance(
             authenticated,
@@ -626,7 +627,7 @@ fn admit_authenticated_job(
         .filter(|claim| claim.public_disclosure == ParticipantPublicDisclosureV1::NamedProfile)
         .count() as u16;
     let anonymous_participant_instance_count =
-        claims.len() as u16 - named_participant_instance_count;
+        offer.participant_instance_count - named_participant_instance_count;
     let transcript = submission.replay_session_transcript.clone();
     let campaign_session = validated_config.config().campaign_session.as_ref();
     let scope_kind = offer.starting_state.scope_kind();
@@ -835,6 +836,11 @@ fn validate_canonical_campaign_start(
         .canonical_start_policy
         .requires_exact_operator_artifact();
     if !custom && !mission_setup {
+        anyhow::ensure!(
+            request.submission.submission.artifacts.starting_campaign
+                == template.canonical_campaign_state.artifact,
+            "replay starting campaign does not satisfy this board's starting conditions"
+        );
         return Ok(());
     }
     let documents = config.content().ordered_documents();
@@ -842,7 +848,17 @@ fn validate_canonical_campaign_start(
         .iter()
         .find(|document| document.kind == SimulationContentComponentKindV1::Profiles)
         .ok_or_else(|| anyhow::anyhow!("verified content has no Profiles component"))?;
-    if custom {
+    if custom
+        && request
+            .submission
+            .submission
+            .offer
+            .session_genesis
+            .claim
+            .ranked_session
+            .recorded_replay
+            .is_none()
+    {
         let actual = robin_engine::simulation_inputs::canonical_fresh_campaign_artifact_v1(
             &template.rules_config,
             profiles_document,
@@ -1191,6 +1207,26 @@ fn validate_replay_header_and_transcript(
     let offer = &submission.offer;
     let genesis = &offer.session_genesis.claim;
     let transcript = &submission.replay_session_transcript;
+    if genesis.ranked_session.recorded_replay.is_some() {
+        let derived = replay
+            .submission_transcript(
+                transcript.replay_session_id,
+                transcript.session_genesis_sha256,
+            )
+            .map_err(|_| {
+                (
+                    VerificationRejectionCodeV1::MalformedReplay,
+                    "replay_seat_events_invalid",
+                )
+            })?;
+        if &derived != transcript || transcript.replay_session_id != replay.submission_id() {
+            return Err((
+                VerificationRejectionCodeV1::CommandNotAllowed,
+                "replay_seat_events_mismatch",
+            ));
+        }
+    }
+
     validate_canonical_replay_shape(replay).map_err(|_| {
         (
             VerificationRejectionCodeV1::MalformedReplay,
@@ -1240,7 +1276,10 @@ fn validate_replay_header_and_transcript(
         .iter()
         .map(|claim| (claim.seat, claim.participant_instance_id))
         .collect::<Vec<_>>();
-    if transcript_participants != claims {
+    if claims
+        .iter()
+        .any(|claim| !transcript_participants.contains(claim))
+    {
         return Err((
             VerificationRejectionCodeV1::CommandNotAllowed,
             "ranked_transcript_participant_mismatch",

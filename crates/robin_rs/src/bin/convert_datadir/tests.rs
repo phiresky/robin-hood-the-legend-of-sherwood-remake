@@ -812,8 +812,9 @@ fn opaque_keyed_picture_avif_without_alpha_item_decodes_all_opaque() {
 }
 
 #[test]
-#[ignore = "requires ffmpeg with libopus"]
+#[ignore = "requires ffmpeg and ROBIN_OPUS_TOOLS_DIR (opusenc on libopus 1.6.1)"]
 fn opus_transcode_is_byte_deterministic() {
+    super::configure_test_opus_toolchain();
     let sample_rate = 8_000u32;
     let sample_count = 800u32;
     let mut wav = Vec::new();

@@ -29,8 +29,8 @@ const gameHost = 'robinhood.phiresky.xyz', signerHost = 'identity.robinhood.phir
 const gameOrigin = `https://${gameHost}`, signerOrigin = `https://${signerHost}`;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 // `--data` holds the published layout of the current Demo generation directory.
-const demoPrefix = '/datadirs/demo-leicester/v17/';
-const demoDatadirName = 'v17-web-opus-q80.rhdata.zst';
+const demoPrefix = '/datadirs/demo-leicester/v17r2/';
+const demoDatadirName = 'v17r2-web-opus-q80.rhdata.zst';
 const result = { source, chrome: execFileSync('google-chrome', ['--version'], { encoding: 'utf8' }).trim(),
     shellCheckout: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     runtime: pkg, data, softwareGpuRequested: true, isolationHeadersAdded: !!values.isolated,

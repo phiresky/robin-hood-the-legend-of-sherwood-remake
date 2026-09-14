@@ -6311,6 +6311,7 @@ dependencies = [
  "js-sys",
  "kira",
  "libc",
+ "libloading",
  "librashader",
  "lru 0.18.4",
  "mainline",

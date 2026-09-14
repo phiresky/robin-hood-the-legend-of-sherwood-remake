@@ -72,15 +72,17 @@ pub fn authenticate_verification_request(
     let signed = &request.submission;
     let offer = &signed.submission.offer;
     let genesis = &offer.session_genesis;
-    let genesis_bytes = genesis
-        .signing_bytes()
-        .map_err(|error| RequestAuthenticationError::Canonicalization(error.to_string()))?;
-    verify_ed25519(
-        "session_genesis",
-        genesis.claim.host_public_key,
-        genesis.host_signature,
-        &genesis_bytes,
-    )?;
+    if let Some(signature) = genesis.host_signature {
+        let genesis_bytes = genesis
+            .signing_bytes()
+            .map_err(|error| RequestAuthenticationError::Canonicalization(error.to_string()))?;
+        verify_ed25519(
+            "session_genesis",
+            genesis.claim.host_public_key,
+            signature,
+            &genesis_bytes,
+        )?;
+    }
     let session_genesis_sha256 = genesis
         .claim
         .canonical_digest()

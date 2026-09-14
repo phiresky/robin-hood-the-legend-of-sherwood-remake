@@ -138,6 +138,21 @@ struct Args {
     #[arg(long, value_enum, default_value_t = AudioFormat::Source)]
     audio_format: AudioFormat,
 
+    /// Shipping `--audio-format opus`: opus-tools prefix whose `bin/opusenc`
+    /// encodes all Opus audio. Its `--version` must report libopus 1.6.1; the
+    /// converter loads the libopus it resolves to check the version string and,
+    /// for every opusenc run, that the loader used exactly that file.
+    #[arg(long)]
+    opus_tools_dir: Option<PathBuf>,
+
+    /// Shipping `--audio-format opus`: directory of lossless remaster WAVs that
+    /// music encodes from. Which remaster belongs to which game track comes
+    /// from the tracked `convert_datadir/lossless_music_mapping.json`, selected
+    /// by the sha256 of the datadir's music files. Without this flag, music
+    /// encodes from the game sources.
+    #[arg(long)]
+    lossless_music_dir: Option<PathBuf>,
+
     /// Shipping: reorder every sprite dictionary by descending tile-index
     /// frequency and rewrite all VQ sprite indices to match. Invisible to
     /// the decoder (a consistent permutation), but the ranked index streams
@@ -359,6 +374,18 @@ fn main() -> Result<()> {
         }
         OutFormat::Hackable => Converter::new(data_in, data_out).run(),
         OutFormat::Shipping => {
+            if args.audio_format == AudioFormat::Opus {
+                let opus_tools_dir = args.opus_tools_dir.as_deref().with_context(|| {
+                    format!(
+                        "--audio-format opus requires --opus-tools-dir (opusenc on {REQUIRED_LIBOPUS_VERSION})"
+                    )
+                })?;
+                configure_opus_toolchain(opus_tools_dir)?;
+                let musics_dir = resolve_case_insensitive(&data_in.join("Musics"))
+                    .filter(|path| path.is_dir())
+                    .with_context(|| format!("no Musics directory in {}", data_in.display()))?;
+                configure_lossless_music(args.lossless_music_dir.as_deref(), &musics_dir)?;
+            }
             let web_content_edition = match (args.web_content_manifest, args.web_content_edition) {
                 (true, Some(edition)) => {
                     Some(validate_web_content_edition(&data_in, edition.into())?)
