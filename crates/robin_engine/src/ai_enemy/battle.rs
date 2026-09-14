@@ -136,27 +136,6 @@ fn battle_friend_primary_target(
 }
 
 impl EnemyAi {
-    pub(crate) fn enter_battle_reserve(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
-        self.enter_battle_reserve_with_multiplicity(ctx, tick, None);
-    }
-
-    fn enter_battle_reserve_with_multiplicity(
-        &mut self,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        target_multiplicity: Option<&std::collections::BTreeMap<HumanHandle, u32>>,
-    ) {
-        let target = self.get_new_primary_target_with_mult_override(
-            PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
-            ctx,
-            tick,
-            target_multiplicity,
-        );
-        self.base.primary_target = target;
-        self.base.outbox.actor.set_focus(target);
-        self.set_state_with_timer(AiState::Attacking, Substate::AttackingReserve, 50, ctx);
-    }
-
     // -----------------------------------------------------------------------
     // Attack nearby sleeping enemies
     // -----------------------------------------------------------------------

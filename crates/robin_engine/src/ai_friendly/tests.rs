@@ -127,23 +127,29 @@ fn civilian_return_to_duty() {
 fn civilian_panic_from_point() {
     let mut ai = FriendlyAi::new(1);
     ai.panic_from_point(100.0, 200.0, 8);
-    assert_eq!(ai.base.current_state, AiState::Fleeing);
-    assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
+    assert_eq!(ai.base.current_state, AiState::Default);
+    assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
     assert_eq!(ai.base.panic_center_x, 100.0);
     assert_eq!(ai.base.panic_center_y, 200.0);
-    assert_eq!(ai.base.lasting_panic_runs, 8);
-    assert!(ai.base.directed_panic);
-    assert_eq!(ai.base.current_music_alert_status, AlertLevel::Yellow);
+    assert_eq!(ai.base.lasting_panic_runs, 0);
+    let request = ai.base.outbox.actor.begin_panic.unwrap();
+    assert_eq!(request.runs, 8);
+    assert!(request.is_new_panic);
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
 }
 
 #[test]
-fn civilian_panic_undirected() {
+fn civilian_panic_undirected_preserves_runs_until_live_execution() {
     let mut ai = FriendlyAi::new(1);
+    ai.base.current_state = AiState::Fleeing;
+    ai.base.current_substate = Substate::FleeingPanic;
+    ai.base.lasting_panic_runs = 11;
     ai.panic_undirected(4);
-    assert_eq!(ai.base.current_state, AiState::Fleeing);
-    assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
-    assert_eq!(ai.base.lasting_panic_runs, 4);
+    assert_eq!(ai.base.lasting_panic_runs, 11);
     assert!(!ai.base.directed_panic);
+    let request = ai.base.outbox.actor.begin_panic.unwrap();
+    assert_eq!(request.runs, 4);
+    assert!(!request.is_new_panic);
 }
 
 #[test]
@@ -198,8 +204,9 @@ fn think_alerting_event_panic() {
 
     ai.think_alerting_event(sim, &stimulus, &AiContext::test_fixture(), None, None);
 
-    assert_eq!(ai.base.current_state, AiState::Fleeing);
-    assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
+    assert_eq!(ai.base.current_state, AiState::Default);
+    assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
+    assert!(ai.base.outbox.actor.begin_panic.unwrap().is_new_panic);
     assert_eq!(ai.base.panic_center_x, 50.0);
     assert_eq!(ai.base.panic_center_y, 75.0);
 }
@@ -532,8 +539,9 @@ fn think_unexpected_net_away_panics() {
     )
     .unwrap();
 
-    assert_eq!(ai.base.current_state, AiState::Fleeing);
-    assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
+    assert_eq!(ai.base.current_state, AiState::Default);
+    assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
+    assert!(ai.base.outbox.actor.begin_panic.unwrap().is_new_panic);
 }
 
 #[test]

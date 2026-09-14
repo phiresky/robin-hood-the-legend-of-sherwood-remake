@@ -32,36 +32,6 @@ fn approaching_new_enemy_is_close_enough(
 }
 
 impl EnemyAi {
-    /// Resolve the primary target inherited after reaching a phalanx slot.
-    ///
-    /// The original game tests the left combat-neighbour reference first, then the right,
-    /// and copies that soldier's target verbatim. A present neighbour whose
-    /// target is null therefore returns `Some(None)`; only the absence of both
-    /// soldier neighbours returns outer `None` and authorizes
-    /// primary-target replacement.
-    pub(super) fn phalanx_neighbour_primary_target(
-        &self,
-        tick: &AiPerTickData,
-    ) -> Option<Option<AiEntityHandle>> {
-        for neighbour in [self.left_combat_neighbour, self.right_combat_neighbour] {
-            let Some(neighbour) = neighbour else {
-                continue;
-            };
-            let fighter = self.required_fighter(
-                neighbour.get(),
-                tick,
-                format_args!(
-                    "combat neighbour {neighbour} missing from complete fighter registry for {}",
-                    self.base.me
-                ),
-            );
-            if fighter.is_soldier {
-                return Some(fighter.primary_target);
-            }
-        }
-        None
-    }
-
     // One dispatcher preserves the numeric Substate machine while the
     // implementations are owned by coherent state families. See
     // the original game's expected-event handling.
@@ -425,12 +395,6 @@ impl EnemyAi {
 
             Substate::WonderingDrinkingAle => self.wondering_drinking_ale(env, stimulus_type)?,
 
-            Substate::WonderingAppleSauceInTheVisor => {
-                self.wondering_apple_sauce_in_the_visor(stimulus_type, ctx)
-            }
-
-            Substate::WonderingHeardWhistling => self.wondering_heard_whistling(stimulus_type, ctx),
-
             Substate::WonderingWatchingTowerGuard => {
                 self.wondering_watching_tower_guard(env, stimulus_type)?
             }
@@ -439,22 +403,6 @@ impl EnemyAi {
 
             Substate::WonderingLooking3Sidewards => {
                 self.wondering_looking3_sidewards(env, stimulus_type)?
-            }
-
-            Substate::WonderingAppleReactiontime => {
-                self.wondering_apple_reactiontime(env, stimulus_type)?
-            }
-
-            Substate::WonderingAppleChasingChild => {
-                self.wondering_apple_chasing_child(stimulus_type, ctx)
-            }
-
-            Substate::WonderingAppleChasingChildWaiting => {
-                self.wondering_apple_chasing_child_waiting(stimulus_type, ctx)
-            }
-
-            Substate::WonderingAppleChasingChildEnd => {
-                self.wondering_apple_chasing_child_end(env, stimulus_type)?
             }
 
             Substate::WonderingRunningForMoney => {
@@ -505,10 +453,6 @@ impl EnemyAi {
 
             Substate::WonderingSoldierLookingOfficerWhoFinishedBrawl => {
                 self.wondering_soldier_looking_officer_who_finished_brawl(env, stimulus_type)?
-            }
-
-            Substate::WonderingWatchingWhistling => {
-                self.wondering_watching_whistling(env, stimulus_type, global)?
             }
 
             Substate::WonderingApproachingBrawlVictim => {
@@ -858,40 +802,6 @@ impl EnemyAi {
         Ok(false)
     }
 
-    fn wondering_apple_sauce_in_the_visor(
-        &mut self,
-        stimulus_type: StimulusType,
-        ctx: &AiContext,
-    ) -> bool {
-        if stimulus_type == StimulusType::EventTimer {
-            // `get_angry_about_apple(seek_position)`: the
-            // apple-origin position stashed when the apple
-            // first landed.
-            let pos = self.base.seek_position;
-            self.get_angry_about_apple(&pos, ctx);
-        }
-        false
-    }
-
-    // Heard whistling: face the source, transition to
-    // WatchingWhistling, launch 60-tick timer.  The
-    // decide-to-follow logic happens in the WatchingWhistling
-    // timer arm — we just stage here.
-
-    fn wondering_heard_whistling(&mut self, stimulus_type: StimulusType, ctx: &AiContext) -> bool {
-        if stimulus_type == StimulusType::EventTimer {
-            self.base
-                .face_position_3d_with_ctx(self.base.seek_position, ctx);
-            self.set_state_with_timer(
-                AiState::Wondering,
-                Substate::WonderingWatchingWhistling,
-                parameters_ai::AI_FIRST_LOOK_TIME as u32,
-                ctx,
-            );
-        }
-        false
-    }
-
     fn wondering_watching_tower_guard(
         &mut self,
         env: ThinkEnv<'_>,
@@ -930,125 +840,6 @@ impl EnemyAi {
         stimulus_type: StimulusType,
     ) -> crate::ai::AiFlow<bool> {
         if stimulus_type == StimulusType::EventDone {
-            self.return_to_duty_default(env)?;
-        }
-        Ok(false)
-    }
-
-    // Apple reaction: decide whether to chase, else return to duty.
-
-    fn wondering_apple_reactiontime(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, .. } = env;
-        if stimulus_type == StimulusType::EventTimer {
-            // Return to duty unless the apple reaction is enabled and a
-            // child can be chased. Outdoors, the profile's positive apple
-            // value enables that reaction.
-            let shall_react = self.soldier_profile_apple > 0;
-            let chased = shall_react && self.chase_childs(ctx);
-            if !chased {
-                self.return_to_duty_default(env)?;
-            }
-        }
-        Ok(false)
-    }
-
-    // Chase child who threw the apple; panic-run counter
-    // drives refreshes.
-
-    fn wondering_apple_chasing_child(
-        &mut self,
-        stimulus_type: StimulusType,
-        ctx: &AiContext,
-    ) -> bool {
-        match stimulus_type {
-                StimulusType::EventMyTalk1
-                    // antagonist.think(CallYourTalk1)
-                    if self.base.antagonist.is_some() => {
-                        let antagonist = self.required(self.base.antagonist, "an antagonist","chasing an apple-throwing child");
-                        self.base
-                            .outbox.reentrant.cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
-                                target: antagonist.get(),
-                                stimulus_type: StimulusType::CallYourTalk1,
-                                info: crate::ai::StimulusInfo::None,
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            });
-                    }
-                StimulusType::EventTimer => {
-                    if self.base.lasting_panic_runs > 0 {
-                        self.base.lasting_panic_runs -= 1;
-                        // Re-issue `go_near(sim, antagonist_pos, 5, RUN |
-                        // DONT_STOP)` from the same substate each
-                        // panic tick.  Our Shape 1 contract requires
-                        // every movement name its new substate (see
-                        // comment at fn go_near above), so route the
-                        // refresh through
-                        // `WonderingAppleChasingChildWaiting` — its
-                        // EventTimer transitions back to ChasingChild.
-                        // Issue an approach from here bundled with the
-                        // Waiting transition so the movement order
-                        // lives with its new substate.
-                        if let Some(view) = ctx.entity_view(self.base.antagonist) {
-                            self.go_near(                                AiState::Wondering,
-                                Substate::WonderingAppleChasingChildWaiting,
-                                view.position,
-                                5,
-                                crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::DONT_STOP,
-                                ctx,
-                            );
-                        }
-                        self.base.launch_timer(10, ctx.frame);
-                    } else {
-                        self.set_state(AiState::Wondering, Substate::WonderingAppleChasingChildEnd);
-                        // Face(antagonist)
-                        self.base.face_entity(self.base.antagonist, ctx);
-                        self.base.launch_timer(30, ctx.frame);
-                    }
-                }
-                StimulusType::EventReachPoint => {
-                    self.set_state_with_timer(
-                        AiState::Wondering,
-                        Substate::WonderingAppleChasingChildWaiting,
-                        10,
-                        ctx,
-                    );
-                }
-                _ => {}
-            }
-        false
-    }
-
-    // Waiting between chase refreshes.
-
-    fn wondering_apple_chasing_child_waiting(
-        &mut self,
-        stimulus_type: StimulusType,
-        ctx: &AiContext,
-    ) -> bool {
-        if stimulus_type == StimulusType::EventTimer {
-            self.set_state_with_timer(
-                AiState::Wondering,
-                Substate::WonderingAppleChasingChild,
-                1,
-                ctx,
-            );
-        }
-        false
-    }
-
-    // End of apple chase.
-
-    fn wondering_apple_chasing_child_end(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> crate::ai::AiFlow<bool> {
-        if stimulus_type == StimulusType::EventTimer {
             self.return_to_duty_default(env)?;
         }
         Ok(false)
@@ -1733,78 +1524,6 @@ impl EnemyAi {
         Ok(false)
     }
 
-    // Listening after whistling sound: decide whether to
-    // investigate or bail.
-
-    fn wondering_watching_whistling(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        if stimulus_type == StimulusType::EventTimer {
-            // ShallIFollowWhistle outdoor arm:
-            //   whistle > 1 && company_number != 100
-            let shall_follow = self.soldier_profile_whistle > 1 && self.company_number != 100;
-            if !shall_follow {
-                self.return_to_duty_default(env)?;
-                return Ok(false);
-            }
-
-            // Rank branch.
-            let rank = self.get_rank();
-            let mut near_officer: Option<NpcHandle> = None;
-            let mut look_for_soldiers = false;
-            match rank {
-                ProfileRank::Soldier => {
-                    near_officer =
-                        self.near_officer_who_is_wondering_about_the_same_noise(ctx, tick);
-                }
-                ProfileRank::Officer => {
-                    // ShallISendOutSoldier outdoor arm:
-                    //   initiative < 50 || patrol.len() > 0
-                    look_for_soldiers =
-                        self.soldier_profile_initiative < 50 || !self.base.patrol.is_empty();
-                }
-                ProfileRank::Knight | ProfileRank::None => {}
-            }
-
-            if let Some(officer) = near_officer {
-                // Face officer + transition to
-                // DefaultLookingOfficerForAdvice + ? emoticon
-                // + 100-tick timer.
-                self.base.face_entity(officer, ctx);
-                self.set_state(AiState::Default, Substate::DefaultLookingOfficerForAdvice);
-                self.base.set_emoticon(EmoticonType::QuestionMark);
-                self.base.launch_timer(100, ctx.frame);
-            } else if look_for_soldiers {
-                // Find a soldier to investigate the noise report.
-                self.officer_look_for_soldier(ReportType::Noise)?;
-            } else {
-                // Search around seek_position with radius
-                // (MAX_WHISTLE_SEEK_RADIUS * (whistle - 2)) / 98,
-                // walking and prioritizing the location.
-                const MAX_WHISTLE_SEEK_RADIUS: u32 = 400;
-                let whistle = self.soldier_profile_whistle as u32;
-                let radius = if whistle >= 2 {
-                    ((MAX_WHISTLE_SEEK_RADIUS * (whistle - 2)) / 98) as u16
-                } else {
-                    0
-                };
-                self.seek_area(
-                    env,
-                    self.base.seek_position,
-                    radius,
-                    SeekFlags::LOCATION_FIRST | SeekFlags::WALKING,
-                    UNDEFINED_DIRECTION,
-                    global,
-                )?;
-            }
-        }
-        Ok(false)
-    }
-
     // Watcher finishes looking at tower guard; back to duty.
 
     fn wondering_approaching_brawl_victim(&mut self, stimulus_type: StimulusType) -> bool {
@@ -1944,35 +1663,31 @@ impl EnemyAi {
             Substate::SeekingOfficerCallSoldier => self.seeking_officer_call_soldier(stimulus_type),
 
             Substate::SeekingOfficerWaitForSoldier => {
-                self.seeking_officer_wait_for_soldier(env, stimulus_type)?
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingOfficerInstructSoldier => {
-                self.seeking_officer_instruct_soldier(env, stimulus_type)?
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
-            Substate::SeekingOfficerWaitForInstructedSoldier => self
-                .seeking_officer_wait_for_instructed_soldier(
-                    stimulus,
-                    stimulus_type,
-                    global,
-                    env,
-                )?,
+            Substate::SeekingOfficerWaitForInstructedSoldier => {
+                unreachable!("officer rendezvous must execute through the engine")
+            }
 
             Substate::SeekingOfficerGetReportFromSoldier => {
                 unreachable!("report conversation must execute through the engine")
             }
 
             Substate::SeekingSoldierCalledByOfficer => {
-                self.seeking_soldier_called_by_officer(stimulus_type, ctx, tick)
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingSoldierGoToOfficer => {
-                self.seeking_soldier_go_to_officer(env, stimulus_type)?
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingSoldierGetInstructedByOfficer => {
-                self.seeking_soldier_get_instructed_by_officer(env, stimulus_type, global)?
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingSoldierReturnToOfficer => {
@@ -1984,43 +1699,43 @@ impl EnemyAi {
             }
 
             Substate::SeekingOfficerCallGroup => {
-                self.seeking_officer_call_group(stimulus_type, env)?
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingOfficerWaitForGroup => {
-                self.seeking_officer_wait_for_group(env, stimulus_type)?
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingOfficerInstructGroup => {
-                self.seeking_officer_instruct_group(stimulus_type, ctx)
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingOfficerInstructGroupPointing => {
-                self.seeking_officer_instruct_group_pointing(env, stimulus_type)?
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingOfficerWaitForInstructedGroup => {
-                self.seeking_officer_wait_for_instructed_group(env, stimulus, stimulus_type)?
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingOfficerWaitInsideHouseToInstructGroup => {
-                self.seeking_officer_wait_inside_house_to_instruct_group(stimulus_type, ctx)
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingOfficerLeavingHouseToInstructGroup => {
-                self.seeking_officer_leaving_house_to_instruct_group(stimulus_type, ctx)
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingGroupCalledByOfficer => {
-                self.seeking_group_called_by_officer(stimulus_type, ctx, tick)
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingGroupGoToOfficer => {
-                self.seeking_group_go_to_officer(env, stimulus_type)?
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingGroupGetInstructedByOfficer => {
-                self.seeking_group_get_instructed_by_officer(env, stimulus, stimulus_type, global)?
+                unreachable!("officer rendezvous must execute through the engine")
             }
 
             Substate::SeekingRunningToOfficer => {
@@ -2985,864 +2700,6 @@ impl EnemyAi {
                 });
         }
         false
-    }
-
-    fn seeking_officer_wait_for_soldier(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Officer waits for soldier to approach
-        match stimulus_type {
-            StimulusType::EventTimer => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "waiting for a called soldier",
-                );
-                let ant_substate = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get())
-                    .map(|cs| cs.ai_substate);
-                match ant_substate {
-                    Some(
-                        Substate::SeekingSoldierCalledByOfficer
-                        | Substate::SeekingSoldierGoToOfficer,
-                    ) => {
-                        self.face_npc(self.base.antagonist, ctx);
-                        self.base.launch_timer(20, ctx.frame);
-                    }
-                    _ => {
-                        self.return_to_duty_default(env)?;
-                    }
-                }
-            }
-            StimulusType::CallCoordinate => {
-                // Soldier has arrived and reported
-                self.set_state(AiState::Seeking, Substate::SeekingOfficerInstructSoldier);
-                self.base.point_to(self.base.alert_soldiers_point, ctx);
-                self.base.launch_timer(20, ctx.frame);
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    fn seeking_officer_instruct_soldier(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Officer instructs soldier via dialogue
-        match stimulus_type {
-            StimulusType::CallYourTalk1 => {
-                // Soldier said "What's your order, Sir?"
-                self.base
-                    .say_with_flags(Remark::OfficerSendsOutSoldier, SpeechFlags::MYTALK_1);
-            }
-            StimulusType::EventMyTalk1 => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "instructing a soldier",
-                );
-                // I said "Soldier! Examine this place!"
-                self.base
-                    .outbox
-                    .reentrant
-                    .cross_npc_actions
-                    .push(CrossNpcAction::SendStimulus {
-                        // Original directly calls
-                        // asks the antagonist to process CALL_YOURTALK_1 and
-                        // does not retry the call on the speaker.
-                        fallback_to_sender: None,
-                        to_whole_patrol: false,
-                        target: antagonist.get(),
-                        stimulus_type: StimulusType::CallYourTalk1,
-                        info: StimulusInfo::None,
-                    });
-            }
-            StimulusType::CallYourTalk2 => {
-                // Soldier said "Sir, yes, Sir!"
-                self.set_state(
-                    AiState::Seeking,
-                    Substate::SeekingOfficerWaitForInstructedSoldier,
-                );
-                self.missed_soldier_timer = 0;
-                self.base.launch_timer(30, ctx.frame);
-            }
-            StimulusType::EventTimer => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "waiting for an instructed soldier",
-                );
-                let ant_substate = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get())
-                    .map(|cs| cs.ai_substate);
-                if ant_substate == Some(Substate::SeekingSoldierGetInstructedByOfficer) {
-                    self.base.launch_timer(20, ctx.frame);
-                } else {
-                    self.return_to_duty_default(env)?;
-                }
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    fn seeking_officer_wait_for_instructed_soldier(
-        &mut self,
-        _stimulus: &Stimulus,
-        stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
-        env: ThinkEnv<'_>,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Officer waits for soldier to return from search
-        match stimulus_type {
-            StimulusType::CallYourTalk1 => {
-                self.base.say(Remark::OfficerAsksWhatsup);
-            }
-            StimulusType::EventTimer => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "waiting for an instructed soldier to return",
-                );
-                let ant = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get());
-                if let Some(ant) = ant {
-                    let alive_and_conscious = ctx
-                        .entity_view(ant.handle)
-                        .is_some_and(|view| !view.is_dead && !view.is_unconscious);
-                    let visible = alive_and_conscious
-                        && self.is_detecting_180_degrees(ant.handle as HumanHandle, ctx);
-                    if visible && ant.ai_state == AiState::Seeking {
-                        self.missed_soldier_timer = 0;
-                        self.base.launch_timer(30, ctx.frame);
-                    } else if visible {
-                        self.return_to_duty_default(env)?;
-                    } else {
-                        self.missed_soldier_timer += 1;
-                        if self.missed_soldier_timer > 100 {
-                            // Enough waiting — seek ourselves or alert soldiers
-                            if !self.alert_soldiers(
-                                ctx.position,
-                                0,
-                                env,
-                                AlertSoldiersFailureContinuation::SeekMissingInstructedSoldier,
-                            )? {
-                                self.seek_area(
-                                    env,
-                                    ctx.position,
-                                    parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
-                                    SeekFlags::LOCATION_FIRST | self.seek_flags,
-                                    UNDEFINED_DIRECTION,
-                                    global,
-                                )?;
-                            }
-                        }
-                    }
-                } else {
-                    self.missed_soldier_timer += 1;
-                    if self.missed_soldier_timer > 100 {
-                        // Enough waiting — seek ourselves or alert soldiers
-                        if !self.alert_soldiers(
-                            ctx.position,
-                            0,
-                            env,
-                            AlertSoldiersFailureContinuation::SeekMissingInstructedSoldier,
-                        )? {
-                            self.seek_area(
-                                env,
-                                ctx.position,
-                                parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
-                                SeekFlags::LOCATION_FIRST | self.seek_flags,
-                                UNDEFINED_DIRECTION,
-                                global,
-                            )?;
-                        }
-                    }
-                }
-            }
-            StimulusType::CallReport => {
-                unreachable!("report handoff must execute through the engine")
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    // -------- Soldier receives instructions from officer --------
-
-    fn seeking_soldier_called_by_officer(
-        &mut self,
-        stimulus_type: StimulusType,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> bool {
-        // Soldier called by officer, approach on timer
-        if stimulus_type == StimulusType::EventTimer {
-            let antagonist = self.required(
-                self.base.antagonist,
-                "an antagonist",
-                "approaching a calling officer",
-            );
-            let officer_pos = tick
-                .camp_soldiers
-                .iter()
-                .find(|cs| cs.handle == antagonist.get())
-                .map(|cs| cs.position)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "called soldier {} requires officer {} in the camp snapshot",
-                        self.base.me, antagonist
-                    )
-                });
-            self.go_near(
-                AiState::Seeking,
-                Substate::SeekingSoldierGoToOfficer,
-                officer_pos,
-                40,
-                // The original game's called-by-officer timer triggers
-                // approaches the antagonist's position within 40 units without
-                // `GOTO_RUN`; the separate return-to-officer path is
-                // the one that explicitly runs.
-                GotoFlags::empty(),
-                ctx,
-            );
-            self.base.launch_timer(20, ctx.frame);
-        }
-        false
-    }
-
-    fn seeking_soldier_go_to_officer(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Soldier walking to officer
-        match stimulus_type {
-            StimulusType::EventTimer => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "walking to a calling officer",
-                );
-                let ant_substate = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get())
-                    .map(|cs| cs.ai_substate);
-                if ant_substate == Some(Substate::SeekingOfficerWaitForSoldier) {
-                    self.base.launch_timer(20, ctx.frame);
-                } else {
-                    self.return_to_duty_default(env)?;
-                }
-            }
-            StimulusType::EventReachPoint => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "reaching a calling officer",
-                );
-                let ant_substate = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get())
-                    .map(|cs| cs.ai_substate);
-                if ant_substate == Some(Substate::SeekingOfficerWaitForSoldier) {
-                    self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::SendStimulus {
-                            fallback_to_sender: None,
-                            to_whole_patrol: false,
-                            target: antagonist.get(),
-                            stimulus_type: StimulusType::CallCoordinate,
-                            info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
-                        },
-                    );
-                    self.set_state_with_timer(
-                        AiState::Seeking,
-                        Substate::SeekingSoldierGetInstructedByOfficer,
-                        20,
-                        ctx,
-                    );
-                    self.base
-                        .say_with_flags(Remark::AwaitsOrders, SpeechFlags::MYTALK_1);
-                } else {
-                    self.return_to_duty_default(env)?;
-                }
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    fn seeking_soldier_get_instructed_by_officer(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Soldier receiving instructions from officer
-        match stimulus_type {
-            StimulusType::EventMyTalk1 => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "receiving officer instructions",
-                );
-                // I said "What's your order, Sir?"
-                self.base
-                    .outbox
-                    .reentrant
-                    .cross_npc_actions
-                    .push(CrossNpcAction::SendStimulus {
-                        // Direct antagonist Think; no sender fallback
-                        // in the Original conversation chain.
-                        fallback_to_sender: None,
-                        to_whole_patrol: false,
-                        target: antagonist.get(),
-                        stimulus_type: StimulusType::CallYourTalk1,
-                        info: StimulusInfo::None,
-                    });
-            }
-            StimulusType::CallYourTalk1 => {
-                // Officer said "Soldier! Examine this place!"
-                // Check if body was already examined
-                if self
-                    .base
-                    .detected_body
-                    .is_some_and(|body| self.already_seen_bodies.contains(&body.get()))
-                {
-                    let antagonist = self.required(
-                        self.base.antagonist,
-                        "an antagonist",
-                        "declining an already examined body",
-                    );
-                    // Already examined — skip search, return to officer
-                    self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::SendStimulus {
-                            // Direct antagonist Think; no sender
-                            // fallback in the Original.
-                            fallback_to_sender: None,
-                            to_whole_patrol: false,
-                            target: antagonist.get(),
-                            stimulus_type: StimulusType::CallYourTalk2,
-                            info: StimulusInfo::None,
-                        },
-                    );
-                    // Re-dispatch as reachpoint.
-                    self.set_state_with_timer(
-                        AiState::Seeking,
-                        Substate::SeekingSoldierReturnToOfficer,
-                        1,
-                        ctx,
-                    );
-                } else {
-                    self.base
-                        .say_with_flags(Remark::GiveOrReceiveOrder, SpeechFlags::MYTALK_2);
-                }
-            }
-            StimulusType::EventMyTalk2 => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "accepting officer instructions",
-                );
-                // I said "Sir, yes, Sir!"
-                // Original captures the officer's selected body before
-                // delivering CALL_YOURTALK_2, which can advance the
-                // officer's conversation state.
-                let officer = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get())
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "instructed soldier {} requires missing officer antagonist {}",
-                            self.base.me, antagonist
-                        )
-                    });
-                let body_handle = officer.detected_body;
-                self.base
-                    .outbox
-                    .reentrant
-                    .cross_npc_actions
-                    .push(CrossNpcAction::SendStimulus {
-                        // Direct antagonist Think; no sender fallback
-                        // in the Original conversation chain.
-                        fallback_to_sender: None,
-                        to_whole_patrol: false,
-                        target: antagonist.get(),
-                        stimulus_type: StimulusType::CallYourTalk2,
-                        info: StimulusInfo::None,
-                    });
-                // Add the body to our detection list so we don't
-                // re-react when detecting it later.
-                if let Some(body_handle) = body_handle {
-                    self.base.outbox.actor.add_detectable((
-                        ctx.entity_id(body_handle).unwrap_or_else(|| {
-                            panic!("CallYourTalk2 body {body_handle} has no typed live entity view")
-                        }),
-                        crate::element::DetectableType::Body,
-                    ));
-                }
-                self.current_task_priority = task_priority::SEEKING;
-                // Read alert_soldiers_point from officer
-                self.base.alert_soldiers_point = officer.alert_soldiers_point;
-                self.officers_position = officer.position;
-                self.seek_area(
-                    env,
-                    self.base.alert_soldiers_point,
-                    0,
-                    SeekFlags::LOCATION_FIRST | SeekFlags::REPORT_OFFICER_AFTER,
-                    UNDEFINED_DIRECTION,
-                    global,
-                )?;
-            }
-            StimulusType::EventTimer => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "waiting for officer instruction completion",
-                );
-                let ant_substate = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get())
-                    .map(|cs| cs.ai_substate);
-                if ant_substate == Some(Substate::SeekingOfficerInstructSoldier) {
-                    self.base.launch_timer(20, ctx.frame);
-                } else {
-                    self.return_to_duty_default(env)?;
-                }
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    // -------- Officer calls a group --------
-
-    fn seeking_officer_call_group(
-        &mut self,
-        stimulus_type: StimulusType,
-        env: ThinkEnv<'_>,
-    ) -> crate::ai::AiFlow<bool> {
-        if stimulus_type == StimulusType::EventTimer
-            && !self.alert_soldiers(
-                self.base.seek_position,
-                self.seek_flags.bits(),
-                env,
-                AlertSoldiersFailureContinuation::ReturnToDuty,
-            )?
-        {
-            self.return_to_duty_default(env)?;
-        }
-        Ok(false)
-    }
-
-    fn seeking_officer_wait_for_group(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Officer waits for group to assemble
-        if matches!(
-            stimulus_type,
-            StimulusType::CallCoordinate | StimulusType::EventTimer
-        ) {
-            // Check if anyone is still approaching
-            let mut wait_longer = false;
-            self.alerted_us.retain(|&handle| {
-                let substate = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == handle)
-                    .map(|cs| cs.ai_substate);
-                match substate {
-                    Some(
-                        Substate::SeekingGroupCalledByOfficer | Substate::SeekingGroupGoToOfficer,
-                    ) => {
-                        wait_longer = true;
-                        true // keep in list
-                    }
-                    Some(Substate::SeekingGroupGetInstructedByOfficer) => {
-                        true // arrived, keep
-                    }
-                    _ => false, // remove from list
-                }
-            });
-
-            if !wait_longer {
-                if !self.alerted_us.is_empty() {
-                    self.set_state_with_timer(
-                        AiState::Seeking,
-                        Substate::SeekingOfficerInstructGroup,
-                        10,
-                        ctx,
-                    );
-                } else {
-                    self.return_to_duty_default(env)?;
-                }
-            }
-        }
-        Ok(false)
-    }
-
-    fn seeking_officer_instruct_group(
-        &mut self,
-        stimulus_type: StimulusType,
-        ctx: &AiContext,
-    ) -> bool {
-        // Officer instructs group — point to position
-        if stimulus_type == StimulusType::EventTimer {
-            self.set_state(
-                AiState::Seeking,
-                Substate::SeekingOfficerInstructGroupPointing,
-            );
-            if self.base.my_reconnaissance_report.report_type == ReportType::MissedCharly {
-                self.base.say(Remark::OfficerSendsOutGroupForCharly);
-            } else {
-                self.base.say(Remark::OfficerSendsOutGroup);
-            }
-            self.base.point_to(self.base.seek_position, ctx);
-        }
-        false
-    }
-
-    fn seeking_officer_instruct_group_pointing(
-        &mut self,
-        _env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> crate::ai::AiFlow<bool> {
-        if stimulus_type == StimulusType::EventDone {
-            return Err(crate::ai::DutyCall {
-                flags: DutyFlags::empty(),
-                think_result: false,
-                tail: crate::ai::DutyTail::OfficerInstructGroup,
-                after: Vec::new(),
-            });
-        }
-        Ok(false)
-    }
-
-    fn seeking_officer_wait_for_instructed_group(
-        &mut self,
-        env: ThinkEnv<'_>,
-        _stimulus: &Stimulus,
-        stimulus_type: StimulusType,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, .. } = env;
-        // Officer waits for group to report back.
-        match stimulus_type {
-            StimulusType::CallReport => {
-                unreachable!("report handoff must execute through the engine")
-            }
-            StimulusType::EventTimer => {
-                // Check if there are still seeking soldiers
-                self.alerted_us.retain(|&handle| {
-                    let member = ctx.entity_view(handle).unwrap_or_else(|| {
-                        panic!(
-                            "officer waiting for instructed group requires alerted soldier {handle} view"
-                        )
-                    });
-                    assert!(
-                        member.is_soldier(),
-                        "officer alerted_us handle {handle} resolved to non-soldier {:?}",
-                        member.kind
-                    );
-                    let substate = member.ai_substate;
-                    matches!(
-                        substate,
-                        Substate::SeekingSeekpoint
-                                | Substate::SeekingSeekpointWatching
-                                | Substate::SeekingSeekpointWatchingSidewards
-                                | Substate::SeekingSeekpointPassedAmbushPointLeft
-                                | Substate::SeekingSeekpointPassedAmbushPointRight
-                                | Substate::SeekingSeekpointCheckingAmbushPoint
-                                | Substate::SeekingSeekpointApproachingBeggar
-                                | Substate::SeekingSeekpointIdentifyingBeggar1
-                                | Substate::SeekingSeekpointIdentifyingBeggar2
-                                | Substate::SeekingSoldierReturnToOfficer
-                                | Substate::SeekingSoldierGiveReportToOfficer
-                                | Substate::SeekingRunningToOfficer
-                                | Substate::SeekingRunningToOfficerSeen
-                                | Substate::SeekingBodyReactiontime
-                                | Substate::SeekingBody
-                                | Substate::SeekingNet
-                                | Substate::SeekingBodyLookingDeadBody
-                                | Substate::SeekingBodyAwakeningSleeperr
-                                | Substate::SeekingDetectedCharly
-                    )
-                });
-
-                if self.alerted_us.is_empty() {
-                    let report = &self.base.my_reconnaissance_report;
-                    if report.report_type == ReportType::MissedCharly
-                        && let Some(charly_handle) = report.charly
-                    {
-                        let charly = ctx.entity_view(charly_handle).unwrap_or_else(|| {
-                            panic!(
-                                "officer waiting for instructed group requires Charly {} view",
-                                charly_handle
-                            )
-                        });
-                        if matches!(
-                            charly.ai_substate,
-                            Substate::SeekingCharlySentToOfficer
-                                | Substate::SeekingCharlyGoToOfficer
-                        ) {
-                            self.base.launch_timer(30, ctx.frame);
-                            return Ok(false);
-                        }
-                    }
-                    self.return_to_duty_default(env)?;
-                } else {
-                    self.base.launch_timer(30, ctx.frame);
-                }
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    // -------- Officer alerted group inside house --------
-
-    fn seeking_officer_wait_inside_house_to_instruct_group(
-        &mut self,
-        stimulus_type: StimulusType,
-        ctx: &AiContext,
-    ) -> bool {
-        if stimulus_type == StimulusType::EventTimer {
-            self.set_state(
-                AiState::Seeking,
-                Substate::SeekingOfficerLeavingHouseToInstructGroup,
-            );
-            self.base
-                .go_to(self.gather_position, GotoFlags::empty(), ctx);
-        }
-        false
-    }
-
-    fn seeking_officer_leaving_house_to_instruct_group(
-        &mut self,
-        stimulus_type: StimulusType,
-        ctx: &AiContext,
-    ) -> bool {
-        match stimulus_type {
-            StimulusType::EventReachPoint => {
-                self.base.face_direction(self.gather_direction, ctx);
-            }
-            StimulusType::EventDone => {
-                self.set_state_with_timer(
-                    AiState::Seeking,
-                    Substate::SeekingOfficerWaitForGroup,
-                    1,
-                    ctx,
-                );
-            }
-            _ => {}
-        }
-        false
-    }
-
-    // -------- Group called by officer --------
-
-    fn seeking_group_called_by_officer(
-        &mut self,
-        stimulus_type: StimulusType,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> bool {
-        if stimulus_type == StimulusType::EventTimer {
-            if self.gather_position_instructed {
-                // The original game starts raw movement first and performs exactly one
-                // state change below. Using EnemyAi::go_to here adds a hidden
-                // same-state update before the movement, which publishes a
-                // spurious attentive-mode request and changes the later
-                // ReachPoint -> Turn sequence ordering.
-                self.base.go_to(self.gather_position, GotoFlags::RUN, ctx);
-            } else {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "joining a called officer group",
-                );
-                let officer_pos = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get())
-                    .map(|cs| cs.position)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "called group member {} requires officer {} in the camp snapshot",
-                            self.base.me, antagonist
-                        )
-                    });
-                self.base.go_near(
-                    officer_pos,
-                    parameters_ai::AI_TALK_DISTANCE,
-                    GotoFlags::RUN,
-                    ctx,
-                );
-            }
-            self.set_state_with_timer(AiState::Seeking, Substate::SeekingGroupGoToOfficer, 20, ctx);
-        }
-        false
-    }
-
-    fn seeking_group_go_to_officer(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        match stimulus_type {
-            StimulusType::EventTimer => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "travelling to a group officer",
-                );
-                let ant_substate = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get())
-                    .map(|cs| cs.ai_substate);
-                match ant_substate {
-                    Some(
-                        Substate::SeekingOfficerWaitForGroup
-                        | Substate::SeekingDetectedCharly
-                        | Substate::SeekingOfficerWaitInsideHouseToInstructGroup
-                        | Substate::SeekingOfficerLeavingHouseToInstructGroup,
-                    ) => {
-                        self.base.launch_timer(20, ctx.frame);
-                    }
-                    _ => {
-                        self.return_to_duty_default(env)?;
-                    }
-                }
-            }
-            StimulusType::EventReachPoint => {
-                if self.gather_position_instructed {
-                    // The original game's facing logic keys its same-direction shortcut on the
-                    // actor's live action state, independently of whether the
-                    // ReachPoint arrived recursively. In particular, a movement request
-                    // which was already at its destination retains either the
-                    // pre-existing Waiting state (shortcut to EventDone) or a
-                    // non-waiting state (author a Turn).
-                    self.base.face_direction(self.gather_direction, ctx);
-                } else {
-                    self.face_npc(self.base.antagonist, ctx);
-                }
-            }
-            StimulusType::EventDone => {
-                let antagonist = self.required(
-                    self.base.antagonist,
-                    "an antagonist",
-                    "finishing travel to a group officer",
-                );
-                let ant_substate = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get())
-                    .map(|cs| cs.ai_substate);
-                match ant_substate {
-                    Some(
-                        Substate::SeekingOfficerWaitForGroup
-                        | Substate::SeekingDetectedCharly
-                        | Substate::SeekingOfficerWaitInsideHouseToInstructGroup
-                        | Substate::SeekingOfficerLeavingHouseToInstructGroup,
-                    ) => {
-                        self.set_state(
-                            AiState::Seeking,
-                            Substate::SeekingGroupGetInstructedByOfficer,
-                        );
-                        self.base.outbox.reentrant.cross_npc_actions.push(
-                            CrossNpcAction::SendStimulus {
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                                target: antagonist.get(),
-                                stimulus_type: StimulusType::CallCoordinate,
-                                info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
-                            },
-                        );
-                    }
-                    _ => {
-                        self.return_to_duty_default(env)?;
-                    }
-                }
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    fn seeking_group_get_instructed_by_officer(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus: &Stimulus,
-        stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Group member receives seek instruction
-        if stimulus_type == StimulusType::CallInstruction
-            && let StimulusInfo::Hint(ref hint) = stimulus.info
-        {
-            self.base.alert_soldiers_point = hint.seek_point;
-            self.officers_position = tick
-                .camp_soldiers
-                .iter()
-                .find(|cs| cs.handle == hint.who_tells_me.get())
-                .map(|cs| cs.position)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "instructed group member {} requires officer {} in the camp snapshot",
-                        self.base.me, hint.who_tells_me
-                    )
-                });
-            // Push a 30-frame THIS_GUY-scoped forbid so this
-            // NPC doesn't also auto-speak the same line when
-            // the group-instruction chain re-enters
-            // SeekingSoldierGiveReportToOfficer.  THIS_GUY
-            // scope matches on `guy_index` only, so
-            // `speech_id=0` is harmless here.
-            self.forbid_remark(
-                global,
-                Remark::TellsOfficerNothing,
-                30,
-                crate::ai::RemarkTargetFlags::THIS_GUY.bits(),
-                0,
-                ctx.original_creation_order
-                    .expect("remark suppression requires the AI owner's game creation order"),
-                ctx.frame,
-            );
-            self.seek_area(
-                env,
-                hint.seek_point,
-                parameters_ai::AI_HINT_SEEK_RADIUS as u16,
-                SeekFlags::from_bits_truncate(hint.seek_flags),
-                UNDEFINED_DIRECTION,
-                global,
-            )
-            .map_err(|duty| duty.with_think_result(true))?;
-            return Ok(true);
-        }
-        Ok(false)
     }
 
     // -------- Soldier alerts officer --------

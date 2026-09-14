@@ -8,6 +8,268 @@ use crate::ai::{AiEntityHandle, AiState, EmoticonType, GotoFlags, Position, Rema
 use crate::ai_enemy::{PrimaryTargetFlags, archer};
 
 impl EngineInner {
+    pub(in crate::engine) fn execute_ai_shield_expected_event(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        event: crate::ai::StimulusType,
+    ) -> bool {
+        use crate::ai::StimulusType;
+        let substate = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("shield event"))
+            .current_substate;
+        match (substate, event) {
+            (Substate::AttackingProtectingWithShield, StimulusType::EventTimer) => {
+                self.execute_ai_protecting_shield_timer(sim, assets, owner);
+            }
+            (Substate::AttackingAdvancingWithShield, StimulusType::EventDone) => {
+                let target = self.shield_primary(owner);
+                let destination = self.live_ai_position(target);
+                self.duty_go_near(
+                    sim,
+                    assets,
+                    owner,
+                    destination,
+                    archer::MIN_PROTECT_ARROW_DISTANCE / 2,
+                    GotoFlags::RUN,
+                );
+                self.shield_timer(owner, 10);
+            }
+            (Substate::AttackingRunningToPhalanx, StimulusType::EventReachPoint) => {
+                let direction = self
+                    .world
+                    .entities
+                    .expect_enemy_ai(owner, format_args!("phalanx arrival direction"))
+                    .shield_bearer_direction;
+                self.duty_face_direction(sim, assets, owner, direction);
+            }
+            (Substate::AttackingRunningToPhalanx, StimulusType::EventDone) => {
+                self.execute_ai_phalanx_arrival(sim, assets, owner);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn shield_timer(&mut self, owner: EntityId, delay: u32) {
+        self.world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("shield event timer"))
+            .launch_timer(delay, self.control.frame_counter);
+    }
+
+    fn shield_primary(&self, owner: EntityId) -> EntityId {
+        let target = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("shield primary target"))
+            .primary_target
+            .expect("shield action requires a primary target");
+        self.expect_human_id_for_ai_handle(target.get(), "shield primary target")
+    }
+
+    fn shield_raise_at_primary(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        let target = self.shield_primary(owner);
+        let point = self
+            .expect_entity(target, "shield danger point")
+            .element_data()
+            .position();
+        self.world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("raise shield"))
+            .raise_shield_world(point);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+    }
+
+    fn shield_focus_primary(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("shield focus"));
+        ai.outbox.actor.set_focus(ai.primary_target);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+    }
+
+    fn execute_ai_protecting_shield_timer(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        let action = self
+            .expect_entity(owner, "protecting shield action")
+            .actor_data()
+            .expect("shield actor")
+            .action_state;
+        if !matches!(
+            action,
+            crate::element::ActionState::HoldingShield
+                | crate::element::ActionState::ParryingShield
+        ) {
+            self.shield_raise_at_primary(sim, assets, owner);
+            self.shield_timer(owner, 20);
+            return;
+        }
+        let ai = self
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("shield links"));
+        if ai.left_combat_neighbour.is_some() || ai.right_combat_neighbour.is_some() {
+            self.duty_set_state(
+                sim,
+                assets,
+                owner,
+                AiState::Attacking,
+                Substate::AttackingPhalanx,
+            );
+            self.shield_focus_primary(sim, assets, owner);
+            self.shield_timer(owner, 5);
+            return;
+        }
+        let archer_behind = ai.archer_behind_me.is_some();
+        if ai.base.primary_target.is_none() {
+            let target =
+                self.select_live_ai_primary_target(owner, PrimaryTargetFlags::VIPS_ALLOWED);
+            self.world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("replacement shield target"))
+                .primary_target = target;
+        }
+        let target = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("shield target after selection"))
+            .primary_target;
+        let Some(target) = target else {
+            if archer_behind {
+                tracing::error!(
+                    ?owner,
+                    "shield bearer protecting an archer has no primary target"
+                );
+            }
+            self.execute_ai_get_battle_overview(sim, assets, owner, 0);
+            return;
+        };
+        let target = self.expect_human_id_for_ai_handle(target.get(), "shield danger target");
+        if archer_behind {
+            let position = self.live_ai_position(target);
+            let origin = self.live_ai_position(owner);
+            let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+                position.x - origin.x,
+                position.y - origin.y,
+            ) as u16;
+            self.world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("protecting archer direction"))
+                .set_direction_goal(direction);
+            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("protecting archer shield"))
+                .outbox
+                .actor
+                .refresh_shield = true;
+            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.shield_timer(owner, 30);
+        } else if self
+            .expect_entity(target, "shield target action")
+            .actor_data()
+            .expect("shield target actor")
+            .action_state
+            .is_bow()
+        {
+            if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::ShieldAdvance, 0..4) == 0 {
+                self.duty_set_state(
+                    sim,
+                    assets,
+                    owner,
+                    AiState::Attacking,
+                    Substate::AttackingAdvancingWithShield,
+                );
+                self.world
+                    .entities
+                    .expect_ai_controller_mut(owner, format_args!("lower shield to advance"))
+                    .lower_shield();
+                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            } else {
+                self.shield_timer(owner, 10);
+            }
+        } else {
+            self.execute_ai_get_battle_overview(sim, assets, owner, 0);
+        }
+    }
+
+    fn live_phalanx_neighbour_target(&self, owner: EntityId) -> Option<Option<AiEntityHandle>> {
+        let ai = self
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("phalanx neighbour target"));
+        for neighbour in [ai.left_combat_neighbour, ai.right_combat_neighbour]
+            .into_iter()
+            .flatten()
+        {
+            let id = self.expect_human_id_for_ai_handle(neighbour.get(), "phalanx neighbour");
+            if matches!(
+                self.expect_entity(id, "phalanx neighbour kind"),
+                Entity::Soldier(_)
+            ) {
+                return Some(
+                    self.world
+                        .entities
+                        .expect_ai_controller(id, format_args!("phalanx neighbour primary"))
+                        .primary_target,
+                );
+            }
+        }
+        None
+    }
+
+    fn execute_ai_phalanx_arrival(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        let target = self
+            .live_phalanx_neighbour_target(owner)
+            .unwrap_or_else(|| {
+                tracing::error!(?owner, "phalanx arrival has no soldier neighbour");
+                self.select_live_ai_primary_target(owner, PrimaryTargetFlags::empty())
+            });
+        self.world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("phalanx arrival primary"))
+            .primary_target = target;
+        if target.is_none() {
+            tracing::error!(?owner, "phalanx arrival has no primary target");
+            self.execute_battle_decisions(sim, assets, owner);
+            return;
+        }
+        self.duty_set_state(
+            sim,
+            assets,
+            owner,
+            AiState::Attacking,
+            Substate::AttackingPhalanx,
+        );
+        self.shield_raise_at_primary(sim, assets, owner);
+        self.shield_focus_primary(sim, assets, owner);
+        self.shield_timer(owner, 20);
+    }
+
     pub(in crate::engine) fn execute_ai_advancing_shield_timer(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

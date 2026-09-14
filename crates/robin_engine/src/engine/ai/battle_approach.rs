@@ -1225,6 +1225,12 @@ mod tests {
                 .element_data_mut()
                 .set_position(WorldPoint3D::new(x, y, 0.0));
             entity.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
+            entity
+                .position_iface_mut()
+                .set_move_box(crate::coordinates::MoveBox::from_corners(
+                    crate::coordinates::MapVec::new(-10.0, -5.0),
+                    crate::coordinates::MapVec::new(10.0, 5.0),
+                ));
         }
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);

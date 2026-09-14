@@ -160,7 +160,6 @@ fn attack_enemy_prefers_matching_position_snapshot_over_fighter_geometry() {
     };
     let mut tick = AiPerTickData::stub();
     tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(252));
-    tick.primary_target_position = Some(authoritative);
     tick.nearby_fighters.push(FighterSnapshot {
         handle: 252,
         position: stale_fighter_position,
@@ -214,12 +213,6 @@ fn attack_enemy_retarget_uses_live_exact_sector_over_number_only_fighter_snapsho
     };
     let mut tick = AiPerTickData::stub();
     tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(282));
-    tick.primary_target_position = Some(Position {
-        x: 900.0,
-        y: 1800.0,
-        sector: crate::position_interface::SectorHandle::new(0),
-        level: 0,
-    });
     tick.nearby_fighters.push(FighterSnapshot {
         handle: 137,
         position: number_only,

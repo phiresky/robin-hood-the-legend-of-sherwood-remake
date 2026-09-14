@@ -9,6 +9,7 @@
 //!  - [`cross_npc_actions`] closes synchronous interactions between NPCs.
 
 mod alert_execution;
+mod archery_execution;
 mod battle_approach;
 mod battle_archery;
 mod battle_cover;
@@ -36,6 +37,7 @@ mod initialization;
 mod live_visibility;
 mod macro_execution;
 mod money_execution;
+mod officer_rendezvous_execution;
 mod owner_scheduling;
 mod patrol_assembly;
 mod patrol_coordination;
@@ -46,6 +48,7 @@ mod seek_execution;
 mod shot_selection;
 mod swordfight_candidates;
 mod swordfight_execution;
+mod wondering_execution;
 #[cfg(test)]
 pub(crate) use detection::capture_heard_callbacks;
 pub(crate) use detection::debug_detectable_mutation_load_snapshot;
@@ -613,66 +616,6 @@ fn directed_panic_center_is_in_front(
     face_x * dx + face_y * crate::position_interface::ASPECT_RATIO * dy > 0.0
 }
 
-/// Collapse the conservative state staged by the pure-AI panic half back to
-/// its outgoing state. The engine's door/no-door arm immediately replaces it
-/// with the single state change which Original exposes to scripts.
-fn fold_new_panic_placeholder(
-    ai: &mut crate::ai::AiController,
-    request: &crate::ai::PanicRequest,
-) -> bool {
-    if !request.is_new_panic {
-        return false;
-    }
-    let Some(index) = ai.outbox.reentrant.owner_work.iter().rposition(|work| {
-        matches!(
-            work,
-            crate::ai::AiOwnerWork::StateChange(change)
-                if change.incoming_state == crate::ai::AiState::Fleeing
-                    && change.incoming_substate == crate::ai::Substate::FleeingPanic
-        )
-    }) else {
-        return false;
-    };
-    let crate::ai::AiOwnerWork::StateChange(mut staged) =
-        ai.outbox.reentrant.owner_work.remove(index)
-    else {
-        unreachable!("rposition selected a non-state panic work item")
-    };
-    let folded = fold_new_panic_notification(ai, request, &staged);
-    if folded && let Some(prefix) = staged.actor_effects_before_callback.take() {
-        // The synthetic state callback is hidden, but calls authored before
-        // it are still real. In particular, enemy battle planning begins
-        // by clearing focus, which must remain ahead of panic's resolved
-        // state-change callback.
-        ai.outbox
-            .reentrant
-            .owner_work
-            .insert(index, crate::ai::AiOwnerWork::ActorEffects(prefix));
-    }
-    folded
-}
-
-pub(super) fn fold_new_panic_notification(
-    ai: &mut crate::ai::AiController,
-    request: &crate::ai::PanicRequest,
-    staged: &crate::ai::AiStateChangeNotification,
-) -> bool {
-    if !request.is_new_panic
-        || staged.incoming_state != crate::ai::AiState::Fleeing
-        || staged.incoming_substate != crate::ai::Substate::FleeingPanic
-    {
-        return false;
-    }
-    assert_eq!(
-        (ai.current_state, ai.current_substate),
-        (staged.incoming_state, staged.incoming_substate),
-        "new panic placeholder was superseded before its synchronous door lookup"
-    );
-    ai.set_ai_state(staged.outgoing_state);
-    ai.current_substate = staged.outgoing_substate;
-    true
-}
-
 #[cfg(test)]
 mod directed_panic_front_tests {
     use super::*;
@@ -714,6 +657,63 @@ mod panic_boundary_tests {
         ActorData, ActorPc, ActorSoldier, AiActorData, AiBrain, ElementData, ElementKind,
         HumanData, NpcData, PcData, Posture, SoldierData,
     };
+
+    #[test]
+    fn panic_door_search_rereads_locks_occupants_and_wrapped_distance() {
+        use crate::coordinates::MapPoint;
+        use crate::fast_find_grid::{GridSector, SectorIndex};
+        use crate::gate::{Door, DoorType, GateType};
+        use crate::sector::{BuildingIdx, SectorNumber, SectorType};
+        let mut engine = EngineInner::new();
+        let owner = engine.add_test_entity(enemy_soldier());
+        let pc = engine.add_test_entity(enemy_ai_hero());
+        for index in 0..2usize {
+            let sector = GridSector {
+                points: vec![],
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: SectorType::MOTION | SectorType::AREA | SectorType::BUILDING,
+                layer: 0,
+                sector_number: SectorNumber::new(index as i16 + 1),
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: BuildingIdx::new(index as u16),
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: vec![],
+                gate_indices: vec![],
+                underlying_sector: None,
+            };
+            let level = engine.world.fast_grid_mut().level_mut();
+            level.sector_number_map.insert(sector.sector_number, index);
+            level.sectors.push(sector);
+            engine.script_domains.interactables.doors.push(Door {
+                gate_type: GateType::Door,
+                door_type: DoorType::Building,
+                point_out: MapPoint::new(10.0 + index as f32 * 10.0, 0.0),
+                sector_in: SectorNumber::new(index as i16 + 1),
+                sector_in_index: SectorIndex::new(index as u32),
+                ..Door::default()
+            });
+        }
+        engine.script_domains.buildings.occupants = vec![vec![], vec![]];
+        assert_eq!(engine.nearest_panic_door(owner, None), Some(0));
+        engine.script_domains.interactables.doors[0].locked_npc_villain = true;
+        assert_eq!(engine.nearest_panic_door(owner, None), Some(1));
+        engine.script_domains.interactables.doors[0].locked_npc_villain = false;
+        engine.script_domains.buildings.occupants[0]
+            .push(crate::natives::ScriptHandleCodec::actor_handle(pc));
+        assert_eq!(engine.nearest_panic_door(owner, None), Some(1));
+        engine.script_domains.buildings.occupants[0].clear();
+        engine.script_domains.interactables.doors[1].point_out.x = 65_040.0;
+        assert_eq!(
+            engine.nearest_panic_door(owner, None),
+            Some(1),
+            "the sector penalty wraps the sixteen-bit score"
+        );
+    }
 
     fn enemy_soldier() -> Entity {
         let enemy_ai = crate::ai_enemy::EnemyAi {
@@ -821,14 +821,7 @@ mod panic_boundary_tests {
             is_new_panic: true,
         };
 
-        engine.begin_panic_no_door_branch(
-            &sim,
-            &assets,
-            pc_id,
-            &request,
-            &AiContext::test_fixture(),
-            false,
-        );
+        engine.begin_panic_no_door_branch(&sim, &assets, pc_id, &request, false);
 
         let ai = engine
             .get_entity(pc_id)
@@ -839,51 +832,18 @@ mod panic_boundary_tests {
     }
 
     #[test]
-    fn new_panic_exposes_only_the_resolved_state_transition_to_scripts() {
+    fn new_panic_request_keeps_outgoing_state_until_live_door_selection() {
         let mut friendly = crate::ai_friendly::FriendlyAi::new(1);
         friendly.base.outbox.actor.set_unfocus();
-        friendly.set_state(
-            crate::ai::AiState::Fleeing,
-            crate::ai::Substate::FleeingPanic,
-        );
-        let request = crate::ai::PanicRequest {
-            center: None,
-            runs: 8,
-            alert: crate::ai::AlertLevel::Red,
-            is_new_panic: true,
-        };
-
-        assert!(fold_new_panic_placeholder(&mut friendly.base, &request));
+        friendly.panic_undirected(8);
         assert_eq!(friendly.base.current_state, crate::ai::AiState::Default);
         assert_eq!(
             friendly.base.current_substate,
             crate::ai::Substate::DefaultOnPost
         );
-        let [crate::ai::AiOwnerWork::ActorEffects(prefix)] =
-            friendly.base.outbox.reentrant.owner_work.as_slice()
-        else {
-            panic!("folded panic must retain the actor-effect prefix")
-        };
-        assert!(prefix.unfocus);
-
-        friendly.set_state(
-            crate::ai::AiState::Fleeing,
-            crate::ai::Substate::FleeingRunToDoor,
-        );
-        let [
-            crate::ai::AiOwnerWork::ActorEffects(_),
-            crate::ai::AiOwnerWork::StateChange(change),
-        ] = friendly.base.outbox.reentrant.owner_work.as_slice()
-        else {
-            panic!("resolved panic must preserve its prefix and expose exactly one state callback")
-        };
-        assert_eq!(change.outgoing_state, crate::ai::AiState::Default);
-        assert_eq!(change.outgoing_substate, crate::ai::Substate::DefaultOnPost);
-        assert_eq!(change.incoming_state, crate::ai::AiState::Fleeing);
-        assert_eq!(
-            change.incoming_substate,
-            crate::ai::Substate::FleeingRunToDoor
-        );
+        assert!(friendly.base.outbox.reentrant.owner_work.is_empty());
+        assert!(friendly.base.outbox.actor.unfocus);
+        assert!(friendly.base.outbox.actor.begin_panic.unwrap().is_new_panic);
     }
 
     #[test]
@@ -945,14 +905,7 @@ mod panic_boundary_tests {
             is_new_panic: true,
         };
 
-        engine.begin_panic_no_door_branch(
-            &sim,
-            &assets,
-            npc_id,
-            &request,
-            &AiContext::test_fixture(),
-            false,
-        );
+        engine.begin_panic_no_door_branch(&sim, &assets, npc_id, &request, false);
 
         let ai = engine.get_entity(npc_id).unwrap().ai_controller().unwrap();
         assert_eq!(ai.current_state, crate::ai::AiState::Fleeing);
@@ -985,14 +938,7 @@ mod panic_boundary_tests {
             is_new_panic: false,
         };
 
-        engine.begin_panic_no_door_branch(
-            &sim,
-            &LevelAssets::default(),
-            npc_id,
-            &request,
-            &AiContext::test_fixture(),
-            false,
-        );
+        engine.begin_panic_no_door_branch(&sim, &LevelAssets::default(), npc_id, &request, false);
 
         let ai = engine.get_entity(npc_id).unwrap().ai_controller().unwrap();
         assert_eq!(ai.current_state, crate::ai::AiState::Fleeing);
@@ -1025,14 +971,7 @@ mod panic_boundary_tests {
         };
 
         let (_, draws) = crate::sim_rng::with_draw_trace(|| {
-            engine.begin_panic_no_door_branch(
-                &sim,
-                &assets,
-                npc_id,
-                &request,
-                &AiContext::test_fixture(),
-                false,
-            );
+            engine.begin_panic_no_door_branch(&sim, &assets, npc_id, &request, false);
         });
 
         assert!(
@@ -3639,47 +3578,13 @@ impl EngineInner {
         civ_id: EntityId,
         runs: u8,
     ) {
-        let scratch = self.build_sim_scratch(assets);
-        let mut ctx = {
-            let Some(entity) = self.world.entities.get(civ_id) else {
-                return;
-            };
-            let entity_sector = entity.element_data().sector();
-            let building_sector = self.entity_building_sector(entity_sector);
-            let Some(entity) = self.world.entities.get(civ_id) else {
-                return;
-            };
-            self.ai_context_from_entity(
-                entity,
-                self.control.frame_counter,
-                building_sector,
-                &scratch,
-                assets,
-            )
-        };
-        self.refresh_selected_default_wait_identity(civ_id, &mut ctx);
-
-        if let Some(Entity::Civilian(c)) = self.world.entities.get_mut(civ_id)
-            && let Some(friendly_ai) = c.npc.ai_brain.friendly_mut()
-        {
-            let was_already_fleeing = matches!(
-                friendly_ai.base.current_substate,
-                crate::ai::Substate::FleeingPanic | crate::ai::Substate::FleeingRunToDoor
-            );
-            friendly_ai.base.lasting_panic_runs = runs;
-            friendly_ai.base.directed_panic = false;
-            friendly_ai.base.current_state = crate::ai::AiState::Fleeing;
-            friendly_ai.base.current_substate = crate::ai::Substate::FleeingPanic;
-            friendly_ai.base.outbox.actor.begin_panic = Some(crate::ai::PanicRequest {
-                center: None,
-                runs,
-                alert: crate::ai::AlertLevel::Red,
-                is_new_panic: !was_already_fleeing,
-            });
-        }
-
-        // Drain the PanicRequest so a door gets picked and movement starts.
-        self.process_pending_begin_panic_for(sim, assets, civ_id, &ctx);
+        self.world
+            .entities
+            .get_mut(civ_id)
+            .and_then(Entity::friendly_ai_mut)
+            .expect("building panic civilian has no friendly AI")
+            .panic_undirected(runs);
+        self.process_pending_begin_panic_for(sim, assets, civ_id);
         self.process_pending_panic_seek_fallback_for(sim, assets, civ_id);
     }
 
@@ -3969,219 +3874,60 @@ impl EngineInner {
         }
         self.duty_go_to(sim, assets, npc_id, destination, flags);
     }
-    /// Drain a queued [`PanicRequest`] on a single NPC.
-    ///
-    /// Called right after any `FriendlyAi::think` that could have
-    /// pushed a panic request (the civilian EVENT_PANIC /
-    /// EVENT_VIEW-from-swordfighting-soldier handlers).  The `panic`
-    /// door-search + movement fallback:
-    ///
-    ///  * Walk `ai_global.door_seek_infos` for a `Building` door in a
-    ///    *different* building from the actor, authorised for the
-    ///    actor, and — when `directed` — pointing *away* from the
-    ///    panic center.  Apply +500 sector-change / +300 layer-change
-    ///    malus to the maximum-norm distance and pick the minimum.
-    ///  * If found → `Substate::FleeingRunToDoor`, reset
-    ///    `lasting_panic_runs`, issue a run to the door entrance via
-    ///    the AI base's `go_to` helper.
-    ///  * If not found → stay in `Substate::FleeingPanic`, bump
-    ///    `lasting_panic_runs` to `runs + 1`, and fire a self
-    ///    `EventReachPoint` so the `think_expected_event_common_stuff`
-    ///    panic-run branch picks a random escape vector next tick.
+    /// Complete a panic request against live actor and door state.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(super) fn process_pending_begin_panic_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         npc_id: EntityId,
-        ctx: &crate::ai::AiContext,
     ) {
-        let think_debug = self.debug_think_stimulus_matches(npc_id);
-        if think_debug {
-            self.trace_think_stimulus_panic_launch("before_panic_launch", npc_id);
-        }
-        // Peel the request off the AI base.
-        let Some(entity) = self.world.entities.get_mut(npc_id) else {
+        let Some(request) = self
+            .world
+            .entities
+            .expect_ai_controller_mut(npc_id, format_args!("panic request owner"))
+            .outbox
+            .actor
+            .begin_panic
+            .take()
+        else {
             return;
         };
-        let Some(ai) = entity.ai_controller_mut() else {
-            return;
-        };
-        let Some(request) = ai.outbox.actor.begin_panic.take() else {
-            return;
-        };
-
-        // The pure-AI half has to choose a conservative state while it still
-        // owns the controller, so a new request temporarily stages
-        // Default -> FleeingPanic. Original does not expose that transition:
-        // Nearest-door selection runs synchronously inside panic handling and the state change is
-        // called exactly once, with either FleeingRunToDoor or FleeingPanic.
-        // Fold the staged notification back to its outgoing side before the
-        // door lookup; the selected arm below will enqueue the one observable
-        // state callback. This is script-visible for callbacks which inspect
-        // GetAIState, such as S01_Not_VL's PaysanSud class.
-        fold_new_panic_placeholder(ai, &request);
-
-        // Resolve the actor's current building for the
-        // "not this building" filter used by nearest-door selection.
-        let my_building = ctx.in_building.then_some(ctx.building_sector).flatten();
-        // Nearest-door selection mixes three different views of "where I am"
-        // in the original game:
-        //
-        //  * raw map position — the element position used
-        //    only to build `vMeToDoor` for the flee-direction dot product
-        //    during the two direction-vector calculations.
-        //  * AI position — which snaps to the gate's
-        //    destination endpoint while a door pass is committed.  It is the
-        //    other side of that dot product and the origin of the scored
-        //    distance vector.
-        //  * actor sector and layer — the live element
-        //    sector and layer, which during a door pass still name the side
-        //    the actor physically stands on.  They decide the +500 / +300
-        //    malus.
-        //
-        // Reading `ctx.position` for all three collapses the distinction and
-        // mis-scores every door while the actor straddles a gate.
-        let (raw_map_position, my_sector, my_layer) = {
-            let elem = self.expect_entity(npc_id, "door-seek owner").element_data();
-            (elem.position_map(), elem.sector(), elem.layer())
-        };
-        let actor_auth = self
-            .expect_entity(npc_id, "panic requester")
-            .actor_auth_info();
-
-        // Pre-compute the set of house sector indices that contain a
-        // PC (the `dangerous_house` set).  Snapshot it here so the
-        // `pick_door` closure doesn't need to borrow `self.world.entities`
-        // (which is re-borrowed mutably after door selection).
-        let dangerous_house_sectors: std::collections::HashSet<u32> =
-            if self.is_hostile_to_player_camp(ctx.camp) {
-                self.ai
-                    .global
-                    .houses
-                    .iter()
-                    .filter(|h| {
-                        h.occupant_ids.iter().any(|&eid| {
-                            matches!(
-                                self.world.entities.get(eid),
-                                Some(crate::element::Entity::Pc(_))
-                            )
-                        })
-                    })
-                    .map(|h| h.sector_index)
-                    .collect()
-            } else {
-                std::collections::HashSet::new()
-            };
-        let authorized_building_doors: std::collections::BTreeSet<crate::gate::DoorIndex> = self
-            .script_domains
-            .interactables
-            .doors
-            .iter()
-            .enumerate()
-            .filter_map(|(index, door)| {
-                (door.door_type == crate::gate::DoorType::Building
-                    && door.is_actor_authorized(
-                        true,
-                        &actor_auth,
-                        self.building_sector_is_authorized(door.sector_in),
-                        false,
-                    ))
-                .then_some(crate::gate::DoorIndex::new(index as u32).expect("valid door index"))
-            })
-            .collect();
-
-        // Pick the best door.  `directed` gates the dot-product
-        // filter: when a panic center is known, first try to find a
-        // door in the "away" half-plane; if none exists, fall back to
-        // an undirected lookup (clearing `directed_panic`).
-        let pick_door = |door_seek_infos: &[crate::ai::DoorSeekInfo],
-                         directed: bool|
-         -> Option<(crate::ai::Position, u32)> {
-            let mut best: Option<(crate::ai::Position, u32)> = None;
-            for door in door_seek_infos {
-                if !matches!(door.door_type, crate::gate::DoorType::Building) {
-                    continue;
-                }
-                if !authorized_building_doors.contains(&door.door_index) {
-                    continue;
-                }
-                if my_building == crate::position_interface::SectorHandle::new(door.sector_in) {
-                    continue;
-                }
-                // Flee-direction test: `vMeToDoor` is measured from the RAW
-                // map position, the flee vector from the AI position
-                // in the original game.
-                if directed && let Some(center) = request.center {
-                    let dx_door = door.point_out.x - raw_map_position.x;
-                    let dy_door = door.point_out.y - raw_map_position.y;
-                    let dx_flee = center.x - ctx.position.x;
-                    let dy_flee = center.y - ctx.position.y;
-                    if dx_door * dx_flee + dy_door * dy_flee >= 0.0 {
-                        continue;
-                    }
-                }
-                // Scored distance: max norm from the actor's AI position to the gate exit.
-                // in the original game.
-                let dx_score = door.point_out.x - ctx.position.x;
-                let dy_score = door.point_out.y - ctx.position.y;
-                let mut distance = dx_score.abs().max(dy_score.abs()) as u32;
-                if Some(door.sector_out) != my_sector.map(u16::from) {
-                    distance = distance.saturating_add(500);
-                }
-                if door.layer_out != my_layer {
-                    distance = distance.saturating_add(300);
-                }
-                if best.map(|(_, d)| distance < d).unwrap_or(true) {
-                    // `dangerous_house` check.  A fleeing Lacklandist
-                    // never runs into a building that already contains
-                    // a PC; the gate is camp-gated so Royalist
-                    // civilians (and all other camps) skip it.
-                    if !dangerous_house_sectors.contains(&(door.sector_in as u32)) {
-                        best = Some((door.position_in, distance));
-                    }
-                }
-            }
-            best
-        };
-
-        let directed_initial = request.center.is_some();
-        let mut best = pick_door(&self.ai.global.door_seek_infos, directed_initial);
-        // Directed → undirected door fallback.  If no door satisfies
-        // the away-half-plane filter, retry with the filter dropped
-        // and clear the directed-panic flag on the controller.
-        let mut directed_after_door_pick = directed_initial;
-        if best.is_none() && directed_initial {
-            best = pick_door(&self.ai.global.door_seek_infos, false);
-            directed_after_door_pick = false;
-        }
-
-        // Snapshot whether the entity is a civilian so we can pick
-        // the right Say() remark after we re-borrow the AI base.
-        let is_civilian = self.expect_entity(npc_id, "door-seek owner").is_civilian();
-
+        let directed = request.center.is_some();
+        let mut door = self.nearest_panic_door(npc_id, request.center);
         {
-            let entity = self.expect_entity_mut(npc_id, "door-seek owner");
-            let Some(ai) = entity.ai_controller_mut() else {
-                return;
-            };
-
-            // Sync `directed_panic` with the door-pick outcome
-            // (`directed_panic = false` on the fallback path).
-            ai.directed_panic = directed_after_door_pick;
-            ai.break_macro();
-            ai.set_transient_emoticon(crate::ai::EmoticonType::XMark, 0, ctx.frame);
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("panic direction"));
+            ai.directed_panic = directed;
+            if let Some(center) = request.center {
+                ai.panic_center_x = center.x;
+                ai.panic_center_y = center.y;
+            }
         }
-
-        if let Some((door_in, _)) = best {
-            // Door-found arm.
+        if directed && door.is_none() {
+            door = self.nearest_panic_door(npc_id, None);
+            self.world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("panic direction fallback"))
+                .directed_panic = false;
+        }
+        let frame = self.control.frame_counter;
+        let is_civilian = self.expect_entity(npc_id, "panic speaker").is_civilian();
+        {
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("panic macro"));
+            ai.break_macro();
+            ai.set_transient_emoticon(crate::ai::EmoticonType::XMark, 0, frame);
+        }
+        if let Some(door) = door {
             if is_civilian {
                 self.world
                     .entities
-                    .expect_ai_controller_mut(
-                        npc_id,
-                        format_args!("panic owner {} lost AI", npc_id.index()),
-                    )
+                    .expect_ai_controller_mut(npc_id, format_args!("panic speech"))
                     .say(crate::ai::Remark::CivPanic);
                 self.drain_ai_owner_work_for(sim, assets, npc_id);
             }
@@ -4192,104 +3938,147 @@ impl EngineInner {
                 crate::ai::AiState::Fleeing,
                 crate::ai::Substate::FleeingRunToDoor,
             );
-            self.drain_ai_owner_work_for(sim, assets, npc_id);
             {
-                let ai = self.world.entities.expect_ai_controller_mut(
-                    npc_id,
-                    format_args!("panic owner before state tail"),
-                );
+                let ai = self
+                    .world
+                    .entities
+                    .expect_ai_controller_mut(npc_id, format_args!("panic door"));
                 ai.set_alert_status(request.alert);
                 ai.lasting_panic_runs = 0;
-                ai.go_to(door_in, crate::ai::GotoFlags::RUN, ctx);
             }
-
-            // AI panic observes the movement path result
-            // immediately and may retry without the directed-door filter in
-            // the same call. Resolve this owner's queued move before reading
-            // `couldnt_reachpoint`.
-            self.launch_pending_orders_for_npc(sim, assets, npc_id);
-            let couldnt_reachpoint = self
+            let position = self.panic_door_position(door);
+            self.duty_go_to(sim, assets, npc_id, position, crate::ai::GotoFlags::RUN);
+            let ai = self
                 .world
                 .entities
-                .expect_ai_controller(npc_id, format_args!("panic owner after movement"))
-                .couldnt_reachpoint;
-            if couldnt_reachpoint {
+                .expect_ai_controller_mut(npc_id, format_args!("panic route result"));
+            if !ai.couldnt_reachpoint {
+                return;
+            }
+            ai.couldnt_reachpoint = false;
+            if ai.directed_panic {
+                let retry = self
+                    .nearest_panic_door(npc_id, None)
+                    .expect("directed panic retry has an accessible building door");
                 self.world
                     .entities
-                    .expect_ai_controller_mut(
-                        npc_id,
-                        format_args!(
-                            "panic owner {} lost AI after failed movement",
-                            npc_id.index()
-                        ),
-                    )
-                    .couldnt_reachpoint = false;
-                if directed_after_door_pick
-                    && let Some((retry_door, _)) = pick_door(&self.ai.global.door_seek_infos, false)
-                {
-                    {
-                        let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                            return;
-                        };
-                        let Some(ai) = entity.ai_controller_mut() else {
-                            return;
-                        };
-                        ai.directed_panic = false;
-                        ai.go_to(retry_door, crate::ai::GotoFlags::RUN, ctx);
-                    }
-                    self.launch_pending_orders_for_npc(sim, assets, npc_id);
-                    let retry_failed = self
-                        .world
-                        .entities
-                        .expect_ai_controller(
-                            npc_id,
-                            format_args!("panic owner after movement retry"),
-                        )
-                        .couldnt_reachpoint;
-                    if !retry_failed {
-                        return;
-                    }
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(
-                            npc_id,
-                            format_args!(
-                                "panic owner {} lost AI after failed retry",
-                                npc_id.index()
-                            ),
-                        )
-                        .couldnt_reachpoint = false;
-                    self.begin_panic_no_door_branch(
-                        sim,
-                        assets,
-                        npc_id,
-                        &request,
-                        ctx,
-                        is_civilian,
-                    );
+                    .expect_ai_controller_mut(npc_id, format_args!("panic retry direction"))
+                    .directed_panic = false;
+                let position = self.panic_door_position(retry);
+                self.duty_go_to(sim, assets, npc_id, position, crate::ai::GotoFlags::RUN);
+                let ai = self
+                    .world
+                    .entities
+                    .expect_ai_controller_mut(npc_id, format_args!("panic retry result"));
+                if !ai.couldnt_reachpoint {
                     return;
                 }
-                self.begin_panic_no_door_branch(sim, assets, npc_id, &request, ctx, is_civilian);
+                ai.couldnt_reachpoint = false;
             }
-            return;
         }
+        self.begin_panic_no_door_branch(sim, assets, npc_id, &request, is_civilian);
+    }
 
-        self.begin_panic_no_door_branch(sim, assets, npc_id, &request, ctx, is_civilian);
-        if think_debug {
-            self.trace_think_stimulus_panic_launch("after_panic_launch", npc_id);
+    fn panic_door_position(&self, index: usize) -> crate::ai::Position {
+        let door = &self.script_domains.interactables.doors[index];
+        crate::ai::Position {
+            x: door.point_in.x,
+            y: door.point_in.y,
+            level: door.layer_in,
+            sector: crate::position_interface::SectorHandle::new(u16::from(door.sector_in)).map(
+                |sector| {
+                    door.sector_in_index
+                        .map_or(sector, |index| sector.with_arena_index(index))
+                },
+            ),
         }
     }
 
-    /// `phase` is `before_panic_launch` or `after_panic_launch`.
-    #[inline(never)]
-    fn trace_think_stimulus_panic_launch(&self, phase: &str, npc_id: EntityId) {
-        eprintln!(
-            "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} rng_cursor={:?}",
-            self.control.frame_counter,
-            npc_id.index(),
-            self.world.original_creation_order(npc_id),
-            self.control.rng.original_replay_cursor(),
-        );
+    fn nearest_panic_door(
+        &self,
+        owner: EntityId,
+        center: Option<crate::ai::Position>,
+    ) -> Option<usize> {
+        let entity = self.expect_entity(owner, "panic door owner");
+        let element = entity.element_data();
+        let raw = element.position_map();
+        let position = self.live_ai_position(owner);
+        let raw_sector = ai_view_position_sector(self, element);
+        let building = self.entity_building_sector(raw_sector);
+        let auth = entity.actor_auth_info();
+        let mut minimum = u16::MAX;
+        let mut selected = None;
+        for (index, door) in self.script_domains.interactables.doors.iter().enumerate() {
+            let inside = crate::position_interface::SectorHandle::from_number(door.sector_in);
+            let inside = door
+                .sector_in_index
+                .map_or(inside, |index| inside.with_arena_index(index));
+            if door.door_type != crate::gate::DoorType::Building
+                || building.is_some_and(|building| building.reference() == inside.reference())
+                || !door.is_actor_authorized(
+                    true,
+                    &auth,
+                    self.building_sector_is_authorized(door.sector_in),
+                    false,
+                )
+            {
+                continue;
+            }
+            if center.is_some_and(|center| {
+                (door.point_out.x - raw.x) * (center.x - position.x)
+                    + (door.point_out.y - raw.y) * (center.y - position.y)
+                    >= 0.0
+            }) {
+                continue;
+            }
+            let mut distance = ((door.point_out.x - position.x)
+                .abs()
+                .max((door.point_out.y - position.y).abs()) as u32)
+                as u16;
+            let sector = crate::position_interface::SectorHandle::new(u16::from(door.sector_out))
+                .map(|sector| {
+                    door.sector_out_index
+                        .map_or(sector, |index| sector.with_arena_index(index))
+                });
+            if sector.map(|sector| sector.reference())
+                != raw_sector.map(|sector| sector.reference())
+            {
+                distance = distance.wrapping_add(500);
+            }
+            if door.layer_out != element.layer() {
+                distance = distance.wrapping_add(300);
+            }
+            if distance >= minimum {
+                continue;
+            }
+            if entity.camp() == crate::element::Camp::Lacklandists {
+                let building_index = door
+                    .sector_in_index
+                    .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)))
+                    .and_then(|sector| sector.building_index)
+                    .expect("panic building door has no building");
+                let occupants = self
+                    .script_domains
+                    .buildings
+                    .occupants
+                    .get(usize::from(building_index))
+                    .expect("panic building occupants missing");
+                if occupants.iter().any(|&handle| {
+                    let id = self
+                        .entity_id_for_actor_handle(handle)
+                        .expect("panic building occupant missing");
+                    matches!(
+                        self.expect_entity(id, "panic building occupant"),
+                        Entity::Pc(_)
+                    )
+                }) {
+                    continue;
+                }
+            }
+            minimum = distance;
+            selected = Some(index);
+        }
+        selected
     }
 
     #[inline(never)]
@@ -4416,7 +4205,6 @@ impl EngineInner {
         assets: &LevelAssets,
         npc_id: EntityId,
         request: &crate::ai::PanicRequest,
-        ctx: &crate::ai::AiContext,
         is_civilian: bool,
     ) {
         // If directed, OR in the "panic center is in front of me"
@@ -4424,14 +4212,19 @@ impl EngineInner {
         // during a prior run still counts as a new panic.
         let mut is_new_panic = request.is_new_panic;
         if request.center.is_some() && !is_new_panic {
+            let position = self.live_ai_position(npc_id);
+            let direction = self
+                .expect_entity(npc_id, "panic facing")
+                .element_data()
+                .direction();
             let ai = self
                 .world
                 .entities
                 .expect_ai_controller(npc_id, format_args!("panic owner"));
             if directed_panic_center_is_in_front(
-                ctx.direction as i16,
-                ctx.position.x,
-                ctx.position.y,
+                direction as i16,
+                position.x,
+                position.y,
                 ai.panic_center_x,
                 ai.panic_center_y,
             ) {
@@ -4466,14 +4259,12 @@ impl EngineInner {
                     .entities
                     .expect_ai_controller_mut(npc_id, format_args!("panic owner after speech"));
                 ai.set_alert_status(request.alert);
-                ai.lasting_panic_runs = request.runs.saturating_add(1);
-                ai.first_try = true;
+                ai.lasting_panic_runs = request.runs.wrapping_add(1);
 
                 // A pre-existing Rust self-stimulus is deferred work from an
                 // enclosing boundary. It is not part of the original game's panic handling
                 // direct recursive Think call and must not be pulled into it.
                 let deferred = std::mem::take(&mut ai.outbox.reentrant.self_stimuli);
-                ai.fire_self_stimulus(crate::ai::StimulusType::EventReachPoint);
                 deferred
             };
 
@@ -4484,7 +4275,12 @@ impl EngineInner {
             // freshly installed `FLEEING_PANIC` substate.  Close the generated
             // Think (and its two direction/distance RNG draws) before Panic
             // returns to its caller.
-            self.drain_self_stimuli_for_npc(sim, npc_id, assets);
+            self.execute_ai_callback(
+                sim,
+                assets,
+                npc_id,
+                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReachPoint),
+            );
             self.world
                 .entities
                 .expect_ai_controller_mut(

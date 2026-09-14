@@ -31,7 +31,6 @@ pub(crate) enum DutyTail {
     OfficerLookForSoldier {
         reason: super::ReportType,
     },
-    OfficerInstructGroup,
     BattleDecisions,
     BattleOverview {
         flags: u16,

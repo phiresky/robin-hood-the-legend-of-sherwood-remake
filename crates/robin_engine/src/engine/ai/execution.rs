@@ -115,9 +115,6 @@ impl EngineInner {
             crate::ai::DutyTail::OfficerLookForSoldier { reason } => {
                 self.execute_ai_officer_look_for_soldier(sim, assets, owner, reason);
             }
-            crate::ai::DutyTail::OfficerInstructGroup => {
-                self.execute_ai_officer_instruct_group(sim, assets, owner);
-            }
             crate::ai::DutyTail::TowerGuardAlert { center } => {
                 self.execute_ai_tower_guard_alert(sim, assets, owner, center);
             }
@@ -438,6 +435,23 @@ impl EngineInner {
         {
             self.execute_ai_advancing_shield_timer(sim, assets, owner);
             Ok(false)
+        } else if enemy_owner
+            && self.execute_ai_shield_expected_event(sim, assets, owner, stimulus.stimulus_type)
+        {
+            Ok(false)
+        } else if enemy_owner
+            && self.execute_ai_archery_expected_event(sim, assets, owner, stimulus.stimulus_type)
+        {
+            Ok(false)
+        } else if enemy_owner
+            && let Some(handled) =
+                self.execute_ai_officer_rendezvous_event(sim, assets, owner, stimulus)
+        {
+            Ok(handled)
+        } else if enemy_owner
+            && let Some(handled) = self.execute_ai_wondering_event(sim, assets, owner, stimulus)
+        {
+            Ok(handled)
         } else if enemy_owner && stimulus.stimulus_type == StimulusType::CallPatrolCoordinate {
             self.execute_ai_coordinate_patrol(sim, assets, owner, &stimulus.info);
             Ok(false)

@@ -62,7 +62,9 @@ impl EngineInner {
             instruction.seek_flags |= SeekFlags::LOCATION_FIRST.bits();
         }
         let mut count = enemy.alerted_us.len();
-        let path_owner = if enemy.base.my_reconnaissance_report.report_type == ReportType::MissedCharly {
+        let path_owner = if enemy.base.my_reconnaissance_report.report_type
+            == ReportType::MissedCharly
+        {
             instruction.seek_flags |= SeekFlags::CHARLY_SEEK.bits();
             let charly = enemy
                 .base
@@ -84,9 +86,13 @@ impl EngineInner {
             None
         };
         let path_index = |engine: &EngineInner, charly| {
-            let ai = engine.world.entities
+            let ai = engine
+                .world
+                .entities
                 .expect_ai_controller(charly, format_args!("group checkpoint path"));
-            ai.patrol_path.as_ref().map(|path| path.hiking_path_index)
+            ai.patrol_path
+                .as_ref()
+                .map(|path| path.hiking_path_index)
                 .or(ai.detached_patrol_path_status.hiking_path_index)
                 .expect("checkpoint with a path requires its authored path")
                 .get() as usize
@@ -112,8 +118,7 @@ impl EngineInner {
                 // Assignment replaces the checkpoint's path contents during
                 // recipient callbacks; the cursor and stride remain local.
                 let path = path_index(self, charly);
-                let waypoint =
-                    &assets.navigation.hiking_paths[path].waypoints[waypoint_index];
+                let waypoint = &assets.navigation.hiking_paths[path].waypoints[waypoint_index];
                 instruction.seek_point = Position {
                     x: waypoint.x as f32,
                     y: waypoint.y as f32,
@@ -317,16 +322,6 @@ impl EngineInner {
                 center,
                 radius,
                 SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
-            ),
-            Failure::SeekMissingInstructedSoldier => (
-                self.live_ai_position(owner),
-                crate::parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
-                SeekFlags::LOCATION_FIRST
-                    | self
-                        .world
-                        .entities
-                        .expect_enemy_ai(owner, format_args!("missing soldier seek"))
-                        .seek_flags,
             ),
             Failure::SeekMissedCharly { .. } => {
                 let checkpoint = self

@@ -3909,53 +3909,6 @@ impl EngineInner {
                 ai.outbox.reentrant.owner_work.remove(0)
             };
 
-            // Panic selects its door before the original game changes state.
-            // The pure controller must stage FleeingPanic until the
-            // engine-owned door lookup runs, but that placeholder is not a
-            // script-visible transition. Some direct Think boundaries reach
-            // owner-work before the actor-effect drain which resolves
-            // `begin_panic`, so fold the staged item here instead of invoking
-            // FilterAIEvent twice (Default -> Panic, then Panic -> Door).
-            if let crate::ai::AiOwnerWork::StateChange(notification) = &work {
-                let folded = {
-                    let ai = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::ai_controller_mut)
-                        .unwrap_or_else(|| {
-                            panic!("panic placeholder owner {} lost its AI", owner.index())
-                        });
-                    let request = ai.outbox.actor.begin_panic;
-                    request.is_some_and(|request| {
-                        super::ai::fold_new_panic_notification(ai, &request, notification)
-                    })
-                };
-                if folded {
-                    let crate::ai::AiOwnerWork::StateChange(mut notification) = work else {
-                        unreachable!("only state-change work can fold a panic placeholder")
-                    };
-                    if let Some(prefix) = notification.actor_effects_before_callback.take() {
-                        let ai = self
-                            .world
-                            .entities
-                            .get_mut(owner)
-                            .and_then(Entity::ai_controller_mut)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "panic placeholder owner {} lost its AI prefix",
-                                    owner.index()
-                                )
-                            });
-                        ai.outbox
-                            .reentrant
-                            .owner_work
-                            .insert(0, crate::ai::AiOwnerWork::ActorEffects(prefix));
-                    }
-                    continue;
-                }
-            }
-
             let notification = match work {
                 crate::ai::AiOwnerWork::StateChange(notification) => notification,
                 crate::ai::AiOwnerWork::ActorEffects(prefix) => {

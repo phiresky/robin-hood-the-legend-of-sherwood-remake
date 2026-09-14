@@ -906,42 +906,6 @@ fn reinitialize_them_list_preserves_order_and_omits_all_unavailable_observations
 }
 
 #[test]
-fn unavailable_owner_preserves_battle_and_target_selection_skip_policy() {
-    use crate::ai_entity_view::AiObservationUnavailable;
-    for reason in [
-        None,
-        Some(AiObservationUnavailable::MissingLayer),
-        Some(AiObservationUnavailable::ExcludedEntity),
-    ] {
-        let mut ctx = AiContext::test_fixture();
-        if let Some(reason) = reason {
-            std::sync::Arc::make_mut(&mut ctx.entity_views)
-                .unavailable_entities
-                .insert(1, reason);
-        }
-        let mut ai = EnemyAi::new(1);
-        ai.list_them = vec![2, 3];
-        ai.base.current_state = AiState::Attacking;
-        ai.base.primary_target = Some(AiEntityHandle::new(2));
-        let before = bitcode::encode(&ai);
-        let tick = AiPerTickData::stub();
-        assert_eq!(
-            ai.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, &ctx, &tick),
-            None
-        );
-        ai.battle_decisions(
-            ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-            &mut AiGlobalState::default(),
-        );
-        assert_eq!(
-            bitcode::encode(&ai),
-            before,
-            "unavailable owner must not mutate AI: {reason:?}"
-        );
-    }
-}
-
-#[test]
 fn reinitialize_them_list_does_not_preserve_unseen_primary_target() {
     let mut ai = EnemyAi::new(1);
     ai.base.primary_target = Some(AiEntityHandle::new(2));
@@ -1379,17 +1343,6 @@ fn hard_reaction_time_fix_selects_the_intended_multiplier() {
 }
 
 #[test]
-fn get_new_primary_target_empty() {
-    let mut ai = EnemyAi::new(1);
-    let ctx = AiContext::test_fixture();
-    let tick = AiPerTickData::stub();
-    assert_eq!(
-        ai.get_new_primary_target(PrimaryTargetFlags::empty(), &ctx, &tick),
-        None
-    );
-}
-
-#[test]
 fn leaving_phalanx_clears_reciprocal_combat_neighbour_links() {
     let mut ai = EnemyAi::new(74);
     ai.base.current_state = AiState::Attacking;
@@ -1428,121 +1381,6 @@ fn entering_phalanx_preserves_preassigned_combat_neighbour_links() {
     assert_eq!(ai.left_combat_neighbour, Some(AiEntityHandle::new(72)));
     assert_eq!(ai.right_combat_neighbour, None);
     assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
-}
-
-#[test]
-fn running_to_phalanx_preserves_existing_neighbours_null_primary_target() {
-    let mut ai = EnemyAi::new(78);
-    ai.right_combat_neighbour = Some(AiEntityHandle::new(70));
-    ai.list_them = vec![170];
-
-    let mut tick = AiPerTickData::stub();
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 70,
-        is_soldier: true,
-        primary_target: None,
-        ..FighterSnapshot::default()
-    });
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 170,
-        is_pc: true,
-        is_able_to_fight: true,
-        ..FighterSnapshot::default()
-    });
-
-    assert_eq!(ai.phalanx_neighbour_primary_target(&tick), Some(None));
-}
-
-#[test]
-fn running_to_phalanx_uses_right_soldier_after_non_soldier_left_neighbour() {
-    let mut ai = EnemyAi::new(78);
-    ai.left_combat_neighbour = Some(AiEntityHandle::new(169));
-    ai.right_combat_neighbour = Some(AiEntityHandle::new(70));
-
-    let mut tick = AiPerTickData::stub();
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 169,
-        is_pc: true,
-        ..FighterSnapshot::default()
-    });
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 70,
-        is_soldier: true,
-        primary_target: Some(AiEntityHandle::new(170)),
-        ..FighterSnapshot::default()
-    });
-
-    assert_eq!(
-        ai.phalanx_neighbour_primary_target(&tick),
-        Some(Some(AiEntityHandle::new(170)))
-    );
-}
-
-#[test]
-fn get_new_primary_target_uses_live_positions_when_timer_snapshot_is_incomplete() {
-    let mut ai = EnemyAi::new(1);
-    ai.list_them = vec![198, 199];
-    let mut views = AiEntityViewMap::new();
-    let mut owner = soldier_view(test_position(0.0, 0.0));
-    owner.camp = Camp::Lacklandists;
-    views.insert(1, owner);
-    views.insert(198, soldier_view(test_position(100.0, 0.0)));
-    views.insert(199, soldier_view(test_position(110.0, 0.0)));
-    let ctx = AiContext {
-        position: test_position(0.0, 0.0),
-        camp: Camp::Lacklandists,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    // Off-detection timer contexts historically cached only the old
-    // primary target. Original still scores every persistent list entry
-    // from its live position.
-    tick.primary_target_multiplicity = vec![(198, 1)];
-
-    let target = ai.get_new_primary_target(
-        PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
-        &ctx,
-        &tick,
-    );
-
-    assert_eq!(target, Some(AiEntityHandle::new(199)));
-}
-
-#[test]
-fn get_new_primary_target_scores_raw_world_position_not_ai_door_endpoint() {
-    let mut ai = EnemyAi::new(1);
-    ai.list_them = vec![170, 169];
-
-    let mut owner = soldier_view(test_position(0.0, 0.0));
-    owner.camp = Camp::Lacklandists;
-    let occupied = soldier_view(test_position(60.0, 0.0));
-    let mut passing_door = soldier_view(test_position(177.0, 0.0));
-    passing_door.detection_position = MapPoint::new(159.0, 0.0);
-    passing_door.detection_position_world = crate::coordinates::WorldPoint3D::new(159.0, 0.0, 0.0);
-    passing_door.passing_door = true;
-
-    let mut views = AiEntityViewMap::new();
-    views.insert(1, owner);
-    views.insert(170, occupied);
-    views.insert(169, passing_door);
-    let ctx = AiContext {
-        position: test_position(0.0, 0.0),
-        camp: Camp::Lacklandists,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    tick.primary_target_multiplicity = vec![(170, 1), (169, 0)];
-
-    assert_eq!(
-        ai.get_new_primary_target(
-            PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
-            &ctx,
-            &tick,
-        ),
-        Some(AiEntityHandle::new(169))
-    );
 }
 
 fn perpendicular_out_of_view_context(stare_y: f32) -> AiContext {

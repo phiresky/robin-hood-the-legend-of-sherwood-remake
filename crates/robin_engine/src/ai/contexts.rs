@@ -863,7 +863,6 @@ pub struct AiPerTickData {
     /// destination-side forecast carried by [`AiContext::position`].
     pub owner_live_position: Option<Position>,
     pub patrol_chief_state: AiState,
-    pub primary_target_multiplicity: Vec<(HumanHandle, u32)>,
     /// Complete fighter-registry snapshot for direct pointer dereferences.
     ///
     /// Original-game AI lists (allies, enemies, primary targets, etc.) hold
@@ -895,26 +894,13 @@ pub struct AiPerTickData {
     /// and creation-slot boundary rewinding. Direct geometry helpers such as
     /// enemy-elevation checks read the element itself.
     pub enemy_detectable_live_world_positions: Vec<(HumanHandle, crate::coordinates::WorldPoint3D)>,
-    /// Pre-computed destination forecast for the missed PC (if any).
-    /// Used by `get_battle_overview` to re-predict position before seeking.
-    pub missed_pc_forecast: Option<PreparedForecastDestination>,
-    /// Target identity paired with `missed_pc_forecast`. A queued Think can
-    /// change the AI's `missed_pc` after this snapshot was prepared.
-    pub missed_pc_forecast_handle: Option<AiEntityHandle>,
-    /// True when `missed_pc` refers to a player character.
-    pub missed_pc_is_pc: bool,
-    /// AI position returned for the actor.
-    /// During a door pass this is the committed destination-side position,
-    /// not the actor's interpolated body position.
-    pub primary_target_position: Option<Position>,
     /// Handle for which the primary-target metadata in this snapshot was
     /// built. A synchronous AI callback can replace `base.primary_target`
     /// before a later handler consumes the same tick data; consumers must
     /// not pair that new handle with this old target's geometry.
     pub primary_target_snapshot_handle: Option<AiEntityHandle>,
-    /// The target element's literal current position and sector. This differs
-    /// from [`Self::primary_target_position`] while passing a door and is for
-    /// operations that read position / sector directly.
+    /// The target element's literal current position and sector, without
+    /// substituting a door endpoint.
     pub primary_target_live_position: Option<Position>,
 
     /// Pre-computed fallback positions for the "avenger on the roof"
@@ -972,7 +958,6 @@ impl AiPerTickData {
             profile_manager: None,
             owner_live_position: None,
             patrol_chief_state: AiState::Default,
-            primary_target_multiplicity: Vec::new(),
             fighter_registry: Vec::new(),
             nearby_fighters: Vec::new(),
             camp_soldiers: Vec::new(),
@@ -980,10 +965,6 @@ impl AiPerTickData {
             enemy_detectable_forecasts: Vec::new(),
             enemy_detectable_positions: Vec::new(),
             enemy_detectable_live_world_positions: Vec::new(),
-            missed_pc_forecast: None,
-            missed_pc_forecast_handle: None,
-            missed_pc_is_pc: false,
-            primary_target_position: None,
             primary_target_snapshot_handle: None,
             primary_target_live_position: None,
             avenger_on_roof_wait_positions: Vec::new(),

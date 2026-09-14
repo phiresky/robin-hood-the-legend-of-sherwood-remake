@@ -1597,18 +1597,7 @@ impl EngineInner {
             .and_then(Entity::ai_controller)
             .is_some_and(|ai| ai.outbox.actor.begin_panic.is_some());
         if has_begin_panic {
-            let scratch = self.build_sim_scratch(assets);
-            let entity = self.expect_entity(npc_id, "pending-drain NPC");
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = self.ai_context_from_entity(
-                entity,
-                self.control.frame_counter,
-                building_sector,
-                &scratch,
-                assets,
-            );
-            self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-            self.process_pending_begin_panic_for(sim, assets, npc_id, &ctx);
+            self.process_pending_begin_panic_for(sim, assets, npc_id);
         }
 
         let has_panic_seek_fallback = self

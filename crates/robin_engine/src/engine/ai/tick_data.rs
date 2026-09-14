@@ -445,26 +445,6 @@ impl EngineInner {
             }
         }
         tick.camp_soldiers = self.build_camp_soldier_tick_infos(npc_id, my_camp);
-        if build_forecasts
-            && let Some(missed_handle) = enemy_ai.missed_pc
-            && let Some(missed_id) = self.entity_id_for_index(missed_handle.get())
-            && let Some(missed_entity) = self.world.entities.get(missed_id)
-            && let Some(input) = extract_exact_forecast_input(
-                self,
-                missed_entity,
-                selected_actor_is_passing_door(&self.orders.sequence_manager, missed_id),
-            )
-        {
-            let doors = self.script_domains.interactables.doors.as_slice();
-            tick.missed_pc_forecast = Some(crate::ai::prepare_forecast_destination_for_ia(
-                &input,
-                doors,
-                &self.world.fast_grid.level.sectors,
-                &self.world.fast_grid.level.sector_number_map,
-            ));
-            tick.missed_pc_forecast_handle = enemy_ai.missed_pc;
-            tick.missed_pc_is_pc = matches!(missed_entity, Entity::Pc(_));
-        }
         // Populate the remaining borrowed tactical inputs here so
         // off-detection dispatch sites (timer events, reach-point
         // events, panic, patrol, cross-NPC actions, pending-stimuli
@@ -534,8 +514,7 @@ impl EngineInner {
             return tick;
         };
 
-        if let Some(pos) = lookup_primary_target_position(self, target_id) {
-            tick.primary_target_position = Some(pos);
+        if lookup_primary_target_position(self, target_id).is_some() {
             let target = self.expect_entity(target_id, "resolved primary target");
             let element = target.element_data();
             tick.primary_target_live_position = Some(crate::ai::Position {
@@ -562,13 +541,6 @@ impl EngineInner {
                 &self.world.fast_grid.level.sector_number_map,
             ));
         }
-        tick.primary_target_multiplicity = self
-            .ai
-            .global
-            .primary_target_multiplicity_scratch
-            .iter()
-            .map(|(&target, &count)| (target, count))
-            .collect();
 
         tick
     }
@@ -775,19 +747,8 @@ impl EngineInner {
                 .ai_brain
                 .enemy()
                 .unwrap_or_else(|| panic!("active soldier {handle} has no EnemyAi brain"));
-            let (soldier_profile, fighting_ability, bow_profile) =
+            let (soldier_profile, fighting_ability, _) =
                 self.soldier_profile_facts(assets, s, EntityId::Soldier(SoldierId(handle)));
-            let has_formation = soldier_profile.formation;
-            let is_archer_unit = snapshots::is_archer_from_bow(bow_profile);
-            let bow_max_range = bow_profile
-                .map(|bow| {
-                    if bow.has_long_shoot {
-                        bow.long_shoot.range
-                    } else {
-                        bow.normal_shoot.range
-                    }
-                })
-                .unwrap_or(0);
             let hth_id = enemy_ai_other.hth_weapon_id;
             let hth_profile = assets
                 .profile_manager
@@ -800,12 +761,6 @@ impl EngineInner {
                 hth_profile.distance[crate::weapons::WeaponDistance::Maximal as usize],
                 hth_profile.distance[crate::weapons::WeaponDistance::Uber as usize],
             );
-            let weapon_is_shield = hth_profile.shield;
-            let has_shield_anim = s
-                .element
-                .sprite
-                .has_animation(crate::order::OrderType::WaitingShield);
-            let is_shield_bearer = weapon_is_shield && has_shield_anim;
             let in_recovery = self.actor_is_in_sword_recovery(EntityId::Soldier(SoldierId(handle)));
             // The seek position is complete and carries its own
             // level; it is never re-levelled from the soldier's current
@@ -859,28 +814,16 @@ impl EngineInner {
                 sword_range_maximal,
                 sword_range_uber,
                 fighting_ability,
-                has_formation,
-                is_shield_bearer,
-                is_archer_unit,
-                is_tower_guard: enemy_ai_other.tower_guard,
                 is_vip: soldier_profile.vip,
                 soldier_profile_pride: enemy_ai_other.soldier_profile_pride,
                 is_robin: false,
-                left_combat_neighbour: enemy_ai_other.left_combat_neighbour,
-                right_combat_neighbour: enemy_ai_other.right_combat_neighbour,
                 is_in_recovery_animation: in_recovery,
                 in_sword_action_state: s.actor.action_state.is_sword(),
                 elevation: s.element.position().z,
                 seek_position,
                 current_substate: s.npc.ai_substate(),
-                archer_behind_me: enemy_ai_other.archer_behind_me,
-                ai_state: s.npc.ai_state(),
-                shield_bearer_before_me: enemy_ai_other.shield_bearer_before_me,
                 hth_weapon_id: hth_id,
                 action_state: s.actor.action_state,
-                shield_bearer_direction: enemy_ai_other.shield_bearer_direction,
-                shield_bearer_seek_position: seek_position,
-                bow_max_range,
             })
         };
 
@@ -984,15 +927,9 @@ impl EngineInner {
                 sword_range_maximal,
                 sword_range_uber,
                 fighting_ability,
-                has_formation: false,
-                is_shield_bearer: false,
-                is_archer_unit: false,
-                is_tower_guard: false,
                 is_vip: character.vip,
                 soldier_profile_pride: 0,
                 is_robin: pc.pc.robin,
-                left_combat_neighbour: None,
-                right_combat_neighbour: None,
                 is_in_recovery_animation: in_recovery,
                 in_sword_action_state: pc.actor.action_state.is_sword(),
                 elevation: pc.element.sprite.position_iface.get_elevation(),
@@ -1003,19 +940,8 @@ impl EngineInner {
                     .as_deref()
                     .map(crate::element::AiActorData::ai_substate)
                     .unwrap_or_default(),
-                archer_behind_me: None,
-                ai_state: pc
-                    .pc
-                    .ai
-                    .as_deref()
-                    .map(crate::element::AiActorData::ai_state)
-                    .unwrap_or_default(),
-                shield_bearer_before_me: None,
                 hth_weapon_id: hth_id,
                 action_state: pc.actor.action_state,
-                shield_bearer_direction: 0,
-                shield_bearer_seek_position: pc_seek_position,
-                bow_max_range: 0,
             })
         };
 

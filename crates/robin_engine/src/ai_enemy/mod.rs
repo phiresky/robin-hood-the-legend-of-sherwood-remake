@@ -919,10 +919,7 @@ impl EnemyAi {
 
     /// Kick off a directed panic — the NPC flees away from `center`.
     ///
-    /// Stash the panic center, transition to `Fleeing / FleeingPanic`,
-    /// and queue a `PanicRequest` so the engine's
-    /// `process_pending_begin_panic_for` can pick a door on the far
-    /// side of the center (or fall back to a random escape vector).
+    /// Resume door selection against live state after releasing this borrow.
     pub(crate) fn panic_from_position(&mut self, center: Position, runs: u8) {
         let was_already_fleeing = matches!(
             self.base.current_substate,
@@ -931,9 +928,6 @@ impl EnemyAi {
         self.base.panic_center_x = center.x;
         self.base.panic_center_y = center.y;
         self.base.directed_panic = true;
-        if !was_already_fleeing {
-            self.set_state(AiState::Fleeing, Substate::FleeingPanic);
-        }
         self.base.outbox.actor.begin_panic = Some(crate::ai::PanicRequest {
             center: Some(center),
             runs,
@@ -964,96 +958,6 @@ impl EnemyAi {
 }
 
 impl EnemyAi {
-    /// Collects visible child-civilian NPCs (alive, conscious, in
-    /// `STATE_DEFAULT`), picks the nearest as the antagonist,
-    /// notifies the antagonist with `CALL_YOU_JUST_WAIT` and each
-    /// other suspect with `EVENT_APPLE_CHASE_NEAR`, and launches the
-    /// chase.  Returns `true` if a chase started.
-    fn chase_childs(&mut self, ctx: &AiContext) -> bool {
-        // Iterate the per-tick entity views — zero-cost filter because
-        // we already have the `is_child` / `ai_state` /
-        // `is_able_to_fight` fields on the view.
-        let mut suspects: Vec<(NpcHandle, Position)> = Vec::new();
-        let mut best_distance = f32::INFINITY;
-        let mut best_handle = None;
-        for (handle, view) in ctx.entity_views.iter() {
-            if !view.is_civilian() || !view.is_child {
-                continue;
-            }
-            if !view.is_able_to_fight {
-                // Filter `!is_dead && !is_unconscious`.
-                continue;
-            }
-            if view.ai_state != AiState::Default {
-                continue;
-            }
-            // Use the directional facing+LOS variant, not 360°.
-            // `is_detecting_180_degrees` is the closest standalone
-            // helper we have.
-            if !self.is_detecting_180_degrees(*handle as HumanHandle, ctx) {
-                continue;
-            }
-            suspects.push((*handle as NpcHandle, view.position));
-            // Maximum norm — Chebyshev distance.
-            let dx = (view.position.x - ctx.position.x).abs();
-            let dy = (view.position.y - ctx.position.y).abs();
-            let dist = dx.max(dy);
-            if dist < best_distance {
-                best_distance = dist;
-                best_handle = Some(AiEntityHandle::new(*handle));
-            }
-        }
-
-        if suspects.is_empty() {
-            return false;
-        }
-        let best_handle = best_handle
-            .expect("non-empty child chase candidate list must have a nearest antagonist");
-        self.base.antagonist = Some(best_handle);
-
-        // Inform all suspects.
-        for (handle, _pos) in &suspects {
-            let stim = if *handle == best_handle.get() {
-                StimulusType::CallYouJustWait
-            } else {
-                StimulusType::EventAppleChaseNear
-            };
-            self.base
-                .outbox
-                .reentrant
-                .cross_npc_actions
-                .push(CrossNpcAction::SendStimulus {
-                    target: *handle,
-                    stimulus_type: stim,
-                    info: crate::ai::StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
-                    fallback_to_sender: None,
-                    to_whole_patrol: false,
-                });
-        }
-
-        // lasting_panic_runs = apple / 2.
-        self.base.lasting_panic_runs = (self.soldier_profile_apple / 2) as u8;
-
-        // Chase!
-        self.base.set_emoticon(EmoticonType::Thunderstorm);
-        self.base
-            .say_with_flags(Remark::ChasesChild, crate::ai::SpeechFlags::MYTALK_1);
-        let antagonist_pos = ctx
-            .entity_view(best_handle)
-            .map(|v| v.position)
-            .unwrap_or(ctx.position);
-        self.go_near(
-            AiState::Wondering,
-            Substate::WonderingAppleChasingChild,
-            antagonist_pos,
-            5,
-            crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::DONT_STOP,
-            ctx,
-        );
-        self.base.launch_timer(10, ctx.frame);
-        true
-    }
-
     /// "Enemy behind me" dot-product check used by the
     /// `EVENT_OUTOFVIEW` handler for `REACTIONTIME_RUNNING` /
     /// `APPROACH_TO_OBSERVE` / `ADVANCING_WITH_SHIELD`.  If the NPC's
@@ -2213,121 +2117,6 @@ impl EnemyAi {
         let time =
             ((100.0 - intelligence) * 0.01 * max_reactiontime as f32 * modifier + 1.0) as u32;
         self.base.launch_timer(time, ctx.frame);
-    }
-
-    // -----------------------------------------------------------------------
-    // Select a new primary target
-    // -----------------------------------------------------------------------
-
-    pub fn get_new_primary_target(
-        &mut self,
-        flags: PrimaryTargetFlags,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> Option<AiEntityHandle> {
-        self.get_new_primary_target_with_mult_override(flags, ctx, tick, None)
-    }
-
-    /// Variant of [`Self::get_new_primary_target`] that lets the caller
-    /// substitute a locally-rebuilt `primary_target_multiplicity` map
-    /// for the owner-ordered shared scratch. Swordfight observation reconsideration
-    /// clears multiplicity on its rebuilt `list_them` and re-bumps from
-    /// swordfighting allies in `list_us` before calling
-    /// `get_new_primary_target(UNOCCUPIED_STRONGLY_PREFERRED)`.
-    pub fn get_new_primary_target_with_mult_override(
-        &mut self,
-        flags: PrimaryTargetFlags,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        mult_override: Option<&std::collections::BTreeMap<HumanHandle, u32>>,
-    ) -> Option<AiEntityHandle> {
-        if self.list_them.is_empty() {
-            return None;
-        }
-
-        let mut nearest = None;
-        let mut min_distance: u16 = 65432; // Original `oo` sentinel
-        let owner_view = match ctx.entity_observation(self.base.me) {
-            Ok(view) => view,
-            Err(reason) => {
-                // TODO: establish Original invalid-layer timer-tail behavior before
-                // changing this existing skip policy.
-                tracing::warn!(
-                    me = self.base.me,
-                    ?reason,
-                    "primary-target replacement skipped: owner spatial observation unavailable"
-                );
-                return None;
-            }
-        };
-        let owner_world = owner_view.detection_position_world;
-
-        for &enemy in &self.list_them {
-            // Gate on `VIPS_ALLOWED || is_allowed_to_attack(enemy)`.
-            // Without VIPS_ALLOWED, VIP-protection rules drop the
-            // candidate (e.g. VIP soldier may only engage Robin).
-            if !flags.contains(PrimaryTargetFlags::VIPS_ALLOWED)
-                && !self.is_allowed_to_attack(enemy, ctx, tick)
-            {
-                continue;
-            }
-
-            // The original game's primary-target selection reads every persistent hostile list
-            // pointer's live position. Detection snapshots are intentionally
-            // incomplete on timer/reach/cross-NPC dispatches and therefore
-            // cannot be used as a distance cache here.
-            let target = ctx.entity_view(enemy).unwrap_or_else(|| {
-                panic!(
-                    "primary-target replacement owner {} has required enemy-list entry {} missing from the live entity view",
-                    self.base.me, enemy
-                )
-            });
-            // Primary-target replacement uses the raw 3D distance /
-            // maximum-norm distance helpers, not AI position. `position` is
-            // deliberately door-aware and can point at the committed far
-            // side of a selected PassDoor; use each element's stored world
-            // position for this scoring path.
-            let target_world = target.detection_position_world;
-            let dx = target_world.x - owner_world.x;
-            let dy =
-                (target_world.y - owner_world.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-            let dz = target_world.z - owner_world.z;
-            // The original game's distance calculations subtract the actors'
-            // world positions. World Y is map Y plus elevation,
-            // so the vertical screen-plane component includes dz before the
-            // isometric stretch; elevation is also retained as the 3D Z
-            // component. Using map Y alone can make a target on another level
-            // appear much farther away and select the wrong primary target.
-            let max_norm = dx.abs().max(dy.abs()).max(dz.abs());
-            if max_norm > f32::from(min_distance) {
-                continue;
-            }
-            let mut distance = (dx * dx + dy * dy + dz * dz).sqrt() as u16;
-
-            // Penalize already-targeted enemies.
-            let mult = if let Some(map) = mult_override {
-                map.get(&enemy).copied().unwrap_or(0)
-            } else {
-                tick.primary_target_multiplicity
-                    .iter()
-                    .find(|&&(h, _)| h == enemy)
-                    .map(|&(_, m)| m)
-                    .unwrap_or(0)
-            };
-
-            if flags.contains(PrimaryTargetFlags::UNOCCUPIED_PREFERRED) {
-                distance = distance.wrapping_add((100_u16).wrapping_mul(mult as u16));
-            } else if flags.contains(PrimaryTargetFlags::UNOCCUPIED_STRONGLY_PREFERRED) {
-                distance = distance.wrapping_add((10_000_u16).wrapping_mul(mult as u16));
-            }
-
-            if distance < min_distance {
-                min_distance = distance;
-                nearest = Some(AiEntityHandle::new(enemy));
-            }
-        }
-
-        nearest
     }
 
     // -----------------------------------------------------------------------

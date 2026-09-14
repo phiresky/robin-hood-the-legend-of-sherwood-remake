@@ -162,18 +162,7 @@ impl FriendlyAi {
     // Movement helpers (`go_to`, `go_to_speed`, `go_near`) and
     // `coordinate_patrol` are shared with the enemy role via [`AiRole`].
 
-    // -- Panic helpers (civilians go through set_state for alert status) --
-    //
-    // Each helper stashes a [`PanicRequest`] on
-    // [`AiController::pending_begin_panic`] so the engine can perform
-    // the door lookup against `ai_global.door_seek_infos` at
-    // post-decision time. The original-game flow is synchronous:
-    // Select the nearest door, enter the fleeing-to-door state, then move to it.
-    // The pure AI stages `FleeingPanic` so its remaining borrowed tail sees
-    // the conservative fallback state. The engine-side request drain folds
-    // that placeholder into the final door/no-door transition before script
-    // callbacks run: Original performs the lookup synchronously and exposes
-    // only that final state change to AI-event filtering.
+    // Panic requests resume against live engine state after releasing this borrow.
 
     /// Panic fleeing from a specific point, tagged with the sector
     /// and level of its origin so the engine's door lookup can
@@ -189,11 +178,7 @@ impl FriendlyAi {
         );
         self.base.panic_center_x = center.x;
         self.base.panic_center_y = center.y;
-        self.base.lasting_panic_runs = runs;
         self.base.directed_panic = true;
-        if !was_already_fleeing {
-            self.set_state(AiState::Fleeing, Substate::FleeingPanic);
-        }
         self.base.outbox.actor.begin_panic = Some(PanicRequest {
             center: Some(center),
             runs,
@@ -208,11 +193,7 @@ impl FriendlyAi {
             self.base.current_substate,
             Substate::FleeingPanic | Substate::FleeingRunToDoor
         );
-        self.base.lasting_panic_runs = runs;
         self.base.directed_panic = false;
-        if !was_already_fleeing {
-            self.set_state(AiState::Fleeing, Substate::FleeingPanic);
-        }
         self.base.outbox.actor.begin_panic = Some(PanicRequest {
             center: None,
             runs,

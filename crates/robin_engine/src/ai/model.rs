@@ -1582,7 +1582,6 @@ pub enum AlertSoldiersFailureContinuation {
     None,
     ReturnToDuty,
     SeekBody { center: Position, radius: u16 },
-    SeekMissingInstructedSoldier,
     SeekMissedCharly { center: Position },
     FleeingRunToDoor,
 }

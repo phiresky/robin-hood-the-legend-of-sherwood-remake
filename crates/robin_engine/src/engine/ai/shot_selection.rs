@@ -21,6 +21,19 @@ fn vector_angle(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
     }
 }
 
+#[cfg(test)]
+mod angle_tests {
+    use super::vector_angle;
+
+    #[test]
+    fn coincident_friend_has_opposite_angle_to_forward_target() {
+        let friend = vector_angle(1.0, 0.0, 0.0, 0.0);
+        let target = vector_angle(1.0, 0.0, 100.0, -3.0);
+        assert_eq!(friend, std::f32::consts::PI);
+        assert!((target - friend).abs() > std::f32::consts::FRAC_PI_2);
+    }
+}
+
 impl EngineInner {
     pub(in crate::engine) fn propose_live_shot_target(
         &mut self,
@@ -205,6 +218,12 @@ impl EngineInner {
                     AiState::Attacking,
                     Substate::AttackingBowShooting,
                 );
+                let target = self
+                    .world
+                    .entities
+                    .expect_ai_controller(owner, format_args!("shot target after state callback"))
+                    .primary_target
+                    .expect("shooting requires target");
                 self.world
                     .entities
                     .expect_ai_controller_mut(owner, format_args!("shoot stop"))
@@ -213,10 +232,6 @@ impl EngineInner {
                 let target = self.expect_human_id_for_ai_handle(target.get(), "shot target");
                 self.shoot_bow_at(assets, owner, target);
             } else {
-                let (_, ability) = self
-                    .bow_profile_and_ability(assets, owner)
-                    .expect("aiming bow");
-                let time = (110_u32.saturating_sub(ability) / 2).max(5);
                 self.duty_set_state(
                     sim,
                     assets,
@@ -224,6 +239,10 @@ impl EngineInner {
                     AiState::Attacking,
                     Substate::AttackingBowAiming,
                 );
+                let (_, ability) = self
+                    .bow_profile_and_ability(assets, owner)
+                    .expect("aiming bow");
+                let time = ((110 - i32::from(ability as u16)) / 2) as u32;
                 let frame = self.control.frame_counter;
                 self.world
                     .entities

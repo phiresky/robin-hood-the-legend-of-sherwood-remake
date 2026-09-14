@@ -552,20 +552,6 @@ pub struct FighterSnapshot {
     /// Extended weapon range used for line-position enemy reachability.
     pub sword_range_uber: u16,
     pub fighting_ability: u16,
-    /// Whether this fighter's soldier profile has formation enabled.
-    pub has_formation: bool,
-    /// True if this fighter's HtH weapon is a shield weapon. Strictly
-    /// this also requires a shield-waiting animation,
-    /// but for now we key off the weapon profile alone (the animation
-    /// presence is a property of the soldier sprite set, not tracked
-    /// in the Rust port yet).
-    pub is_shield_bearer: bool,
-    /// Whether this fighter is an archer unit (has a bow).
-    pub is_archer_unit: bool,
-    /// Whether this fighter is a tower guard. Used by
-    /// `number_of_nearby_archers_who_need_protection` to exclude tower
-    /// guards from the orphan-archer count.
-    pub is_tower_guard: bool,
     /// Whether this fighter is a VIP (important character) — from
     /// `CharacterProfile::vip` for PCs, `SoldierProfile::vip` for soldiers.
     pub is_vip: bool,
@@ -574,11 +560,6 @@ pub struct FighterSnapshot {
     pub soldier_profile_pride: u16,
     /// Whether this fighter is Robin Hood (the main hero). Only true for PCs.
     pub is_robin: bool,
-    /// This fighter's cached left combat neighbour (for phalanx chain
-    /// walking).
-    pub left_combat_neighbour: Option<AiEntityHandle>,
-    /// This fighter's cached right combat neighbour.
-    pub right_combat_neighbour: Option<AiEntityHandle>,
     /// True if in a recovery animation (being hit, dying, unconscious, etc.).
     pub is_in_recovery_animation: bool,
     /// True if in a valid sword combat action state.
@@ -599,18 +580,6 @@ pub struct FighterSnapshot {
     /// scorer treats the fighter as moving toward `position`; otherwise it
     /// scores at `seek_position`.
     pub current_substate: Substate,
-    /// The handle of the archer hiding behind this shield bearer, or 0.
-    /// Derived during snapshot building from the reverse
-    /// `shield_bearer_before_me` link so archers can't double-claim a
-    /// shield bearer.
-    pub archer_behind_me: Option<AiEntityHandle>,
-    /// The AI state of this fighter (Seeking, Attacking, etc.).
-    /// Used by `number_of_nearby_archers_who_need_protection` to filter
-    /// fighters in specific states.
-    pub ai_state: AiState,
-    /// Handle of the shield bearer this archer is hiding behind (0 = none).
-    /// Used to identify "orphan" archers who need protection.
-    pub shield_bearer_before_me: Option<AiEntityHandle>,
     /// Snapshots keep the stable 1-based weapon profile id and resolve
     /// it through the tick's shared `ProfileManager` when strike
     /// damage is evaluated, avoiding per-fighter `HtHWeaponProfile`
@@ -619,14 +588,6 @@ pub struct FighterSnapshot {
     /// The fighter's current action state — used by phalanx tick handlers
     /// to check `HoldingShield`/`ParryingShield` and bow states.
     pub action_state: crate::element::ActionState,
-    // (archer_behind_me field is above, derived from reverse shield_bearer_before_me scan)
-    /// This fighter's shield-bearer direction (seek direction when running
-    /// to phalanx). Used by `get_shield_bearer_position`.
-    pub shield_bearer_direction: u16,
-    /// This fighter's seek position (destination when running to phalanx).
-    pub shield_bearer_seek_position: Position,
-    /// Bow max range. 0 for non-archers.
-    pub bow_max_range: u16,
 }
 
 impl FighterSnapshot {
