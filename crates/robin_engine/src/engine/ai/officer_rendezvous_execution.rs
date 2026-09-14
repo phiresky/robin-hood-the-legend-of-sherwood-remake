@@ -6,7 +6,6 @@ use crate::ai::{
     Stimulus, StimulusInfo, Substate,
 };
 use crate::ai_enemy::{EnemyAi, SeekFlags, task_priority};
-use crate::element::{Element as _, Human as _};
 use crate::parameters_ai;
 use crate::profiles::ProfileRank;
 use crate::sim_rng::SimulationContext;
@@ -348,8 +347,7 @@ impl Rendezvous<'_> {
                         20,
                         frame,
                     );
-                    self.engine
-                        .drain_direct_ai_owner_boundary(self.sim, self.owner, self.assets);
+
                     self.say(Remark::OfficerCallsSoldier, SpeechFlags::empty());
                     self.timer(20);
                 } else {
@@ -580,15 +578,10 @@ impl Rendezvous<'_> {
                         let body = self
                             .engine
                             .expect_human_id_for_ai_handle(body.get(), "instructed body");
-                        self.enemy_mut()
-                            .base
-                            .outbox
-                            .actor
-                            .add_detectable((body, crate::element::DetectableType::Body));
-                        self.engine.drain_direct_ai_owner_boundary(
-                            self.sim,
+                        self.engine.execute_ai_add_detectable(
                             self.owner,
-                            self.assets,
+                            body,
+                            crate::element::DetectableType::Body,
                         );
                     }
                     self.enemy_mut().current_task_priority = task_priority::SEEKING;
@@ -848,16 +841,11 @@ impl Rendezvous<'_> {
                     {
                         self.forecast_officer();
                     } else {
-                        self.enemy_mut()
-                            .base
-                            .outbox
-                            .actor
-                            .delete_detectable_type(crate::element::DetectableType::Friend);
-                        self.engine.drain_direct_ai_owner_boundary(
-                            self.sim,
+                        self.engine.execute_ai_delete_detectable_type(
                             self.owner,
-                            self.assets,
+                            crate::element::DetectableType::Friend,
                         );
+
                         self.state(Substate::SeekingRunningToOfficerSeen);
                         self.call(self.owner, StimulusType::EventReachPoint, false);
                     }

@@ -32,9 +32,13 @@ impl EngineInner {
                 Err(mut error) => {
                     if !error.sequence_element_failed {
                         if let Some((sequence_id, element_index)) = failed_element {
-                            self.orders
-                                .sequence_manager
-                                .element_impossible(sequence_id, element_index);
+                            self.element_impossible(
+                                sim,
+                                assets,
+                                active_scripts,
+                                sequence_id,
+                                element_index,
+                            );
                         }
                         error.sequence_element_failed = true;
                     }
@@ -53,7 +57,7 @@ impl EngineInner {
     /// recursive stack, not a flat FIFO. Each action temporarily detaches its
     /// older siblings; successors and nested callbacks therefore finish before
     /// control returns to the next sibling, matching `Go()` in the original.
-    pub(in crate::engine) fn drain_script_synchronous_actions(
+    pub(crate) fn drain_script_synchronous_actions(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -72,9 +76,13 @@ impl EngineInner {
                 Err(mut error) => {
                     if !error.sequence_element_failed {
                         if let Some((sequence_id, element_index)) = failed_element {
-                            self.orders
-                                .sequence_manager
-                                .element_impossible(sequence_id, element_index);
+                            self.element_impossible(
+                                sim,
+                                assets,
+                                active_scripts,
+                                sequence_id,
+                                element_index,
+                            );
                         }
                         error.sequence_element_failed = true;
                     }
@@ -107,9 +115,13 @@ impl EngineInner {
             Err(mut error) => {
                 if !error.sequence_element_failed {
                     if let Some((sequence_id, element_index)) = failed_element {
-                        self.orders
-                            .sequence_manager
-                            .element_impossible(sequence_id, element_index);
+                        self.element_impossible(
+                            sim,
+                            assets,
+                            active_scripts,
+                            sequence_id,
+                            element_index,
+                        );
                     }
                     error.sequence_element_failed = true;
                 }
@@ -155,13 +167,18 @@ impl EngineInner {
                     // arbitration. WAIT-priority Go reaches this synchronous
                     // dispatcher directly at registration, so it must use the
                     // same admission order as the manager-update path.
-                    if self.non_interruptable_guard(owner, sequence_id, element_index) {
+                    if self.non_interruptable_guard(sim, assets, owner, sequence_id, element_index)
+                    {
                         return Ok(());
                     }
                     if !self.generate_transition(sim, assets, owner, sequence_id, element_index) {
-                        self.orders
-                            .sequence_manager
-                            .element_impossible(sequence_id, element_index);
+                        self.element_impossible(
+                            sim,
+                            assets,
+                            active_scripts,
+                            sequence_id,
+                            element_index,
+                        );
                         return Ok(());
                     }
                 }
@@ -209,7 +226,8 @@ impl EngineInner {
                     // reach arbitration with the NotYetSet fallback.
                     element.priority = resolved_priority;
                 }
-                if !self.arbitrate_instruct(sequence_id, element_index) {
+                if !self.arbitrate_instruct(sim, assets, active_scripts, sequence_id, element_index)
+                {
                     return Ok(());
                 }
                 let command = self
@@ -224,6 +242,7 @@ impl EngineInner {
                     self.dispatch_synchronous_move_instruct(
                         sim,
                         assets,
+                        active_scripts,
                         owner,
                         sequence_id,
                         element_index,
@@ -249,7 +268,14 @@ impl EngineInner {
                     // the first element synchronously, just like the normal
                     // hourglass dispatcher; the movement remains behind the
                     // lowering animation until this element completes.
-                    self.dispatch_quit_swordfight(sim, assets, owner, sequence_id, element_index)
+                    self.dispatch_quit_swordfight(
+                        sim,
+                        assets,
+                        active_scripts,
+                        owner,
+                        sequence_id,
+                        element_index,
+                    )
                 } else if matches!(
                     command,
                     Command::EnterSwordfight | Command::PrepareSwordfight
@@ -271,6 +297,7 @@ impl EngineInner {
                     self.dispatch_enter_swordfight(
                         sim,
                         assets,
+                        active_scripts,
                         owner,
                         opponent,
                         sequence_id,
@@ -283,12 +310,15 @@ impl EngineInner {
                         | Command::ParrySmalltalkLeft
                         | Command::ParrySmalltalkRight
                 ) {
-                    SmalltalkCommandContext {
-                        entities: &self.world.entities,
-                        sequence_manager: &mut self.orders.sequence_manager,
-                        orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
-                    }
-                    .dispatch(owner, command, sequence_id, element_index)
+                    self.dispatch_smalltalk_command(
+                        sim,
+                        assets,
+                        active_scripts,
+                        owner,
+                        command,
+                        sequence_id,
+                        element_index,
+                    )
                 } else if command == Command::Provoke {
                     // A sword-movement TERMINATED callback registers this
                     // waiting-priority successor before order advancement. The original game
@@ -303,11 +333,14 @@ impl EngineInner {
                         sequence_id,
                         element_index,
                     );
-                    let barrier = PositionAssertionContext {
-                        entities: &self.world.entities,
-                        sequence_manager: &mut self.orders.sequence_manager,
-                    }
-                    .dispatch(owner, sequence_id, element_index);
+                    let barrier = self.dispatch_position_assertion(
+                        sim,
+                        assets,
+                        active_scripts,
+                        owner,
+                        sequence_id,
+                        element_index,
+                    );
                     self.orders.sequence_manager.end_instruct_callback(
                         owner,
                         sequence_id,
@@ -320,26 +353,46 @@ impl EngineInner {
                     // Use the same translator as the ordinary hourglass path
                     // so its stored direction is applied only now, when the
                     // Turn has actually won arbitration.
-                    TurnCommandContext {
-                        entities: &mut self.world.entities,
-                        sequence_manager: &mut self.orders.sequence_manager,
-                        orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
-                    }
-                    .dispatch(owner, command, sequence_id, element_index)
+                    self.dispatch_turn_command(
+                        sim,
+                        assets,
+                        active_scripts,
+                        owner,
+                        command,
+                        sequence_id,
+                        element_index,
+                    )
                 } else if matches!(
                     command,
                     Command::ParrySword | Command::ParrySwordLow | Command::StopParrySword
                 ) {
                     match command {
-                        Command::ParrySword => {
-                            self.dispatch_parry_sword(owner, false, sequence_id, element_index)
-                        }
-                        Command::ParrySwordLow => {
-                            self.dispatch_parry_sword(owner, true, sequence_id, element_index)
-                        }
-                        Command::StopParrySword => {
-                            self.dispatch_stop_parry(owner, sequence_id, element_index)
-                        }
+                        Command::ParrySword => self.dispatch_parry_sword(
+                            sim,
+                            assets,
+                            active_scripts,
+                            owner,
+                            false,
+                            sequence_id,
+                            element_index,
+                        ),
+                        Command::ParrySwordLow => self.dispatch_parry_sword(
+                            sim,
+                            assets,
+                            active_scripts,
+                            owner,
+                            true,
+                            sequence_id,
+                            element_index,
+                        ),
+                        Command::StopParrySword => self.dispatch_stop_parry(
+                            sim,
+                            assets,
+                            active_scripts,
+                            owner,
+                            sequence_id,
+                            element_index,
+                        ),
                         _ => unreachable!(),
                     }
                 } else if matches!(
@@ -350,12 +403,15 @@ impl EngineInner {
                     // look booking through the same release → launch → instruction
                     // stack. Reuse the normal translator so the actor's live
                     // attentive flag selects the correct alerted row.
-                    NpcAttentionCommandContext {
-                        entities: &mut self.world.entities,
-                        sequence_manager: &mut self.orders.sequence_manager,
-                        orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
-                    }
-                    .dispatch(owner, command, sequence_id, element_index)
+                    self.dispatch_npc_attention_command(
+                        sim,
+                        assets,
+                        active_scripts,
+                        owner,
+                        command,
+                        sequence_id,
+                        element_index,
+                    )
                 } else if matches!(
                     command,
                     Command::EnterAttentiveMode
@@ -366,23 +422,28 @@ impl EngineInner {
                     // attentive-mode successor through Ready -> Go ->
                     // instruction handling. Keep that re-entrant path on the same
                     // translator as the ordinary manager hourglass.
-                    NpcAttentionCommandContext {
-                        entities: &mut self.world.entities,
-                        sequence_manager: &mut self.orders.sequence_manager,
-                        orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
-                    }
-                    .dispatch(owner, command, sequence_id, element_index)
+                    self.dispatch_npc_attention_command(
+                        sim,
+                        assets,
+                        active_scripts,
+                        owner,
+                        command,
+                        sequence_id,
+                        element_index,
+                    )
                 } else if matches!(
                     command,
                     Command::Wait | Command::WaitTimer | Command::WaitFreeLift
                 ) {
-                    WaitCommandContext {
-                        entities: &mut self.world.entities,
-                        sequence_manager: &mut self.orders.sequence_manager,
-                        orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
-                        profiles: &assets.profile_manager,
-                    }
-                    .dispatch(owner, command, sequence_id, element_index)
+                    self.dispatch_wait_command(
+                        sim,
+                        assets,
+                        active_scripts,
+                        owner,
+                        command,
+                        sequence_id,
+                        element_index,
+                    )
                 } else if matches!(
                     command,
                     Command::ReceiveSwordDamage
@@ -399,7 +460,14 @@ impl EngineInner {
                     // instruction/translation callback before the attacker's
                     // condolence stack returns. Use the same damage
                     // translator as the ordinary manager-update path.
-                    self.dispatch_receive_damage(sim, assets, owner, sequence_id, element_index)
+                    self.dispatch_receive_damage(
+                        sim,
+                        assets,
+                        active_scripts,
+                        owner,
+                        sequence_id,
+                        element_index,
+                    )
                 } else {
                     return Err(format!(
                         "unsupported synchronous owner command {command:?} at {sequence_id:?}/{element_index}"
@@ -480,14 +548,18 @@ impl EngineInner {
                         frame,
                         active_scripts,
                     );
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(sequence_id, element_index);
+                    self.element_terminated(
+                        sim,
+                        assets,
+                        active_scripts,
+                        sequence_id,
+                        element_index,
+                    );
                     // Immediate original-game actor execution returns from
                     // message processing and immediately enters state change, whose
                     // owner card and Ready() complete before the parent VM
                     // resumes. Keep the active call stack while closing it.
-                    self.dispatch_condolations_in_script_driver(sim, assets, active_scripts)?;
+
                     result?;
                 } else {
                     let message = self.dispatch_execute_immediate_owner(
@@ -517,7 +589,12 @@ impl EngineInner {
     /// Apply the deterministic half of the original game's lock-user /
     /// MSG_UNLOCK_USER handling. Selection and current actions are part of
     /// simulation state; only physical input cleanup remains a host effect.
-    pub(super) fn apply_script_user_lock(&mut self, assets: &LevelAssets, command: Command) {
+    pub(super) fn apply_script_user_lock(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        command: Command,
+    ) {
         match command {
             Command::LockUser => {
                 self.players.user_locked = true;
@@ -526,7 +603,7 @@ impl EngineInner {
                     .invalidate_trajectory_preview = true;
                 self.players.selection_before_user_lock = self.players.seats[0].selection.clone();
                 for pc_id in self.players.seats[0].selection.clone() {
-                    self.unselect_action(pc_id);
+                    self.unselect_action(sim, assets, pc_id);
                     let pc = self
                         .get_entity_mut(pc_id)
                         .and_then(|entity| entity.pc_data_mut())
@@ -538,7 +615,7 @@ impl EngineInner {
             Command::UnlockUser => {
                 self.players.user_locked = false;
                 for pc_id in self.players.selection_before_user_lock.clone() {
-                    self.select_pc(assets, 0, pc_id, true, false);
+                    self.select_pc(sim, assets, 0, pc_id, true, false);
                 }
                 self.feedback.pending_side_effects.pending_reset_input = true;
             }
@@ -553,6 +630,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         sequence_id: crate::sequence::SequenceId,
         element_index: usize,
@@ -574,9 +652,7 @@ impl EngineInner {
             })?;
 
         if self.beggar_rejects_command(owner, Command::Move) {
-            self.orders
-                .sequence_manager
-                .element_impossible(sequence_id, element_index);
+            self.element_impossible(sim, assets, active_scripts, sequence_id, element_index);
             return Ok(OwnerActionBarrier::Skip);
         }
         let is_anonymous_archer_pc = self.get_entity(owner).is_some_and(|entity| {
@@ -589,9 +665,7 @@ impl EngineInner {
                 owner,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
-            self.orders
-                .sequence_manager
-                .element_impossible(sequence_id, element_index);
+            self.element_impossible(sim, assets, active_scripts, sequence_id, element_index);
             return Ok(OwnerActionBarrier::Skip);
         }
 
@@ -615,15 +689,14 @@ impl EngineInner {
                 None,
                 "building interior move",
             );
-            self.orders
-                .sequence_manager
-                .element_terminated(sequence_id, element_index);
+            self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
             return Ok(OwnerActionBarrier::Skip);
         }
 
         Ok(self.dispatch_prepared_move_instruction(
             sim,
             assets,
+            active_scripts,
             owner,
             sequence_id,
             element_index,
@@ -664,26 +737,25 @@ impl EngineInner {
                     frame,
                     active_scripts,
                 );
-                self.orders
-                    .sequence_manager
-                    .element_terminated(sequence_id, element_index);
+                self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
                 result?;
             }
             command @ (Command::LockUser | Command::UnlockUser) => {
-                self.apply_script_user_lock(assets, command);
-                self.orders
-                    .sequence_manager
-                    .element_terminated(sequence_id, element_index);
+                self.apply_script_user_lock(sim, assets, command);
+                self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
             }
             Command::Timer => {
-                let timer = TimerImmediateContext {
-                    sequence_manager: &self.orders.sequence_manager,
-                }
-                .entry(sequence_id, element_index);
+                let timer = self.timer_immediate_entry(
+                    sim,
+                    assets,
+                    active_scripts,
+                    sequence_id,
+                    element_index,
+                );
                 self.add_timer(timer.remaining, timer.element_ref);
             }
             Command::CameraJumpTo => {
-                self.terminate_prev_camera_sequence_element();
+                self.terminate_prev_camera_sequence_element(sim, assets);
                 self.players.seats[0].follow_element = None;
                 self.players.seats[0].locker_active = false;
                 let point = self
@@ -701,17 +773,17 @@ impl EngineInner {
                         self.check_location_is_valid_for_camera(position);
                     self.feedback.pending_side_effects.invalidate_background = true;
                 }
-                self.orders
-                    .sequence_manager
-                    .element_terminated(sequence_id, element_index);
+                self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
             }
             command @ (Command::CharacterAvailable | Command::ActionAvailable) => {
-                AvailabilityImmediateContext {
-                    entities: &mut self.world.entities,
-                    messenger: &mut self.orders.messenger,
-                    sequence_manager: &mut self.orders.sequence_manager,
-                }
-                .dispatch(command, sequence_id, element_index);
+                self.dispatch_availability_immediate(
+                    sim,
+                    assets,
+                    active_scripts,
+                    command,
+                    sequence_id,
+                    element_index,
+                );
             }
             Command::OpenScroll => {
                 let (scroll, reader) = {
@@ -745,9 +817,13 @@ impl EngineInner {
                     );
                     match result {
                         Ok(_) => {
-                            self.orders
-                                .sequence_manager
-                                .element_terminated(sequence_id, element_index);
+                            self.element_terminated(
+                                sim,
+                                assets,
+                                active_scripts,
+                                sequence_id,
+                                element_index,
+                            );
                         }
                         Err(error) if error.sequence_element_failed => {
                             // IsTaken dispatched successfully and a nested
@@ -755,9 +831,13 @@ impl EngineInner {
                             // SendMessage: terminate this ancestor before
                             // propagating so only the actual child is
                             // Impossible.
-                            self.orders
-                                .sequence_manager
-                                .element_terminated(sequence_id, element_index);
+                            self.element_terminated(
+                                sim,
+                                assets,
+                                active_scripts,
+                                sequence_id,
+                                element_index,
+                            );
                             return Err(error);
                         }
                         Err(error) => {
@@ -770,9 +850,13 @@ impl EngineInner {
                     }
                 } else {
                     tracing::warn!(?scroll, ?reader, "OpenScroll missing properties");
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(sequence_id, element_index);
+                    self.element_terminated(
+                        sim,
+                        assets,
+                        active_scripts,
+                        sequence_id,
+                        element_index,
+                    );
                 }
             }
             other => {

@@ -117,7 +117,7 @@ fn speech_state_roundtrip_and_hash_cover_live_identity_and_global_state() {
 }
 
 #[test]
-fn detectable_mutations_preserve_statement_order_through_snapshot_and_drain() {
+fn live_detectable_mutations_preserve_statement_order_through_snapshot() {
     // Native actor decoding needs more than libtest's 2 MiB thread stack for
     // this complete three-actor snapshot. Keep the adjustment local to this
     // codec matrix rather than changing production or the full test runner.
@@ -182,9 +182,11 @@ fn npc_enter_swordfight_preserves_postponed_bow_sequence() {
     );
     shot.priority = crate::sequence::SequencePriority::Preference;
     let shot_seq = engine.orders.sequence_manager.launch_element(shot);
-    engine.orders.sequence_manager.postpone_element(shot_seq, 0);
+    engine.postpone_element(sim, &assets, &mut Vec::new(), shot_seq, 0);
 
-    let _ = engine.enter_swordfight(sim, &assets, initiator, opponent, false);
+    let (_, stimuli) = crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
+        engine.enter_swordfight(sim, &assets, initiator, opponent, false)
+    });
 
     assert_eq!(
         engine
@@ -197,18 +199,17 @@ fn npc_enter_swordfight_preserves_postponed_bow_sequence() {
         "Original ClearShootList removes the retained NPC pointer without interrupting its sequence"
     );
     assert!(
-        engine
-            .orders
-            .sequence_manager
-            .drain_pending_condolations()
-            .is_empty(),
+        !stimuli
+            .iter()
+            .any(|(owner, event)| *owner == initiator
+                && *event == crate::ai::StimulusType::EventDone),
         "clearing an NPC shoot pointer must not invent EventDone"
     );
 }
 
 #[test]
 fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
-    use crate::ai::{AiState, NoiseType, Stimulus, StimulusType, Substate};
+    use crate::ai::{AiState, NoiseType, Substate};
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::element::Camp;
 
@@ -235,14 +236,6 @@ fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
         .expect("test listener has enemy AI")
         .base
         .me = listener_id.index();
-    engine
-        .get_entity_mut(listener_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("test listener has base AI")
-        .outbox
-        .detection
-        .stimuli
-        .push(Stimulus::new(StimulusType::EventTimer));
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine.broadcast_noise_synchronously(
@@ -260,18 +253,6 @@ fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
         .get_entity(listener_id)
         .and_then(Entity::enemy_ai)
         .expect("test listener survives synchronous noise");
-    assert_eq!(
-        listener
-            .base
-            .outbox
-            .detection
-            .stimuli
-            .iter()
-            .map(|stimulus| stimulus.stimulus_type)
-            .collect::<Vec<_>>(),
-        vec![StimulusType::EventTimer],
-        "direct EVENT_HEAR must not consume an unrelated deferred FIFO"
-    );
     assert_eq!(listener.base.current_state, AiState::Wondering);
     assert_eq!(listener.base.current_substate, Substate::WonderingWatching);
 }
@@ -290,7 +271,7 @@ fn one_shot_noise_listener_walk_uses_restored_original_creation_order() {
         second_order + 1,
     );
 
-    assert_eq!(engine.one_shot_noise_listener_ids(), vec![second, first]);
+    assert_eq!(engine.world.npc_registry_ids, vec![second, first]);
 }
 
 #[test]
@@ -534,6 +515,7 @@ fn bow_interaction_accepts_a_target_that_died_while_aiming() {
 
 #[test]
 fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
+    let mut assets = LevelAssets::new();
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::gate::{Door, DoorIndex, DoorType};
     use crate::order::OrderType;
@@ -614,10 +596,13 @@ fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
     *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 0;
     let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
 
     let assets = engine.test_runtime_assets();
 
@@ -651,6 +636,7 @@ fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
 
 #[test]
 fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
+    let mut assets = LevelAssets::new();
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::gate::{Door, DoorIndex, DoorType};
@@ -755,10 +741,13 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
         *gate_id = Some(DoorIndex::new(door_index).expect("valid door index"));
         *direction = 0;
         let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence_id, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence_id,
+            0,
+        );
     }
 
     let assets = engine.test_runtime_assets();

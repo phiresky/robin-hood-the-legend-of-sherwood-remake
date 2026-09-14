@@ -56,11 +56,8 @@ fn legacy_seek_direction_delta(direction: u16, seek_direction: u16) -> u16 {
     direction.wrapping_add(16).wrapping_sub(seek_direction)
 }
 
-use super::util::{pos_distance, resolve_seek_point_id, resolve_seek_point_mut, vec_to_sector};
-use super::{
-    AlertSoldiersFailureContinuation, EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION,
-    task_priority,
-};
+use super::util::{pos_distance, vec_to_sector};
+use super::{EnemyAi, SeekFlags, UNDEFINED_DIRECTION};
 
 /// Immutable inputs shared by the candidate and personal-point phases.
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]

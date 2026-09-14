@@ -175,7 +175,9 @@ impl EngineInner {
         } else {
             ai.list_them.clear();
         }
-        for target in self.world.fighter_registry_order() {
+        let fighter_count = self.world.fighter_registry_ids.len();
+        for index in 0..fighter_count {
+            let target = self.world.fighter_registry_ids[index];
             let entity = self.expect_entity(target, "near fighter");
             if self.camps_are_allied(camp, entity.camp()) != friendly {
                 continue;
@@ -256,14 +258,7 @@ impl EngineInner {
             Substate::AttackingOverviewLookLeft,
         );
         self.stop_ai_owner(sim, assets, owner);
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("overview look"))
-            .base
-            .outbox
-            .actor
-            .look_sidewards = Some(crate::ai::LookDirection::Left);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_look_sidewards(owner, crate::ai::LookDirection::Left);
     }
 
     pub(in crate::engine) fn execute_ai_make_battle_predecisions(
@@ -414,8 +409,8 @@ impl EngineInner {
             .entities
             .expect_enemy_ai_mut(owner, format_args!("battle entry"));
         let old_substate = ai.base.current_substate;
-        ai.base.outbox.actor.set_unfocus();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_unfocus(owner);
+
         let camp = self.expect_entity(owner, "battle camp").camp();
         let mut visible = self
             .world
@@ -466,7 +461,9 @@ impl EngineInner {
 
         // One registration-order scan performs admission and target injection.
         // Visibility precedes the soldier-state gate.
-        for friend in self.world.fighter_registry_order() {
+        let fighter_count = self.world.fighter_registry_ids.len();
+        for index in 0..fighter_count {
+            let friend = self.world.fighter_registry_ids[index];
             if friend == owner {
                 continue;
             }

@@ -68,10 +68,15 @@ impl EngineInner {
     // bookkeeping (patch bake, window-regain-focus) is driven by
     // `SideEffects::invalidate_background`, and save-load
     // clears mid-zoom state via `EngineSnapshot::apply_to`.
-    pub(super) fn tick_display_state(&mut self, display: &mut CameraDisplayState) -> u32 {
+    pub(super) fn tick_display_state(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        display: &mut CameraDisplayState,
+    ) -> u32 {
         // Director work is cinematic / script-driven; it targets the
         // single canonical cutscene camera and runs once per tick.
-        self.perform_director_work(display);
+        self.perform_director_work(sim, assets, display);
 
         // Skip rendering in fast-forward mode (draw every 32nd frame).
         // This is a frame-level gate, not per-seat — applies to every

@@ -2,22 +2,16 @@ use super::*;
 use crate::element::{Command, ListenPhase, Posture};
 use crate::engine::movement::{FailedPathRequest, PendingPathRequest, PendingPathRequestQueue};
 use crate::engine::test_support::actors::make_test_soldier;
-use crate::entity_id::{EntityId, EntityIdKind};
 use crate::order::{Order, OrderType};
 use crate::sequence::{SequenceElement, SequenceState};
 
 #[test]
-fn waiter_preparation_uses_only_world_and_orders_and_cancels_only_its_owner() {
-    let mut world = WorldState::new();
-    let mut orders = OrderRuntime::new();
-    let owner = EntityId::new(0, EntityIdKind::Soldier);
-    let other = EntityId::new(1, EntityIdKind::Soldier);
-    world
-        .entities
-        .push(Some(make_test_soldier(Posture::Upright)));
-    world
-        .entities
-        .push(Some(make_test_soldier(Posture::Upright)));
+fn live_waiter_preparation_cancels_only_its_owner() {
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
+    let other = engine.add_test_entity(make_test_soldier(Posture::Upright));
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let mut element = SequenceElement::new_movement(
         1,
@@ -30,19 +24,19 @@ fn waiter_preparation_uses_only_world_and_orders_and_cancels_only_its_owner() {
         OrderType::Freezing,
         0.0,
         0.0,
-        orders.allocate_order_id(),
+        engine.orders.allocate_order_id(),
     ));
-    let waiter = orders.sequence_manager.launch_element(element);
-    let other_sequence =
-        orders
-            .sequence_manager
-            .launch_element(SequenceElement::new(1, Command::Wait, Some(other)));
-    orders.pending_path_requests = PendingPathRequestQueue::restore_v48_waiting(vec![
+    let waiter = engine.orders.sequence_manager.launch_element(element);
+    let other_sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Wait, Some(other)));
+    engine.orders.pending_path_requests = PendingPathRequestQueue::restore_v48_waiting(vec![
         PendingPathRequest::test_request(owner, waiter, 0),
         PendingPathRequest::test_request(other, other_sequence, 0),
         PendingPathRequest::test_request(owner, waiter, 0),
     ]);
-    orders.failed_path_requests = vec![
+    engine.orders.failed_path_requests = vec![
         FailedPathRequest::from_pending(PendingPathRequest::test_request(owner, waiter, 0), 0),
         FailedPathRequest::from_pending(
             PendingPathRequest::test_request(other, other_sequence, 0),
@@ -50,44 +44,63 @@ fn waiter_preparation_uses_only_world_and_orders_and_cancels_only_its_owner() {
         ),
     ];
 
-    prepare_cross_postponed_waiter(&mut world, &mut orders, waiter, 0);
+    engine.prepare_cross_postponed_waiter(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        waiter,
+        0,
+    );
 
-    let element = orders.sequence_manager.get_element(waiter, 0).unwrap();
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(waiter, 0)
+        .unwrap();
     assert_eq!(element.command, Command::Move);
     assert_eq!(element.state, SequenceState::Postponed);
     assert!(element.orders.is_empty());
     assert_eq!(element.retained_movement_goal, None);
-    assert!(!orders.sequence_manager.is_registered_to_go(waiter, 0));
-    let pending = orders.pending_path_requests.v48_waiting();
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .is_registered_to_go(waiter, 0)
+    );
+    let pending = engine.orders.pending_path_requests.v48_waiting();
     // Cancellation retains the logical head as stale so it still consumes
     // this barrier's processing slot; only the later owner request is removed.
     assert_eq!(pending.len(), 2);
     assert_eq!(pending[0].owner, owner);
     assert_eq!(pending[1].owner, other);
     assert_eq!(
-        serde_json::to_value(&orders.pending_path_requests).unwrap()["ignore_next_path"],
+        serde_json::to_value(&engine.orders.pending_path_requests).unwrap()["ignore_next_path"],
         true,
     );
-    assert_eq!(orders.failed_path_requests.len(), 1);
-    assert_eq!(orders.failed_path_requests[0].owner, other);
+    assert_eq!(engine.orders.failed_path_requests.len(), 1);
+    assert_eq!(engine.orders.failed_path_requests[0].owner, other);
 }
 
 #[test]
 fn mechanics_stop_clears_only_the_selected_elements_ability_mirror() {
     for mirror_matches_selected in [false, true] {
-        let mut world = WorldState::new();
-        let mut orders = OrderRuntime::new();
-        let owner = EntityId::new(0, EntityIdKind::Soldier);
-        world
-            .entities
-            .push(Some(make_test_soldier(Posture::Upright)));
-        let selected = orders.sequence_manager.launch_element(SequenceElement::new(
-            1,
-            Command::Wait,
-            Some(owner),
-        ));
-        orders.sequence_manager.element_in_progress(selected, 0);
-        let actor = world
+        let mut engine = EngineInner::new();
+        let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let selected = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            selected,
+            0,
+        );
+        let actor = engine
+            .world
             .entities
             .get_mut(owner)
             .unwrap()
@@ -99,9 +112,15 @@ fn mechanics_stop_clears_only_the_selected_elements_ability_mirror() {
         actor.listen_phase = ListenPhase::CountingDown;
         actor.listen_wait_time = 12;
 
-        stop_owner_active_mechanics(&mut world, &mut orders, owner);
+        stop_owner_active_mechanics(&mut engine.world, &mut engine.orders, owner);
 
-        let actor = world.entities.get(owner).unwrap().actor_data().unwrap();
+        let actor = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap();
         if mirror_matches_selected {
             assert_eq!(actor.active_ability.kind, None);
             assert_eq!(actor.listen_phase, ListenPhase::Inactive);

@@ -219,7 +219,6 @@ impl EngineInner {
         owner: EntityId,
         operation: MoneyFightOperation,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         match operation {
             MoneyFightOperation::CleanUpAfterBrawl => {
                 self.create_live_money_fight_victims(assets, owner);
@@ -277,7 +276,6 @@ impl EngineInner {
                 self.handle_stolen_money(sim, assets, owner, object, thief)
             }
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     fn create_live_money_fight_victims(&mut self, assets: &LevelAssets, owner: EntityId) {
@@ -574,7 +572,7 @@ impl EngineInner {
         self.money_ai_mut(owner)
             .base
             .set_emoticon(crate::ai::EmoticonType::Thunderstorm);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         self.money_timer(owner, 200);
     }
 
@@ -637,9 +635,7 @@ impl EngineInner {
                 AiState::Wondering,
                 Substate::WonderingWatchingForMoreMoney,
             );
-            self.money_ai_mut(owner).base.outbox.actor.look_sidewards =
-                Some(crate::ai::LookDirection::LeftRight);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_look_sidewards(owner, crate::ai::LookDirection::LeftRight);
         }
     }
 
@@ -737,13 +733,13 @@ impl EngineInner {
         }
         let substate = self.money_ai(owner).base.current_substate;
         if substate.is_take_money() {
-            self.money_ai_mut(owner).base.break_macro();
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_break_macro(owner);
+
             self.face_money_human(sim, assets, owner, thief);
             self.money_ai_mut(owner)
                 .base
                 .set_emoticon(crate::ai::EmoticonType::QuestionMark);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             self.duty_set_state(
                 sim,
                 assets,

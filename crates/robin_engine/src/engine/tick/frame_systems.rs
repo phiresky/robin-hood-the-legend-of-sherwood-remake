@@ -142,7 +142,6 @@ impl EngineInner {
         self.drain_pending_scroll_amulets(sim, assets);
         self.drain_pending_hero_speeches(assets);
         self.drain_pending_hades_kills(sim, assets);
-        self.drain_pending_concussion_side_effects(sim, assets);
 
         // Drain matured sound-source finishes.  Replaces the
         // `stop_sound_source` logic the Rust host used to run on
@@ -587,41 +586,8 @@ impl EngineInner {
             }
         });
         for r in expired {
-            self.orders
-                .sequence_manager
-                .element_terminated(r.sequence_id, r.element_index);
+            self.element_terminated(sim, assets, &mut Vec::new(), r.sequence_id, r.element_index);
         }
-
-        // ── Post-timer removal-notification dispatch ──────────────
-        // The pre-timer pass after `hourglass_phase_sequences` preserves the
-        // original state-change, removal-notification, then readiness ordering for work
-        // that completed before this scan. This second pass is still required:
-        // timer expiry above can itself terminate an owned sequence element
-        // and queue another card. Its continuation and immediate successors
-        // drain below, after this frame's timer iteration has finished.
-        self.dispatch_condolations(sim, assets);
-
-        // ── Same-tick re-entrant stimulus dispatch ───────────────
-        // The condolation drain calls `Think(EVENT_DONE)` /
-        // `Think(EVENT_IMPOSSIBLE)` / etc. synchronously and
-        // re-entrantly on the same tick — so e.g. a patrol Turn
-        // that gets interrupted when enabling attentive mode
-        // launches `ENTER_ATTENTIVE_MODE` during
-        // Enemy-sighting processing fires its `EVENT_DONE`
-        // *during that same* `EventView` Think, advancing
-        // `SUBSTATE_ATTACKING_REACTIONTIME_TURNING` →
-        // `REACTIONTIME` before the frame ends.  We can't nest
-        // `&mut AiController` borrows mid-think, so
-        // `send_condolation_card` queues the stimulus via
-        // `fire_self_stimulus` (→ `pending_self_stimuli`).  Drain
-        // that queue here — after `dispatch_condolations` has
-        // populated it — so the redispatch happens on the same
-        // tick as the condolation, keeping
-        // `REACTIONTIME_TURNING → REACTIONTIME` timing correct.
-        // Without this the substate waits for the full
-        // 20-tick timer upper bound regardless of which
-        // sequence actually completed.
-        self.drain_pending_self_stimuli(sim, assets);
 
         // ── End-of-tick registration-inline drain ───────────────────
         // Anonymous timers run after the sequence-manager tick. Preserve

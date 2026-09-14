@@ -42,20 +42,6 @@ impl BoredBoundaryDebugConfig {
     }
 }
 
-fn consider_report_debug_config() -> &'static crate::engine::diagnostics::ParityGate<2> {
-    use crate::engine::diagnostics::ParityGate;
-    static CONFIG: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| {
-        ParityGate::from_env(
-            "PARITY_DEBUG_CONSIDER_REPORT",
-            [
-                "PARITY_DEBUG_CONSIDER_REPORT_FRAME",
-                "PARITY_DEBUG_CONSIDER_REPORT_OWNER",
-            ],
-        )
-    })
-}
-
 fn will_stop_debug_config() -> &'static crate::engine::diagnostics::ParityGate<2> {
     use crate::engine::diagnostics::ParityGate;
     static CONFIG: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
@@ -88,11 +74,6 @@ pub(crate) enum WillStopCaller {
     SimpleWaypoint,
     ProceedOnPath,
     SetPathWalkingFlags,
-}
-
-pub(crate) fn consider_report_debug_matches(frame: u32, owner: u32) -> bool {
-    let config = consider_report_debug_config();
-    config.matches_required([Some(frame), Some(owner)])
 }
 
 /// The per-NPC AI controller state. Enemy and friendly AI extend this
@@ -359,17 +340,9 @@ pub struct AiController {
     pub last_goto_flags: GotoFlags,
     pub stuck_counter: u16,
 
-    // -- Engine-facing effects, grouped by their drain barrier --
-    pub outbox: AiOutbox,
-
     /// Cached result of script binding; this is controller state rather than
-    /// an effect and therefore remains outside the outbox.
+    /// an execution request.
     pub has_script_filter_override: bool,
-
-    /// Last primary target reconciled into the entity-side focus state.
-    /// This gates automatic focus synchronization across explicit outbox
-    /// focus/unfocus effects.
-    pub last_synced_focus_target: Option<AiEntityHandle>,
 
     // -- Static entity context (set once at init/load) --
     /// Initial position (guard post / spawn point), set at level load.
@@ -386,8 +359,6 @@ pub struct AiController {
     // -- Cached engine state for say() / forbidden remarks --
     /// Current frame counter, set by the engine before think().
     pub cached_frame: u32,
-    /// Whether this NPC is inside a building, set by the engine.
-    pub cached_in_building: bool,
 }
 
 impl Default for AiController {
@@ -500,14 +471,11 @@ impl Default for AiController {
             last_goto_destination: Position::default(),
             last_goto_flags: GotoFlags::empty(),
             stuck_counter: 0,
-            outbox: AiOutbox::default(),
             has_script_filter_override: false,
-            last_synced_focus_target: None,
             initial_position: Position::default(),
             initial_view_direction: 0,
             max_visibility: 0,
             cached_frame: 0,
-            cached_in_building: false,
         }
     }
 }
@@ -580,66 +548,6 @@ impl AiController {
     /// fires.
     pub fn ai_is_script_locked(&self) -> bool {
         self.script_locked
-    }
-
-    /// Script-side AI lock.
-    ///
-    /// Sets `script_locked` + `remember_events`, halts the NPC's
-    /// current engine order (unless the lock itself is the active
-    /// command), and drops any running waypoint macro. Callers invoked
-    /// from the `LockAi` sequence command handler must pass
-    /// `from_lockai_command = true` so the stop doesn't cancel the very
-    /// command that triggered the lock; every other site passes
-    /// `false`.
-    pub fn script_lock(&mut self, remember_events: bool, from_lockai_command: bool) {
-        self.script_locked = true;
-        self.remember_events = remember_events;
-        // The original game handles the return-to-duty event synchronously from
-        // AssignPath before the later recorded LockAI can run. In Rust
-        // those AI actions are deferred through pending_* queues; once the
-        // script lock lands, no pre-lock deferred return-to-duty work may
-        // survive and interrupt the scripted sequence that follows.
-        self.outbox.reentrant.self_stimuli.clear();
-        if !from_lockai_command {
-            // Cancel the NPC's current order. The engine drains
-            // `pending_halt` in post-think.
-            self.outbox.actor.queue_halt();
-        }
-        self.break_macro();
-    }
-
-    /// Clear the script lock and, unless a `EventAfterScriptGoOn` is
-    /// already queued or the NPC is asleep/unconscious, schedule a
-    /// `EventReturnToDuty` self-stimulus so the AI re-enters its state
-    /// machine immediately. Also latches `pending_blink_all_enemies` so
-    /// the next detection pass re-registers anyone still in the view
-    /// cone.
-    #[track_caller]
-    pub fn script_unlock(&mut self, is_unconscious: bool) {
-        tracing::trace!(
-            target: "parity_stimulus_origin",
-            me = self.me,
-            was_script_locked = self.script_locked,
-            origin = %std::panic::Location::caller(),
-            "script unlock"
-        );
-        // Clear current detections so NPCs re-register view-cone
-        // occupants on the next detection pass.
-        self.outbox.actor.blink_all_enemies = true;
-
-        // Skip the return-to-duty Think if a EVENT_AFTER_SCRIPT_GO_ON
-        // is already queued — the script left a waypoint-continuation
-        // stimulus that must drain first.
-        let after_script_go_on = self
-            .stimulus_queue
-            .iter()
-            .any(|s| s.stimulus_type == StimulusType::EventAfterScriptGoOn);
-
-        self.script_locked = false;
-
-        if self.current_state != AiState::Sleeping && !after_script_go_on && !is_unconscious {
-            self.fire_self_stimulus(StimulusType::EventReturnToDuty);
-        }
     }
 
     // -- Emoticon --
@@ -950,7 +858,6 @@ impl AiController {
                 delta: &(delta),
                 timer_running: &(self.timer_is_running),
                 timer_deadline: &(self.when_does_timer_ring),
-                self_stimuli: &(self.outbox.reentrant.self_stimuli.len()),
             }
             .emit();
         }
@@ -977,63 +884,9 @@ impl AiController {
                 .is_none_or(|target| target.get() != id.index())
         };
         self.stimulus_queue.retain(keep);
-        self.outbox.detection.stimuli.retain(keep);
     }
 
-    /// Whether the AI has produced any orders this tick.
-
-    /// Drain self-directed stimuli queued by `say()`.
-    /// The engine re-dispatches these as think() calls to the same NPC.
-    pub fn take_pending_self_stimuli(&mut self) -> Vec<StimulusType> {
-        std::mem::take(&mut self.outbox.reentrant.self_stimuli)
-            .into_iter()
-            .map(|queued| queued.stimulus_type)
-            .collect()
-    }
-
-    // -- Shield commands --
-
-    /// Issue a raise-shield order toward a danger point.
-    pub fn raise_shield(&mut self, danger_point: Position, danger_elevation: f32) {
-        self.raise_shield_world(crate::coordinates::WorldPoint3D::new(
-            danger_point.x,
-            danger_point.y + danger_elevation,
-            danger_elevation,
-        ));
-    }
-
-    /// Preserve the stored world point without a map-space round trip.
-    pub(crate) fn raise_shield_world(&mut self, danger_point: crate::coordinates::WorldPoint3D) {
-        use crate::element::Command;
-        use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
-
-        let owner = self
-            .owner_entity_id
-            .expect("RaiseShield requires an AI controller bound to an owner");
-        let mut element = SequenceElement::new_generic(1, Command::RaiseShield, Some(owner));
-        element.set_property(
-            Field::ShieldDangerPoint,
-            FieldValue::Point3D {
-                x: danger_point.x,
-                y: danger_point.y,
-                z: danger_point.z,
-            },
-        );
-        let mut sequence = Sequence::new();
-        sequence.append_element(element);
-        self.outbox.actor.launch_sequences.push(sequence);
-    }
-
-    /// Issue a lower-shield order.
-    pub fn lower_shield(&mut self) {
-        // The original game launches a lower-shield sequence element, not
-        // a bare animation order. Preserve that command identity so the
-        // engine's preemption drain routes through dispatch_lower_shield and
-        // the eventual condolence card reports EventDone for LowerShield.
-        self.outbox.actor.lower_shield = true;
-    }
-
-    // -- Break macro --
+    // -- Macro diagnostics --
 
     pub(crate) fn debug_macro_lifecycle_at(
         &self,
@@ -1059,57 +912,11 @@ impl AiController {
             command_offset: &(self.macro_command_offset),
             remaining_bytes: &(self.number_of_remaining_macro_bytes),
             waypoint: &(self.macro_command_waypoint),
-            self_stimuli_len: &(self.outbox.reentrant.self_stimuli.len()),
+
             phase: &(phase),
             reason: &(reason),
         }
         .emit();
-    }
-
-    pub fn break_macro(&mut self) {
-        self.macro_in_progress = false;
-        self.macro_timer_is_running = false;
-        // Original deliberately leaves the macro byte cursor and remaining
-        // count untouched. They are serialized even after macro interruption and can
-        // therefore be observed by a later save/reload.
-        // Macro interruption clears `DETECTABLE_MISSED_FRIEND` and zeros
-        // `sorrow_level` as side effects — route through
-        // `set_checkpoint_charly` so the detectable queue + sorrow
-        // reset stay consistent.
-        self.set_checkpoint_charly(None);
-    }
-
-    /// Overwrites the stashed checkpoint actor and applies the
-    /// detectable/sorrow bookkeeping every call:
-    ///
-    /// * Unconditionally enqueue removal of all missed-friend detectables.
-    /// * When `target` is present, enqueue an
-    ///   missed-friend detectable registration so the target shows up
-    ///   in the "missed friend" list.
-    /// * When `target` is absent, zero `sorrow_level` and enqueue a
-    ///   second delete (belt-and-braces).
-    ///
-    /// Detectable effects are drained after the synchronous AI call returns.
-    /// The ordered mutation list retains each clear/add pair, so consecutive calls
-    /// have last-call-wins semantics (`A -> null` leaves none, `A -> B` leaves
-    /// only B).
-    pub fn set_checkpoint_charly(&mut self, target: Option<AiEntityHandle>) {
-        use crate::element::DetectableType;
-        self.outbox
-            .actor
-            .delete_detectable_type(DetectableType::MissedFriend);
-        self.checkpoint_charly = target;
-        if let Some(target) = target {
-            self.outbox.actor.add_detectable((
-                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(target.get())),
-                DetectableType::MissedFriend,
-            ));
-        } else {
-            self.sorrow_level = 0;
-            self.outbox
-                .actor
-                .delete_detectable_type(DetectableType::MissedFriend);
-        }
     }
 
     /// Pick the closest seek point to flee toward when a panic-run
@@ -1224,183 +1031,6 @@ impl AiController {
         }
     }
 
-    /// Assign a new patrol path (or drop the current one). The call
-    /// shapes of the original game's two patrol-path assignment variants
-    /// (sentinel `-1`, sentinel `-2`, valid waypoint-macro index, valid
-    /// script hiking-path reference) collapse to the cases encoded in
-    /// [`PatrolAssignment`].
-    ///
-    /// Side effects:
-    /// - Unconditionally cancel the macro first.
-    /// - On clear: snapshot current position/direction into
-    ///   `initial_position` / `initial_view_direction` so
-    ///   returning to duty sends the NPC back to the right anchor.
-    /// - Reset `likes_to_sit_around` (per variant), `is_stay_at_home`,
-    ///   and — for every variant except [`PatrolAssignment::ScriptWay`] —
-    ///   `special_action`.
-    /// - The index variant sets `has_patrol_path` before the Original's
-    ///   off-by-one bounds check. An out-of-range assignment therefore
-    ///   returns `false` with that flag set while retaining the prior path.
-    /// - When `!script_locked && current_state == Default`, fire a
-    ///   self `EventReturnToDuty` so the NPC walks to the new path /
-    ///   post on the next tick.
-    ///
-    /// Callers must supply the NPC's current map position + facing
-    /// (0–15) so the initial-pos snapshot is accurate.
-    pub fn assign_new_patrol_path(
-        &mut self,
-        assignment: PatrolAssignment,
-        current_position: Position,
-        current_direction: u16,
-        hiking_paths: &[crate::level_data::RawHikingPath],
-    ) -> bool {
-        self.break_macro();
-
-        match assignment {
-            PatrolAssignment::ClearPath | PatrolAssignment::ClearPathSitAround => {
-                let sits = matches!(assignment, PatrolAssignment::ClearPathSitAround);
-                self.has_patrol_path = false;
-                self.detach_patrol_path(None, false);
-                self.path_id = None;
-                self.initial_position = current_position;
-                self.initial_view_direction = current_direction & 0x0F;
-                self.likes_to_sit_around = sits;
-                self.special_action = false;
-                self.is_stay_at_home = false;
-                if !self.script_locked && self.current_state == AiState::Default {
-                    self.fire_self_stimulus(StimulusType::EventReturnToDuty);
-                }
-                true
-            }
-            PatrolAssignment::Index(pid) | PatrolAssignment::ScriptWay(pid) => {
-                let idx = pid.get() as usize;
-                // The original game writes the patrol-path flag before validating the
-                // authored index. Preserve that odd partial mutation on the
-                // error path; mPath itself is not reinitialized there.
-                self.has_patrol_path = true;
-                // Strictly greater, so `idx == count` is tolerated
-                // (matches the off-by-one in the original engine).
-                //
-                // todo: the hiking-path overload has no bounds check at
-                // all — the script hands it an already-resolved pointer. Rust
-                // resolves the script's Way to an index here, so `ScriptWay`
-                // inherits the index overload's guard. Keep it (failing loud
-                // beats a wild dereference), but note the divergence.
-                if idx > hiking_paths.len() {
-                    tracing::warn!(
-                        npc = self.me,
-                        idx = pid.get(),
-                        count = hiking_paths.len(),
-                        "patrol-path assignment: index out of range",
-                    );
-                    return false;
-                }
-                self.path_id = Some(pid);
-                let (last_waypoint_index, history) = if let Some(path) = self.patrol_path.take() {
-                    (path.last_waypoint_index, path.history)
-                } else {
-                    (
-                        self.detached_patrol_path_status.last_waypoint_index,
-                        std::mem::take(&mut self.detached_patrol_path_status.history),
-                    )
-                };
-                self.patrol_path = PatrolPath::new(pid, hiking_paths).map(|mut path| {
-                    // Initializing a new path resets current/forward only.
-                    path.last_waypoint_index = last_waypoint_index;
-                    path.history = history;
-                    path
-                });
-                self.likes_to_sit_around = false;
-                // Only the waypoint-macro index overload
-                // (patrol-path assignment by 16-bit index,
-                // clears
-                // special-action flag. The `AssignPath` script native goes
-                // through the hiking-path overload
-                // whose valid-path arm
-                // leaves that special-action flag untouched — a leisure-authored NPC
-                // sent onto a scripted route stays special, so its later
-                // return-to-duty movement skips the already-on-point shortcut
-                // and runs a real (possibly zero-length) move instead.
-                if matches!(assignment, PatrolAssignment::Index(_)) {
-                    self.special_action = false;
-                }
-                if !self.script_locked && self.current_state == AiState::Default {
-                    self.fire_self_stimulus(StimulusType::EventReturnToDuty);
-                }
-                true
-            }
-        }
-    }
-
-    /// Assign a new guard post.
-    ///
-    /// Drops any active patrol path, installs the new post as the
-    /// NPC's `initial_position` / `initial_view_direction` anchor,
-    /// clears the three authored flags, and — when not script-locked
-    /// and in the default state — fires `EventReturnToDuty` so the
-    /// NPC walks to the new post.
-    pub fn assign_new_post(&mut self, post_position: Position, post_direction: u16) -> bool {
-        self.break_macro();
-
-        self.path_id = None;
-        self.detach_patrol_path(None, false);
-        self.has_patrol_path = false;
-        self.initial_position = post_position;
-        self.initial_view_direction = post_direction & 0x0F;
-        self.is_stay_at_home = false;
-        self.likes_to_sit_around = false;
-        self.special_action = false;
-
-        if !self.script_locked && self.current_state == AiState::Default {
-            self.fire_self_stimulus(StimulusType::EventReturnToDuty);
-        }
-        true
-    }
-
-    /// Script-driven AI state entry. Wires the per-state side effects
-    /// that the bare `set_ai_state` field write omits:
-    /// an `EVENT_RETURN_TO_DUTY` decision for `Default`, area search via
-    /// `pending_script_seek_area` for `Seeking`, and `Panic` via
-    /// `pending_begin_panic` for `Fleeing`.
-    ///
-    /// Unreachable arms (`Sleeping`, `Wondering`, `Menacing`,
-    /// `Attacking`) are logged as warnings and skipped.
-    pub fn script_set_ai_state(&mut self, state: AiState, current_position: Position) {
-        match state {
-            AiState::Default => {
-                // The native barrier dispatches this through the real Think
-                // path before the VM resumes.
-                self.fire_self_stimulus(StimulusType::EventReturnToDuty);
-            }
-            AiState::Seeking => {
-                self.outbox.actor.script_seek_area = Some(ScriptSeekAreaRequest {
-                    center: current_position,
-                    radius: crate::parameters_ai::AI_SCRIPT_SEEK_RADIUS as u16,
-                });
-            }
-            AiState::Fleeing => {
-                // Panic(AI_MACRO_PANIC_RUNS) undirected. Panic itself routes
-                // through the owner's typed state change at the engine barrier.
-                let runs = crate::parameters_ai::AI_MACRO_PANIC_RUNS as u8;
-                let was_already_fleeing = self.current_state == AiState::Fleeing
-                    && matches!(
-                        self.current_substate,
-                        Substate::FleeingPanic | Substate::FleeingRunToDoor
-                    );
-                self.directed_panic = false;
-                self.outbox.actor.begin_panic = Some(PanicRequest {
-                    center: None,
-                    runs,
-                    alert: AlertLevel::Red,
-                    is_new_panic: !was_already_fleeing,
-                });
-            }
-            AiState::Sleeping | AiState::Wondering | AiState::Menacing | AiState::Attacking => {
-                unreachable!("scripted AI state selection rejects {state:?} before dispatch")
-            }
-        }
-    }
-
     /// Post-filter half of no-event decision-tick admission. This path deliberately
     /// reads only live owner state: building a global detection/forecast
     /// snapshot here would consume unrelated actors' authoritative RNG.
@@ -1461,20 +1091,6 @@ impl AiController {
             return false;
         }
         true
-    }
-
-    /// Broadcast a facing direction to every member of this NPC's patrol
-    /// formation.
-    ///
-    /// The per-minion call iterates `patrol` and writes
-    /// `patrol_direction` on each minion; if the minion is in
-    /// default patrol en-route waiting, it also faces the requested direction
-    /// on the minion. Each minion call needs live actor access which the
-    /// chief's `AiController` doesn't have access to, so the directive is
-    /// handed to the engine-facing owner drain that runs before the macro
-    /// call returns.
-    pub fn instruct_patrol_direction_to_patrol_members(&mut self, direction: u16) {
-        self.outbox.patrol.direction_broadcast = Some(direction);
     }
 
     // -- Waypoint-macro launch --
@@ -1707,108 +1323,10 @@ impl AiController {
         ]))
     }
 
-    /// Drop every queued `pending_*` intent that a prior `think()` set
-    /// but the engine hasn't yet drained.
-    ///
-    /// These fields exist because Rust's borrow checker forbids holding
-    /// a `&mut Engine` during `think()`, so engine-side calls
-    /// (state changes, swordfight entry, movement, …) become `pending_*`
-    /// flags on the AiController that the engine drains after think
-    /// returns. `handle_death_with_damage_element` needs to clear every
-    /// one of them so stale intents from the pre-death think don't fire
-    /// on a corpse; replacing the complete outbox keeps that cauterisation
-    /// exhaustive as new effect fields are introduced.
-    pub fn clear_all_pending(&mut self) {
-        // Replace the entire outbox so death/teardown clears every barrier,
-        // including detection, re-entrant, recovery, speech, and music work.
-        // This is deliberately exhaustive-by-construction: adding a new
-        // effect field to AiOutbox cannot silently escape this cauterisation.
-        self.outbox = AiOutbox::default();
-    }
-
-    /// Preserve movement's split close-point callback boundary. Inside AI decisions the
-    /// original game defers EVENT_REACHPOINT through the already-on-point flag until
-    /// decision-tick completion; callers outside a tick dispatch the reach-point event
-    /// synchronously. Rust's owner-boundary drain provides that synchronous
-    /// re-entry for a queued self stimulus.
-    fn finish_already_on_point(&mut self, depth: u8) {
-        if depth > 0 {
-            self.already_on_point = true;
-        } else {
-            self.fire_self_stimulus(StimulusType::EventReachPoint);
-        }
-    }
-
     pub(crate) fn begin_move_request(&mut self, destination: Position, flags: GotoFlags) {
         self.last_goto_destination = destination;
         self.last_goto_flags = flags;
         self.couldnt_reachpoint = false;
-    }
-
-    pub(crate) fn prepare_move_request(
-        &mut self,
-        destination: Position,
-        flags: GotoFlags,
-        position: Position,
-        layer: u16,
-        sector: Option<crate::position_interface::SectorHandle>,
-        animation: crate::order::OrderType,
-        civilian: bool,
-        depth: u8,
-    ) -> Option<GotoFlags> {
-        let mut flags = flags;
-        if civilian {
-            flags -= GotoFlags::FORBIDDEN_CIVILIANS;
-        }
-        let dx = (position.x - destination.x).abs();
-        let dy = (position.y - destination.y).abs();
-        if dx.max(dy) < 5.0
-            && !self.likes_to_sit_around
-            && !self.special_action
-            && matches!(
-                animation,
-                crate::order::OrderType::WaitingUpright
-                    | crate::order::OrderType::WaitingAlerted
-                    | crate::order::OrderType::NonanimationEnd
-            )
-        {
-            self.finish_already_on_point(depth);
-            return None;
-        }
-        let tolerance = if flags.contains(GotoFlags::NEAR) {
-            self.stop_before_end_of_path_distance as f32
-        } else {
-            0.0
-        };
-        if flags.contains(GotoFlags::NEAR)
-            && destination.level == layer
-            && dx * dx + dy * dy <= tolerance * tolerance
-        {
-            self.finish_already_on_point(depth);
-            return None;
-        }
-        if destination.x <= 0.0
-            || destination.y <= 0.0
-            || destination.sector.is_none()
-            || (destination.level as i16) < 0
-        {
-            self.couldnt_reachpoint = true;
-            return None;
-        }
-        let crosses_sector = match (
-            destination.sector.and_then(|s| s.arena_index()),
-            sector.and_then(|s| s.arena_index()),
-        ) {
-            (Some(destination), Some(current)) => destination != current,
-            _ => destination.sector != sector,
-        };
-        if flags.contains(GotoFlags::STRAIGHT)
-            && !flags.contains(GotoFlags::ASK_OBSTACLE)
-            && (crosses_sector || destination.level != layer)
-        {
-            flags -= GotoFlags::STRAIGHT;
-        }
-        Some(flags)
     }
 
     pub(crate) fn prepare_approach(&mut self, distance: i32, flags: GotoFlags, depth: u8) {
@@ -1820,130 +1338,6 @@ impl AiController {
         self.stop_before_end_of_path = true;
         self.use_max_norm_to_stop_before_end_of_path = !flags.contains(GotoFlags::USE_NORM);
         self.stop_before_end_of_path_distance = effective_distance as u16;
-    }
-
-    // -- Facing commands --
-
-    /// Match direct original-game direction selection.
-    ///
-    /// This writes the progressive direction goal only. It must not launch a
-    /// standalone Turn sequence: callers such as shield maintenance update
-    /// their collision geometry in place while the selected waiting-shield
-    /// animation performs any needed rotation.
-    pub fn set_direction_goal(&mut self, direction: u16) {
-        self.outbox.actor.set_direction = Some((direction & 15) as i16);
-    }
-
-    // -- Self-stimuli --
-
-    /// Queue a stimulus to be re-dispatched to this NPC on the next tick.
-    /// The engine drains `pending_self_stimuli` and re-dispatches them
-    /// after the current think cycle.
-    #[track_caller]
-    pub fn fire_self_stimulus(&mut self, stimulus_type: StimulusType) {
-        tracing::trace!(
-            target: "parity_stimulus_origin",
-            me = self.me,
-            ?stimulus_type,
-            origin = %std::panic::Location::caller(),
-            "self stimulus queued"
-        );
-        self.outbox
-            .reentrant
-            .self_stimuli
-            .push(stimulus_type.into());
-    }
-
-    // -- Pointing command --
-
-    pub(crate) fn point_direction(&mut self, direction: i16) {
-        use crate::element::Command;
-        use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
-        let owner = self.owner_entity_id.expect("pointing requires an owner");
-        let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
-        turn.set_property(Field::Direction, FieldValue::Integer(direction as u32));
-        let mut point = SequenceElement::new_generic(2, Command::Point, Some(owner));
-        // Original resolves the sector once and stores it on both elements.
-        point.set_property(Field::Direction, FieldValue::Integer(direction as u32));
-
-        let mut sequence = Sequence::new();
-        sequence.append_element(turn);
-        sequence.append_element(point);
-        self.outbox.actor.launch_sequences.push(sequence);
-    }
-
-    // -- Alert status --
-
-    /// Set the NPC's alert status (affects music + view).
-    ///
-    /// Writes both the music-side counter
-    /// (`current_music_alert_status`) and the view-side field
-    /// (`view_alert_status`). This is the override-free path: callers
-    /// that need the soldier forced-attentive view override should
-    /// go through `EnemyAi::set_alert_status` (or call
-    /// `set_alert_status_with_flags` directly with `forced_attentive =
-    /// true`).
-    ///
-    /// The music-system side — aggregating all soldier statuses into
-    /// the overall villain alert and changing music mode — runs
-    /// once per frame in `EngineInner::update_overall_villain_alert`.
-    pub fn set_alert_status(&mut self, level: AlertLevel) {
-        self.set_alert_status_with_flags(level, AlertFlags::empty(), false);
-    }
-
-    /// Full-fidelity `set_alert_status(new_status, flags)`.
-    ///
-    /// Always updates `current_music_alert_status`. Returns early
-    /// without touching the view field when `flags` contains
-    /// `ALERT_ONLY_MUSIC`. Otherwise writes the view field, applying
-    /// the soldier forced-attentive override (Green music ⇒ Yellow
-    /// view) when `forced_attentive` is set.
-    ///
-    /// `INSTANT_MUSIC_CHANGE` is staged on `pending_instant_music_change`
-    /// when the call actually changes `current_music_alert_status`, and
-    /// observed by the per-frame `update_overall_villain_alert` sweep.
-    pub fn set_alert_status_with_flags(
-        &mut self,
-        level: AlertLevel,
-        flags: AlertFlags,
-        forced_attentive: bool,
-    ) {
-        if flags.contains(AlertFlags::INSTANT_MUSIC_CHANGE)
-            && level != self.current_music_alert_status
-        {
-            self.outbox.music.instant_change = true;
-        }
-        self.current_music_alert_status = level;
-
-        if flags.contains(AlertFlags::ONLY_MUSIC) {
-            return;
-        }
-
-        self.view_alert_status = if forced_attentive && level == AlertLevel::Green {
-            AlertLevel::Yellow
-        } else {
-            level
-        };
-    }
-
-    // -- Return to duty (common) --
-
-    /// Forecast whether the actor will stop at its current waypoint.
-    ///
-    /// Returns `true` when the selected macro section starts with an
-    /// opcode that halts the actor (`CMD_WAIT`, `CMD_FACE_TO`,
-    /// `CMD_BEND`, `CMD_CHECK_4*`, `CMD_LOOK_LEFT`, `CMD_LOOK_RIGHT`,
-    /// `CMD_STAY_HERE`). Returns `false` for purely-motion sections
-    /// (`CMD_RUN`/`CMD_WALK`/`CMD_REVERSE_PATH`/`CMD_GOTO_POINT`/…) so
-    /// the caller keeps the `DONT_STOP` flag and walks through. Takes
-    /// `&mut self` so it can call [`Self::forecast_macro_rand`] (peek
-    /// without consuming).
-    pub fn will_stop_at_next_waypoint(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        hiking_paths: &[crate::level_data::RawHikingPath],
-    ) -> bool {
-        self.will_stop_at_next_waypoint_inner(sim, hiking_paths)
     }
 
     pub(crate) fn will_stop_at_next_waypoint_at(
@@ -2157,230 +1551,5 @@ impl AiController {
                 position.y - y as f32,
             ) as u16
         })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Consideration accumulator (replaces module-static accumulators)
-// ---------------------------------------------------------------------------
-
-/// Helper for the weighted-attribute decision system. Modelled as an
-/// explicit struct rather than module-static accumulators.
-#[derive(Debug, Default)]
-pub struct ConsiderationAccumulator {
-    pub sum_of_values: u32,
-    pub sum_of_weights: u32,
-    pub sum_of_threshold_values: i32,
-    pub sum_of_threshold_weights: u32,
-    pub positive_threshold_values: bool,
-    pub negative_threshold_values: bool,
-}
-
-impl ConsiderationAccumulator {
-    pub fn reset(&mut self) {
-        *self = Self::default();
-    }
-
-    /// Add a value to the consideration. `positive_effect` means higher
-    /// values favor "yes".
-    pub fn consider_value(&mut self, positive_effect: bool, value: u8, weight: u8, threshold: u8) {
-        debug_assert!(weight > 0);
-        if threshold == 0 {
-            let contrib = if positive_effect {
-                value as u32
-            } else {
-                MAX_ATT_VALUE as u32 - value as u32
-            };
-            self.sum_of_values += contrib * weight as u32;
-            self.sum_of_weights += weight as u32;
-        } else {
-            // Threshold branch: compare the *raw* value (not inverted)
-            // against the threshold, and only accumulate if
-            // `value > threshold`. The polarity flag is set
-            // unconditionally based on `positive_effect`.
-            if value > threshold {
-                let delta = (value as i32 - threshold as i32) * weight as i32;
-                if positive_effect {
-                    self.sum_of_threshold_values += delta;
-                } else {
-                    self.sum_of_threshold_values -= delta;
-                }
-                self.sum_of_threshold_weights += weight as u32;
-            }
-            if positive_effect {
-                self.positive_threshold_values = true;
-            } else {
-                self.negative_threshold_values = true;
-            }
-        }
-    }
-
-    /// Evaluate all accumulated considerations and return a value in
-    /// 0..100. Initial lambda, threshold correction, clamp, then
-    /// consume-and-reset.
-    pub fn evaluate(&mut self) -> u8 {
-        #[allow(clippy::manual_checked_ops)]
-        let mut lambda: i32 = if self.sum_of_weights > 0 {
-            (self.sum_of_values / self.sum_of_weights) as i32
-        } else if self.positive_threshold_values == self.negative_threshold_values {
-            HALF_MAX_ATT_VALUE
-        } else if self.positive_threshold_values {
-            0
-        } else {
-            MAX_ATT_VALUE
-        };
-
-        if self.sum_of_threshold_weights > 0 {
-            let adjusted = self.sum_of_values as i32
-                + lambda * self.sum_of_threshold_weights as i32
-                + self.sum_of_threshold_values;
-            lambda = adjusted / (self.sum_of_weights + self.sum_of_threshold_weights) as i32;
-        }
-
-        let result = lambda.clamp(0, MAX_ATT_VALUE) as u8;
-        self.reset();
-        result
-    }
-}
-
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests;
-
-impl AiController {
-    /// Shared freeze/lock and substate gates, before role-specific admission.
-    pub(crate) fn admit_think_before_role_gates(
-        &mut self,
-        stimulus: &Stimulus,
-        static_ai_frozen: bool,
-    ) -> bool {
-        let stimulus_type = stimulus.stimulus_type;
-        self.couldnt_reachpoint = false;
-        self.already_on_point = false;
-        self.already_turned = false;
-
-        // Static AI freeze discards stimuli after the engine-side script
-        // filter. It is not the per-NPC AILOCK_FREEZE retention bit.
-        if static_ai_frozen {
-            self.register_log_line(LogLineType::EventRefused, 1);
-            return false;
-        }
-
-        // Script lock — queue non-gameflow stimuli when
-        // `remember_events` is set so the script can drain them later.
-        if self.script_locked {
-            if self.remember_events {
-                match stimulus_type {
-                    StimulusType::EventDone | StimulusType::EventReachPoint => {
-                        // Gameflow commands — ignore.
-                    }
-                    _ => {
-                        self.stimulus_queue.push(*stimulus);
-                    }
-                }
-            }
-            self.register_log_line(LogLineType::EventRefused, 2);
-            return false;
-        }
-
-        // Every non-script AILOCK flag retains stimuli. Original's separate
-        // global freeze discard gate is not the per-NPC AILOCK_FREEZE bit.
-        if !self.locks_flag_field.is_empty() {
-            self.stimulus_queue.push(*stimulus);
-            self.register_log_line(LogLineType::EventRefused, 3);
-            return false;
-        }
-
-        // WonderingWaspInArmour gate.
-        if self.current_substate == Substate::WonderingWaspInArmour {
-            match stimulus_type {
-                StimulusType::EventLoseConsciousness | StimulusType::EventWaspAway => {}
-                _ => {
-                    self.register_log_line(LogLineType::EventRefused, 4);
-                    return false;
-                }
-            }
-        }
-
-        // WonderingUnderNet gate.
-        if self.current_substate == Substate::WonderingUnderNet {
-            match stimulus_type {
-                StimulusType::EventLoseConsciousness | StimulusType::EventNetAway => {}
-                _ => {
-                    self.register_log_line(LogLineType::EventRefused, 5);
-                    return false;
-                }
-            }
-        }
-
-        // FleeingMerryManLeaveMap gate.  Reached by civilian
-        // merry-men running off the map after rescue, so this gate
-        // is civilian-relevant.
-        if self.current_substate == Substate::FleeingMerryManLeaveMap
-            && stimulus_type != StimulusType::EventReachPoint
-        {
-            self.register_log_line(LogLineType::EventRefused, 6);
-            return false;
-        }
-
-        true
-    }
-
-    /// Shared timer/death/recovery gates, after the enemy physical-injury gate.
-    pub(crate) fn admit_think_after_role_gates(
-        &mut self,
-        stimulus: &Stimulus,
-        ctx: &super::AiAdmission,
-    ) -> bool {
-        let stimulus_type = stimulus.stimulus_type;
-        // Reset standing-around timer.
-        self.standing_around_timer = 0;
-
-        // Stale-timer handling.
-        if self.timer_is_running {
-            if self.current_substate != self.substate_at_last_timer_launch {
-                self.timer_is_running = false;
-            }
-        } else if stimulus_type == StimulusType::EventTimer
-            && self.current_substate != self.substate_at_last_timer_launch
-        {
-            self.register_log_line(LogLineType::EventRefused, 9);
-            return false;
-        }
-
-        // Dead guys ignore everything.  Defence-in-depth — scripts
-        // and cross-NPC actions can still fire stimuli at a corpse
-        // even though the tick loop normally skips them.
-        if ctx.self_is_dead {
-            self.register_log_line(LogLineType::EventRefused, 10);
-            return false;
-        }
-
-        // SleepingUnconscious refusal for non-recovery stimuli.
-        if self.current_substate == Substate::SleepingUnconscious
-            && stimulus_type != StimulusType::EventFitAgain
-        {
-            self.register_log_line(LogLineType::EventRefused, 11);
-            return false;
-        }
-
-        // Recovery is only valid when unconscious or napping; refused
-        // even when unconscious if the actor is being carried.
-        if stimulus_type == StimulusType::EventFitAgain {
-            match self.current_substate {
-                Substate::SleepingUnconscious | Substate::SleepingNapping => {}
-                _ => {
-                    self.register_log_line(LogLineType::EventRefused, 12);
-                    return false;
-                }
-            }
-            if ctx.posture == crate::element::Posture::Carried {
-                self.register_log_line(LogLineType::EventRefused, 7);
-                return false;
-            }
-        }
-
-        true
     }
 }

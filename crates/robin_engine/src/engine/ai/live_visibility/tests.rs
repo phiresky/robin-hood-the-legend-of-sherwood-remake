@@ -71,10 +71,13 @@ fn door_position(engine: &mut EngineInner, owner: EntityId, point: MapPoint) {
     *gate_id = Some(gate);
     *direction = 1;
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 }
 
 fn wall(x0: f32, y0: f32, x1: f32, y1: f32, top: f32) -> SightObstacle {

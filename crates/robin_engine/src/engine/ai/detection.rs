@@ -986,7 +986,7 @@ impl EngineInner {
                     observe_heard_callback(self, entity_id);
                 }
             }
-            self.do_next_order(listener.seq_id, listener.elem_idx);
+            self.do_next_order(sim, assets, listener.seq_id, listener.elem_idx);
             let (exit_order_id, exit_order_type) = self
                 .orders
                 .sequence_manager
@@ -1540,6 +1540,7 @@ impl EngineInner {
             }
         }
 
+        let mut stimuli = Vec::new();
         let detectable_list_debug_creation_order = detectable_list_debug_gate()
             .matches([Some(universal_frame), None])
             .then(|| self.original_static_creation_order(npc_id));
@@ -1603,17 +1604,8 @@ impl EngineInner {
             // detectable types, preserving the original
             // SHADOW → (VIEW|OUTOFVIEW)* → BODY → OBJECT → FRIEND →
             // MISSED_FRIEND → BEGGAR FIFO.
-            if let Some(stimuli) = think_input {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(
-                        npc_id,
-                        format_args!("detected NPC before its same-phase stimulus queue"),
-                    )
-                    .outbox
-                    .detection
-                    .stimuli
-                    .extend(stimuli);
+            if let Some(enemy_stimuli) = think_input {
+                stimuli.extend(enemy_stimuli);
             }
             // The original NPC update completes this NPC's entire
             // detection-refresh scan before flushing its FIFO stimulus list.
@@ -1625,6 +1617,7 @@ impl EngineInner {
                 universal_frame,
                 ground,
                 radius,
+                &mut stimuli,
             );
         }
         if let Some(creation_order) = detectable_list_debug_creation_order
@@ -1643,27 +1636,17 @@ impl EngineInner {
             );
         }
 
-        let has_pending_stimuli = self
-            .world
-            .entities
-            .get(npc_id)
-            .and_then(Entity::ai_controller)
-            .is_some_and(|ai| !ai.outbox.detection.stimuli.is_empty());
-        if has_pending_stimuli {
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets);
-        }
+        self.dispatch_optical_stimuli(sim, npc_id, assets, stimuli);
     }
 
-    /// Test seam: mutate entity/sequence state after shield-link reconciliation,
-    /// then verify that detection reads the changed live state.
+    /// Test seam: mutate entity/sequence state immediately before detection.
     #[cfg(test)]
-    pub(crate) fn refresh_detection_after_world_snapshot_for_test(
+    pub(crate) fn refresh_detection_after_live_mutation_for_test(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         mutate_live_state: impl FnOnce(&mut Self),
     ) {
-        self.refresh_archer_shield_links();
         mutate_live_state(self);
         let owners: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for owner in owners {
@@ -1734,6 +1717,7 @@ impl EngineInner {
         ground: GroundPoint,
         radius: u16,
     ) -> Option<Vec<crate::ai::Stimulus>> {
+        let mut stimuli = Vec::new();
         let creation_order = self.original_static_creation_order(npc_id);
         let modified_frame = refresh_detection_modified_frame(universal_frame, creation_order);
         let bucket = DetectableType::Enemy as usize;
@@ -1878,13 +1862,10 @@ impl EngineInner {
                 .expect("optical owner requires controller");
             ai.max_visibility = ai.max_visibility.max(u32::from(sharpness));
             if shadow {
-                ai.outbox
-                    .detection
-                    .stimuli
-                    .push(crate::ai::Stimulus::with_position(
-                        crate::ai::StimulusType::EventSeesShadow,
-                        shadow_position,
-                    ));
+                stimuli.push(crate::ai::Stimulus::with_position(
+                    crate::ai::StimulusType::EventSeesShadow,
+                    shadow_position,
+                ));
             }
             if achievement_observation_sample(sharpness > 0, is_pc, hostile) {
                 observed_pcs.push(target);
@@ -1928,7 +1909,6 @@ impl EngineInner {
         };
         npc.maximal_detection_suspect = npc.detection_suspects[bucket];
 
-        let mut stimuli = Vec::new();
         for index in 0..count {
             let entry = &self
                 .world
@@ -2185,6 +2165,7 @@ impl EngineInner {
         universal_frame: u32,
         ground: GroundPoint,
         radius: u16,
+        stimuli: &mut Vec<crate::ai::Stimulus>,
     ) {
         use crate::ai::{AiState, StimulusType, Substate as AiSubstate};
         use crate::element::Human as _;
@@ -2231,7 +2212,7 @@ impl EngineInner {
                     &mut self.world.entities,
                     npc_id,
                     kind,
-                    super::snapshots::is_live_beggar,
+                    super::actor_queries::is_live_beggar,
                 );
             }
             let bucket = kind as usize;
@@ -2432,13 +2413,10 @@ impl EngineInner {
                     stimulus.info = crate::ai::StimulusInfo::Object(
                         crate::ai::AiEntityHandle::new(target.index()),
                     );
-                    ai.outbox.detection.stimuli.push(stimulus);
+                    stimuli.push(stimulus);
                 }
             } else {
-                ai.outbox
-                    .detection
-                    .stimuli
-                    .extend(queued_human_detection_stimuli(event, shadows, rising));
+                stimuli.extend(queued_human_detection_stimuli(event, shadows, rising));
             }
         }
         finalize_detection_summary(
@@ -2559,17 +2537,33 @@ mod tests {
     #[test]
     fn optical_passing_door_follows_selected_command_without_runtime_door_state() {
         let target = EntityId::Pc(crate::entity_id::PcId(0));
-        let mut sequences = crate::sequence::SequenceManager::new();
-        assert!(!selected_actor_is_passing_door(&sequences, target));
-
-        let sequence = sequences.launch_element(crate::sequence::SequenceElement::new(
-            1,
-            crate::element::Command::PassDoor,
-            Some(target),
+        let mut engine = EngineInner::new();
+        assert!(!selected_actor_is_passing_door(
+            &engine.orders.sequence_manager,
+            target
         ));
-        sequences.element_in_progress(sequence, 0);
 
-        assert!(selected_actor_is_passing_door(&sequences, target));
+        let sequence =
+            engine
+                .orders
+                .sequence_manager
+                .launch_element(crate::sequence::SequenceElement::new(
+                    1,
+                    crate::element::Command::PassDoor,
+                    Some(target),
+                ));
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
+
+        assert!(selected_actor_is_passing_door(
+            &engine.orders.sequence_manager,
+            target
+        ));
     }
 
     #[test]

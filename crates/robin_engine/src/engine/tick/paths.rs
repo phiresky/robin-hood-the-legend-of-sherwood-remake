@@ -52,16 +52,13 @@ impl EngineInner {
             {
                 element.command = crate::element::Command::MoveOk;
             }
-            self.orders
-                .sequence_manager
-                .element_impossible(request.seq_id, request.elem_idx);
-            // Marking a sequence element impossible invokes the
-            // owner's removal notification synchronously inside
-            // path-processing phase. Close only this timeout's owner
-            // boundary here, before collision and every element update;
-            // leaving the card queued until the actor's insertion-order slot
-            // lets earlier actors consume RNG before EVENT_COULDNT_REACHPOINT.
-            self.dispatch_condolations_for_owner_boundary(sim, request.owner, assets);
+            self.element_impossible(
+                sim,
+                assets,
+                &mut Vec::new(),
+                request.seq_id,
+                request.elem_idx,
+            );
             tracing::debug!(
                 actor = ?request.owner,
                 seq_id = ?request.seq_id,

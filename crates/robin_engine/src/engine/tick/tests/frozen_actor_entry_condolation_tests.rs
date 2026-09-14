@@ -8,6 +8,13 @@ use crate::sequence::{CascadeFlags, SequenceElement};
 
 #[test]
 fn selected_terminal_card_precedes_frozen_actors_derived_tail() {
+    let mut assets = LevelAssets::new();
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    profiles.soldiers.push(crate::profiles::SoldierProfile {
+        hth_weapon_id: 1,
+        ..Default::default()
+    });
+    profiles.hth_weapons.push(Default::default());
     let mut engine = EngineInner::new();
     let npc = NpcData {
         ai: crate::element::AiActorData {
@@ -48,22 +55,22 @@ fn selected_terminal_card_precedes_frozen_actors_derived_tail() {
         .orders
         .push_back(Order::test_new(OrderType::StrikingRightSmalltalk, 0.0, 0.0));
     let sequence = engine.orders.sequence_manager.launch_element(strike);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
-    engine
-        .orders
-        .sequence_manager
-        .element_interrupted(sequence, 0, CascadeFlags::NEXT_LEVEL);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
+    engine.element_interrupted(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+        CascadeFlags::NEXT_LEVEL,
+    );
 
-    let mut assets = LevelAssets::new();
-    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
-    profiles.soldiers.push(crate::profiles::SoldierProfile {
-        hth_weapon_id: 1,
-        ..Default::default()
-    });
-    profiles.hth_weapons.push(Default::default());
     engine.tick_actor_animation_action_change_slots_with_after_slot(
         &crate::sim_rng::test_context(),
         &assets,

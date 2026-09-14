@@ -11,11 +11,7 @@ use tick_action_change_step::ActionChangeSlotCtx;
 
 use super::movement::{CompletedPathWork, PathScheduleContext};
 #[cfg(test)]
-use super::sequence_runtime::{
-    DirectAbilityCommandContext, LiftWaitCommandContext, NpcAttentionCommandContext,
-    NpcStateCommandContext, OwnerActionBarrier, PositionAssertionContext, StealthCommandContext,
-    TurnCommandContext, WaitCommandContext,
-};
+use super::sequence_runtime::OwnerActionBarrier;
 use super::*;
 use crate::abilities;
 use crate::element::{Command, Entity, EntityId};
@@ -1351,7 +1347,6 @@ impl EngineInner {
         // inside `perform_hourglass` for rollback determinism: replay
         // only re-runs `perform_hourglass`, so anything advancing engine
         // state outside it would diverge from the live timeline.
-        self.update_overall_villain_alert(&assets.profile_manager);
         // Forbidden-expression timers age in the Original's per-frame PC
         // render refresh, which runs after the whole simulation frame.  Keep
         // the decrement here (not inside a mid-hourglass melee phase) so a
@@ -1439,7 +1434,7 @@ impl EngineInner {
         // camera display state into this argument. Advance that exact value;
         // taking `cutscene_camera.display` again here would tick a fresh
         // default and then overwrite it when the outer value is restored.
-        let skip_render = self.tick_display_state(display);
+        let skip_render = self.tick_display_state(sim, assets, display);
 
         // Original's portrait refresh mirrors these fields from canonical
         // profile/status/interface state. Event-driven open, burn, and
@@ -1691,16 +1686,6 @@ impl EngineInner {
             )
         });
 
-        // Terminating a sequence element calls the owner's completion callback,
-        // then readies the sequence synchronously
-        // in the original game. `Ready` immediately
-        // starts the next command level, so an
-        // immediate timer successor must be installed before the engine reaches
-        // its anonymous-timer scan. This implementation defers the
-        // borrow-reentrant card itself, but this barrier must stay on the
-        // sequence-manager side of that scan.
-        self.dispatch_condolations(sim, assets);
-
         // Sequence-manager processing runs before the anonymous-timer
         // scan. If a deferred command terminates and advances its sequence
         // to an immediate Timer, the original game executes it re-entrantly, adds
@@ -1878,7 +1863,7 @@ impl EngineInner {
                 {
                     element.command = crate::element::Command::MoveOk;
                 }
-                self.finish_move_path(sim, request, waypoints);
+                self.finish_move_path(sim, assets, request, waypoints);
             }
             Some(CompletedPathWork::Failed(request)) => {
                 tracing::warn!(
@@ -1901,10 +1886,13 @@ impl EngineInner {
                     {
                         element.command = crate::element::Command::MoveOk;
                     }
-                    self.orders
-                        .sequence_manager
-                        .element_impossible(request.seq_id, request.elem_idx);
-                    self.dispatch_condolations_for_owner_boundary(sim, request.owner, assets);
+                    self.element_impossible(
+                        sim,
+                        assets,
+                        &mut Vec::new(),
+                        request.seq_id,
+                        request.elem_idx,
+                    );
                     if let Some(destination) = fallback {
                         tracing::info!(
                             actor = ?request.owner,
@@ -2506,7 +2494,6 @@ impl EngineInner {
             let _detail = entity_system_detail_guard(EntitySystemDetail::PrepareNpc);
             self.prepare_npc_owner_pass();
         }
-        let mut shield_links_need_refresh = true;
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,
             assets,
@@ -2557,7 +2544,7 @@ impl EngineInner {
                 // step that starts here is the order this actor executes a few
                 // lines later, and the landing posture it publishes is visible
                 // to every later creation slot and to none of the earlier ones.
-                engine.tick_active_jump_for(assets, owner);
+                engine.tick_active_jump_for(sim, assets, owner);
                 if matches!(owner, EntityId::Soldier(_)) {
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::SoldierPrelude(owner));
                     engine.tick_apple_smell_for(owner);
@@ -2724,7 +2711,6 @@ impl EngineInner {
                             owner,
                             derived_tail_order_type,
                         );
-                        shield_links_need_refresh = true;
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanNoise(owner));
                         engine.tick_tiredness_for(owner, assets);
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
@@ -2736,7 +2722,7 @@ impl EngineInner {
                             .get(owner)
                             .is_some_and(|entity| entity.ai_controller().is_some())
                         {
-                            engine.tick_npc_owner_pass(sim, assets, &mut shield_links_need_refresh, owner);
+                            engine.tick_npc_owner_pass(sim, assets, owner);
                         }
                         engine.tick_pc_auto_heal_for(sim, owner);
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::PcTail(owner));
@@ -2748,7 +2734,7 @@ impl EngineInner {
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
                             owner,
                         ));
-                        engine.tick_npc_owner_pass(sim, assets, &mut shield_links_need_refresh, owner);
+                        engine.tick_npc_owner_pass(sim, assets, owner);
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::NpcTail(owner));
                     }
                     _ => panic!(
@@ -2919,10 +2905,14 @@ impl EngineInner {
     /// the actor update after one execution call.
     fn apply_actor_post_execute_wait_modifier(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         execute_result: &mut super::animation::ActorExecuteResult,
     ) {
         self.apply_actor_post_execute_wait_modifier_to_motion(
+            sim,
+            assets,
             owner,
             execute_result.entry_seq_id,
             execute_result.entry_elem_idx,
@@ -2932,6 +2922,8 @@ impl EngineInner {
 
     fn apply_actor_post_execute_wait_modifier_to_motion(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         entry_seq_id: crate::sequence::SequenceId,
         entry_elem_idx: usize,
@@ -2986,14 +2978,14 @@ impl EngineInner {
         if live_command == Some(crate::element::Command::WaitFreeLift)
             && let Some((seq_id, elem_idx)) = live_element
         {
-            let world = &mut self.world;
-            let authorized = super::sequence_runtime::LiftWaitCommandContext {
-                entities: &mut world.entities,
-                fast_grid: std::sync::Arc::make_mut(&mut world.fast_grid),
-                doors: self.script_domains.interactables.doors.as_slice(),
-                sequence_manager: &mut self.orders.sequence_manager,
-            }
-            .authorize_and_reserve(owner, seq_id, elem_idx);
+            let authorized = self.authorize_and_reserve_lift_wait(
+                sim,
+                assets,
+                &mut Vec::new(),
+                owner,
+                seq_id,
+                elem_idx,
+            );
             if authorized {
                 *motion = crate::sprite::MotionState::Terminated;
             }
@@ -3332,6 +3324,8 @@ impl EngineInner {
 
     fn apply_helper_driven_shoulder_dismount(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         dismount: super::animation::ShoulderHelperDismount,
     ) {
         use crate::element::{ActionState, Posture};
@@ -3354,7 +3348,7 @@ impl EngineInner {
             // FreezeExecution interrupts the rider's selected sequence. Its
             // cached installed order is the Rust mirror of Original's
             // detached actor order and must disappear at the same owner boundary.
-            self.actor_freeze_execution(dismount.carried_id);
+            self.actor_freeze_execution(sim, assets, dismount.carried_id);
             if let Some(carried) = self.get_entity_mut(dismount.carried_id)
                 && let Some(actor) = carried.actor_data_mut()
             {
@@ -3543,17 +3537,17 @@ impl EngineInner {
             self.actor_wait(carried_id);
         }
         for dismount in shoulder_helper_dismounts {
-            self.apply_helper_driven_shoulder_dismount(dismount);
+            self.apply_helper_driven_shoulder_dismount(sim, assets, dismount);
         }
-        self.drain_seq_advance(seq_advance);
-        self.drain_wasp_next_cycle(wasp_next_cycle);
-        self.drain_seq_terminate(seq_terminate);
+        self.drain_seq_advance(sim, assets, seq_advance);
+        self.drain_wasp_next_cycle(sim, assets, wasp_next_cycle);
+        self.drain_seq_terminate(sim, assets, seq_terminate);
         self.drain_play_anim_frozen(play_anim_frozen);
-        self.drain_seq_impossible(seq_impossible);
+        self.drain_seq_impossible(sim, assets, seq_impossible);
         self.drain_unlock_door_done(unlock_door_done);
-        self.drain_next_jump_step(assets, next_jump_step);
+        self.drain_next_jump_step(sim, assets, next_jump_step);
         self.drain_select_hulk(select_hulk);
-        self.drain_resume_door_pass(assets, resume_door_pass);
+        self.drain_resume_door_pass(sim, assets, resume_door_pass);
         for entity_id in rejected_dead_idle_posture_requests {
             self.process_rejected_nonlying_posture_request_for(entity_id);
         }
@@ -3564,9 +3558,9 @@ impl EngineInner {
         // drain fires a cross-entity effect (bottle hide, coin pickup,
         // remarks, blood-alcohol bump).
         self.drain_drop_ale_done(assets, drop_ale_done);
-        self.drain_pc_bow_equip_action(assets, pc_bow_equip_action);
-        self.drain_pc_bow_unequip_action(assets, pc_bow_unequip_action);
-        self.drain_pc_helping_climb_action(assets, pc_helping_climb_action);
+        self.drain_pc_bow_equip_action(sim, assets, pc_bow_equip_action);
+        self.drain_pc_bow_unequip_action(sim, assets, pc_bow_unequip_action);
+        self.drain_pc_helping_climb_action(sim, assets, pc_helping_climb_action);
         self.drain_stature_change_end(stature_change_end);
         self.drain_weak_stunned_start(sim, assets, weak_stunned_start);
         self.drain_hidden_titbit_removals(hidden_titbit_removals);

@@ -158,18 +158,22 @@ impl EngineInner {
 
     pub(super) fn drain_seq_advance(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         seq_advance: Vec<(crate::sequence::SequenceId, usize)>,
     ) {
         for (seq_id, elem_idx) in seq_advance {
             // `do_next_order` semantics: pop the just-completed
             // order; advance to the next if one exists, otherwise
             // terminate the element.
-            self.do_next_order(seq_id, elem_idx);
+            self.do_next_order(sim, assets, seq_id, elem_idx);
         }
     }
 
     pub(super) fn drain_wasp_next_cycle(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         wasp_next_cycle: Vec<(crate::sequence::SequenceId, usize, u16)>,
     ) {
         // Wasp struggle-cycle refill: push a fresh `GettingFreeFromWasp`
@@ -186,18 +190,18 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .push_order_on(seq_id, elem_idx, order);
-            self.do_next_order(seq_id, elem_idx);
+            self.do_next_order(sim, assets, seq_id, elem_idx);
         }
     }
 
     pub(super) fn drain_seq_terminate(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         seq_terminate: Vec<(crate::sequence::SequenceId, usize)>,
     ) {
         for (seq_id, elem_idx) in seq_terminate {
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         }
     }
 
@@ -221,6 +225,8 @@ impl EngineInner {
 
     pub(super) fn drain_seq_impossible(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         seq_impossible: Vec<(crate::sequence::SequenceId, usize)>,
     ) {
         for (seq_id, elem_idx) in seq_impossible {
@@ -242,13 +248,15 @@ impl EngineInner {
                 // ABORTED for that unknown action; the release build then
                 // sets even this NonInterruptable injury Impossible and
                 // synchronously releases its postponed successor.
-                self.orders
-                    .sequence_manager
-                    .element_impossible_from_execute(seq_id, elem_idx);
+                self.element_impossible_from_execute(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    seq_id,
+                    elem_idx,
+                );
             } else {
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
+                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
         }
     }
@@ -273,12 +281,13 @@ impl EngineInner {
 
     pub(super) fn drain_next_jump_step(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         next_jump_step: Vec<EntityId>,
     ) {
         for entity_id in next_jump_step {
             if let Some((new_layer, new_sector, projection_point)) =
-                self.advance_jump_step(entity_id)
+                self.advance_jump_step(sim, assets, entity_id)
             {
                 self.finalize_airborne_jump_landing(
                     assets,
@@ -299,6 +308,7 @@ impl EngineInner {
 
     pub(super) fn drain_resume_door_pass(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         resume_door_pass: Vec<EntityId>,
     ) {
@@ -403,7 +413,7 @@ impl EngineInner {
                             None,
                             "PassDoor resumed walk",
                         );
-                        self.do_next_order(seq_id, elem_idx);
+                        self.do_next_order(sim, assets, seq_id, elem_idx);
                     }
                     DoorPassAdvance::Paused { transition_order } => {
                         self.orders.sequence_manager.push_order_on(
@@ -411,20 +421,20 @@ impl EngineInner {
                             elem_idx,
                             transition_order,
                         );
-                        self.do_next_order(seq_id, elem_idx);
+                        self.do_next_order(sim, assets, seq_id, elem_idx);
                     }
                     DoorPassAdvance::ActionPoint { order } => {
                         self.orders
                             .sequence_manager
                             .push_order_on(seq_id, elem_idx, order);
-                        self.do_next_order(seq_id, elem_idx);
+                        self.do_next_order(sim, assets, seq_id, elem_idx);
                     }
                     DoorPassAdvance::NoActive => {
                         tracing::warn!(
                             entity = ?entity_id,
                             "DoorPass: resume callback had no active pass"
                         );
-                        self.do_next_order(seq_id, elem_idx);
+                        self.do_next_order(sim, assets, seq_id, elem_idx);
                     }
                     DoorPassAdvance::Done { .. } => {}
                 }
@@ -442,9 +452,7 @@ impl EngineInner {
                         "completed transition-resumed PassDoor for {entity_id:?} has no sequence identity"
                     )
                 });
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, am.element_index);
+                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, am.element_index);
             }
 
             let _ = advance;
@@ -567,6 +575,7 @@ impl EngineInner {
 
     pub(super) fn drain_pc_bow_equip_action(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         pc_bow_equip_action: Vec<EntityId>,
     ) {
@@ -575,12 +584,13 @@ impl EngineInner {
             // the TransitionEquipBow START arm after setting AimingWithBow.
             // An unselected PC only restores its remembered action; a
             // selected PC also restores the messenger-global action.
-            self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Bow);
+            self.set_pc_action_from_message(sim, assets, 0, pc_id, crate::profiles::Action::Bow);
         }
     }
 
     pub(super) fn drain_pc_bow_unequip_action(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         pc_bow_unequip_action: Vec<(EntityId, bool)>,
     ) {
@@ -600,7 +610,7 @@ impl EngineInner {
                 // cleanup sequence is launched).
                 if self.players.seats[0].selected_action == crate::profiles::Action::Bow {
                     self.players.seats[0].selected_action = crate::profiles::Action::NoAction;
-                    self.unselect_action(pc_id);
+                    self.unselect_action(sim, assets, pc_id);
                 }
             }
         }
@@ -608,6 +618,7 @@ impl EngineInner {
 
     pub(super) fn drain_pc_helping_climb_action(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         pc_helping_climb_action: Vec<EntityId>,
     ) {
@@ -619,7 +630,13 @@ impl EngineInner {
             // Normal priority, which interrupts whatever the entry transition
             // postponed behind itself — the move the player queued while the
             // PC was kneeling down never resumes.
-            self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::HelpToClimb);
+            self.set_pc_action_from_message(
+                sim,
+                assets,
+                0,
+                pc_id,
+                crate::profiles::Action::HelpToClimb,
+            );
         }
     }
 
@@ -700,9 +717,13 @@ impl EngineInner {
             let wait_sequence = self.actor_wait(pc_id);
             let selected_entry = entering && self.players.seats[0].selection.contains(&pc_id);
             if selected_entry {
-                self.orders
-                    .sequence_manager
-                    .interrupt_just_registered_wait_before_instruct(pc_id, wait_sequence);
+                self.interrupt_just_registered_wait_before_instruct(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    pc_id,
+                    wait_sequence,
+                );
             }
             // The original game next forwards beggar action selection.
             // When this PC is selected, action selection stops it at
@@ -730,7 +751,13 @@ impl EngineInner {
                     });
             }
             if entering {
-                self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Beggar);
+                self.set_pc_action_from_message(
+                    sim,
+                    assets,
+                    0,
+                    pc_id,
+                    crate::profiles::Action::Beggar,
+                );
             } else if self.players.seats[0].selection.contains(&pc_id) {
                 // Leaving forwards MSG_UNSELECT_ACTION(BEGGAR) for a
                 // selected PC. The messenger drops the message unless Beggar
@@ -739,7 +766,7 @@ impl EngineInner {
                 // survive both the transition and this callback.
                 if self.players.seats[0].selected_action == crate::profiles::Action::Beggar {
                     self.players.seats[0].selected_action = crate::profiles::Action::NoAction;
-                    self.unselect_action(pc_id);
+                    self.unselect_action(sim, assets, pc_id);
                 }
             } else if let Some(pc) = self
                 .get_entity_mut(pc_id)
@@ -925,23 +952,12 @@ impl EngineInner {
                 // Deferring both writes to the owner-tail sampler would see
                 // only Upright -> Upright and lose both corpse callbacks.
                 self.process_corpse_intersection_update_for(target);
-                let wake_outcome = self.apply_concussion(sim, assets, target, 0, false);
+                self.apply_concussion(sim, assets, target, 0, false);
                 // Concussion handling synchronously sends FITAGAIN from
                 // the WakingUp DONE stack. This AI consequence is immediate
                 // even when the target's creation-ordered actor slot has
                 // already passed; only its next animation Execute is delayed.
-                self.drain_pending_concussion_side_effects(sim, assets);
-                if !target_is_pc && matches!(wake_outcome, crate::combat::ConcussionOutcome::WokeUp)
-                {
-                    assert!(
-                        self.dispatch_pending_fit_again_for_npc(sim, target, assets),
-                        "WakingUp DONE for NPC {target:?} cleared concussion without queueing the required EVENT_FITAGAIN"
-                    );
-                    // These are inline consequences of the NPC's FITAGAIN
-                    // Think call in Original, not work for its next actor slot.
-                    self.tick_ai_pending_resurrection_and_eyes_for_npc(target);
-                    self.apply_wake_redetection_blinks(target);
-                }
+
                 // Original-game completed waking makes the target wait
                 // unconditionally. That launches a fresh priority-Wait
                 // element even while the old unconscious Wait is live, so
@@ -989,9 +1005,13 @@ impl EngineInner {
                         .expect("TakingNet invalidation lost taker actor data")
                         .continuation
                         .motion_state = crate::sprite::MotionState::Aborted;
-                    self.orders
-                        .sequence_manager
-                        .element_impossible_from_execute(seq_id, elem_idx);
+                    self.element_impossible_from_execute(
+                        sim,
+                        assets,
+                        &mut Vec::new(),
+                        seq_id,
+                        elem_idx,
+                    );
                     continue;
                 }
                 let taker_point = self

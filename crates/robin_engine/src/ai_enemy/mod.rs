@@ -19,15 +19,12 @@ mod map_vec_ext;
 mod parity_trace;
 mod seek;
 pub(crate) use seek::SeekAreaSpec;
-mod substate_handlers;
 mod util;
 
 pub use util::*;
 
 use crate::ai::*;
 use crate::entity_id::PcId;
-#[cfg(test)]
-use crate::parameters_ai;
 
 /// Master switch for the opt-in AI decision/path diagnostic used by the
 /// Save020/Save055 substate-only parity cohort. Keep this check separate so
@@ -82,8 +79,6 @@ fn primary_swap_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<
 pub(crate) fn primary_swap_debug_matches(frame: u32, owner: HumanHandle) -> bool {
     primary_swap_debug_gate().matches_required([Some(frame), Some(owner)])
 }
-#[cfg(test)]
-use crate::position_interface::ASPECT_RATIO;
 
 // ---------------------------------------------------------------------------
 // EnemyAi — extends AiController with soldier-specific state
@@ -117,23 +112,6 @@ pub struct EnemyAi {
     /// manager no longer has an active sword-strike element for this
     /// actor (covers both natural completion and interruption).
     pub pending_special_strike: bool,
-
-    /// One-shot handoff from swordfight reconsideration to the engine-side
-    /// strike proposer. The original game only proposes a good sword strike
-    /// when that event-driven reconsideration reaches its decision tail;
-    /// merely entering the swordfight substate must not authorize a draw.
-    #[serde(default)]
-    pub pending_sword_strike_consideration: bool,
-
-    /// AI decisions reached the combat-insult step after swordfight reconsideration,
-    /// but the engine-side strike proposer has not yet settled the one-shot
-    /// consideration. Original proposes inline: a successful proposal
-    /// changes to `...SPECIAL_STRIKE` and suppresses the insult, while a
-    /// rejected proposal leaves `...SWORDFIGHT` and says it. The Rust port
-    /// settles this latch immediately after `Think`, at the same owner
-    /// boundary as `pending_sword_strike_consideration`.
-    #[serde(default)]
-    pub pending_combat_insult_after_strike_consideration: bool,
 
     // -- Private fields --
     #[serde(default, with = "crate::ai::optional_ai_handle")]
@@ -374,11 +352,6 @@ impl AiRole for EnemyAi {
     fn base_mut(&mut self) -> &mut AiController {
         &mut self.base
     }
-
-    /// Soldier alert setter: threads the forced-attentive view override.
-    fn role_set_alert_status(&mut self, level: AlertLevel) {
-        EnemyAi::set_alert_status(self, level);
-    }
 }
 
 impl EnemyAi {
@@ -412,31 +385,6 @@ impl EnemyAi {
             soldier_profile_initiative: 50,
             ..Default::default()
         }
-    }
-
-    /// Soldier-side wrapper for `AiController::set_alert_status_with_flags`.
-    ///
-    /// Threads `self.forced_attentive` into the view-override
-    /// (Green music ⇒ Yellow view for forced-attentive soldiers).  Use
-    /// this in place of `self.base.set_alert_status(level)` from any
-    /// soldier-side path so the view field stays correct.
-    pub fn set_alert_status(&mut self, level: crate::ai::AlertLevel) {
-        self.base.set_alert_status_with_flags(
-            level,
-            crate::ai::AlertFlags::empty(),
-            self.forced_attentive,
-        );
-    }
-
-    /// Soldier-side flag-aware setter — same as `set_alert_status` but
-    /// honours `ALERT_INSTANT_MUSIC_CHANGE` / `ALERT_ONLY_MUSIC`.
-    pub fn set_alert_status_with_flags(
-        &mut self,
-        level: crate::ai::AlertLevel,
-        flags: crate::ai::AlertFlags,
-    ) {
-        self.base
-            .set_alert_status_with_flags(level, flags, self.forced_attentive);
     }
 
     // -----------------------------------------------------------------------
@@ -478,48 +426,12 @@ impl EnemyAi {
         self.known_enemy_strike_2 = None;
         self.known_enemy_strike_3 = None;
     }
-
-    /// Kick off a directed panic — the NPC flees away from `center`.
-    ///
-    /// Resume door selection against live state after releasing this borrow.
-    pub(crate) fn panic_from_position(&mut self, center: Position, runs: u8) {
-        let was_already_fleeing = matches!(
-            self.base.current_substate,
-            Substate::FleeingPanic | Substate::FleeingRunToDoor
-        );
-        self.base.panic_center_x = center.x;
-        self.base.panic_center_y = center.y;
-        self.base.directed_panic = true;
-        self.base.outbox.actor.begin_panic = Some(crate::ai::PanicRequest {
-            center: Some(center),
-            runs,
-            alert: crate::ai::AlertLevel::Red,
-            is_new_panic: !was_already_fleeing,
-        });
-    }
 }
 
 impl EnemyAi {
     // -----------------------------------------------------------------------
     // State management
     // -----------------------------------------------------------------------
-
-    /// Assign the soldier's guarded PC *and* synchronise the
-    /// reciprocal `guard` pointer on both the old and new PC.  The
-    /// AI can't touch the PC entity directly, so the PC-side flip is
-    /// queued in the ordered actor outbox for the engine drain.
-    ///
-    pub fn set_guarded_pc(&mut self, new_pc: Option<PcId>) {
-        let old_pc = self.guarded_pc;
-        if old_pc == new_pc {
-            return;
-        }
-        self.guarded_pc = new_pc;
-        self.base.outbox.actor.set_guarded_pc = Some(GuardedPcEffect {
-            old: old_pc,
-            new: new_pc,
-        });
-    }
 
     pub(crate) fn update_new_task_priority(&mut self, stimulus: &Stimulus) {
         match stimulus.stimulus_type {

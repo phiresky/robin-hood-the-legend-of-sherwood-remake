@@ -3,19 +3,17 @@ use robin_util::state_hash::compute;
 mod field_guards;
 mod goldens;
 // Persistence must preserve current gameplay state while reconstructing transient
-// execution state. Check both encodings independently against persisted_clone.
+// execution state. Check JSON, native encoding, and state hashes together.
 macro_rules! assert_projection_matches_wire {
     ($runtime:expr, $live:ty) => {{
         let runtime: $live = $runtime;
         let json = serde_json::to_string(&runtime).unwrap();
         let native = bitcode::encode(&runtime);
-        let restored = runtime.persisted_clone();
-        let decoded: $live = serde_json::from_str(&json).unwrap();
+        let restored = serde_json::from_str::<$live>(&json).unwrap();
         let native_decoded: $live = bitcode::decode(&native).unwrap();
         assert_eq!(serde_json::to_string(&restored).unwrap(), json);
         assert_eq!(bitcode::encode(&restored), native);
         assert_eq!(compute(&restored), compute(&runtime));
-        assert_eq!(format!("{decoded:?}"), format!("{restored:?}"));
         assert_eq!(format!("{native_decoded:?}"), format!("{restored:?}"));
         restored
     }};
@@ -179,7 +177,6 @@ fn ai_controller_scalar_projection_matrix() {
             initial_view_direction: (117u32 + seed) as u16,
             max_visibility: (118u32 + seed),
             cached_frame: (119u32 + seed),
-            cached_in_building: seed & (1 << 3) != 0,
             ..Default::default()
         };
         assert_projection_matches_wire!(value, AiController);
@@ -214,8 +211,6 @@ fn enemy_ai_scalar_projection_matrix() {
     for seed in 0..16u32 {
         let value = EnemyAi {
             pending_special_strike: seed & (1 << 1) != 0,
-            pending_sword_strike_consideration: seed & (1 << 2) != 0,
-            pending_combat_insult_after_strike_consideration: seed & (1 << 3) != 0,
             pc_missed: seed & (1 << 1) != 0,
             pc_gone_away_in_this_direction: (7u32 + seed) as u16,
             frame_when_missed_charly: (8u32 + seed),
@@ -308,56 +303,36 @@ fn populated_controller() -> AiController {
         macro_command_offset: 3,
         forbidden_remark_ids: vec![9, 3, 9],
         list_us: vec![17, 0, 8],
-        stimulus_queue: vec![provenance_stimulus(SelfStimulusOrigin::Condolation)],
-        outbox: populated_outbox(),
+        stimulus_queue: vec![populated_stimulus()],
         ..Default::default()
     }
 }
 
-fn provenance_stimulus(origin: SelfStimulusOrigin) -> Stimulus {
+fn populated_stimulus() -> Stimulus {
     let mut value = Stimulus::new(StimulusType::EventReachPoint);
     value.info = StimulusInfo::LegacyInvalidType(i32::MIN + 9);
     value.owner = Some(AiEntityHandle::new(0));
     value.to_whole_patrol = true;
-    value.self_origin = origin;
-    value
-}
-
-fn populated_outbox() -> AiOutbox {
-    let mut value = AiOutbox::default();
-    value.patrol.direction_broadcast = Some(65535);
-    value.detection.stimuli = vec![provenance_stimulus(SelfStimulusOrigin::EngineCompletion)];
-    value.detection.mark_alerted = true;
-    value.reentrant.engine_drains_after_script_go_on = true;
-    value.reentrant.self_stimuli = vec![
-        QueuedSelfStimulus::new(StimulusType::EventDone, SelfStimulusOrigin::Condolation),
-        QueuedSelfStimulus::new(
-            StimulusType::EventReachPoint,
-            SelfStimulusOrigin::EngineCompletion,
-        ),
-    ];
-    value.actor.set_direction = Some(-127);
-    value.actor.focus = Some(AiEntityHandle::new(0));
-    value.actor.additional_halts = 3;
-    value.music.instant_change = true;
-    value.recovery.inform_resurrection = true;
     value
 }
 
 #[test]
 fn controller_projection_matches_existing_json_native_and_hash_contracts() {
-    let raw = populated_controller();
-    let raw_clone = raw.clone();
+    let mut raw = populated_controller();
+    raw.script_locked = true;
+    raw.stimulus_queue
+        .push(Stimulus::new(StimulusType::EventDone));
     let restored = assert_projection_matches_wire!(raw.clone(), AiController);
-    assert_eq!(
-        raw_clone.stimulus_queue[0].self_origin,
-        SelfStimulusOrigin::Condolation
-    );
-    assert_eq!(
-        restored.stimulus_queue[0].self_origin,
-        SelfStimulusOrigin::Ordinary
-    );
     assert_eq!(compute(&raw), compute(&restored));
+    assert_eq!(format!("{restored:?}"), format!("{raw:?}"));
+
+    let mut reordered = raw.clone();
+    reordered.stimulus_queue.reverse();
+    assert_ne!(
+        compute(&raw),
+        compute(&reordered),
+        "the order of stimuli retained behind a script lock is gameplay state"
+    );
 }
 
 #[test]
@@ -372,6 +347,10 @@ fn global_projection_reconstructs_nonpersisted_scratch_without_changing_hash() {
     raw.primary_target_multiplicity_initialized = true;
     let raw_clone = raw.clone();
     let restored = assert_projection_matches_wire!(raw.clone(), AiGlobalState);
+    assert_eq!(
+        format!("{restored:?}"),
+        format!("{:?}", raw.persisted_clone())
+    );
     // Target selection now persists only its live actor state, not a dead
     // global compensation ledger from the former batched AI scheduler.
     assert!(
@@ -393,27 +372,6 @@ fn global_projection_reconstructs_nonpersisted_scratch_without_changing_hash() {
 }
 
 #[test]
-fn outbox_projection_preserves_fifo_and_only_reconstructs_runtime_provenance() {
-    let raw = populated_outbox();
-    let raw_clone = raw.clone();
-    let restored = assert_projection_matches_wire!(raw, AiOutbox);
-    assert!(raw_clone.reentrant.engine_drains_after_script_go_on);
-    assert_eq!(
-        raw_clone.reentrant.self_stimuli[1].origin,
-        SelfStimulusOrigin::EngineCompletion
-    );
-    assert!(!restored.reentrant.engine_drains_after_script_go_on);
-    assert_eq!(
-        restored.reentrant.self_stimuli[0].origin,
-        SelfStimulusOrigin::Ordinary
-    );
-    assert_eq!(
-        restored.detection.stimuli[0].self_origin,
-        SelfStimulusOrigin::Ordinary
-    );
-}
-
-#[test]
 fn enemy_and_friendly_projection_recurse_into_base_and_last_patrol_stimulus() {
     let enemy = EnemyAi {
         base: populated_controller(),
@@ -421,18 +379,13 @@ fn enemy_and_friendly_projection_recurse_into_base_and_last_patrol_stimulus() {
         previous_state: StoredEnumWord::from_raw(i32::MIN),
         previous_substate: StoredEnumWord::from_raw(i32::MAX),
         missed_pc: Some(AiEntityHandle::new(0)),
-        last_stimulus_dispatched_to_patrol: Some(provenance_stimulus(
-            SelfStimulusOrigin::Condolation,
-        )),
+        last_stimulus_dispatched_to_patrol: Some(populated_stimulus()),
         ..Default::default()
     };
     let restored = assert_projection_matches_wire!(enemy, EnemyAi);
     assert_eq!(
-        restored
-            .last_stimulus_dispatched_to_patrol
-            .unwrap()
-            .self_origin,
-        SelfStimulusOrigin::Ordinary
+        restored.last_stimulus_dispatched_to_patrol.unwrap().owner,
+        Some(AiEntityHandle::new(0))
     );
     let friendly = FriendlyAi {
         base: populated_controller(),
@@ -445,15 +398,8 @@ fn enemy_and_friendly_projection_recurse_into_base_and_last_patrol_stimulus() {
 }
 
 #[test]
-fn stimulus_projection_preserves_transparent_queue_and_tagged_owner_wire() {
-    let raw = QueuedSelfStimulus::new(
-        StimulusType::EventDone,
-        SelfStimulusOrigin::EngineCompletion,
-    );
-    let restored = assert_projection_matches_wire!(raw, QueuedSelfStimulus);
-    assert_eq!(serde_json::to_string(&raw).unwrap(), "\"EventDone\"");
-    assert_eq!(restored.origin, SelfStimulusOrigin::Ordinary);
-    let raw = provenance_stimulus(SelfStimulusOrigin::EngineCompletion);
+fn stimulus_roundtrip_preserves_tagged_owner() {
+    let raw = populated_stimulus();
     let restored = assert_projection_matches_wire!(raw, Stimulus);
     assert_eq!(restored.owner, Some(AiEntityHandle::new(0)));
     assert!(

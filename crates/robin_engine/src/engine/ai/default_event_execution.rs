@@ -1,7 +1,6 @@
 //! Default and sleeping decisions executed against live actor state.
 use super::*;
 use crate::ai::*;
-use crate::element::Element as _;
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
@@ -83,8 +82,8 @@ impl EngineInner {
                 2 => LookDirection::LeftRight,
                 _ => LookDirection::RightLeft,
             };
-        self.default_ai_mut(owner).outbox.actor.look_sidewards = Some(direction);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_look_sidewards(owner, direction);
+
         true
     }
 
@@ -188,11 +187,19 @@ impl EngineInner {
             }
             Substate::DefaultGotoPostTurn => {
                 if kind == StimulusType::EventDone {
-                    let ai = self.default_ai_mut(owner);
-                    if ai.likes_to_sit_around {
-                        ai.outbox.actor.posture = Some(crate::element::Posture::Sitting);
+                    let ai = self.default_ai(owner);
+                    let posture = if ai.likes_to_sit_around {
+                        Some(crate::element::Posture::Sitting)
                     } else if ai.special_action {
-                        ai.outbox.actor.posture = Some(crate::element::Posture::Leisure);
+                        Some(crate::element::Posture::Leisure)
+                    } else {
+                        None
+                    };
+                    if let Some(posture) = posture {
+                        self.world
+                            .entities
+                            .expect_entity_mut(owner, format_args!("post arrival posture"))
+                            .set_posture(posture);
                     }
                     self.duty_set_state(
                         sim,
@@ -1000,10 +1007,13 @@ mod movement_tests {
         *gate_id = Some(gate);
         *direction = 1;
         let sequence = engine.orders.sequence_manager.launch_element(pass);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         assert_eq!(
             engine.live_ai_position(owner).map_point(),
             MapPoint::new(500.0, 500.0)

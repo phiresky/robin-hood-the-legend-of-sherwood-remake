@@ -4,92 +4,6 @@ use super::*;
 impl SequenceManager {
     // ─── State change callbacks ─────────────────────────────────
 
-    /// Called by the engine when an element has finished (terminated).
-    /// Advances the sequence to the next command level if all elements at
-    /// the current level are done.
-    #[track_caller]
-    pub fn element_terminated(&mut self, seq_id: SequenceId, elem_idx: usize) {
-        tracing::trace!(
-            target: "parity_terminate_caller",
-            ?seq_id,
-            elem_idx,
-            caller = %std::panic::Location::caller(),
-            "element_terminated"
-        );
-        let Some(seq) = self.sequences.get_mut(&seq_id) else {
-            return;
-        };
-
-        let effects = seq.set_element_state(
-            elem_idx,
-            SequenceState::Terminated,
-            CascadeFlags::NEXT_LEVEL,
-        );
-
-        self.process_effects(seq_id, effects, "element_terminated");
-    }
-
-    /// Called when an element becomes impossible.
-    ///
-    /// Sequence elements marked `SequencePriority::NonInterruptable`
-    /// must run to completion and can't be downgraded to `Impossible`
-    /// by external events. When something tries, the call is logged
-    /// and treated as a no-op so the element stays `InProgress` and
-    /// finishes normally.
-    pub fn element_impossible(&mut self, seq_id: SequenceId, elem_idx: usize) {
-        let Some(seq) = self.sequences.get_mut(&seq_id) else {
-            return;
-        };
-
-        // Priority guard: non-interruptable elements ignore "impossible"
-        // downgrades from outside their natural completion path.
-        let elem = seq
-            .elements
-            .get(elem_idx)
-            .unwrap_or_else(|| panic!("missing impossible element {seq_id:?}/{elem_idx}"));
-        let blocked =
-            elem.state == SequenceState::InProgress && elem.priority.is_non_interruptable();
-        if blocked {
-            tracing::debug!(
-                ?seq_id,
-                elem_idx,
-                "element_impossible: blocked by NonInterruptable priority — keeping element in progress"
-            );
-            return;
-        }
-
-        let effects = seq.set_element_state(
-            elem_idx,
-            SequenceState::Impossible,
-            CascadeFlags::NEXT_LEVEL,
-        );
-
-        self.process_effects(seq_id, effects, "element_impossible");
-    }
-
-    /// Apply an aborted-motion result returned by an actor's own
-    /// `Execute` call.
-    ///
-    /// This is distinct from an external attempt to invalidate an active
-    /// element. The actor update asserts in debug builds that its
-    /// retained element is not non-interruptable, but release builds still
-    /// mark the sequence impossible after an intrinsic execution abort.
-    /// Preserve that release behavior for malformed/sentinel orders authored
-    /// by Original itself.
-    pub fn element_impossible_from_execute(&mut self, seq_id: SequenceId, elem_idx: usize) {
-        let Some(seq) = self.sequences.get_mut(&seq_id) else {
-            return;
-        };
-
-        let effects = seq.set_element_state(
-            elem_idx,
-            SequenceState::Impossible,
-            CascadeFlags::NEXT_LEVEL,
-        );
-
-        self.process_effects(seq_id, effects, "element_impossible_from_execute");
-    }
-
     /// Resolve a retained element's priority for Stop without bypassing the
     /// manager's priority-dependent caches. Stop promotes a resolver's `None`
     /// to `Normal`; ordinary instruction-time resolution deliberately does not.
@@ -150,166 +64,6 @@ impl SequenceManager {
                 }
             }
         }
-    }
-
-    /// Called when an element starts executing (enters InProgress).
-    pub fn element_in_progress(&mut self, seq_id: SequenceId, elem_idx: usize) {
-        let Some(seq) = self.sequences.get_mut(&seq_id) else {
-            return;
-        };
-
-        let effects = seq.set_element_state(
-            elem_idx,
-            SequenceState::InProgress,
-            CascadeFlags::NEXT_LEVEL,
-        );
-
-        self.process_effects(seq_id, effects, "element_in_progress");
-    }
-
-    /// Called when an element is interrupted.
-    pub fn element_interrupted(
-        &mut self,
-        seq_id: SequenceId,
-        elem_idx: usize,
-        flags: CascadeFlags,
-    ) {
-        let Some(seq) = self.sequences.get_mut(&seq_id) else {
-            return;
-        };
-
-        let effects = seq.set_element_state(elem_idx, SequenceState::Interrupted, flags);
-
-        self.process_effects(seq_id, effects, "element_interrupted");
-    }
-
-    /// Interrupt an element after its actor has already selected an incoming
-    /// replacement.
-    ///
-    /// The original game selects the new sequence element before it interrupts the old
-    /// element.  Consequently the old element's synchronous
-    /// removal notification observes that it is no longer selected. Rust's
-    /// incoming element is still `Todo` at this borrow-safe boundary, so the
-    /// actor-in-progress index alone would incorrectly mark the old card as
-    /// selected.
-    pub fn element_interrupted_after_replacement_selected(
-        &mut self,
-        seq_id: SequenceId,
-        elem_idx: usize,
-        flags: CascadeFlags,
-    ) {
-        let pending_before = self.pending_condolations.len();
-        self.element_interrupted(seq_id, elem_idx, flags);
-        let dispatch = self
-            .pending_condolations
-            .get_mut(pending_before)
-            .expect("replacement interruption must queue its condolence card");
-        assert_eq!(dispatch.card.seq_id, seq_id);
-        assert_eq!(usize::from(dispatch.card.elem_idx), elem_idx);
-        dispatch.card.was_selected = false;
-    }
-
-    /// Hard-interrupt every live sequence element owned by `actor`, except
-    /// those in `exempt_seq` and dead-admissible cards already waiting in the
-    /// FIFO.
-    ///
-    /// Used on death: the graceful `stop_owner` path rewrites an
-    /// in-progress movement order to a `TransitionWalking*Waiting*` stop
-    /// animation and lets the element keep playing — which is correct
-    /// for a live halt but produces a "corpse walks a few more frames"
-    /// visual for a dead actor.  Death needs to throw every surviving
-    /// sequence away cleanly. Original-game human death does not purge its
-    /// sequence queue, and dead-human instruction handling still admits the five
-    /// ordinary damage-reception commands, waiting, and death at the bottom. Preserve
-    /// those `Todo` cards so simultaneous hits execute in FIFO order after the
-    /// lethal hit; the active damage sequence survives via `exempt_seq` so its
-    /// dying order becomes the actor's current order.
-    ///
-    /// Our arbitration doesn't run on state changes, so we do the
-    /// cleanup explicitly here.
-    pub fn kill_owner_sequences(&mut self, actor: EntityId, exempt_seq: SequenceId) {
-        let mut targets: Vec<(SequenceId, usize)> = Vec::new();
-        for (seq_id, seq) in &self.sequences {
-            if *seq_id == exempt_seq {
-                continue;
-            }
-            for (elem_idx, elem) in seq.elements.iter().enumerate() {
-                if elem.owner != Some(actor) {
-                    continue;
-                }
-                let pending_command_admitted_while_dead =
-                    matches!(elem.state, SequenceState::Todo | SequenceState::Postponed)
-                        && matches!(
-                            elem.command,
-                            Command::ReceiveHitDamage
-                                | Command::ReceiveSwordDamage
-                                | Command::ReceiveArrowDamage
-                                | Command::ReceiveDamage
-                                | Command::ReceiveMobileDamage
-                                | Command::Wait
-                                | Command::GetKilledAtBottom
-                        );
-                if pending_command_admitted_while_dead {
-                    continue;
-                }
-                if matches!(
-                    elem.state,
-                    SequenceState::InProgress | SequenceState::Postponed | SequenceState::Todo
-                ) {
-                    targets.push((*seq_id, elem_idx));
-                }
-            }
-        }
-        for (seq_id, elem_idx) in targets {
-            let Some(seq) = self.sequences.get_mut(&seq_id) else {
-                continue;
-            };
-            let effects = seq.set_element_state(
-                elem_idx,
-                SequenceState::Interrupted,
-                CascadeFlags::NEXT_LEVEL,
-            );
-            self.process_effects(seq_id, effects, "kill_owner_sequences");
-        }
-    }
-
-    /// Flip an element to `Postponed` via the normal state-change
-    /// pipeline. Used by the instruction arbitration path. The common
-    /// `set_element_state` prologue still runs (so the in-progress
-    /// counter decrements when the waiter was InProgress), while the
-    /// `Postponed` case body itself does nothing extra — no cascade,
-    /// no signal_ready, no condolation.  `CascadeFlags::empty()`
-    /// reflects that, and `process_effects` keeps `actor_in_progress`
-    /// / `elements_in_progress` consistent on the InProgress→Postponed
-    /// transition.  The element's `cross_postponed` / `postponed_by`
-    /// links are set separately by the caller before this call.
-    pub fn postpone_element(&mut self, seq_id: SequenceId, elem_idx: usize) {
-        let Some(seq) = self.sequences.get_mut(&seq_id) else {
-            return;
-        };
-        let effects =
-            seq.set_element_state(elem_idx, SequenceState::Postponed, CascadeFlags::empty());
-        self.process_effects(seq_id, effects, "postpone_element");
-
-        // The original game postpones from inside the element's instruction path
-        // boundary, after the sequence-manager tick has already removed
-        // that element from its launch FIFO. Rust also arbitrates owned
-        // launches synchronously, while their initial manager registration
-        // is still queued. Consume that registration here: otherwise the
-        // manager instructs the same postponed element again next frame and
-        // can attach it behind itself, creating a recursive self-cycle.
-        let target = (seq_id, elem_idx);
-        self.elements_to_go.retain(|entry| *entry != target);
-        self.pending_synchronous_actions.retain(|entry| {
-            !matches!(
-                entry.as_action(),
-                Some(SequenceAction::InstructOwner {
-                    sequence_id,
-                    element_index,
-                    ..
-                }) if (*sequence_id, *element_index) == target
-            )
-        });
     }
 
     /// Re-register shoulder-climb interactions that were held while their
@@ -756,416 +510,6 @@ impl SequenceManager {
         self.set_cross_postponed_link((src_seq, src_idx), None);
     }
 
-    /// Process effects from a state change.
-    pub(super) fn process_effects(
-        &mut self,
-        seq_id: SequenceId,
-        effects: StateChangeEffects,
-        terminal_site: &'static str,
-    ) {
-        self.process_effects_with_cross_cleanup(seq_id, effects, terminal_site, true);
-    }
-
-    /// Process a state transition while leaving inbound cross-postponed links
-    /// for a caller-owned batch cleanup. Stopping a sequence element can walk a
-    /// chain containing thousands of separately allocated sequences; scanning
-    /// the complete manager after every node makes that linear graph
-    /// quadratic in the number of retained sequences.
-    pub(super) fn process_effects_deferring_cross_cleanup(
-        &mut self,
-        seq_id: SequenceId,
-        effects: StateChangeEffects,
-        terminal_site: &'static str,
-    ) {
-        self.process_effects_with_cross_cleanup(seq_id, effects, terminal_site, false);
-    }
-
-    pub(super) fn process_effects_with_cross_cleanup(
-        &mut self,
-        seq_id: SequenceId,
-        mut effects: StateChangeEffects,
-        terminal_site: &'static str,
-        clear_cross_links: bool,
-    ) {
-        if effects.resume_cross_postponed.is_some()
-            && let Some((_, owner, _, _)) = effects.actor_live_transition
-        {
-            // `Sequence::set_element_state` already took this source's
-            // cross-postponed pointer before returning its effects.
-            self.invalidate_postpone_tail_cache_for(owner);
-        }
-        // The movement-sequence override interrupts its exact linked
-        // Seek before delegating to the base element's Interrupted handling.
-        // Process the cross-sequence target before bookkeeping or queuing the
-        // movement element's own condolence card to preserve callback order.
-        if let Some(linked) = effects.interrupt_linked_seek.take() {
-            let cancel_before_linked_callback = effects
-                .condolation
-                .as_mut()
-                .and_then(|card| card.cancel_path_request_owner.take());
-            let linked_element = self
-                .get_element(linked.sequence_id, linked.element_index)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "loaded movement linked Seek references missing element {:?}/{}",
-                        linked.sequence_id, linked.element_index
-                    )
-                });
-            assert!(
-                linked_element.data.is_movement(),
-                "loaded movement linked Seek target {:?}/{} is not a movement element",
-                linked.sequence_id,
-                linked.element_index
-            );
-            let mut linked_effects = self
-                .sequences
-                .get_mut(&linked.sequence_id)
-                .expect("linked Seek sequence disappeared")
-                .set_element_state(
-                    linked.element_index,
-                    SequenceState::Interrupted,
-                    CascadeFlags::FOLLOWING,
-                );
-            if let Some(cancel_owner) = cancel_before_linked_callback {
-                if let Some(linked_card) = linked_effects.condolation.as_mut() {
-                    assert!(
-                        linked_card.cancel_path_request_owner.is_none()
-                            || linked_card.cancel_path_request_owner == Some(cancel_owner),
-                        "linked movement cancellation crosses actors"
-                    );
-                    linked_card.cancel_path_request_owner = Some(cancel_owner);
-                } else if let Some(card) = effects.condolation.as_mut() {
-                    // An already-terminal linked target has no callback. Keep
-                    // cancellation on the source movement's own card.
-                    card.cancel_path_request_owner = Some(cancel_owner);
-                }
-            }
-            self.process_effects_with_cross_cleanup(
-                linked.sequence_id,
-                linked_effects,
-                "linked_movement_seek_interrupt",
-                clear_cross_links,
-            );
-        }
-
-        if let Some(card) = effects.condolation.as_mut() {
-            card.was_selected = self.current_element_for_actor(card.owner)
-                == Some((card.seq_id, usize::from(card.elem_idx)));
-            if goal_owner_debug_matches(card.owner) {
-                let provenance = GoalOwnerTerminalProvenance {
-                    site: terminal_site,
-                    selected: self.current_element_for_actor(card.owner),
-                    translating: self.actor_translating,
-                };
-                GOAL_OWNER_TERMINAL_PROVENANCE.with(|records| {
-                    records
-                        .borrow_mut()
-                        .insert((card.seq_id, card.elem_idx), provenance);
-                });
-            }
-            tracing::trace!(
-                target: "parity_owner_handoff",
-                owner = ?card.owner,
-                seq_id = ?card.seq_id,
-                elem_idx = card.elem_idx,
-                command = ?card.command,
-                terminal_state = ?card.terminal_state,
-                was_selected = card.was_selected,
-                instructing = ?self.actor_instructing.get(&card.owner),
-                in_progress = ?self.actor_in_progress.get(&card.owner),
-                "removal notification capturing selection at state change"
-            );
-        }
-
-        if let Some(seq) = self.sequences.get_mut(&seq_id) {
-            if effects.increment_in_progress {
-                seq.increase_elements_in_progress();
-            }
-            if effects.decrement_in_progress {
-                seq.decrease_elements_in_progress();
-            }
-        }
-
-        if let Some((elem_idx, owner, old_state, new_state)) = effects.actor_live_transition {
-            let elem_ref = SequenceElementRef::new(seq_id, elem_idx);
-            match (
-                Self::is_actor_live_state(old_state),
-                Self::is_actor_live_state(new_state),
-            ) {
-                (false, true) => self.insert_actor_live_ref(owner, elem_ref),
-                (true, false) => self.remove_actor_live_ref(owner, elem_ref),
-                _ => {}
-            }
-            if clear_cross_links
-                && matches!(
-                    new_state,
-                    SequenceState::Terminated
-                        | SequenceState::Interrupted
-                        | SequenceState::Impossible
-                )
-            {
-                self.clear_cross_postponed_links_to((seq_id, elem_idx));
-            }
-        }
-
-        // Maintain `actor_in_progress`. The (elem_idx, owner) carried
-        // by `entered/left_in_progress` point at whichever element
-        // actually transitioned — which can differ from any outer
-        // elem_idx the caller passed in (e.g. `stop_element` recurses
-        // to a sibling / postponed element).
-        if let Some((elem_idx, owner)) = effects.entered_in_progress {
-            self.actor_in_progress
-                .entry(owner)
-                .or_default()
-                .insert(SequenceElementRef::new(seq_id, elem_idx));
-        }
-        if let Some((elem_idx, owner)) = effects.left_in_progress
-            && let Some(set) = self.actor_in_progress.get_mut(&owner)
-        {
-            set.remove(&SequenceElementRef::new(seq_id, elem_idx));
-            if set.is_empty() {
-                self.actor_in_progress.remove(&owner);
-            }
-        }
-
-        // A sequence state change calls the completion callback before
-        // cascading or calling Ready.  Suspend those trailing effects at
-        // exactly that boundary; the engine resumes them after the card's
-        // recursive Think has completed.  Impossible is the one exception:
-        // the original game starts the postponed sequence element before falling
-        // through to the Interrupted/card branch.
-        if let Some(mut card) = effects.condolation.take() {
-            // If this sequence tear-down came from an in-flight
-            // halt, mark the notification so the removal callback
-            // handler knows to skip the Think dispatch.
-            if self.halt_pending {
-                card.from_halt = true;
-            }
-
-            card.postponed_successor_pending = card.terminal_state != SequenceState::Impossible
-                && effects.resume_cross_postponed.is_some();
-
-            if card.terminal_state == SequenceState::Impossible {
-                self.resume_postponed_effects(
-                    seq_id,
-                    effects.start_postponed.take(),
-                    effects.resume_cross_postponed.take(),
-                );
-            }
-
-            self.pending_condolations.push(PendingCondolationDispatch {
-                card,
-                effects_after_card: effects,
-            });
-            return;
-        }
-
-        self.process_effects_after_condolation_with_cross_cleanup(
-            seq_id,
-            effects,
-            clear_cross_links,
-        );
-    }
-
-    pub(super) fn process_effects_after_condolation(
-        &mut self,
-        seq_id: SequenceId,
-        effects: StateChangeEffects,
-    ) {
-        self.process_effects_after_condolation_with_cross_cleanup(seq_id, effects, true);
-    }
-
-    pub(super) fn process_effects_after_condolation_with_cross_cleanup(
-        &mut self,
-        seq_id: SequenceId,
-        effects: StateChangeEffects,
-        clear_cross_links: bool,
-    ) {
-        let install_cross_postponed_after_card = effects.install_cross_postponed_after_card;
-        // Process cascading state changes
-        for (cascade_elem_idx, cascade_state, cascade_flags) in effects.cascade {
-            let sub_effects = {
-                let Some(seq) = self.sequences.get_mut(&seq_id) else {
-                    continue;
-                };
-                if cascade_elem_idx >= seq.elements.len() {
-                    continue;
-                }
-                seq.set_element_state(cascade_elem_idx, cascade_state, cascade_flags)
-            };
-            // Recursively process sub-effects
-            self.process_effects_with_cross_cleanup(
-                seq_id,
-                sub_effects,
-                "terminal_state_cascade",
-                clear_cross_links,
-            );
-        }
-
-        // Signal ready (element finished) — advance to next level
-        if effects.signal_ready {
-            let to_go = {
-                let Some(seq) = self.sequences.get_mut(&seq_id) else {
-                    return;
-                };
-                if seq.running_elements == 0 {
-                    let elements: Vec<_> = seq
-                        .elements
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, elem)| {
-                            (
-                                idx,
-                                elem.command,
-                                elem.command_level,
-                                elem.owner,
-                                elem.state,
-                                elem.priority,
-                                elem.orders.len(),
-                            )
-                        })
-                        .collect();
-                    panic!(
-                        "Ready called with no running elements: seq_id={seq_id:?} cursor={} current_level={} elements_in_progress={} elements={elements:?}",
-                        seq.cursor, seq.current_command_level, seq.elements_in_progress
-                    );
-                }
-                if seq.element_ready() {
-                    seq.next_elements_go()
-                } else {
-                    Vec::new()
-                }
-            };
-            self.register_level_elements_to_go(seq_id, to_go);
-        }
-
-        // Start postponed element if requested.  We always re-pathfind
-        // on restart:
-        //
-        //   1. Path rebuild: every re-registered Move/Seek element gets
-        //      a fresh `InstructOwner` → `try_dispatch_move_path` pass,
-        //      and `build_orders_from_path` clears the old orders before
-        //      rebuilding waypoints from the actor's current position.
-        //   2. We never reassign an element's `command` to
-        //      `Command::MoveOk` (see `engine/posture_transitions.rs:281`
-        //      for the rationale — flipping to `MoveOk` breaks
-        //      `element_priority::actor_branch` priority resolution).
-        //      So no element is ever in a `MoveOk` state that would
-        //      need a posture-aware revert; the branch is moot.
-        self.resume_postponed_effects(
-            seq_id,
-            effects.start_postponed,
-            effects.resume_cross_postponed,
-        );
-
-        if let Some((blocker_seq, blocker_idx, waiter_seq, waiter_idx)) =
-            install_cross_postponed_after_card
-        {
-            let waiter_state = self
-                .get_element(waiter_seq, waiter_idx)
-                .map(|element| element.state)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "deferred cross-postponed waiter {waiter_seq:?}/{waiter_idx} disappeared"
-                    )
-                });
-            assert_eq!(
-                waiter_state,
-                SequenceState::Postponed,
-                "deferred cross-postponed waiter {waiter_seq:?}/{waiter_idx} is not postponed"
-            );
-            let blocker = self
-                .get_element(blocker_seq, blocker_idx)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "deferred cross-postponed blocker {blocker_seq:?}/{blocker_idx} disappeared"
-                    )
-                });
-            assert!(
-                blocker.cross_postponed.is_none(),
-                "deferred cross-postponed blocker {blocker_seq:?}/{blocker_idx} acquired another waiter"
-            );
-            self.set_cross_postponed_link(
-                (blocker_seq, blocker_idx),
-                Some((waiter_seq, waiter_idx)),
-            );
-        }
-    }
-
-    pub(super) fn resume_postponed_effects(
-        &mut self,
-        seq_id: SequenceId,
-        start_postponed: Option<(usize, usize)>,
-        resume_cross_postponed: Option<(SequenceId, usize)>,
-    ) {
-        if let Some((blocker_idx, postponed_idx)) = start_postponed {
-            self.register_element_to_go(seq_id, postponed_idx);
-            let blocker = self
-                .sequences
-                .get_mut(&seq_id)
-                .and_then(|sequence| sequence.elements.get_mut(blocker_idx))
-                .unwrap_or_else(|| {
-                    panic!("released postponed blocker {seq_id:?}/{blocker_idx} disappeared")
-                });
-            assert_eq!(
-                blocker.postponed_element_index,
-                Some(postponed_idx),
-                "released postponed blocker {seq_id:?}/{blocker_idx} no longer points to {postponed_idx}"
-            );
-            // The original game clears postponed sequence elements
-            // `mpsqePostponedSequenceElement` immediately after registering
-            // the released element.  Leaving this edge live lets a later
-            // same-frame Stop recurse through the stale blocker and interrupt
-            // work that is already back on the manager FIFO.
-            blocker.postponed_element_index = None;
-        }
-
-        // Release the cross-sequence postponed successor. The manager's later
-        // restarting calls actor instruction again, which snapshots the
-        // actor's posture and action state as they exist at that second
-        // instruction boundary. Mark the old snapshot stale so the engine
-        // performs the same refresh before arbitration and translation.
-        if let Some((succ_seq_id, succ_idx)) = resume_cross_postponed
-            && let Some(succ_seq) = self.sequences.get_mut(&succ_seq_id)
-            && let Some(succ_elem) = succ_seq.elements.get_mut(succ_idx)
-            && succ_elem.state == SequenceState::Postponed
-        {
-            succ_elem.state = SequenceState::Todo;
-            succ_elem.posture_after_transition = crate::element::Posture::Undefined;
-            self.register_element_to_go(succ_seq_id, succ_idx);
-
-            // A door route can expose two zero-frame position frontiers at
-            // once: Ready registers the old route's AssertPosition, while
-            // Postponed-element startup releases a replacement route's
-            // AssertPosition. Each assertion immediately makes its following
-            // Move ready. Leaving the assertions in old-then-replacement
-            // order consequently leaves the replacement Move last, although
-            // Original's nested owner boundary has already admitted that
-            // replacement before it resumes the old route and lets the old
-            // terminal Move reclaim the actor.
-            //
-            // Scope the correction to that exact same-owner
-            // AssertPosition -> Move frontier. A direct PassDoor -> Move
-            // successor retains the ordinary Ready-before-postponed FIFO
-            // ordering used by equal-priority replacement arbitration.
-            if let Some(ready_position) =
-                self.cross_postponed_assert_move_frontier(seq_id, succ_seq_id, succ_idx)
-            {
-                let target = (succ_seq_id, succ_idx);
-                let registered_position = self
-                    .elements_to_go
-                    .iter()
-                    .position(|entry| *entry == target)
-                    .expect("released cross-postponed assertion was not registered");
-                let registered = self
-                    .elements_to_go
-                    .remove(registered_position)
-                    .expect("released cross-postponed assertion disappeared");
-                self.elements_to_go.insert(ready_position, registered);
-            }
-        }
-    }
-
     /// Locate the old route's queued assertion when both the old and released
     /// routes have an immediate `AssertPosition -> Move` frontier.
     pub(super) fn cross_postponed_assert_move_frontier(
@@ -1210,5 +554,791 @@ impl SequenceManager {
                     .then_some(position)
             },
         )
+    }
+}
+
+impl crate::engine::EngineInner {
+    pub(crate) fn prepare_live_sequence_state(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+        elem_idx: usize,
+        state: SequenceState,
+        flags: CascadeFlags,
+    ) -> StateChangeEffects {
+        let element = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .expect("sequence transition element missing");
+        let interrupted_movement = element.state != state
+            && state == SequenceState::Interrupted
+            && element.data.is_movement();
+        if interrupted_movement {
+            if element.command == Command::MoveWaiting {
+                let owner = element.owner.expect("waiting movement has no owner");
+                self.world.pathfinder.cancel_requests_for(owner);
+                self.orders.pending_path_requests.cancel_for_owner(owner);
+                self.orders
+                    .failed_path_requests
+                    .retain(|request| request.owner != owner);
+                self.orders
+                    .sequence_manager
+                    .get_element_mut(seq_id, elem_idx)
+                    .expect("waiting movement disappeared")
+                    .command = Command::Move;
+            }
+            let linked = self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|element| element.legacy_v48.as_ref())
+                .and_then(|legacy| legacy.linked_seek)
+                .flatten();
+            if let Some(linked) = linked {
+                assert!(
+                    self.orders
+                        .sequence_manager
+                        .get_element(linked.sequence_id, linked.element_index)
+                        .expect("linked Seek missing")
+                        .data
+                        .is_movement(),
+                    "linked Seek is not movement"
+                );
+                self.element_interrupted(
+                    sim,
+                    assets,
+                    active_scripts,
+                    linked.sequence_id,
+                    linked.element_index,
+                    CascadeFlags::FOLLOWING,
+                );
+            }
+        }
+        self.orders
+            .sequence_manager
+            .sequences
+            .get_mut(&seq_id)
+            .expect("sequence disappeared during state transition")
+            .set_element_state(elem_idx, state, flags)
+    }
+
+    /// Called by the engine when an element has finished (terminated).
+    /// Advances the sequence to the next command level if all elements at
+    /// the current level are done.
+    #[track_caller]
+    pub fn element_terminated(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+        elem_idx: usize,
+    ) {
+        tracing::trace!(
+            target: "parity_terminate_caller",
+            ?seq_id,
+            elem_idx,
+            caller = %std::panic::Location::caller(),
+            "element_terminated"
+        );
+        let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+            return;
+        };
+
+        let effects = self.prepare_live_sequence_state(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            SequenceState::Terminated,
+            CascadeFlags::NEXT_LEVEL,
+        );
+
+        self.complete_sequence_state_change(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            effects,
+            "element_terminated",
+        );
+    }
+
+    /// Called when an element becomes impossible.
+    ///
+    /// Sequence elements marked `SequencePriority::NonInterruptable`
+    /// must run to completion and can't be downgraded to `Impossible`
+    /// by external events. When something tries, the call is logged
+    /// and treated as a no-op so the element stays `InProgress` and
+    /// finishes normally.
+    pub fn element_impossible(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+        elem_idx: usize,
+    ) {
+        let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+            return;
+        };
+
+        // Priority guard: non-interruptable elements ignore "impossible"
+        // downgrades from outside their natural completion path.
+        let elem = seq
+            .elements
+            .get(elem_idx)
+            .unwrap_or_else(|| panic!("missing impossible element {seq_id:?}/{elem_idx}"));
+        let blocked =
+            elem.state == SequenceState::InProgress && elem.priority.is_non_interruptable();
+        if blocked {
+            tracing::debug!(
+                ?seq_id,
+                elem_idx,
+                "element_impossible: blocked by NonInterruptable priority — keeping element in progress"
+            );
+            return;
+        }
+
+        let effects = self.prepare_live_sequence_state(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            SequenceState::Impossible,
+            CascadeFlags::NEXT_LEVEL,
+        );
+
+        self.complete_sequence_state_change(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            effects,
+            "element_impossible",
+        );
+    }
+
+    /// Apply an aborted-motion result returned by an actor's own
+    /// `Execute` call.
+    ///
+    /// This is distinct from an external attempt to invalidate an active
+    /// element. The actor update asserts in debug builds that its
+    /// retained element is not non-interruptable, but release builds still
+    /// mark the sequence impossible after an intrinsic execution abort.
+    /// Preserve that release behavior for malformed/sentinel orders authored
+    /// by Original itself.
+    pub fn element_impossible_from_execute(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+        elem_idx: usize,
+    ) {
+        let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+            return;
+        };
+
+        let effects = self.prepare_live_sequence_state(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            SequenceState::Impossible,
+            CascadeFlags::NEXT_LEVEL,
+        );
+
+        self.complete_sequence_state_change(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            effects,
+            "element_impossible_from_execute",
+        );
+    }
+
+    /// Called when an element starts executing (enters InProgress).
+    pub fn element_in_progress(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+        elem_idx: usize,
+    ) {
+        let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+            return;
+        };
+
+        let effects = self.prepare_live_sequence_state(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            SequenceState::InProgress,
+            CascadeFlags::NEXT_LEVEL,
+        );
+
+        self.complete_sequence_state_change(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            effects,
+            "element_in_progress",
+        );
+    }
+
+    /// Called when an element is interrupted.
+    pub fn element_interrupted(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+        elem_idx: usize,
+        flags: CascadeFlags,
+    ) {
+        let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+            return;
+        };
+
+        let effects = self.prepare_live_sequence_state(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            SequenceState::Interrupted,
+            flags,
+        );
+
+        self.complete_sequence_state_change(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            effects,
+            "element_interrupted",
+        );
+    }
+
+    /// Interrupt an element after its actor has already selected an incoming
+    /// replacement.
+    ///
+    /// The original game selects the new sequence element before it interrupts the old
+    /// element.  Consequently the old element's synchronous
+    /// removal notification observes that it is no longer selected. Rust's
+    /// incoming element is still `Todo` at this borrow-safe boundary, so the
+    /// actor-in-progress index alone would incorrectly mark the old card as
+    /// selected.
+    pub fn element_interrupted_after_replacement_selected(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+        elem_idx: usize,
+        flags: CascadeFlags,
+    ) {
+        let Some(sequence) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+            return;
+        };
+        let mut effects = self.prepare_live_sequence_state(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            SequenceState::Interrupted,
+            flags,
+        );
+        if let Some(card) = effects.condolation.as_mut() {
+            card.was_selected = false;
+        }
+        self.complete_sequence_state_change(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            effects,
+            "replacement_interruption",
+        );
+    }
+
+    /// Hard-interrupt every live sequence element owned by `actor`, except
+    /// those in `exempt_seq` and dead-admissible cards already waiting in the
+    /// FIFO.
+    ///
+    /// Used on death: the graceful `stop_owner` path rewrites an
+    /// in-progress movement order to a `TransitionWalking*Waiting*` stop
+    /// animation and lets the element keep playing — which is correct
+    /// for a live halt but produces a "corpse walks a few more frames"
+    /// visual for a dead actor.  Death needs to throw every surviving
+    /// sequence away cleanly. Original-game human death does not purge its
+    /// sequence queue, and dead-human instruction handling still admits the five
+    /// ordinary damage-reception commands, waiting, and death at the bottom. Preserve
+    /// those `Todo` cards so simultaneous hits execute in FIFO order after the
+    /// lethal hit; the active damage sequence survives via `exempt_seq` so its
+    /// dying order becomes the actor's current order.
+    ///
+    /// Our arbitration doesn't run on state changes, so we do the
+    /// cleanup explicitly here.
+    pub fn kill_owner_sequences(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        actor: EntityId,
+        exempt_seq: SequenceId,
+    ) {
+        let mut targets: Vec<(SequenceId, usize)> = Vec::new();
+        for (seq_id, seq) in &self.orders.sequence_manager.sequences {
+            if *seq_id == exempt_seq {
+                continue;
+            }
+            for (elem_idx, elem) in seq.elements.iter().enumerate() {
+                if elem.owner != Some(actor) {
+                    continue;
+                }
+                let pending_command_admitted_while_dead =
+                    matches!(elem.state, SequenceState::Todo | SequenceState::Postponed)
+                        && matches!(
+                            elem.command,
+                            Command::ReceiveHitDamage
+                                | Command::ReceiveSwordDamage
+                                | Command::ReceiveArrowDamage
+                                | Command::ReceiveDamage
+                                | Command::ReceiveMobileDamage
+                                | Command::Wait
+                                | Command::GetKilledAtBottom
+                        );
+                if pending_command_admitted_while_dead {
+                    continue;
+                }
+                if matches!(
+                    elem.state,
+                    SequenceState::InProgress | SequenceState::Postponed | SequenceState::Todo
+                ) {
+                    targets.push((*seq_id, elem_idx));
+                }
+            }
+        }
+        for (seq_id, elem_idx) in targets {
+            let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+                continue;
+            };
+            let effects = self.prepare_live_sequence_state(
+                sim,
+                assets,
+                active_scripts,
+                seq_id,
+                elem_idx,
+                SequenceState::Interrupted,
+                CascadeFlags::NEXT_LEVEL,
+            );
+            self.complete_sequence_state_change(
+                sim,
+                assets,
+                active_scripts,
+                seq_id,
+                effects,
+                "kill_owner_sequences",
+            );
+        }
+    }
+
+    /// Flip an element to `Postponed` via the normal state-change
+    /// pipeline. Used by the instruction arbitration path. The common
+    /// `set_element_state` prologue still runs (so the in-progress
+    /// counter decrements when the waiter was InProgress), while the
+    /// `Postponed` case body itself does nothing extra — no cascade,
+    /// no signal_ready, no condolation.  `CascadeFlags::empty()`
+    /// reflects that, and `process_effects` keeps `actor_in_progress`
+    /// / `elements_in_progress` consistent on the InProgress→Postponed
+    /// transition.  The element's `cross_postponed` / `postponed_by`
+    /// links are set separately by the caller before this call.
+    pub fn postpone_element(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+        elem_idx: usize,
+    ) {
+        let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+            return;
+        };
+        let effects = self.prepare_live_sequence_state(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            SequenceState::Postponed,
+            CascadeFlags::empty(),
+        );
+        self.complete_sequence_state_change(
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            effects,
+            "postpone_element",
+        );
+
+        // The original game postpones from inside the element's instruction path
+        // boundary, after the sequence-manager tick has already removed
+        // that element from its launch FIFO. Rust also arbitrates owned
+        // launches synchronously, while their initial manager registration
+        // is still queued. Consume that registration here: otherwise the
+        // manager instructs the same postponed element again next frame and
+        // can attach it behind itself, creating a recursive self-cycle.
+        let target = (seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .elements_to_go
+            .retain(|entry| *entry != target);
+        self.orders
+            .sequence_manager
+            .pending_synchronous_actions
+            .retain(|entry| {
+                !matches!(
+                    entry.as_action(),
+                    Some(SequenceAction::InstructOwner {
+                        sequence_id,
+                        element_index,
+                        ..
+                    }) if (*sequence_id, *element_index) == target
+                )
+            });
+    }
+
+    pub(crate) fn complete_sequence_state_change(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+        mut effects: StateChangeEffects,
+        terminal_site: &'static str,
+    ) {
+        let impossible_was_selected = effects
+            .impossible_notification
+            .and_then(|index| {
+                self.orders
+                    .sequence_manager
+                    .get_element(seq_id, index)
+                    .and_then(|element| element.owner)
+                    .map(|owner| {
+                        self.orders
+                            .sequence_manager
+                            .current_element_for_actor(owner)
+                            == Some((seq_id, index))
+                    })
+            })
+            .unwrap_or(false);
+        if let Some(card) = effects.condolation.as_mut() {
+            card.was_selected = terminal_site != "replacement_interruption"
+                && self
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(card.owner)
+                    == Some((card.seq_id, usize::from(card.elem_idx)));
+            if goal_owner_debug_matches(card.owner) {
+                let provenance = GoalOwnerTerminalProvenance {
+                    site: terminal_site,
+                    selected: self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(card.owner),
+                    translating: self.orders.sequence_manager.actor_translating,
+                };
+                GOAL_OWNER_TERMINAL_PROVENANCE.with(|records| {
+                    records
+                        .borrow_mut()
+                        .insert((card.seq_id, card.elem_idx), provenance);
+                });
+            }
+            tracing::trace!(
+                target: "parity_owner_handoff",
+                owner = ?card.owner,
+                seq_id = ?card.seq_id,
+                elem_idx = card.elem_idx,
+                command = ?card.command,
+                terminal_state = ?card.terminal_state,
+                was_selected = card.was_selected,
+                instructing = ?self.orders.sequence_manager.actor_instructing.get(&card.owner),
+                in_progress = ?self.orders.sequence_manager.actor_in_progress.get(&card.owner),
+                "removal notification capturing selection at state change"
+            );
+        }
+
+        if let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) {
+            if effects.increment_in_progress {
+                seq.increase_elements_in_progress();
+            }
+            if effects.decrement_in_progress {
+                seq.decrease_elements_in_progress();
+            }
+        }
+
+        if let Some((elem_idx, owner, old_state, new_state)) = effects.actor_live_transition {
+            let elem_ref = SequenceElementRef::new(seq_id, elem_idx);
+            match (
+                SequenceManager::is_actor_live_state(old_state),
+                SequenceManager::is_actor_live_state(new_state),
+            ) {
+                (false, true) => self
+                    .orders
+                    .sequence_manager
+                    .insert_actor_live_ref(owner, elem_ref),
+                (true, false) => self
+                    .orders
+                    .sequence_manager
+                    .remove_actor_live_ref(owner, elem_ref),
+                _ => {}
+            }
+        }
+
+        // Maintain `actor_in_progress`. The (elem_idx, owner) carried
+        // by `entered/left_in_progress` point at whichever element
+        // actually transitioned — which can differ from any outer
+        // elem_idx the caller passed in (e.g. `stop_element` recurses
+        // to a sibling / postponed element).
+        if let Some((elem_idx, owner)) = effects.entered_in_progress {
+            self.orders
+                .sequence_manager
+                .actor_in_progress
+                .entry(owner)
+                .or_default()
+                .insert(SequenceElementRef::new(seq_id, elem_idx));
+        }
+        if let Some((elem_idx, owner)) = effects.left_in_progress
+            && let Some(set) = self
+                .orders
+                .sequence_manager
+                .actor_in_progress
+                .get_mut(&owner)
+        {
+            set.remove(&SequenceElementRef::new(seq_id, elem_idx));
+            if set.is_empty() {
+                self.orders
+                    .sequence_manager
+                    .actor_in_progress
+                    .remove(&owner);
+            }
+        }
+
+        if let Some(index) = effects.impossible_notification.take() {
+            self.resume_postponed_effects(
+                sim,
+                assets,
+                active_scripts,
+                seq_id,
+                effects.start_postponed.take(),
+            );
+            effects.condolation = self
+                .orders
+                .sequence_manager
+                .sequences
+                .get_mut(&seq_id)
+                .expect("impossible sequence disappeared")
+                .complete_impossible_notification(index);
+            if let Some(card) = effects.condolation.as_mut() {
+                card.was_selected = impossible_was_selected
+                    && self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(card.owner)
+                        .is_none();
+                effects.notify_owner = Some(card.owner);
+            }
+        }
+
+        // Complete the owner callback on this call stack before cascading
+        // or calling Ready. Impossible has already started its postponed
+        // element and cleared its orders above.
+        if let Some(mut card) = effects.condolation.take() {
+            // If this sequence tear-down came from an in-flight
+            // halt, mark the notification so the removal callback
+            // handler knows to skip the Think dispatch.
+            if self.orders.sequence_manager.halt_pending {
+                card.from_halt = true;
+            }
+
+            self.send_condolation_card(sim, card, assets, active_scripts);
+        }
+
+        self.complete_sequence_state_tail(sim, assets, active_scripts, seq_id, effects);
+    }
+
+    pub(crate) fn complete_sequence_state_tail(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+        effects: StateChangeEffects,
+    ) {
+        if let Some((anchor, state, flags)) = effects.cascade_after_card {
+            let target = self
+                .orders
+                .sequence_manager
+                .live_cascade_target(seq_id, anchor, flags);
+            if let Some(target) = target {
+                let nested = self.prepare_live_sequence_state(
+                    sim,
+                    assets,
+                    active_scripts,
+                    target.sequence_id,
+                    target.element_index,
+                    state,
+                    CascadeFlags::FOLLOWING,
+                );
+                self.complete_sequence_state_change(
+                    sim,
+                    assets,
+                    active_scripts,
+                    target.sequence_id,
+                    nested,
+                    "terminal_state_cascade",
+                );
+            }
+        }
+
+        // Signal ready (element finished) — advance to next level
+        if effects.signal_ready {
+            let to_go = {
+                let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+                    return;
+                };
+                if seq.running_elements == 0 {
+                    let elements: Vec<_> = seq
+                        .elements
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, elem)| {
+                            (
+                                idx,
+                                elem.command,
+                                elem.command_level,
+                                elem.owner,
+                                elem.state,
+                                elem.priority,
+                                elem.orders.len(),
+                            )
+                        })
+                        .collect();
+                    panic!(
+                        "Ready called with no running elements: seq_id={seq_id:?} cursor={} current_level={} elements_in_progress={} elements={elements:?}",
+                        seq.cursor, seq.current_command_level, seq.elements_in_progress
+                    );
+                }
+                if seq.element_ready() {
+                    seq.next_elements_go()
+                } else {
+                    Vec::new()
+                }
+            };
+            self.orders
+                .sequence_manager
+                .register_level_elements_to_go(seq_id, to_go);
+            self.drain_script_synchronous_actions(sim, assets, active_scripts)
+                .unwrap_or_else(|error| panic!("sequence Ready failed: {error:?}"));
+        }
+
+        // Start postponed element if requested.  We always re-pathfind
+        // on restart:
+        //
+        //   1. Path rebuild: every re-registered Move/Seek element gets
+        //      a fresh `InstructOwner` → `try_dispatch_move_path` pass,
+        //      and `build_orders_from_path` clears the old orders before
+        //      rebuilding waypoints from the actor's current position.
+        //   2. We never reassign an element's `command` to
+        //      `Command::MoveOk` (see `engine/posture_transitions.rs:281`
+        //      for the rationale — flipping to `MoveOk` breaks
+        //      `element_priority::actor_branch` priority resolution).
+        //      So no element is ever in a `MoveOk` state that would
+        //      need a posture-aware revert; the branch is moot.
+        self.resume_postponed_effects(sim, assets, active_scripts, seq_id, effects.start_postponed);
+    }
+
+    pub(crate) fn resume_postponed_effects(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+        anchor: Option<usize>,
+    ) {
+        let Some(anchor) = anchor else {
+            return;
+        };
+        let target = self
+            .orders
+            .sequence_manager
+            .sequences
+            .get(&seq_id)
+            .and_then(|sequence| sequence.live_postponed_ref(anchor));
+        let Some(target) = target else {
+            return;
+        };
+        let source_owner = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, anchor)
+            .expect("postponed source missing")
+            .owner;
+        let successor = self
+            .orders
+            .sequence_manager
+            .get_element(target.sequence_id, target.element_index)
+            .expect("postponed successor missing");
+        if successor.command == Command::MoveOk && successor.owner.is_some() {
+            let owner = source_owner.expect("movement blocker has no owner");
+            let target_owner = successor.owner.expect("postponed movement owner missing");
+            if self
+                .world
+                .entities
+                .get(owner)
+                .expect("movement blocker owner missing")
+                .posture()
+                != self
+                    .world
+                    .entities
+                    .get(target_owner)
+                    .expect("postponed movement owner missing")
+                    .posture()
+            {
+                let successor = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(target.sequence_id, target.element_index)
+                    .expect("postponed successor missing");
+                successor.orders.clear();
+                successor.command = Command::Move;
+            }
+        }
+        self.orders
+            .sequence_manager
+            .register_element_to_go(target.sequence_id, target.element_index);
+        self.drain_script_synchronous_actions(sim, assets, active_scripts)
+            .unwrap_or_else(|error| panic!("postponed registration failed: {error:?}"));
+        self.orders
+            .sequence_manager
+            .sequences
+            .get_mut(&seq_id)
+            .expect("postponed source disappeared")
+            .sever_postponed_link(anchor);
     }
 }

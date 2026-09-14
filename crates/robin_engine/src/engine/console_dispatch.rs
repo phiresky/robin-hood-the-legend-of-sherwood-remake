@@ -906,12 +906,7 @@ impl EngineInner {
             })
             .collect();
         for id in ids {
-            // Route through `apply_concussion` so the guards
-            // (invulnerable / tied / carried / script-locked)
-            // fire AND the WentUnconscious / WokeUp outcome
-            // side-effects get dispatched to
-            // `pending_concussion_side_effects` for
-            // `perform_hourglass` to drain.
+            // Apply wake guards and finish the resulting callbacks inline.
             self.apply_concussion(sim, assets, id, 31, false);
         }
         ConsoleResponse::Ok("Wake up !".to_string())

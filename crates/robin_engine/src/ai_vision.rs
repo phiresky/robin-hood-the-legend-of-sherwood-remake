@@ -1861,7 +1861,6 @@ pub fn focus_point(npc: &mut AiActorData, point: GroundPoint) {
 pub fn unfocus(npc: &mut AiActorData) {
     npc.eye_status = EyeStatus::LookForward;
     npc.view_half_angle_range = NORMAL_HALF_ANGLE_RANGE;
-    npc.follow_target = None;
 }
 
 /// Common handler for `LookForward`, `LookToTheLeft`, `LookToTheRight`,
@@ -3214,7 +3213,10 @@ mod tests {
         unfocus(&mut npc);
         assert_eq!(npc.eye_status, EyeStatus::LookForward);
         assert_eq!(npc.view_half_angle_range, NORMAL_HALF_ANGLE_RANGE);
-        assert!(npc.follow_target.is_none());
+        assert_eq!(
+            npc.follow_target,
+            Some(EntityId::Pc(crate::entity_id::PcId(7)))
+        );
     }
 
     #[test]

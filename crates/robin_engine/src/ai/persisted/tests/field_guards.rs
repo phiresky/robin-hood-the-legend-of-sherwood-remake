@@ -86,7 +86,6 @@ fn classify_ai_controller(value: &AiController) {
                 is_stay_at_home,
                 locks_flag_field,
                 was_busy,
-                // Persisted; nested `Stimulus::self_origin` is skipped.
                 stimulus_queue,
                 script_locked,
                 remember_events,
@@ -131,15 +130,11 @@ fn classify_ai_controller(value: &AiController) {
                 last_goto_destination,
                 last_goto_flags,
                 stuck_counter,
-                // Persisted; nested outbox scratch is skipped.
-                outbox,
                 has_script_filter_override,
-                last_synced_focus_target,
                 initial_position,
                 initial_view_direction,
                 max_visibility,
                 cached_frame,
-                cached_in_building,
             ],
             skipped: [],
         }
@@ -186,56 +181,12 @@ fn classify_ai_global_state(value: &AiGlobalState) {
     );
 }
 
-fn classify_queued_self_stimulus(value: &QueuedSelfStimulus) {
-    classify_fields!(
-        value,
-        QueuedSelfStimulus {
-            // `#[serde(transparent)]`: serialized as the bare stimulus name.
-            persisted: [stimulus_type],
-            skipped: [origin],
-        }
-    );
-}
-
 fn classify_stimulus(value: &Stimulus) {
     classify_fields!(
         value,
         Stimulus {
             persisted: [stimulus_type, info, owner, to_whole_patrol],
-            skipped: [self_origin],
-        }
-    );
-}
-
-fn classify_ai_outbox(value: &AiOutbox) {
-    classify_fields!(
-        value,
-        AiOutbox {
-            persisted: [patrol, detection, reentrant, actor, recovery, music],
             skipped: [],
-        }
-    );
-}
-
-fn classify_ai_detection_outbox(value: &AiDetectionOutbox) {
-    classify_fields!(
-        value,
-        AiDetectionOutbox {
-            persisted: [stimuli, mark_alerted],
-            skipped: [],
-        }
-    );
-}
-
-fn classify_ai_reentrant_outbox(value: &AiReentrantOutbox) {
-    classify_fields!(
-        value,
-        AiReentrantOutbox {
-            persisted: [
-                // Persisted; nested `QueuedSelfStimulus::origin` is skipped.
-                self_stimuli,
-            ],
-            skipped: [engine_drains_after_script_go_on],
         }
     );
 }
@@ -247,8 +198,6 @@ fn classify_enemy_ai(value: &EnemyAi) {
             persisted: [
                 base,
                 pending_special_strike,
-                pending_sword_strike_consideration,
-                pending_combat_insult_after_strike_consideration,
                 missed_pc,
                 pc_missed,
                 pc_gone_away_in_this_direction,
@@ -310,7 +259,6 @@ fn classify_enemy_ai(value: &EnemyAi) {
                 known_enemy_strike_3,
                 return_to_patrol_point,
                 fleeing_seen_enemy_counter,
-                // Persisted; nested `Stimulus::self_origin` is skipped.
                 last_stimulus_dispatched_to_patrol,
                 character_id,
                 old_life_points,
@@ -379,11 +327,7 @@ fn classify_friendly_ai(value: &FriendlyAi) {
 fn persisted_ai_owner_fields_are_exhaustively_classified() {
     classify_ai_controller(&AiController::default());
     classify_ai_global_state(&AiGlobalState::default());
-    classify_queued_self_stimulus(&QueuedSelfStimulus::from(StimulusType::EventDone));
     classify_stimulus(&Stimulus::new(StimulusType::EventDone));
-    classify_ai_outbox(&AiOutbox::default());
-    classify_ai_detection_outbox(&AiDetectionOutbox::default());
-    classify_ai_reentrant_outbox(&AiReentrantOutbox::default());
     classify_enemy_ai(&EnemyAi::default());
     classify_friendly_ai(&FriendlyAi::default());
 }

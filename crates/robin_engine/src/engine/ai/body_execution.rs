@@ -16,7 +16,6 @@ impl EngineInner {
         owner: EntityId,
         operation: BodyReaction,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         match operation {
             BodyReaction::Seen { body } => self.execute_ai_seen_body(sim, assets, owner, body),
             BodyReaction::ReactionTimer => self.execute_ai_body_reaction_timer(sim, assets, owner),
@@ -106,7 +105,6 @@ impl EngineInner {
                 self.execute_dead_body_alert(sim, assets, owner, center)
             }
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     fn body_target(&self, owner: EntityId) -> EntityId {
@@ -153,7 +151,7 @@ impl EngineInner {
         self.seek_enemy_mut(owner)
             .base
             .set_emoticon(EmoticonType::XMark);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         let body = self.body_target(owner);
         let delta = self
             .expect_entity(body, "body arrival target")
@@ -170,16 +168,16 @@ impl EngineInner {
                 let body = self.body_target(owner);
                 let entity = self.expect_entity(body, "missing body");
                 if entity.is_unconscious() || entity.human_life_points() <= 0 {
-                    self.seek_enemy_mut(owner)
-                        .base
-                        .outbox
-                        .actor
-                        .add_detectable((body, crate::element::DetectableType::Body));
+                    self.execute_ai_add_detectable(
+                        owner,
+                        body,
+                        crate::element::DetectableType::Body,
+                    );
                 }
                 self.seek_enemy_mut(owner)
                     .base
                     .set_emoticon(EmoticonType::QuestionMark);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                 match self.seek_enemy(owner).get_rank() {
                     ProfileRank::Officer => {
                         let center = self.live_ai_position(owner);
@@ -248,13 +246,8 @@ impl EngineInner {
                 Some(owner),
                 Some(body),
             ));
-            self.seek_enemy_mut(owner)
-                .base
-                .outbox
-                .actor
-                .launch_sequences
-                .push(sequence);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.launch_sequence(sequence);
+
             self.body_timer(owner, 50);
             self.seek_enemy_mut(owner).base.clear_emoticon();
         } else {

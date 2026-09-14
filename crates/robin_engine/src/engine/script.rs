@@ -117,16 +117,13 @@ pub(super) fn capture_active_driver_snapshot_errors<R>(f: impl FnOnce() -> R) ->
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct ActiveScriptCall {
+pub(crate) struct ActiveScriptCall {
     pub(super) target: ScriptVmKey,
     pub(super) frame: crate::natives::ScriptCallFrame,
-    /// External-native entry supplies receiver context but is not a VM
-    /// activation and therefore must not consume one recursion slot.
-    pub(super) counts_toward_depth: bool,
 }
 
 #[derive(Debug)]
-pub(super) struct ScriptDriverError {
+pub(crate) struct ScriptDriverError {
     pub(super) detail: String,
     pub(super) spellforge: Option<crate::spellforge::SpellforgeGuestError>,
     /// True once the sequence element that actually failed has been marked
@@ -168,25 +165,6 @@ impl From<crate::spellforge::SpellforgeGuestError> for ScriptDriverError {
     fn from(error: crate::spellforge::SpellforgeGuestError) -> Self {
         Self::spellforge(error)
     }
-}
-
-fn assign_post_from_script_request(
-    ai: &mut crate::ai::AiController,
-    post_x: f32,
-    post_y: f32,
-    post_sector: crate::position_interface::SectorHandle,
-    post_level: u16,
-    direction: i32,
-) {
-    ai.assign_new_post(
-        crate::ai::Position {
-            x: post_x,
-            y: post_y,
-            sector: Some(post_sector),
-            level: post_level,
-        },
-        direction as u16,
-    );
 }
 
 /// Script-originated effects removed from the VM adapter before processing.
@@ -446,10 +424,7 @@ impl EngineInner {
         if !script.script_vm_has_function(key, fn_name) {
             return Ok(if fn_name == "FilterAIEvent" { 1 } else { 0 });
         }
-        let real_depth = active
-            .iter()
-            .filter(|call| call.counts_toward_depth)
-            .count();
+        let real_depth = script.active_vm_depth();
         if real_depth >= usize::from(crate::natives::MAX_NESTED_CALL_DEPTH) {
             return Err(ScriptDriverError::new(format!(
                 "nested script callback depth limit ({}) exceeded while calling {key:?}.{fn_name}",
@@ -467,12 +442,8 @@ impl EngineInner {
             .mission
             .as_mut()
             .expect("validated mission script vanished before activation guard")
-            .push_active_driver_frame(frame);
-        active.push(ActiveScriptCall {
-            target: key,
-            frame,
-            counts_toward_depth: true,
-        });
+            .push_active_driver_frame(frame, true);
+        active.push(ActiveScriptCall { target: key, frame });
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.drive_started_script_vm(sim, assets, key, fn_name, frame, &mut activation, active)
         }));
@@ -621,10 +592,12 @@ impl EngineInner {
         frame: crate::natives::ScriptCallFrame,
         active: &mut Vec<ActiveScriptCall>,
     ) -> Result<i32, ScriptDriverError> {
-        let real_depth = active
-            .iter()
-            .filter(|call| call.counts_toward_depth)
-            .count();
+        let real_depth = self
+            .scripts
+            .mission
+            .as_ref()
+            .ok_or_else(|| ScriptDriverError::new("Spellforge requires mission ScriptEffects"))?
+            .active_vm_depth();
         if real_depth >= usize::from(crate::natives::MAX_NESTED_CALL_DEPTH) {
             return Err(ScriptDriverError::new(format!(
                 "nested Spellforge callback depth limit ({}) exceeded while calling {:?}.{}",
@@ -650,12 +623,8 @@ impl EngineInner {
             .mission
             .as_mut()
             .ok_or_else(|| ScriptDriverError::new("Spellforge requires mission ScriptEffects"))?
-            .push_active_driver_frame(frame);
-        active.push(ActiveScriptCall {
-            target: key,
-            frame,
-            counts_toward_depth: true,
-        });
+            .push_active_driver_frame(frame, true);
+        active.push(ActiveScriptCall { target: key, frame });
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             loop {
                 let crate::spellforge::SpellforgeStep::Native {
@@ -901,6 +870,52 @@ impl EngineInner {
         active: &mut Vec<ActiveScriptCall>,
     ) -> Result<i32, ScriptDriverError> {
         match request {
+            crate::interp::SynchronousScriptRequest::ForceAiAttentive { actor, target, .. } => {
+                let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!("SetAlwaysAttentive owner handle {actor} became stale at its synchronous boundary")
+                })?;
+                self.world
+                    .entities
+                    .expect_entity_mut(owner, format_args!("forced attentive owner"))
+                    .enemy_ai_mut()
+                    .expect("forced attentive owner requires enemy AI")
+                    .forced_attentive = target;
+                if target {
+                    self.set_soldier_attentive_mode_from(
+                        owner,
+                        true,
+                        false,
+                        crate::engine::soldier_helpers::AttentiveModeCaller::ScriptNative,
+                    );
+                    let ai = self
+                        .world
+                        .entities
+                        .expect_ai_controller(owner, format_args!("forced attentive alert"));
+                    if ai.view_alert_status == crate::ai::AlertLevel::Green
+                        && self.control.frame_counter > 1
+                    {
+                        self.execute_ai_set_alert_status(
+                            assets,
+                            owner,
+                            crate::ai::AlertLevel::Yellow,
+                            crate::ai::AlertFlags::empty(),
+                        );
+                    }
+                }
+                Ok(0)
+            }
+            crate::interp::SynchronousScriptRequest::SetAiAlertStatus { actor, level, .. } => {
+                let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!("SetAIAlertStatus owner handle {actor} became stale at its synchronous boundary")
+                })?;
+                self.execute_ai_set_alert_status(
+                    assets,
+                    owner,
+                    level,
+                    crate::ai::AlertFlags::empty(),
+                );
+                Ok(0)
+            }
             crate::interp::SynchronousScriptRequest::ApplyAiStateNative {
                 actor, effect, ..
             } => {
@@ -989,8 +1004,15 @@ impl EngineInner {
                             crate::ai::Substate::DefaultScriptDriven,
                         );
                     }
-                    crate::interp::ScriptAiStateNativeEffect::Default
-                    | crate::interp::ScriptAiStateNativeEffect::Seeking
+                    crate::interp::ScriptAiStateNativeEffect::Default => {
+                        self.execute_ai_callback(
+                            sim,
+                            assets,
+                            owner,
+                            &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReturnToDuty),
+                        );
+                    }
+                    crate::interp::ScriptAiStateNativeEffect::Seeking
                     | crate::interp::ScriptAiStateNativeEffect::Fleeing => {
                         let current_position = {
                             let entity = self.get_entity(owner).unwrap_or_else(|| {
@@ -1008,40 +1030,33 @@ impl EngineInner {
                                 level: data.layer(),
                             }
                         };
-                        let state = match effect {
-                            crate::interp::ScriptAiStateNativeEffect::Default => {
-                                crate::ai::AiState::Default
-                            }
-                            crate::interp::ScriptAiStateNativeEffect::Seeking => {
-                                crate::ai::AiState::Seeking
-                            }
-                            crate::interp::ScriptAiStateNativeEffect::Fleeing => {
-                                crate::ai::AiState::Fleeing
-                            }
-                            crate::interp::ScriptAiStateNativeEffect::ScriptDriven => {
-                                unreachable!()
-                            }
-                        };
-                        self.get_entity_mut(owner)
-                            .and_then(Entity::ai_controller_mut)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "SetAIState owner {} lost its required typed AI after NO_EVENT callback",
-                                    owner.index()
-                                )
-                            })
-                            .script_set_ai_state(state, current_position);
+                        if matches!(effect, crate::interp::ScriptAiStateNativeEffect::Seeking) {
+                            self.execute_ai_script_seek_area(
+                                sim,
+                                assets,
+                                owner,
+                                current_position,
+                                crate::parameters_ai::AI_SCRIPT_SEEK_RADIUS as u16,
+                            );
+                        } else {
+                            self.execute_ai_panic(
+                                sim,
+                                assets,
+                                owner,
+                                None,
+                                crate::parameters_ai::AI_MACRO_PANIC_RUNS as u8,
+                                crate::ai::AlertLevel::Red,
+                            );
+                        }
                     }
                 }
 
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
                 if matches!(
                     effect,
                     crate::interp::ScriptAiStateNativeEffect::Seeking
                         | crate::interp::ScriptAiStateNativeEffect::Fleeing
                 ) {
                     self.end_script_ai_native_think(sim, assets, owner);
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
                 }
                 Ok(0)
             }
@@ -1074,7 +1089,7 @@ impl EngineInner {
                 let narrowed = amount as u16;
                 let value = if (narrowed as i16) < 0 { 0 } else { narrowed };
                 self.apply_scripted_concussion(sim, assets, actor, value, true);
-                self.drain_pending_concussion_side_effects(sim, assets);
+
                 Ok(0)
             }
             crate::interp::SynchronousScriptRequest::SetActorPosture { actor, posture, .. } => {
@@ -1145,66 +1160,15 @@ impl EngineInner {
                 let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
                     format!("LockAI owner handle {actor} became stale at its synchronous barrier")
                 })?;
-                let from_lockai_command = self
-                    .orders
-                    .sequence_manager
-                    .current_element_for_actor(owner)
-                    .is_some_and(|(sequence_id, element_index)| {
-                        self.orders
-                            .sequence_manager
-                            .get_element(sequence_id, element_index)
-                            .is_some_and(|element| {
-                                element.command == crate::element::Command::LockAi
-                            })
-                    });
-                let ai = self
-                    .get_entity_mut(owner)
-                    .and_then(Entity::ai_controller_mut)
-                    .ok_or_else(|| {
-                        format!(
-                            "LockAI owner {} lost its required NPC AI at its synchronous barrier",
-                            owner.index()
-                        )
-                    })?;
-
-                // Apply the lock and macro teardown now, but suppress the
-                // controller's deferred Halt: Original immediately calls
-                // actor.Stop(NORMAL), which must finish before the VM resumes
-                // and launches any scripted replacement sequence.
-                ai.script_lock(remember_events, true);
-                if !from_lockai_command {
-                    self.stop_owner(owner, crate::sequence::SequencePriority::Normal);
-                    self.dispatch_condolations_in_script_driver(sim, assets, active)?;
-                }
+                self.execute_ai_script_lock_in_driver(sim, assets, owner, remember_events, active)?;
                 Ok(0)
             }
             crate::interp::SynchronousScriptRequest::UnlockAi { actor, .. } => {
                 let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
                     format!("UnlockAI owner handle {actor} became stale at its synchronous barrier")
                 })?;
-                let unconscious = self
-                    .get_entity(owner)
-                    .and_then(Entity::human_data)
-                    .is_some_and(|human| human.unconscious);
-                let ai = self
-                    .get_entity_mut(owner)
-                    .and_then(Entity::ai_controller_mut)
-                    .ok_or_else(|| {
-                        format!(
-                            "UnlockAI owner {} lost its required NPC AI at its synchronous barrier",
-                            owner.index()
-                        )
-                    })?;
-                // Scripted AI unlocking does not test
-                // the script-lock state. Even a redundant native UnlockAI must
-                // blink detections and re-enter Think(EVENT_RETURN_TO_DUTY).
-                ai.script_unlock(unconscious);
-                // ScriptUnlockAI synchronously re-enters
-                // Think(EVENT_RETURN_TO_DUTY). Finish that owner-local call,
-                // then materialize any resulting movement before resuming the VM.
-                // Normal-priority movement remains registered for
-                // the sequence-manager tick; it is not instructed inline.
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.execute_ai_script_unlock(sim, assets, owner);
+
                 Ok(0)
             }
             crate::interp::SynchronousScriptRequest::AssignPath { actor, way, .. } => {
@@ -1213,32 +1177,6 @@ impl EngineInner {
                         "AssignPath owner handle {actor} became stale at its synchronous barrier"
                     )
                 })?;
-                let entity = self.get_entity(owner).ok_or_else(|| {
-                    format!(
-                        "AssignPath owner {} disappeared at its synchronous barrier",
-                        owner.index()
-                    )
-                })?;
-                let data = entity.element_data();
-                let current_position = crate::ai::Position {
-                    x: data.position_map().x,
-                    y: data.position_map().y,
-                    sector: data.sector(),
-                    level: data.layer(),
-                };
-                let current_direction = entity.position_iface().get_direction().as_u8() as u16;
-                // The AssignPath native routes through Original's
-                // patrol-path assignment overload,
-                // whose valid-path arm — unlike the waypoint-macro index
-                // overload — does not clear the special-action flag. `ScriptWay`
-                // carries that distinction.
-                //
-                // TODO: the reference variant's empty and invalid-sentinel branches write
-                // likes-to-sit and special-action flags only *after* the
-                // synchronous Think(EVENT_RETURN_TO_DUTY), so that Think
-                // observes the pre-assignment flags. Rust defers the think to
-                // the owner drain, which sees the post-assignment flags
-                // instead; no known trace exercises the difference yet.
                 let assignment = if way == 0 {
                     crate::ai::PatrolAssignment::ClearPath
                 } else if way == -1 {
@@ -1248,29 +1186,8 @@ impl EngineInner {
                         .map(crate::ai::PatrolAssignment::ScriptWay)
                         .unwrap_or(crate::ai::PatrolAssignment::ClearPath)
                 };
-                let ai = self
-                    .get_entity_mut(owner)
-                    .and_then(Entity::ai_controller_mut)
-                    .ok_or_else(|| {
-                        format!(
-                            "AssignPath owner {} lost its required NPC AI at its synchronous barrier",
-                            owner.index()
-                        )
-                    })?;
-                ai.assign_new_patrol_path(
-                    assignment,
-                    current_position,
-                    current_direction,
-                    &assets.navigation.hiking_paths,
-                );
-                // Patrol-path assignment synchronously runs
-                // the EVENT_RETURN_TO_DUTY decision, including movement and its
-                // sequence-element launch. Normal-priority movement does not
-                // launch or instruct it synchronously, though: it remains registered for
-                // the sequence-manager tick after the entity loop. Close the
-                // AI callback now, then materialize its pending Move sequence
-                // without instructing or executing it early.
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.execute_ai_assign_patrol_path(sim, assets, owner, assignment, true);
+
                 Ok(0)
             }
             crate::interp::SynchronousScriptRequest::AssignPost {
@@ -1293,29 +1210,19 @@ impl EngineInner {
                         owner.index()
                     )
                 })?;
-                let ai = self
-                    .get_entity_mut(owner)
-                    .and_then(Entity::ai_controller_mut)
-                    .ok_or_else(|| {
-                        format!(
-                            "AssignPost owner {} lost its required NPC AI at its synchronous barrier",
-                            owner.index()
-                        )
-                    })?;
-                assign_post_from_script_request(
-                    ai,
-                    post_x,
-                    post_y,
-                    post_sector,
-                    post_level,
-                    direction,
+                self.execute_ai_assign_post(
+                    sim,
+                    assets,
+                    owner,
+                    crate::ai::Position {
+                        x: post_x,
+                        y: post_y,
+                        sector: Some(post_sector),
+                        level: post_level,
+                    },
+                    direction as u16,
                 );
-                // The original game immediately dispatches return-to-duty when assigning a new post
-                // before returning to the script. Close that owner-local AI
-                // stack and materialize its movement now. The resulting ordinary
-                // Move remains registered for the later sequence-manager
-                // update, exactly like AssignPath above.
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                 Ok(0)
             }
             crate::interp::SynchronousScriptRequest::SwitchToAlertPath { actor, .. } => {
@@ -1375,7 +1282,6 @@ impl EngineInner {
 
                     // Close the direct owner-local AI boundary and
                     // materialize any movement before the script VM resumes.
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
                 }
                 Ok(0)
             }
@@ -1423,10 +1329,60 @@ impl EngineInner {
                         "StopActor owner handle {actor} became stale at its synchronous barrier"
                     )
                 })?;
-                self.stop_owner(owner, crate::sequence::SequencePriority::Script);
+                self.stop_actor_orders(
+                    sim,
+                    assets,
+                    active,
+                    owner,
+                    crate::sequence::SequencePriority::Script,
+                );
                 Ok(0)
             }
         }
+    }
+
+    pub(crate) fn execute_ai_script_lock(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: crate::element::EntityId,
+        remember_events: bool,
+    ) {
+        self.execute_ai_script_lock_in_driver(sim, assets, owner, remember_events, &mut Vec::new())
+            .unwrap_or_else(|error| panic!("script lock failed: {error:?}"));
+    }
+
+    fn execute_ai_script_lock_in_driver(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: crate::element::EntityId,
+        remember_events: bool,
+        active: &mut Vec<ActiveScriptCall>,
+    ) -> Result<(), ScriptDriverError> {
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("script lock owner"));
+        ai.script_locked = true;
+        ai.remember_events = remember_events;
+        let from_lock_command = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .and_then(|(sequence, index)| self.orders.sequence_manager.get_element(sequence, index))
+            .is_some_and(|element| element.command == crate::element::Command::LockAi);
+        if !from_lock_command {
+            self.stop_actor_orders(
+                sim,
+                assets,
+                active,
+                owner,
+                crate::sequence::SequencePriority::Normal,
+            );
+        }
+        self.execute_ai_break_macro(owner);
+        Ok(())
     }
 
     fn apply_script_actor_location(
@@ -1581,6 +1537,7 @@ impl EngineInner {
             );
         }
         let mut disabled_pc = false;
+        let mut lock_npc = false;
         match self
             .get_entity_mut(actor)
             .expect("SetActorLocation actor vanished before playability/AI mutation")
@@ -1597,14 +1554,15 @@ impl EngineInner {
                 let ai = entity
                     .ai_controller_mut()
                     .expect("SetActorLocation resolved NPC without an AI controller");
-                if !ai.script_locked {
-                    ai.script_lock(false, false);
-                }
+                lock_npc = !ai.script_locked;
             }
             _ => {}
         }
         if disabled_pc {
             self.unselect_single_pc(actor);
+        }
+        if lock_npc {
+            self.execute_ai_script_lock(sim, assets, actor, false);
         }
         Ok(1)
     }
@@ -1643,13 +1601,14 @@ impl EngineInner {
         };
         let clear_concussion = |engine: &mut Self| {
             engine.apply_scripted_concussion(sim, assets, actor, 0, true);
-            engine.drain_pending_concussion_side_effects(sim, assets);
         };
         let notify_down = |engine: &mut Self| {
             if is_npc {
-                engine.dispatch_ai_stimulus(
+                engine.execute_ai_callback(
+                    sim,
+                    assets,
                     actor,
-                    crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
+                    &crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
                 );
                 engine.broadcast_body_detectable(actor);
             }
@@ -1711,7 +1670,13 @@ impl EngineInner {
                 wait(self, active)?;
             }
             17 => {
-                self.stop_owner(actor, crate::sequence::SequencePriority::Injury);
+                self.stop_actor_orders(
+                    sim,
+                    assets,
+                    active,
+                    actor,
+                    crate::sequence::SequencePriority::Injury,
+                );
                 self.drain_script_synchronous_actions(sim, assets, active)?;
                 set_posture(self, Posture::Lying);
                 self.apply_scripted_concussion(
@@ -1721,7 +1686,7 @@ impl EngineInner {
                     crate::combat::CONCUSSION_MAX,
                     true,
                 );
-                self.drain_pending_concussion_side_effects(sim, assets);
+
                 notify_down(self);
                 wait(self, active)?;
             }
@@ -1831,7 +1796,7 @@ impl EngineInner {
         // remain installed across VM suspension, effect application, and all
         // nested drains. The owning driver pushes/pops them in catch-unwind
         // guards; external-native receiver frames follow the same lifetime but
-        // are marked as depth-neutral in `ActiveScriptCall`.
+        // are marked as depth-neutral in the mission's runtime call stack.
         self.scripts.assert_native_attachments_ready();
         let result = {
             let EngineInner {
@@ -2103,7 +2068,7 @@ impl EngineInner {
                         if actor == 0 {
                             // No actor specified: select or deselect all
                             if select {
-                                self.select_all_pcs(assets, 0);
+                                self.select_all_pcs(sim, assets, 0);
                             } else {
                                 self.unselect_all_pcs(0);
                             }
@@ -2111,7 +2076,7 @@ impl EngineInner {
                             if select {
                                 // Script-path SelectPC uses `speak=false`
                                 // — script already owns the sound flow.
-                                self.select_pc(assets, 0, id, false, false);
+                                self.select_pc(sim, assets, 0, id, false, false);
                             } else {
                                 self.players.seats[0].selection.retain(|&x| x != id);
                             }
@@ -2119,7 +2084,13 @@ impl EngineInner {
                     }
                     crate::natives::DeferredCommand::StopActor { actor } => {
                         if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            self.stop_owner(id, crate::sequence::SequencePriority::Script);
+                            self.stop_actor_orders(
+                                sim,
+                                assets,
+                                active_scripts,
+                                id,
+                                crate::sequence::SequencePriority::Script,
+                            );
                         }
                     }
                     crate::natives::DeferredCommand::FreezeAll { freeze } => {
@@ -3566,7 +3537,7 @@ impl EngineInner {
                     | crate::ai::StimulusType::CallYourTalk3
             );
             eprintln!(
-                "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} event={:?} code={} expected_class={} source={source:?} stimulus_owner={:?} ai_antagonist={:?} state={:?} substate={:?} locks={:?} script_locked={} recursion={} stimulus_queue={:?} self_stimuli={:?} begin_panic={} rng_cursor={rng_cursor:?}",
+                "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} event={:?} code={} expected_class={} source={source:?} stimulus_owner={:?} ai_antagonist={:?} state={:?} substate={:?} locks={:?} script_locked={} recursion={} stimulus_queue={:?} rng_cursor={rng_cursor:?}",
                 engine.control.frame_counter,
                 entity_id.index(),
                 engine.world.original_creation_order(entity_id),
@@ -3581,11 +3552,9 @@ impl EngineInner {
                 ai.script_locked,
                 engine.ai_think_depth(),
                 ai.stimulus_queue,
-                ai.outbox.reentrant.self_stimuli,
-                ai.outbox.actor.begin_panic.is_some(),
             );
         };
-        let entered_think = self.begin_ai_think_before_filter(entity_id, stimulus);
+        let entered_think = self.begin_ai_think_before_filter(assets, entity_id, stimulus);
         debug_snapshot(self, "before_filter");
         let handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
         let filter_allowed = self.filter_stimulus(sim, assets, handle, stimulus);
@@ -3607,15 +3576,6 @@ impl EngineInner {
             return false;
         }
 
-        if stimulus.stimulus_type == crate::ai::StimulusType::EventAfterScriptGoOn {
-            let ai = self
-                .world
-                .entities
-                .get_mut(entity_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| panic!("AfterScript owner {} lost its AI", entity_id.index()));
-            ai.outbox.reentrant.engine_drains_after_script_go_on = true;
-        }
         let route_arrival = stimulus.stimulus_type == crate::ai::StimulusType::EventReachPoint
             && self
                 .world
@@ -3636,144 +3596,6 @@ impl EngineInner {
                 "after_think_unhandled"
             },
         );
-        let after_script_suspended = stimulus.stimulus_type
-            == crate::ai::StimulusType::EventAfterScriptGoOn
-            && self
-                .world
-                .entities
-                .get(entity_id)
-                .and_then(Entity::ai_controller)
-                .is_some_and(|ai| ai.outbox.reentrant.engine_drains_after_script_go_on);
-        if after_script_suspended {
-            // Original is still inside the outer Think here.  Its handler
-            // recursively calls Think for each retained sibling, skipping a
-            // duplicate AFTER_SCRIPT marker and stopping if a sibling locks
-            // the AI.  Close each sibling's engine-facing outbox before
-            // advancing to the next one, then run the outer tail/tick completion.
-            loop {
-                let next = {
-                    let ai = self
-                        .world
-                        .entities
-                        .get_mut(entity_id)
-                        .and_then(Entity::ai_controller_mut)
-                        .unwrap_or_else(|| {
-                            panic!("AfterScript owner {} lost its AI queue", entity_id.index())
-                        });
-                    if ai.stimulus_queue.is_empty()
-                        || !ai.locks_flag_field.is_empty()
-                        || ai.script_locked
-                    {
-                        None
-                    } else if ai.stimulus_queue[0].stimulus_type
-                        == crate::ai::StimulusType::EventAfterScriptGoOn
-                    {
-                        ai.stimulus_queue.remove(0);
-                        Some(false)
-                    } else {
-                        Some(true)
-                    }
-                };
-                match next {
-                    Some(true) => self.tick_one_ai_queued_stimulus_for_npc(sim, entity_id, assets),
-                    Some(false) => continue,
-                    None => break,
-                }
-            }
-            let completed = self
-                .world
-                .entities
-                .get(entity_id)
-                .and_then(Entity::ai_controller)
-                .is_some_and(|ai| ai.stimulus_queue.is_empty());
-
-            self.world
-                .entities
-                .expect_ai_controller_mut(entity_id, format_args!("AfterScript outer tail"))
-                .outbox
-                .reentrant
-                .engine_drains_after_script_go_on = false;
-            if completed
-                && self
-                    .world
-                    .entities
-                    .get(entity_id)
-                    .is_some_and(|entity| entity.friendly_ai().is_some())
-            {
-                self.execute_civilian_after_script(sim, assets, entity_id);
-            } else if completed {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_enemy_ai(entity_id, format_args!("AfterScript enemy patrol"));
-                if ai.base.current_state == crate::ai::AiState::Default {
-                    let has_path = ai
-                        .base
-                        .patrol_path
-                        .as_ref()
-                        .and_then(|path| path.current_waypoint(&assets.navigation.hiking_paths))
-                        .is_some();
-                    if !has_path {
-                        self.execute_ai_return_to_duty(
-                            sim,
-                            assets,
-                            entity_id,
-                            crate::ai::DutyFlags::empty(),
-                        );
-                    } else {
-                        self.world
-                            .entities
-                            .expect_enemy_ai_mut(
-                                entity_id,
-                                format_args!("AfterScript patrol advance"),
-                            )
-                            .base
-                            .patrol_path
-                            .as_mut()
-                            .expect("AfterScript patrol path")
-                            .advance();
-                        self.duty_set_state(
-                            sim,
-                            assets,
-                            entity_id,
-                            crate::ai::AiState::Default,
-                            crate::ai::Substate::DefaultEnroute,
-                        );
-                        let ai = self.world.entities.expect_enemy_ai(
-                            entity_id,
-                            format_args!("AfterScript route after state callback"),
-                        );
-                        let path = ai
-                            .base
-                            .patrol_path
-                            .as_ref()
-                            .expect("AfterScript route after state callback");
-                        let waypoint = path
-                            .current_waypoint(&assets.navigation.hiking_paths)
-                            .expect("AfterScript waypoint after state callback");
-                        let destination = crate::ai::Position {
-                            x: waypoint.x as f32,
-                            y: waypoint.y as f32,
-                            sector: assets.navigation.hiking_waypoint_sector(
-                                usize::from(path.hiking_path_index),
-                                usize::from(path.current_waypoint_index),
-                                waypoint.sector,
-                            ),
-                            level: waypoint.level,
-                        };
-                        let flags = ai.base.default_path_walking_flags;
-                        self.duty_go_to(sim, assets, entity_id, destination, flags);
-                    }
-                }
-            }
-            self.execute_ai_end_think(sim, assets, entity_id);
-        }
-
-        // Swordfight reconsideration proposes a strike before returning
-        // to its caller. Keep that event-owned RNG and sequence work ahead of
-        // later actors instead of leaving the one-shot authorization for the
-        // global melee maintenance pass.
-        self.consume_pending_enemy_sword_attack_for(sim, assets, entity_id);
 
         // State changes call FilterAIEvent before any of the caller's deferred
         // effects. The entity borrow above is the first point at which the
@@ -3849,23 +3671,6 @@ impl EngineInner {
             Some(command_strike),
             animation_strike,
         );
-    }
-
-    pub(in crate::engine) fn execute_ai_speech(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        attempt: crate::ai::AiSpeechAttempt,
-    ) {
-        // Rejection invokes the finished callback before category cleanup.
-        let settlement = self.settle_npc_speech_attempt(assets, owner, attempt);
-        if settlement.invoke_finished_callback {
-            self.drain_self_stimuli_for_npc(sim, owner, assets);
-        }
-        if let Some(finalization) = settlement.category_rejection {
-            self.finalize_category_speech_rejection(owner, finalization);
-        }
     }
 
     /// Settle one synchronous state callback before reattaching its caller tail.
@@ -4910,46 +4715,6 @@ impl EngineInner {
             }
         }
 
-        // Putting an actor in a building enters its building sector, so
-        // Original has one authoritative occupant list for both script
-        // queries and indoor enemy alerts. The native updates the
-        // script-facing list before this deferred positioning barrier; now
-        // that the possible carried occupant has also been entered, mirror
-        // the complete ordered list into the AI-facing House.
-        let occupant_ids = self
-            .script_domains
-            .buildings
-            .occupants
-            .get(bld_idx)
-            .unwrap_or_else(|| {
-                panic!(
-                    "PutActorInBuilding: building {building} lost occupant list after entry"
-                )
-            })
-            .iter()
-            .map(|&occupant| {
-                self.entity_id_for_actor_handle(occupant).unwrap_or_else(|| {
-                    panic!(
-                        "PutActorInBuilding: building {building} contains invalid actor handle {occupant}"
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
-        let building_index = crate::sector::BuildingIdx::new(
-            u16::try_from(bld_idx)
-                .unwrap_or_else(|_| panic!("building index {bld_idx} exceeds u16")),
-        )
-        .expect("script building index uses the null sentinel");
-        if let Some(house) = self
-            .ai
-            .global
-            .houses
-            .iter_mut()
-            .find(|house| house.building_index == Some(building_index))
-        {
-            house.occupant_ids = occupant_ids;
-        }
-
         tracing::debug!(
             "PutActorInBuilding: actor={actor} building={building} \
              → layer={special_layer}, sector={}, pos=({:.1},{:.1})",
@@ -5101,11 +4866,10 @@ impl EngineInner {
             .mission
             .as_mut()
             .expect("mission-script presence checked above")
-            .push_active_driver_frame(base_frame);
+            .push_active_driver_frame(base_frame, false);
         let mut active = vec![ActiveScriptCall {
             target: this_actor.map_or(ScriptVmKey::Global, ScriptVmKey::Actor),
             frame: base_frame,
-            counts_toward_depth: false,
         }];
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let outcome = self
@@ -5171,7 +4935,7 @@ impl EngineInner {
             }
         }));
         let popped = active.pop();
-        debug_assert!(popped.is_some_and(|call| !call.counts_toward_depth));
+        debug_assert!(popped.is_some_and(|call| call.frame == base_frame));
         self.scripts
             .mission
             .as_mut()

@@ -381,32 +381,52 @@ impl EngineInner {
 
     /// Give an explicit player combat command precedence over work the
     /// soldier AI planned before the gesture was received.
-    pub(super) fn prepare_tactical_player_combat_command(&mut self, soldier: EntityId) {
+    pub(super) fn prepare_tactical_player_combat_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        soldier: EntityId,
+    ) {
         if !self.tactical_unit_is_selected(soldier) {
             return;
         }
-        self.prepare_direct_tactical_combat_command(soldier);
+        self.prepare_direct_tactical_combat_command(sim, assets, soldier);
     }
 
     /// Re-establish direct control for an automatic combat step even when the
     /// player changed selection after planning it. Admission already captured
     /// a controllable tactical actor; execution only fizzles if that actor is
     /// no longer living and tactically controllable.
-    pub(super) fn prepare_queued_tactical_combat_command(&mut self, soldier: EntityId) -> bool {
+    pub(super) fn prepare_queued_tactical_combat_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        soldier: EntityId,
+    ) -> bool {
         if !self.is_tactically_controllable(soldier) {
             return false;
         }
-        self.prepare_direct_tactical_combat_command(soldier);
+        self.prepare_direct_tactical_combat_command(sim, assets, soldier);
         true
     }
 
-    fn prepare_direct_tactical_combat_command(&mut self, soldier: EntityId) {
-        self.stop_owner(soldier, crate::sequence::SequencePriority::Preference);
+    fn prepare_direct_tactical_combat_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        soldier: EntityId,
+    ) {
+        self.stop_actor_orders(
+            sim,
+            assets,
+            &mut Vec::new(),
+            soldier,
+            crate::sequence::SequencePriority::Preference,
+        );
         let ai = self
             .get_entity_mut(soldier)
             .and_then(Entity::enemy_ai_mut)
             .unwrap_or_else(|| panic!("selected tactical unit {soldier:?} has no enemy AI"));
-        ai.pending_sword_strike_consideration = false;
     }
 
     pub fn find_tactically_controllable_unit(
@@ -615,30 +635,31 @@ impl EngineInner {
         };
     }
 
-    fn set_tactical_ai_locked(&mut self, id: EntityId, locked: bool) {
+    fn set_tactical_ai_locked(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        id: EntityId,
+        locked: bool,
+    ) {
         let entity = self
             .get_entity_mut(id)
             .unwrap_or_else(|| panic!("controlled allied soldier {id:?} disappeared"));
-        let is_unconscious = entity
-            .human_data()
-            .expect("controlled allied soldier has no human data")
-            .unconscious;
         let Some(ai) = entity.ai_controller_mut() else {
             panic!("controlled allied soldier {id:?} has no AI controller");
         };
         if locked {
             if !ai.script_locked {
-                // Direct-control movement is about to launch immediately.
-                // Use the real script-lock cleanup so an already-queued bored
-                // animation or return-to-duty order cannot dispatch after and
-                // replace that movement, but suppress script_lock's halt: a
-                // deferred halt would cancel the new player order instead.
-                ai.script_lock(true, true);
+                // Direct control owns the next movement; lock the decision
+                // controller and end its waypoint macro at this statement.
+                ai.script_locked = true;
+                ai.remember_events = true;
+                self.execute_ai_break_macro(id);
             } else {
                 ai.remember_events = true;
             }
         } else if ai.script_locked {
-            ai.script_unlock(is_unconscious);
+            self.execute_ai_script_unlock(sim, assets, id);
         } else {
             ai.remember_events = false;
         }
@@ -847,7 +868,7 @@ impl EngineInner {
         let slots =
             self.tactical_formation_slots(assets, &valid, leaders, destination, formation, true);
         for &(id, _) in &slots {
-            self.set_tactical_ai_locked(id, true);
+            self.set_tactical_ai_locked(sim, assets, id, true);
         }
         let actor_ids: Vec<_> = slots.iter().map(|(id, _)| *id).collect();
         let destinations: Vec<_> = slots.iter().map(|(_, point)| *point).collect();
@@ -958,6 +979,8 @@ impl EngineInner {
     /// The movement route itself is launched by the QA replay path.
     pub(crate) fn prepare_queued_tactical_move(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         soldier: EntityId,
         destination: MapPoint,
         formation: TacticalFormation,
@@ -966,7 +989,7 @@ impl EngineInner {
             return false;
         }
         self.replace_authored_tactical_patrol(soldier);
-        self.set_tactical_ai_locked(soldier, true);
+        self.set_tactical_ai_locked(sim, assets, soldier, true);
         let stance = self.initial_tactical_stance(soldier);
         self.players.tactical.orders.insert(
             soldier,
@@ -984,7 +1007,13 @@ impl EngineInner {
         true
     }
 
-    pub(crate) fn set_tactical_stance(&mut self, soldiers: &[EntityId], stance: CombatStance) {
+    pub(crate) fn set_tactical_stance(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        soldiers: &[EntityId],
+        stance: CombatStance,
+    ) {
         for &id in soldiers {
             if !self.is_tactically_controllable(id) {
                 continue;
@@ -1014,12 +1043,16 @@ impl EngineInner {
                 // Preference is the priority used by ordinary sword strikes.
                 // Stopping only at Normal left an already-planned AI strike
                 // alive after switching to Hold.
-                self.stop_owner(id, crate::sequence::SequencePriority::Preference);
-                if let Some(ai) = self.get_entity_mut(id).and_then(Entity::enemy_ai_mut) {
-                    ai.pending_sword_strike_consideration = false;
-                }
+                self.stop_actor_orders(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    id,
+                    crate::sequence::SequencePriority::Preference,
+                );
+                if let Some(ai) = self.get_entity_mut(id).and_then(Entity::enemy_ai_mut) {}
             }
-            self.set_tactical_ai_locked(id, stance != CombatStance::Aggressive);
+            self.set_tactical_ai_locked(sim, assets, id, stance != CombatStance::Aggressive);
         }
     }
 
@@ -1099,6 +1132,7 @@ impl EngineInner {
 
     pub(crate) fn set_tactical_follow(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         soldiers: &[EntityId],
         hero: EntityId,
@@ -1133,7 +1167,7 @@ impl EngineInner {
                 .element_data()
                 .position_map();
             let stance = self.initial_tactical_stance(id);
-            self.set_tactical_ai_locked(id, stance != CombatStance::Aggressive);
+            self.set_tactical_ai_locked(sim, assets, id, stance != CombatStance::Aggressive);
             self.players.tactical.orders.insert(
                 id,
                 TacticalUnitOrder {
@@ -1150,11 +1184,15 @@ impl EngineInner {
         }
     }
 
-    pub(crate) fn release_tactical_control(&mut self) {
+    pub(crate) fn release_tactical_control(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let controlled: Vec<_> = self.players.tactical.orders.keys().copied().collect();
         for id in controlled {
             if self.get_entity(id).is_some() {
-                self.set_tactical_ai_locked(id, false);
+                self.set_tactical_ai_locked(sim, assets, id, false);
             }
         }
         self.players.tactical = Default::default();
@@ -1233,7 +1271,7 @@ impl EngineInner {
             if was_ai_locked && !ai_locked && reached_hold_anchor {
                 self.store_tactical_current_position_as_post(id);
             }
-            self.set_tactical_ai_locked(id, ai_locked);
+            self.set_tactical_ai_locked(sim, assets, id, ai_locked);
             let deploy_destination = order.deploy_destination.filter(|_| {
                 matches!(
                     &order.duty,
@@ -1563,7 +1601,12 @@ mod tests {
             },
         }));
 
-        engine.set_tactical_ai_locked(soldier, true);
+        engine.set_tactical_ai_locked(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            soldier,
+            true,
+        );
 
         let ai = engine
             .get_entity(soldier)
@@ -1571,10 +1614,6 @@ mod tests {
             .expect("controlled test soldier retains AI");
         assert!(ai.script_locked);
         assert!(ai.remember_events);
-        assert!(
-            !ai.outbox.actor.halt,
-            "direct-control lock must not queue a halt behind the new movement"
-        );
     }
 
     #[test]
@@ -1632,17 +1671,14 @@ mod tests {
     }
 
     #[test]
-    fn selected_player_strike_discards_preexisting_ai_combat_work() {
-        let mut npc = crate::element::NpcData {
+    fn selected_player_strike_stops_preexisting_preference_command() {
+        let npc = crate::element::NpcData {
             life_points: 100,
             ai: crate::element::AiActorData {
                 ai_brain: crate::element::AiBrain::Enemy(Box::default()),
                 ..Default::default()
             },
         };
-        let ai = npc.ai_brain.enemy_mut().expect("test soldier has enemy AI");
-        ai.pending_sword_strike_consideration = true;
-
         let mut engine = EngineInner::new();
         let soldier = engine.add_test_entity(Entity::Soldier(crate::element::ActorSoldier {
             element: {
@@ -1660,14 +1696,26 @@ mod tests {
             },
         }));
         engine.players.tactical.seats[0].selection.push(soldier);
-
-        engine.prepare_tactical_player_combat_command(soldier);
-
-        let ai = engine
-            .get_entity(soldier)
-            .and_then(Entity::enemy_ai)
-            .expect("test soldier retains enemy AI");
-        assert!(!ai.pending_sword_strike_consideration);
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let mut command =
+            crate::sequence::SequenceElement::new(1, crate::element::Command::Point, Some(soldier));
+        command.priority = crate::sequence::SequencePriority::Preference;
+        let sequence = engine.launch_element(command);
+        engine.prepare_tactical_player_combat_command(
+            &crate::sim_rng::test_context(),
+            &assets,
+            soldier,
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::Interrupted
+        );
     }
 
     #[test]

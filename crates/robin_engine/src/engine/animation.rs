@@ -3649,10 +3649,13 @@ mod shoulder_idle_initialization_tests {
             0.0,
         ));
         let helper_wait = engine.orders.sequence_manager.launch_element(wait);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(helper_wait, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            helper_wait,
+            0,
+        );
 
         let (_, outcomes, _) = engine.tick_actor_animation_for(&sim, &assets, helper_id);
         assert_eq!(outcomes.shoulder_carried_waits, vec![climber_id]);
@@ -3742,10 +3745,13 @@ mod shoulder_idle_initialization_tests {
         wait.orders
             .push_back(Order::test_new(OrderType::WaitingOnShoulders, 0.0, 0.0));
         let wait_id = engine.orders.sequence_manager.launch_element(wait);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(wait_id, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            wait_id,
+            0,
+        );
 
         engine.tick_actor_animation_for(&sim, &assets, climber_id);
 

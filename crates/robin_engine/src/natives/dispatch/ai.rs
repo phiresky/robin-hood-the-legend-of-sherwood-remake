@@ -10,10 +10,7 @@ impl NativeContext<'_, '_> {
             // --- AI ---
             SetAIAlertStatus => {
                 // Reject (1) missing actor, (2) PCs, (3)
-                // non-NPCs, (4) illegal alert values — each with
-                // its own warning + false return.  The actual
-                // alert write + music propagation still happens
-                // via the per-frame overall-alert sweep.
+                // non-NPCs, (4) illegal alert values.
                 let val = stack.pop_i32();
                 let actor = stack.pop_i32();
                 let Some(entity) = self.get_entity_mut(actor) else {
@@ -32,16 +29,13 @@ impl NativeContext<'_, '_> {
                     script_error!(native, "illegal alert value {val}");
                     return 0;
                 };
-                // Route soldiers through the enemy-side wrapper
-                // so the forced-attentive view-override is
-                // applied; civilians fall through to the base
-                // setter (override is soldier-only and would
-                // always be `false` for them).
-                if let Some(enemy) = entity.enemy_ai_mut() {
-                    enemy.set_alert_status(level);
-                } else if let Some(ai) = entity.ai_controller_mut() {
-                    ai.set_alert_status(level);
-                }
+                self.yield_engine_action(
+                    crate::interp::SynchronousScriptRequest::SetAiAlertStatus {
+                        actor,
+                        level,
+                        native_return: 1,
+                    },
+                );
                 1
             }
             GetAIAlertStatus => {

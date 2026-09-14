@@ -17,9 +17,9 @@ mod types;
 pub(crate) use types::optional_ai_handle;
 pub use types::{
     AiEntityHandle, AiLockFlags, AiStateChangeSource, AlertFlags, DoorHandle, DutyFlags,
-    ElementHandle, EnterSwordfightRequest, GotoFlags, HALF_MAX_ATT_VALUE, HumanHandle,
-    IntoOptionalAiHandle, MAX_ATT_VALUE, NpcHandle, ObjectHandle, QUARTER_MAX_ATT_VALUE,
-    RemarkTargetFlags, SectorHandle, SpeechFlags, THREE_QUARTERS_MAX_ATT_VALUE,
+    ElementHandle, GotoFlags, HALF_MAX_ATT_VALUE, HumanHandle, IntoOptionalAiHandle, MAX_ATT_VALUE,
+    NpcHandle, ObjectHandle, QUARTER_MAX_ATT_VALUE, RemarkTargetFlags, SectorHandle, SpeechFlags,
+    THREE_QUARTERS_MAX_ATT_VALUE,
 };
 
 mod macro_patrol;
@@ -30,6 +30,7 @@ pub use macro_patrol::{
 };
 
 mod model;
+pub(crate) use model::cache_npc_villain_authorized_direct;
 pub use model::{
     AMBUSH_BOX_HALF_SIZE, AiState, AlertLevel, AlertSoldiersFailureContinuation, AmbushPoint,
     Attitude, CombatInfo, Curiosity, Decision, Detection, DoorCombatInfo, DoorSeekInfo,
@@ -39,9 +40,6 @@ pub use model::{
     ScreenRemark, ScriptSeekAreaRequest, SectorArchery, SeekPoint, SeekPointDirection, Stimulus,
     StimulusCategory, StimulusInfo, StimulusType, StolenObject, StoredEnumWord, Substate,
     TargetType, ViewCone, stimulus_to_ai_event_code,
-};
-pub(crate) use model::{
-    QueuedSelfStimulus, SelfStimulusOrigin, cache_npc_villain_authorized_direct,
 };
 
 mod contexts;
@@ -56,19 +54,14 @@ mod effects;
 pub(crate) use duty::{
     BodyReaction, EnemyObservation, EnemyRecovery, MoneyFightOperation, OfficerAlertCaller,
 };
-pub(crate) use effects::{AiActorCoreEffects, AiActorPreemptionEffects};
-pub use effects::{
-    AiActorOutbox, AiDetectionOutbox, AiMusicOutbox, AiOutbox, AiPatrolOutbox, AiRecoveryOutbox,
-    AiReentrantOutbox, AiSpeechAttempt, AttentiveModeEffect, DetectableMutation, GuardedPcEffect,
-};
+pub use effects::AiSpeechAttempt;
 
 mod controller;
 pub mod persisted;
 mod role;
+pub use controller::AiController;
 pub(crate) use controller::WillStopCaller;
-pub(crate) use controller::consider_report_debug_matches;
-pub use controller::{AiController, ConsiderationAccumulator};
-pub(crate) use role::{AiAdmission, AiRole};
+pub(crate) use role::AiRole;
 
 #[cfg(test)]
 mod tests;

@@ -171,20 +171,22 @@ impl EngineInner {
             self.observation_say(sim, assets, owner, Remark::FoundCharly);
         }
         self.observation_ai_mut(owner).base.sorrow_level = 0;
-        self.observation_ai_mut(owner)
-            .base
-            .set_checkpoint_charly(None);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_set_checkpoint_charly(owner, None);
+
         let ai = &self.observation_ai(owner).base;
         if ai.synchronize_index == u16::MAX
             || ai.synchronize_charly.is_none()
             || !ai.macro_in_progress
         {
-            self.observation_ai_mut(owner).base.outbox.actor.halt = true;
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
-            self.observation_ai_mut(owner)
-                .set_alert_status(AlertLevel::Green);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.halt_actor(sim, assets, owner);
+
+            self.execute_ai_set_alert_status(
+                assets,
+                owner,
+                AlertLevel::Green,
+                crate::ai::AlertFlags::empty(),
+            );
+
             self.observation_face_entity(sim, assets, owner, charly, false);
             if self.observation_ai(owner).base.current_state == AiState::Default {
                 self.duty_set_state(

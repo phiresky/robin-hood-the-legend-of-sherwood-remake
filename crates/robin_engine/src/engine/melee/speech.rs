@@ -19,19 +19,15 @@ impl EngineInner {
         if ai.base.current_substate != crate::ai::Substate::AttackingSwordfight {
             return;
         }
-        if ai.pending_sword_strike_consideration {
-            ai.pending_combat_insult_after_strike_consideration = true;
-        } else {
-            self.execute_ai_speech(
-                sim,
-                assets,
-                owner,
-                crate::ai::AiSpeechAttempt {
-                    remark: crate::ai::Remark::CombatInsult,
-                    flags: 0,
-                },
-            );
-        }
+        self.execute_ai_speech(
+            sim,
+            assets,
+            owner,
+            crate::ai::AiSpeechAttempt {
+                remark: crate::ai::Remark::CombatInsult,
+                flags: 0,
+            },
+        );
     }
 
     // ─── Speech / sound effects ─────────────────────────────────────
@@ -634,45 +630,7 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .push_order_on(sequence_id, element_index, order);
-        self.orders
-            .sequence_manager
-            .element_in_progress(sequence_id, element_index);
-    }
-
-    // ─── AI stimulus dispatch ─────────────────────────────────────────
-
-    /// Queue a stimulus on an actor's common AI controller.
-    ///
-    /// Original-game human concussion paths test NPC status, covering soldiers and
-    /// civilians alike. Custom battle PCs may explicitly own that same
-    /// controller; ordinary player PCs remain the only intentional no-op.
-    pub(crate) fn dispatch_ai_stimulus(
-        &mut self,
-        entity_id: EntityId,
-        stimulus: crate::ai::Stimulus,
-    ) {
-        let entity = self.world.entities.expect_entity_mut(
-            entity_id,
-            format_args!("NPC while queueing {:?}", stimulus.stimulus_type),
-        );
-        if matches!(entity, Entity::Pc(pc) if pc.pc.ai.is_none()) {
-            return;
-        }
-        let ai_actor = entity.ai_actor_data_mut().unwrap_or_else(|| {
-            panic!(
-                "AI actor {} lost its required AI data while queueing {:?}",
-                entity_id.index(),
-                stimulus.stimulus_type
-            )
-        });
-        let ai = ai_actor.ai_brain.base_mut().unwrap_or_else(|| {
-            panic!(
-                "AI actor {} is missing its required AI controller while queueing {:?}",
-                entity_id.index(),
-                stimulus.stimulus_type
-            )
-        });
-        ai.outbox.detection.stimuli.push(stimulus);
+        self.element_in_progress(sim, assets, &mut Vec::new(), sequence_id, element_index);
     }
 
     // ─── Tiredness tick ──────────────────────────────────────────────

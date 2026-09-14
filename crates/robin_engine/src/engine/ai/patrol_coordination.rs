@@ -71,8 +71,12 @@ mod tests {
             };
             ai.attentive = attentive;
             ai.will_be_attentive = attentive;
-            ai.base.current_music_alert_status = AlertLevel::Yellow;
-            ai.base.view_alert_status = AlertLevel::Yellow;
+            engine.execute_ai_set_alert_status(
+                &assets,
+                owner,
+                AlertLevel::Yellow,
+                crate::ai::AlertFlags::empty(),
+            );
 
             engine.execute_ai_coordinate_patrol(
                 &crate::sim_rng::test_context(),
@@ -190,7 +194,13 @@ impl EngineInner {
 
     /// Apply facing from the two actor values it actually reads. In particular,
     /// this runs after coordinate Think, so callback changes are visible.
-    fn instruct_patrol_direction(&mut self, member: EntityId, direction: u16) {
+    fn instruct_patrol_direction(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        member: EntityId,
+        direction: u16,
+    ) {
         let entity = self
             .world
             .entities
@@ -214,29 +224,24 @@ impl EngineInner {
             {
                 ai.already_turned = true;
             } else {
-                self.launch_live_ai_turn(member, direction as i16, false);
+                self.launch_live_ai_turn(sim, assets, member, direction as i16, false);
             }
         }
     }
 
-    pub(in crate::engine) fn drain_patrol_direction_broadcast_for(
+    pub(in crate::engine) fn instruct_patrol_direction_to_patrol_members(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         owner: EntityId,
         assets: &LevelAssets,
+        direction: u16,
     ) {
-        let Some(ai) = self
+        let member_count = self
             .world
             .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-        else {
-            return;
-        };
-        let Some(direction) = ai.outbox.patrol.direction_broadcast.take() else {
-            return;
-        };
-        let member_count = ai.patrol.len();
+            .expect_ai_controller(owner, format_args!("patrol direction chief"))
+            .patrol
+            .len();
         for index in 0..member_count {
             let member = *self
                 .world
@@ -245,10 +250,9 @@ impl EngineInner {
                 .patrol
                 .get(index)
                 .expect("patrol shrank during direction callback");
-            self.instruct_patrol_direction(member, direction);
+            self.instruct_patrol_direction(sim, assets, member, direction);
             // Register turns now; owner instruction belongs to the later
             // sequence-manager pass, as with coordinate Think below.
-            self.drain_direct_ai_owner_boundary(sim, member, assets);
         }
     }
 
@@ -355,9 +359,9 @@ impl EngineInner {
                 .patrol
                 .get(index)
                 .expect("patrol shrank during coordinate callback");
-            self.instruct_patrol_direction(member, direction);
+            self.instruct_patrol_direction(sim, assets, member, direction);
             self.debug_patrol_turn_lifecycle("after_instructed_direction_emit", member);
-            self.drain_direct_ai_owner_boundary(sim, member, assets);
+
             self.debug_patrol_turn_lifecycle("after_instructed_direction_drain", member);
         }
         self.reacquire_patrol_members(assets, owner);

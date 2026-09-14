@@ -3256,7 +3256,6 @@ fn set_actor_posture_ko_yields_one_canonical_engine_action() {
     active.priority = crate::sequence::SequencePriority::Normal;
     let active_id = host.sequence_manager.launch_element(active);
     host.sequence_manager.take_pending_synchronous_actions();
-    host.sequence_manager.element_in_progress(active_id, 0);
 
     let mut posture = NativeStack::default();
     posture.push_i32(actor);
@@ -3279,7 +3278,7 @@ fn set_actor_posture_ko_yields_one_canonical_engine_action() {
             .get_element(active_id, 0)
             .expect("old active element")
             .state,
-        crate::sequence::SequenceState::InProgress,
+        crate::sequence::SequenceState::Todo,
         "the native adapter must not duplicate the engine posture pipeline"
     );
 }
@@ -3388,8 +3387,7 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
         0.0,
         std::num::NonZeroU32::new(1).unwrap(),
     ));
-    let sequence_id = sequences.launch_element(element);
-    sequences.element_in_progress(sequence_id, 0);
+    sequences.launch_element(element);
     let mut sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();
     let frame = 123;
@@ -3935,30 +3933,35 @@ fn set_always_attentive_promotes_green_view_when_music_is_already_yellow() {
     enemy.base.current_music_alert_status = crate::ai::AlertLevel::Yellow;
     enemy.base.view_alert_status = crate::ai::AlertLevel::Green;
 
-    let mut host = BoundScriptEffects::new();
-    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(soldier)]);
-    let actor = ScriptHandleCodec::actor_handle_from_index(0);
-    let mut sequences = crate::sequence::SequenceManager::new();
-    let mut selected = Vec::new();
-    let mut sounds = crate::sound_source::SoundSourceManager::new();
-    let weather = crate::engine::WeatherState::default();
-    let frame = 656;
-    let mut stack = NativeStack::default();
-    stack.push_i32(actor);
-    stack.push_i32(1);
+    let mut engine = crate::engine::EngineInner::new();
+    let owner = engine.add_test_entity(soldier);
+    engine.control.frame_counter = 656;
+    let mut assets = crate::engine::LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .scripts
+        .install_mission(crate::engine::test_support::asm::empty_mission_script(
+            "attentive_native.scs",
+        ));
+    engine.scripts.attach_native_capabilities(&assets);
 
     assert_eq!(
-        call_host_native_with_queries(
-            &mut host,
-            NativeFn::SetAlwaysAttentive,
-            &mut stack,
-            TestQueryViews::new(&mut sequences, &mut selected, &mut sounds, &weather, &frame),
-        ),
+        engine
+            .call_external_native(
+                &crate::sim_rng::test_context(),
+                &assets,
+                "SetAlwaysAttentive",
+                &[ScriptHandleCodec::actor_handle(owner), 1],
+            )
+            .expect("attentive native must complete through its engine callback"),
         0
     );
 
-    let enemy = host
-        .entity_at_legacy_slot(0)
+    let enemy = engine
+        .world
+        .entities
+        .get(owner)
+        .expect("native retains owner")
         .enemy_ai()
         .expect("native must retain the soldier's enemy AI");
     assert!(enemy.forced_attentive);
@@ -4048,35 +4051,39 @@ fn set_always_attentive_preserves_ordinary_alert_branches() {
         enemy.base.current_music_alert_status = case.music;
         enemy.base.view_alert_status = case.view;
 
-        let mut host = BoundScriptEffects::new();
-        host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(soldier)]);
-        let mut sequences = crate::sequence::SequenceManager::new();
-        let mut selected = Vec::new();
-        let mut sounds = crate::sound_source::SoundSourceManager::new();
-        let weather = crate::engine::WeatherState::default();
-        let mut stack = NativeStack::default();
-        stack.push_i32(ScriptHandleCodec::actor_handle_from_index(0));
-        stack.push_i32(i32::from(case.target));
+        let mut engine = crate::engine::EngineInner::new();
+        let owner = engine.add_test_entity(soldier);
+        engine.control.frame_counter = case.frame;
+        let mut assets = crate::engine::LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine
+            .scripts
+            .install_mission(crate::engine::test_support::asm::empty_mission_script(
+                "attentive_native.scs",
+            ));
+        engine.scripts.attach_native_capabilities(&assets);
         assert_eq!(
-            call_host_native_with_queries(
-                &mut host,
-                NativeFn::SetAlwaysAttentive,
-                &mut stack,
-                TestQueryViews::new(
-                    &mut sequences,
-                    &mut selected,
-                    &mut sounds,
-                    &weather,
-                    &case.frame,
-                ),
-            ),
+            engine
+                .call_external_native(
+                    &crate::sim_rng::test_context(),
+                    &assets,
+                    "SetAlwaysAttentive",
+                    &[
+                        ScriptHandleCodec::actor_handle(owner),
+                        i32::from(case.target)
+                    ],
+                )
+                .expect("attentive native must complete through its engine callback"),
             0,
             "{}",
             case.name
         );
 
-        let enemy = host
-            .entity_at_legacy_slot(0)
+        let enemy = engine
+            .world
+            .entities
+            .get(owner)
+            .expect("native retains owner")
             .enemy_ai()
             .expect("native must retain the soldier's enemy AI");
         assert_eq!(enemy.forced_attentive, case.target, "{}", case.name);

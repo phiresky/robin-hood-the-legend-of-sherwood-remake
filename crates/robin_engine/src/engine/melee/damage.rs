@@ -533,6 +533,7 @@ impl EngineInner {
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
         let Some(strike) = self.sword_damage_prelude(
+            sim,
             assets,
             victim_id,
             attacker_id,
@@ -570,6 +571,7 @@ impl EngineInner {
     /// type, or diplomacy forbids it after terminating the element).
     fn sword_damage_prelude(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: Option<EntityId>,
@@ -612,9 +614,13 @@ impl EngineInner {
                 victim.camp(),
                 victim.is_pc(),
             ) {
-                self.orders
-                    .sequence_manager
-                    .element_terminated(damage_element.0, damage_element.1);
+                self.element_terminated(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    damage_element.0,
+                    damage_element.1,
+                );
                 return None;
             }
         }
@@ -1178,7 +1184,7 @@ impl EngineInner {
                 .publish_order_posture(Posture::Dead);
             }
             let (dseq, didx) = damage_element;
-            self.orders.sequence_manager.element_terminated(dseq, didx);
+            self.element_terminated(sim, assets, &mut Vec::new(), dseq, didx);
             // The original game's transition to terminated sends the selected actor's
             // condolence card synchronously from inside
             // sword-damage translation. Besides notifying an NPC AI, that
@@ -1188,7 +1194,6 @@ impl EngineInner {
             // Keeping the card queued until the manager tail lets the
             // attacker's following Provoke/EventDone run first and observe
             // the victim with no selected recovery order.
-            self.dispatch_condolations_for_owner_boundary(sim, victim_id, assets);
         }
         (pushed, grounded_translation_terminates)
     }
@@ -1526,8 +1531,12 @@ impl EngineInner {
                         );
                     }
                 }
-                self.dispatch_ai_stimulus(atk_id, crate::ai::Stimulus::new(stimulus_type));
-                self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, atk_id, assets);
+                self.execute_ai_callback(
+                    sim,
+                    assets,
+                    atk_id,
+                    &crate::ai::Stimulus::new(stimulus_type),
+                );
             }
 
             // Original-game sword-damage translation sends
@@ -1835,7 +1844,7 @@ impl EngineInner {
             );
             if !is_rider && !still_alive {
                 let (dseq, didx) = damage_element;
-                self.orders.sequence_manager.element_terminated(dseq, didx);
+                self.element_terminated(sim, assets, &mut Vec::new(), dseq, didx);
                 return;
             }
         }
@@ -2150,7 +2159,7 @@ impl EngineInner {
             }
             if !is_rider || !post_dead {
                 let (dseq, didx) = damage_element;
-                self.orders.sequence_manager.element_terminated(dseq, didx);
+                self.element_terminated(sim, assets, &mut Vec::new(), dseq, didx);
                 return;
             }
             // TODO: match the Original sleeping-rider special case,
@@ -2283,9 +2292,13 @@ impl EngineInner {
                     victim.is_pc(),
                 )
             {
-                self.orders
-                    .sequence_manager
-                    .element_terminated(damage_element.0, damage_element.1);
+                self.element_terminated(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    damage_element.0,
+                    damage_element.1,
+                );
                 return;
             }
         }
@@ -2366,14 +2379,7 @@ impl EngineInner {
                     ),
                     None => crate::ai::Stimulus::new(crate::ai::StimulusType::EventGotHit),
                 };
-                self.dispatch_synchronous_ai_think_preserving_detection_fifo(
-                    sim, victim_id, assets, stimulus,
-                );
-                // The got-hit event applies view status inline before
-                // Human hit-damage translation continues to the
-                // fall animation. Rust represents that synchronous write in
-                // the AI recovery outbox, so consume it at the same boundary.
-                self.tick_ai_pending_resurrection_and_eyes_for_npc(victim_id);
+                self.execute_ai_callback(sim, assets, victim_id, &stimulus);
             }
         }
 
@@ -2393,9 +2399,13 @@ impl EngineInner {
         // same frame that the first hit's flight lands: EVENT_GOTHIT must
         // still restore EYES_DIE_OR_GET_UNCONSCIOUS before the element ends.
         if victim_posture == Posture::Lying {
-            self.orders
-                .sequence_manager
-                .element_terminated(damage_element.0, damage_element.1);
+            self.element_terminated(
+                sim,
+                assets,
+                &mut Vec::new(),
+                damage_element.0,
+                damage_element.1,
+            );
             return;
         }
 
@@ -2456,6 +2466,7 @@ impl EngineInner {
         // priority and end lying; harder hits play in place and
         // collapse to lying on completion.
         self.dispatch_hit_fall_animation(
+            sim,
             assets,
             victim_id,
             attacker_id,
@@ -2479,6 +2490,7 @@ impl EngineInner {
     /// that order first executes.
     pub(super) fn dispatch_hit_fall_animation(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: Option<EntityId>,
@@ -2506,9 +2518,13 @@ impl EngineInner {
                 // before command translation; leaving the element live would
                 // mistake one of those stale orders for a hit reaction and
                 // run actor instruction handling's IN_PROGRESS epilogue.
-                self.orders
-                    .sequence_manager
-                    .element_terminated(damage_element.0, damage_element.1);
+                self.element_terminated(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    damage_element.0,
+                    damage_element.1,
+                );
                 return;
             }
         };
@@ -2763,7 +2779,12 @@ impl EngineInner {
     ///    posture that can't transition to StuckUnderNet (tied, KO,
     ///    dead).  Counter still tracks though, so the same victim
     ///    netted while tied gets released correctly on un-apply.
-    pub(super) fn apply_net(&mut self, victim_id: EntityId) {
+    pub(super) fn apply_net(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+    ) {
         let (already_stuck, can_transition) = {
             let victim = self.expect_entity(victim_id, "apply_net victim");
             let posture = victim.element_data().posture();
@@ -2792,9 +2813,11 @@ impl EngineInner {
             .is_npc();
         if victim_is_npc {
             self.broadcast_body_detectable(victim_id);
-            self.dispatch_ai_stimulus(
+            self.execute_ai_callback(
+                sim,
+                assets,
                 victim_id,
-                crate::ai::Stimulus::new(crate::ai::StimulusType::EventNet),
+                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventNet),
             );
         }
     }
@@ -2939,10 +2962,10 @@ impl EngineInner {
         );
         let seq_id = self.launch_element(elem);
         let elem_idx = 0;
-        if !self.arbitrate_instruct(seq_id, elem_idx) {
+        if !self.arbitrate_instruct(sim, assets, &mut Vec::new(), seq_id, elem_idx) {
             return;
         }
-        self.dispatch_receive_damage(sim, assets, victim_id, seq_id, elem_idx);
+        self.dispatch_receive_damage(sim, assets, &mut Vec::new(), victim_id, seq_id, elem_idx);
     }
 
     /// Register a projectile damage sequence for the sequence-manager phase.
@@ -3122,7 +3145,7 @@ impl EngineInner {
 
     /// Release live relationships before death discards pending actor work.
     fn detach_npc_death_relationships(&mut self, victim_id: EntityId) {
-        let (guarded_pcs, shooting_points, archery_sector, shield_bearers, archers) = {
+        let (guarded_pc, shooting_points, archery_sector, shield_bearers, archers) = {
             let Some(enemy) = self
                 .world
                 .entities
@@ -3132,20 +3155,7 @@ impl EngineInner {
                 return;
             };
 
-            let guard_effect = enemy.base.outbox.actor.set_guarded_pc.take();
-            let mut guarded_pcs = Vec::new();
-            for guarded_pc in [
-                enemy.guarded_pc.take(),
-                guard_effect.and_then(|effect| effect.old),
-                guard_effect.and_then(|effect| effect.new),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                if !guarded_pcs.contains(&guarded_pc) {
-                    guarded_pcs.push(guarded_pc);
-                }
-            }
+            let guarded_pc = enemy.guarded_pc.take();
 
             let shooting_points = enemy.my_shooting_point.take();
 
@@ -3157,7 +3167,7 @@ impl EngineInner {
             let archers = enemy.archer_behind_me.take().map(|archer| archer.get());
 
             (
-                guarded_pcs,
+                guarded_pc,
                 shooting_points,
                 archery_sector,
                 shield_bearers,
@@ -3187,7 +3197,7 @@ impl EngineInner {
 
         self.clear_live_combat_neighbours(victim_id);
 
-        for guarded_pc in guarded_pcs {
+        if let Some(guarded_pc) = guarded_pc {
             let guarded_pc_id = EntityId::Pc(guarded_pc);
             match self.world.entities.get_mut(guarded_pc_id) {
                 Some(Entity::Pc(pc)) if pc.pc.guard == Some(victim_id) => {
@@ -3395,9 +3405,7 @@ impl EngineInner {
         // producing a "corpse walks a few more frames" visual.  We want
         // a hard interrupt instead, so the damage element's `DyingSword`
         // order becomes current without deleting a simultaneous pending hit.
-        self.orders
-            .sequence_manager
-            .kill_owner_sequences(victim_id, damage_element.0);
+        self.kill_owner_sequences(sim, assets, &mut Vec::new(), victim_id, damage_element.0);
 
         // Remove the dying soldier from every other NPC's
         // friend/missed-friend tracker so they don't keep looking for
@@ -3405,9 +3413,8 @@ impl EngineInner {
         self.delete_detectable_for_all_npc(victim_id, crate::element::DetectableType::Friend);
         self.delete_detectable_for_all_npc(victim_id, crate::element::DetectableType::MissedFriend);
 
-        // The original game's permanently sleeping state immediately clears the
-        // guarded-PC reciprocal pointer and archery ownership.  Apply those
-        // invariants before the broad outbox reset below discards stale work.
+        // Permanent sleep clears the guarded-PC reciprocal pointer and archery
+        // ownership before the remaining death cleanup.
         self.detach_npc_death_relationships(victim_id);
 
         let victim = self.expect_entity_mut(victim_id, "fresh death cleanup victim");
@@ -3425,8 +3432,8 @@ impl EngineInner {
             actor.clear_path();
         }
 
-        // NPC kill cascade: clear stale pre-death work, then enqueue the
-        // death-owned alert/music transition and snap the terminal state.
+        // Clear stale pre-death work, apply the alert/music transition,
+        // then enter the terminal state.
         // Original-game NPC death handling changes state; the
         // enemy override clears the Beggar detectable bucket when this death
         // leaves STATE_SEEKING.  Rust writes the terminal controller state
@@ -3434,30 +3441,23 @@ impl EngineInner {
         let clear_beggar_detectables = victim
             .enemy_ai()
             .is_some_and(|ai| ai.base.current_state == crate::ai::AiState::Seeking);
-        let forced_attentive = if victim.is_soldier() {
-            victim
-                .enemy_ai()
-                .expect("dying soldier NPC has no EnemyAi")
-                .forced_attentive
-        } else {
-            false
-        };
-        if let Some(ai) = victim.ai_controller_mut() {
-            // Drop every remaining AI intent queued by the think that ran
-            // earlier in this tick.  The relationship-maintenance effects
-            // were applied synchronously above; all other channels must be
-            // cauterised before death adds its own instant-music effect.
-            ai.clear_all_pending();
-            ai.set_alert_status_with_flags(
+        if victim.ai_controller().is_some() {
+            self.execute_ai_set_alert_status(
+                assets,
+                victim_id,
                 crate::ai::AlertLevel::Green,
                 crate::ai::AlertFlags::INSTANT_MUSIC_CHANGE,
-                forced_attentive,
             );
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(victim_id, format_args!("death alert completion"));
             ai.current_state = crate::ai::AiState::Sleeping;
             ai.current_substate = crate::ai::Substate::SleepingForever;
             ai.clear_emoticon();
         }
 
+        let victim = self.expect_entity_mut(victim_id, "death alert completion victim");
         if let Some(npc) = victim.ai_actor_data_mut() {
             if clear_beggar_detectables {
                 npc.detectable_lists[crate::element::DetectableType::Beggar as usize].clear();
@@ -3714,17 +3714,12 @@ impl EngineInner {
             .get(victim_id)
             .is_some_and(|entity| entity.ai_controller().is_some())
         {
-            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+            self.execute_ai_callback(
                 sim,
-                victim_id,
                 assets,
-                crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
+                victim_id,
+                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
             );
-            // Decision-tick admission handles loss of consciousness by applying
-            // dead-or-unconscious view-status assignment inline. Rust's AI
-            // borrow boundary represents that write in the recovery outbox,
-            // so consume it before returning from the same synchronous Think.
-            self.tick_ai_pending_resurrection_and_eyes_for_npc(victim_id);
         }
 
         let victim = self

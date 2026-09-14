@@ -247,11 +247,11 @@ impl EngineInner {
             // order's initialization. Preserve older detection stimuli, but
             // close this call before advancing to the next opponent or the
             // actor's action processing.
-            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+            self.execute_ai_callback(
                 sim,
-                opponent_id,
                 assets,
-                crate::ai::Stimulus::with_human(
+                opponent_id,
+                &crate::ai::Stimulus::with_human(
                     crate::ai::StimulusType::EventAdversaryWeak,
                     entity_id.index(),
                 ),

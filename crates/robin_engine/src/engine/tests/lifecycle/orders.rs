@@ -281,10 +281,13 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
     element.orders.push_back(transition_order);
     element.orders.push_back(whistle_order);
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     {
         let actor = engine
             .get_entity_mut(carrier)
@@ -393,10 +396,13 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
         order_id,
     ));
     let take_sequence = engine.orders.sequence_manager.launch_element(take);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(take_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        take_sequence,
+        0,
+    );
     engine.players.seats[0].selection = vec![carrier];
 
     let sim = crate::sim_rng::test_context();
@@ -513,10 +519,13 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
         .orders
         .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
     let sequence = engine.orders.sequence_manager.launch_element(selected);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     let mut executed_idle = false;
     let mut forwarded_termination = false;
@@ -557,10 +566,13 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
     let order_id = order.order_id;
     selected.orders.push_back(order);
     let sequence = engine.orders.sequence_manager.launch_element(selected);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     let script = SpriteScript {
         action_id: OrderType::BeingTied as u16,
@@ -642,10 +654,13 @@ fn face_to_waits_for_manager_after_live_halt() {
         NonZeroU32::new(777).unwrap(),
     ));
     let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(movement_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        movement_sequence,
+        0,
+    );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         let actor = entity.actor_data_mut().unwrap();
@@ -655,7 +670,7 @@ fn face_to_waits_for_manager_after_live_halt() {
             .position_iface_mut()
             .set_map_goal(MapPoint::new(70.0, 80.0));
     }
-    engine.halt_actor(owner);
+    engine.halt_actor(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
     engine.duty_face_direction(&sim, &assets, owner, 9);
 
     let turn_sequence = engine
@@ -739,10 +754,13 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
             ),
             crate::abilities::BeginResult::Started
         );
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence_id, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            sequence_id,
+            0,
+        );
     }
 
     let mut display = CameraDisplayState::default();
@@ -816,10 +834,13 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
         ),
         crate::abilities::BeginResult::Started
     );
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     let assets = engine.test_runtime_assets();
     let sprite_before = {
@@ -1049,7 +1070,13 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
         0.0,
     ));
     let seq = engine.orders.sequence_manager.launch_element(element);
-    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        seq,
+        0,
+    );
     let actor = engine
         .get_entity_mut(beggar)
         .unwrap()
@@ -1362,7 +1389,13 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         .unwrap()
         .active_ability
         .strangle_initialized = true;
-    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        seq,
+        0,
+    );
     let mut display = CameraDisplayState::default();
 
     for _ in 0..10 {
@@ -1430,14 +1463,6 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         (victim_sprite.current_frame, victim_sprite.frame_count),
         (1, 0),
         "the pre-action fast-turn path and normal strangling tail must not both advance the victim"
-    );
-    engine.dispatch_ai_stimulus(
-        victim,
-        crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
-    );
-    engine.dispatch_ai_stimulus(
-        victim,
-        crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
     );
 
     let (_, condolation_order) =
@@ -1510,22 +1535,6 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         victim_entity
             .ai_controller()
             .unwrap()
-            .outbox
-            .detection
-            .stimuli
-            .iter()
-            .map(|stimulus| stimulus.stimulus_type)
-            .collect::<Vec<_>>(),
-        vec![
-            crate::ai::StimulusType::EventTimer,
-            crate::ai::StimulusType::EventFitAgain,
-        ],
-        "both synchronous EventGotHit Thinks must preserve the genuinely pre-existing FIFO in exact order"
-    );
-    assert_eq!(
-        victim_entity
-            .ai_controller()
-            .unwrap()
             .ai_log
             .iter()
             .filter(|line| {
@@ -1564,7 +1573,13 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
         .orders
         .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
     let seq = engine.orders.sequence_manager.launch_element(element);
-    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        seq,
+        0,
+    );
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -1669,10 +1684,13 @@ fn unbound_ability_catalog_order_still_uses_generic_execute() {
         .orders
         .push_back(Order::test_new(OrderType::ThrowingApple, 0.0, 0.0));
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     engine.tick_actor_animation_action_change_slots(
         &crate::sim_rng::test_context(),
@@ -1748,7 +1766,13 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
         ),
         crate::abilities::BeginResult::Started
     );
-    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        seq,
+        0,
+    );
     engine
         .orders
         .sequence_manager
@@ -1851,7 +1875,11 @@ fn unselected_listen_done_clears_action_without_dispatching_leave_listen() {
         pc.pc_data_mut().unwrap().current_action = crate::profiles::Action::Listen;
     }
 
-    engine.apply_listen_done_action_handoff(owner);
+    engine.apply_listen_done_action_handoff(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+    );
 
     assert_eq!(
         engine
@@ -1879,7 +1907,11 @@ fn listen_done_rejects_non_pc_owner() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
 
-    engine.apply_listen_done_action_handoff(owner);
+    engine.apply_listen_done_action_handoff(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+    );
 }
 
 #[test]
@@ -2110,7 +2142,7 @@ fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
             Command::QuitSwordfight,
             Some(owner),
         ));
-    engine.dispatch_quit_swordfight(&sim, &assets, owner, sequence, 0);
+    engine.dispatch_quit_swordfight(&sim, &assets, &mut Vec::new(), owner, sequence, 0);
     // The InstructOwner dispatcher publishes the translated current order
     // through the actor's installed-order mirror right after the
     // per-command dispatch; mirror that boundary when calling the dispatch

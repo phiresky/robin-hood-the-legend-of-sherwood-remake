@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::ai::*;
+use crate::sim_rng::SimulationContext;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct MacroOwner {
@@ -38,20 +39,190 @@ impl std::ops::DerefMut for MacroExecution<'_> {
 }
 
 impl EngineInner {
+    pub(in crate::engine) fn execute_ai_assign_post(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        post_position: Position,
+        post_direction: u16,
+    ) {
+        self.execute_ai_break_macro(owner);
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("post assignment"));
+        ai.path_id = None;
+        ai.detach_patrol_path(None, false);
+        ai.has_patrol_path = false;
+        ai.initial_position = post_position;
+        ai.initial_view_direction = post_direction & 0x0F;
+        ai.is_stay_at_home = false;
+        ai.likes_to_sit_around = false;
+        ai.special_action = false;
+
+        if !ai.script_locked && ai.current_state == AiState::Default {
+            self.execute_ai_callback(
+                sim,
+                assets,
+                owner,
+                &Stimulus::new(StimulusType::EventReturnToDuty),
+            );
+        }
+    }
+
+    pub(in crate::engine) fn execute_ai_assign_patrol_path(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        assignment: PatrolAssignment,
+        script_way: bool,
+    ) -> bool {
+        self.execute_ai_break_macro(owner);
+        let current_position = self.live_ai_position(owner);
+        let current_direction = self
+            .expect_entity(owner, "path assignment owner")
+            .element_data()
+            .direction() as u16;
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("path assignment"));
+        match assignment {
+            PatrolAssignment::ClearPath | PatrolAssignment::ClearPathSitAround => {
+                let sits = matches!(assignment, PatrolAssignment::ClearPathSitAround);
+                ai.has_patrol_path = false;
+                ai.detach_patrol_path(None, false);
+                ai.path_id = None;
+                ai.initial_position = current_position;
+                ai.initial_view_direction = current_direction & 0x0F;
+                if !script_way {
+                    ai.likes_to_sit_around = sits;
+                    ai.special_action = false;
+                }
+                ai.is_stay_at_home = false;
+                if !ai.script_locked && ai.current_state == AiState::Default {
+                    self.execute_ai_callback(
+                        sim,
+                        assets,
+                        owner,
+                        &Stimulus::new(StimulusType::EventReturnToDuty),
+                    );
+                }
+                if script_way {
+                    let ai = self.world.entities.expect_ai_controller_mut(
+                        owner,
+                        format_args!("path assignment callback return"),
+                    );
+                    ai.likes_to_sit_around = sits;
+                    ai.special_action = false;
+                }
+                true
+            }
+            PatrolAssignment::Index(pid) | PatrolAssignment::ScriptWay(pid) => {
+                let idx = pid.get() as usize;
+                // The original game writes the patrol-path flag before validating the
+                // authored index. Preserve that odd partial mutation on the
+                // error path; mPath itself is not reinitialized there.
+                ai.has_patrol_path = true;
+                // Strictly greater, so `idx == count` is tolerated
+                // (matches the off-by-one in the original engine).
+                //
+                // todo: the hiking-path overload has no bounds check at
+                // all — the script hands it an already-resolved pointer. Rust
+                // resolves the script's Way to an index here, so `ScriptWay`
+                // inherits the index overload's guard. Keep it (failing loud
+                // beats a wild dereference), but note the divergence.
+                if idx > assets.navigation.hiking_paths.len() {
+                    tracing::warn!(
+                        npc = ai.me,
+                        idx = pid.get(),
+                        count = assets.navigation.hiking_paths.len(),
+                        "patrol-path assignment: index out of range",
+                    );
+                    return false;
+                }
+                ai.path_id = Some(pid);
+                let (last_waypoint_index, history) = if let Some(path) = ai.patrol_path.take() {
+                    (path.last_waypoint_index, path.history)
+                } else {
+                    (
+                        ai.detached_patrol_path_status.last_waypoint_index,
+                        std::mem::take(&mut ai.detached_patrol_path_status.history),
+                    )
+                };
+                ai.patrol_path =
+                    PatrolPath::new(pid, &assets.navigation.hiking_paths).map(|mut path| {
+                        // Initializing a new path resets current/forward only.
+                        path.last_waypoint_index = last_waypoint_index;
+                        path.history = history;
+                        path
+                    });
+                ai.likes_to_sit_around = false;
+                // Only the waypoint-macro index overload
+                // (patrol-path assignment by 16-bit index,
+                // clears
+                // special-action flag. The `AssignPath` script native goes
+                // through the hiking-path overload
+                // whose valid-path arm
+                // leaves that special-action flag untouched — a leisure-authored NPC
+                // sent onto a scripted route stays special, so its later
+                // return-to-duty movement skips the already-on-point shortcut
+                // and runs a real (possibly zero-length) move instead.
+                if matches!(assignment, PatrolAssignment::Index(_)) {
+                    ai.special_action = false;
+                }
+                if !ai.script_locked && ai.current_state == AiState::Default {
+                    self.execute_ai_callback(
+                        sim,
+                        assets,
+                        owner,
+                        &Stimulus::new(StimulusType::EventReturnToDuty),
+                    );
+                }
+                true
+            }
+        }
+    }
+
+    pub(in crate::engine) fn execute_ai_script_unlock(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        self.execute_ai_blink_all_enemies(owner);
+        let unconscious = self
+            .expect_entity(owner, "script unlock")
+            .human_data()
+            .expect("script unlock human")
+            .unconscious;
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("script unlock"));
+        let after_script = ai
+            .stimulus_queue
+            .iter()
+            .any(|s| s.stimulus_type == StimulusType::EventAfterScriptGoOn);
+        ai.script_locked = false;
+        if ai.current_state != AiState::Sleeping && !after_script && !unconscious {
+            self.execute_ai_callback(
+                sim,
+                assets,
+                owner,
+                &Stimulus::new(StimulusType::EventReturnToDuty),
+            );
+        }
+    }
+
     pub(in crate::engine) fn run_ai_macro(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        // Pre-existing siblings resume after this synchronous invocation.
-        let later_stimuli = {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("macro entry"));
-            std::mem::take(&mut ai.outbox.reentrant.self_stimuli)
-        };
         MacroExecution {
             engine: self,
             owner,
@@ -59,11 +230,6 @@ impl EngineInner {
             assets,
         }
         .run();
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("macro return"));
-        ai.outbox.reentrant.self_stimuli.extend(later_stimuli);
     }
 }
 
@@ -88,7 +254,7 @@ impl MacroExecution<'_> {
 
     fn break_macro_debug(&mut self, owner: &MacroOwner, reason: &str) {
         self.debug_macro_lifecycle(owner, "break_before", reason);
-        self.break_macro();
+        self.engine.execute_ai_break_macro(self.owner);
         self.debug_macro_lifecycle(owner, "break_after", reason);
     }
 
@@ -100,11 +266,6 @@ impl MacroExecution<'_> {
 
     fn run(&mut self) {
         self.execute_next_macro_command(self.sim);
-    }
-
-    fn settle(&mut self) {
-        self.engine
-            .drain_direct_ai_owner_boundary(self.sim, self.owner, self.assets);
     }
 
     fn set_macro_state(&mut self, substate: Substate) {
@@ -141,30 +302,13 @@ impl MacroExecution<'_> {
     }
 
     fn assign_path(&mut self, assignment: PatrolAssignment) {
-        let before = self.outbox.reentrant.self_stimuli.len();
-        let position = self.engine.live_ai_position(self.owner);
-        let direction = self
-            .engine
-            .expect_entity(self.owner, "macro path assignment")
-            .element_data()
-            .direction() as u16;
-        let assets = self.assets;
-        self.assign_new_patrol_path(
+        self.engine.execute_ai_assign_patrol_path(
+            self.sim,
+            self.assets,
+            self.owner,
             assignment,
-            position,
-            direction,
-            &assets.navigation.hiking_paths,
+            false,
         );
-        if self.outbox.reentrant.self_stimuli.len() > before {
-            let callback = self
-                .outbox
-                .reentrant
-                .self_stimuli
-                .pop()
-                .expect("path assignment callback");
-            assert_eq!(callback.stimulus_type, StimulusType::EventReturnToDuty);
-            self.callback(callback.stimulus_type);
-        }
     }
 
     fn execute_next_macro_command(&mut self, sim: &crate::sim_rng::SimulationContext) {
@@ -270,7 +414,7 @@ impl MacroExecution<'_> {
                             .duty_go_to(sim, self.assets, self.owner, next_wp, walk_flags);
                         // An already-reached waypoint can start another macro.
                         // Its deadline survives this invocation's cancellation.
-                        self.settle();
+
                         self.finish_patrol_macro_debug(ctx, "goto_completed");
                     } else {
                         self.engine.execute_ai_return_to_duty(
@@ -337,7 +481,7 @@ impl MacroExecution<'_> {
                 };
                 self.engine
                     .duty_face_direction(sim, self.assets, self.owner, direction);
-                self.settle();
+
                 self.consume_macro_operand();
                 return std::ops::ControlFlow::Break(());
             }
@@ -373,7 +517,7 @@ impl MacroExecution<'_> {
                     frames,
                     u16::MAX,
                 );
-                self.settle();
+
                 self.macro_started_in_this_frame = false;
                 return std::ops::ControlFlow::Break(());
             }
@@ -402,7 +546,7 @@ impl MacroExecution<'_> {
                     frames,
                     index,
                 );
-                self.settle();
+
                 self.macro_started_in_this_frame = false;
                 return std::ops::ControlFlow::Break(());
             }
@@ -424,7 +568,7 @@ impl MacroExecution<'_> {
                 self.assign_path(assignment);
                 // Assignment's nested decision finishes before this explicit
                 // second cancellation and actor-specific duty call.
-                self.break_macro();
+                self.engine.execute_ai_break_macro(self.owner);
                 self.engine.execute_ai_return_to_duty(
                     sim,
                     self.assets,
@@ -473,8 +617,9 @@ impl MacroExecution<'_> {
                 if !ctx.self_is_soldier {
                     tracing::warn!("NPC {}: CMD_LOOK_LEFT is illegal for civilians", self.me);
                 }
-                self.outbox.actor.look_sidewards = Some(LookDirection::Left);
-                self.settle();
+                self.engine
+                    .execute_ai_look_sidewards(self.owner, LookDirection::Left);
+
                 self.set_macro_state(Substate::DefaultInMacroWaitingForDone);
                 self.macro_started_in_this_frame = false;
                 return std::ops::ControlFlow::Break(());
@@ -484,8 +629,9 @@ impl MacroExecution<'_> {
                 if !ctx.self_is_soldier {
                     tracing::warn!("NPC {}: CMD_LOOK_RIGHT is illegal for civilians", self.me);
                 }
-                self.outbox.actor.look_sidewards = Some(LookDirection::Right);
-                self.settle();
+                self.engine
+                    .execute_ai_look_sidewards(self.owner, LookDirection::Right);
+
                 self.set_macro_state(Substate::DefaultInMacroWaitingForDone);
                 self.macro_started_in_this_frame = false;
                 return std::ops::ControlFlow::Break(());
@@ -499,7 +645,8 @@ impl MacroExecution<'_> {
                 if !ctx.self_is_soldier {
                     tracing::warn!("NPC {}: CMD_BEND is illegal for civilians", self.me);
                 }
-                self.outbox.actor.look_sidewards = Some(LookDirection::Down);
+                self.engine
+                    .execute_ai_look_sidewards(self.owner, LookDirection::Down);
                 self.launch_macro_timer(frames as u32, ctx.frame);
                 self.debug_macro_lifecycle(ctx, "timer_started", "bend");
                 self.macro_started_in_this_frame = false;
@@ -529,9 +676,12 @@ impl MacroExecution<'_> {
                         self.me
                     );
                 }
-                self.instruct_patrol_direction_to_patrol_members(direction);
-                self.engine
-                    .drain_patrol_direction_broadcast_for(sim, self.owner, self.assets);
+                self.engine.instruct_patrol_direction_to_patrol_members(
+                    sim,
+                    self.owner,
+                    self.assets,
+                    direction,
+                );
                 self.consume_macro_operand();
                 self.run();
                 return std::ops::ControlFlow::Break(());
@@ -553,6 +703,9 @@ impl MacroExecution<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod assignment_tests;
 
 #[cfg(test)]
 mod tests {

@@ -265,6 +265,7 @@ mod suite {
     fn run_fast_wall_anti_collision_fixture(
         first_distance: u16,
     ) -> (MapPoint, crate::movement_diagnostics::ParityMovementStep) {
+        let assets = LevelAssets::new();
         use crate::element::{
             ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
         };
@@ -354,10 +355,13 @@ mod suite {
             goal.y,
         ));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -419,6 +423,7 @@ mod suite {
 
     #[test]
     fn running_stairs_second_call_observes_first_call_arrival_snap() {
+        let assets = LevelAssets::new();
         use crate::element::{
             ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
         };
@@ -474,10 +479,13 @@ mod suite {
             .orders
             .push_back(Order::test_new(OrderType::RunningStairs, goal.x, goal.y));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -562,6 +570,7 @@ mod suite {
         crate::movement_diagnostics::ParityMovementStep,
         crate::fast_find_grid::LineIndex,
     ) {
+        let mut assets = LevelAssets::new();
         use crate::element::{
             ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
         };
@@ -627,10 +636,13 @@ mod suite {
             goal.y + 20.0,
         ));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -671,7 +683,6 @@ mod suite {
             [710.0, 1400.0, 15.0],
             [690.0, 1450.0, 5.0],
         ];
-        let mut assets = LevelAssets::new();
         assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![ramp]);
         engine.world.static_sight_obstacle_active = vec![true];
 
@@ -907,6 +918,7 @@ mod suite {
 
     #[test]
     fn exact_goal_transition_clears_stale_running_forecast() {
+        let assets = LevelAssets::new();
         use crate::element::{
             ActionState, ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
         };
@@ -988,10 +1000,13 @@ mod suite {
             .orders
             .push_back(Order::new(transition, position.x, position.y, order_id));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()

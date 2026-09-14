@@ -355,6 +355,7 @@ fn hit_translation_defers_flight_facing_until_first_execute() {
     let element = crate::sequence::SequenceElement::new(1, Command::ReceiveHitDamage, Some(victim));
     let seq_id = engine.launch_element(element);
     engine.dispatch_hit_fall_animation(
+        &crate::sim_rng::test_context(),
         &LevelAssets::default(),
         victim,
         Some(attacker),
@@ -421,7 +422,14 @@ fn hit_translation_without_animation_terminates_despite_retained_transition_orde
     damage.initialize_transition_orders();
     let sequence = engine.launch_element(damage);
 
-    engine.dispatch_hit_fall_animation(&LevelAssets::default(), victim, None, false, (sequence, 0));
+    engine.dispatch_hit_fall_animation(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::default(),
+        victim,
+        None,
+        false,
+        (sequence, 0),
+    );
 
     let damage = engine
         .orders
@@ -580,6 +588,7 @@ fn scroll_civilian_hit_keeps_immunity_but_still_translates_reaction() {
     engine.dispatch_receive_damage(
         &crate::sim_rng::test_context(),
         &assets,
+        &mut Vec::new(),
         victim,
         sequence,
         0,
@@ -649,15 +658,8 @@ fn check_conscious_hit_eye_status(standard_range: u16, expected_eye_status: EyeS
         (seq_id, 0),
     );
 
-    // EVENT_GOTHIT first stops actions (which queues Unfocus) and only
-    // then sets EYES_DIE_OR_GET_UNCONSCIOUS. Exercise the complete
-    // fixed-point drain. A failed approach then completes its nested overview,
-    // whose look-sideways action releases focus after the hit's eye write.
-    // Applying the tail eye write through the earlier
-    // recovery channel made this pass immediately after Translate but
-    // regress to LookForward once the queued Unfocus was drained.
-    engine.drain_pending_for_npc(&crate::sim_rng::test_context(), victim, &assets);
-
+    // A failed approach finishes its nested overview inline, whose sideways
+    // look releases focus after the hit's eye-status change.
     let victim_entity = engine.get_entity(victim).unwrap();
     assert_eq!(
         victim_entity.npc_data().unwrap().eye_status,
@@ -670,16 +672,6 @@ fn check_conscious_hit_eye_status(standard_range: u16, expected_eye_status: EyeS
         );
         assert!(engine.ai.think_call_stack.is_empty());
     }
-    assert_eq!(
-        victim_entity
-            .ai_controller()
-            .unwrap()
-            .outbox
-            .recovery
-            .set_eye_status,
-        None,
-        "the synchronous EVENT_GOTHIT write must not wait for the next owner slot"
-    );
 }
 
 #[test]
@@ -713,7 +705,14 @@ fn conscious_lying_hit_applies_concussion_and_got_hit_before_terminating() {
     std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
         [crate::weapons::WeaponDistance::Default as usize] = 50;
 
-    engine.dispatch_receive_damage(&crate::sim_rng::test_context(), &assets, victim, seq_id, 0);
+    engine.dispatch_receive_damage(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        victim,
+        seq_id,
+        0,
+    );
 
     let victim_entity = engine.get_entity(victim).unwrap();
     assert_eq!(
@@ -747,7 +746,7 @@ fn enemy_ai_hero_consumes_enemy_sword_strike_proposal() {
     engine.control.rng = SimulationRng::with_original_replay(vec![0]);
 
     engine.with_simulation_context(|engine, sim| {
-        engine.consume_pending_enemy_sword_attack_for(sim, &assets, attacker);
+        engine.execute_ai_sword_strike_proposal(sim, &assets, attacker);
     });
 
     let ai = engine
@@ -776,7 +775,7 @@ fn enemy_ai_hero_consumes_enemy_sword_strike_proposal() {
 #[test]
 fn entering_attacking_swordfight_without_reconsideration_does_not_propose() {
     let mut engine = make_engine();
-    let (attacker, _) = make_enemy_strike_pair(&mut engine, false);
+    let (attacker, _) = make_enemy_strike_pair(&mut engine);
     let assets = assets_with_sword_profile(7, 30);
     engine.control.rng = SimulationRng::with_original_replay(Vec::new());
 
@@ -797,24 +796,26 @@ fn entering_attacking_swordfight_without_reconsideration_does_not_propose() {
 #[test]
 fn sword_strike_honour_reads_live_animation_not_action_change_history() {
     let mut engine = make_engine();
-    let (attacker, target) = make_enemy_strike_pair(&mut engine, true);
-    let assets = assets_with_sword_profile(7, 30);
+    let (attacker, target) = make_enemy_strike_pair(&mut engine);
+    let mut assets = assets_with_sword_profile(7, 30);
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.control.rng = SimulationRng::with_original_replay(Vec::new());
     {
         let target = engine.get_entity_mut(target).unwrap();
         let actor = target.actor_data_mut().unwrap();
         actor.old_action = OrderType::Invalid;
-        // The live animation is the installed order (the Original's
-        // actor order), not the action-change history in `old_action`.
+        // Recovery admission reads the installed animation while the
+        // action-change history can still be invalid.
         actor.installed_order = Some(crate::element::InstalledActorOrder {
             order_id: std::num::NonZeroU32::new(1).unwrap(),
             order_type: OrderType::BeingHitSword,
         });
         target.element_data_mut().sprite.last_action = OrderType::BeingHitSword;
     }
+    assert!(engine.actor_is_in_sword_recovery(target));
 
     engine.with_simulation_context(|engine, sim| {
-        engine.tick_enemy_sword_attacks(sim, &assets);
+        engine.execute_reconsider_swordfight(sim, &assets, attacker, false);
     });
 
     assert_eq!(
@@ -824,18 +825,16 @@ fn sword_strike_honour_reads_live_animation_not_action_change_history() {
     );
     assert!(
         !engine
-            .get_entity(attacker)
-            .and_then(Entity::enemy_ai)
-            .unwrap()
-            .pending_sword_strike_consideration,
-        "the rejected reconsideration remains a one-shot event"
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(attacker, Command::is_swordstrike)
     );
 }
 
 #[test]
 fn owner_scoped_sword_consideration_precedes_later_owner_rng() {
     let mut engine = make_engine();
-    let (attacker, _) = make_enemy_strike_pair(&mut engine, true);
+    let (attacker, _) = make_enemy_strike_pair(&mut engine);
     let assets = assets_with_sword_profile(7, 30);
     {
         let sprite = &mut engine
@@ -857,7 +856,7 @@ fn owner_scoped_sword_consideration_precedes_later_owner_rng() {
     engine.control.rng = SimulationRng::with_original_replay(vec![85, 36]);
 
     let later_roll = engine.with_simulation_context(|engine, sim| {
-        engine.consume_pending_enemy_sword_attack_for(sim, &assets, attacker);
+        engine.execute_ai_sword_strike_proposal(sim, &assets, attacker);
         crate::sim_rng::u32(sim, crate::sim_rng::RngSite::ScriptRand, 0..100)
     });
 
@@ -876,7 +875,7 @@ fn owner_scoped_sword_consideration_precedes_later_owner_rng() {
 }
 
 #[test]
-fn deferred_combat_insult_depends_on_inline_strike_result() {
+fn strike_proposal_changes_substate_only_when_accepted() {
     fn install_minimal_sprite(engine: &mut EngineInner, attacker: EntityId) {
         let sprite = &mut engine
             .get_entity_mut(attacker)
@@ -900,47 +899,46 @@ fn deferred_combat_insult_depends_on_inline_strike_result() {
     // A failed proposal leaves Original in ordinary Swordfight and the
     // caller's following statement says CombatInsult.
     let mut rejected = make_engine();
-    let (rejected_attacker, _) = make_enemy_strike_pair(&mut rejected, true);
+    let (rejected_attacker, _) = make_enemy_strike_pair(&mut rejected);
     install_minimal_sprite(&mut rejected, rejected_attacker);
-    rejected
-        .get_entity_mut(rejected_attacker)
-        .and_then(Entity::enemy_ai_mut)
-        .unwrap()
-        .pending_combat_insult_after_strike_consideration = true;
     rejected.control.rng = SimulationRng::with_original_replay(vec![85]);
     rejected.with_simulation_context(|engine, sim| {
-        engine.consume_pending_enemy_sword_attack_for(sim, &assets, rejected_attacker);
+        engine.execute_ai_sword_strike_proposal(sim, &assets, rejected_attacker);
     });
     let rejected_ai = rejected
         .get_entity(rejected_attacker)
         .and_then(Entity::enemy_ai)
         .unwrap();
+    assert_eq!(
+        rejected_ai.base.current_substate,
+        crate::ai::Substate::AttackingSwordfight
+    );
+    assert!(!rejected_ai.pending_special_strike);
 
     // A successful proposal changes Original to SpecialStrike before the
     // same following statement tests the substate, suppressing the bark.
     let mut accepted = make_engine();
-    let (accepted_attacker, _) = make_enemy_strike_pair(&mut accepted, true);
+    let (accepted_attacker, _) = make_enemy_strike_pair(&mut accepted);
     install_minimal_sprite(&mut accepted, accepted_attacker);
-    accepted
-        .get_entity_mut(accepted_attacker)
-        .and_then(Entity::enemy_ai_mut)
-        .unwrap()
-        .pending_combat_insult_after_strike_consideration = true;
     accepted.control.rng = SimulationRng::with_original_replay(vec![0]);
     accepted.with_simulation_context(|engine, sim| {
-        engine.consume_pending_enemy_sword_attack_for(sim, &assets, accepted_attacker);
+        engine.execute_ai_sword_strike_proposal(sim, &assets, accepted_attacker);
     });
     let accepted_ai = accepted
         .get_entity(accepted_attacker)
         .and_then(Entity::enemy_ai)
         .unwrap();
     assert!(accepted_ai.pending_special_strike);
+    assert_eq!(
+        accepted_ai.base.current_substate,
+        crate::ai::Substate::AttackingSwordfightSpecialStrike
+    );
 }
 
 #[test]
 fn civilian_health_counts_toward_round_strike_and_warcry() {
     let mut engine = make_engine();
-    let (attacker, _) = make_enemy_strike_pair(&mut engine, true);
+    let (attacker, _) = make_enemy_strike_pair(&mut engine);
     {
         let sprite = &mut engine
             .get_entity_mut(attacker)
@@ -968,7 +966,7 @@ fn civilian_health_counts_toward_round_strike_and_warcry() {
     engine.control.rng = SimulationRng::with_original_replay(vec![0]);
 
     engine.with_simulation_context(|engine, sim| {
-        engine.consume_pending_enemy_sword_attack_for(sim, &assets, attacker);
+        engine.execute_ai_sword_strike_proposal(sim, &assets, attacker);
     });
 
     assert!(
@@ -1195,6 +1193,7 @@ fn launching_sword_damage_does_not_add_attacker_tiredness() {
 
 #[test]
 fn helping_climb_shoulder_damage_keeps_posture_until_fall_executes() {
+    let assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
     let sim = crate::sim_rng::SimulationContext::with_seed(0x183);
     let mut engine = make_engine();
     let victim = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
@@ -1210,12 +1209,14 @@ fn helping_climb_shoulder_damage_keeps_posture_until_fall_executes() {
         Some(victim),
     ));
     let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
 
-    let assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
     engine.translate_shoulder_damage(&sim, &assets, victim, (sequence_id, 0));
 
     assert_eq!(
@@ -1317,10 +1318,13 @@ fn parried_damage_still_learns_attackers_live_strike() {
         .orders
         .sequence_manager
         .launch_sequence(attacker_sequence);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(attacker_sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        attacker_sequence_id,
+        0,
+    );
 
     let mut damage_sequence = crate::sequence::Sequence::new();
     let mut damage_element =
@@ -1332,10 +1336,13 @@ fn parried_damage_still_learns_attackers_live_strike() {
         .orders
         .sequence_manager
         .launch_sequence(damage_sequence);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(damage_sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        damage_sequence_id,
+        0,
+    );
 
     let Entity::Soldier(soldier) = engine.get_entity_mut(victim).unwrap() else {
         unreachable!()
@@ -1438,10 +1445,13 @@ fn push_damage_command_disables_direction_on_fall_and_successors() {
         0,
     );
     let sequence = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     assert!(engine.apply_push_effect(
         &sim,
@@ -1578,10 +1588,13 @@ fn pc_shoulder_sword_damage_skips_good_strike_but_keeps_fall_translation() {
         damage.data =
             crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
         let sequence_id = engine.orders.sequence_manager.launch_element(damage);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence_id, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence_id,
+            0,
+        );
 
         engine.apply_sword_damage(
             &sim,
@@ -1698,10 +1711,13 @@ fn surviving_sword_knockout_quits_before_good_strike_and_fall_translation() {
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
     let sequence_id = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
 
     engine.apply_sword_damage(
         &sim,
@@ -1810,12 +1826,15 @@ fn preexisting_unconscious_smalltalk_hit_preserves_closed_eyes_and_plain_quit() 
         1,
     );
     let sequence = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
-    engine.dispatch_receive_damage(&sim, &assets, victim, sequence, 0);
+    engine.dispatch_receive_damage(&sim, &assets, &mut Vec::new(), victim, sequence, 0);
 
     let victim_entity = engine.get_entity(victim).unwrap();
     assert!(victim_entity.human_data().unwrap().unconscious);
@@ -1940,12 +1959,15 @@ fn protected_preexisting_unconscious_smalltalk_hit_has_no_translation() {
         1,
     );
     let sequence = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
-    engine.dispatch_receive_damage(&sim, &assets, victim, sequence, 0);
+    engine.dispatch_receive_damage(&sim, &assets, &mut Vec::new(), victim, sequence, 0);
 
     let victim_entity = engine.get_entity(victim).unwrap();
     assert_eq!(
@@ -2035,12 +2057,15 @@ fn grounded_preexisting_unconscious_smalltalk_hit_terminates_without_quit() {
         1,
     );
     let sequence = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
-    engine.dispatch_receive_damage(&sim, &assets, victim, sequence, 0);
+    engine.dispatch_receive_damage(&sim, &assets, &mut Vec::new(), victim, sequence, 0);
 
     let victim_entity = engine.get_entity(victim).unwrap();
     assert_eq!(
@@ -2115,10 +2140,13 @@ fn lethal_sword_hit_kills_unconscious_npc_before_say_ouch_translation() {
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
     let sequence = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     engine.apply_sword_damage(
         &sim,
@@ -2181,10 +2209,13 @@ fn nonlethal_sword_hit_keeps_unconscious_npc_silent() {
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
     let sequence = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     engine.apply_sword_damage(
         &sim,
@@ -2212,6 +2243,7 @@ fn nonlethal_sword_hit_keeps_unconscious_npc_silent() {
 
 #[test]
 fn killing_seeking_enemy_clears_only_its_beggar_detectables() {
+    let assets = assets_with_sword_profile_effects(1, 50, 100, 0);
     use crate::ai::{AiState, Substate};
     use crate::element::{Detectable, DetectableType};
 
@@ -2245,10 +2277,13 @@ fn killing_seeking_enemy_clears_only_its_beggar_detectables() {
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
     let sequence = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     engine.apply_nonvisual_death_cascade(
         &sim,
@@ -2309,8 +2344,6 @@ fn lethal_push_runs_npc_kill_cascade_before_owning_the_fall() {
         ai.hth_weapon_id = 1;
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
-        ai.base.current_music_alert_status = AlertLevel::Red;
-        ai.base.view_alert_status = AlertLevel::Red;
     }
     engine
         .get_entity_mut(attacker)
@@ -2346,6 +2379,12 @@ fn lethal_push_runs_npc_kill_cascade_before_owning_the_fall() {
     }
 
     let mut assets = assets_with_sword_profile_effects(1, 50, 100, 0);
+    engine.execute_ai_set_alert_status(
+        &assets,
+        victim,
+        AlertLevel::Red,
+        crate::ai::AlertFlags::empty(),
+    );
     let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].thrusts
         [SwordStrike::A as usize];
     thrust.kind = crate::profiles::WeaponThrustKind::PushAside;
@@ -2355,10 +2394,13 @@ fn lethal_push_runs_npc_kill_cascade_before_owning_the_fall() {
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
     let sequence = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     let score_before = engine
         .mission_domain
         .campaign
@@ -2478,10 +2520,13 @@ fn surviving_push_does_not_run_npc_kill_cascade() {
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
     let sequence = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     engine.apply_sword_damage(
         &sim,
@@ -2545,10 +2590,13 @@ fn surviving_push_sword_knockout_applies_one_ko_callback_and_star() {
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
     let sequence_id = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
 
     engine.apply_sword_damage(
         &sim,
@@ -2716,10 +2764,13 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
     fall.antagonist = Some(attacker);
     damage.orders.push_back(fall);
     let sequence = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     engine
         .get_entity_mut(victim)
         .unwrap()
@@ -2856,10 +2907,13 @@ fn charge_hit_on_already_dead_pc_does_not_repeat_virtual_kill_rng() {
         0,
     );
     let sequence = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     let (_, draws) = crate::sim_rng::with_draw_trace(|| {
         engine.apply_sword_damage(
@@ -3093,10 +3147,13 @@ fn lethal_sword_damage_to_grounded_non_rider_publishes_dead_before_terminating()
         damage.data =
             crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
         let sequence = engine.orders.sequence_manager.launch_element(damage);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
 
         engine.apply_sword_damage(
             &sim,
@@ -3166,10 +3223,13 @@ fn grounded_sword_damage_preserves_living_and_dead_rider_posture_controls() {
         damage.data =
             crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
         let sequence = engine.orders.sequence_manager.launch_element(damage);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
 
         engine.apply_sword_damage(
             &sim,
@@ -3201,6 +3261,7 @@ fn grounded_sword_damage_preserves_living_and_dead_rider_posture_controls() {
 
 #[test]
 fn grounded_sword_damage_resumes_same_sequence_successor_synchronously() {
+    let assets = assets_with_sword_profile_effects(200, 50, 100, 0);
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
     let attacker = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
@@ -3243,10 +3304,13 @@ fn grounded_sword_damage_resumes_same_sequence_successor_synchronously() {
     sequence.append_element(damage);
     sequence.append_element(successor);
     let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
 
     engine.apply_sword_damage(
         &sim,
@@ -3420,6 +3484,7 @@ fn enter_swordfight_instruct_queues_transition_without_execute_side_effects() {
     engine.dispatch_enter_swordfight(
         sim,
         &LevelAssets::default(),
+        &mut Vec::new(),
         owner,
         Some(opponent),
         seq_id,
@@ -3498,6 +3563,7 @@ fn failed_enter_swordfight_retires_matching_postponed_thrust_a() {
     engine.dispatch_enter_swordfight(
         &sim,
         &LevelAssets::default(),
+        &mut Vec::new(),
         owner,
         Some(opponent),
         admission,
@@ -3563,6 +3629,7 @@ fn failed_enter_swordfight_leaves_mismatched_postponed_work_untouched() {
     engine.dispatch_enter_swordfight(
         &sim,
         &LevelAssets::default(),
+        &mut Vec::new(),
         owner,
         Some(opponent),
         admission,
@@ -3623,6 +3690,7 @@ fn successful_enter_swordfight_retains_postponed_thrust_a() {
     engine.dispatch_enter_swordfight(
         &sim,
         &LevelAssets::default(),
+        &mut Vec::new(),
         owner,
         Some(opponent),
         admission,
@@ -3739,7 +3807,15 @@ fn enter_swordfight_instruct_preserves_live_sprite_destination() {
         Some(owner),
     ));
     let seq_id = engine.launch_sequence(sequence);
-    engine.dispatch_enter_swordfight(&sim, &LevelAssets::default(), owner, None, seq_id, 0);
+    engine.dispatch_enter_swordfight(
+        &sim,
+        &LevelAssets::default(),
+        &mut Vec::new(),
+        owner,
+        None,
+        seq_id,
+        0,
+    );
 
     assert_eq!(
         engine
@@ -3781,6 +3857,7 @@ fn satisfied_enter_swordfight_skips_outer_instruct_epilogue() {
     let barrier = engine.dispatch_enter_swordfight(
         &sim,
         &LevelAssets::default(),
+        &mut Vec::new(),
         owner,
         Some(opponent),
         seq_id,
@@ -3805,8 +3882,7 @@ fn satisfied_enter_swordfight_skips_outer_instruct_epilogue() {
 
 #[test]
 fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
-    use crate::ai::EnterSwordfightRequest;
-
+    let assets = LevelAssets::default();
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
     let victim = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
@@ -3846,30 +3922,15 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
         .orders
         .sequence_manager
         .push_order_on(strike_id, 0, strike_order);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(strike_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        strike_id,
+        0,
+    );
 
-    let attacker_handle = (0..3)
-        .find(|slot| engine.world.entities.id_at_legacy_slot(*slot) == Some(attacker))
-        .expect("attacker must occupy a legacy entity slot");
-    let Entity::Soldier(soldier) = engine.get_entity_mut(victim).unwrap() else {
-        unreachable!()
-    };
-    soldier
-        .npc
-        .ai_brain
-        .enemy_mut()
-        .unwrap()
-        .base
-        .outbox
-        .actor
-        .enter_swordfight = Some(EnterSwordfightRequest::Direct(AiEntityHandle::new(
-        attacker_handle,
-    )));
-
-    engine.drain_pending_for_npc(&sim, victim, &LevelAssets::default());
+    engine.direct_enter_swordfight(&sim, &LevelAssets::default(), victim, attacker);
 
     assert_eq!(
         engine
@@ -4281,11 +4342,6 @@ fn preparing_swordfight_orders_done_enter_then_queues_reciprocal() {
         Some(opponent),
     ));
     let selected_id = engine.launch_sequence(selected);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(selected_id, 0);
-
     let mut profiles = ProfileManager::new();
     profiles.hth_weapons.push(HtHWeaponProfile {
         distance: [30, 50, 60, 70],
@@ -4305,6 +4361,7 @@ fn preparing_swordfight_orders_done_enter_then_queues_reciprocal() {
         ..LevelAssets::new()
     };
 
+    engine.element_in_progress(sim, &assets, &mut Vec::new(), selected_id, 0);
     assert!(engine.enter_swordfight(sim, &assets, initiator, opponent, false));
 
     assert!(

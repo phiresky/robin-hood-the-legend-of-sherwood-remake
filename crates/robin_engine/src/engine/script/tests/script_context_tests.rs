@@ -3,6 +3,83 @@ use crate::engine::test_support::asm::{STARTUP_CLASS, empty_mission_script};
 use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
 
 #[test]
+fn fresh_callback_driver_obeys_live_vm_depth_and_ignores_receiver_guards() {
+    use crate::engine::test_support::asm::{
+        empty_startup_class, q_aff0_iconstant, q_begin_function, q_end_function, q_return_val,
+    };
+    let mut class = empty_startup_class("callback_depth.scs".into());
+    class.functions.push(crate::scb::Function {
+        name: "FilterAIEvent".into(),
+        address: 0,
+        num_parameters: 0,
+        size_of_return_value: 4,
+        size_of_parameters: 0,
+        size_of_volatile: 0,
+        size_of_temporary: 4,
+    });
+    class.quads = vec![
+        q_begin_function(0, 4),
+        q_aff0_iconstant(0xc000, 17),
+        q_return_val(0xc000),
+        q_end_function(),
+    ];
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![class],
+        })
+        .unwrap(),
+    );
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    let sim = crate::sim_rng::test_context();
+    let receiver = crate::natives::ScriptCallFrame::actor(77);
+    let outer = crate::natives::ScriptCallFrame::default();
+    let limit = usize::from(crate::natives::MAX_NESTED_CALL_DEPTH);
+    let script = engine.scripts.mission.as_mut().unwrap();
+    script.push_active_driver_frame(receiver, false);
+    for _ in 0..limit - 1 {
+        script.push_active_driver_frame(outer, true);
+    }
+
+    // Direct gameplay callbacks re-enter through this public driver with a
+    // fresh local Vec while the outer activation guards remain installed.
+    let invoke = |engine: &mut EngineInner| {
+        engine.call_script_vm(
+            &sim,
+            &assets,
+            ScriptVmKey::Global,
+            "FilterAIEvent",
+            &[],
+            outer,
+        )
+    };
+    assert_eq!(invoke(&mut engine).unwrap(), 17);
+    let script = engine.scripts.mission.as_mut().unwrap();
+    assert_eq!(script.active_vm_depth(), limit - 1);
+    assert_eq!(script.active_call_frame_count(), limit);
+    script.push_active_driver_frame(outer, true);
+    let error = invoke(&mut engine).expect_err("live caller activations must exhaust the limit");
+    assert!(error.contains("depth limit"), "{error}");
+    let script = engine.scripts.mission.as_mut().unwrap();
+    assert_eq!(script.active_vm_depth(), limit);
+    script.pop_active_driver_frame(outer);
+    assert_eq!(
+        invoke(&mut engine).unwrap(),
+        17,
+        "unwinding reopens one slot"
+    );
+
+    let script = engine.scripts.mission.as_mut().unwrap();
+    for _ in 0..limit - 1 {
+        script.pop_active_driver_frame(outer);
+    }
+    script.pop_active_driver_frame(receiver);
+    script.assert_no_active_call_frames();
+}
+
+#[test]
 fn repeated_patch_target_skips_one_shot_vm_and_respects_config_and_locks() {
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
@@ -279,21 +356,48 @@ fn put_actor_in_building_retains_exact_sector_across_special_layer() {
         "putting an actor in a building changes only that actor's topology and position"
     );
     assert_eq!(
-        engine.ai.global.houses[0].occupant_ids,
-        [actor_id, carried_id],
+        engine.script_domains.buildings.occupants[0],
+        [
+            crate::natives::ScriptHandleCodec::actor_handle(actor_id),
+            crate::natives::ScriptHandleCodec::actor_handle(carried_id),
+        ],
         "scripted entry and its carried occupant must reach indoor enemy alerts in game order"
     );
 }
 
 #[test]
 fn assign_post_engine_boundary_retains_exact_return_to_duty_sector() {
-    let mut ai = crate::ai::AiController::new(147);
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let owner = engine.add_test_entity(crate::engine::test_support::actors::make_test_ai_soldier(
+        crate::element::Camp::Royalists,
+    ));
+    engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("assigned post fixture"))
+        .script_locked = true;
     let arena = crate::fast_find_grid::SectorIndex::new(97).unwrap();
     let exact = crate::position_interface::SectorHandle::new(97)
         .unwrap()
         .with_arena_index(arena);
 
-    assign_post_from_script_request(&mut ai, 780.0, 995.0, exact, 3, 4);
+    engine.execute_ai_assign_post(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        crate::ai::Position {
+            x: 780.0,
+            y: 995.0,
+            sector: Some(exact),
+            level: 3,
+        },
+        4,
+    );
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("assigned post result"));
 
     assert_eq!(
         ai.initial_position,
@@ -313,11 +417,8 @@ fn assign_post_engine_boundary_retains_exact_return_to_duty_sector() {
         crate::fast_find_grid::SectorIndex::new(98),
         "same-public foreign topology must not replace the authored post"
     );
-    assert_eq!(
-        ai.outbox.reentrant.self_stimuli,
-        [crate::ai::StimulusType::EventReturnToDuty],
-        "the exact post must survive the same engine helper that triggers ReturnToDuty"
-    );
+    assert_eq!(ai.initial_view_direction, 4);
+    assert!(!ai.has_patrol_path);
 }
 
 #[test]

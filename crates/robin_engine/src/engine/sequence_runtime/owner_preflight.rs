@@ -50,9 +50,7 @@ impl EngineInner {
             {
                 actor.execution_frozen = false;
             }
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return None;
         }
         if command.is_some_and(|command| self.pc_should_hold_shoot_bow(owner, command)) {
@@ -74,10 +72,8 @@ impl EngineInner {
                 .and_then(crate::element::Entity::actor_data_mut)
                 .expect("NULL actor instruction requires its actor owner")
                 .execution_frozen = false;
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
-            self.dispatch_condolations(sim, assets);
+            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+
             return None;
         }
 
@@ -112,18 +108,15 @@ impl EngineInner {
         // it. The guard can also interrupt an older postponed
         // equal-priority command, so settle any resulting card at
         // this exact instruction boundary.
-        if self.non_interruptable_guard(owner, seq_id, elem_idx) {
-            self.dispatch_condolations(sim, assets);
+        if self.non_interruptable_guard(sim, assets, owner, seq_id, elem_idx) {
             return None;
         }
         // Outside that special arm, Original generates the
         // incoming element's transition orders before normal
         // priority comparison with the selected element.
         if needs_transition && !self.generate_transition(sim, assets, owner, seq_id, elem_idx) {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
-            self.dispatch_condolations(sim, assets);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+
             return None;
         }
         if self
@@ -144,7 +137,7 @@ impl EngineInner {
             // terminal. The state change's removal callback is
             // synchronous there, so close that boundary before
             // leaving without priority resolution or arbitration.
-            self.dispatch_condolations(sim, assets);
+
             return None;
         }
         let resolved_priority = self
@@ -208,9 +201,7 @@ impl EngineInner {
                         })
             });
             if helper_is_entering {
-                self.orders
-                    .sequence_manager
-                    .postpone_element(seq_id, elem_idx);
+                self.postpone_element(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return None;
             }
             if let Some(helper_id) = helper
@@ -233,9 +224,7 @@ impl EngineInner {
                         Command::LeaveHelpingClimb,
                         Some(helper_id),
                     ));
-                    self.orders
-                        .sequence_manager
-                        .element_impossible(seq_id, elem_idx);
+                    self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                     return None;
                 }
             }
@@ -260,9 +249,17 @@ impl EngineInner {
                 self.dispatch_ordered_move_seek_instruct(sim, assets, owner, seq_id, elem_idx);
             self.orders.sequence_manager.set_translating_element(None);
             if barrier == OwnerActionBarrier::Reach {
-                self.engine_postpone(blocker_seq, blocker_idx, seq_id, elem_idx);
+                self.engine_postpone(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    blocker_seq,
+                    blocker_idx,
+                    seq_id,
+                    elem_idx,
+                );
             }
-            self.dispatch_condolations(sim, assets);
+
             return None;
         }
         // A redundant EnterSwordfight still replaces and
@@ -333,7 +330,8 @@ impl EngineInner {
                 Some((seq_id, elem_idx)),
             );
         }
-        let arbitration_accepted = self.arbitrate_instruct(seq_id, elem_idx);
+        let arbitration_accepted =
+            self.arbitrate_instruct(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         if trace_path_owner {
             self.trace_path_owner_lifecycle(
                 if arbitration_accepted {
@@ -360,7 +358,7 @@ impl EngineInner {
             // Abandonment/impossibility changes state synchronously in
             // Original too. Postpone produces no card, making this
             // drain a no-op for that arm.
-            self.dispatch_condolations(sim, assets);
+
             return None;
         }
         // Original priority arbitration interrupts/postpones the
@@ -377,7 +375,7 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .begin_instruct_callback(owner, seq_id, elem_idx);
-        self.dispatch_condolations(sim, assets);
+
         let still_selected = self
             .orders
             .sequence_manager
@@ -417,9 +415,7 @@ impl EngineInner {
         // than RECEIVE_PURSE / BEGGAR_SHOW_FACE / WAIT on
         // beggar civilians.
         if self.beggar_rejects_command(owner, cmd) {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return None;
         }
         // Posture transitions (leave-disguise, stand-up, …)

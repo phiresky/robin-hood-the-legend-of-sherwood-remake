@@ -45,7 +45,7 @@ fn lying_arrow_victim_speaks_before_posture_termination() {
             0,
         );
         let sequence = engine.launch_element(damage);
-        engine.dispatch_receive_damage(&sim, &assets, victim, sequence, 0);
+        engine.dispatch_receive_damage(&sim, &assets, &mut Vec::new(), victim, sequence, 0);
     }
 
     assert_eq!(
@@ -70,10 +70,11 @@ fn lying_arrow_victim_speaks_before_posture_termination() {
 }
 
 #[test]
-fn sword_strike_consideration_latch_is_one_shot_when_honour_rejects() {
+fn rejected_swordfight_reconsideration_does_not_retry_during_lifecycle_tick() {
     let mut engine = make_engine();
-    let (attacker, target) = make_enemy_strike_pair(&mut engine, true);
-    let assets = assets_with_sword_profile(7, 30);
+    let (attacker, target) = make_enemy_strike_pair(&mut engine);
+    let mut assets = assets_with_sword_profile(7, 30);
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.control.rng = SimulationRng::with_original_replay(Vec::new());
     engine
         .get_entity_mut(target)
@@ -83,16 +84,16 @@ fn sword_strike_consideration_latch_is_one_shot_when_honour_rejects() {
         .action_state = ActionState::Waiting;
 
     engine.with_simulation_context(|engine, sim| {
-        engine.tick_enemy_sword_attacks(sim, &assets);
+        engine.execute_reconsider_swordfight(sim, &assets, attacker, false);
     });
     let cursor_after_first = engine.control.rng.original_replay_cursor().unwrap();
     assert_eq!(cursor_after_first, 0, "honour rejection precedes proposal");
-    let pending_after_first = engine
-        .get_entity(attacker)
-        .and_then(Entity::enemy_ai)
-        .unwrap()
-        .pending_sword_strike_consideration;
-    assert!(!pending_after_first, "the authorization must be one-shot");
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(attacker, Command::is_swordstrike)
+    );
 
     engine.with_simulation_context(|engine, sim| {
         engine.tick_enemy_sword_attacks(sim, &assets);
@@ -100,7 +101,7 @@ fn sword_strike_consideration_latch_is_one_shot_when_honour_rejects() {
     assert_eq!(
         engine.control.rng.original_replay_cursor(),
         Some(cursor_after_first),
-        "the rejected, consumed latch must not retry next frame"
+        "the lifecycle tick must not repeat a rejected decision"
     );
 }
 

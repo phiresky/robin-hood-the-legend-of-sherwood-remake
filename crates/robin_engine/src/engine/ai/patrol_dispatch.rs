@@ -1,43 +1,6 @@
 use super::*;
 
 impl EngineInner {
-    pub(in crate::engine) fn execute_ai_dispatch_patrol_event(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        mut stimulus: crate::ai::Stimulus,
-    ) {
-        if !self.dispatch_live_stimulus_to_patrol(sim, assets, owner, &stimulus) {
-            stimulus.to_whole_patrol = true;
-            self.resume_local_patrol_stimulus(sim, assets, owner, &stimulus);
-        }
-    }
-
-    fn resume_local_patrol_stimulus(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        stimulus: &crate::ai::Stimulus,
-    ) {
-        let target = match stimulus.info {
-            crate::ai::StimulusInfo::Human(handle)
-                if matches!(
-                    stimulus.stimulus_type,
-                    crate::ai::StimulusType::EventView
-                        | crate::ai::StimulusType::EventOutOfView
-                        | crate::ai::StimulusType::EventSeesBeggar
-                        | crate::ai::StimulusType::EventEnemyNear
-                ) =>
-            {
-                Some(self.expect_entity_id_for_index(handle.get(), "patrol detection target"))
-            }
-            _ => None,
-        };
-        self.execute_ai_handler_body(sim, assets, owner, stimulus, target);
-    }
-
     pub(in crate::engine) fn dispatch_live_stimulus_to_patrol(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

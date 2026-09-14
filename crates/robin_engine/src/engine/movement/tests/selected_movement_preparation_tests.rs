@@ -40,8 +40,12 @@ fn prepared_order_retains_selected_front_and_literal_successor() {
         Posture::Upright,
     ));
     entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
-    let actor_id = ActorId::Pc(PcId(7));
-    let mut manager = SequenceManager::new();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(entity);
+    let EntityId::Pc(pc_id) = owner else {
+        unreachable!()
+    };
+    let actor_id = ActorId::Pc(pc_id);
     let mut movement = SequenceElement::new_movement(
         1,
         Command::Move,
@@ -58,12 +62,18 @@ fn prepared_order_retains_selected_front_and_literal_successor() {
         40.0,
         18.0,
     ));
-    let seq_id = manager.launch_element(movement);
-    manager.element_in_progress(seq_id, 0);
+    let seq_id = engine.orders.sequence_manager.launch_element(movement);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &crate::engine::LevelAssets::new(),
+        &mut Vec::new(),
+        seq_id,
+        0,
+    );
 
     let prepared = EngineInner::prepare_selected_movement_order(
-        &mut entity,
-        &manager,
+        engine.world.entities.get_mut(owner).unwrap(),
+        &engine.orders.sequence_manager,
         MovementOwnerSelection {
             seq_id,
             elem_idx: 0,
@@ -84,5 +94,14 @@ fn prepared_order_retains_selected_front_and_literal_successor() {
         prepared.next_destination_same_action,
         Some(MapPoint::new(40.0, 18.0))
     );
-    assert_eq!(manager.get_element(seq_id, 0).unwrap().orders.len(), 2);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap()
+            .orders
+            .len(),
+        2
+    );
 }

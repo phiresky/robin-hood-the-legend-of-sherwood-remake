@@ -8,6 +8,27 @@ use crate::ai::{AiEntityHandle, AiState, EmoticonType, GotoFlags, Position, Rema
 use crate::ai_enemy::{PrimaryTargetFlags, archer};
 
 impl EngineInner {
+    pub(in crate::engine) fn launch_ai_raise_shield(
+        &mut self,
+        owner: EntityId,
+        point: crate::coordinates::WorldPoint3D,
+    ) {
+        let mut element = crate::sequence::SequenceElement::new_generic(
+            1,
+            crate::element::Command::RaiseShield,
+            Some(owner),
+        );
+        element.set_property(
+            crate::sequence::Field::ShieldDangerPoint,
+            crate::sequence::FieldValue::Point3D {
+                x: point.x,
+                y: point.y,
+                z: point.z,
+            },
+        );
+        self.launch_element(element);
+    }
+
     pub(in crate::engine) fn execute_ai_shield_expected_event(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -82,11 +103,7 @@ impl EngineInner {
             .expect_entity(target, "shield danger point")
             .element_data()
             .position();
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("raise shield"))
-            .raise_shield_world(point);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.launch_ai_raise_shield(owner, point);
     }
 
     fn shield_focus_primary(
@@ -99,8 +116,8 @@ impl EngineInner {
             .world
             .entities
             .expect_ai_controller_mut(owner, format_args!("shield focus"));
-        ai.outbox.actor.set_focus(ai.primary_target);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let target = ai.primary_target;
+        self.execute_ai_focus(owner, target);
     }
 
     fn execute_ai_protecting_shield_timer(
@@ -171,18 +188,10 @@ impl EngineInner {
                 position.x - origin.x,
                 position.y - origin.y,
             ) as u16;
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("protecting archer direction"))
-                .set_direction_goal(direction);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("protecting archer shield"))
-                .outbox
-                .actor
-                .refresh_shield = true;
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_direction_goal(owner, direction);
+
+            self.refresh_retained_shield_obstacle(assets, owner);
+
             self.shield_timer(owner, 30);
         } else if self
             .expect_entity(target, "shield target action")
@@ -199,11 +208,11 @@ impl EngineInner {
                     AiState::Attacking,
                     Substate::AttackingAdvancingWithShield,
                 );
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("lower shield to advance"))
-                    .lower_shield();
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.launch_element(crate::sequence::SequenceElement::new(
+                    1,
+                    crate::element::Command::LowerShield,
+                    Some(owner),
+                ));
             } else {
                 self.shield_timer(owner, 10);
             }
@@ -529,7 +538,7 @@ impl EngineInner {
                 continue;
             }
             let (_, _, bow) = self.soldier_profile_facts(assets, soldier, candidate);
-            if snapshots::is_archer_from_bow(bow)
+            if actor_queries::is_archer_from_bow(bow)
                 && ai.shield_bearer_before_me.is_none()
                 && !ai.tower_guard
             {
@@ -630,8 +639,8 @@ impl EngineInner {
             .entities
             .expect_enemy_ai_mut(owner, format_args!("protection target"));
         ai.base.primary_target = Some(handle);
-        ai.base.outbox.actor.set_focus(Some(handle));
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_focus(owner, Some(handle));
+
         if let Some((position, direction, left, right)) = self.live_phalanx_place(assets, owner) {
             self.execute_ai_speech(
                 sim,
@@ -685,11 +694,8 @@ impl EngineInner {
                 .expect_entity(target, "shield danger point")
                 .element_data()
                 .position();
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("shield raise"))
-                .raise_shield_world(point);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.launch_ai_raise_shield(owner, point);
+
             let ai = self
                 .world
                 .entities
@@ -709,7 +715,7 @@ impl EngineInner {
                     },
                 );
             }
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             self.duty_set_state(
                 sim,
                 assets,

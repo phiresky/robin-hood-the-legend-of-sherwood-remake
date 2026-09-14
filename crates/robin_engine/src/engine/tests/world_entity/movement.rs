@@ -133,7 +133,6 @@ fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
         destination,
         crate::ai::GotoFlags::empty(),
     );
-    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
     let commands = engine
         .orders
@@ -346,6 +345,7 @@ fn selection_mark_skips_hidden_and_building_pcs() {
 
 #[test]
 fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
+    let mut assets = LevelAssets::new();
     use crate::coordinates::MapPoint;
     use crate::gate::{Door, DoorIndex};
     use crate::order::OrderType;
@@ -416,10 +416,13 @@ fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
         *gate_id = Some(gate);
         *movement_direction = direction;
         let sequence_id = engine.orders.sequence_manager.launch_element(element);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence_id, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence_id,
+            0,
+        );
     }
 
     engine.script_domains.interactables.doors = vec![
@@ -538,6 +541,7 @@ fn live_ai_position_preserves_exact_duplicate_target_sector() {
 
 #[test]
 fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
+    let mut assets = LevelAssets::new();
     use crate::coordinates::MapPoint;
     use crate::element::{ElementBonus, ElementData, ElementKind, ObjectData, ObjectType};
     use crate::gate::{Door, DoorIndex};
@@ -573,10 +577,13 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
     *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 1;
     let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
 
     let doors = [Door {
         point_in: MapPoint::new(101.0, 102.0),
@@ -603,6 +610,7 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
 
 #[test]
 fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fallback() {
+    let mut assets = LevelAssets::new();
     use crate::coordinates::MapPoint;
     use crate::fast_find_grid::GridSector;
     use crate::gate::{Door, DoorIndex};
@@ -700,10 +708,13 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 1;
     let sequence_id = engine.orders.sequence_manager.launch_element(pass);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
 
     let wait = crate::engine::ai::precompute_avenger_on_roof_wait_position(
         &engine.world.entities,
@@ -720,10 +731,13 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     assert_eq!(wait.y, 100.0);
     assert_eq!(wait.sector, me_sector);
 
-    engine
-        .orders
-        .sequence_manager
-        .element_terminated(sequence_id, 0);
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
 
     // Result616 reaches the same lookup without a selected PassDoor: both
     // ordinary actor positions came from the legacy save as number-only
@@ -779,6 +793,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
 
 #[test]
 fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
+    let mut assets = LevelAssets::new();
     use crate::ai::{AlertLevel, Substate};
     use crate::ai_enemy::SeekFlags;
     use crate::coordinates::MapPoint;
@@ -857,10 +872,13 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
     *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 0;
     let sequence_id = engine.orders.sequence_manager.launch_element(pass);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     assert!(
         engine
             .get_entity(friend_id)
@@ -880,10 +898,13 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
     let distance = live_friend - live_owner;
     assert!(distance.x * distance.x + distance.y * distance.y >= 500.0 * 500.0);
 
-    engine
-        .orders
-        .sequence_manager
-        .element_terminated(sequence_id, 0);
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     let live_friend = engine.live_ai_position(friend_id).map_point();
     assert_eq!(live_friend, friend_raw_position);
     let distance = live_friend - live_owner;

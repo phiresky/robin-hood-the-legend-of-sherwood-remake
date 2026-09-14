@@ -174,6 +174,9 @@ struct NativeEntitySnapshot {
 struct NativeWorldSnapshot {
     entities: Vec<u8>,
     soldier_registry: Vec<u8>,
+    npc_registry_ids: Vec<u8>,
+    actor_registry_ids: Vec<u8>,
+    fighter_registry_ids: Vec<u8>,
     pc_ids: Vec<u8>,
     original_pc_registry_ids: Vec<u8>,
     fast_grid: Vec<u8>,
@@ -272,6 +275,9 @@ fn encode_native_world(world: &WorldState) -> Vec<u8> {
     bitcode::encode(&NativeWorldSnapshot {
         entities: bitcode::encode(&entities),
         soldier_registry: bitcode::encode(&world.soldier_registry),
+        npc_registry_ids: bitcode::encode(&world.npc_registry_ids),
+        actor_registry_ids: bitcode::encode(&world.actor_registry_ids),
+        fighter_registry_ids: bitcode::encode(&world.fighter_registry_ids),
         pc_ids: bitcode::encode(&world.pc_ids),
         original_pc_registry_ids: bitcode::encode(&world.original_pc_registry_ids),
         fast_grid: bitcode::encode(&world.fast_grid),
@@ -349,6 +355,9 @@ fn decode_native_world(bytes: &[u8]) -> Result<WorldState, bitcode::Error> {
     Ok(WorldState {
         entities: crate::entities::Entities::from_snapshot_slots(entities),
         soldier_registry: bitcode::decode(&snapshot.soldier_registry)?,
+        npc_registry_ids: bitcode::decode(&snapshot.npc_registry_ids)?,
+        actor_registry_ids: bitcode::decode(&snapshot.actor_registry_ids)?,
+        fighter_registry_ids: bitcode::decode(&snapshot.fighter_registry_ids)?,
         pc_ids: bitcode::decode(&snapshot.pc_ids)?,
         original_pc_registry_ids: bitcode::decode(&snapshot.original_pc_registry_ids)?,
         fast_grid: bitcode::decode(&snapshot.fast_grid)?,

@@ -1,5 +1,4 @@
-//! Creation-ordered post-detection NPC update tail, plus test-only legacy
-//! drains used by focused detection seams.
+//! Creation-ordered post-detection NPC update tail.
 
 use super::*;
 
@@ -57,7 +56,7 @@ impl EngineInner {
             format_args!("BORED_BOUNDARY owner {owner} during {phase}"),
         );
         eprintln!(
-            "BORED_BOUNDARY frame={} owner={} phase={} command={:?} state={:?} substate={:?} timer_running={} timer_deadline={} self_stimuli={}",
+            "BORED_BOUNDARY frame={} owner={} phase={} command={:?} state={:?} substate={:?} timer_running={} timer_deadline={}",
             frame,
             owner,
             phase,
@@ -66,7 +65,6 @@ impl EngineInner {
             ai.current_substate,
             ai.timer_is_running,
             ai.when_does_timer_ring,
-            ai.outbox.reentrant.self_stimuli.len(),
         );
     }
 }
@@ -176,44 +174,7 @@ impl EngineInner {
         self.execute_ai_callback(sim, assets, npc_id, &timer_stimulus);
     }
 
-    /// P6c — drain `pending_*` AI swordfight / order flags for every NPC.
-    /// AI decisions set flags on `AiController`; we consume them here
-    /// after all think calls are done, since they require engine-side
-    /// entity mutations (opponent lists, sequences).
-    #[cfg(test)]
-    pub(super) fn tick_enemy_ai_drain_swordfight_requests(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
-        for npc_id in npc_ids {
-            self.drain_pending_for_npc(sim, npc_id, assets);
-        }
-    }
-
-    /// P6d — replay deferred `pending_stimuli` for every NPC.
-    ///
-    /// Combat events (EVENT_GOOD_STRIKE, EVENT_LETHAL_STRIKE,
-    /// EVENT_ENTER_SWORDFIGHT, etc.) are queued on
-    /// `AiController::outbox.detection.stimuli` by `dispatch_ai_stimulus()`
-    /// during the combat tick.  We defer them to avoid re-entrant
-    /// borrow issues, then replay them now.
-    #[cfg(test)]
-    pub(super) fn tick_enemy_ai_drain_pending_stimuli(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
-        for npc_id in npc_ids {
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets);
-        }
-    }
-
-    /// Run the base-actor `Execute` combat-injury Think synchronously without
-    /// stealing older work from the NPC's ordinary deferred stimulus FIFO.
-    /// Any stimuli emitted by the Think are restored behind that older work.
+    /// Deliver the actor's combat-injury callback at its current execution slot.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(in crate::engine) fn dispatch_combat_injury_think_for_actor_hourglass(
         &mut self,
@@ -221,72 +182,23 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
     ) {
-        self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+        self.execute_ai_callback(
             sim,
-            npc_id,
             assets,
-            crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterCombatInjury),
-        );
-    }
-
-    /// Run one legacy synchronous NPC Think while preserving older deferred
-    /// detection stimuli ahead of anything emitted by that Think.
-    pub(in crate::engine) fn dispatch_synchronous_ai_think_preserving_detection_fifo(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-        stimulus: crate::ai::Stimulus,
-    ) {
-        let mut preexisting = {
-            let ai = self.world.entities.expect_ai_controller_mut(
-                npc_id,
-                format_args!("synchronous Think before detaching its stimulus FIFO"),
-            );
-            std::mem::take(&mut ai.outbox.detection.stimuli)
-        };
-
-        self.dispatch_ai_stimulus(npc_id, stimulus);
-        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets);
-
-        // This FIFO was detached during the synchronous call, so deletion's
-        // owner hooks could not reach it. Do not restore newly stale targets.
-        preexisting.retain(|stimulus| {
-            stimulus
-                .info
-                .live_target()
-                .is_none_or(|target| self.world.entities.get_legacy_slot(target.get()).is_some())
-        });
-        let ai = self.world.entities.expect_ai_controller_mut(
             npc_id,
-            format_args!("synchronous Think before restoring its stimulus FIFO"),
+            &crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterCombatInjury),
         );
-        preexisting.append(&mut ai.outbox.detection.stimuli);
-        ai.outbox.detection.stimuli = preexisting;
     }
 
-    /// P6d inner — per-NPC body of [`Self::tick_enemy_ai_drain_pending_stimuli`].
-    /// Replays deferred stimuli for one NPC; carries the per-NPC tracing
-    /// span so the `dispatch_think_with_drain` events emit with `npc=<id>`.
+    /// Deliver the local optical scan batch after every detectable bucket finishes.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
-    pub(in crate::engine) fn tick_enemy_ai_drain_pending_stimuli_for_npc(
+    pub(in crate::engine) fn dispatch_optical_stimuli(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
+        stimuli: Vec<crate::ai::Stimulus>,
     ) {
-        let stimuli = {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            let Some(ai) = entity.ai_controller_mut() else {
-                return;
-            };
-            std::mem::take(&mut ai.outbox.detection.stimuli)
-        };
-        if stimuli.is_empty() {
-            return;
-        }
         for (queue_index, stimulus) in stimuli.into_iter().enumerate() {
             self.debug_building_exit_wait_event_view(npc_id, queue_index, &stimulus);
             tracing::trace!(
@@ -417,26 +329,6 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
     ) {
-        self.tick_ai_queued_stimuli_for_npc_limit(sim, npc_id, assets, None);
-    }
-
-    pub(crate) fn tick_one_ai_queued_stimulus_for_npc(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
-        self.tick_ai_queued_stimuli_for_npc_limit(sim, npc_id, assets, Some(1));
-    }
-
-    fn tick_ai_queued_stimuli_for_npc_limit(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-        limit: Option<usize>,
-    ) {
-        let mut processed = 0usize;
         loop {
             let stimulus = {
                 let ai = self
@@ -476,10 +368,6 @@ impl EngineInner {
                 _ => None,
             };
             self.dispatch_think_with_drain(sim, npc_id, &stimulus, target_override, assets);
-            processed += 1;
-            if limit.is_some_and(|limit| processed >= limit) {
-                return;
-            }
         }
     }
 }

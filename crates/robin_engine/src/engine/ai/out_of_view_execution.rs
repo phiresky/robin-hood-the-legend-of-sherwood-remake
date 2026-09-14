@@ -177,13 +177,7 @@ impl EngineInner {
             .opponents
             .is_empty()
         {
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("visibility loss sword"))
-                .outbox
-                .actor
-                .quit_swordfight = true;
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_end_swordfight(owner);
         }
         self.finish_live_lost_enemy_pursuit(sim, assets, owner);
     }
@@ -194,13 +188,8 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("lost swordfight focus"))
-            .outbox
-            .actor
-            .set_unfocus();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_unfocus(owner);
+
         let ai = self
             .world
             .entities
@@ -246,11 +235,10 @@ impl EngineInner {
             .sector_with_aspect(crate::position_interface::ASPECT_RATIO);
             self.world
                 .entities
-                .expect_ai_controller_mut(owner, format_args!("lost target direction"))
-                .outbox
-                .actor
-                .set_direction_instantly = Some(direction as i16);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                .expect_entity_mut(owner, format_args!("instant AI direction owner"))
+                .element_data_mut()
+                .set_direction_instantly(direction as i16);
+
             self.execute_ai_get_battle_overview(sim, assets, owner, 0);
         }
     }

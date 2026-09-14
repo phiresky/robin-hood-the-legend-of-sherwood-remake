@@ -2085,7 +2085,7 @@ impl EngineInner {
         self.attach_mission_level_stage(&level_plan)?;
         self.cache_door_ai_metadata();
         self.sort_pc_ids_by_priority(assets);
-        self.select_highest_priority_pc(assets, 0);
+        self.select_highest_priority_pc(sim, assets, 0);
         tracing::debug!(
             elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
             "engine level: final identities and attachments"

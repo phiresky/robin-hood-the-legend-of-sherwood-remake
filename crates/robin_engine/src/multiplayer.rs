@@ -82,7 +82,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// hashes, retaining the initial soldier-camp set (save 82 / replay 40).
 /// Protocol 49 carries synchronous AI execution state and a versioned native
 /// snapshot envelope (save 83 / replay 41).
-pub const NET_PROTOCOL_VERSION: u32 = 49;
+pub const NET_PROTOCOL_VERSION: u32 = 50;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must

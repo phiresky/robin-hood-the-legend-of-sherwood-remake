@@ -94,8 +94,8 @@ impl EngineInner {
         let ai = self.seek_enemy_mut(owner);
         ai.base.seek_position = body_position;
         ai.base.detected_body = Some(AiEntityHandle::new(body));
-        ai.base.outbox.actor.set_focus(body);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_focus(owner, Some(AiEntityHandle::new(body)));
+
         self.duty_set_state(
             sim,
             assets,
@@ -124,7 +124,7 @@ impl EngineInner {
         self.seek_enemy_mut(owner)
             .base
             .set_emoticon(EmoticonType::QuestionMark);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         if is_charly {
             self.unalert_body_charly_seekers(sim, assets, owner, body);
         }
@@ -138,7 +138,6 @@ impl EngineInner {
         owner: EntityId,
         body: HumanHandle,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let body = self.expect_human_id_for_ai_handle(body, "body checkpoint seekers");
         self.unalert_live_charly_seekers(sim, assets, owner, body);
     }
@@ -299,7 +298,7 @@ impl EngineInner {
             self.seek_enemy_mut(owner)
                 .base
                 .set_emoticon(EmoticonType::QuestionMark);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             let frame = self.control.frame_counter;
             self.seek_enemy_mut(owner).base.launch_timer(100, frame);
         } else if delegate {

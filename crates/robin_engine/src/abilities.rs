@@ -3589,7 +3589,9 @@ mod tests {
         owner: EntityId,
     ) -> SequenceId {
         let seq_id = manager.launch_element(SequenceElement::new(1, command, Some(owner)));
-        manager.element_in_progress(seq_id, 0);
+        manager.get_element_mut(seq_id, 0).unwrap().state =
+            crate::sequence::SequenceState::InProgress;
+        manager.rebuild_indices();
         seq_id
     }
 
@@ -4183,7 +4185,9 @@ mod tests {
             Some(owner),
             Some(target),
         ));
-        manager.element_in_progress(seq_id, 0);
+        manager.get_element_mut(seq_id, 0).unwrap().state =
+            crate::sequence::SequenceState::InProgress;
+        manager.rebuild_indices();
         let mut next_order_id = 77;
 
         assert_eq!(
@@ -4278,7 +4282,9 @@ mod tests {
             Some(owner),
             Some(target),
         ));
-        manager.element_in_progress(seq_id, 0);
+        manager.get_element_mut(seq_id, 0).unwrap().state =
+            crate::sequence::SequenceState::InProgress;
+        manager.rebuild_indices();
         let mut next_order_id = 1;
         assert_eq!(
             begin_untie(
@@ -5295,7 +5301,9 @@ mod tests {
             Some(climber_id),
             Some(helper_id),
         ));
-        manager.element_in_progress(seq_id, 0);
+        manager.get_element_mut(seq_id, 0).unwrap().state =
+            crate::sequence::SequenceState::InProgress;
+        manager.rebuild_indices();
         let mut next_order_id = 1;
         let result = begin_climb_on_shoulders(
             &mut entities,

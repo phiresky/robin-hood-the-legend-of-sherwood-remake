@@ -148,7 +148,6 @@ impl EngineInner {
                         crate::element::Command::QuitSwordfight,
                         Some(owner),
                     ));
-                    self.dispatch_condolations(sim, assets);
                 }
                 self.observation_ai_mut(owner).base.seek_position = position;
                 self.duty_set_state(

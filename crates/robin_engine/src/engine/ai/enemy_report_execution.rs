@@ -518,9 +518,7 @@ impl EngineInner {
             if flags & 1 != 0 {
                 ai.my_reconnaissance_report.add_seen_body(body);
             }
-            ai.outbox
-                .actor
-                .delete_detectable_entity((body_id, DetectableType::Body));
+            self.execute_ai_delete_detectable_entity(recipient, body_id, DetectableType::Body);
         }
         let charly = self
             .world
@@ -538,10 +536,11 @@ impl EngineInner {
         {
             ai.my_reconnaissance_report.charly = Some(charly);
             ai.my_reconnaissance_report.charly_seen = false;
-            ai.outbox.actor.append_detectable((
+            self.execute_ai_append_detectable(
+                recipient,
                 EntityId::Soldier(SoldierId(charly.get())),
                 DetectableType::MissedFriend,
-            ));
+            );
         }
         if flags & 4 != 0 {
             let report = &self
@@ -556,7 +555,6 @@ impl EngineInner {
                 .my_reconnaissance_report
                 .update(kind, position);
         }
-        self.drain_direct_ai_owner_boundary(sim, recipient, assets);
     }
 }
 

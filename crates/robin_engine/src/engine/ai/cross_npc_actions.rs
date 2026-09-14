@@ -65,7 +65,6 @@ impl EngineInner {
             self.execute_ai_return_to_duty(sim, assets, member, crate::ai::DutyFlags::empty());
             // A forced duty call does not close a Think frame. Keep its
             // close-post latch available for the actor's actual completion.
-            self.drain_direct_ai_owner_boundary(sim, member, assets);
         }
 
         self.world
@@ -77,15 +76,6 @@ impl EngineInner {
     }
 
     // ─── One-shot noise broadcast ──────────────────────────────────
-
-    pub(crate) fn one_shot_noise_listener_ids(&self) -> Vec<EntityId> {
-        let mut npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
-        // NPC lookup follows the original-game registration array.
-        // Rust's typed arena order is not authoritative after save adoption,
-        // where static entities may be reused under restored creation ranks.
-        npc_ids.sort_by_key(|&npc_id| self.world.original_creation_order(npc_id));
-        npc_ids
-    }
 
     pub(crate) fn one_shot_noise(
         &self,
@@ -259,7 +249,9 @@ impl EngineInner {
             source_entity,
         );
 
-        for npc_id in self.one_shot_noise_listener_ids() {
+        let count = self.world.npc_registry_ids.len();
+        for index in 0..count {
+            let npc_id = self.world.npc_registry_ids[index];
             let Some(subjective_noise) = self.subjective_one_shot_noise_for(npc_id, noise) else {
                 continue;
             };
@@ -327,20 +319,8 @@ impl EngineInner {
         }
     }
 
-    /// Dispatch `stimulus` to `npc_id` via
-    /// [`Self::dispatch_filtered_stimulus`], then run a synchronous
-    /// side-effect drain pass so handler side effects (sequence launch,
-    /// attentive-mode changes, facing, quitting/entering swordfight, looking sideways,
-    /// …) and any completion notifications / re-entrant `EVENT_DONE` they
-    /// trigger happen synchronously before the outer AI response completes.
-    ///
-    /// The loop re-runs the drain while the NPC keeps generating new
-    /// pending side effects (e.g. one condolation's `EventDone` handler
-    /// queues another sequence that is preempted in the next iteration),
-    /// bounded at 8 iterations to guard against a pathological cascade.
-    ///
-    /// Returns `dispatch_filtered_stimulus`'s handled bool — unchanged
-    /// by the drain pass.
+    /// Run a decision and deliver the sequence completion callbacks it causes
+    /// before returning its handled result.
     pub(in crate::engine) fn dispatch_think_with_drain(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -369,75 +349,6 @@ impl EngineInner {
         // those engine-owned writes while its controller is borrowed; commit
         // them immediately after Think returns, before waypoint callbacks or
         // any other pending/re-entrant work can observe stale NPC state.
-        self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
-
-        // Enemy-sighting processing explicitly marks an accepted VIEW after
-        // all decision-tick admission and handler guards. Mirror that one-shot onto the
-        // engine-owned AI actor record before draining its other synchronous
-        // effects. Locked, frozen, script-filtered, and handler-rejected VIEWs
-        // never set the flag.
-        let mark_alerted = self.world.entities.expect_ai_controller_mut(
-            npc_id,
-            format_args!(
-                "handled Think recipient {} lost its entity or AI controller before drain",
-                npc_id.index()
-            ),
-        );
-        let mark_alerted = std::mem::take(&mut mark_alerted.outbox.detection.mark_alerted);
-        if mark_alerted {
-            let ai_actor = self.world.entities.expect_ai_actor_data_mut(
-                npc_id,
-                format_args!("accepted EVENT_VIEW recipient after its synchronous Think"),
-            );
-            ai_actor.alerted = true;
-        }
-
-        const MAX_ITERS: u32 = 8;
-        for iter in 0..MAX_ITERS {
-            // Drain the per-NPC pending-flags pass (launches sequences,
-            // commands, turn orders, attentive-mode transitions, etc.).
-            self.drain_pending_for_npc(sim, npc_id, assets);
-            // `drain_pending_for_npc` launches the first order barrier in its
-            // original position. Close the boundary again because later
-            // effect application and civilian handlers share the same base
-            // order outbox. Owner-local state-change notifications are also part
-            // of this fixed point, so late script-seek callbacks cannot leak
-            // into a global batch or strand in the outbox.
-
-            // Any condolations the drain above queued (sequences that
-            // got preempted by the side effects) fire here — which may
-            // push EventDone / EventImpossible into pending_self_stimuli.
-            self.dispatch_condolations(sim, assets);
-
-            // Re-enter Think for each self-stimulus (EventDone, MYTALK,
-            // etc.).  This may queue more pending flags — loop again.
-            let has_self_stimuli = {
-                let ai = self.world.entities.expect_ai_controller(
-                    npc_id,
-                    format_args!("handled Think recipient before self-stimulus recheck"),
-                );
-                !ai.outbox.reentrant.self_stimuli.is_empty()
-            };
-            if has_self_stimuli {
-                self.drain_self_stimuli_for_npc(sim, npc_id, assets);
-            }
-
-            let still_pending = {
-                let ai = self.world.entities.expect_ai_controller(
-                    npc_id,
-                    format_args!("handled Think recipient before fixed-point recheck"),
-                );
-                ai.outbox.actor.has_boundary_work() || !ai.outbox.reentrant.self_stimuli.is_empty()
-            };
-            if !still_pending {
-                break;
-            }
-            assert!(
-                iter + 1 < MAX_ITERS,
-                "Think-drain NPC {} did not stabilise after {MAX_ITERS} passes",
-                npc_id.index()
-            );
-        }
 
         handled
     }

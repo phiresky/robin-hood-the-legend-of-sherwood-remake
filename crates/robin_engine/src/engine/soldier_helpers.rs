@@ -13,7 +13,7 @@ use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{Command, Entity, EntityId};
 use crate::order::OrderType;
 use crate::sequence::{
-    PendingCondolation, SequenceElement, SequenceId, take_goal_owner_terminal_provenance,
+    CondolationCard, SequenceElement, SequenceId, take_goal_owner_terminal_provenance,
 };
 
 fn door_battle_outside_sector(door: &crate::gate::Door) -> crate::position_interface::SectorHandle {
@@ -30,6 +30,7 @@ fn damage_parry_handoff_debug_config() -> Option<&'static super::diagnostics::Ex
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AttentiveModeCaller {
+    ScriptNative,
     AiOwnerEffect,
     ConsoleCheat,
     #[cfg(test)]
@@ -46,6 +47,8 @@ fn goal_owner_handoff_debug_frame_matches(frame: u32) -> bool {
 
 #[cfg(test)]
 thread_local! {
+    static CONDOLATION_CALLBACK: std::cell::RefCell<Option<Box<dyn FnMut(&mut EngineInner, &CondolationCard)>>> =
+        const { std::cell::RefCell::new(None) };
     static CONDOLATION_CARD_TRACE: super::test_support::Probe<(EntityId, Command)> =
         const { super::test_support::Probe::new() };
     static CONDOLATION_STIMULUS_TRACE: super::test_support::Probe<(EntityId, StimulusType)> =
@@ -58,6 +61,39 @@ thread_local! {
         const { super::test_support::Probe::new() };
     static STRANGLE_CONDOLATION_TRACE: super::test_support::Probe<&'static str> =
         const { super::test_support::Probe::new() };
+}
+
+#[cfg(test)]
+impl EngineInner {
+    pub(crate) fn with_condolation_callback<T>(
+        callback: impl FnMut(&mut EngineInner, &CondolationCard) + 'static,
+        run: impl FnOnce() -> T,
+    ) -> T {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                CONDOLATION_CALLBACK.with(|hook| *hook.borrow_mut() = None);
+            }
+        }
+        CONDOLATION_CALLBACK.with(|hook| {
+            assert!(
+                hook.borrow().is_none(),
+                "condolation callback already installed"
+            );
+            *hook.borrow_mut() = Some(Box::new(callback));
+        });
+        let _reset = Reset;
+        run()
+    }
+}
+
+#[cfg(test)]
+fn run_condolation_callback(engine: &mut EngineInner, card: &CondolationCard) {
+    let callback = CONDOLATION_CALLBACK.with(|hook| hook.borrow_mut().take());
+    if let Some(mut callback) = callback {
+        callback(engine, card);
+        CONDOLATION_CALLBACK.with(|hook| *hook.borrow_mut() = Some(callback));
+    }
 }
 
 #[cfg(test)]
@@ -153,7 +189,7 @@ impl EngineInner {
     fn trace_damage_parry_handoff(
         &self,
         phase: &str,
-        card: PendingCondolation,
+        card: CondolationCard,
         cross_postponed: Option<(SequenceId, usize)>,
     ) {
         let Some(config) = damage_parry_handoff_debug_config() else {
@@ -376,15 +412,11 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let Some(entity) = self.world.entities.get(owner) else {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return;
         };
         if !entity.is_soldier() {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return;
         }
 
@@ -442,6 +474,8 @@ impl EngineInner {
                 npc.wasp_victim = true;
             }
         }
+        self.execute_ai_callback(sim, assets, owner, &Stimulus::new(StimulusType::EventWasp));
+
         let order = crate::order::Order::new(
             OrderType::GettingFreeFromWasp,
             0.0,
@@ -455,211 +489,7 @@ impl EngineInner {
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
 
-        // Queue the EventWasp AI stimulus.
-        self.dispatch_ai_stimulus(owner, Stimulus::new(StimulusType::EventWasp));
-
-        self.orders
-            .sequence_manager
-            .element_in_progress(seq_id, elem_idx);
-    }
-
-    /// Drain and dispatch removal notifications queued by
-    /// the sequence manager since the last call.  Invoked by the tick
-    /// loop after `hourglass` so every sequence-element terminal state
-    /// change (Terminated / Interrupted / Impossible) fires its
-    /// per-entity cleanup in a single pass.
-    ///
-    /// Notifications are queued (rather than fired inline) to avoid
-    /// re-entrant borrows; this method drains the queue.
-    /// Cascading state changes can cross owners, including after an NPC Think
-    /// call. Filtering by the originating NPC would strand nested removal
-    /// notifications until later in the frame, so this global synchronous
-    /// boundary drains all queued cards depth-first.
-    pub(super) fn dispatch_condolations(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        self.dispatch_condolations_in_script_driver(sim, assets, &mut Vec::new())
-            .unwrap_or_else(|error| panic!("condolation dispatch failed: {error:?}"));
-    }
-
-    /// Close the state change's owner-notification/readiness stack without dropping the
-    /// active VM frames that made the state change.
-    pub(super) fn dispatch_condolations_in_script_driver(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    ) -> Result<(), crate::engine::script::ScriptDriverError> {
-        let mut pending: std::collections::VecDeque<_> = self
-            .orders
-            .sequence_manager
-            .drain_pending_condolations()
-            .into();
-        while let Some(dispatch) = pending.pop_front() {
-            let owner = dispatch.card.owner;
-            let from_halt = dispatch.card.from_halt;
-            let diagnostic = damage_parry_handoff_debug_config()
-                .map(|_| (dispatch.card, dispatch.cross_postponed_successor()));
-            if let Some((card, cross)) = diagnostic {
-                self.trace_damage_parry_handoff("before_card", card, cross);
-            }
-            self.send_condolation_card(sim, dispatch.card, assets);
-            // A Halt card performs actor/human cleanup, but the NPC override
-            // returns before Think. It cannot causally produce any of these
-            // continuations, so do not let its empty callback steal
-            // replacement work which the Halt caller queued beforehand.
-            if !from_halt {
-                // Removal notification re-enters the decision tick for this owner directly.
-                // Do not resolve unrelated actors' prepared movement forecasts
-                // while closing that native owner-local call stack.
-                #[cfg(test)]
-                observe_owner_boundary_reentrant_step("self_stimuli");
-                self.drain_self_stimuli_for_npc(sim, owner, assets);
-                // A script-side state transition can restore the outer Think
-                // tail only after the recursive drain's ordinary order pass.
-                // Original remains inside removal notification here.
-            }
-            self.orders
-                .sequence_manager
-                .finish_pending_condolation(dispatch);
-            if let Some((card, cross)) = diagnostic {
-                self.trace_damage_parry_handoff("after_finish", card, cross);
-            }
-            // Original-game sequence state handling resumes directly after
-            // removal notification: readiness can advance the sequence and
-            // Sequence-element registration immediately executes
-            // Timer/LockUser/etc. Keep that work
-            // inside this exact state-change stack frame, before another
-            // condolence card or NPC update slot can run.
-            self.drain_script_synchronous_actions(sim, assets, active_scripts)?;
-            if let Some((card, cross)) = diagnostic {
-                self.trace_damage_parry_handoff("after_sync_drain", card, cross);
-            }
-
-            for nested in self
-                .orders
-                .sequence_manager
-                .drain_pending_condolations()
-                .into_iter()
-                .rev()
-            {
-                pending.push_front(nested);
-            }
-        }
-        Ok(())
-    }
-
-    /// Close terminal cards for one live actor owner, then follow newly
-    /// generated cross-owner cards depth-first. Foreign cards that predate
-    /// this owner slot remain queued for their established boundary.
-    pub(super) fn dispatch_condolations_for_owner_boundary(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        owner: EntityId,
-        assets: &LevelAssets,
-    ) -> Vec<(crate::sequence::SequenceId, usize)> {
-        let preexisting = self.orders.sequence_manager.drain_pending_condolations();
-        let (roots, foreign_backlog): (Vec<_>, Vec<_>) = preexisting
-            .into_iter()
-            .partition(|dispatch| dispatch.card.owner == owner);
-        let mut resumed_cross_successors = Vec::new();
-        for root in roots {
-            self.close_owner_boundary_condolation(sim, assets, root, &mut resumed_cross_successors);
-        }
-        self.orders
-            .sequence_manager
-            .restore_pending_condolations(foreign_backlog);
-        resumed_cross_successors
-    }
-
-    /// Close a terminal callback for the actor-selected element before its
-    /// human/NPC update tail runs.
-    ///
-    /// The original-game actor update advances orders whenever
-    /// the selected element has no current order, before its
-    /// frozen-execution early return.
-    /// Rust may already have recorded that selected terminal transition from
-    /// an earlier-created attacker's owner slot.  Its deferred condolence is
-    /// therefore the exact continuation of order advancement; unrelated and
-    /// non-selected cards retain their established boundaries.
-    pub(super) fn dispatch_selected_condolations_for_actor_entry(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        owner: EntityId,
-        assets: &LevelAssets,
-    ) {
-        let pending = self.orders.sequence_manager.drain_pending_condolations();
-        let (selected_roots, backlog): (Vec<_>, Vec<_>) = pending
-            .into_iter()
-            .partition(|dispatch| dispatch.card.owner == owner && dispatch.card.was_selected);
-        let mut resumed_cross_successors = Vec::new();
-        for root in selected_roots {
-            self.close_owner_boundary_condolation(sim, assets, root, &mut resumed_cross_successors);
-        }
-        self.orders
-            .sequence_manager
-            .restore_pending_condolations(backlog);
-    }
-
-    #[allow(clippy::only_used_in_recursion)]
-    fn close_owner_boundary_condolation(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        dispatch: crate::sequence::PendingCondolationDispatch,
-        resumed_cross_successors: &mut Vec<(crate::sequence::SequenceId, usize)>,
-    ) {
-        let card_owner = dispatch.card.owner;
-        let from_halt = dispatch.card.from_halt;
-        let diagnostic = damage_parry_handoff_debug_config()
-            .map(|_| (dispatch.card, dispatch.cross_postponed_successor()));
-        if let Some((card, cross)) = diagnostic {
-            self.trace_damage_parry_handoff("owner_boundary_before_card", card, cross);
-        }
-        self.send_condolation_card(sim, dispatch.card, assets);
-        if !from_halt {
-            #[cfg(test)]
-            observe_owner_boundary_reentrant_step("self_stimuli");
-            self.drain_self_stimuli_for_npc(sim, card_owner, assets);
-            // Register movement produced by the callback for the manager update.
-        }
-
-        // A state change reached re-entrantly from a removal notification belongs
-        // inside that call. Close those cards before resuming this outer
-        // state change at readiness/cascade.
-        for nested in self.orders.sequence_manager.drain_pending_condolations() {
-            self.close_owner_boundary_condolation(sim, assets, nested, resumed_cross_successors);
-        }
-
-        #[cfg(test)]
-        OWNER_BOUNDARY_RESUME_TRACE.with(|trace| trace.record(card_owner));
-        self.orders
-            .sequence_manager
-            .finish_pending_condolation(dispatch);
-        if let Some((card, cross)) = diagnostic {
-            self.trace_damage_parry_handoff("owner_boundary_after_finish", card, cross);
-        }
-
-        // Postponed-element startup only calls
-        // sequence-element registration. Ordinary released work therefore
-        // remains in the manager FIFO until sequence processing;
-        // only commands handled by registration itself may run inline.
-        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-            .unwrap_or_else(|error| {
-                panic!(
-                    "owner-boundary condolation for {} failed to drain its synchronous successor: {error:?}",
-                    card_owner.index()
-                )
-            });
-        if let Some((card, cross)) = diagnostic {
-            self.trace_damage_parry_handoff("owner_boundary_after_sync_drain", card, cross);
-        }
-
-        for nested in self.orders.sequence_manager.drain_pending_condolations() {
-            self.close_owner_boundary_condolation(sim, assets, nested, resumed_cross_successors);
-        }
+        self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
     }
 
     /// Dispatch a single removal notification to the owner entity.
@@ -672,14 +502,17 @@ impl EngineInner {
     /// substates like `DefaultOnPostLookingSidewards`, whose only exit
     /// is an `EventDone` stimulus after the `LookLeft` / `LookRight`
     /// sequence completes.
-    fn send_condolation_card(
+    pub(crate) fn send_condolation_card(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        card: PendingCondolation,
+        card: CondolationCard,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     ) {
         use crate::sequence::SequenceState;
-        let PendingCondolation {
+        #[cfg(test)]
+        run_condolation_callback(self, &card);
+        let CondolationCard {
             owner,
             command,
             terminal_state,
@@ -687,8 +520,6 @@ impl EngineInner {
             elem_idx,
             was_selected,
             from_halt,
-            postponed_successor_pending,
-            cancel_path_request_owner,
         } = card;
         let frame = self.control.frame_counter;
         let goal_owner_provenance = take_goal_owner_terminal_provenance(owner, seq_id, elem_idx)
@@ -696,20 +527,6 @@ impl EngineInner {
 
         #[cfg(test)]
         observe_condolation_card(owner, command);
-
-        if let Some(path_owner) = cancel_path_request_owner {
-            // Optional movement path cancellation runs before
-            // the base removal notification. Keep cancellation at
-            // that same callback boundary so no linked-Seek or owner Think
-            // callback can observe the stale request.
-            self.world.pathfinder.cancel_requests_for(path_owner);
-            self.orders
-                .pending_path_requests
-                .cancel_for_owner(path_owner);
-            self.orders
-                .failed_path_requests
-                .retain(|request| request.owner != path_owner);
-        }
 
         // Snapshot the owner's posture for the `is_very_very_busy` check
         // below without holding a mutable borrow on `self.world.entities` — so
@@ -727,7 +544,15 @@ impl EngineInner {
         // NPC-only — the PC has no `ai_controller` for
         // `fire_self_stimulus` to land on).
         if self.world.entities.get(owner).is_some_and(|e| e.is_pc()) {
-            self.send_condolation_card_pc(sim, owner, command, seq_id, elem_idx, assets);
+            self.send_condolation_card_pc(
+                sim,
+                owner,
+                command,
+                seq_id,
+                elem_idx,
+                assets,
+                active_scripts,
+            );
         }
 
         // The human actor's completion callback always completes an
@@ -1044,7 +869,6 @@ impl EngineInner {
         // actions follow in the chain, or when we're tearing the
         // sequence down from inside a `Halt()` call.
         if from_halt
-            || postponed_successor_pending
             || !self
                 .orders
                 .sequence_manager
@@ -1173,30 +997,24 @@ impl EngineInner {
         if let Some(st) = stimulus {
             observe_condolation_stimulus(owner, st);
             if let Some((seq_id, elem_idx)) = take_condolation_nested_termination(owner, st) {
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             }
         }
 
         if let Some(st) = stimulus
-            && let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(ai) = entity.ai_controller_mut()
+            && self
+                .world
+                .entities
+                .get(owner)
+                .and_then(Entity::ai_controller)
+                .is_some()
         {
             tracing::trace!(
-                owner = owner.index(),
-                ?command,
-                ?terminal_state,
-                stimulus = ?st,
+                owner = owner.index(), ?command, ?terminal_state, stimulus = ?st,
                 "send_condolation_card: fire EventDone/EventReachPoint to owner"
             );
-            ai.outbox
-                .reentrant
-                .self_stimuli
-                .push(crate::ai::QueuedSelfStimulus::new(
-                    st,
-                    crate::ai::SelfStimulusOrigin::Condolation,
-                ));
+            let stimulus = crate::ai::Stimulus::new(st);
+            self.execute_ai_callback(sim, assets, owner, &stimulus);
         }
     }
 
@@ -1223,6 +1041,7 @@ impl EngineInner {
         seq_id: SequenceId,
         elem_idx: u16,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     ) {
         match command {
             Command::StrangleCmd => {
@@ -1291,18 +1110,9 @@ impl EngineInner {
                     crate::ai::StimulusType::EventGotHit,
                     owner.index(),
                 );
-                self.dispatch_synchronous_ai_think_preserving_detection_fifo(
-                    sim, victim_id, assets, stim,
-                );
-                // the enemy AI's unexpected got-hit event
-                // branch ends by setting the actor's view status to death/unconsciousness
-                // in the original game, before the next
-                // statement here. The port routes that write through the AI
-                // recovery outbox, so it has to be drained now; otherwise the
-                // gaze reset below compares against a stale eye status and
-                // view-status update computes the wrong transition flag, freezing
-                // a half-finished head-turn angle in the view cone.
-                self.tick_ai_pending_resurrection_and_eyes_for_npc(victim_id);
+                self.execute_ai_callback(sim, assets, victim_id, &stim);
+                // The callback commits unconscious view status before the gaze
+                // reset below chooses its next transition.
                 #[cfg(test)]
                 observe_strangle_condolation_step("EventGotHit");
 
@@ -1373,7 +1183,7 @@ impl EngineInner {
                     .sequence_manager
                     .take_pending_synchronous_actions();
                 self.force_drop_carried_corpse_instant(owner);
-                self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                self.drain_script_synchronous_actions(sim, assets, active_scripts)
                     .unwrap_or_else(|error| {
                         panic!(
                             "TakeCorpse condolation for {owner:?} failed to instruct dropped body {carried_id:?}: {error:?}"
@@ -1413,7 +1223,6 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        door_indices: &[u32],
         fleeing: &[EntityId],
         pursuing: &[EntityId],
     ) {
@@ -1428,6 +1237,18 @@ impl EngineInner {
         };
         let first_pos = entity.element_data().position_map();
         let move_box = *entity.position_iface().get_move_box();
+
+        let building_sector = self
+            .entity_building_sector(entity.element_data().sector())
+            .expect("first fleeing actor must remain in a building after indoor alert callbacks");
+        let door_indices = &self
+            .ai
+            .global
+            .houses
+            .iter()
+            .find(|house| house.sector_index == u32::from(building_sector))
+            .expect("first fleeing actor's building must have its gate list")
+            .door_indices;
 
         // Pick the unlocked door nearest to first_pos by maximum norm of
         // (door.point_in - first_pos).
@@ -1647,11 +1468,11 @@ impl EngineInner {
                 // Think(EVENT_DOOR_COMBAT) directly. The state/target/timer
                 // update must settle before later same-frame callbacks (such
                 // as the completed PassDoor's EventReachPoint) are delivered.
-                self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                self.execute_ai_callback(
                     sim,
-                    actor_id,
                     assets,
-                    Stimulus::with_door_combat(StimulusType::EventDoorCombat, info),
+                    actor_id,
+                    &Stimulus::with_door_combat(StimulusType::EventDoorCombat, info),
                 );
             }
             _ => {
@@ -1949,7 +1770,6 @@ mod tests {
         ));
         let sequence_id = engine.orders.sequence_manager.launch_element(movement);
 
-        engine.dispatch_condolations(&sim, &assets);
         assert!(
             engine
                 .orders

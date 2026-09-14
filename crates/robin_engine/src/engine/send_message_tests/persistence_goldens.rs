@@ -140,7 +140,7 @@ fn active_callback_rejects_json_and_persisted_clone() {
         .mission
         .as_mut()
         .unwrap()
-        .push_active_driver_frame(crate::natives::ScriptCallFrame::actor(handle));
+        .push_active_driver_frame(crate::natives::ScriptCallFrame::actor(handle), true);
     let script = engine.scripts.mission.as_ref().unwrap();
     let error = serde_json::to_string(script).unwrap_err().to_string();
     assert!(error.contains("active script callback"), "{error}");

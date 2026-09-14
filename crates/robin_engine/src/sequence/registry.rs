@@ -53,7 +53,6 @@ impl SequenceManager {
         Vec<(EntityId, SequenceElementRef)>,
     ) {
         if !self.pending_synchronous_actions.is_empty()
-            || !self.pending_condolations.is_empty()
             || !self.actor_instructing.is_empty()
             || self.actor_translating.is_some()
             || self.halt_pending
@@ -195,7 +194,6 @@ impl SequenceManager {
             actor_translating: None,
             elements_to_go: VecDeque::new(),
             pending_synchronous_actions: VecDeque::new(),
-            pending_condolations: Vec::new(),
             next_sequence_id: 1,
             next_element_id: 1,
             halt_pending: false,
@@ -221,7 +219,6 @@ impl SequenceManager {
             actor_translating: None,
             elements_to_go: state.elements_to_go,
             pending_synchronous_actions: VecDeque::new(),
-            pending_condolations: Vec::new(),
             next_sequence_id: state.next_sequence_id,
             next_element_id: state.next_element_id,
             halt_pending: false,
@@ -275,124 +272,13 @@ impl SequenceManager {
     }
 
     /// Toggle the halt-pending marker. While `true`, any
-    /// [`PendingCondolation`] queued via `process_effects` will be
+    /// [`CondolationCard`] delivered during a terminal transition will be
     /// tagged with `from_halt=true`. Callers bracket a
     /// `stop_owner(Preference)` invocation with
     /// `set_halt_pending(true) … set_halt_pending(false)` so handlers
     /// can detect the AI-initiated `Halt()` window.
     pub fn set_halt_pending(&mut self, v: bool) {
         self.halt_pending = v;
-    }
-
-    /// Drain all pending removal notifications accumulated
-    /// since the last call.  EngineInner calls this after each `hourglass`
-    /// and dispatches to per-entity cleanup handlers.
-    pub fn drain_pending_condolations(&mut self) -> Vec<PendingCondolationDispatch> {
-        std::mem::take(&mut self.pending_condolations)
-    }
-
-    /// Whether Original's synchronous NPC condolence callback already owns
-    /// this owner's `EVENT_COULDNT_REACHPOINT` delivery.
-    ///
-    /// Marking a sequence element impossible
-    /// sends its completion callback before it returns,
-    /// and the NPC override dispatches this event for a final Move/MoveOk
-    /// action. This implementation suspends that callback
-    /// in `pending_condolations`, so an engine decision-tick completion must not
-    /// overtake it with a second completion event.
-    pub fn has_pending_couldnt_reachpoint_condolation(&self, owner: EntityId) -> bool {
-        self.pending_condolations.iter().any(|pending| {
-            let card = pending.card;
-            card.owner == owner
-                && !card.from_halt
-                && !card.postponed_successor_pending
-                && card.terminal_state == SequenceState::Impossible
-                && matches!(
-                    card.command,
-                    Command::PassDoor | Command::Move | Command::MoveOk | Command::SitDown
-                )
-                && self.is_last_real_action(card.seq_id, usize::from(card.elem_idx))
-        })
-    }
-
-    /// Restore a backlog detached around an owner-local synchronous boundary.
-    /// The detached cards predate anything still queued, so they retain their
-    /// original position at the front of the global FIFO.
-    pub fn restore_pending_condolations(&mut self, mut pending: Vec<PendingCondolationDispatch>) {
-        pending.append(&mut self.pending_condolations);
-        self.pending_condolations = pending;
-    }
-
-    /// Drain only the pending condolations whose `owner` matches `owner`.
-    /// Used by the per-NPC synchronous drain pass that runs right after
-    /// each [`EngineInner::dispatch_filtered_stimulus`] — so a sequence
-    /// that a handler's side effects just preempted fires its
-    /// `Think(EVENT_DONE)` within the same call stack as the outer
-    /// `Think` (re-entrant Think timing).  Condolations belonging to
-    /// other entities remain queued for the end-of-tick global drain.
-    pub fn drain_pending_condolations_for_owner(
-        &mut self,
-        owner: EntityId,
-    ) -> Vec<PendingCondolationDispatch> {
-        let mut matching = Vec::new();
-        self.pending_condolations.retain(|c| {
-            if c.card.owner == owner {
-                matching.push(c.clone());
-                false
-            } else {
-                true
-            }
-        });
-        matching
-    }
-
-    /// Resume the state transition after
-    /// removal notification: cascade, readiness, and postponed-element
-    /// activation.  The engine calls this only after the card's recursive
-    /// `Think` and its same-frame side effects have reached a fixed point.
-    pub fn finish_pending_condolation(&mut self, pending: PendingCondolationDispatch) {
-        let was_halt_pending = self.halt_pending;
-        self.halt_pending |= pending.card.from_halt;
-        self.process_effects_after_condolation(pending.card.seq_id, pending.effects_after_card);
-        self.halt_pending = was_halt_pending;
-    }
-
-    /// Suspend a cross-postponed replacement at the same callback boundary as
-    /// an interrupted predecessor. This is the continuation of the outer
-    /// actor-instruction priority arbitration, not a successor released by the
-    /// interrupted element itself.
-    pub fn install_cross_postponed_after_condolation(
-        &mut self,
-        interrupted: (SequenceId, usize),
-        blocker: (SequenceId, usize),
-        waiter: (SequenceId, usize),
-    ) {
-        let pending = self
-            .pending_condolations
-            .iter_mut()
-            .rev()
-            .find(|pending| {
-                pending.card.seq_id == interrupted.0
-                    && usize::from(pending.card.elem_idx) == interrupted.1
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "interrupted postponed element {:?}/{} produced no condolence continuation",
-                    interrupted.0, interrupted.1
-                )
-            });
-        assert!(
-            pending
-                .effects_after_card
-                .install_cross_postponed_after_card
-                .is_none(),
-            "interrupted postponed element {:?}/{} already has a deferred cross install",
-            interrupted.0,
-            interrupted.1
-        );
-        pending
-            .effects_after_card
-            .install_cross_postponed_after_card = Some((blocker.0, blocker.1, waiter.0, waiter.1));
     }
 
     /// Number of active sequences.

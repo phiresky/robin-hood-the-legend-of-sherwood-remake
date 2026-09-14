@@ -9,41 +9,35 @@ fn failed_combat_routes_execute_overview_without_rebuilding_friends() {
         Substate::AttackingRunningToLadder,
         Substate::AttackingRunToAvengerOnRoof,
     ] {
-        for origin in [
-            crate::ai::SelfStimulusOrigin::EngineCompletion,
-            crate::ai::SelfStimulusOrigin::Condolation,
-        ] {
-            for decision_frame in [99, 100] {
-                let (mut engine, assets, owner, target) = fixture(false);
-                let friends = vec![owner.index(), target.index()];
-                let ai = engine
-                    .get_entity_mut(owner)
-                    .unwrap()
-                    .enemy_ai_mut()
-                    .unwrap();
-                ai.base.current_substate = substate;
-                ai.base.list_us = friends.clone();
-                ai.base.ai_log.push(crate::ai::LogLine {
-                    line_type: crate::ai::LogLineType::BattleDecision,
-                    info: crate::ai::Decision::Fight as u16,
-                    frame: decision_frame,
-                });
-                let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
-                stimulus.self_origin = origin;
-                engine.execute_ai_handler_body(
-                    &crate::sim_rng::test_context(),
-                    &assets,
-                    owner,
-                    &stimulus,
-                    None,
-                );
-                let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
-                assert_eq!(
-                    ai.base.current_substate,
-                    Substate::AttackingOverviewLookLeft
-                );
-                assert_eq!(ai.base.list_us, friends);
-            }
+        for decision_frame in [99, 100] {
+            let (mut engine, assets, owner, target) = fixture(false);
+            let friends = vec![owner.index(), target.index()];
+            let ai = engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .enemy_ai_mut()
+                .unwrap();
+            ai.base.current_substate = substate;
+            ai.base.list_us = friends.clone();
+            ai.base.ai_log.push(crate::ai::LogLine {
+                line_type: crate::ai::LogLineType::BattleDecision,
+                info: crate::ai::Decision::Fight as u16,
+                frame: decision_frame,
+            });
+            let stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
+            engine.execute_ai_handler_body(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                &stimulus,
+                None,
+            );
+            let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+            assert_eq!(
+                ai.base.current_substate,
+                Substate::AttackingOverviewLookLeft
+            );
+            assert_eq!(ai.base.list_us, friends);
         }
     }
 }

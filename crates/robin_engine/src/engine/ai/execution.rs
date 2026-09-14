@@ -2,30 +2,145 @@
 //! handler execution, and completion.
 
 use super::*;
+use crate::ai::{AiState, Stimulus, Substate};
+use crate::sim_rng::SimulationContext;
 
-impl EngineInner {
-    pub(crate) fn ai_admission(&self, owner: EntityId) -> crate::ai::AiAdmission {
-        let entity = self
+#[cfg(test)]
+mod after_script_tests {
+    use super::*;
+
+    #[test]
+    fn retained_callbacks_skip_duplicate_markers_and_finish_the_outer_think() {
+        let (mut engine, assets, owner, _) =
+            super::super::battle_decision_observation_tests::fixture(false);
+        let outer_frames = engine.ai.think_call_stack.clone();
+        let ai = engine
             .world
             .entities
-            .expect_entity(owner, format_args!("decision admission"));
-        crate::ai::AiAdmission {
-            frame: self.control.frame_counter,
-            original_creation_order: Some(self.world.original_creation_order(owner)),
-            think_depth: self.ai_think_depth(),
-            in_building: self
-                .entity_building_sector(entity.element_data().sector())
-                .is_some(),
-            self_is_rider: matches!(entity, Entity::Soldier(s) if s.soldier.rider),
-            self_is_dead: entity.is_dead(),
-            self_is_unconscious: entity.is_unconscious(),
-            posture: entity.element_data().posture(),
-            position: self.live_ai_position(owner),
+            .expect_ai_controller_mut(owner, format_args!("retained events fixture"));
+        ai.current_state = AiState::Wondering;
+        ai.current_substate = Substate::WonderingOfficerSeeingBrawl;
+        ai.stimulus_queue = vec![
+            Stimulus::new(StimulusType::EventAfterScriptGoOn),
+            Stimulus::new(StimulusType::NoEvent),
+            Stimulus::new(StimulusType::EventAfterScriptGoOn),
+        ];
+        assert!(!engine.execute_ai_callback(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            &Stimulus::new(StimulusType::EventAfterScriptGoOn)
+        ));
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("retained events result"));
+        assert!(ai.stimulus_queue.is_empty());
+        assert_eq!(ai.current_substate, Substate::WonderingOfficerSeeingBrawl);
+        assert_eq!(engine.ai.think_call_stack, outer_frames);
+    }
+}
+
+impl EngineInner {
+    fn execute_ai_after_script(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        loop {
+            let stimulus = {
+                let ai = self
+                    .world
+                    .entities
+                    .expect_ai_controller_mut(owner, format_args!("AfterScript retained event"));
+                if ai.stimulus_queue.is_empty() {
+                    break;
+                }
+                if !ai.locks_flag_field.is_empty() || ai.script_locked {
+                    return;
+                }
+                ai.stimulus_queue.remove(0)
+            };
+            if stimulus.stimulus_type != StimulusType::EventAfterScriptGoOn {
+                let target = match stimulus.info {
+                    crate::ai::StimulusInfo::Human(handle)
+                        if matches!(
+                            stimulus.stimulus_type,
+                            StimulusType::EventView
+                                | StimulusType::EventOutOfView
+                                | StimulusType::EventSeesBeggar
+                                | StimulusType::EventEnemyNear
+                        ) =>
+                    {
+                        Some(
+                            self.entity_id_for_index(handle.get())
+                                .expect("retained event target"),
+                        )
+                    }
+                    _ => None,
+                };
+                self.execute_ai_callback_for_target(sim, assets, owner, &stimulus, target);
+            }
         }
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("AfterScript route"));
+        if ai.current_state != AiState::Default {
+            return;
+        }
+        if ai
+            .patrol_path
+            .as_ref()
+            .and_then(|path| path.current_waypoint(&assets.navigation.hiking_paths))
+            .is_none()
+        {
+            self.execute_ai_return_to_duty(sim, assets, owner, crate::ai::DutyFlags::empty());
+            return;
+        }
+        self.world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("AfterScript route advance"))
+            .patrol_path
+            .as_mut()
+            .expect("AfterScript path")
+            .advance();
+        self.duty_set_state(
+            sim,
+            assets,
+            owner,
+            AiState::Default,
+            Substate::DefaultEnroute,
+        );
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("AfterScript route callback"));
+        let path = ai
+            .patrol_path
+            .as_ref()
+            .expect("AfterScript path after callback");
+        let waypoint = path
+            .current_waypoint(&assets.navigation.hiking_paths)
+            .expect("AfterScript waypoint after callback");
+        let destination = crate::ai::Position {
+            x: waypoint.x as f32,
+            y: waypoint.y as f32,
+            sector: assets.navigation.hiking_waypoint_sector(
+                usize::from(path.hiking_path_index),
+                usize::from(path.current_waypoint_index),
+                waypoint.sector,
+            ),
+            level: waypoint.level,
+        };
+        let flags = ai.default_path_walking_flags;
+        self.duty_go_to(sim, assets, owner, destination, flags);
     }
 
     pub(in crate::engine) fn begin_ai_think_before_filter(
         &mut self,
+        assets: &LevelAssets,
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
@@ -59,6 +174,14 @@ impl EngineInner {
                 .expect("decision owner has no brain")
                 .start_think_pre_filter(stimulus);
         }
+        if stimulus.stimulus_type == crate::ai::StimulusType::EventLoseConsciousness {
+            self.execute_ai_set_alert_status(
+                assets,
+                owner,
+                crate::ai::AlertLevel::Green,
+                crate::ai::AlertFlags::empty(),
+            );
+        }
         true
     }
 
@@ -86,7 +209,7 @@ impl EngineInner {
             Some(&owner),
             "decision completion has no matching active frame"
         );
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         for event in [
             StimulusType::EventCouldntReachPoint,
             StimulusType::EventReachPoint,
@@ -134,9 +257,7 @@ impl EngineInner {
         owner: EntityId,
         flags: crate::ai::DutyFlags,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         self.execute_specialized_ai_duty(sim, assets, owner, flags);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     /// Execute a nested actor decision to completion before its caller resumes.
@@ -348,7 +469,8 @@ impl EngineInner {
         {
             return false;
         }
-        let admission = self.ai_admission(owner);
+        let frame = self.control.frame_counter;
+        let original_creation_order = Some(self.world.original_creation_order(owner));
         let admitted = if self
             .world
             .entities
@@ -356,31 +478,26 @@ impl EngineInner {
             .enemy_ai()
             .is_some()
         {
-            self.begin_enemy_think(sim, assets, owner, stimulus, &admission)
+            self.begin_enemy_think(sim, assets, owner, stimulus)
         } else {
-            self.begin_friendly_think(sim, assets, owner, stimulus, &admission)
+            self.begin_friendly_think(sim, assets, owner, stimulus)
         };
         if !admitted {
             self.execute_ai_end_think(sim, assets, owner);
             return true;
         }
 
-        let handled = self.execute_ai_handler_body(sim, assets, owner, stimulus, target);
-        let suspended = stimulus.stimulus_type == StimulusType::EventAfterScriptGoOn
-            && self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("Think completion"))
-                .outbox
-                .reentrant
-                .engine_drains_after_script_go_on;
-        if !suspended {
-            self.execute_ai_end_think(sim, assets, owner);
-        }
+        let handled = if stimulus.stimulus_type == StimulusType::EventAfterScriptGoOn {
+            self.execute_ai_after_script(sim, assets, owner);
+            false
+        } else {
+            self.execute_ai_handler_body(sim, assets, owner, stimulus, target)
+        };
+        self.execute_ai_end_think(sim, assets, owner);
         if let Some(enemy) = self.world.entities.get(owner).and_then(Entity::enemy_ai) {
             enemy.base.debug_macro_lifecycle_at(
-                admission.frame,
-                admission.original_creation_order,
+                frame,
+                original_creation_order,
                 "think_return",
                 stimulus.stimulus_type,
             );

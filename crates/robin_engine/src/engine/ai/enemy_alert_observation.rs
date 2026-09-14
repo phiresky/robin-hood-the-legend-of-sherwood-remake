@@ -28,7 +28,6 @@ impl EngineInner {
             10,
             frame,
         );
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
     fn alert_focus_point(
         &mut self,
@@ -37,12 +36,7 @@ impl EngineInner {
         owner: EntityId,
         position: Position,
     ) {
-        self.observation_ai_mut(owner)
-            .base
-            .outbox
-            .actor
-            .set_focus_point(position);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_focus_point(assets, owner, position);
     }
     fn alert_face_seek_position(
         &mut self,

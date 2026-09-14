@@ -67,13 +67,11 @@ impl EngineInner {
                 .is_some(),
             "friend-check partner must be an NPC"
         );
-        self.friend_check_owner_mut(owner)
-            .set_checkpoint_charly(Some(AiEntityHandle::new(target_handle)));
+        self.execute_ai_set_checkpoint_charly(owner, Some(AiEntityHandle::new(target_handle)));
         assert_ne!(
             owner, target,
             "friend-check partner cannot be the checking actor"
         );
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
 
         let ai = self
             .world
@@ -87,8 +85,7 @@ impl EngineInner {
                     .wrapping_sub(ai.frame_when_enemy_detected)
                     < crate::parameters_ai::NO_CHECK_FOR_AFTER_CHARLY_ALERT_TIME)
         {
-            self.friend_check_owner_mut(owner)
-                .set_checkpoint_charly(None);
+            self.execute_ai_set_checkpoint_charly(owner, None);
             self.resume_after_friend_check(sim, assets, owner);
             return;
         }
@@ -104,12 +101,14 @@ impl EngineInner {
             let ai = self.friend_check_owner_mut(owner);
             ai.synchronize_index = destination;
             ai.synchronize_charly = Some(AiEntityHandle::new(target_handle));
-            ai.set_checkpoint_charly(None);
+            self.execute_ai_set_checkpoint_charly(owner, None);
             assert!(
-                ai.macro_in_progress,
+                self.world
+                    .entities
+                    .expect_ai_controller(owner, format_args!("friend synchronization"))
+                    .macro_in_progress,
                 "pure friend synchronization requires a running macro"
             );
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
 
             let entity = self.expect_entity(target, "synchronizing partner");
             let partner = entity
@@ -241,11 +240,7 @@ impl EngineInner {
         } else {
             LookDirection::RightLeft
         };
-        self.friend_check_owner_mut(owner)
-            .outbox
-            .actor
-            .look_sidewards = Some(direction);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_look_sidewards(owner, direction);
     }
 
     fn friend_check_owner_mut(&mut self, owner: EntityId) -> &mut AiController {

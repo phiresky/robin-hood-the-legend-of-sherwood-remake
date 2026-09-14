@@ -1128,10 +1128,13 @@ fn explicitly_queued_sword_strike_still_records_a_quick_action() {
     let target = spawn_pc_at(&mut engine, 90.0, 10.0);
     let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
     let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(busy_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        busy_sequence,
+        0,
+    );
 
     engine.apply_command(
         &crate::sim_rng::test_context(),
@@ -1181,10 +1184,13 @@ fn auto_launch_preserves_empty_manual_recording() {
     let mut busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
     busy.priority = crate::sequence::SequencePriority::Normal;
     let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(busy_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        busy_sequence,
+        0,
+    );
     let sim = crate::sim_rng::test_context();
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
@@ -1220,10 +1226,13 @@ fn auto_launch_preserves_empty_manual_recording() {
         .expect("empty armed manual slot")
         .clone();
 
-    engine
-        .orders
-        .sequence_manager
-        .element_terminated(busy_sequence, 0);
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        busy_sequence,
+        0,
+    );
     let mut camera = CameraDisplayState::default();
     engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);
 
@@ -1299,10 +1308,13 @@ fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
     let mut busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
     busy.priority = crate::sequence::SequencePriority::Normal;
     let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(busy_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        busy_sequence,
+        0,
+    );
     engine.apply_command(
         &sim,
         &mut display,
@@ -1339,10 +1351,13 @@ fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
         .expect("restore engine with automatic and manual QA state");
     assert_eq!(engine.players.macro_store.get(pc_id), Some(&armed_state));
 
-    engine
-        .orders
-        .sequence_manager
-        .element_terminated(busy_sequence, 0);
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        busy_sequence,
+        0,
+    );
     let mut restored_camera = CameraDisplayState::default();
     engine.advance_auto_quick_action_queues(&sim, &mut restored_camera, &assets);
 
@@ -1424,20 +1439,26 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
     let mut idle = SequenceElement::new(1, Command::Wait, Some(pc_id));
     idle.priority = crate::sequence::SequencePriority::Wait;
     let idle_sequence = engine.orders.sequence_manager.launch_element(idle);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(idle_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        idle_sequence,
+        0,
+    );
 
     // Door/lift traversal can leave an interrupted command postponed after
     // the movement itself has settled. A postponed card is dormant, not
     // executable actor work, and must not pin the automatic queue forever.
     let stale = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
     let stale_sequence = engine.orders.sequence_manager.launch_element(stale);
-    engine
-        .orders
-        .sequence_manager
-        .postpone_element(stale_sequence, 0);
+    engine.postpone_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        stale_sequence,
+        0,
+    );
 
     engine.apply_command(&sim, &mut display, &mut input, &assets, &queued);
     assert!(engine.players.auto_queue_active.contains(&pc_id));
@@ -1486,10 +1507,13 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
         .sequence_manager
         .live_element_for_actor_matching(pc_id, |element| element.command == Command::WhistleCmd)
         .expect("first queued action is live");
-    engine
-        .orders
-        .sequence_manager
-        .element_terminated(sequence_id, element_index);
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        element_index,
+    );
     let mut camera = CameraDisplayState::default();
     engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);
 
@@ -1522,10 +1546,13 @@ fn shift_queue_retains_more_than_three_pending_actions() {
     let mut busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
     busy.priority = crate::sequence::SequencePriority::Normal;
     let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(busy_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        busy_sequence,
+        0,
+    );
 
     let queued = PlayerCommand::QueueQuickAction {
         action: Action::Whistle,
@@ -1575,17 +1602,23 @@ fn queued_bow_shot_starts_once_after_real_work_ends_despite_postponed_card() {
     configure_valid_bow_quick_action(&mut engine, &mut assets, pc_id, target);
     let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
     let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(busy_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        busy_sequence,
+        0,
+    );
 
     let stale = SequenceElement::new(1, Command::LeaveListen, Some(pc_id));
     let stale_sequence = engine.orders.sequence_manager.launch_element(stale);
-    engine
-        .orders
-        .sequence_manager
-        .postpone_element(stale_sequence, 0);
+    engine.postpone_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        stale_sequence,
+        0,
+    );
 
     let sim = crate::sim_rng::test_context();
     let mut display = HostDisplayState::default();
@@ -1608,10 +1641,13 @@ fn queued_bow_shot_starts_once_after_real_work_ends_despite_postponed_card() {
     assert_eq!(engine.players.auto_queues.len(pc_id), 1);
     assert!(!engine.has_quick_action(pc_id, 0));
 
-    engine
-        .orders
-        .sequence_manager
-        .element_terminated(busy_sequence, 0);
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        busy_sequence,
+        0,
+    );
     let mut camera = CameraDisplayState::default();
     engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);
 
@@ -1649,10 +1685,13 @@ fn queued_pickup_moves_following_bow_preview_origin_to_pickup_target() {
 
     let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
     let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(busy_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        busy_sequence,
+        0,
+    );
 
     let sim = crate::sim_rng::test_context();
     let mut display = HostDisplayState::default();
@@ -1698,10 +1737,13 @@ fn shift_pickup_uses_take_quick_action_phase() {
     let target = spawn_bonus(&mut engine, ObjectType::BonusArrow, true, Action::Bow);
     let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
     let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(busy_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        busy_sequence,
+        0,
+    );
 
     engine.apply_command(
         &crate::sim_rng::test_context(),
@@ -4207,10 +4249,13 @@ fn newer_strike_seek_replaces_old_preference_behind_injury() {
     let mut injury = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(pc_id));
     injury.priority = SequencePriority::Injury;
     let injury_seq = engine.orders.sequence_manager.launch_element(injury);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(injury_seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        injury_seq,
+        0,
+    );
 
     let mut old_strike = SequenceElement::new_interaction(
         1,
@@ -4220,7 +4265,15 @@ fn newer_strike_seek_replaces_old_preference_behind_injury() {
     );
     old_strike.priority = SequencePriority::Preference;
     let old_strike_seq = engine.orders.sequence_manager.launch_element(old_strike);
-    engine.engine_postpone(injury_seq, 0, old_strike_seq, 0);
+    engine.engine_postpone(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        injury_seq,
+        0,
+        old_strike_seq,
+        0,
+    );
 
     engine.apply_sword_strike_with_seek(
         &assets,
@@ -5393,7 +5446,7 @@ fn pay_seek_faces_the_beggar_action_point() {
 #[test]
 fn running_non_recording_pay_stamps_beggar_and_only_makes_current_order_fast() {
     let sim = crate::sim_rng::test_context();
-    let (mut engine, _assets, pc_id) = setup_pc_engine(&[]);
+    let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
     let target_id = spawn_friendly_civilian(&mut engine);
 
     let movement = SequenceElement::new_movement(
@@ -5403,10 +5456,13 @@ fn running_non_recording_pay_stamps_beggar_and_only_makes_current_order_fast() {
         crate::order::OrderType::WalkingUpright,
     );
     let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(movement_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        movement_sequence,
+        0,
+    );
 
     engine.apply_interaction_with_seek(&sim, pc_id, target_id, Command::Pay, true);
 
@@ -6053,10 +6109,13 @@ fn independent_adjacent_cancel_does_not_suppress_select_pc_action_fanout() {
     let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(pc_id));
     wait.priority = crate::sequence::SequencePriority::Wait;
     let wait_sequence = engine.orders.sequence_manager.launch_element(wait);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(wait_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        wait_sequence,
+        0,
+    );
 
     engine.apply_commands_with_mode(
         sim,

@@ -213,7 +213,7 @@ fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() 
 
 #[test]
 fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
-    use crate::ai::{AiState, AlertLevel, GuardedPcEffect, PointArchery, SectorArchery, Substate};
+    use crate::ai::{AiState, AlertLevel, PointArchery, SectorArchery, Substate};
     use crate::entity_id::PcId;
     use crate::sector::{ArcheryPointIdx, SectorNumber};
     use crate::sound::MusicMode;
@@ -270,11 +270,7 @@ fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
         .ai_brain
         .enemy_mut()
         .expect("test victim has enemy AI");
-    enemy.guarded_pc = Some(PcId(current_guarded_pc_typed.0));
-    enemy.base.outbox.actor.set_guarded_pc = Some(GuardedPcEffect {
-        old: Some(PcId(old_guarded_pc_typed.0)),
-        new: Some(PcId(current_guarded_pc_typed.0)),
-    });
+    enemy.guarded_pc = Some(PcId(old_guarded_pc_typed.0));
     enemy.my_shooting_point = Some((0, 0));
     enemy.my_archery_sector = Some(0);
 
@@ -282,9 +278,28 @@ fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
     enemy.base.current_substate = Substate::MenacingPcInComa;
     enemy.base.current_music_alert_status = AlertLevel::Red;
     enemy.base.view_alert_status = AlertLevel::Red;
-    enemy.base.outbox.actor.halt = true;
     engine.ai.global.overall_villain_alert_status = AlertLevel::Red;
     engine.ai.global.overall_alert_status = AlertLevel::Red;
+
+    engine.set_live_guarded_pc(victim_id, Some(current_guarded_pc_typed));
+    assert_eq!(
+        engine
+            .get_entity(old_guarded_pc)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .guard,
+        None
+    );
+    assert_eq!(
+        engine
+            .get_entity(current_guarded_pc)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .guard,
+        Some(victim_id)
+    );
 
     let assets = engine.test_runtime_assets();
     engine.handle_death(&crate::sim_rng::test_context(), &assets, victim_id);
@@ -310,11 +325,10 @@ fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
     assert_eq!(enemy.my_archery_sector, None);
     assert_eq!(enemy.base.current_state, AiState::Sleeping);
     assert_eq!(enemy.base.current_substate, Substate::SleepingForever);
-    assert!(!enemy.base.outbox.actor.halt);
     assert_eq!(enemy.my_shooting_point, None);
-    assert!(enemy.base.outbox.music.instant_change);
-
-    engine.update_overall_villain_alert(&assets.profile_manager);
+    assert_eq!(enemy.base.current_music_alert_status, AlertLevel::Green);
+    assert_eq!(engine.ai.global.red_alert_soldiers, 0);
+    assert_eq!(engine.ai.global.green_alert_soldiers, 1);
     assert!(
         engine
             .feedback
@@ -693,7 +707,6 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
             ..Default::default()
         },
     );
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 
     let officer = engine
         .get_entity(officer_id)
@@ -781,7 +794,6 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
             ..Default::default()
         },
     );
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 
     let officer = engine
         .get_entity(officer_id)

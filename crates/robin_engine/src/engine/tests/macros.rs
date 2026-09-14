@@ -546,10 +546,13 @@ fn queued_multi_pc_group_move_records_resolved_formation_without_touching_manual
             Some(pc),
         );
         let sequence = engine.orders.sequence_manager.launch_element(busy);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
     }
     arm_group_move_recording(&mut engine, &[pc_a, pc_b]);
     let manual_a = engine
@@ -671,10 +674,13 @@ fn queued_multi_pc_group_move_replays_each_recorded_formation_seek() {
             Some(pc),
         );
         let sequence = engine.orders.sequence_manager.launch_element(busy);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         busy_sequences.push(sequence);
     }
     arm_group_move_recording(&mut engine, &[pc_a, pc_b]);
@@ -702,10 +708,13 @@ fn queued_multi_pc_group_move_replays_each_recorded_formation_seek() {
         },
     );
     for sequence in busy_sequences {
-        engine
-            .orders
-            .sequence_manager
-            .element_terminated(sequence, 0);
+        engine.element_terminated(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
     }
     let mut camera = crate::engine::CameraDisplayState::default();
     engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);

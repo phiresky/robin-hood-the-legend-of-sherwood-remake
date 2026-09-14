@@ -1708,7 +1708,7 @@ impl PendingPathRequestQueue {
     /// marks its eventual result stale instead of removing it, while later
     /// requests for the same actor are deleted immediately. The retained head
     /// still occupies one path-request processing result slot.
-    pub(super) fn cancel_for_owner(&mut self, owner: EntityId) {
+    pub(crate) fn cancel_for_owner(&mut self, owner: EntityId) {
         let head_owner = self
             .in_flight
             .as_ref()
@@ -4158,36 +4158,33 @@ impl EngineInner {
                 .expect("orphan sword movement owner disappeared before Stop")
                 .element_data()
                 .position_map();
-            {
-                let resolver = Self::priority_resolver(&self.world.entities);
-                let pathfinder = &mut self.world.pathfinder;
-                self.orders.sequence_manager.stop_movement_from_root(
-                    owner,
-                    (selected.seq_id, selected.elem_idx),
-                    owner_pos,
-                    crate::sequence::SequencePriority::Injury,
-                    &resolver,
-                    &mut self.orders.next_order_id,
-                    &mut |id| pathfinder.cancel_requests_for(id),
-                );
-            }
+            self.stop_movement_from_root(
+                sim,
+                assets,
+                &mut Vec::new(),
+                owner,
+                (selected.seq_id, selected.elem_idx),
+                owner_pos,
+                crate::sequence::SequencePriority::Injury,
+                &|engine, element| Self::priority_resolver(&engine.world.entities)(element),
+            );
             // Movement stopping delivers the selected movement's notification
             // before base sequence-element stopping walks the
             // linked successor/postponed graph.  That callback may re-enter
             // AI and mutate the graph, so it is a real owner boundary rather
             // than a batchable cleanup detail.
-            self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
             {
-                let resolver = Self::priority_resolver(&self.world.entities);
-                self.orders.sequence_manager.stop_owner_current_from_root(
+                self.stop_owner_current_from_root(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
                     owner,
                     Some((selected.seq_id, selected.elem_idx)),
                     crate::sequence::SequencePriority::Injury,
-                    &resolver,
+                    &|engine, element| Self::priority_resolver(&engine.world.entities)(element),
                 );
             }
         }
-        self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         // Human action execution only registers this command here. Its ABORTED return
         // reaches the actor update first; the later sequence-manager update
         // calls the ordinary actor-instruction path, which translates the
@@ -4210,11 +4207,11 @@ impl EngineInner {
             "orphaned sword movement aborted; sending EVENT_QUIT_SWORDFIGHT"
         );
         if matches!(self.world.entities.get(owner), Some(Entity::Soldier(_))) {
-            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+            self.execute_ai_callback(
                 sim,
-                owner,
                 assets,
-                crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
+                owner,
+                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
             );
         }
 
@@ -4223,10 +4220,13 @@ impl EngineInner {
         // element Impossible. Keep this after the direct soldier callback so
         // neither QuitSwordfight nor the callback can inherit the stopped
         // Turn's cross-element link.
-        self.orders
-            .sequence_manager
-            .element_impossible(selected.seq_id, selected.elem_idx);
-        self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
+        self.element_impossible(
+            sim,
+            assets,
+            &mut Vec::new(),
+            selected.seq_id,
+            selected.elem_idx,
+        );
         true
     }
 
@@ -5275,7 +5275,7 @@ impl EngineInner {
         }
 
         if executed_sword_movement && matches!(owner, EntityId::Pc(_)) {
-            self.abort_pinched_pc_sword_movement(owner, selected, &mut order_pops);
+            self.abort_pinched_pc_sword_movement(sim, assets, owner, selected, &mut order_pops);
         }
 
         // Execute pending door-pass triggers (PassingDoor steps).
@@ -5346,7 +5346,7 @@ impl EngineInner {
         // selections, so reproduce this re-entrant live-pointer seam
         // explicitly for post-seek launches only.
         for entity_id in post_seek_reentrant_order_advances {
-            self.advance_live_order_after_terminal_handoff(entity_id);
+            self.advance_live_order_after_terminal_handoff(sim, assets, entity_id);
         }
 
         // Drain collected waypoint pops against each actor's Move
@@ -5361,7 +5361,7 @@ impl EngineInner {
         // on completion then terminates the element.
         let mut terminal_order_pops = Vec::new();
         for (seq_id, elem_idx) in order_pops {
-            if let Some(pop) = self.pop_selected_movement_order(seq_id, elem_idx) {
+            if let Some(pop) = self.pop_selected_movement_order(sim, assets, seq_id, elem_idx) {
                 terminal_order_pops.push(pop);
             }
         }
@@ -5401,34 +5401,7 @@ impl EngineInner {
             );
         }
         for (seq_id, elem_idx) in blocked_impossible {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
-        }
-        let selected_terminal = self
-            .orders
-            .sequence_manager
-            .get_element(selected.seq_id, selected.elem_idx)
-            .is_some_and(|element| {
-                matches!(
-                    element.state,
-                    crate::sequence::SequenceState::Terminated
-                        | crate::sequence::SequenceState::Impossible
-                        | crate::sequence::SequenceState::Interrupted
-                )
-            });
-        if selected_terminal {
-            // Termination may synchronously instruct a cross-postponed
-            // movement successor, but the actor update has already made
-            // and executed its one entry-latched order choice for this
-            // owner slot. The successor becomes observable immediately and
-            // executes at the actor's next update; never recurse into a
-            // second Execute in the same slot. The returned list of resumed
-            // cross-owner successors `(sequence, element)` is therefore not
-            // needed here: those successors are already re-queued on their
-            // owners by the dispatch itself and run at their own owner slots.
-            let _resumed_cross_successors =
-                self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         }
 
         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
@@ -5696,6 +5669,8 @@ impl EngineInner {
 
     fn abort_pinched_pc_sword_movement(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         selected: MovementOwnerSelection,
         order_pops: &mut Vec<(crate::sequence::SequenceId, usize)>,
@@ -5745,9 +5720,7 @@ impl EngineInner {
             // order-advancement arm, even when motion processing had already
             // reached the short step-back destination.
             cancel_aborted_order_pop(order_pops, seq_id, elem_idx);
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         }
     }
 
@@ -5802,7 +5775,7 @@ impl EngineInner {
                         Some(order.order_id) == charge_execution.completion_order_id
                     });
                 if entry_still_current {
-                    self.do_next_order(selected.seq_id, selected.elem_idx);
+                    self.do_next_order(sim, assets, selected.seq_id, selected.elem_idx);
                 }
                 if let Some(actor) = self
                     .world
@@ -7319,7 +7292,14 @@ impl EngineInner {
                     layer = entity_layer,
                     "try_dispatch_move_path: actor cannot be extracted from obstacle (Stop + Wait)",
                 );
-                self.stop_owner(owner, crate::sequence::SequencePriority::Normal);
+                self.stop_owner(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    owner,
+                    crate::sequence::SequencePriority::Normal,
+                    &|engine, element| Self::priority_resolver(&engine.world.entities)(element),
+                );
                 let mut wait_elem = crate::sequence::SequenceElement::new(
                     1,
                     crate::element::Command::Wait,
@@ -7416,9 +7396,7 @@ impl EngineInner {
                     crate::order::alloc_order_id(&mut self.orders.next_order_id),
                 ));
             }
-            self.orders
-                .sequence_manager
-                .element_in_progress(seq_id, elem_idx);
+            self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             if let Some(goal) = retained_movement_goal
                 && let Some(entity) = self.world.entities.get_mut(owner)
                 && entity.position_iface().map_goal() == MapPoint::ZERO
@@ -7447,13 +7425,14 @@ impl EngineInner {
             return MovePathOutcome::Pending;
         }
 
-        self.finish_move_path(sim, request, vec![source, dest]);
+        self.finish_move_path(sim, assets, request, vec![source, dest]);
         MovePathOutcome::Success
     }
 
     pub(super) fn finish_move_path(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         request: PendingPathRequest,
         mut waypoints: Vec<MapPoint>,
     ) {
@@ -7679,9 +7658,7 @@ impl EngineInner {
         }
 
         // Transition element to InProgress.
-        self.orders
-            .sequence_manager
-            .element_in_progress(seq_id, elem_idx);
+        self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
     }
 }
 
@@ -7775,6 +7752,8 @@ impl EngineInner {
 
     fn pop_selected_movement_order(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> Option<TerminalMovementOrderPop> {
@@ -7811,13 +7790,18 @@ impl EngineInner {
         let prepared = selected.prepare(&mut self.orders.sequence_manager);
         // Keep synchronous callbacks in the coordinator, outside the limited
         // sequence borrow. No actor/script effects can run during preparation.
-        self.do_next_order(seq_id, elem_idx);
+        self.do_next_order(sim, assets, seq_id, elem_idx);
         let terminal_pop = prepared.finish(&self.orders.sequence_manager);
         self.trace_selected_movement_order_pop("return", owner, seq_id, elem_idx, "accepted");
         terminal_pop
     }
 
-    pub(in crate::engine) fn advance_live_order_after_terminal_handoff(&mut self, owner: EntityId) {
+    pub(in crate::engine) fn advance_live_order_after_terminal_handoff(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
         if let Some((seq_id, elem_idx)) = self
             .orders
             .sequence_manager
@@ -7856,7 +7840,7 @@ impl EngineInner {
                     (seq_id, elem_idx),
                 );
             }
-            self.do_next_order(seq_id, elem_idx);
+            self.do_next_order(sim, assets, seq_id, elem_idx);
         } else if debug_post_seek_handoff_enabled() {
             eprintln!(
                 "[POST_SEEK frame={} owner={owner:?} stage=live_advance_no_current]",
