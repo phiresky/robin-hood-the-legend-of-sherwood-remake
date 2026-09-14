@@ -5,7 +5,7 @@
 
 use robin_assets::scb;
 use robin_engine::interp::StopReason;
-use robin_engine::natives::{NativeContext, ScriptEffects, ScriptState};
+use robin_engine::natives::{NativeContext, ScriptState};
 use robin_engine::script_manager::{ScriptError, ScriptManager, ScriptProgram};
 use std::sync::Arc;
 
@@ -37,13 +37,12 @@ fn run_script(
     let mut activation = instance
         .begin_activation(&manager, function, &vec![0; count])
         .map_err(|error| error.to_string())?;
-    let mut script_effects = ScriptEffects::new();
     let mut entities = robin_engine::entities::Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let simulation = robin_engine::sim_rng::SimulationContext::with_seed(0);
     let mut native_globals = Vec::new();
-    let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
+    let mut capabilities = robin_engine::natives::NativeSessionCapabilities::new(
         &simulation,
         &mut entities,
         &mut ai_global,
@@ -52,12 +51,7 @@ fn run_script(
     );
     let mut script_state = ScriptState::default();
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
-    let mut context = NativeContext::new(
-        &mut script_effects,
-        &mut script_state,
-        &mut script_domains,
-        &capabilities,
-    );
+    let mut context = NativeContext::new(&mut script_state, &mut script_domains, &mut capabilities);
 
     let stop = instance.poll_activation_with_host(
         &mut manager,
@@ -69,10 +63,6 @@ fn run_script(
     tracing::info!("stop reason: {stop:?}");
     tracing::info!("ip: {}", activation.ip);
     tracing::info!("frames depth: {}", activation.frames.len());
-    tracing::info!(
-        "--- {} deferred engine commands ---",
-        context.script_effects().engine_commands().len()
-    );
     for (id, val) in context.script_globals().iter().enumerate() {
         tracing::info!("  [{id}] = {val}");
     }

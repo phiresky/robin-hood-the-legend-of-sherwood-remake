@@ -101,6 +101,7 @@ pub(super) fn set_flags_of_near_coins_on_ground(
 /// transition reaches this callback.
 pub(super) fn add_beggar_for_all_intelligent_seeking_soldiers(
     entities: &mut crate::entities::Entities,
+    profiles: &crate::profiles::ProfileManager,
     diplomacy: &crate::diplomacy::DiplomacyState,
     beggar_id: EntityId,
     difficulty: crate::player_profile::DifficultyLevel,
@@ -110,7 +111,9 @@ pub(super) fn add_beggar_for_all_intelligent_seeking_soldiers(
         .soldiers()
         .filter_map(|(soldier_id, soldier)| {
             let ai = soldier.npc.ai_brain.enemy()?;
-            let iq = difficulty.rules().enemy_iq(ai.soldier_profile_iq, 100);
+            let iq = difficulty
+                .rules()
+                .enemy_iq(ai.profile(profiles).intelligence, 100);
             (diplomacy.is_hostile_to_player(soldier.soldier.cached_camp)
                 && iq >= CHECK_BEGGAR_MIN_IQ
                 && ai.base.current_substate.is_seek_area())

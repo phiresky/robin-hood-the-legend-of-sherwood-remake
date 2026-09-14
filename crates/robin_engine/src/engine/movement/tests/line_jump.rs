@@ -265,6 +265,7 @@ mod suite {
     fn run_fast_wall_anti_collision_fixture(
         first_distance: u16,
     ) -> (MapPoint, crate::movement_diagnostics::ParityMovementStep) {
+        let assets = LevelAssets::new();
         use crate::element::{
             ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
         };
@@ -354,10 +355,13 @@ mod suite {
             goal.y,
         ));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -419,6 +423,7 @@ mod suite {
 
     #[test]
     fn running_stairs_second_call_observes_first_call_arrival_snap() {
+        let assets = LevelAssets::new();
         use crate::element::{
             ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
         };
@@ -474,10 +479,13 @@ mod suite {
             .orders
             .push_back(Order::test_new(OrderType::RunningStairs, goal.x, goal.y));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -516,42 +524,6 @@ mod suite {
             capture.split_calls[1].requested_delta.x.bits, 0,
             "running on stairs must still execute its second motion step after termination"
         );
-
-        let offset_point = start + crate::coordinates::MapVec::new(7.0, -3.0);
-        let line_a = start + crate::coordinates::MapVec::new(-2.0, 4.0);
-        let line_b = start + crate::coordinates::MapVec::new(6.0, 4.0);
-        let mut snapshot = crate::engine::anti_collision::ActorSnapshot {
-            id: owner,
-            active: true,
-            is_actor: true,
-            is_human: true,
-            is_ignored_for_anti_collision: false,
-            position_map: start,
-            layer: 0,
-            sector: None,
-            posture: Posture::Upright,
-            element_kind: ElementKind::ActorPc,
-            target_element: None,
-            is_swordfighting: false,
-            repulsive_point: None,
-            extra_repulsive_points: vec![crate::repulsive::RepulsivePoint::new(
-                offset_point,
-                4.0,
-                12.0,
-            )],
-            repulsive_lines: vec![crate::repulsive::RepulsiveLine::new(
-                line_a, line_b, 0.0, 5.0,
-            )],
-        };
-        sync_snapshot_after_committed_step(&mut snapshot, start, goal);
-        let committed = goal - start;
-        assert_eq!(
-            snapshot.extra_repulsive_points[0].position,
-            offset_point + committed,
-            "offset repulsive geometry must follow the snapped commit, not the raw overshoot"
-        );
-        assert_eq!(snapshot.repulsive_lines[0].a, line_a + committed);
-        assert_eq!(snapshot.repulsive_lines[0].b, line_b + committed);
     }
 
     fn run_running_stairs_outer_crossing_fixture(
@@ -562,6 +534,7 @@ mod suite {
         crate::movement_diagnostics::ParityMovementStep,
         crate::fast_find_grid::LineIndex,
     ) {
+        let mut assets = LevelAssets::new();
         use crate::element::{
             ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
         };
@@ -627,10 +600,13 @@ mod suite {
             goal.y + 20.0,
         ));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -671,7 +647,6 @@ mod suite {
             [710.0, 1400.0, 15.0],
             [690.0, 1450.0, 5.0],
         ];
-        let mut assets = LevelAssets::new();
         assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![ramp]);
         engine.world.static_sight_obstacle_active = vec![true];
 
@@ -907,6 +882,7 @@ mod suite {
 
     #[test]
     fn exact_goal_transition_clears_stale_running_forecast() {
+        let assets = LevelAssets::new();
         use crate::element::{
             ActionState, ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
         };
@@ -988,10 +964,13 @@ mod suite {
             .orders
             .push_back(Order::new(transition, position.x, position.y, order_id));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()

@@ -333,6 +333,17 @@ impl EngineInner {
         element_id: EntityId,
         det_type: DetectableType,
     ) {
+        if det_type == DetectableType::Body {
+            for index in 0..self.world.npc_registry_ids.len() {
+                let owner = self.world.npc_registry_ids[index];
+                self.execute_ai_add_detectable(owner, element_id, det_type);
+            }
+            self.expect_entity_mut(element_id, "body publication target")
+                .human_data_mut()
+                .expect("body publication requires a human")
+                .already_detectable_body = true;
+            return;
+        }
         let idx = det_type as usize;
         if idx >= DetectableType::COUNT {
             return;

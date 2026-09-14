@@ -438,57 +438,23 @@ impl NativeContext<'_, '_> {
                 0
             }
             SetAlwaysAttentive => {
-                // Set the AI's `forced_attentive` flag, launch
-                // an `EnterAttentiveMode` sequence on the
-                // false→true transition, and — on the true
-                // branch with frame>1 and the NPC's live view alert already
-                // on GREEN — bump the alert to YELLOW. The music channel can
-                // already be Yellow after an ALERT_ONLY_MUSIC update.
-                let val = stack.pop_i32();
+                let target = stack.pop_i32() != 0;
                 let actor = stack.pop_i32();
-                let target = val != 0;
-                let mut launch_enter = false;
-                let frame = self.frame_counter();
-                match self.get_entity_mut(actor) {
-                    None => {
-                        script_error!(native, "on invalid actor {actor}");
-                    }
-                    Some(entity) => match entity.enemy_ai_mut() {
-                        None => {
-                            script_error!(native, "on non-soldier actor {actor}");
-                        }
-                        Some(enemy) => {
-                            enemy.forced_attentive = target;
-                            if target && !enemy.will_be_attentive {
-                                enemy.will_be_attentive = true;
-                                launch_enter = true;
-                            }
-                            if target
-                                && frame > 1
-                                && enemy.base.view_alert_status == AlertLevel::Green
-                            {
-                                // Route through the soldier wrapper so view
-                                // tracks the override; SetAlwaysAttentive
-                                // already updated `forced_attentive` above.
-                                enemy.set_alert_status(AlertLevel::Yellow);
-                            }
-                        }
+                let Some(entity) = self.get_entity(actor) else {
+                    script_error!(native, "on invalid actor {actor}");
+                    return 0;
+                };
+                if !entity.is_soldier() {
+                    script_error!(native, "on non-soldier actor {actor}");
+                    return 0;
+                }
+                self.yield_engine_action(
+                    crate::interp::SynchronousScriptRequest::ForceAiAttentive {
+                        actor,
+                        target,
+                        native_return: 0,
                     },
-                }
-                if launch_enter {
-                    let target_id = self.actor_id(actor).unwrap_or_else(|| {
-                        panic!(
-                            "SetAlwaysAttentive resolved enemy soldier {actor} without an actor entity ID"
-                        )
-                    });
-                    let mut seq = Sequence::new();
-                    seq.append_element(SequenceElement::new(
-                        1,
-                        Command::EnterAttentiveMode,
-                        Some(target_id),
-                    ));
-                    self.launch_script_sequence(seq, 0);
-                }
+                );
                 0
             }
             SetInvisible => {
@@ -525,10 +491,9 @@ impl NativeContext<'_, '_> {
                 // engine-side state. Validation (existing PC)
                 // and the actual `actor_make_crouched`
                 // call happen in the engine-side handler.
-                self.script_effects_mut()
-                    .emit_engine(EngineCommand::ScriptMakePCCrouched {
-                        actor_handle: actor,
-                    });
+                self.yield_engine_command(EngineCommand::ScriptMakePCCrouched {
+                    actor_handle: actor,
+                });
                 0
             }
             GetActorActionState => {

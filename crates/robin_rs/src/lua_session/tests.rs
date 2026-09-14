@@ -1,6 +1,6 @@
 use super::*;
 use crate::main_entry::PendingLuaMission;
-use robin_engine::natives::{ScriptEffects, ScriptState};
+use robin_engine::natives::ScriptState;
 use robin_engine::spellforge::{SPELLFORGE_CONTRACT_VERSION, SpellforgeScriptMode};
 use robin_lua::{MissionLuaState, register_natives};
 use robin_spellforge::{compute_package_sha256, spellforge_vm_abi};
@@ -216,13 +216,12 @@ fn event_returns_are_checked_table_driven() {
         function BadReturn() return {} end
         "#,
     );
-    let mut host = ScriptEffects::new();
     let mut entities = robin_engine::entities::Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let simulation = robin_engine::sim_rng::SimulationContext::with_seed(1);
     let mut native_globals = Vec::new();
-    let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
+    let mut capabilities = robin_engine::natives::NativeSessionCapabilities::new(
         &simulation,
         &mut entities,
         &mut ai_global,
@@ -242,10 +241,9 @@ fn event_returns_are_checked_table_driven() {
         assert_eq!(
             session
                 .run_event(
-                    &mut host,
                     &mut script_state,
                     &mut script_domains,
-                    &capabilities,
+                    &mut capabilities,
                     event,
                     &[],
                 )
@@ -256,10 +254,9 @@ fn event_returns_are_checked_table_driven() {
 
     assert!(matches!(
         session.run_event(
-            &mut host,
                     &mut script_state,
                     &mut script_domains,
-                    &capabilities,
+                    &mut capabilities,
             "BadReturn",
             &[],
         ),
@@ -268,10 +265,9 @@ fn event_returns_are_checked_table_driven() {
     #[cfg(target_pointer_width = "64")]
     assert!(matches!(
         session.run_event(
-            &mut host,
             &mut script_state,
             &mut script_domains,
-            &capabilities,
+            &mut capabilities,
             "WideIntegerReturn",
             &[],
         ),
@@ -291,13 +287,12 @@ fn event_lua_errors_are_not_replaced_with_zero() {
         end
         "#,
     );
-    let mut host = ScriptEffects::new();
     let mut entities = robin_engine::entities::Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let simulation = robin_engine::sim_rng::SimulationContext::with_seed(1);
     let mut native_globals = Vec::new();
-    let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
+    let mut capabilities = robin_engine::natives::NativeSessionCapabilities::new(
         &simulation,
         &mut entities,
         &mut ai_global,
@@ -309,10 +304,9 @@ fn event_lua_errors_are_not_replaced_with_zero() {
 
     let err = session
         .run_event(
-            &mut host,
             &mut script_state,
             &mut script_domains,
-            &capabilities,
+            &mut capabilities,
             "Fails",
             &[],
         )
@@ -334,7 +328,6 @@ fn required_startup_event_error_aborts_the_startup_pair() {
         end
         "#,
     );
-    let mut host = ScriptEffects::new();
     let mut entities = robin_engine::entities::Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -344,7 +337,7 @@ fn required_startup_event_error_aborts_the_startup_pair() {
 
     let err = robin_engine::sim_rng::with_seed(7, |sim| {
         let mut native_globals = Vec::new();
-        let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
+        let mut capabilities = robin_engine::natives::NativeSessionCapabilities::new(
             sim,
             &mut entities,
             &mut ai_global,
@@ -354,11 +347,10 @@ fn required_startup_event_error_aborts_the_startup_pair() {
         session
             .run_required_startup_events(
                 Some((
-                    &mut host,
                     &mut script_state,
                     &mut script_domains,
                     &bindings,
-                    &capabilities,
+                    &mut capabilities,
                 )),
                 123,
             )
@@ -385,11 +377,11 @@ fn required_startup_event_error_aborts_the_startup_pair() {
 }
 
 #[test]
-fn required_startup_rejects_a_missing_script_effects() {
+fn required_startup_rejects_a_missing_native_session() {
     let session = session_with_script("function Initialize() end");
     assert!(matches!(
         session.run_required_startup_events(None, 0),
-        Err(LegacyStartupError::MissingScriptEffects {
+        Err(LegacyStartupError::MissingNativeSession {
             event: "Initialize",
             ..
         })
@@ -447,7 +439,7 @@ fn engine_lua_startup_mutates_the_canonical_campaign_owner() {
         robin_engine::engine::SimConfig::default(),
     )
     .expect("construct engine with the minimal mission script");
-    engine.test_with_mission_script_effects_and_rng(&assets, |_simulation, native_parts| {
+    engine.test_with_mission_script_and_rng(&assets, |_simulation, native_parts| {
         session
             .run_required_startup_events(native_parts, 0)
             .expect("Lua startup campaign native succeeds")
@@ -518,7 +510,7 @@ fn engine_lua_startup_borrows_the_scoped_canonical_ai_global() {
         robin_engine::engine::SimConfig::default(),
     )
     .expect("construct engine with the minimal mission script");
-    engine.test_with_mission_script_effects_and_rng(&assets, |_simulation, native_parts| {
+    engine.test_with_mission_script_and_rng(&assets, |_simulation, native_parts| {
         session
             .run_required_startup_events(native_parts, 0)
             .expect("Lua startup AI natives succeed")
@@ -537,7 +529,6 @@ fn startup_random_draw_uses_the_attached_authoritative_context() {
         end
         "#,
     );
-    let mut host = ScriptEffects::new();
     let mut entities = robin_engine::entities::Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -546,7 +537,7 @@ fn startup_random_draw_uses_the_attached_authoritative_context() {
     let bindings = robin_engine::natives::AttachedScriptBindings::default();
     robin_engine::sim_rng::with_seed(0x5eed, |sim| {
         let mut native_globals = Vec::new();
-        let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
+        let mut capabilities = robin_engine::natives::NativeSessionCapabilities::new(
             sim,
             &mut entities,
             &mut ai_global,
@@ -556,11 +547,10 @@ fn startup_random_draw_uses_the_attached_authoritative_context() {
         session
             .run_required_startup_events(
                 Some((
-                    &mut host,
                     &mut script_state,
                     &mut script_domains,
                     &bindings,
-                    &capabilities,
+                    &mut capabilities,
                 )),
                 0,
             )

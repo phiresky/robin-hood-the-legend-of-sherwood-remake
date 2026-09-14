@@ -242,8 +242,7 @@ fn feedback_capture_preserves_camera_but_resets_host_output_without_a_codec() {
         .pending_minimap_position = Some(crate::coordinates::ScreenPoint::new(56.0, 78.0));
     engine.feedback.pending_side_effects.invalidate_background = true;
     let camera = bitcode::encode(&engine.feedback.cutscene_camera);
-    let restored =
-        super::super::state::PersistedFeedbackRuntime::capture(&engine.feedback).into_runtime();
+    let restored = engine.feedback.persisted_clone();
     assert_eq!(camera, bitcode::encode(&restored.cutscene_camera));
     assert!(
         restored

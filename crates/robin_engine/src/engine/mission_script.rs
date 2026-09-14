@@ -10,18 +10,26 @@ use super::*;
 /// inheritance explicit and prevents callback state from leaking into saves.
 #[derive(Clone, Debug, Default)]
 struct ScriptCallStack {
-    frames: Vec<crate::natives::ScriptCallFrame>,
+    frames: Vec<(crate::natives::ScriptCallFrame, bool)>,
 }
 
 impl ScriptCallStack {
-    fn push(&mut self, frame: crate::natives::ScriptCallFrame) {
-        self.frames.push(frame);
+    fn push(&mut self, frame: crate::natives::ScriptCallFrame, vm_activation: bool) {
+        self.frames.push((frame, vm_activation));
     }
 
     fn pop(&mut self) -> crate::natives::ScriptCallFrame {
         self.frames
             .pop()
             .expect("script call-frame stack underflow")
+            .0
+    }
+
+    fn vm_depth(&self) -> usize {
+        self.frames
+            .iter()
+            .filter(|(_, vm_activation)| *vm_activation)
+            .count()
     }
 
     #[cfg(test)]
@@ -62,8 +70,7 @@ pub struct MissionScript {
     /// [`LevelAssets`] after snapshot deserialization.
     pub script_name: String,
     pub(in crate::engine) manager: ScriptManager,
-    /// Persistent state belonging to the script subsystem. This is separate
-    /// from the ordered output effects emitted by native calls.
+    /// Persistent state belonging to the script subsystem.
     pub state: ScriptState,
     /// Immutable level-native capabilities. Snapshot decode intentionally
     /// leaves this detached; the engine's snapshot adoption/restore boundary
@@ -72,11 +79,6 @@ pub struct MissionScript {
     #[serde(skip)]
     #[bitcode(skip)]
     pub(crate) bindings: crate::natives::AttachedScriptBindings,
-    /// Concrete script-native state. VMs borrow this through their
-    /// transient trait-object host field only while a script call is
-    /// executing, so snapshots keep the real state instead of losing it
-    /// behind `Vm::host`'s serde skip.
-    pub script_effects: ScriptEffects,
     /// Active callback receivers. This is runtime control state, excluded from
     /// serialization and hashing; snapshots are rejected while it is nonempty
     /// (serde: `MissionScript::check_snapshot_safe`; bitcode: the empty
@@ -88,9 +90,7 @@ pub struct MissionScript {
     /// Per-actor script instances, keyed by actor script handle.
     ///
     /// Each actor with a `script_class` gets a persistent `ScriptInstance`
-    /// whose heap survives across calls. The effect buffer is NOT stored
-    /// on these — it lives on the global `instance` and is transferred
-    /// in/out for each per-actor call.
+    /// whose heap survives across calls.
     pub(in crate::engine) actor_instances: BTreeMap<i32, ScriptInstance>,
     /// Per-zone script instances, keyed by zone index (0-based index into
     /// `EngineInner::script_zone_grid_indices`).
@@ -188,33 +188,26 @@ impl MissionScript {
 
     /// In-memory equivalent of a save round trip, without running a codec.
     ///
-    /// This exhaustive destructure is the single persistence decision point:
-    /// `_` fields survive a save verbatim, bound fields are process-local and
-    /// reset to what deserialization reconstructs.
+    /// Copy persistent owners directly; process attachments are reconstructed
+    /// on restore and never copied into the snapshot.
     pub(crate) fn persisted_clone(&self) -> Result<Self, String> {
         self.check_snapshot_safe()?;
-        let mut clone = self.clone();
-        let Self {
-            script_name: _,
-            manager,
-            state: _,
-            bindings,
-            script_effects: _,
-            call_stack,
-            instance: _,
-            actor_instances: _,
-            zone_instances: _,
-            target_instances: _,
-            scroll_instances: _,
-            waypoint_instances: _,
-            spellforge_virtual_instances: _,
-            spellforge_virtual_bindings_enabled: _,
-        } = &mut clone;
-        // Only the static area is saved; bytecode reattaches from LevelAssets.
-        *manager = crate::script_manager::ScriptManagerSnapshot::capture(manager).into_runtime();
-        *bindings = crate::natives::AttachedScriptBindings::default();
-        *call_stack = ScriptCallStack::default();
-        Ok(clone)
+        Ok(Self {
+            script_name: self.script_name.clone(),
+            // Only the static area is saved; bytecode reattaches from LevelAssets.
+            manager: self.manager.persisted_clone(),
+            state: self.state.clone(),
+            bindings: crate::natives::AttachedScriptBindings::default(),
+            call_stack: ScriptCallStack::default(),
+            instance: self.instance.clone(),
+            actor_instances: self.actor_instances.clone(),
+            zone_instances: self.zone_instances.clone(),
+            target_instances: self.target_instances.clone(),
+            scroll_instances: self.scroll_instances.clone(),
+            waypoint_instances: self.waypoint_instances.clone(),
+            spellforge_virtual_instances: self.spellforge_virtual_instances.clone(),
+            spellforge_virtual_bindings_enabled: self.spellforge_virtual_bindings_enabled,
+        })
     }
 }
 
@@ -377,7 +370,7 @@ impl MissionScript {
         frame: crate::natives::ScriptCallFrame,
         activation: &mut crate::interp::VmActivationState,
         script_domains: &mut crate::engine::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
+        capabilities: &mut crate::natives::NativeSessionCapabilities<'_>,
     ) -> crate::interp::StopReason {
         let class_idx = self
             .script_instance(key)
@@ -393,7 +386,6 @@ impl MissionScript {
             manager,
             state,
             bindings,
-            script_effects,
             instance,
             actor_instances,
             zone_instances,
@@ -420,14 +412,8 @@ impl MissionScript {
                 .get_mut(&(path, waypoint))
                 .expect("waypoint script VM vanished while suspended"),
         };
-        let mut context = NativeContext::with_call_frame(
-            script_effects,
-            state,
-            script_domains,
-            bindings,
-            capabilities,
-            frame,
-        );
+        let mut context =
+            NativeContext::with_call_frame(state, script_domains, bindings, capabilities, frame);
         context.script_vm_diagnostic = Some(diagnostic);
         instance.poll_activation_with_host(manager, activation, 10_000_000, fn_name, &mut context)
     }
@@ -457,7 +443,6 @@ impl MissionScript {
             manager,
             state: ScriptState::default(),
             bindings: crate::natives::AttachedScriptBindings::default(),
-            script_effects: ScriptEffects::new(),
             call_stack: ScriptCallStack::default(),
             instance,
             actor_instances: BTreeMap::new(),
@@ -599,8 +584,16 @@ impl MissionScript {
     pub(in crate::engine) fn push_active_driver_frame(
         &mut self,
         frame: crate::natives::ScriptCallFrame,
+        vm_activation: bool,
     ) {
-        self.call_stack.push(frame);
+        self.call_stack.push(frame, vm_activation);
+    }
+
+    /// Count VM activations across every synchronous callback entry, including
+    /// callbacks whose local native-driver stack starts empty. External-native
+    /// receiver guards protect context but do not consume a recursion slot.
+    pub(in crate::engine) fn active_vm_depth(&self) -> usize {
+        self.call_stack.vm_depth()
     }
 
     pub(in crate::engine) fn pop_active_driver_frame(
@@ -720,18 +713,6 @@ impl MissionScript {
         };
         let inst = self.manager.create_instance_idx(class_idx);
         self.waypoint_instances.insert((path_idx, wp_idx), inst);
-    }
-
-    /// Get a mutable reference to the ordered script effects.
-    ///
-    /// Exposed to the host crate so custom-mission Lua scripts can
-    /// reach engine state through `MissionLuaState::with_host`
-    /// (see `robin_rs::lua_session`). Modifying the host through
-    /// this handle outside of a script event is fine for queued commands (the
-    /// engine drains them next tick). Canonical entities, AI, and grid state
-    /// are deliberately unavailable through this adapter.
-    pub fn script_effects_mut(&mut self) -> &mut ScriptEffects {
-        &mut self.script_effects
     }
 }
 

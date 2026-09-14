@@ -19,15 +19,12 @@ mod map_vec_ext;
 mod parity_trace;
 mod seek;
 pub(crate) use seek::SeekAreaSpec;
-mod substate_handlers;
 mod util;
 
 pub use util::*;
 
 use crate::ai::*;
 use crate::entity_id::PcId;
-#[cfg(test)]
-use crate::parameters_ai;
 
 /// Master switch for the opt-in AI decision/path diagnostic used by the
 /// Save020/Save055 substate-only parity cohort. Keep this check separate so
@@ -82,8 +79,6 @@ fn primary_swap_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<
 pub(crate) fn primary_swap_debug_matches(frame: u32, owner: HumanHandle) -> bool {
     primary_swap_debug_gate().matches_required([Some(frame), Some(owner)])
 }
-#[cfg(test)]
-use crate::position_interface::ASPECT_RATIO;
 
 // ---------------------------------------------------------------------------
 // EnemyAi — extends AiController with soldier-specific state
@@ -117,23 +112,6 @@ pub struct EnemyAi {
     /// manager no longer has an active sword-strike element for this
     /// actor (covers both natural completion and interruption).
     pub pending_special_strike: bool,
-
-    /// One-shot handoff from swordfight reconsideration to the engine-side
-    /// strike proposer. The original game only proposes a good sword strike
-    /// when that event-driven reconsideration reaches its decision tail;
-    /// merely entering the swordfight substate must not authorize a draw.
-    #[serde(default)]
-    pub pending_sword_strike_consideration: bool,
-
-    /// AI decisions reached the combat-insult step after swordfight reconsideration,
-    /// but the engine-side strike proposer has not yet settled the one-shot
-    /// consideration. Original proposes inline: a successful proposal
-    /// changes to `...SPECIAL_STRIKE` and suppresses the insult, while a
-    /// rejected proposal leaves `...SWORDFIGHT` and says it. The Rust port
-    /// settles this latch immediately after `Think`, at the same owner
-    /// boundary as `pending_sword_strike_consideration`.
-    #[serde(default)]
-    pub pending_combat_insult_after_strike_consideration: bool,
 
     // -- Private fields --
     #[serde(default, with = "crate::ai::optional_ai_handle")]
@@ -265,10 +243,6 @@ pub struct EnemyAi {
 
     pub last_stimulus_dispatched_to_patrol: Option<Stimulus>,
 
-    // -- Protected fields --
-    /// Character ID cached from the soldier profile at level load.
-    pub character_id: u32,
-
     pub old_life_points: u8,
     pub initial_life_points: u8,
 
@@ -281,50 +255,8 @@ pub struct EnemyAi {
     pub forced_next_battle_decision: Decision,
     pub reset_battle_decision: bool,
 
-    // Cached scalars from `SoldierProfile` — denormalised at level
-    // load so AI ticks never touch the profile table during mutable
-    // entity iteration.  If you add a new field here, populate it
-    // from `engine::level_loading::init_enemy_ai_from_profile`.
-    pub soldier_profile_iq: u16,
-    pub soldier_profile_courage: u16,
-    /// Cached shooting skill — used by
-    /// [`Self::get_shooting_ability`] (the `AIMING_TIME_FORMULA`
-    /// driver).  Pulled from the soldier profile at level load.
-    pub soldier_profile_shooting: u16,
-    /// Cached VIP flag from soldier profile — VIP soldiers can only attack Robin.
-    pub soldier_profile_vip: bool,
-    pub soldier_profile_bee_time: u16,
-    /// Cached pride value from soldier profile — determines whether
-    /// this NPC considers themselves "too proud to attack" when
-    /// soldiers with lower pride are nearby.
-    pub soldier_profile_pride: u16,
-    /// Cached hearing factor from soldier profile — multiplier for
-    /// noise volume when checking acoustic detection.
-    pub soldier_profile_hearing_factor: f32,
-    pub soldier_profile_rank: ProfileRank,
-    /// Cached initiative — used by
-    /// `Q_SHALL_I_SEEK_BEFORE_ALERTING_*` and `Q_SHALL_I_SEND_OUT_SOLDIER`.
-    pub soldier_profile_initiative: u16,
-    /// Cached beer count — used by `Q_SHALL_I_TAKE_ALE`.
-    pub soldier_profile_beer: u16,
-    /// Cached eligibility for the optional zero-beer reliability rule. This
-    /// is true only for a non-VIP soldier while the authoritative setting is
-    /// enabled, so live menu commands affect spawned AI on the same frame.
-    #[serde(default)]
-    pub ale_reliable_distraction: bool,
-    /// Cached money count — used by `Q_SHALL_I_TAKE_MONEY`
-    /// and `Q_SHALL_I_FIGHT_FOR_MONEY`.
-    pub soldier_profile_money: u16,
-    /// Cached apple count — used by `Q_SHALL_I_REACT_ON_APPLE`.
-    pub soldier_profile_apple: u16,
-    /// Cached whistle count — used by `Q_SHALL_I_LOOK_WHISTLE`
-    /// and `Q_SHALL_I_FOLLOW_WHISTLE`.
-    pub soldier_profile_whistle: u16,
-    /// Cached duty flag — used by several questions to prevent on-duty
-    /// soldiers from wandering after stimuli.
-    pub soldier_profile_duty: bool,
-    /// Cached endurance — used by `Q_SHALL_I_RUN`.
-    pub soldier_profile_endurance: u16,
+    /// Immutable decision personality, independent of the physical actor profile.
+    pub behavior_profile: crate::profiles::SoldierProfileIdx,
     /// Whether this soldier is a VIP (mission-critical NPC). Cached
     /// from the soldier profile at level load.
     pub is_vip: bool,
@@ -374,11 +306,6 @@ impl AiRole for EnemyAi {
     fn base_mut(&mut self) -> &mut AiController {
         &mut self.base
     }
-
-    /// Soldier alert setter: threads the forced-attentive view override.
-    fn role_set_alert_status(&mut self, level: AlertLevel) {
-        EnemyAi::set_alert_status(self, level);
-    }
 }
 
 impl EnemyAi {
@@ -404,39 +331,9 @@ impl EnemyAi {
             thirsty: true,
             previous_state: crate::ai::StoredEnumWord::new(AiState::Default),
             previous_substate: crate::ai::StoredEnumWord::new(Substate::DefaultOnPost),
-            soldier_profile_iq: 50,
-            soldier_profile_courage: 50,
-            soldier_profile_shooting: 50,
             sword_range: 40, // default before profile lookup
-            soldier_profile_hearing_factor: 1.0,
-            soldier_profile_initiative: 50,
             ..Default::default()
         }
-    }
-
-    /// Soldier-side wrapper for `AiController::set_alert_status_with_flags`.
-    ///
-    /// Threads `self.forced_attentive` into the view-override
-    /// (Green music ⇒ Yellow view for forced-attentive soldiers).  Use
-    /// this in place of `self.base.set_alert_status(level)` from any
-    /// soldier-side path so the view field stays correct.
-    pub fn set_alert_status(&mut self, level: crate::ai::AlertLevel) {
-        self.base.set_alert_status_with_flags(
-            level,
-            crate::ai::AlertFlags::empty(),
-            self.forced_attentive,
-        );
-    }
-
-    /// Soldier-side flag-aware setter — same as `set_alert_status` but
-    /// honours `ALERT_INSTANT_MUSIC_CHANGE` / `ALERT_ONLY_MUSIC`.
-    pub fn set_alert_status_with_flags(
-        &mut self,
-        level: crate::ai::AlertLevel,
-        flags: crate::ai::AlertFlags,
-    ) {
-        self.base
-            .set_alert_status_with_flags(level, flags, self.forced_attentive);
     }
 
     // -----------------------------------------------------------------------
@@ -445,6 +342,7 @@ impl EnemyAi {
 
     pub(crate) fn iq_for_difficulty(
         &self,
+        profiles: &crate::profiles::ProfileManager,
         difficulty: crate::player_profile::DifficultyLevel,
         hostile_to_player: bool,
     ) -> u16 {
@@ -452,17 +350,33 @@ impl EnemyAi {
         // is Lacklandists; Royalist soldiers (also EnemyAi-driven)
         // get the raw intelligence.
         if !hostile_to_player {
-            return self.soldier_profile_iq;
+            return self.profile(profiles).intelligence;
         }
-        difficulty.rules().enemy_iq(self.soldier_profile_iq, 100)
+        difficulty
+            .rules()
+            .enemy_iq(self.profile(profiles).intelligence, 100)
     }
 
-    pub fn get_courage(&self) -> u16 {
-        self.soldier_profile_courage
+    pub fn profile<'a>(
+        &self,
+        profiles: &'a crate::profiles::ProfileManager,
+    ) -> &'a crate::profiles::SoldierProfile {
+        profiles
+            .get_soldier(self.behavior_profile)
+            .unwrap_or_else(|| {
+                panic!(
+                    "enemy AI {} requires behavior profile {:?}",
+                    self.base.me, self.behavior_profile
+                )
+            })
     }
 
-    pub fn get_rank(&self) -> ProfileRank {
-        self.soldier_profile_rank
+    pub fn get_courage(&self, profiles: &crate::profiles::ProfileManager) -> u16 {
+        self.profile(profiles).courage
+    }
+
+    pub fn get_rank(&self, profiles: &crate::profiles::ProfileManager) -> ProfileRank {
+        self.profile(profiles).rank
     }
 
     pub fn is_archer(&self) -> bool {
@@ -478,48 +392,12 @@ impl EnemyAi {
         self.known_enemy_strike_2 = None;
         self.known_enemy_strike_3 = None;
     }
-
-    /// Kick off a directed panic — the NPC flees away from `center`.
-    ///
-    /// Resume door selection against live state after releasing this borrow.
-    pub(crate) fn panic_from_position(&mut self, center: Position, runs: u8) {
-        let was_already_fleeing = matches!(
-            self.base.current_substate,
-            Substate::FleeingPanic | Substate::FleeingRunToDoor
-        );
-        self.base.panic_center_x = center.x;
-        self.base.panic_center_y = center.y;
-        self.base.directed_panic = true;
-        self.base.outbox.actor.begin_panic = Some(crate::ai::PanicRequest {
-            center: Some(center),
-            runs,
-            alert: crate::ai::AlertLevel::Red,
-            is_new_panic: !was_already_fleeing,
-        });
-    }
 }
 
 impl EnemyAi {
     // -----------------------------------------------------------------------
     // State management
     // -----------------------------------------------------------------------
-
-    /// Assign the soldier's guarded PC *and* synchronise the
-    /// reciprocal `guard` pointer on both the old and new PC.  The
-    /// AI can't touch the PC entity directly, so the PC-side flip is
-    /// queued in the ordered actor outbox for the engine drain.
-    ///
-    pub fn set_guarded_pc(&mut self, new_pc: Option<PcId>) {
-        let old_pc = self.guarded_pc;
-        if old_pc == new_pc {
-            return;
-        }
-        self.guarded_pc = new_pc;
-        self.base.outbox.actor.set_guarded_pc = Some(GuardedPcEffect {
-            old: old_pc,
-            new: new_pc,
-        });
-    }
 
     pub(crate) fn update_new_task_priority(&mut self, stimulus: &Stimulus) {
         match stimulus.stimulus_type {

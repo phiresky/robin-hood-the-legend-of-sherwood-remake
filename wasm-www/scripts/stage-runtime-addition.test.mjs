@@ -3,7 +3,18 @@ import test from 'node:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { stageRuntimeAddition, validateContentIdentity } from './stage-runtime-addition.mjs';
+import { runtimeBuildPlan } from './build-runtime.mjs';
+import { RUNTIME_ADDITION_BUILD, stageRuntimeAddition, validateContentIdentity } from './stage-runtime-addition.mjs';
+
+test('production runtime additions are the threaded game build', () => {
+    assert.equal(RUNTIME_ADDITION_BUILD.threads, true);
+    assert.equal(RUNTIME_ADDITION_BUILD.requireIdentity, true);
+    const plan = runtimeBuildPlan({ outDir: '/tmp/addition', ...RUNTIME_ADDITION_BUILD });
+    assert(plan.cargo.includes('scripts/wasm-threads.cargo-config.toml'));
+    assert(plan.cargo.includes('audio,wasm-threads'));
+    assert(plan.cargo.includes('robin'));
+    assert.equal(plan.optimize, null);
+});
 
 test('staging rejects invalid identity and size before creating an artifact', () => {
     const valid = { demoSha: 'a'.repeat(64), nativeDemoSha: 'b'.repeat(64), demoBytes: '26214400' };

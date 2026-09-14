@@ -95,10 +95,13 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
     let order_id = order.order_id;
     shot_element.orders.push_back(order);
     let shot_sequence = engine.orders.sequence_manager.launch_element(shot_element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(shot_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        shot_sequence,
+        0,
+    );
     {
         let shooter = engine
             .get_entity_mut(shooter_id)
@@ -722,10 +725,13 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
     let order_id = order.order_id;
     selected.orders.push_back(order);
     let selected_seq = engine.orders.sequence_manager.launch_element(selected);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(selected_seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        selected_seq,
+        0,
+    );
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -741,7 +747,7 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
     };
 
     assert!(engine.selected_bow_order(owner).is_none());
-    let (_, _, executed) = engine.tick_actor_animation_for(
+    let executed = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
@@ -829,10 +835,13 @@ fn bound_bow_transition_advances_through_production_owner_coordinator() {
     let order_id = order.order_id;
     element.orders.push_back(order);
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     let actor = engine
         .get_entity_mut(owner)
         .unwrap()
@@ -894,10 +903,13 @@ fn unbound_bow_transition_still_uses_generic_execute() {
         .orders
         .push_back(Order::test_new(OrderType::TransitionEquipBow, 0.0, 0.0));
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
 
@@ -935,10 +947,13 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
         .orders
         .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     let actor = engine
         .get_entity_mut(owner)
         .unwrap()
@@ -1010,7 +1025,7 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
         OrderType::WaitingUpright
     );
 
-    let (_, _, next_execute) = engine.tick_actor_animation_for(&sim_context, &assets, owner);
+    let next_execute = engine.tick_actor_animation_for(&sim_context, &assets, owner);
     assert_eq!(
         next_execute.unwrap().order_type,
         OrderType::WaitingUpright,
@@ -1036,10 +1051,13 @@ fn execution_frozen_selected_bow_does_not_advance_or_fire() {
     let order_id = order.order_id;
     element.orders.push_back(order);
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     let actor = engine
         .get_entity_mut(shooter)
         .unwrap()
@@ -1161,10 +1179,13 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
         ),
         crate::abilities::BeginResult::Started
     );
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     for _ in 0..10 {
         let mut display = CameraDisplayState::default();
@@ -1197,7 +1218,11 @@ fn selected_listen_done_does_not_clear_newer_bow_action() {
     engine.players.seats[0].selection.push(owner);
     engine.players.seats[0].selected_action = crate::profiles::Action::Bow;
 
-    engine.apply_listen_done_action_handoff(owner);
+    engine.apply_listen_done_action_handoff(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+    );
 
     assert_eq!(
         engine

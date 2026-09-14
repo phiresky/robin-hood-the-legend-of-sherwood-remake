@@ -171,11 +171,18 @@ fn standalone_option_rect(
     (x, y, field_w, field_h)
 }
 
+fn option_editable(index: usize, sherwood_trading_editable: bool, host_authority: bool) -> bool {
+    let setting = GameplaySetting::ALL[index];
+    (setting != GameplaySetting::SherwoodTrading || sherwood_trading_editable)
+        && (host_authority || !setting.requires_host_authority())
+}
+
 fn build_standalone_frame(
     application_context: &crate::host::ApplicationContext,
     resources: &IngameMenuResources,
     page: usize,
     sherwood_trading_editable: bool,
+    host_authority: bool,
 ) -> FrameWnd {
     let localized = LocalizedGameplayText::from_application_context(application_context);
     let (btn_w, btn_h) = resources.button_dimensions();
@@ -193,8 +200,7 @@ fn build_standalone_frame(
     for (visible_index, option_index) in visible.enumerate() {
         let (x, y, field_w, field_h) =
             standalone_option_rect(visible_index, visible_count, field_w, field_h);
-        let enabled =
-            option_index != GameplaySetting::SherwoodTrading.index() || sherwood_trading_editable;
+        let enabled = option_editable(option_index, sherwood_trading_editable, host_authority);
         let label = fit_button_label(
             resources,
             localized.option_label(option_index),
@@ -306,6 +312,7 @@ pub struct GameplayScreenState {
     tooltip: TooltipState,
     sherwood_trading_editable: bool,
     content_requested: bool,
+    host_authority: bool,
 }
 
 impl GameplayScreenState {
@@ -323,6 +330,7 @@ impl GameplayScreenState {
             io.resources,
             page,
             sherwood_trading_editable,
+            true,
         );
 
         let input_state = ModalInputState::for_screen(io.window, io.renderer);
@@ -337,6 +345,7 @@ impl GameplayScreenState {
             tooltip: TooltipState::new(),
             sherwood_trading_editable,
             content_requested: false,
+            host_authority: true,
         }
     }
 
@@ -350,14 +359,26 @@ impl GameplayScreenState {
             resources,
             self.page,
             self.sherwood_trading_editable,
+            self.host_authority,
         );
     }
 
-    fn take_content_request(&mut self) -> bool {
+    pub(crate) fn with_host_authority(
+        mut self,
+        host_authority: bool,
+        application_context: &crate::host::ApplicationContext,
+        resources: &IngameMenuResources,
+    ) -> Self {
+        self.host_authority = host_authority;
+        self.rebuild_page(application_context, resources);
+        self
+    }
+
+    pub(crate) fn take_content_request(&mut self) -> bool {
         std::mem::take(&mut self.content_requested)
     }
 
-    fn resume_after_content(&mut self, io: &ModalScreenIo<'_, '_>) {
+    pub(crate) fn resume_after_content(&mut self, io: &ModalScreenIo<'_, '_>) {
         self.input_state
             .seed_mouse_from_window(io.window, MenuTransform::for_renderer(io.renderer));
     }
@@ -403,9 +424,7 @@ impl GameplayScreenState {
                     .contains(&id) =>
                 {
                     let index = (id - ID_OPT_BASE) as usize;
-                    if index != GameplaySetting::SherwoodTrading.index()
-                        || self.sherwood_trading_editable
-                    {
+                    if option_editable(index, self.sherwood_trading_editable, self.host_authority) {
                         apply_option_toggle(&mut self.working, index);
                     }
                 }
@@ -714,6 +733,35 @@ mod tests {
         "en-US", "de-DE", "und", "fr-FR", "it-IT", "pt-PT", "es-ES", "ru-RU", "ja-JP", "cs-CZ",
         "pl-PL", "pt-BR", "zh-TW", "ko-KR", "zh-CN", "th-TH",
     ];
+
+    #[test]
+    fn host_authority_and_sherwood_editability_are_independent() {
+        for host_authority in [false, true] {
+            for sherwood_editable in [false, true] {
+                assert_eq!(
+                    option_editable(
+                        GameplaySetting::SherwoodTrading.index(),
+                        sherwood_editable,
+                        host_authority
+                    ),
+                    host_authority && sherwood_editable,
+                );
+                assert_eq!(
+                    option_editable(
+                        GameplaySetting::FixHardReactionTimes.index(),
+                        sherwood_editable,
+                        host_authority
+                    ),
+                    host_authority,
+                );
+                assert!(option_editable(
+                    GameplaySetting::PlanQuickActions.index(),
+                    sherwood_editable,
+                    host_authority
+                ));
+            }
+        }
+    }
 
     #[test]
     fn every_setting_has_keyed_text_and_german_uses_the_catalogue() {

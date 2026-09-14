@@ -216,31 +216,6 @@ impl AiStateChangeSource {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum EnterSwordfightRequest {
-    RaiseSword,
-    Engage(AiEntityHandle),
-    /// Direct enter-swordfight action made by
-    /// swordfight reconsideration while rebalancing an existing melee.
-    Rebalance(AiEntityHandle),
-    /// Direct enter-swordfight action made by the
-    /// already-swordfighting `EVENT_GOTHIT` arm. This synchronously updates
-    /// the relationship and, when needed, authors the reciprocal command on
-    /// the attacker rather than on the AI receiving the event.
-    Direct(AiEntityHandle),
-}
-
 pub use crate::position_interface::SectorHandle;
 
 // NpcHandle is still a `u32` alias; convert it to an `EntityId` only at

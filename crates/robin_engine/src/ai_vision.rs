@@ -1861,7 +1861,6 @@ pub fn focus_point(npc: &mut AiActorData, point: GroundPoint) {
 pub fn unfocus(npc: &mut AiActorData) {
     npc.eye_status = EyeStatus::LookForward;
     npc.view_half_angle_range = NORMAL_HALF_ANGLE_RANGE;
-    npc.follow_target = None;
 }
 
 /// Common handler for `LookForward`, `LookToTheLeft`, `LookToTheRight`,
@@ -2994,8 +2993,7 @@ mod tests {
     fn officer_bored_random_event_sets_right_look() {
         // Only officers trigger the right-look during
         // WaitingUprightBoredRandom.  This is plumbed via
-        // `apply_npc_execute_side_effects` on the motion-start edge,
-        // which inspects `enemy_ai.soldier_profile_rank == Officer`.
+        // the motion-start edge, which reads the officer's behavior profile.
         // `refresh_view` itself no longer knows about rank — so here
         // we just confirm that once the look-right status has been
         // set (by the animation dispatcher), `refresh_view`
@@ -3214,7 +3212,10 @@ mod tests {
         unfocus(&mut npc);
         assert_eq!(npc.eye_status, EyeStatus::LookForward);
         assert_eq!(npc.view_half_angle_range, NORMAL_HALF_ANGLE_RANGE);
-        assert!(npc.follow_target.is_none());
+        assert_eq!(
+            npc.follow_target,
+            Some(EntityId::Pc(crate::entity_id::PcId(7)))
+        );
     }
 
     #[test]

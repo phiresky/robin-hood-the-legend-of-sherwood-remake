@@ -43,13 +43,7 @@ impl EngineInner {
                     } else {
                         LookDirection::LeftRight
                     };
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("wondering look"))
-                    .outbox
-                    .actor
-                    .look_sidewards = Some(direction);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.execute_ai_look_sidewards(owner, direction);
             }
             (WonderingLooking1Sidewards | WonderingLooking2Sidewards, EventDone) => {
                 let next = if substate == WonderingLooking1Sidewards {
@@ -282,7 +276,7 @@ impl EngineInner {
                     .entities
                     .expect_ai_controller_mut(owner, format_args!("brawl excuse completion"))
                     .set_emoticon(EmoticonType::None);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                 if let Some(target) = self
                     .world
                     .entities
@@ -349,7 +343,6 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         self.forget_ai_nearby_coins_live(owner);
     }
 

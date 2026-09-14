@@ -599,15 +599,12 @@ mod tests {
         // by native saves and rollback snapshots, not a second imported copy.
         engine.players.seats[0].selected_action = Action::Stone;
         engine.players.view_locked = false;
-        let players_json = serde_json::to_vec(
-            &crate::engine::state::PersistedPlayerRuntime::capture(&engine.players),
-        )
-        .unwrap();
-        let persisted: crate::engine::state::PersistedPlayerRuntime =
+        let players_json = serde_json::to_vec(&engine.players.persisted_clone()).unwrap();
+        let persisted: crate::engine::state::PlayerRuntime =
             serde_json::from_slice(&players_json).unwrap();
         let snapshot: crate::engine::state::PlayerRuntime =
             bitcode::decode(&bitcode::encode(&engine.players)).unwrap();
-        for restored in [persisted.into_runtime(), snapshot] {
+        for restored in [persisted, snapshot] {
             assert_eq!(restored.seats[0].selected_action, Action::Stone);
             assert!(!restored.view_locked);
             assert_eq!(

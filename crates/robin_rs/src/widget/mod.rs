@@ -32,8 +32,8 @@ pub use toggle::WidgetToggleButton;
 use serde::{Deserialize, Serialize};
 
 use crate::ui::{
-    MouseButtons, ProbeCode, RendererBase, RendererBitmap, RendererListbox, RendererShadow,
-    RendererText, ResourceId, UiEvent, UiEventData, UiMsg, UiProbe, UiState, resource_widget_id,
+    MouseButtons, ResourceId, UiEvent, UiEventData, UiMsg, UiState, WidgetAppearance,
+    resource_widget_id,
 };
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 
@@ -102,109 +102,6 @@ pub struct WidgetInput<'a> {
     pub capture: Option<&'a CaptureSlot>,
 }
 
-// ─── Renderer wrapper ───────────────────────────────────────────────
-
-/// Renderer variant attached to a widget.
-///
-/// Implemented as an enum to allow heterogeneous widget storage.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub enum WidgetRenderer {
-    #[default]
-    None,
-    Bitmap(RendererBitmap),
-    Shadow(RendererShadow),
-    Text(RendererText),
-    Listbox(RendererListbox),
-}
-
-impl WidgetRenderer {
-    /// Get a reference to the underlying [`RendererBase`].
-    pub fn base(&self) -> Option<&RendererBase> {
-        match self {
-            Self::None => None,
-            Self::Bitmap(r) => Some(&r.base),
-            Self::Shadow(r) => Some(&r.base),
-            Self::Text(r) => Some(&r.shadow.base),
-            Self::Listbox(r) => Some(&r.base),
-        }
-    }
-
-    /// Get a mutable reference to the underlying [`RendererBase`].
-    pub fn base_mut(&mut self) -> Option<&mut RendererBase> {
-        match self {
-            Self::None => None,
-            Self::Bitmap(r) => Some(&mut r.base),
-            Self::Shadow(r) => Some(&mut r.base),
-            Self::Text(r) => Some(&mut r.shadow.base),
-            Self::Listbox(r) => Some(&mut r.base),
-        }
-    }
-
-    /// Hit-test a point against the renderer's area.
-    ///
-    /// Routes through `RendererBase::is_real_point`, which performs a per-pixel
-    /// transparency test against the widget's surface (honouring an
-    /// attached `AlphaMask` if the wiring layer baked one from the
-    /// bound sprite — see `widget_bridge::attach_alpha_masks`).
-    pub fn is_real_point(&self, point: ScreenPoint) -> bool {
-        self.base().is_some_and(|b| b.is_real_point(point))
-    }
-
-    /// Set the bounding box on the underlying renderer.
-    pub fn set_position(&mut self, bbox: ScreenBBox) {
-        if let Some(b) = self.base_mut() {
-            b.set_position_bbox(bbox);
-        }
-    }
-
-    /// Set the resource ID on the underlying renderer.
-    pub fn set_resource(&mut self, id: ResourceId) {
-        if let Some(base) = self.base_mut() {
-            base.set_resource(id);
-        }
-    }
-
-    /// Set text on the underlying renderer.
-    pub fn set_text(&mut self, text: &str) {
-        if let Some(b) = self.base_mut() {
-            b.set_text(text);
-        }
-    }
-
-    /// Dismiss (release) the current resource.
-    pub fn dismiss_resource(&mut self) {
-        if let Some(b) = self.base_mut() {
-            b.dismiss_resource();
-        }
-    }
-
-    /// Render with the given sub-resource ID.
-    pub fn render(&mut self, sub_res: u8) -> bool {
-        self.base_mut().is_some_and(|b| b.render(sub_res))
-    }
-
-    /// Attach to a rendering surface.
-    pub fn attach_to_display(&mut self, surface: u32) {
-        if let Some(b) = self.base_mut() {
-            b.rendering_surface = surface;
-        }
-    }
-
-    /// Set the double-buffer pair counter.
-    pub fn set_counter(&mut self, counter: u32) {
-        if let Some(b) = self.base_mut() {
-            b.set_counter(counter);
-        }
-    }
-
-    /// Reset saved state for full refresh.
-    pub fn reset_save(&mut self) {
-        if let Some(b) = self.base_mut() {
-            b.reset_save();
-        }
-    }
-}
-
 // ─── Widget base ────────────────────────────────────────────────────
 
 /// Common widget state shared by all widget types.
@@ -232,10 +129,8 @@ pub struct WidgetBase {
     pub bbox: ScreenBBox,
     /// Current interaction state.
     pub state: UiState,
-    /// Renderer for visual output.
-    pub renderer: WidgetRenderer,
-    /// Opaque handle to the rendering surface.
-    pub rendering_surface: u32,
+    /// Asset selection and pixel hit mask; the GPU bridge owns drawing.
+    pub appearance: Option<WidgetAppearance>,
 }
 
 impl Default for WidgetBase {
@@ -252,8 +147,7 @@ impl Default for WidgetBase {
             tooltip_text: String::new(),
             bbox: ScreenBBox::new(),
             state: UiState::Default,
-            renderer: WidgetRenderer::None,
-            rendering_surface: u32::MAX,
+            appearance: None,
         }
     }
 }
@@ -280,14 +174,13 @@ impl WidgetBase {
         resource_id: ResourceId,
     ) {
         self.create(text, bbox, flags);
-        self.renderer.set_resource(resource_id);
-        self.renderer.set_position(bbox);
-        self.renderer.set_text(text);
+        self.appearance
+            .get_or_insert_with(WidgetAppearance::default)
+            .resource_id = resource_id;
     }
 
     pub fn set_text(&mut self, text: &str) {
         text.clone_into(&mut self.text);
-        self.renderer.set_text(text);
     }
 
     pub fn set_tooltip_text(&mut self, text: &str) {
@@ -300,7 +193,6 @@ impl WidgetBase {
 
     pub fn set_position(&mut self, bbox: ScreenBBox) {
         self.bbox = bbox;
-        self.renderer.set_position(bbox);
     }
 
     pub fn set_enable(&mut self, enabled: bool) {
@@ -309,28 +201,23 @@ impl WidgetBase {
 
     /// Check if a screen point is inside the widget's clickable area.
     ///
-    /// Tests bounding box first, then delegates to the renderer for
+    /// Tests bounding box first, then checks the asset's alpha mask for
     /// pixel-perfect hit testing (e.g. transparency check). Uses the
     /// half-open `is_boxed_point` so adjacent widgets never both claim
     /// a shared right/bottom edge column.
     pub fn is_inside(&self, point: ScreenPoint) -> bool {
-        self.bbox.is_boxed_point(point) && self.renderer.is_real_point(point)
+        self.bbox.is_boxed_point(point)
+            && self
+                .appearance
+                .as_ref()
+                .is_some_and(|appearance| appearance.is_real_point(self.bbox, point))
     }
 
-    /// Attach the widget (and its renderer) to a rendering surface.
-    pub fn attach_to_display(&mut self, surface: u32) {
-        self.rendering_surface = surface;
-        self.renderer.attach_to_display(surface);
-    }
-
-    /// Dismiss the renderer's resource.
+    /// Clear the widget's asset selection.
     pub fn dismiss_resource(&mut self) {
-        self.renderer.dismiss_resource();
-    }
-
-    /// Render the widget with the given sub-resource.
-    pub fn refresh(&mut self, sub_res: u8) {
-        self.renderer.render(sub_res);
+        if let Some(appearance) = self.appearance.as_mut() {
+            appearance.resource_id = -1;
+        }
     }
 
     /// Build a [`UiEvent`] from this widget.
@@ -357,15 +244,6 @@ impl WidgetBase {
             Some(self.make_event(UiMsg::WidgetFocusedDisabled))
         } else {
             None
-        }
-    }
-
-    /// Build a [`UiProbe`] for this widget.
-    pub fn make_probe(&self, code: ProbeCode) -> UiProbe {
-        UiProbe {
-            code,
-            zone: self.bbox,
-            widget_id: self.id,
         }
     }
 }
@@ -455,48 +333,6 @@ impl Widget {
             Self::Slider(w) => w.transform_state_into_id(),
             Self::Listbox(_) => resource_widget_id::BUTTON_DEFAULT,
         }
-    }
-
-    /// Probe whether the widget needs a refresh.
-    pub fn probe_refresh(&mut self, counter: u32) -> Option<UiProbe> {
-        match self {
-            Self::Label(w) => w.probe_refresh(counter),
-            Self::InputField(w) => w.probe_refresh(counter),
-            _ => {
-                // Default probe: check if the rendered sub-resource changed.
-                let sub_res = self.transform_state_into_id();
-                let base = self.base_mut();
-                base.renderer.set_counter(counter);
-                let will_render = base
-                    .renderer
-                    .base()
-                    .map_or(u32::MAX, |b| b.will_be_rendered(sub_res));
-                let last = base.renderer.base().map_or(u32::MAX, |b| b.last_rendered());
-                if will_render != last {
-                    Some(base.make_probe(ProbeCode::FullRefresh))
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    /// Render the widget.
-    pub fn refresh(&mut self) {
-        let sub_res = self.transform_state_into_id();
-        if sub_res != resource_widget_id::NO_RESOURCE {
-            self.base_mut().refresh(sub_res);
-        }
-    }
-
-    /// Restore the widget's renderer state.
-    pub fn restore(&mut self) {
-        self.base_mut().renderer.reset_save();
-    }
-
-    /// Attach to a rendering surface.
-    pub fn attach_to_display(&mut self, surface: u32) {
-        self.base_mut().attach_to_display(surface);
     }
 
     /// Set enable state, with widget-specific side effects.

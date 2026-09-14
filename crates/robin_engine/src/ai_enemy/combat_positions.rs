@@ -7,19 +7,10 @@
 //! `is_allowed_to_attack`, and the neighbour predicates.
 
 use crate::ai::*;
-use crate::parameters_ai;
-use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 use crate::sim_rng::SimulationContext;
 
-use super::map_vec_ext::AiMapVec;
-use super::util::{
-    ai_max_norm_distance, ai_square_distance, ai_square_distance_world, check_straight_movement,
-    vec_to_sector,
-};
-use super::{
-    CombatPosition, EnemyAi, PrimaryTargetFlags, ProfileRank, Question, SeekFlags,
-    UNDEFINED_DIRECTION, archer, combat, propose_good_step_back_goal,
-};
+use super::EnemyAi;
+use super::util::vec_to_sector;
 use crate::coordinates::MapVec;
 
 /// Us / them aggregates built by `reconsider_swordfight`.
@@ -28,29 +19,6 @@ pub(crate) struct SwordfightLists {
     pub(crate) nearest_friend_solo: Option<AiEntityHandle>,
     pub(crate) number_of_swordfighting_enemies: u16,
     pub(crate) number_of_friends: u16,
-}
-
-/// Opt-in trace for the event-driven swordfight reposition decision. Keep the
-/// gate process-local and evaluate it before touching any proposal data so the
-/// disabled path cannot add lookups, RNG draws, or simulation state.
-pub(super) fn reconsider_position_debug_matches(
-    frame: impl FnOnce() -> u32,
-    creation_order: impl FnOnce() -> Option<u32>,
-    owner: impl FnOnce() -> u32,
-) -> bool {
-    use crate::engine::diagnostics::ParityGate;
-    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
-    let gate = GATE.get_or_init(|| {
-        ParityGate::from_env(
-            "PARITY_DEBUG_RECONSIDER_POSITION",
-            [
-                "PARITY_DEBUG_RECONSIDER_POSITION_FRAME",
-                "PARITY_DEBUG_RECONSIDER_POSITION_CREATION_ORDER",
-                "PARITY_DEBUG_RECONSIDER_POSITION_OWNER_HANDLE",
-            ],
-        )
-    });
-    gate.enabled() && gate.matches_required([Some(frame()), creation_order(), Some(owner())])
 }
 
 fn original_uword_norm(delta: MapVec) -> u16 {

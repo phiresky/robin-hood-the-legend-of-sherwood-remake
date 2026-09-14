@@ -1,7 +1,7 @@
 //! Live shot selection and shared human sorting keys.
 
 use super::*;
-use crate::ai::{AiEntityHandle, AiState, Decision, HumanHandle, Substate};
+use crate::ai::{AiEntityHandle, AiState, Decision, Substate};
 use crate::sim_rng::SimulationContext;
 use std::ops::ControlFlow;
 
@@ -227,8 +227,8 @@ impl EngineInner {
             .entities
             .expect_ai_controller_mut(owner, format_args!("shot selected target"));
         ai.primary_target = Some(target);
-        ai.outbox.actor.set_focus(target.get());
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_focus(owner, Some(target));
+
         let bow_state = self
             .expect_entity(owner, "shot action")
             .actor_data()
@@ -290,16 +290,16 @@ impl EngineInner {
                 .world
                 .entities
                 .expect_enemy_ai_mut(owner, format_args!("equip bow"));
-            ai.base
-                .outbox
-                .actor
-                .launch_commands
-                .push(if ai.enemy_seen_below {
-                    crate::element::Command::EquipBowDown
-                } else {
-                    crate::element::Command::EquipBow
-                });
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            let command = if ai.enemy_seen_below {
+                crate::element::Command::EquipBowDown
+            } else {
+                crate::element::Command::EquipBow
+            };
+            self.launch_element(crate::sequence::SequenceElement::new(
+                1,
+                command,
+                Some(owner),
+            ));
         }
         ControlFlow::Break(true)
     }

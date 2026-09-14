@@ -1351,7 +1351,7 @@ impl EngineInner {
                     route,
                     formation,
                 } => {
-                    if !self.prepare_queued_tactical_move(pc, destination, formation) {
+                    if !self.prepare_queued_tactical_move(sim, assets, pc, destination, formation) {
                         return false;
                     }
                     self.launch_recorded_group_move_qa(
@@ -1487,7 +1487,7 @@ impl EngineInner {
                     }
                     if replay_store == QuickActionRecordingStore::Automatic
                         && !self.get_entity(pc).is_some_and(Entity::is_pc)
-                        && !self.prepare_queued_tactical_combat_command(pc)
+                        && !self.prepare_queued_tactical_combat_command(sim, assets, pc)
                     {
                         return false;
                     }
@@ -1512,7 +1512,7 @@ impl EngineInner {
                     }
                     if replay_store == QuickActionRecordingStore::Automatic
                         && !self.get_entity(pc).is_some_and(Entity::is_pc)
-                        && !self.prepare_queued_tactical_combat_command(pc)
+                        && !self.prepare_queued_tactical_combat_command(sim, assets, pc)
                     {
                         return false;
                     }
@@ -1741,7 +1741,7 @@ impl EngineInner {
                     // saved double-click. At this input boundary no entity
                     // phase work remains; the normal sequence phase drains
                     // precisely the newly registered click sequence.
-                    self.hourglass_phase_sequences_authoritative(sim, assets, &[], &[]);
+                    self.hourglass_phase_sequences_authoritative(sim, assets);
                     self.actor_make_fast(sim, pc);
                 }
                 succeeded

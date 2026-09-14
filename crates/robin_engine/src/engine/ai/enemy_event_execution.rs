@@ -132,7 +132,7 @@ impl EngineInner {
             }
             StimulusType::CallCombatAlert => {
                 assert_eq!(
-                    self.observation_ai(owner).get_rank(),
+                    self.observation_ai(owner).get_rank(&assets.profile_manager),
                     crate::profiles::ProfileRank::Soldier
                 );
                 if matches!(
@@ -281,7 +281,7 @@ impl EngineInner {
                 self.observation_ai_mut(owner)
                     .base
                     .set_emoticon(EmoticonType::None);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                 self.observation_ai_mut(owner).base.antagonist = Some(officer);
                 self.forget_ai_nearby_coins_live(owner);
                 self.duty_set_state(
@@ -324,7 +324,6 @@ impl EngineInner {
                     panic!("sword strike requires attacker");
                 };
                 self.execute_ai_consider_to_begin_parade(sim, assets, owner, attacker.get());
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
             }
             StimulusType::EventGoodStrike | StimulusType::EventLethalStrike
                 if substate == Substate::AttackingSwordfightSpecialStrike =>
@@ -382,11 +381,14 @@ impl EngineInner {
                         self.dispatch_enemy_in_house_alert(sim, owner, assets);
                     } else {
                         let position = self.live_ai_position(id);
-                        self.observation_ai_mut(owner).panic_from_position(
-                            position,
+                        self.execute_ai_panic(
+                            sim,
+                            assets,
+                            owner,
+                            Some(position),
                             crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+                            crate::ai::AlertLevel::Red,
                         );
-                        self.drain_direct_ai_owner_boundary(sim, owner, assets);
                     }
                 }
             }

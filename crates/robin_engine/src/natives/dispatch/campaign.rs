@@ -106,10 +106,9 @@ impl NativeContext<'_, '_> {
                 }
                 // Mark only on the success branch.
                 if added {
-                    self.script_effects_mut()
-                        .emit_engine(EngineCommand::MarkPc {
-                            actor_handle: actor,
-                        });
+                    self.yield_engine_command(EngineCommand::MarkPc {
+                        actor_handle: actor,
+                    });
                 }
                 0
             }
@@ -483,12 +482,11 @@ impl NativeContext<'_, '_> {
                     script_error!(native, "Trying to select an invalid or non-PC actor!");
                     return 0;
                 }
-                self.apply_script_selection(actor, select != 0);
-                self.script_effects_mut()
-                    .emit_barrier(DeferredCommand::SelectPC {
-                        actor,
-                        select: select != 0,
-                    });
+
+                self.yield_world_command(WorldNativeCommand::SelectPC {
+                    actor,
+                    select: select != 0,
+                });
                 0
             }
             IsPCSelected => {

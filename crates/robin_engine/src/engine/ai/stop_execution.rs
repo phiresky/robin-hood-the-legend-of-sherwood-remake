@@ -11,7 +11,6 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let substate = self
             .world
             .entities
@@ -21,15 +20,10 @@ impl EngineInner {
             substate,
             Substate::DefaultLookingForCharly | Substate::DefaultLookingSidewardsForCharly
         ) {
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("stop owner checkpoint"))
-                .set_checkpoint_charly(None);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_set_checkpoint_charly(owner, None);
         }
 
-        self.halt_actor(owner);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.halt_actor(sim, assets, owner);
 
         let ai = self
             .world
@@ -41,8 +35,7 @@ impl EngineInner {
                 | Substate::DefaultLookingSidewardsForCharly
                 | Substate::SeekingGroupGetInstructedByOfficer
         ) {
-            ai.break_macro();
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_break_macro(owner);
         }
     }
 }

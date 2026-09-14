@@ -2308,38 +2308,20 @@ pub(crate) fn take_goal_owner_terminal_provenance(
     bitcode::Decode,
 )]
 pub struct StateChangeEffects {
-    /// Loaded movement element's exact `mpsqeLinkedSeekSequenceElement`.
-    /// The original game interrupts this target with cascading successors before the
-    /// movement element's base-class Interrupted handling.
-    pub interrupt_linked_seek: Option<SequenceElementRef>,
-    /// Elements whose state should also be changed (cascade).
-    pub cascade: Vec<(usize, SequenceState, CascadeFlags)>,
+    /// Source element whose following link is read after its removal callback.
+    pub cascade_after_card: Option<(usize, SequenceState, CascadeFlags)>,
     /// Whether `Sequence::element_ready()` should be called.
     pub signal_ready: bool,
-    /// Whether to start a postponed element.
-    /// `(blocker_index, postponed_index)` released by Original's
-    /// postponed-element startup. Retaining the blocker lets the
-    /// manager clear its pointer at the exact restart boundary, after the
-    /// registration call (and, for Terminated, after Condolation + Ready).
-    pub start_postponed: Option<(usize, usize)>,
-    /// Cross-sequence postponed successor to resume.  Set when an
-    /// element with a non-empty `cross_postponed` link terminates or is
-    /// interrupted — the sequence manager takes this (seq_id, elem_idx)
-    /// pair and registers it back on the `elements_to_go` queue.
-    pub resume_cross_postponed: Option<(SequenceId, usize)>,
-    /// Cross-sequence postponed link whose installation belongs after this
-    /// element's synchronous removal-notification callback. Actor priority
-    /// arbitration can interrupt an existing postponed successor while an
-    /// incoming element is still being instructed; the original game does not expose
-    /// that incoming element through the blocker's postponed pointer until
-    /// the interrupted successor's callback returns.
-    pub install_cross_postponed_after_card: Option<(SequenceId, usize, SequenceId, usize)>,
+    /// Source element whose current postponed link is read at startup.
+    /// Impossible starts it before clearing orders; Terminated starts it
+    /// after the removal callback and sequence Ready call.
+    pub start_postponed: Option<usize>,
+    /// Impossible clears its orders and reads its owner only after postponed startup.
+    pub impossible_notification: Option<usize>,
     /// Owner entity to notify when the element is removed.
     pub notify_owner: Option<EntityId>,
-    /// Full condolation record (owner + command + terminal state) —
-    /// used by `SequenceManager::process_effects` to populate the
-    /// engine-drained `pending_condolations` queue.
-    pub condolation: Option<PendingCondolation>,
+    /// The completion callback's arguments, consumed by the live Engine transition.
+    pub condolation: Option<CondolationCard>,
     /// Whether elements_in_progress should be incremented.
     pub increment_in_progress: bool,
     /// Whether elements_in_progress should be decremented.
@@ -2358,9 +2340,19 @@ pub struct StateChangeEffects {
     pub actor_live_transition: Option<(usize, EntityId, SequenceState, SequenceState)>,
 }
 
+/// The current node's branch in the synchronous Stop call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum StopElementAction {
+    NoChange,
+    InterruptSelf,
+    InterruptFollowing,
+    StopFollowing,
+}
+
 impl Sequence {
     /// Change the state of element at `elem_idx`, returning effects that
-    /// the caller must process. This is the core state machine.
+    /// the caller must process synchronously. Movement cancellation and linked
+    /// Seek interruption must already have finished before entering this base transition.
     pub fn set_element_state(
         &mut self,
         elem_idx: usize,
@@ -2368,12 +2360,10 @@ impl Sequence {
         flags: CascadeFlags,
     ) -> StateChangeEffects {
         let mut effects = StateChangeEffects {
-            interrupt_linked_seek: None,
-            cascade: Vec::new(),
+            cascade_after_card: None,
             signal_ready: false,
             start_postponed: None,
-            resume_cross_postponed: None,
-            install_cross_postponed_after_card: None,
+            impossible_notification: None,
             notify_owner: None,
             condolation: None,
             increment_in_progress: false,
@@ -2418,58 +2408,12 @@ impl Sequence {
             }
 
             SequenceState::Impossible => {
-                // Start postponed element if any
-                if let Some(postponed_idx) = self.elements[elem_idx].postponed_element_index {
-                    effects.start_postponed = Some((elem_idx, postponed_idx));
-                }
-                // Release cross-sequence postponed successor, if any.
-                if let Some(cross) = self.elements[elem_idx].cross_postponed.take() {
-                    effects.resume_cross_postponed = Some(cross);
-                }
-                // Clear orders
-                self.elements[elem_idx].orders.clear();
-                // Notify owner
-                effects.notify_owner = self.elements[elem_idx].owner;
-                if let Some(owner) = self.elements[elem_idx].owner {
-                    effects.condolation = Some(PendingCondolation {
-                        owner,
-                        command: self.elements[elem_idx].command,
-                        terminal_state: new_state,
-                        seq_id: self.id,
-                        elem_idx: elem_idx as u16,
-                        was_selected: false,
-                        from_halt: false,
-                        postponed_successor_pending: false,
-                        cancel_path_request_owner: None,
-                    });
-                }
-                // Cascade
-                self.compute_cascade(elem_idx, new_state, flags, &mut effects.cascade);
+                effects.start_postponed = Some(elem_idx);
+                effects.impossible_notification = Some(elem_idx);
+                effects.cascade_after_card = Some((elem_idx, new_state, flags));
             }
 
             SequenceState::Interrupted => {
-                let mut cancel_path_request_owner = None;
-                if self.elements[elem_idx].data.is_movement() {
-                    // Optional path-request cancellation runs
-                    // before the base-class Interrupted transition. The
-                    // engine consumes this marker before dispatching the
-                    // resulting condolence card.
-                    if self.elements[elem_idx].command == Command::MoveWaiting {
-                        self.elements[elem_idx].command = Command::Move;
-                        cancel_path_request_owner =
-                            Some(self.elements[elem_idx].owner.unwrap_or_else(|| {
-                                panic!(
-                                    "MoveWaiting element {:?}/{elem_idx} has no actor owner",
-                                    self.id
-                                )
-                            }));
-                    }
-                    effects.interrupt_linked_seek = self.elements[elem_idx]
-                        .legacy_v48
-                        .as_ref()
-                        .and_then(|legacy| legacy.linked_seek)
-                        .flatten();
-                }
                 // The original game's transition to interrupted deliberately does not
                 // start postponed elements. Instruction arbitration
                 // transfers the postponed pointer to the replacement before
@@ -2480,7 +2424,7 @@ impl Sequence {
                 // Notify owner
                 effects.notify_owner = self.elements[elem_idx].owner;
                 if let Some(owner) = self.elements[elem_idx].owner {
-                    effects.condolation = Some(PendingCondolation {
+                    effects.condolation = Some(CondolationCard {
                         owner,
                         command: self.elements[elem_idx].command,
                         terminal_state: new_state,
@@ -2488,12 +2432,10 @@ impl Sequence {
                         elem_idx: elem_idx as u16,
                         was_selected: false,
                         from_halt: false,
-                        postponed_successor_pending: false,
-                        cancel_path_request_owner,
                     });
                 }
                 // Cascade
-                self.compute_cascade(elem_idx, new_state, flags, &mut effects.cascade);
+                effects.cascade_after_card = Some((elem_idx, new_state, flags));
             }
 
             SequenceState::Terminated => {
@@ -2502,7 +2444,7 @@ impl Sequence {
                         // Notify owner
                         effects.notify_owner = self.elements[elem_idx].owner;
                         if let Some(owner) = self.elements[elem_idx].owner {
-                            effects.condolation = Some(PendingCondolation {
+                            effects.condolation = Some(CondolationCard {
                                 owner,
                                 command: self.elements[elem_idx].command,
                                 terminal_state: new_state,
@@ -2510,21 +2452,11 @@ impl Sequence {
                                 elem_idx: elem_idx as u16,
                                 was_selected: false,
                                 from_halt: false,
-                                postponed_successor_pending: false,
-                                cancel_path_request_owner: None,
                             });
                         }
                         // Tell the sequence this element is done
                         effects.signal_ready = true;
-                        // Start postponed if any
-                        if let Some(postponed_idx) = self.elements[elem_idx].postponed_element_index
-                        {
-                            effects.start_postponed = Some((elem_idx, postponed_idx));
-                        }
-                        // Release cross-sequence postponed successor, if any.
-                        if let Some(cross) = self.elements[elem_idx].cross_postponed.take() {
-                            effects.resume_cross_postponed = Some(cross);
-                        }
+                        effects.start_postponed = Some(elem_idx);
                     }
                     _ => {
                         // Assign the new state before dispatching its effects.
@@ -2564,37 +2496,71 @@ impl Sequence {
         effects
     }
 
-    /// Compute cascade targets for interrupted/impossible state propagation.
-    fn compute_cascade(
-        &self,
+    /// Finish Impossible after its synchronous postponed-element startup.
+    pub(crate) fn complete_impossible_notification(
+        &mut self,
         elem_idx: usize,
-        new_state: SequenceState,
-        flags: CascadeFlags,
-        cascade: &mut Vec<(usize, SequenceState, CascadeFlags)>,
-    ) {
-        let command_level = self.elements[elem_idx].command_level;
+    ) -> Option<CondolationCard> {
+        let element = self
+            .elements
+            .get_mut(elem_idx)
+            .expect("impossible element missing");
+        element.orders.clear();
+        element.owner.map(|owner| CondolationCard {
+            owner,
+            command: element.command,
+            terminal_state: SequenceState::Impossible,
+            seq_id: self.id,
+            elem_idx: elem_idx as u16,
+            was_selected: false,
+            from_halt: false,
+        })
+    }
 
-        if flags.contains(CascadeFlags::FOLLOWING) {
-            if let Some(next) = self.following_element_index(elem_idx) {
-                cascade.push((next, new_state, CascadeFlags::FOLLOWING));
-            }
-        } else if flags.contains(CascadeFlags::NEXT_LEVEL) {
-            // Find the first linked follower with a different command level.
-            let mut visited = HashSet::new();
-            let mut next = self.following_element_index(elem_idx);
-            while let Some(next_idx) = next {
-                assert!(
-                    visited.insert(next_idx),
-                    "loaded v48 sequence {:?} has a cycle in its following chain at {next_idx}",
-                    self.id
-                );
-                if self.elements[next_idx].command_level != command_level {
-                    cascade.push((next_idx, new_state, CascadeFlags::FOLLOWING));
-                    break;
-                }
-                next = self.following_element_index(next_idx);
-            }
+    pub(crate) fn live_following_ref(&self, elem_idx: usize) -> Option<SequenceElementRef> {
+        self.elements
+            .get(elem_idx)
+            .expect("following-link owner missing");
+        self.unsevered_following_ref(elem_idx)
+    }
+
+    pub(crate) fn live_postponed_ref(&self, elem_idx: usize) -> Option<SequenceElementRef> {
+        let element = self
+            .elements
+            .get(elem_idx)
+            .expect("postponed-link owner missing");
+        assert!(
+            element.postponed_element_index.is_none() || element.cross_postponed.is_none(),
+            "one element cannot have two postponed successors"
+        );
+        element
+            .cross_postponed
+            .map(|(sequence, index)| SequenceElementRef::new(sequence, index))
+            .or_else(|| {
+                element
+                    .postponed_element_index
+                    .map(|index| SequenceElementRef::new(self.id, index))
+            })
+    }
+
+    pub(crate) fn sever_following_link(&mut self, elem_idx: usize) {
+        let element = self
+            .elements
+            .get_mut(elem_idx)
+            .expect("following-link owner missing");
+        if let Some(legacy) = &mut element.legacy_v48 {
+            legacy.next = None;
         }
+        element.next_link_severed = true;
+    }
+
+    pub(crate) fn sever_postponed_link(&mut self, elem_idx: usize) {
+        let element = self
+            .elements
+            .get_mut(elem_idx)
+            .expect("postponed-link owner missing");
+        element.postponed_element_index = None;
+        element.cross_postponed = None;
     }
 
     /// Interpret the stored following link, without traversal policy.
@@ -2645,228 +2611,37 @@ impl Sequence {
         Some(next.element_index)
     }
 
-    /// Stop an element (and possibly its postponed chain) up to a given priority.
-    ///
-    /// Returns the state-change effects produced. Multiple effects are
-    /// possible because the implementation has two recursive calls: one
-    /// inside the priority-too-strong branch (recurse on `next`) and a
-    /// second **unconditional** recursion on the postponed element
-    /// after the if/else. Both recursions can produce their own
-    /// `StateChangeEffects`, and the manager must process each in turn —
-    /// hence the `Vec` return.
-    ///
-    /// `resolver` is invoked lazily when a reached element's priority is
-    /// still `NotYetSet`. Build one via
-    /// [`crate::engine::EngineInner::priority_resolver`].
-    pub fn stop_element(
-        &mut self,
+    /// Select only the current node's Stop branch. The engine resolves its
+    /// priority first, completes each recursive call, then rereads links.
+    pub(crate) fn prepare_element_stop(
+        &self,
         elem_idx: usize,
         stop_priority: SequencePriority,
-        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
-    ) -> Vec<StateChangeEffects> {
-        self.stop_element_with_cross_targets(elem_idx, stop_priority, resolver)
-            .0
-    }
-
-    /// Stop one Original linked graph and also return cross-sequence
-    /// postponed edges encountered at nodes actually visited by `Stop`.
-    fn stop_element_with_cross_targets(
-        &mut self,
-        elem_idx: usize,
-        stop_priority: SequencePriority,
-        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
-    ) -> (Vec<StateChangeEffects>, Vec<(SequenceId, usize)>) {
-        let mut cross_targets = Vec::new();
-        let effects = self.stop_element_with_debug_depth(
-            elem_idx,
-            stop_priority,
-            resolver,
-            0,
-            &mut cross_targets,
+    ) -> StopElementAction {
+        let element = self
+            .elements
+            .get(elem_idx)
+            .expect("stopped element missing");
+        assert_ne!(
+            element.priority,
+            SequencePriority::NotYetSet,
+            "Stop priority must be resolved before choosing its branch"
         );
-        (effects, cross_targets)
-    }
-
-    fn stop_element_with_debug_depth(
-        &mut self,
-        elem_idx: usize,
-        stop_priority: SequencePriority,
-        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
-        depth: usize,
-        cross_targets: &mut Vec<(SequenceId, usize)>,
-    ) -> Vec<StateChangeEffects> {
-        {
-            let elem = &self.elements[elem_idx];
-            tracing::trace!(
-                target: "parity_stop",
-                depth,
-                elem_idx,
-                command = ?elem.command,
-                state = ?elem.state,
-                priority = ?elem.priority,
-                postponed = ?elem.postponed_element_index,
-                "stop_element enter"
-            );
-        }
-        let mut all_effects: Vec<StateChangeEffects> = Vec::new();
-
-        // The original game handles this node's postponed reference unconditionally at
-        // the end of Stop. Same-sequence postponed edges recurse below;
-        // report split-storage edges to SequenceManager's owner worklist.
-        if let Some(cross) = self.elements[elem_idx].cross_postponed
-            && !cross_targets.contains(&cross)
-        {
-            cross_targets.push(cross);
-        }
-
-        // Determine priority if not yet set: ask the owning actor's
-        // priority resolver and promote `None` to `Normal` so the stop
-        // actually succeeds on commands like WAIT / FREEZE.
-        if self.elements[elem_idx].priority == SequencePriority::NotYetSet {
-            tracing::trace!(
-                target: "parity_stop",
-                depth,
-                elem_idx,
-                "stop_element before priority resolver"
-            );
-            let mut resolved = resolver(&self.elements[elem_idx]);
-            tracing::trace!(
-                target: "parity_stop",
-                depth,
-                elem_idx,
-                ?resolved,
-                "stop_element after priority resolver"
-            );
-            if resolved == SequencePriority::None {
-                resolved = SequencePriority::Normal;
-            }
-            self.elements[elem_idx].priority = resolved;
-        }
-
-        // Is the priority weak enough to be stopped? (>= means weaker or equal)
-        if self.elements[elem_idx].priority >= stop_priority {
-            if self.elements[elem_idx].state == SequenceState::InProgress
-                && self.elements[elem_idx].data.is_movement()
-            {
-                // Movements in progress are kept (for transition) but their
-                // successor is interrupted
-                if let Some(next_idx) = self.following_element_index(elem_idx) {
-                    tracing::trace!(
-                        target: "parity_stop",
-                        depth,
-                        from = elem_idx,
-                        to = next_idx,
-                        "stop_element before interrupt movement successor"
-                    );
-                    all_effects.push(self.set_element_state(
-                        next_idx,
-                        SequenceState::Interrupted,
-                        CascadeFlags::NEXT_LEVEL,
-                    ));
-                    tracing::trace!(
-                        target: "parity_stop",
-                        depth,
-                        from = elem_idx,
-                        to = next_idx,
-                        "stop_element after interrupt movement successor"
-                    );
+        if element.priority >= stop_priority {
+            if element.state == SequenceState::InProgress && element.data.is_movement() {
+                if self.live_following_ref(elem_idx).is_some() {
+                    StopElementAction::InterruptFollowing
+                } else {
+                    StopElementAction::NoChange
                 }
             } else {
-                tracing::trace!(
-                    target: "parity_stop",
-                    depth,
-                    elem_idx,
-                    "stop_element before interrupt self"
-                );
-                all_effects.push(self.set_element_state(
-                    elem_idx,
-                    SequenceState::Interrupted,
-                    CascadeFlags::NEXT_LEVEL,
-                ));
-                tracing::trace!(
-                    target: "parity_stop",
-                    depth,
-                    elem_idx,
-                    "stop_element after interrupt self"
-                );
+                StopElementAction::InterruptSelf
             }
+        } else if self.live_following_ref(elem_idx).is_some() {
+            StopElementAction::StopFollowing
         } else {
-            // Can't stop this element, but try the next one.
-            if let Some(next_idx) = self.following_element_index(elem_idx) {
-                tracing::trace!(
-                    target: "parity_stop",
-                    depth,
-                    from = elem_idx,
-                    to = next_idx,
-                    "stop_element before next"
-                );
-                let sub = self.stop_element_with_debug_depth(
-                    next_idx,
-                    stop_priority,
-                    resolver,
-                    depth + 1,
-                    cross_targets,
-                );
-                all_effects.extend(sub);
-                tracing::trace!(
-                    target: "parity_stop",
-                    depth,
-                    from = elem_idx,
-                    to = next_idx,
-                    "stop_element after next"
-                );
-                if self.elements[next_idx].state == SequenceState::Interrupted {
-                    // the explicit next-element reference is cleared
-                    // after recursively stopping the successor. The edge is gone for
-                    // every later reader, not just for cascades: a movement
-                    // element that survives this Stop must afterwards see
-                    // the next order is neither movement nor jumping
-                    // and grow the
-                    // end transition when fast-movement conversion re-runs path postprocessing.
-                    if let Some(legacy) = self.elements[elem_idx].legacy_v48.as_mut() {
-                        legacy.next = None;
-                    }
-                    self.elements[elem_idx].next_link_severed = true;
-                }
-            }
+            StopElementAction::NoChange
         }
-
-        // Unconditional postponed-element handling — runs after the
-        // if/else above. Without this, a postponed sibling attached to
-        // an Interrupted parent stays alive indefinitely.
-        if let Some(postponed_idx) = self.elements[elem_idx].postponed_element_index {
-            tracing::trace!(
-                target: "parity_stop",
-                depth,
-                from = elem_idx,
-                to = postponed_idx,
-                "stop_element before postponed"
-            );
-            let sub = self.stop_element_with_debug_depth(
-                postponed_idx,
-                stop_priority,
-                resolver,
-                depth + 1,
-                cross_targets,
-            );
-            all_effects.extend(sub);
-            tracing::trace!(
-                target: "parity_stop",
-                depth,
-                from = elem_idx,
-                to = postponed_idx,
-                "stop_element after postponed"
-            );
-            // Null the postponed link when the recursive stop left it
-            // INTERRUPTED so a subsequent `start_postponed` cascade
-            // doesn't try to wake an already-interrupted element.
-            if self.elements[postponed_idx].state == SequenceState::Interrupted {
-                self.elements[elem_idx].postponed_element_index = None;
-            }
-        }
-
-        tracing::trace!(target: "parity_stop", depth, elem_idx, "stop_element exit");
-        all_effects
     }
 }
 
@@ -3050,30 +2825,20 @@ impl crate::bitcode_adapters::NativeBitcode for OrderedSequences {
 crate::bitcode_adapters::impl_native_bitcode!(OrderedSequences);
 
 #[derive(Debug, Clone, Copy)]
-struct ActorStopSummary {
-    weakest_priority: SequencePriority,
-    /// No live element owned by the actor has a same-sequence next or
-    /// postponed successor. Cross-sequence successors are owner-checked by
-    /// `stop_owner_current_from_root`.
-    cross_only: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
 struct PostponeTailSummary {
     tail: SequenceElementRef,
     hops: usize,
-    weakest_priority: SequencePriority,
-    /// Every node in this cross chain has no same-sequence successor that a
-    /// Stop would additionally traverse.
-    cross_only: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct StopNoopSummary {
-    tail: SequenceElementRef,
-}
-
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SequenceManager {
     /// All active sequences, keyed by `SequenceId` in original-game manager
     /// insertion order. `IndexMap` preserves that scan order while retaining
@@ -3096,22 +2861,8 @@ pub struct SequenceManager {
     /// `sequences` and serialized with the manager so snapshots remain
     /// self-contained.
     // EntityId is a tagged enum; populated indexes need reversible JSON keys.
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     actor_live: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
-
-    /// Weakest priority among each actor's live elements.
-    ///
-    /// This is a derived acceleration index for actor stopping. The original game walks
-    /// the selected element's postponed chain even when every element is too
-    /// strong for the requested stop. Large swordfight crowds can append one
-    /// strong postponed element between successive `Stop(PREFERENCE)` calls,
-    /// making that pointer walk triangular. If this index proves that *all*
-    /// of an actor's live work is stronger than the stop, the selected graph
-    /// is necessarily effect-free and can be left untouched.
-    ///
-    /// Snapshots omit the index; it is rebuilt lazily from `actor_live`.
-    #[bitcode(skip)]
-    #[state_hash(skip)]
-    actor_stop_summaries: BTreeMap<EntityId, ActorStopSummary>,
 
     /// Per-owner tails of cross-sequence postponed chains for a prospective
     /// waiter's priority. Equal-priority swordfight instructions repeatedly
@@ -3121,17 +2872,9 @@ pub struct SequenceManager {
     /// owner before installing a replacement entry.
     #[bitcode(skip)]
     #[state_hash(skip)]
+    #[serde(skip)]
     postpone_tail_cache:
         BTreeMap<EntityId, BTreeMap<(SequenceElementRef, SequencePriority), PostponeTailSummary>>,
-
-    /// Selected Stop graphs already proven to produce no terminal
-    /// transitions for one stop priority. This is repaired by an exact Stop
-    /// traversal, so unrelated same-owner work cannot force every later call
-    /// to repeat that traversal.
-    #[bitcode(skip)]
-    #[state_hash(skip)]
-    stop_noop_cache:
-        BTreeMap<EntityId, BTreeMap<(SequenceElementRef, SequencePriority), StopNoopSummary>>,
 
     /// Actor → every `SequenceElementRef` whose element is currently
     /// `InProgress` and owned by that actor.
@@ -3148,6 +2891,7 @@ pub struct SequenceManager {
     /// Replaces an O(N_seq × N_elem) nested scan that was the single
     /// hottest per-tick function in a rollback-enabled debug profile
     /// (~5–15% depending on checker mode).
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     actor_in_progress: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
 
     /// Temporary actor selection installed by instruction handling while priority
@@ -3159,6 +2903,7 @@ pub struct SequenceManager {
     /// arbitrate against the incoming element even though it has not reached
     /// `InProgress` yet. Entries only exist inside that callback boundary and
     /// are empty at stable frame/save boundaries.
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     actor_instructing: BTreeMap<EntityId, Vec<(SequenceElementRef, bool)>>,
 
     /// Actor selection held across the accepted element's command
@@ -3173,6 +2918,7 @@ pub struct SequenceManager {
     /// removal notification while still selected, which is what performs
     /// the actor-base movement-goal cleanup. Set for the duration of one
     /// command dispatch; empty at stable frame/save boundaries.
+    #[serde(deserialize_with = "Option::deserialize")]
     actor_translating: Option<(EntityId, SequenceElementRef)>,
 
     /// Deferred queue of elements to start. Processed in `hourglass()`.
@@ -3210,7 +2956,6 @@ pub struct SequenceManager {
     /// Impossible; drained by the engine after `hourglass` so
     /// per-entity cleanup (wasp-victim reset, carrier cleanup, etc.)
     /// fires in a single pass.
-    pending_condolations: Vec<PendingCondolationDispatch>,
 
     /// Per-engine sequence-id counter. Replaces the previous global
     /// atomic so id allocation is part of the rollback snapshot —
@@ -3232,93 +2977,35 @@ pub struct SequenceManager {
     halt_pending: bool,
 }
 
-impl serde::Serialize for SequenceManager {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedSequenceManager::capture(self).serialize(serializer)
-    }
-}
-impl<'de> serde::Deserialize<'de> for SequenceManager {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(PersistedSequenceManager::deserialize(deserializer)?.into_runtime())
-    }
-}
-
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedSequenceManager {
-    sequences: OrderedSequences,
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    actor_live: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    actor_in_progress: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    actor_instructing: BTreeMap<EntityId, Vec<(SequenceElementRef, bool)>>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    actor_translating: Option<(EntityId, SequenceElementRef)>,
-
-    elements_to_go: VecDeque<(SequenceId, usize)>,
-
-    pending_synchronous_actions: VecDeque<PendingSyncEntry>,
-
-    pending_condolations: Vec<PendingCondolationDispatch>,
-
-    next_sequence_id: u32,
-
-    next_element_id: u32,
-
-    halt_pending: bool,
-}
-
-impl PersistedSequenceManager {
-    pub(crate) fn capture(value: &SequenceManager) -> Self {
+impl SequenceManager {
+    /// Capture owned simulation state without cloning derived search caches.
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let value = self;
         let SequenceManager {
             sequences: _,
             actor_live: _,
-            actor_stop_summaries: _,
             postpone_tail_cache: _,
-            stop_noop_cache: _,
             actor_in_progress: _,
             actor_instructing: _,
             actor_translating: _,
             elements_to_go: _,
             pending_synchronous_actions: _,
-            pending_condolations: _,
             next_sequence_id: _,
             next_element_id: _,
             halt_pending: _,
         } = value;
         Self {
             sequences: value.sequences.clone(),
+            postpone_tail_cache: BTreeMap::new(),
             actor_live: value.actor_live.clone(),
             actor_in_progress: value.actor_in_progress.clone(),
             actor_instructing: value.actor_instructing.clone(),
             actor_translating: value.actor_translating,
             elements_to_go: value.elements_to_go.clone(),
             pending_synchronous_actions: value.pending_synchronous_actions.clone(),
-            pending_condolations: value.pending_condolations.clone(),
             next_sequence_id: value.next_sequence_id,
             next_element_id: value.next_element_id,
             halt_pending: value.halt_pending,
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> SequenceManager {
-        SequenceManager {
-            sequences: self.sequences,
-            actor_live: self.actor_live,
-            actor_stop_summaries: BTreeMap::new(),
-            postpone_tail_cache: BTreeMap::new(),
-            stop_noop_cache: BTreeMap::new(),
-            actor_in_progress: self.actor_in_progress,
-            actor_instructing: self.actor_instructing,
-            actor_translating: self.actor_translating,
-            elements_to_go: self.elements_to_go,
-            pending_synchronous_actions: self.pending_synchronous_actions,
-            pending_condolations: self.pending_condolations,
-            next_sequence_id: self.next_sequence_id,
-            next_element_id: self.next_element_id,
-            halt_pending: self.halt_pending,
         }
     }
 }
@@ -3332,8 +3019,8 @@ pub(crate) struct SequenceManagerV48State {
     pub next_element_id: u32,
 }
 
-/// Pending entity cleanup emitted by the sequence manager when an
-/// element finishes.  Drained by the engine after each `hourglass`.
+/// Transition-local arguments delivered to the owner's completion callback
+/// before the sequence continues through its current links.
 #[derive(
     Debug,
     Clone,
@@ -3344,7 +3031,7 @@ pub(crate) struct SequenceManagerV48State {
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub struct PendingCondolation {
+pub struct CondolationCard {
     pub owner: EntityId,
     pub command: Command,
     pub terminal_state: SequenceState,
@@ -3359,48 +3046,13 @@ pub struct PendingCondolation {
     /// at the synchronous state-change-to-removal-notification boundary.
     /// Captured before terminal elements leave the in-progress index.
     pub was_selected: bool,
-    /// `true` if this condolation was queued while the owning NPC's
+    /// `true` if this callback began while the owning NPC's
     /// `inside_halt_method` flag was set — i.e. the sequence was torn
     /// down by an AI-initiated `Halt()` call.  The NPC's condolation
     /// handler uses this to skip the `Think(EVENT_DONE)` /
     /// `Think(EVENT_IMPOSSIBLE)` / `Think(EVENT_COULDNT_REACHPOINT)`
     /// dispatches for these.
     pub from_halt: bool,
-    /// The state change detached a cross-sequence postponed successor,
-    /// but postponed-element startup occurs after this notification in the
-    /// original game. Such a successor prevents the element from being the
-    /// last real action while removal notification is running.
-    pub postponed_successor_pending: bool,
-    /// Movement interruption ran path-request cancellation for a
-    /// `MOVE_WAITING` element. The engine removes this owner's pending and
-    /// failed requests immediately before this card's callback. This can
-    /// differ from `owner` when a movement interrupts its linked Seek first.
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub cancel_path_request_owner: Option<EntityId>,
-}
-
-/// A removal notification plus the portion of the state change that the original
-/// performs only after removal notification returns. Keeping the
-/// continuation beside the card preserves the depth-first order across
-/// Rust's borrow-safe dispatch boundary.
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct PendingCondolationDispatch {
-    pub card: PendingCondolation,
-    effects_after_card: StateChangeEffects,
-}
-
-impl PendingCondolationDispatch {
-    pub fn cross_postponed_successor(&self) -> Option<(SequenceId, usize)> {
-        self.effects_after_card.resume_cross_postponed
-    }
 }
 
 impl Default for SequenceManager {

@@ -882,11 +882,13 @@ fn selection_boundary_fixture() -> (Engine, LevelAssets, EntityId, crate::sequen
     );
     wait.priority = crate::sequence::SequencePriority::Wait;
     let wait_sequence = engine.inner.orders.sequence_manager.launch_element(wait);
-    engine
-        .inner
-        .orders
-        .sequence_manager
-        .element_in_progress(wait_sequence, 0);
+    engine.inner.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        wait_sequence,
+        0,
+    );
     (engine, assets, pc_id, wait_sequence)
 }
 
@@ -1594,11 +1596,13 @@ fn rejected_external_fact_prevents_command_and_hourglass() {
         .orders
         .sequence_manager
         .launch_sequence(sequence);
-    engine
-        .inner
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.inner.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     engine.inner.feedback.cutscene_camera.sequence_element =
         Some(crate::sequence::SequenceElementRef::new(sequence_id, 0));
     assert!(
@@ -1684,11 +1688,13 @@ fn no_hourglass_director_prefix_exposes_new_delayed_drop_ale_seek() {
         .orders
         .sequence_manager
         .launch_sequence(sequence);
-    engine
-        .inner
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.inner.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     engine.inner.feedback.cutscene_camera.sequence_element =
         Some(crate::sequence::SequenceElementRef::new(sequence_id, 0));
 
@@ -2897,25 +2903,6 @@ fn scripted_snapshot_fixture() -> (
     let mut inner = EngineInner::new();
     inner.scripts.install_mission(script);
     inner.scripts.attach_native_capabilities(&assets);
-    inner
-        .scripts
-        .mission
-        .as_mut()
-        .expect("fixture mission script")
-        .script_effects
-        .emit_engine(crate::natives::EngineCommand::UpdateInformationBars);
-    {
-        let effects = &mut inner
-            .scripts
-            .mission
-            .as_mut()
-            .expect("fixture mission script")
-            .script_effects;
-        effects.emit_sound(crate::natives::SoundCommand::SuspendAll);
-        effects.emit_engine(crate::natives::EngineCommand::ChooseVictoryDefeatText { id: 17 });
-        effects.emit_barrier(crate::natives::DeferredCommand::FreezeAll { freeze: true });
-    }
-
     let mut sequence = crate::sequence::Sequence::new();
     sequence.append_element(crate::sequence::SequenceElement::new(
         1,
@@ -3202,7 +3189,7 @@ fn try_restore_rejects_world_parallel_mismatch_before_mutating_live_engine() {
 }
 
 #[test]
-fn network_adoption_is_fully_attached_and_preserves_hash_and_script_queue() {
+fn network_adoption_is_fully_attached_and_preserves_hash_and_sequences() {
     let (source, assets, program, sequence_id) = scripted_snapshot_fixture();
     let source_hash = crate::replay::state_hash(&source);
     let snapshot = decoded_engine(&source);
@@ -3217,28 +3204,6 @@ fn network_adoption_is_fully_attached_and_preserves_hash_and_script_queue() {
         &script.bindings.profile_manager,
         &assets.profile_manager
     ));
-    assert!(matches!(
-        script.script_effects.ordered.as_slices(),
-        (
-            [
-                crate::natives::ScriptEffect::Presentation(
-                    crate::natives::EngineCommand::UpdateInformationBars
-                ),
-                crate::natives::ScriptEffect::ExternalSound(
-                    crate::natives::SoundCommand::SuspendAll
-                ),
-                crate::natives::ScriptEffect::Simulation(crate::natives::SimulationEffect::Engine(
-                    crate::natives::EngineCommand::ChooseVictoryDefeatText { id: 17 }
-                )),
-                crate::natives::ScriptEffect::Simulation(
-                    crate::natives::SimulationEffect::Deferred(
-                        crate::natives::DeferredCommand::FreezeAll { freeze: true }
-                    )
-                )
-            ],
-            []
-        )
-    ));
     assert_eq!(
         live.inner
             .orders
@@ -3251,7 +3216,7 @@ fn network_adoption_is_fully_attached_and_preserves_hash_and_script_queue() {
 }
 
 #[test]
-fn save_restore_attaches_before_fixups_and_appends_save_only_hud_repair() {
+fn save_restore_attaches_before_fixups_and_requests_redraw() {
     let (mut source, assets, program, _) = scripted_snapshot_fixture();
     source.inner.feedback.cutscene_camera.level_size =
         crate::coordinates::MapSize::new(4096.0, 4096.0);
@@ -3263,42 +3228,21 @@ fn save_restore_attaches_before_fixups_and_appends_save_only_hud_repair() {
         .background_transform
         .zoom_to_up = true;
     source.inner.feedback.cutscene_camera.zoom_init_done = true;
-    let queued_engine_commands = source
-        .inner
-        .scripts
-        .mission
-        .as_ref()
-        .expect("fixture script")
-        .script_effects
-        .engine_commands()
-        .len();
     let snapshot = decoded_engine(&source);
     let mut display = super::super::HostDisplayState::default();
 
-    let observed_fixups_before_hud_repair = std::cell::Cell::new(false);
+    let observed_fixups = std::cell::Cell::new(false);
     let mut live =
         Engine::restore_from_snapshot_with_observer(&mut display, snapshot, &assets, |inner| {
-            observed_fixups_before_hud_repair.set(true);
+            observed_fixups.set(true);
             assert_eq!(
                 inner.orders.messenger.count(),
                 3,
                 "zoom-end, stature, and select-action must already be queued"
             );
-            assert_eq!(
-                inner
-                    .scripts
-                    .mission
-                    .as_ref()
-                    .expect("restored script during fixup observation")
-                    .script_effects
-                    .engine_commands()
-                    .len(),
-                queued_engine_commands,
-                "save-only HUD repair must not be queued until engine fixups finish"
-            );
         })
         .expect("restore compatible save snapshot");
-    assert!(observed_fixups_before_hud_repair.get());
+    assert!(observed_fixups.get());
 
     live.inner.scripts.assert_native_attachments_ready();
     let script = live
@@ -3308,11 +3252,6 @@ fn save_restore_attaches_before_fixups_and_appends_save_only_hud_repair() {
         .as_ref()
         .expect("restored script");
     assert!(std::sync::Arc::ptr_eq(&script.manager.program, &program));
-    assert_eq!(
-        script.script_effects.engine_commands().len(),
-        queued_engine_commands + 1,
-        "saved queue must survive and save-load must append one HUD repair"
-    );
     let messages = live.inner.orders.messenger.drain();
     assert_eq!(messages.len(), 3);
     assert_eq!(

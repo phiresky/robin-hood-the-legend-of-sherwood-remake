@@ -65,7 +65,7 @@ fn drunk_body_observer_records_the_body_before_rejecting_its_priority() {
 
 #[test]
 fn informed_officer_scan_checks_visibility_before_lock_and_body_list() {
-    let (mut engine, assets, ids) = fixture(&[
+    let (mut engine, mut assets, ids) = fixture(&[
         (500.0, 500.0),
         (510.0, 500.0),
         (520.0, 500.0),
@@ -79,7 +79,11 @@ fn informed_officer_scan_checks_visibility_before_lock_and_body_list() {
         .expect_ai_actor_data_mut(owner, format_args!("advice viewer"))
         .view_radius = 400;
     for &officer in &ids[2..] {
-        engine.seek_enemy_mut(officer).soldier_profile_rank = ProfileRank::Officer;
+        crate::engine::test_support::actors::edit_enemy_profile(
+            &mut assets,
+            engine.seek_enemy_mut(officer),
+            |profile| profile.rank = ProfileRank::Officer,
+        );
     }
     engine.seek_enemy_mut(ids[2]).base.script_locked = true;
     engine
@@ -110,7 +114,7 @@ fn informed_officer_scan_checks_visibility_before_lock_and_body_list() {
 }
 
 fn react_as_officer(body_y: f32) -> (EngineInner, EntityId, EntityId) {
-    let (mut engine, assets, ids) = fixture(&[(500.0, 500.0), (550.0, body_y), (520.0, 500.0)]);
+    let (mut engine, mut assets, ids) = fixture(&[(500.0, 500.0), (550.0, body_y), (520.0, 500.0)]);
     let (owner, body) = (ids[0], ids[1]);
     engine.control.frame_counter = 1200;
     let position = engine.live_ai_position(body);
@@ -121,8 +125,12 @@ fn react_as_officer(body_y: f32) -> (EngineInner, EntityId, EntityId) {
     ai.base
         .my_reconnaissance_report
         .update(ReportType::Body, position);
-    ai.soldier_profile_rank = ProfileRank::Officer;
-    ai.soldier_profile_initiative = 0;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+        profile.rank = ProfileRank::Officer
+    });
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+        profile.initiative = 0
+    });
     let Entity::Soldier(target) = engine
         .world
         .entities

@@ -28,7 +28,6 @@ impl EngineInner {
             10,
             frame,
         );
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
     fn alert_focus_point(
         &mut self,
@@ -37,12 +36,7 @@ impl EngineInner {
         owner: EntityId,
         position: Position,
     ) {
-        self.observation_ai_mut(owner)
-            .base
-            .outbox
-            .actor
-            .set_focus_point(position);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_focus_point(assets, owner, position);
     }
     fn alert_face_seek_position(
         &mut self,
@@ -132,6 +126,7 @@ impl EngineInner {
                 if was_default {
                     self.execute_ai_react_live(
                         sim,
+                        assets,
                         owner,
                         crate::parameters_ai::AI_MAX_STEPS_REACTIONTIME as u16,
                     );
@@ -143,7 +138,11 @@ impl EngineInner {
                 let entity = self.expect_entity(owner, "whistle observer");
                 let look = entity.element_data().active
                     && !self.entity_data_in_building_sector(entity.element_data())
-                    && self.observation_ai(owner).soldier_profile_whistle > 0;
+                    && self
+                        .observation_ai(owner)
+                        .profile(&assets.profile_manager)
+                        .whistle
+                        > 0;
                 if !look {
                     self.observation_emoticon(sim, assets, owner);
                     self.duty_set_state(
@@ -169,7 +168,7 @@ impl EngineInner {
                     .update(ReportType::Noise, origin);
                 let ai = self.observation_ai(owner);
                 if ai.base.current_state == AiState::Seeking
-                    && ai.get_rank() != ProfileRank::Officer
+                    && ai.get_rank(&assets.profile_manager) != ProfileRank::Officer
                 {
                     self.duty_set_state(
                         sim,
@@ -195,6 +194,7 @@ impl EngineInner {
                     self.observation_ai_mut(owner).base.seek_position = origin;
                     self.execute_ai_react_live(
                         sim,
+                        assets,
                         owner,
                         crate::parameters_ai::AI_MAX_STANDARD_REACTIONTIME as u16,
                     );
@@ -222,7 +222,7 @@ impl EngineInner {
                 let ai = self.observation_ai(owner);
                 if ai.base.current_state == AiState::Seeking
                     && ai.base.current_substate != Substate::SeekingGotStopEvent
-                    && ai.get_rank() != ProfileRank::Officer
+                    && ai.get_rank(&assets.profile_manager) != ProfileRank::Officer
                 {
                     self.duty_set_state(
                         sim,
@@ -255,6 +255,7 @@ impl EngineInner {
                     {
                         self.execute_ai_react_live(
                             sim,
+                            assets,
                             owner,
                             crate::parameters_ai::AI_MAX_STEPS_REACTIONTIME as u16,
                         );
@@ -341,7 +342,7 @@ impl EngineInner {
             .base
             .my_reconnaissance_report
             .update(ReportType::Enemy, hint.seek_point);
-        if self.observation_ai(owner).get_rank() == ProfileRank::Knight {
+        if self.observation_ai(owner).get_rank(&assets.profile_manager) == ProfileRank::Knight {
             self.duty_set_state(
                 sim,
                 assets,
@@ -378,7 +379,7 @@ impl EngineInner {
         ai.base
             .my_reconnaissance_report
             .update(ReportType::Enemy, hint.seek_point);
-        match ai.get_rank() {
+        match ai.get_rank(&assets.profile_manager) {
             ProfileRank::Soldier => self.execute_ai_alert_officer_for_caller(
                 sim,
                 assets,
@@ -413,6 +414,7 @@ impl EngineInner {
         self.alert_face_seek_position(sim, assets, owner);
         self.execute_ai_react_live(
             sim,
+            assets,
             owner,
             crate::parameters_ai::AI_MAX_STANDARD_REACTIONTIME as u16,
         );

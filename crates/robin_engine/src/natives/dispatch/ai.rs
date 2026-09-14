@@ -10,10 +10,7 @@ impl NativeContext<'_, '_> {
             // --- AI ---
             SetAIAlertStatus => {
                 // Reject (1) missing actor, (2) PCs, (3)
-                // non-NPCs, (4) illegal alert values — each with
-                // its own warning + false return.  The actual
-                // alert write + music propagation still happens
-                // via the per-frame overall-alert sweep.
+                // non-NPCs, (4) illegal alert values.
                 let val = stack.pop_i32();
                 let actor = stack.pop_i32();
                 let Some(entity) = self.get_entity_mut(actor) else {
@@ -32,16 +29,13 @@ impl NativeContext<'_, '_> {
                     script_error!(native, "illegal alert value {val}");
                     return 0;
                 };
-                // Route soldiers through the enemy-side wrapper
-                // so the forced-attentive view-override is
-                // applied; civilians fall through to the base
-                // setter (override is soldier-only and would
-                // always be `false` for them).
-                if let Some(enemy) = entity.enemy_ai_mut() {
-                    enemy.set_alert_status(level);
-                } else if let Some(ai) = entity.ai_controller_mut() {
-                    ai.set_alert_status(level);
-                }
+                self.yield_engine_action(
+                    crate::interp::SynchronousScriptRequest::SetAiAlertStatus {
+                        actor,
+                        level,
+                        native_return: 1,
+                    },
+                );
                 1
             }
             GetAIAlertStatus => {
@@ -411,22 +405,19 @@ impl NativeContext<'_, '_> {
                     script_error!(native, "without a location (handle {loc})");
                     return 0;
                 };
-                // Emit a deferred command so the engine runs the
-                // full `broadcast_noise` path (deafness, state
-                // filter, noise-display update), identical to the
-                // gameplay callsites.
+                // Yield before the next script statement: hearing callbacks
+                // and their mutations complete inside this native invocation.
                 let Some((layer, sector)) = self.resolve_location_layer_sector_handle(loc) else {
                     script_error!(native, "location {loc} has no exact layer/sector metadata");
                     return 0;
                 };
-                self.script_effects_mut()
-                    .emit_engine(EngineCommand::MakeNoise {
-                        noise_type,
-                        x: origin_x,
-                        y: origin_y,
-                        layer,
-                        sector,
-                    });
+                self.yield_engine_command(EngineCommand::MakeNoise {
+                    noise_type,
+                    x: origin_x,
+                    y: origin_y,
+                    layer,
+                    sector,
+                });
                 tracing::debug!(
                     target: "script",
                     "MakeNoise: scripted {noise_type:?} at ({origin_x},{origin_y}) \
@@ -718,17 +709,12 @@ impl NativeContext<'_, '_> {
                 // member was actually new, and it does so before returning to
                 // the mission script. Yield through the typed engine barrier
                 // so subsequent natives (notably UnlockAI) observe the
-                // subordinate's freshly assigned patrol chief. The roster
-                // length is captured here because the barrier drains after the
-                // whole script chunk, by which point later appends would
-                // otherwise widen this pass beyond what it saw.
+                // subordinate's freshly assigned patrol chief.
                 if let Some(member_count) = appended_len {
-                    self.script_effects_mut().emit_barrier(
-                        DeferredCommand::AddAsSubordinateInitialize {
-                            chief: actor,
-                            member_count,
-                        },
-                    );
+                    self.yield_world_command(WorldNativeCommand::AddAsSubordinateInitialize {
+                        chief: actor,
+                        member_count,
+                    });
                 }
                 0
             }

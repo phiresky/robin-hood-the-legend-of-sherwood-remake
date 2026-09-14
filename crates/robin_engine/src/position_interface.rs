@@ -1303,7 +1303,7 @@ impl PositionInterface {
     pub fn set_sector(&mut self, s: Option<SectorHandle>) {
         // A number-only write has no proof that the prior arena object still
         // applies. Clear it rather than retaining stale pointer provenance.
-        self.set_sector_topology(s, None);
+        self.set_sector_topology(s, s.and_then(SectorHandle::arena_index));
     }
     /// Return the goal sector number and exact arena identity together.
     #[inline]
@@ -1328,10 +1328,10 @@ impl PositionInterface {
         });
         self.sector_goal_index = sector_index;
     }
-    /// Number-only goal-sector writes deliberately discard arena provenance.
+    /// Preserve the supplied identity; number-only writes clear prior provenance.
     #[inline]
     pub fn set_goal_sector(&mut self, sector: Option<SectorHandle>) {
-        self.set_goal_sector_topology(sector, None);
+        self.set_goal_sector_topology(sector, sector.and_then(SectorHandle::arena_index));
     }
 
     /// Mirror the position-interface fields installed by Original's

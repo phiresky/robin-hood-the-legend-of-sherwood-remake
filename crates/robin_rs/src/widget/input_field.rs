@@ -27,7 +27,7 @@ use winit::keyboard::KeyCode;
 
 use crate::ingame_menu::widget_bridge::{WIDGET_NOISY_INPUTFIELD, play_widget_noise};
 use crate::ui::{
-    KeyState, MouseButtons, ProbeCode, TypeWriter, UiEvent, UiMsg, UiProbe, UiState,
+    KeyState, MouseButtons, TypeWriter, UiEvent, UiMsg, UiState,
     resource_widget_id::{
         INPUT_FIELD_CLICKED, INPUT_FIELD_DEFAULT, INPUT_FIELD_DISABLED, INPUT_FIELD_FOCUSED,
         INPUT_FIELD_SELECTED,
@@ -55,11 +55,6 @@ pub struct WidgetInputField {
     /// Maximum allowed text length (0 = unlimited).
     pub max_length: usize,
 
-    // Double-buffered state for probe_refresh.
-    old_caret_offset: [usize; 2],
-    old_caret_visible: [bool; 2],
-    old_text_len: [usize; 2],
-
     /// ID of the next linked input field (for Tab navigation).
     /// `WIDGET_ID_NONE` if no linked field.
     pub linked_field: super::WidgetId,
@@ -74,9 +69,6 @@ impl Default for WidgetInputField {
             caret_offset: 0,
             caret_visible: false,
             max_length: 0,
-            old_caret_offset: [0; 2],
-            old_caret_visible: [false; 2],
-            old_text_len: [0; 2],
             linked_field: super::WIDGET_ID_NONE,
         }
     }
@@ -105,49 +97,6 @@ impl WidgetInputField {
             UiState::Selected => INPUT_FIELD_SELECTED,
             UiState::SelectedEditable => INPUT_FIELD_SELECTED,
             _ => INPUT_FIELD_DEFAULT,
-        }
-    }
-
-    /// Probe whether a refresh is needed.
-    ///
-    /// Tracks caret position, visibility, and text length changes
-    /// across double-buffered frames.
-    pub fn probe_refresh(&mut self, counter: u32) -> Option<UiProbe> {
-        self.base.renderer.set_counter(counter);
-        let idx = (counter % 2) as usize;
-
-        let caret_changed = self.old_caret_offset[idx] != self.caret_offset
-            || self.old_caret_visible[idx] != self.caret_visible;
-        let text_changed = self.old_text_len[idx] != self.edit_text.len();
-
-        self.old_caret_offset[idx] = self.caret_offset;
-        self.old_caret_visible[idx] = self.caret_visible;
-        self.old_text_len[idx] = self.edit_text.len();
-
-        if caret_changed {
-            return Some(self.base.make_probe(ProbeCode::LazyRefresh));
-        }
-
-        if text_changed {
-            return Some(self.base.make_probe(ProbeCode::FullRefresh));
-        }
-
-        // Check renderer state change (same as default widget probe).
-        let sub_res = self.transform_state_into_id();
-        let will_render = self
-            .base
-            .renderer
-            .base()
-            .map_or(u32::MAX, |b| b.will_be_rendered(sub_res));
-        let last = self
-            .base
-            .renderer
-            .base()
-            .map_or(u32::MAX, |b| b.last_rendered());
-        if will_render != last {
-            Some(self.base.make_probe(ProbeCode::FullRefresh))
-        } else {
-            None
         }
     }
 
@@ -561,20 +510,15 @@ fn byte_offset_for_char_index(s: &str, char_index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::{MouseButtons, RendererBase, RendererBitmap, UiKeyboard};
-    use crate::widget::WidgetRenderer;
+    use crate::ui::{MouseButtons, UiKeyboard};
+
     use robin_engine::coordinates::ScreenBBox;
 
     fn make_editable_field() -> WidgetInputField {
         let mut f = WidgetInputField::new(1);
         f.base
             .create("", ScreenBBox::from_coords(0.0, 0.0, 100.0, 20.0), 0);
-        f.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
-            base: RendererBase {
-                bbox: ScreenBBox::from_coords(0.0, 0.0, 100.0, 20.0),
-                ..Default::default()
-            },
-        });
+        f.base.appearance = Some(crate::ui::WidgetAppearance::default());
         f.base.state = UiState::SelectedEditable;
         f
     }

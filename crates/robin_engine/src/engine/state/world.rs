@@ -55,6 +55,12 @@ mod entity_creation_order_pairs {
 pub(crate) struct WorldState {
     pub(crate) entities: Entities,
     pub(crate) soldier_registry: SoldierRegistry,
+    /// NPC publication order, including inactive soldiers and civilians.
+    pub(crate) npc_registry_ids: Vec<EntityId>,
+    /// Canonical actor publication order for collision and projectile scans.
+    pub(crate) actor_registry_ids: Vec<EntityId>,
+    /// PC and soldier publication order; camp queries retain this subsequence order.
+    pub(crate) fighter_registry_ids: Vec<EntityId>,
     /// Portrait/UI order, sorted by character-profile priority after loading.
     pub(crate) pc_ids: Vec<EntityId>,
     /// Exact original-game player-character insertion order.
@@ -97,43 +103,15 @@ pub(crate) struct WorldState {
     pub(crate) original_repulsive_point_counter: u32,
 }
 
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedWorldState {
-    entities: Entities,
-    soldier_registry: SoldierRegistry,
-
-    pc_ids: Vec<EntityId>,
-
-    original_pc_registry_ids: Vec<EntityId>,
-
-    fast_grid: crate::fast_find_grid::FastFindGridSnapshot,
-
-    pathfinder: crate::pathfinder::PersistedPathFinder,
-
-    weather: WeatherState,
-
-    shield: ShieldState,
-
-    dynamic_sight_obstacles: Vec<SightObstacle>,
-
-    static_sight_obstacle_active: Vec<bool>,
-
-    mobile_elements: Vec<crate::mobile::MobileElement>,
-    #[serde(with = "entity_creation_order_pairs")]
-    original_creation_order_by_entity: BTreeMap<EntityId, u32>,
-
-    next_original_creation_order: u32,
-
-    original_repulsive_point_counter: u32,
-}
-
-impl PersistedWorldState {
-    pub(crate) fn capture(value: &WorldState) -> Self {
+impl WorldState {
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let value = self;
         let WorldState {
             entities: _,
             soldier_registry: _,
+            npc_registry_ids: _,
+            actor_registry_ids: _,
+            fighter_registry_ids: _,
             pc_ids: _,
             original_pc_registry_ids: _,
             fast_grid: _,
@@ -150,10 +128,13 @@ impl PersistedWorldState {
         Self {
             entities: value.entities.persisted_projection(),
             soldier_registry: value.soldier_registry.clone(),
+            npc_registry_ids: value.npc_registry_ids.clone(),
+            actor_registry_ids: value.actor_registry_ids.clone(),
+            fighter_registry_ids: value.fighter_registry_ids.clone(),
             pc_ids: value.pc_ids.clone(),
             original_pc_registry_ids: value.original_pc_registry_ids.clone(),
-            fast_grid: crate::fast_find_grid::FastFindGridSnapshot::capture(&value.fast_grid),
-            pathfinder: crate::pathfinder::PersistedPathFinder::capture(&value.pathfinder),
+            fast_grid: std::sync::Arc::new(value.fast_grid.persisted_clone()),
+            pathfinder: value.pathfinder.clone(),
             weather: value.weather.clone(),
             shield: value.shield.clone(),
             dynamic_sight_obstacles: value.dynamic_sight_obstacles.clone(),
@@ -162,25 +143,6 @@ impl PersistedWorldState {
             original_creation_order_by_entity: value.original_creation_order_by_entity.clone(),
             next_original_creation_order: value.next_original_creation_order,
             original_repulsive_point_counter: value.original_repulsive_point_counter,
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> WorldState {
-        WorldState {
-            entities: self.entities,
-            soldier_registry: self.soldier_registry,
-            pc_ids: self.pc_ids,
-            original_pc_registry_ids: self.original_pc_registry_ids,
-            fast_grid: std::sync::Arc::new(self.fast_grid.into_runtime()),
-            pathfinder: self.pathfinder.into_runtime(),
-            weather: self.weather,
-            shield: self.shield,
-            dynamic_sight_obstacles: self.dynamic_sight_obstacles,
-            static_sight_obstacle_active: self.static_sight_obstacle_active,
-            mobile_elements: self.mobile_elements,
-            original_creation_order_by_entity: self.original_creation_order_by_entity,
-            next_original_creation_order: self.next_original_creation_order,
-            original_repulsive_point_counter: self.original_repulsive_point_counter,
         }
     }
 }
@@ -327,12 +289,14 @@ impl WorldState {
         &'a mut Entities,
         crate::sight_obstacle::ObstacleList<'a>,
         &'a std::sync::Arc<FastFindGrid>,
+        &'a [EntityId],
     ) {
         let Self {
             entities,
             fast_grid,
             dynamic_sight_obstacles,
             static_sight_obstacle_active,
+            actor_registry_ids,
             ..
         } = self;
         (
@@ -343,6 +307,7 @@ impl WorldState {
                 static_active: static_sight_obstacle_active,
             },
             fast_grid,
+            actor_registry_ids,
         )
     }
 
@@ -354,6 +319,9 @@ impl WorldState {
         Self {
             entities: Entities::new(),
             soldier_registry: SoldierRegistry::default(),
+            npc_registry_ids: Vec::new(),
+            actor_registry_ids: Vec::new(),
+            fighter_registry_ids: Vec::new(),
             pc_ids: Vec::new(),
             original_pc_registry_ids: Vec::new(),
             fast_grid: std::sync::Arc::new(FastFindGrid::default()),
@@ -447,6 +415,18 @@ impl WorldState {
         // Normalize the provisional registry once authoritative topology is
         // installed; subsequent runtime additions retain stable append order.
         let creation_orders = &self.original_creation_order_by_entity;
+        for registry in [&mut self.actor_registry_ids, &mut self.fighter_registry_ids] {
+            registry.sort_by_key(|id| {
+                *creation_orders
+                    .get(id)
+                    .expect("published actor lacks creation order")
+            });
+        }
+        self.npc_registry_ids.sort_by_key(|&entity_id| {
+            creation_orders.get(&entity_id).copied().unwrap_or_else(|| {
+                panic!("NPC {entity_id} lacks a creation order while installing its registry")
+            })
+        });
         self.original_pc_registry_ids.sort_by_key(|&entity_id| {
             creation_orders.get(&entity_id).copied().unwrap_or_else(|| {
                 panic!(
@@ -463,47 +443,6 @@ impl WorldState {
             .unwrap_or_else(|| {
                 panic!("entity {entity_id} has no authoritative Original creation order")
             })
-    }
-
-    /// Actor ids in the order they were registered in the engine's
-    /// camp fighter arrays.
-    ///
-    /// Every scan that models camp fighter enumeration must visit actors in this
-    /// order. Entity slots are allocated per kind and PC slots follow the
-    /// character roster rather than construction, so slot order is not a
-    /// substitute: a save can leave the four PCs in slots whose relative
-    /// order differs from the order the engine registered them.
-    pub(crate) fn fighter_registry_order(&self) -> Vec<EntityId> {
-        let mut ids: Vec<EntityId> = self
-            .entities
-            .occupied()
-            .filter(|(_, entity)| {
-                matches!(
-                    entity,
-                    crate::element::Entity::Pc(_) | crate::element::Entity::Soldier(_)
-                )
-            })
-            .map(|(id, _)| id)
-            .collect();
-        // Cache each tree lookup for this scan while retaining stable tie order.
-        ids.sort_by_cached_key(|&id| self.original_creation_order(id));
-        ids
-    }
-
-    /// Actor IDs in the order the original game appended them to its actor collection.
-    ///
-    /// Projectile victim and shield scans use this combined PC/NPC array,
-    /// not the per-kind entity-slot order. Derive it from the authoritative
-    /// creation identities so deleted actors disappear and runtime actors
-    /// naturally join at their append position without duplicating state.
-    pub(crate) fn actor_registry_order(&self) -> Vec<EntityId> {
-        let mut ids: Vec<EntityId> = self
-            .entities
-            .actors()
-            .map(|(actor_id, _)| actor_id.into())
-            .collect();
-        ids.sort_by_key(|&id| self.original_creation_order(id));
-        ids
     }
 
     /// Reattach immutable level topology and sprite runtimes after decoding.
@@ -538,6 +477,56 @@ impl WorldState {
     ) -> Result<(), String> {
         self.validate_pc_index_inner()?;
         self.soldier_registry.validate(&self.entities)?;
+        for (name, registry, fighter_only) in [
+            ("actor", &self.actor_registry_ids, false),
+            ("fighter", &self.fighter_registry_ids, true),
+        ] {
+            let eligible = |entity: &crate::element::Entity| {
+                if fighter_only {
+                    matches!(
+                        entity,
+                        crate::element::Entity::Pc(_) | crate::element::Entity::Soldier(_)
+                    )
+                } else {
+                    entity.actor_data().is_some()
+                }
+            };
+            let mut members = std::collections::BTreeSet::new();
+            for &id in registry {
+                if !members.insert(id) || !self.entities.get(id).is_some_and(&eligible) {
+                    return Err(format!(
+                        "{name} registry contains duplicate or invalid member {id}"
+                    ));
+                }
+            }
+            if members.len()
+                != self
+                    .entities
+                    .occupied()
+                    .filter(|(_, entity)| eligible(entity))
+                    .count()
+            {
+                return Err(format!(
+                    "{name} registry does not include every published member"
+                ));
+            }
+        }
+        let mut npc_members = std::collections::BTreeSet::new();
+        for &id in &self.npc_registry_ids {
+            if !npc_members.insert(id)
+                || !self
+                    .entities
+                    .get(id)
+                    .is_some_and(|entity| entity.npc_data().is_some())
+            {
+                return Err(format!(
+                    "NPC registry contains duplicate or invalid member {id}"
+                ));
+            }
+        }
+        if npc_members.len() != self.entities.npc_ids().count() {
+            return Err("NPC registry does not include every published NPC".into());
+        }
 
         if script_zone_count != assets.scripts.zone_grid_indices.len() {
             return Err(format!(
@@ -577,6 +566,18 @@ impl WorldState {
         self.validate_fast_grid_indices_against(assets.navigation.level_grid.sectors.len())?;
 
         for (id, entity) in self.entities.occupied() {
+            if let Some(enemy) = entity.enemy_ai() {
+                if assets
+                    .profile_manager
+                    .get_soldier(enemy.behavior_profile)
+                    .is_none()
+                {
+                    return Err(format!(
+                        "entity {id} references missing behavior profile {}",
+                        enemy.behavior_profile.0
+                    ));
+                }
+            }
             entity
                 .sprite()
                 .validate_runtime_cache(&assets.sprite_scriptor)
@@ -786,15 +787,22 @@ mod tests {
 
         // Explicit load adoption can differ from entity-table order. Both
         // persistence paths must retain that order and inactive membership.
+        let civilian =
+            engine.add_test_entity(crate::engine::test_support::actors::make_test_civilian(
+                crate::element::Posture::Upright,
+            ));
+        let npc_order = vec![first, second, third, civilian];
+        assert_eq!(engine.world.npc_registry_ids, npc_order);
         engine
             .world
             .soldier_registry
             .rebuild_from_order(&engine.world.entities, [third, first, second]);
-        let wire = serde_json::to_vec(&PersistedWorldState::capture(&engine.world)).unwrap();
-        let saved: PersistedWorldState = serde_json::from_slice(&wire).unwrap();
-        let restored = saved.into_runtime();
+        let wire = serde_json::to_vec(&engine.world.persisted_clone()).unwrap();
+        let saved: WorldState = serde_json::from_slice(&wire).unwrap();
+        let restored = saved;
         let rollback: WorldState = bitcode::decode(&bitcode::encode(&engine.world)).unwrap();
         for world in [&restored, &rollback] {
+            assert_eq!(world.npc_registry_ids, npc_order);
             assert_eq!(
                 world.soldier_registry.all(),
                 &[third.index(), first.index(), second.index()]
@@ -811,6 +819,8 @@ mod tests {
         }
 
         engine.remove_entity(first);
+        assert_eq!(engine.world.npc_registry_ids, vec![second, third, civilian]);
+        assert_eq!(restored.npc_registry_ids, npc_order);
         assert_eq!(
             engine.world.soldier_registry.all(),
             &[third.index(), second.index()]
@@ -836,43 +846,41 @@ mod tests {
 
     #[test]
     fn fighter_registry_preserves_creation_and_tie_order_across_edits() {
-        let mut world = WorldState::new();
+        let mut engine = crate::engine::EngineInner::new();
         let mut ids = Vec::new();
-        for creation_order in [50, 20, 20, 40] {
-            let id = EntityId::Soldier(crate::entity_id::SoldierId(ids.len() as u32));
-            world.entities.push(Some(registry_test_soldier()));
-            world.assign_reserved_original_creation_order(id, creation_order);
-            ids.push(id);
+        for _ in 0..4 {
+            ids.push(engine.add_test_entity(registry_test_soldier()));
         }
-        // Non-fighters do not need a creation identity for this scan.
-        world
-            .entities
-            .push(Some(Entity::Fx(crate::element::ElementFx {
-                element: Default::default(),
-                fx: Default::default(),
-            })));
+        engine.world.install_original_creation_orders(
+            ids.iter().copied().zip([50, 20, 20, 40]).collect(),
+            51,
+        );
+        engine.add_test_entity(Entity::Fx(crate::element::ElementFx {
+            element: Default::default(),
+            fx: Default::default(),
+        }));
         assert_eq!(
-            world.fighter_registry_order(),
+            engine.world.fighter_registry_ids,
             [ids[1], ids[2], ids[3], ids[0]]
         );
 
-        world.entities.remove(ids[1]).unwrap();
-        let added = EntityId::Soldier(crate::entity_id::SoldierId(5));
-        world.entities.push(Some(registry_test_soldier()));
-        world.assign_reserved_original_creation_order(added, 30);
+        engine.remove_entity(ids[1]);
+        let added = engine.add_test_entity(registry_test_soldier());
         assert_eq!(
-            world.fighter_registry_order(),
-            [ids[2], added, ids[3], ids[0]]
+            engine.world.fighter_registry_ids,
+            [ids[2], ids[3], ids[0], added]
         );
     }
 
     #[test]
-    #[should_panic(expected = "has no authoritative Original creation order")]
+    #[should_panic(expected = "published actor lacks creation order")]
     fn fighter_registry_rejects_missing_creation_order() {
-        let mut world = WorldState::new();
-        world.entities.push(Some(registry_test_soldier()));
-        world.entities.push(Some(registry_test_soldier()));
-        world.fighter_registry_order();
+        let mut engine = crate::engine::EngineInner::new();
+        engine.add_test_entity(registry_test_soldier());
+        engine.add_test_entity(registry_test_soldier());
+        engine
+            .world
+            .install_original_creation_orders(BTreeMap::new(), 0);
     }
 
     #[test]
@@ -920,23 +928,17 @@ mod tests {
 
     #[test]
     fn retired_pc_may_be_absent_from_original_registry() {
-        // A retired actor remains a valid world even without a live registry entry.
-        let mut world = WorldState::new();
-        let id = EntityId::Pc(crate::entity_id::PcId(0));
-        world
-            .entities
-            .push(Some(Entity::Pc(crate::element::ActorPc {
-                element: {
-                    let mut initial_element = crate::element::ElementData::default();
-                    initial_element.kind = crate::element::ElementKind::ActorPc;
-                    initial_element
-                },
-                actor: Default::default(),
-                human: Default::default(),
-                pc: Default::default(),
-            })));
-        world.pc_ids.push(id);
-        world.validate_level_attachments(&LevelAssets::new(), 0);
+        let mut engine = crate::engine::EngineInner::new();
+        let id = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
+            crate::element::Posture::Upright,
+        ));
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.retire_replaced_pc(id);
+        assert!(!engine.world.original_pc_registry_ids.contains(&id));
+        assert!(engine.world.actor_registry_ids.contains(&id));
+        assert!(engine.world.fighter_registry_ids.contains(&id));
+        engine.world.validate_level_attachments(&assets, 0);
     }
 
     #[test]

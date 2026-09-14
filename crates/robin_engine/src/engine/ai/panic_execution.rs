@@ -227,7 +227,6 @@ impl EngineInner {
                         *destination = crate::coordinates::MapPoint::new(point.x, point.y);
                         *flags = crate::sequence::MoveFlags::MAP;
                         self.launch_element(movement);
-                        self.dispatch_condolations(sim, assets);
                     } else {
                         self.duty_go_to(sim, assets, owner, destination, GotoFlags::RUN);
                         self.observation_timer(owner, 30);
@@ -300,11 +299,16 @@ impl EngineInner {
                         AiState::Fleeing,
                         Substate::FleeingHiding,
                     );
+                    self.execute_ai_set_alert_status(
+                        assets,
+                        owner,
+                        AlertLevel::Yellow,
+                        crate::ai::AlertFlags::empty(),
+                    );
                     let ai = self
                         .world
                         .entities
                         .expect_ai_controller_mut(owner, format_args!("hide alert"));
-                    ai.set_alert_status(AlertLevel::Yellow);
                     ai.clear_emoticon();
                     let center = (ai.panic_center_x, ai.panic_center_y);
                     let position = self.live_ai_position(owner);
@@ -393,7 +397,12 @@ impl EngineInner {
                 .entities
                 .expect_ai_controller_mut(owner, format_args!("panic hiding"));
             ai.clear_emoticon();
-            ai.set_alert_status(AlertLevel::Yellow);
+            self.execute_ai_set_alert_status(
+                assets,
+                owner,
+                AlertLevel::Yellow,
+                crate::ai::AlertFlags::empty(),
+            );
             let npc = self
                 .world
                 .entities

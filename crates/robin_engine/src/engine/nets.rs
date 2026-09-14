@@ -378,7 +378,13 @@ impl EngineInner {
             // Use the engine wrapper so the movement-element transition
             // rewrite + path cancel runs (the bare
             // `SequenceManager::stop_owner` skips both).
-            self.stop_owner(victim_id, crate::sequence::SequencePriority::Injury);
+            self.stop_actor_orders(
+                sim,
+                assets,
+                &mut Vec::new(),
+                victim_id,
+                crate::sequence::SequencePriority::Injury,
+            );
 
             // ── 3. Park the victim with a Wait element ──────────────
             self.actor_wait(victim_id);
@@ -397,14 +403,12 @@ impl EngineInner {
                 .map(|e| e.is_npc())
                 .unwrap_or(false);
             if victim_is_npc {
-                self.dispatch_ai_stimulus(
+                self.execute_ai_callback(
+                    sim,
+                    assets,
                     victim_id,
-                    crate::ai::Stimulus::new(crate::ai::StimulusType::EventNetAway),
+                    &crate::ai::Stimulus::new(crate::ai::StimulusType::EventNetAway),
                 );
-                // Original-game net removal sends the net-away event
-                // synchronously, even when the victim's creation slot has
-                // already run this frame.
-                self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, victim_id, assets);
 
                 // Skip the body-detectable cleanup for dead/unconscious
                 // victims — their body is genuinely a body to detect.

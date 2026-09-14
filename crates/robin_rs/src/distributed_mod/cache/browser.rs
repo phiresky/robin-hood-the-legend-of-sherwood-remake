@@ -226,7 +226,15 @@ fn chunk_key(hash: &str, offset: u64) -> String {
 }
 
 /// Validate and acquire one complete immutable cache entry.
+// Each public entry owns multi-request IndexedDB transactions; run them through
+// `indexed_db_executor` so they stay active on threaded builds.
 pub async fn acquire(
+    full_mod_sha256: [u8; 32],
+) -> Result<Option<DistributedModCacheLease>, String> {
+    crate::indexed_db_executor::drive(acquire_transactions(full_mod_sha256)).await
+}
+
+async fn acquire_transactions(
     full_mod_sha256: [u8; 32],
 ) -> Result<Option<DistributedModCacheLease>, String> {
     match acquire_inner(full_mod_sha256).await {
@@ -298,6 +306,14 @@ async fn acquire_inner(
 
 /// Return a byte prefix only after verifying every indexed durable chunk.
 pub async fn resume_offset(full_mod_sha256: [u8; 32], total_bytes: u64) -> Result<u64, String> {
+    crate::indexed_db_executor::drive(resume_offset_transactions(full_mod_sha256, total_bytes))
+        .await
+}
+
+async fn resume_offset_transactions(
+    full_mod_sha256: [u8; 32],
+    total_bytes: u64,
+) -> Result<u64, String> {
     validate_transfer_total(total_bytes)?;
     match inspect_resume_offset(full_mod_sha256, total_bytes).await {
         Ok(offset) => Ok(offset),
@@ -480,6 +496,19 @@ pub async fn append_chunk(
     offset: u64,
     chunk: &[u8],
 ) -> Result<u64, String> {
+    let chunk = chunk.to_vec();
+    crate::indexed_db_executor::drive(async move {
+        append_chunk_transaction(full_mod_sha256, total_bytes, offset, &chunk).await
+    })
+    .await
+}
+
+async fn append_chunk_transaction(
+    full_mod_sha256: [u8; 32],
+    total_bytes: u64,
+    offset: u64,
+    chunk: &[u8],
+) -> Result<u64, String> {
     let end = validate_chunk(total_bytes, offset, chunk.len())?;
     let key = hex_hash(&full_mod_sha256);
     let db = database().await?;
@@ -608,6 +637,14 @@ fn browser_storage_error(operation: &str, error: impl std::fmt::Display) -> Stri
 
 /// Assemble, validate, and atomically promote a complete partial.
 pub async fn finish_partial(
+    full_mod_sha256: [u8; 32],
+    total_bytes: u64,
+) -> Result<DistributedModCacheLease, String> {
+    crate::indexed_db_executor::drive(finish_partial_transactions(full_mod_sha256, total_bytes))
+        .await
+}
+
+async fn finish_partial_transactions(
     full_mod_sha256: [u8; 32],
     total_bytes: u64,
 ) -> Result<DistributedModCacheLease, String> {
@@ -743,6 +780,10 @@ async fn finish_partial_inner(
 
 /// Remove every complete and partial cached package. Trust grants are separate.
 pub async fn clear() -> Result<usize, String> {
+    crate::indexed_db_executor::drive(clear_transaction()).await
+}
+
+async fn clear_transaction() -> Result<usize, String> {
     let db = database().await?;
     let transaction = db
         .transaction(&[PACKAGES, CHUNKS, METADATA], TransactionMode::ReadWrite)

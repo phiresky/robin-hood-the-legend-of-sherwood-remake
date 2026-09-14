@@ -1,12 +1,12 @@
-//! Frame window container that owns widgets and routes input/refresh.
+//! Frame window container that owns widgets and routes input.
 //!
 //! A frame window holds a collection of widgets, routes input to them,
-//! collects events, and manages refresh probes. Widgets are positioned
+//! collects events, and controls widget exclusion. Widgets are positioned
 //! relative to the frame's origin.
 
 use serde::{Deserialize, Serialize};
 
-use crate::ui::{UiEvent, UiMsg, UiProbe};
+use crate::ui::{UiEvent, UiMsg};
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 
 use super::{Widget, WidgetId, WidgetInput};
@@ -34,11 +34,8 @@ pub struct FrameWnd {
 
     /// All widgets owned by this frame.
     widgets: Vec<Widget>,
-    /// Widget IDs that are excluded from input/refresh processing.
+    /// Widget IDs that are excluded from input and drawing.
     excluded: Vec<WidgetId>,
-
-    /// Opaque handle to the rendering surface.
-    rendering_surface: u32,
 
     /// Internal event for FrameFocus.
     frame_id: u32,
@@ -56,7 +53,6 @@ impl Default for FrameWnd {
             tooltip_set: false,
             widgets: Vec::new(),
             excluded: Vec::new(),
-            rendering_surface: u32::MAX,
             frame_id: 0,
         }
     }
@@ -100,14 +96,6 @@ impl FrameWnd {
         self.frame_id = id;
     }
 
-    /// Attach all widgets to a rendering surface.
-    pub fn attach_to_display(&mut self, surface: u32) {
-        self.rendering_surface = surface;
-        for widget in &mut self.widgets {
-            widget.attach_to_display(surface);
-        }
-    }
-
     // ── Widget management ──────────────────────────────────────────
 
     /// Add a widget to the frame.
@@ -133,19 +121,11 @@ impl FrameWnd {
             widget.base_mut().set_position(adjusted);
         }
 
-        // Attach to rendering surface if we already have one.
-        if self.rendering_surface != u32::MAX {
-            widget.attach_to_display(self.rendering_surface);
-        }
-
         self.widgets.push(widget);
     }
 
     /// Add a widget without adjusting its position (already in screen coords).
-    pub fn add_widget_absolute(&mut self, mut widget: Widget) {
-        if self.rendering_surface != u32::MAX {
-            widget.attach_to_display(self.rendering_surface);
-        }
+    pub fn add_widget_absolute(&mut self, widget: Widget) {
         self.widgets.push(widget);
     }
 
@@ -230,7 +210,7 @@ impl FrameWnd {
 
     // ── Exclusion ──────────────────────────────────────────────────
 
-    /// Exclude a widget from input/refresh processing.
+    /// Exclude a widget from input and drawing.
     ///
     /// Only excludes widgets that are actually owned by this frame, and
     /// refuses to add duplicate entries. Returns `true` if the widget
@@ -363,65 +343,6 @@ impl FrameWnd {
         }
 
         events
-    }
-
-    fn non_excluded_widgets_mut(&mut self) -> impl Iterator<Item = &mut Widget> {
-        let excluded = &self.excluded;
-        self.widgets
-            .iter_mut()
-            .filter(move |widget| !excluded.contains(&widget.id()))
-    }
-
-    // ── Refresh ────────────────────────────────────────────────────
-
-    /// Probe all widgets for refresh needs.
-    pub fn probe_refresh(&mut self, counter: u32) -> Vec<UiProbe> {
-        let mut probes = Vec::new();
-
-        if !self.enabled {
-            return probes;
-        }
-
-        for widget in self.non_excluded_widgets_mut() {
-            if let Some(probe) = widget.probe_refresh(counter) {
-                probes.push(probe);
-            }
-        }
-
-        probes
-    }
-
-    /// Refresh (render) all widgets.
-    pub fn refresh(&mut self) {
-        if !self.enabled {
-            return;
-        }
-        for widget in self.non_excluded_widgets_mut() {
-            widget.refresh();
-        }
-    }
-
-    /// Restore all widgets' renderer state.
-    pub fn restore(&mut self) {
-        if !self.enabled {
-            return;
-        }
-        for widget in self.non_excluded_widgets_mut() {
-            widget.restore();
-        }
-    }
-
-    /// Restore only widgets that overlap with the given region.
-    pub fn restore_region(&mut self, region: &ScreenBBox) {
-        if !self.enabled {
-            return;
-        }
-        for widget in self.non_excluded_widgets_mut() {
-            if widget.base().bbox.intersects_bbox(region) {
-                widget.restore();
-                widget.refresh();
-            }
-        }
     }
 }
 

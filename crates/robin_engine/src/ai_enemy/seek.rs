@@ -56,11 +56,8 @@ fn legacy_seek_direction_delta(direction: u16, seek_direction: u16) -> u16 {
     direction.wrapping_add(16).wrapping_sub(seek_direction)
 }
 
-use super::util::{pos_distance, resolve_seek_point_id, resolve_seek_point_mut, vec_to_sector};
-use super::{
-    AlertSoldiersFailureContinuation, EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION,
-    task_priority,
-};
+use super::util::{pos_distance, vec_to_sector};
+use super::{EnemyAi, SeekFlags, UNDEFINED_DIRECTION};
 
 /// Immutable inputs shared by the candidate and personal-point phases.
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -311,7 +308,7 @@ impl EnemyAi {
             // is a plain `min + rand() % range` and ignores consideration
             // scores, so courage does not bias this sample. Rust's uniform
             // sample matches. The courage axis itself *is* implemented
-            // (`AiBrain::soldier_profile_courage` / `get_courage`),
+            // (`EnemyAi::get_courage`),
             // wired into the call sites that actually use it
             // (`CHARGE_MIN_COURAGE`, `OBSERVE_SWORDFIGHT` distance,
             // courage_distance, etc).

@@ -72,7 +72,7 @@ impl EngineInner {
                     .world
                     .entities
                     .expect_enemy_ai(owner, format_args!("arrow search rank"))
-                    .get_rank()
+                    .get_rank(&assets.profile_manager)
                     == ProfileRank::Soldier
                 {
                     flags |= SeekFlags::LOOK_FOR_HELP_AFTER;
@@ -174,13 +174,7 @@ impl EngineInner {
                     } else {
                         LookDirection::LeftRight
                     };
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("officer search look"))
-                    .outbox
-                    .actor
-                    .look_sidewards = Some(direction);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.execute_ai_look_sidewards(owner, direction);
             }
             (
                 SeekingOfficerLookingForSoldiers1Sidewards

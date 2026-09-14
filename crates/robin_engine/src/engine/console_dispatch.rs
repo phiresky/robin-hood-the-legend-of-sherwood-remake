@@ -12,7 +12,6 @@ use crate::console::ConsoleCommand;
 #[cfg(test)]
 use crate::console::parse_with_final;
 use crate::element::{Camp, Command, Entity, EntityId, ObjectType, Posture};
-use crate::natives::EngineCommand;
 use crate::sequence::SequenceElement;
 
 /// Any authoritative console command makes the current attempt ineligible
@@ -242,18 +241,6 @@ impl EngineInner {
     fn console_give_blazon(&mut self, amount: u32) -> ConsoleResponse {
         self.campaign_mut_or_panic()
             .add_value(CampaignValue::Blazon, amount as i32);
-        // Rust HUD is immediate-mode but we still push the
-        // information-bars command so script-side consumers and
-        // the blazon-bar state recomputation see the hook —
-        // same pattern as the `WinMission` branch.
-        if let Some(effects) = self
-            .scripts
-            .mission
-            .as_mut()
-            .map(|s| s.script_effects_mut())
-        {
-            effects.emit_engine(EngineCommand::UpdateInformationBars);
-        }
         ConsoleResponse::Ok(format!("{amount} blazons added."))
     }
 
@@ -851,17 +838,6 @@ impl EngineInner {
             }
             campaign.add_value(CampaignValue::Blazon, pending_blazons);
         }
-        // Rust's HUD is immediate-mode so no widget rebuild is
-        // needed, but we still push the information-bars
-        // command so script-side consumers see the hook.
-        if let Some(effects) = self
-            .scripts
-            .mission
-            .as_mut()
-            .map(|s| s.script_effects_mut())
-        {
-            effects.emit_engine(EngineCommand::UpdateInformationBars);
-        }
         self.win(true);
         self.mission_domain.state.quit_won = true;
         ConsoleResponse::Ok("Mission won !".to_string())
@@ -906,12 +882,7 @@ impl EngineInner {
             })
             .collect();
         for id in ids {
-            // Route through `apply_concussion` so the guards
-            // (invulnerable / tied / carried / script-locked)
-            // fire AND the WentUnconscious / WokeUp outcome
-            // side-effects get dispatched to
-            // `pending_concussion_side_effects` for
-            // `perform_hourglass` to drain.
+            // Apply wake guards and finish the resulting callbacks inline.
             self.apply_concussion(sim, assets, id, 31, false);
         }
         ConsoleResponse::Ok("Wake up !".to_string())

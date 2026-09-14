@@ -34,7 +34,9 @@ fn enemy_ai_hero_rejects_soldier_speech_without_invalid_timing_or_stuck_latch() 
                 ..Default::default()
             });
         let flags = SpeechFlags::ALWAYS | SpeechFlags::HOUSE | SpeechFlags::MYTALK_1;
-        let settlement = engine.settle_npc_speech_attempt(
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.execute_ai_speech(
+            &crate::sim_rng::test_context(),
             &assets,
             owner,
             AiSpeechAttempt {
@@ -42,23 +44,13 @@ fn enemy_ai_hero_rejects_soldier_speech_without_invalid_timing_or_stuck_latch() 
                 flags: flags.bits(),
             },
         );
-        assert!(settlement.invoke_finished_callback);
+        assert!(speech_log(&engine, owner).contains(&(
+            crate::ai::LogLineType::Event,
+            StimulusType::EventMyTalk1 as u16
+        )));
         assert_eq!(last_speech_impossible(&engine, owner), Some(11));
         assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
         assert_eq!(exclamation_for(&engine, owner), None);
-        let ai = mytalk_ai(&engine, owner);
-        assert_eq!(ai.current_remark, remark);
-        assert_eq!(ai.outbox.reentrant.self_stimuli.len(), 1);
-        assert_eq!(
-            ai.outbox.reentrant.self_stimuli[0].stimulus_type,
-            StimulusType::EventMyTalk1
-        );
-        engine.finalize_category_speech_rejection(
-            owner,
-            settlement
-                .category_rejection
-                .expect("hero voice category rejection"),
-        );
         assert_eq!(
             mytalk_ai(&engine, owner).current_remark,
             Remark::TheSoundOfSilence
@@ -443,7 +435,6 @@ fn speech_calls_preserve_rejected_accepted_busy_and_emergency_attempts() {
     );
     let ai = mytalk_ai(&engine, owner);
     assert_eq!(ai.current_remark, Remark::Wounded);
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     // Accepted lines wait as pending requests until the concrete sound
     // manager resolves a duration; only then do they start playing.
     assert_eq!(
@@ -538,15 +529,22 @@ fn send_charly_tail_runs_after_both_rejected_and_accepted_speech() {
                 .expect("speech test owner has Enemy AI");
             enemy.base.current_state = AiState::Seeking;
             enemy.base.current_substate = Substate::SeekingGroupCalledByOfficer;
-            enemy.soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
+            crate::engine::test_support::actors::edit_enemy_profile(
+                &mut assets,
+                enemy,
+                |profile| profile.rank = crate::profiles::ProfileRank::Soldier,
+            );
             enemy.base.antagonist = Some(crate::ai::AiEntityHandle::new(charly_handle));
             enemy.base.friend_in_trouble = None;
         }
-        engine
-            .get_entity_mut(charly)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap()
-            .soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
+        crate::engine::test_support::actors::edit_enemy_profile(
+            &mut assets,
+            engine
+                .get_entity_mut(charly)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap(),
+            |profile| profile.rank = crate::profiles::ProfileRank::Soldier,
+        );
         engine.execute_ai_seen_charly(
             &crate::sim_rng::test_context(),
             &assets,
@@ -607,7 +605,6 @@ fn speech_id_zero_latches_subtitle_and_forbid_without_completion_callback() {
         ai.current_remark_flags,
         (SpeechFlags::ALWAYS | SpeechFlags::MYTALK_1).bits()
     );
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     assert!(engine.feedback.sound_sim.playing_exclamations.is_empty());
     assert!(exclamation_for(&engine, owner).is_none());
     assert_eq!(engine.ai.global.screen_remarks.len(), 1);
@@ -787,15 +784,6 @@ fn tower_guard_officer_call_consumes_ignored_route_failure_before_priority_tail(
         ai.current_task_priority,
         crate::ai_enemy::task_priority::ALERT_IGNORE_ENEMY
     );
-    assert!(
-        !ai.base
-            .outbox
-            .reentrant
-            .self_stimuli
-            .iter()
-            .any(|stimulus| stimulus.stimulus_type
-                == crate::ai::StimulusType::EventCouldntReachPoint)
-    );
 }
 
 fn corpse_officer_fixture(
@@ -896,14 +884,17 @@ fn corpse_officer_alert_success_keeps_search_fallback_unstarted() {
 #[test]
 fn corpse_officer_alert_missing_or_unreachable_officer_starts_body_search() {
     for disconnected in [false, true] {
-        let (mut engine, assets, owner, officer, center) = corpse_officer_fixture(disconnected);
+        let (mut engine, mut assets, owner, officer, center) = corpse_officer_fixture(disconnected);
         if !disconnected {
-            engine
-                .get_entity_mut(officer)
-                .unwrap()
-                .enemy_ai_mut()
-                .unwrap()
-                .soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
+            crate::engine::test_support::actors::edit_enemy_profile(
+                &mut assets,
+                engine
+                    .get_entity_mut(officer)
+                    .unwrap()
+                    .enemy_ai_mut()
+                    .unwrap(),
+                |profile| profile.rank = crate::profiles::ProfileRank::Soldier,
+            );
         }
         engine.execute_ai_alert_officer_for_caller(
             &crate::sim_rng::test_context(),
@@ -927,15 +918,6 @@ fn corpse_officer_alert_missing_or_unreachable_officer_starts_body_search() {
             center
         );
         assert!(!ai.base.couldnt_reachpoint);
-        assert!(
-            !ai.base
-                .outbox
-                .reentrant
-                .self_stimuli
-                .iter()
-                .any(|stimulus| stimulus.stimulus_type
-                    == crate::ai::StimulusType::EventCouldntReachPoint)
-        );
     }
 }
 
@@ -1013,10 +995,9 @@ fn dead_body_alert_tail_fails_loud_for_wrong_ai_owner() {
 }
 
 #[test]
-fn alert_soldier_friend_append_drain_preserves_preexisting_duplicate_and_order() {
+fn alert_soldier_friend_append_preserves_preexisting_duplicate_and_order() {
     use crate::element::{AiBrain, Detectable, DetectableType};
 
-    let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let civilian_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
     let first_friend = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
@@ -1044,12 +1025,8 @@ fn alert_soldier_friend_append_drain_preserves_preexisting_duplicate_and_order()
     ai.owner_entity_id = Some(civilian_id);
     // This is the exact duplicate-preserving path used by soldier alerting's
     // direct retail detectable additions.
-    ai.outbox.actor.detectable_mutations.extend([
-        crate::ai::DetectableMutation::Append(first_friend, DetectableType::Friend),
-        crate::ai::DetectableMutation::Append(second_friend, DetectableType::Friend),
-    ]);
-
-    engine.drain_pending_for_npc(&sim, civilian_id, &LevelAssets::default());
+    engine.execute_ai_append_detectable(civilian_id, first_friend, DetectableType::Friend);
+    engine.execute_ai_append_detectable(civilian_id, second_friend, DetectableType::Friend);
 
     let friends = &engine
         .get_entity(civilian_id)
@@ -1069,11 +1046,7 @@ fn alert_soldier_friend_append_drain_preserves_preexisting_duplicate_and_order()
 
 #[test]
 fn detectable_enemy_add_filters_targets_but_append_preserves_direct_calls() {
-    use crate::ai::DetectableMutation::{Add, Append};
-    use crate::element::{
-        Camp, DetectableType::Enemy, ElementBonus, ElementData, ElementKind, ObjectData, Posture,
-    };
-    let sim = crate::sim_rng::test_context();
+    use crate::element::{Camp, DetectableType::Enemy, Posture};
     for (camp, target_entity, accepted) in [
         (
             Camp::Lacklandists,
@@ -1083,31 +1056,12 @@ fn detectable_enemy_add_filters_targets_but_append_preserves_direct_calls() {
         (Camp::Royalists, make_test_soldier(Posture::Upright), true),
         (Camp::Royalists, make_test_pc(Posture::Upright), false),
         (Camp::Lacklandists, make_test_pc(Posture::Upright), true),
-        (
-            Camp::Lacklandists,
-            Entity::Bonus(ElementBonus {
-                element: {
-                    let mut element = ElementData::default();
-                    element.kind = ElementKind::ObjectBonus;
-                    element
-                },
-                object: ObjectData::default(),
-            }),
-            false,
-        ),
     ] {
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(make_test_ai_soldier(camp));
         let target = engine.add_test_entity(target_entity);
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .ai_controller_mut()
-            .unwrap()
-            .outbox
-            .actor
-            .detectable_mutations = vec![Add(target, Enemy), Append(target, Enemy)];
-        engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
+        engine.execute_ai_add_detectable(owner, target, Enemy);
+        engine.execute_ai_append_detectable(owner, target, Enemy);
         let entries = &engine
             .get_entity(owner)
             .unwrap()
@@ -1124,23 +1078,15 @@ fn detectable_enemy_add_filters_targets_but_append_preserves_direct_calls() {
 }
 
 #[test]
-#[should_panic(expected = "detectable target 999 disappeared")]
+#[should_panic(expected = "missing (detectable target)")]
 fn detectable_enemy_add_requires_a_live_target() {
-    let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .outbox
-        .actor
-        .add_detectable((
-            EntityId::Soldier(crate::entity_id::SoldierId(999)),
-            crate::element::DetectableType::Enemy,
-        ));
-    engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
+    engine.execute_ai_add_detectable(
+        owner,
+        EntityId::Soldier(crate::entity_id::SoldierId(999)),
+        crate::element::DetectableType::Enemy,
+    );
 }
 
 #[test]
@@ -1280,7 +1226,7 @@ fn review_civilian_sees_soldier_deletes_friends_before_acceptance_or_refusal() {
 }
 
 #[test]
-fn review_direct_owner_self_stimulus_closes_nested_alert_request() {
+fn civilian_arrival_callback_finishes_nested_alert_request() {
     use crate::ai::{AiState, StimulusType, Substate};
 
     let engine =
@@ -1345,7 +1291,9 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
             .and_then(Entity::enemy_ai_mut)
             .expect("test soldier has EnemyAi");
         enemy.base.me = id.index();
-        enemy.soldier_profile_rank = rank;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, enemy, |profile| {
+            profile.rank = rank
+        });
         {
             let ai = &mut enemy.base;
             ai.set_ai_state(state);
@@ -1397,7 +1345,9 @@ fn review_officer_sees_soldier_accepts_officer_rank_target() {
             .and_then(Entity::enemy_ai_mut)
             .expect("officer test entity has EnemyAi");
         enemy.base.me = id.index();
-        enemy.soldier_profile_rank = ProfileRank::Officer;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, enemy, |profile| {
+            profile.rank = ProfileRank::Officer
+        });
         {
             let ai = &mut enemy.base;
             ai.set_ai_state(AiState::Default);
@@ -1490,7 +1440,7 @@ fn review_soldier_alert_records_sender_even_when_later_call_is_refused() {
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let callback_officer_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let assets = engine.test_runtime_assets();
+    let mut assets = engine.test_runtime_assets();
 
     for (id, x, rank) in [
         (reporter_id, 100.0, ProfileRank::Soldier),
@@ -1515,7 +1465,9 @@ fn review_soldier_alert_records_sender_even_when_later_call_is_refused() {
             .enemy_mut()
             .expect("alert soldier has EnemyAi");
         ai.base.me = id.index();
-        ai.soldier_profile_rank = rank;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = rank
+        });
         {
             let ai = &mut ai.base;
             ai.set_ai_state(AiState::Default);
@@ -1919,7 +1871,6 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
             .get_entity_mut(owner)
             .and_then(Entity::enemy_ai_mut)
             .expect("Unalert owner has EnemyAi");
-        owner_ai.soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
         owner_ai.base.antagonist =
             Some(crate::ai::AiEntityHandle::new(excluded_antagonist.index()));
     }
@@ -1962,6 +1913,15 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
     assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
     engine.world.static_sight_obstacle_active = vec![true];
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    crate::engine::test_support::actors::edit_enemy_profile(
+        &mut assets,
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap(),
+        |profile| profile.rank = crate::profiles::ProfileRank::Soldier,
+    );
 
     crate::sight_obstacle::begin_parity_visibility_capture();
     engine.unalert_live_charly_seekers(&sim, &assets, owner, charly);
@@ -2017,14 +1977,6 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
         assert!(
             soldier.npc.detectable_lists[DetectableType::MissedFriend as usize].is_empty(),
             "clearing the checkpoint friend must synchronously clear the recipient's missed-friend list"
-        );
-        assert!(
-            enemy
-                .base
-                .outbox
-                .actor
-                .deleted_detectable_types()
-                .is_empty()
         );
     }
     assert_eq!(
@@ -2099,7 +2051,6 @@ fn final_review_alert_all_refused_resumes_caller_failure() {
         0,
         AlertSoldiersFailureContinuation::ReturnToDuty,
     );
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 
     let officer = engine
         .get_entity(officer_id)
@@ -2155,7 +2106,9 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
         .enemy_mut()
         .expect("partial alert acceptor has EnemyAi");
     accepted_ai.base.me = accepted_id.index();
-    accepted_ai.soldier_profile_rank = ProfileRank::Soldier;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, accepted_ai, |profile| {
+        profile.rank = ProfileRank::Soldier
+    });
     {
         let ai = &mut accepted_ai.base;
         ai.set_ai_state(AiState::Default);
@@ -2192,7 +2145,6 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
         0,
         AlertSoldiersFailureContinuation::ReturnToDuty,
     );
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 
     let officer = engine
         .get_entity(officer_id)
@@ -2424,7 +2376,9 @@ fn review2_alerted_soldier_accepts_a_later_live_reconnaissance_report() {
         .enemy_mut()
         .expect("review2 second alerted soldier has EnemyAi");
     second_ai.base.me = second_id.index();
-    second_ai.soldier_profile_rank = ProfileRank::Soldier;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, second_ai, |profile| {
+        profile.rank = ProfileRank::Soldier
+    });
     complete_test_runtime_fixture(&mut engine, &mut assets);
     let first_position = Position {
         x: 10.0,

@@ -57,18 +57,6 @@ pub enum AiBrain {
 }
 
 impl AiBrain {
-    /// In-memory save projection: persisted AI fields only, with callback
-    /// provenance, scratch state and clone-only continuations rebuilt fresh,
-    /// exactly as the serde path (`ai::persisted`) does.
-    pub(crate) fn persisted_projection(&self) -> Self {
-        use crate::ai::persisted::PersistedProjection;
-        match self {
-            Self::None => Self::None,
-            Self::Enemy(value) => Self::Enemy(Box::new(value.persisted_clone())),
-            Self::Friendly(value) => Self::Friendly(Box::new(value.persisted_clone())),
-        }
-    }
-
     /// Access the base `AiController` (common to both enemy and friendly).
     pub fn base(&self) -> Option<&AiController> {
         match self {

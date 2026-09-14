@@ -143,18 +143,17 @@ fn removal_revalidates_stimuli_detached_across_a_synchronous_boundary() {
         .ai_controller_mut()
         .unwrap();
     let history = ai.last_stimulus;
-    ai.outbox.detection.stimuli = detached;
-    engine.tick_enemy_ai_drain_pending_stimuli_for_npc(
+    engine.dispatch_optical_stimuli(
         &crate::sim_rng::test_context(),
         observer,
         &LevelAssets::new(),
+        detached,
     );
     let ai = engine
         .get_entity(observer)
         .unwrap()
         .ai_controller()
         .unwrap();
-    assert!(ai.outbox.detection.stimuli.is_empty());
     assert_eq!(
         ai.last_stimulus, history,
         "neither stale target is delivered to Think"
@@ -231,7 +230,6 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
         engine.settle_npc_speech_completions(&sim, &assets);
         let ai = mytalk_ai(&engine, soldier_id);
         assert_eq!(ai.current_remark, Remark::Arrow);
-        assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     }
 
     engine.control.frame_counter = 103;
@@ -239,7 +237,6 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
     engine.settle_npc_speech_completions(&sim, &assets);
     let ai = mytalk_ai(&engine, soldier_id);
     assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     assert_eq!(
         ai.ai_log.last().map(|line| (line.line_type, line.info)),
         Some((LogLineType::Event, StimulusType::EventMyTalk1 as u16))
@@ -375,7 +372,6 @@ fn zero_duration_resolution_completes_mytalk_at_current_boundary() {
     let ai = mytalk_ai(&engine, soldier_id);
     assert_eq!(engine.control.frame_counter, 100);
     assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     assert_eq!(
         ai.ai_log.last().map(|line| (line.line_type, line.info)),
         Some((LogLineType::Event, StimulusType::EventMyTalk1 as u16))
@@ -384,7 +380,7 @@ fn zero_duration_resolution_completes_mytalk_at_current_boundary() {
 
 #[test]
 fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo() {
-    use crate::ai::{AiState, AttentiveModeEffect, Substate};
+    use crate::ai::{AiState, Substate};
     use crate::element::{AiBrain, Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::SequenceState;
@@ -412,20 +408,11 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
         AiState::Default,
         Substate::DefaultGotoPostTurn,
     );
-    {
-        let ai = engine
-            .get_entity_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap();
-        ai.outbox
-            .actor
-            .queue_set_attentive_mode(AttentiveModeEffect::new(false, false));
-    }
+    engine.set_soldier_attentive_mode(owner, false, false);
 
     // This is the movement-condolation mode that exposed the bug. Face and
     // attentive-mode changes both launch inline, but their ordinary
     // elements remain registered until the global sequence-manager update.
-    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
     let owned_before_manager: Vec<_> = engine
         .orders
@@ -559,8 +546,6 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
         Substate::AttackingTooProudToAttackApproach,
     );
 
-    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
-
     let owned: Vec<_> = engine
         .orders
         .sequence_manager
@@ -668,67 +653,51 @@ fn matured_mytalk_completion_precedes_deferred_hades_replacement() {
 }
 
 #[test]
-fn category_rejection_tail_clears_recursive_emergency_line() {
-    use crate::ai::{AiSpeechAttempt, Remark, SpeechFlags};
+fn category_rejection_completes_notification_before_returning_with_a_cleared_latch() {
+    use crate::ai::{AiSpeechAttempt, LogLineType, Remark, SpeechFlags, StimulusType};
 
-    let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
-    let owner = add_speech_test_npc(
-        &mut engine,
-        &mut assets,
-        SpeechNpcKind::Soldier { vip: false },
-        221,
-    );
-    let rejected_flags = SpeechFlags::ALWAYS | SpeechFlags::MYTALK_1;
-    let settlement = engine.settle_npc_speech_attempt(
-        &assets,
-        owner,
-        AiSpeechAttempt {
-            remark: Remark::VipWarcry,
-            flags: rejected_flags.bits(),
-        },
-    );
-    assert!(settlement.invoke_finished_callback);
-    assert_eq!(mytalk_ai(&engine, owner).current_remark, Remark::VipWarcry);
-    assert_eq!(
-        mytalk_ai(&engine, owner).current_remark_flags,
-        rejected_flags.bits(),
-        "remark-completion notification observes the rejected speech latch"
-    );
-
-    let recursive = engine.settle_npc_speech_attempt(
-        &assets,
-        owner,
-        AiSpeechAttempt {
-            remark: Remark::Arrow,
-            flags: (SpeechFlags::ALWAYS | SpeechFlags::EMERGENCY).bits(),
-        },
-    );
-    assert_eq!(
-        recursive,
-        super::super::super::ai::NpcSpeechSettlement::default()
-    );
-    assert_eq!(mytalk_ai(&engine, owner).current_remark, Remark::Arrow);
-
-    engine.finalize_category_speech_rejection(
-        owner,
-        settlement
-            .category_rejection
-            .expect("category rejection has an unconditional return tail"),
-    );
-    let ai = mytalk_ai(&engine, owner);
-    assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
-    assert_eq!(ai.current_remark_flags, 0);
-    assert!(
-        engine
-            .feedback
-            .sound_sim
-            .pending_exclamations
+    for (kind, remark, reason, log_before_callback) in [
+        (
+            SpeechNpcKind::Soldier { vip: false },
+            Remark::VipWarcry,
+            5,
+            true,
+        ),
+        (
+            SpeechNpcKind::Civilian { vip: false },
+            Remark::Arrow,
+            9,
+            false,
+        ),
+    ] {
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        let owner = add_speech_test_npc(&mut engine, &mut assets, kind, 221);
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.execute_ai_speech(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            AiSpeechAttempt {
+                remark,
+                flags: (SpeechFlags::ALWAYS | SpeechFlags::MYTALK_1).bits(),
+            },
+        );
+        let log = speech_log(&engine, owner);
+        let rejection = log
             .iter()
-            .any(|line| line.actor_id == owner.index()
-                && line.exclamation_id == Remark::Arrow as u16),
-        "the recursive line started, but the outer rejected Say overwrote its latch"
-    );
+            .position(|entry| *entry == (LogLineType::SpeakImpossible, reason))
+            .expect("category rejection logged");
+        let notification = log
+            .iter()
+            .position(|entry| *entry == (LogLineType::Event, StimulusType::EventMyTalk1 as u16))
+            .expect("completion notification executed synchronously");
+        assert_eq!(rejection < notification, log_before_callback);
+        let ai = mytalk_ai(&engine, owner);
+        assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
+        assert_eq!(ai.current_remark_flags, 0);
+        assert!(engine.ai.think_call_stack.is_empty());
+    }
 }
 
 #[test]
@@ -835,24 +804,30 @@ fn number_of_remarks_sentinel_fails_instead_of_entering_automatic_forbid() {
 }
 
 #[test]
-fn repeated_checkpoint_charly_drains_only_the_last_target() {
+fn repeated_checkpoint_charly_replaces_the_live_target() {
     use crate::ai::AiEntityHandle;
     use crate::element::DetectableType::MissedFriend;
-    let sim = crate::sim_rng::test_context();
     for clear in [false, true] {
         let mut engine = EngineInner::new();
         let owner =
             engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
         let first = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
         let second = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
-        let ai = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .ai_controller_mut()
-            .unwrap();
-        ai.set_checkpoint_charly(Some(AiEntityHandle::new(first.index())));
-        ai.set_checkpoint_charly((!clear).then_some(AiEntityHandle::new(second.index())));
-        engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
+        engine.execute_ai_set_checkpoint_charly(owner, Some(AiEntityHandle::new(first.index())));
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .ai_actor_data()
+                .unwrap()
+                .detectable_lists[MissedFriend as usize][0]
+                .element,
+            Some(first)
+        );
+        engine.execute_ai_set_checkpoint_charly(
+            owner,
+            (!clear).then_some(AiEntityHandle::new(second.index())),
+        );
         let actual = engine
             .get_entity(owner)
             .unwrap()
@@ -907,7 +882,7 @@ fn fighter_registry_keeps_inactive_and_tied_members_with_live_ineligibility() {
     };
     other_soldier.element.publish_order_posture(Posture::Tied);
 
-    let registry = engine.world.fighter_registry_order();
+    let registry = &engine.world.fighter_registry_ids;
     assert!(registry.contains(&self_id));
     assert!(registry.contains(&other_id));
     for id in [self_id, other_id] {
@@ -952,7 +927,7 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
 
     let assets = engine.test_runtime_assets();
 
-    assert!(engine.world.fighter_registry_order().contains(&dead_pc_id));
+    assert!(engine.world.fighter_registry_ids.contains(&dead_pc_id));
     let entity = engine
         .get_entity(dead_pc_id)
         .expect("held dead fighter remains live");
@@ -1096,8 +1071,6 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
-    engine.drain_direct_ai_owner_boundary(&sim, soldier_id, &assets);
 
     let sector = Some(crate::engine::test_support::ensure_ordinary_sector(
         &mut engine,
@@ -1167,8 +1140,6 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
             .is_empty(),
         "ReturnToDuty's Beggar deletion must settle on the resumed caller stack"
     );
-    assert!(!ai.base.outbox.actor.has_boundary_work());
-    assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
 
     let commands: Vec<_> = engine
         .orders
@@ -1363,8 +1334,7 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
-    engine.drain_direct_ai_owner_boundary(&sim, soldier_id, &assets);
+
     let officer = engine
         .get_entity_mut(officer_id)
         .expect("call-acceptance officer exists");
@@ -1434,8 +1404,6 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
             .len(),
         1
     );
-    assert!(!ai.base.outbox.actor.has_boundary_work());
-    assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
     assert!(
         !engine
             .orders
@@ -1470,8 +1438,6 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, source_id, target_id, assets) = setup_review2_officer_and_soldier();
-    engine.drain_direct_ai_owner_boundary(&sim, source_id, &assets);
-    engine.drain_direct_ai_owner_boundary(&sim, target_id, &assets);
 
     engine
         .get_entity_mut(source_id)
@@ -1569,16 +1535,6 @@ fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() 
         engine.ai.think_call_stack,
         vec![source_id],
         "the direct member call must preserve the enclosing decision frame"
-    );
-    assert!(
-        !member
-            .base
-            .outbox
-            .reentrant
-            .self_stimuli
-            .iter()
-            .any(|queued| queued.stimulus_type == StimulusType::EventReachPoint),
-        "the recursively called member owns no decision-completion surface"
     );
 }
 

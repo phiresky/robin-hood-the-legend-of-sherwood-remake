@@ -15,7 +15,6 @@ fn duty_fixture(
     ai.base.special_action = true;
     ai.base.substate_at_last_timer_launch = ai.base.current_substate;
     ai.base.timer_is_running = false;
-    ai.base.outbox = Default::default();
     let Entity::Civilian(civilian) = &mut entity else {
         unreachable!()
     };
@@ -31,24 +30,6 @@ fn duty_fixture(
 
 fn friendly(engine: &crate::engine::EngineInner, owner: crate::element::EntityId) -> &FriendlyAi {
     engine.get_entity(owner).unwrap().friendly_ai().unwrap()
-}
-
-impl FriendlyAi {
-    /// Raw-coordinate panic entry point (tests only).  Production
-    /// code uses [`Self::panic_from_point_at`] so the panic
-    /// center carries a valid sector/level for the multi-level
-    /// door lookup.
-    fn panic_from_point(&mut self, center_x: f32, center_y: f32, runs: u8) {
-        self.panic_from_point_at(
-            Position {
-                x: center_x,
-                y: center_y,
-                sector: None,
-                level: 0,
-            },
-            runs,
-        );
-    }
 }
 
 #[test]
@@ -72,34 +53,6 @@ fn civilian_return_to_duty() {
     assert_eq!(ai.base.current_state, AiState::Default);
     assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
     assert_eq!(ai.fleeing_seen_enemy_counter, 0);
-}
-
-#[test]
-fn civilian_panic_from_point() {
-    let mut ai = FriendlyAi::new(1);
-    ai.panic_from_point(100.0, 200.0, 8);
-    assert_eq!(ai.base.current_state, AiState::Default);
-    assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
-    assert_eq!(ai.base.panic_center_x, 100.0);
-    assert_eq!(ai.base.panic_center_y, 200.0);
-    assert_eq!(ai.base.lasting_panic_runs, 0);
-    let request = ai.base.outbox.actor.begin_panic.unwrap();
-    assert_eq!(request.runs, 8);
-    assert!(request.is_new_panic);
-}
-
-#[test]
-fn civilian_panic_undirected_preserves_runs_until_live_execution() {
-    let mut ai = FriendlyAi::new(1);
-    ai.base.current_state = AiState::Fleeing;
-    ai.base.current_substate = Substate::FleeingPanic;
-    ai.base.lasting_panic_runs = 11;
-    ai.panic_undirected(4);
-    assert_eq!(ai.base.lasting_panic_runs, 11);
-    assert!(!ai.base.directed_panic);
-    let request = ai.base.outbox.actor.begin_panic.unwrap();
-    assert_eq!(request.runs, 4);
-    assert!(!request.is_new_panic);
 }
 
 #[test]

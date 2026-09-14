@@ -92,19 +92,8 @@ impl PhaseTimer {
     }
 }
 
-// Tail-phase loading targets share one monotonic schedule. Keeping these in
-// one place prevents a slow earlier phase (notably map decompression) from
-// advancing beyond a later phase's ceiling and making the loading bar stall.
-// Referenced by the wasm synchronous map-decode branch and the
-// monotonic-schedule test; native decodes the map on a worker thread
-// without loading-bar status updates.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-pub(super) const LOADING_MAP_DECODE_PROGRESS: f32 = 0.85;
-pub(super) const LOADING_SPRITE_VARIANTS_PROGRESS: f32 = 0.88;
-pub(super) const LOADING_AUDIO_PROGRESS: f32 = 0.91;
-pub(super) const LOADING_DESCRIPTORS_PROGRESS: f32 = 0.95;
-pub(super) const LOADING_HUD_FONTS_PROGRESS: f32 = 0.98;
-pub(super) const LOADING_FINAL_PROGRESS: f32 = 1.0;
+// All loading-bar targets come from one time-weighted, monotonic schedule.
+use super::loading_progress::LoadingPhase;
 
 /// Load mission-specific sound banks and switch to mission music.
 ///
@@ -393,7 +382,10 @@ pub(super) fn pre_decode_maps_and_resources(
     // pool, ground-mark sprite data, and titbit row counts.
 
     if let Some(ls) = loading_screen.as_mut() {
-        ls.set_status("Loading level descriptors...", LOADING_DESCRIPTORS_PROGRESS);
+        ls.set_status(
+            "Loading level descriptors...",
+            LoadingPhase::LevelDescriptors.end(),
+        );
     }
 
     // Level descriptors (`.red` file) and HUD fonts — file I/O only.
@@ -413,7 +405,7 @@ pub(super) fn pre_decode_maps_and_resources(
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     if let Some(ls) = loading_screen.as_mut() {
-        ls.set_status("Loading HUD fonts...", LOADING_HUD_FONTS_PROGRESS);
+        ls.set_status("Loading HUD fonts...", LoadingPhase::HudFonts.end());
     }
     let hud_fonts = HudFonts::load(files);
     timer.step("HUD fonts");
@@ -428,7 +420,9 @@ pub(super) fn pre_decode_maps_and_resources(
     let _ = (engine, game, host, event_pump);
 
     if let Some(ls) = loading_screen.as_mut() {
-        ls.set_status("Finalizing...", LOADING_FINAL_PROGRESS);
+        // The loading screen hands over its renderer next; the bar rests at
+        // the start of the final (renderer + HUD assembly) phase.
+        ls.set_status("Preparing game renderer...", LoadingPhase::Finalizing.end());
     }
     Ok(LoadedInteractiveResources {
         level_descriptors,
@@ -1199,7 +1193,7 @@ pub(super) fn prepare_mission(
     }
 
     if let Some(ls) = loading_screen.as_mut() {
-        ls.set_status("Initializing level...", 0.73);
+        ls.set_status("Initializing level...", LoadingPhase::InitializeLevel.end());
     }
 
     // Engine LevelAssets already owns profile_manager (loaded at startup);
@@ -1623,7 +1617,7 @@ impl ConstructedMission {
         if let Some(ls) = loading_screen.as_mut() {
             ls.set_status(
                 "Generating sprite variants...",
-                LOADING_SPRITE_VARIANTS_PROGRESS,
+                LoadingPhase::SpriteVariants.end(),
             );
         }
 
@@ -2233,21 +2227,6 @@ mod tests {
         .unwrap();
         assert_eq!(focus, engine_coordinates::MapPoint::new(200.0, 300.0));
         assert!(spectator_actor_centroid(std::iter::empty()).is_none());
-    }
-
-    #[test]
-    fn loading_tail_phase_targets_are_monotonic() {
-        let targets = [
-            LOADING_MAP_DECODE_PROGRESS,
-            LOADING_SPRITE_VARIANTS_PROGRESS,
-            LOADING_AUDIO_PROGRESS,
-            LOADING_DESCRIPTORS_PROGRESS,
-            LOADING_HUD_FONTS_PROGRESS,
-            LOADING_FINAL_PROGRESS,
-        ];
-
-        assert!(targets.windows(2).all(|pair| pair[0] < pair[1]));
-        assert_eq!(targets.last().copied(), Some(1.0));
     }
 
     #[test]

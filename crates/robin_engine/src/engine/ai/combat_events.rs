@@ -76,12 +76,7 @@ impl EngineInner {
         owner: EntityId,
     ) {
         let target = self.combat_event_ai(owner).base.primary_target;
-        self.combat_event_ai_mut(owner)
-            .base
-            .outbox
-            .actor
-            .set_focus(target);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_focus(owner, target);
     }
     pub(super) fn duty_face_position_ground(
         &mut self,
@@ -168,8 +163,7 @@ impl EngineInner {
         {
             self.combat_event_ai_mut(owner).base.already_turned = true;
         } else {
-            self.launch_live_ai_turn(owner, direction, true);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.launch_live_ai_turn(sim, assets, owner, direction, true);
         }
     }
     fn combat_event_raise_sword(
@@ -178,10 +172,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        let actor = &mut self.combat_event_ai_mut(owner).base.outbox.actor;
-        actor.enter_swordfight = Some(crate::ai::EnterSwordfightRequest::RaiseSword);
-        actor.enter_swordfight_jump_line = None;
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.launch_ai_raise_sword(owner);
     }
     fn combat_event_command(
         &mut self,
@@ -190,13 +181,11 @@ impl EngineInner {
         owner: EntityId,
         command: crate::element::Command,
     ) {
-        self.combat_event_ai_mut(owner)
-            .base
-            .outbox
-            .actor
-            .launch_commands
-            .push(command);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.launch_element(crate::sequence::SequenceElement::new(
+            1,
+            command,
+            Some(owner),
+        ));
     }
     fn combat_event_stop(
         &mut self,
@@ -307,10 +296,9 @@ impl EngineInner {
                     self.combat_event_ai_mut(owner)
                         .base
                         .set_emoticon(EmoticonType::None);
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                     self.execute_reconsider_swordfight(sim, assets, owner, false);
                     self.combat_insult_after_reconsider(sim, assets, owner);
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
                 }
             }
             (AttackingSwordfightSpecialStrike, EventDone | EventTimer) => {
@@ -356,12 +344,17 @@ impl EngineInner {
                         .opponents
                         .is_empty()
                     {
-                        self.combat_event_ai_mut(owner)
-                            .base
-                            .outbox
-                            .actor
-                            .retry_quit_swordfight = true;
-                        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                        let already_quitting = self
+                            .current_sequence_element_for_actor(owner)
+                            .and_then(|(sequence, index)| {
+                                self.orders.sequence_manager.get_element(sequence, index)
+                            })
+                            .is_some_and(|element| {
+                                element.command == crate::element::Command::QuitSwordfight
+                            });
+                        if !already_quitting {
+                            self.execute_ai_end_swordfight(owner);
+                        }
                     }
                     self.combat_event_timer(owner, 3);
                 } else {
@@ -376,12 +369,7 @@ impl EngineInner {
                     AiState::Attacking,
                     AttackingOverviewLookRight,
                 );
-                self.combat_event_ai_mut(owner)
-                    .base
-                    .outbox
-                    .actor
-                    .look_sidewards = Some(crate::ai::LookDirection::Right);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.execute_ai_look_sidewards(owner, crate::ai::LookDirection::Right);
             }
             (AttackingOverviewLookRight, EventDone) => self.combat_event_timer(owner, 10),
             (
@@ -540,17 +528,15 @@ impl EngineInner {
                     target.x - here.x,
                     target.y - here.y,
                 );
-                self.combat_event_ai_mut(owner)
-                    .base
-                    .set_direction_goal(direction as u16);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.execute_ai_direction_goal(owner, direction as u16);
+
                 self.combat_event_stop(sim, assets, owner);
                 self.combat_event_raise_sword(sim, assets, owner);
                 self.duty_set_state(sim, assets, owner, AiState::Attacking, AttackingObserve);
                 self.combat_event_ai_mut(owner)
                     .base
                     .set_emoticon(EmoticonType::None);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                 self.combat_event_timer(owner, 50);
             }
             (AttackingTooProudToAttack, EventTimer) => {
@@ -558,7 +544,7 @@ impl EngineInner {
                 self.combat_event_ai_mut(owner)
                     .base
                     .set_emoticon(EmoticonType::None);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                 self.duty_set_state(
                     sim,
                     assets,
@@ -567,12 +553,7 @@ impl EngineInner {
                     AttackingTooProudToAttackOverview,
                 );
                 if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::TooProudLook, 0..16) == 0 {
-                    self.combat_event_ai_mut(owner)
-                        .base
-                        .outbox
-                        .actor
-                        .look_sidewards = Some(crate::ai::LookDirection::LeftRight);
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                    self.execute_ai_look_sidewards(owner, crate::ai::LookDirection::LeftRight);
                 } else {
                     self.combat_event_timer(owner, 20);
                 }
@@ -817,9 +798,7 @@ impl EngineInner {
                         owner,
                         crate::element::Command::StartMenace,
                     );
-                    self.combat_event_ai_mut(owner)
-                        .set_guarded_pc(Some(patient));
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                    self.set_live_guarded_pc(owner, Some(patient));
                 }
                 self.combat_event_timer(owner, 20);
                 return;
@@ -845,13 +824,7 @@ impl EngineInner {
                 Some(owner),
                 Some(target),
             ));
-            self.combat_event_ai_mut(owner)
-                .base
-                .outbox
-                .actor
-                .launch_sequences
-                .push(sequence);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.launch_sequence(sequence);
         }
     }
     fn combat_event_distance(&self, owner: EntityId, target: EntityId) -> f32 {
@@ -905,12 +878,10 @@ impl EngineInner {
         }
         self.combat_event_state(sim, assets, owner, Substate::AttackingSwordfight, 20);
         let target = self.combat_event_ai(owner).base.primary_target;
-        self.combat_event_ai_mut(owner)
-            .base
-            .outbox
-            .actor
-            .set_principal = target;
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        if let Some(target) = target {
+            let target = self.expect_human_id_for_ai_handle(target.get(), "combat principal");
+            self.set_as_new_principal_opponent(assets, owner, target);
+        }
     }
     fn combat_event_reserve(
         &mut self,
@@ -950,7 +921,7 @@ impl EngineInner {
         self.combat_event_ai_mut(owner)
             .base
             .set_emoticon(EmoticonType::None);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         self.combat_event_state(sim, assets, owner, Substate::AttackingReserveOverview, 20);
     }
 }

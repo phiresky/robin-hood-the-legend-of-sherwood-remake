@@ -3,6 +3,7 @@ use super::*;
 impl EngineInner {
     pub(super) fn execute_teleport(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
@@ -34,7 +35,13 @@ impl EngineInner {
             // movement / active element before the teleport
             // so the actor doesn't resume pathing toward
             // its old destination on the next tick.
-            self.stop_owner(owner, crate::sequence::SequencePriority::Normal);
+            self.stop_actor_orders(
+                sim,
+                assets,
+                &mut Vec::new(),
+                owner,
+                crate::sequence::SequencePriority::Normal,
+            );
 
             // Snapshot old position & whether this is a PC
             // before any mutation; also capture eyes/feet
@@ -43,9 +50,7 @@ impl EngineInner {
                 let entity = match self.get_entity(owner) {
                     Some(e) => e,
                     None => {
-                        self.orders
-                            .sequence_manager
-                            .element_terminated(seq_id, elem_idx);
+                        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                         return;
                     }
                 };
@@ -316,9 +321,7 @@ impl EngineInner {
                 }
             }
         }
-        self.orders
-            .sequence_manager
-            .element_terminated(seq_id, elem_idx);
+        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         // `actor_wait` parks the actor in a low-priority
         // idle element after the teleport so the AI
         // re-enters its default loop instead of resuming

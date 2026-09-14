@@ -22,7 +22,6 @@ mod tests {
             .element_data_mut()
             .set_position(crate::coordinates::WorldPoint3D::new(x, y + z, z));
         entity.element_data_mut().set_direction_instantly(direction);
-        entity.enemy_ai_mut().unwrap().soldier_profile_rank = ProfileRank::Soldier;
         id
     }
 
@@ -32,17 +31,19 @@ mod tests {
         let owner = add(&mut engine, 1231.5779, 1845.2806, 0.0, 8);
         let first = add(&mut engine, 1159.4979, 1829.3608, 1.4621211, 7);
         let second = add(&mut engine, 1220.2673, 1886.527, 0.0, 8);
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine
             .world
             .entities
             .expect_ai_controller_mut(owner, format_args!("test allies"))
             .list_us = vec![owner.index(), first.index(), second.index()];
         assert_eq!(
-            engine.live_combat_neighbour(&LevelAssets::new(), owner, None, true),
+            engine.live_combat_neighbour(&assets, owner, None, true),
             None
         );
         assert_eq!(
-            engine.live_combat_neighbour(&LevelAssets::new(), owner, None, false),
+            engine.live_combat_neighbour(&assets, owner, None, false),
             Some(AiEntityHandle::new(second.index()))
         );
     }
@@ -53,17 +54,19 @@ mod tests {
         let owner = add(&mut engine, 431.41672, 1755.0808, 4.6533546, 13);
         let first = add(&mut engine, 420.24728, 1758.1467, 4.186_21, 12);
         let second = add(&mut engine, 420.18027, 1757.8624, 4.382771, 12);
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine
             .world
             .entities
             .expect_ai_controller_mut(owner, format_args!("test allies"))
             .list_us = vec![owner.index(), first.index(), second.index()];
         assert_eq!(
-            engine.live_combat_neighbour(&LevelAssets::new(), owner, None, true),
+            engine.live_combat_neighbour(&assets, owner, None, true),
             Some(AiEntityHandle::new(first.index()))
         );
         assert_eq!(
-            engine.live_combat_neighbour(&LevelAssets::new(), owner, None, false),
+            engine.live_combat_neighbour(&assets, owner, None, false),
             None
         );
         engine
@@ -72,7 +75,7 @@ mod tests {
             .expect_ai_controller_mut(owner, format_args!("test reorder"))
             .list_us = vec![owner.index(), second.index(), first.index()];
         assert_eq!(
-            engine.live_combat_neighbour(&LevelAssets::new(), owner, None, true),
+            engine.live_combat_neighbour(&assets, owner, None, true),
             Some(AiEntityHandle::new(second.index()))
         );
     }
@@ -168,7 +171,7 @@ impl CombatFighterAccess for LiveCombatFighters<'_> {
     fn rank(self, handle: u32) -> ProfileRank {
         self.entity(handle)
             .enemy_ai()
-            .map(|ai| ai.soldier_profile_rank)
+            .map(|ai| ai.profile(&self.assets.profile_manager).rank)
             .unwrap_or(ProfileRank::Soldier)
     }
     fn is_pc(self, handle: u32) -> bool {
@@ -281,6 +284,7 @@ impl EngineInner {
             .entities
             .expect_enemy_ai(owner, format_args!("combat evaluator"));
         let iq = ai.iq_for_difficulty(
+            &assets.profile_manager,
             self.control.sim_config.difficulty,
             self.is_hostile_to_player_camp(
                 self.expect_entity(owner, "combat evaluator camp").camp(),
@@ -450,7 +454,10 @@ impl EngineInner {
             _ => false,
         };
         let mut surround = true;
-        if ai.get_rank() == ProfileRank::Soldier && ai.base.list_us.len() > 2 && formation {
+        if ai.get_rank(&assets.profile_manager) == ProfileRank::Soldier
+            && ai.base.list_us.len() > 2
+            && formation
+        {
             let left = self.live_combat_neighbour(assets, owner, ai.left_combat_neighbour, true);
             let right = self.live_combat_neighbour(assets, owner, ai.right_combat_neighbour, false);
             if left.is_some() || right.is_some() {

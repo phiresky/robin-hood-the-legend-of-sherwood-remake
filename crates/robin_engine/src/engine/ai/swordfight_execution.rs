@@ -394,49 +394,6 @@ mod tests {
         );
         assert!(target_position.sector.unwrap().arena_index().is_some());
     }
-
-    #[test]
-    fn strike_authorization_reads_current_action_state() {
-        let (mut engine, assets, owner, _, target) = combatants();
-        engage(&mut engine, owner, target);
-        for (action, expected) in [
-            (crate::element::ActionState::Waiting, false),
-            (crate::element::ActionState::WaitingSword, true),
-        ] {
-            engine
-                .world
-                .entities
-                .get_mut(target)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap()
-                .action_state = action;
-            engine
-                .world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("test strike reset"))
-                .pending_sword_strike_consideration = false;
-            engine.reconsider_live_swordfight_tactics(
-                &sober_combat_context(),
-                &assets,
-                owner,
-                false,
-                SwordfightLists {
-                    nearest_friend_solo: None,
-                    number_of_friends: 1,
-                    number_of_swordfighting_enemies: 1,
-                },
-            );
-            assert_eq!(
-                engine
-                    .world
-                    .entities
-                    .expect_enemy_ai(owner, format_args!("test strike"))
-                    .pending_sword_strike_consideration,
-                expected
-            );
-        }
-    }
 }
 
 impl EngineInner {
@@ -447,7 +404,6 @@ impl EngineInner {
         owner: EntityId,
         enemy_weak: bool,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let frame = self.control.frame_counter;
         let ai = self
             .world
@@ -496,13 +452,8 @@ impl EngineInner {
             self.expect_entity(old_target, "swordfight target camp")
                 .camp(),
         ) {
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("quit friendly swordfight"))
-                .outbox
-                .actor
-                .quit_swordfight = true;
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_end_swordfight(owner);
+
             self.clear_live_combat_neighbours(owner);
             self.duty_set_state(
                 sim,
@@ -556,7 +507,6 @@ impl EngineInner {
         }
         let lists = self.rebuild_live_swordfight_lists(assets, owner);
         self.reconsider_live_swordfight_tactics(sim, assets, owner, enemy_weak, lists);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     fn finish_live_swordfight_target_loss(
@@ -594,8 +544,8 @@ impl EngineInner {
         ai.pc_gone_away_in_this_direction = forecast.direction;
         ai.missed_pc = ai.base.primary_target;
         ai.pc_missed = true;
-        ai.base.outbox.actor.quit_swordfight = true;
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_end_swordfight(owner);
+
         self.finish_live_lost_enemy_pursuit(sim, assets, owner);
     }
 
@@ -665,15 +615,8 @@ impl EngineInner {
                 .nearest_live_opponent(friend, owner)
                 .expect("solo fighter requires an opponent");
             if self.nearest_live_opponent(primary_id, nearest) == Some(owner) {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("combat rebalance"))
-                    .outbox
-                    .actor
-                    .enter_swordfight = Some(crate::ai::EnterSwordfightRequest::Rebalance(
-                    AiEntityHandle::new(nearest.index()),
-                ));
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.execute_ai_rebalance_swordfight(sim, assets, owner, nearest);
+
                 return;
             }
         }
@@ -766,7 +709,7 @@ impl EngineInner {
             && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CombatReposition, 0..3) == 0
         {
             let candidate = self.propose_live_combat_position(assets, owner);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             let ai = self
                 .world
                 .entities
@@ -809,13 +752,12 @@ impl EngineInner {
                         AiState::Attacking,
                         Substate::AttackingSwordfight,
                     );
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("combat new principal"))
-                        .outbox
-                        .actor
-                        .set_principal = candidate.target;
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                    if let Some(target) = candidate.target {
+                        let target = self
+                            .expect_human_id_for_ai_handle(target.get(), "combat new principal");
+                        self.set_as_new_principal_opponent(assets, owner, target);
+                    }
+
                     let frame = self.control.frame_counter;
                     self.world
                         .entities
@@ -918,10 +860,7 @@ impl EngineInner {
                 .action_state
                 .is_sword()
         {
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("combat strike authorization"))
-                .pending_sword_strike_consideration = true;
+            self.execute_ai_sword_strike_proposal(sim, assets, owner);
         }
     }
 
@@ -954,7 +893,6 @@ impl EngineInner {
         owner: EntityId,
     ) -> SwordfightLists {
         let camp = self.expect_entity(owner, "swordfight list owner").camp();
-        let registry = self.world.fighter_registry_order();
         let ai = self
             .world
             .entities
@@ -963,7 +901,9 @@ impl EngineInner {
         ai.list_us.push(owner.index());
         let mut nearest_friend_solo = None;
         let mut nearest_distance = u16::MAX;
-        for &friend in &registry {
+        let friend_count = self.world.fighter_registry_ids.len();
+        for index in 0..friend_count {
+            let friend = self.world.fighter_registry_ids[index];
             let entity = self.expect_entity(friend, "swordfight ally candidate");
             if friend == owner || !self.camps_are_allied(camp, entity.camp()) {
                 continue;
@@ -996,7 +936,9 @@ impl EngineInner {
             .list_them
             .clear();
         let mut number_of_swordfighting_enemies = 0u16;
-        for target in registry {
+        let target_count = self.world.fighter_registry_ids.len();
+        for index in 0..target_count {
+            let target = self.world.fighter_registry_ids[index];
             let entity = self.expect_entity(target, "swordfight enemy candidate");
             if !self.camps_are_hostile(camp, entity.camp())
                 || !self.fighter_can_fight(target)
@@ -1036,9 +978,8 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let protected = self.refresh_ai_arrow_protection(sim, assets, owner, false);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         if protected {
             return;
         }
@@ -1096,18 +1037,17 @@ impl EngineInner {
                 );
                 self.duty_go_to(sim, assets, owner, goal, GotoFlags::RUN);
             } else {
-                self.world
-                    .entities
-                    .expect_enemy_ai_mut(owner, format_args!("defensive observation panic"))
-                    .panic_from_position(
-                        enemy_position,
-                        crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
-                    );
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.execute_ai_panic(
+                    sim,
+                    assets,
+                    owner,
+                    Some(enemy_position),
+                    crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+                    crate::ai::AlertLevel::Red,
+                );
             }
         }
         self.execute_observation_attack_or_step(sim, assets, owner);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     fn focus_live_combat_target(
@@ -1121,11 +1061,11 @@ impl EngineInner {
             .entities
             .expect_ai_controller_mut(owner, format_args!("combat focus"));
         if ai.primary_target.is_some() {
-            ai.outbox.actor.set_focus(ai.primary_target);
+            let target = ai.primary_target;
+            self.execute_ai_focus(owner, target);
         } else {
-            ai.outbox.actor.set_unfocus();
+            self.execute_ai_unfocus(owner);
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     fn stand_observing_combat(
@@ -1144,11 +1084,8 @@ impl EngineInner {
         let direction = (self.live_ai_position(target).map_point()
             - self.live_ai_position(owner).map_point())
         .sector_with_aspect(crate::position_interface::ASPECT_RATIO);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("observer direction"))
-            .set_direction_goal(direction);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_direction_goal(owner, direction);
+
         self.focus_live_combat_target(sim, assets, owner);
         self.stop_ai_owner(sim, assets, owner);
         self.duty_set_state(
@@ -1302,7 +1239,7 @@ impl EngineInner {
         let ideal = crate::ai::AiController::value_between(
             crate::parameters_ai::OBSERVE_SWORDFIGHT_MAX_DISTANCE,
             crate::parameters_ai::OBSERVE_SWORDFIGHT_MIN_DISTANCE,
-            ai.get_courage() as u8,
+            ai.get_courage(&assets.profile_manager) as u8,
         );
         let aspect = crate::position_interface::ASPECT_RATIO;
         let mut distance = (me.map_point() - reference.map_point()).iso_norm(aspect) as u16;
@@ -1396,13 +1333,14 @@ impl EngineInner {
     fn rebuild_live_observation_lists(&mut self, assets: &LevelAssets, owner: EntityId) {
         let camp = self.expect_entity(owner, "observation list owner").camp();
         let radius = crate::parameters_ai::MAX_SWORDFIGHT_CONSIDERATION_RADIUS as f32;
-        let registry = self.world.fighter_registry_order();
         self.world
             .entities
             .expect_enemy_ai_mut(owner, format_args!("observation enemies"))
             .list_them
             .clear();
-        for &target in &registry {
+        let target_count = self.world.fighter_registry_ids.len();
+        for index in 0..target_count {
+            let target = self.world.fighter_registry_ids[index];
             if !self.camps_are_hostile(
                 camp,
                 self.expect_entity(target, "observation target camp").camp(),
@@ -1428,7 +1366,9 @@ impl EngineInner {
             .expect_ai_controller_mut(owner, format_args!("observation allies"));
         ai.list_us.clear();
         ai.list_us.push(owner.index());
-        for friend in registry {
+        let friend_count = self.world.fighter_registry_ids.len();
+        for index in 0..friend_count {
+            let friend = self.world.fighter_registry_ids[index];
             let entity = self.expect_entity(friend, "observation ally candidate");
             if !self.camps_are_allied(camp, entity.camp())
                 || friend == owner

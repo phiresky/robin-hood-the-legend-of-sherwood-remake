@@ -9,7 +9,37 @@ const ADMISSION = 'replay_admission.js';
 const CLIENT = 'browser_identity_client.js';
 const VAULT = 'browser_identity_vault.js';
 const STATIC_IMPORT = 1;
+const DYNAMIC_IMPORT = 2;
 const IMPORT_META = 3;
+// The threaded runtime statically imports wasm-bindgen-rayon's bundler-free
+// worker helper. Each decode worker is a blob: copy of that helper which
+// re-imports the engine glue by its absolute URL (`import(data.mainJS)`), the
+// one dynamic import the closure admits. It is admitted only for the exact
+// bytes of the pinned crate (robin_assets pins `wasm-bindgen-rayon = "=1.3.0"`);
+// any other dynamic import, or a reshaped helper, is still rejected.
+// TODO: re-pin when wasm-bindgen-rayon is deliberately upgraded.
+export const WORKER_POOL_HELPER = Object.freeze({
+    path: /^snippets\/wasm-bindgen-rayon-[0-9a-f]{16}\/src\/workerHelpers\.no-bundler\.js$/u,
+    sha256: '9801503f464f848c6c7405462fca9a5c721556904c5fee5ee0afcb0887ea1b7f',
+});
+
+/**
+ * Classify a module by its build-relative `/`-separated path: `false` when it
+ * is not at the helper location, `true` for the exact pinned helper bytes, and
+ * an error for anything else at that location.
+ */
+export function pinnedWorkerPoolHelper(path, bytes) {
+    if (!WORKER_POOL_HELPER.path.test(path)) return false;
+    if (sha256(bytes) !== WORKER_POOL_HELPER.sha256) {
+        throw new Error(`runtime worker-pool helper is not the pinned wasm-bindgen-rayon helper: ${path}`);
+    }
+    return true;
+}
+
+/** The helper's only admitted import: its one `import(data.mainJS)`. */
+export function isWorkerPoolEngineReimport(imported) {
+    return imported.t === DYNAMIC_IMPORT && imported.n === undefined && imported.a === -1;
+}
 const DIGEST = /^[0-9a-f]{64}$/u;
 const MODULE_PATH = /^(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.js$/u;
 
@@ -110,17 +140,26 @@ async function deriveRuntimeJavascriptModules(directory, { replayAdmission = fal
     }
 
     const graph = new Map();
+    const workerPoolHelpers = [];
     for (const [path, absolute] of files) {
-        const source = await readFile(absolute, 'utf8');
+        const bytes = await readFile(absolute);
+        const source = bytes.toString('utf8');
         let imports;
         try {
             [imports] = parse(source, path);
         } catch (error) {
             throw new Error(`runtime JavaScript module is invalid: ${path}`, { cause: error });
         }
+        const workerPoolHelper = pinnedWorkerPoolHelper(path, bytes);
+        if (workerPoolHelper) workerPoolHelpers.push(path);
+        let dynamicImports = 0;
         const targets = [];
         for (const imported of imports) {
             if (imported.t === IMPORT_META) continue;
+            if (workerPoolHelper && isWorkerPoolEngineReimport(imported) && dynamicImports === 0) {
+                dynamicImports += 1;
+                continue;
+            }
             if (imported.t !== STATIC_IMPORT || imported.a !== -1 || imported.n === undefined) {
                 throw new Error(`runtime JavaScript module has a dynamic, phased, or attributed import: ${path}`);
             }
@@ -134,7 +173,13 @@ async function deriveRuntimeJavascriptModules(directory, { replayAdmission = fal
             }
             targets.push(targetPath);
         }
+        if (workerPoolHelper && (dynamicImports !== 1 || targets.length !== 0)) {
+            throw new Error(`runtime worker-pool helper must be a standalone module with its one engine re-import: ${path}`);
+        }
         graph.set(path, targets);
+    }
+    if (workerPoolHelpers.length > 1) {
+        throw new Error(`runtime JavaScript build has more than one worker-pool helper: ${workerPoolHelpers.join(', ')}`);
     }
 
     const state = new Map();

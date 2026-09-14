@@ -94,7 +94,7 @@ pub async fn show_shortcuts(
 
 /// Live modal owner: keyboard capture and widget interaction state cannot be
 /// restored from serialization. Edited configuration remains ordinary data.
-struct ShortcutsScreen {
+pub(crate) struct ShortcutsScreen {
     working: KeyConfig,
     working_dirty: bool,
     menu_buttons: Vec<super::layout::MenuButton>,
@@ -103,7 +103,8 @@ struct ShortcutsScreen {
     rebinding_row: Option<usize>,
     reserved_overlay: bool,
     focused_button: Option<usize>,
-    done: bool,
+    pub(crate) done: bool,
+    pub(crate) exit_requested: bool,
     accepted: bool,
     keyboard_button_activation: Option<u32>,
     input_state: ModalInputState,
@@ -112,7 +113,7 @@ struct ShortcutsScreen {
 }
 
 impl ShortcutsScreen {
-    fn new(
+    pub(crate) fn new(
         resources: &IngameMenuResources,
         active: &KeyConfig,
         input_state: ModalInputState,
@@ -189,6 +190,7 @@ impl ShortcutsScreen {
             focused_button,
             done,
             accepted,
+            exit_requested: false,
             keyboard_button_activation,
             input_state,
             row_height,
@@ -196,7 +198,7 @@ impl ShortcutsScreen {
         }
     }
 
-    fn tick(
+    pub(crate) fn tick(
         &mut self,
         io: &mut ModalScreenIo<'_, '_>,
         custom: &mut KeyConfig,
@@ -289,7 +291,10 @@ impl ShortcutsScreen {
         audio: &mut ScreenAudio<'_>,
     ) {
         match *event {
-            GameEvent::Quit => self.done = true,
+            GameEvent::Quit => {
+                self.exit_requested = true;
+                self.done = true;
+            }
             GameEvent::KeyDown {
                 keycode,
                 physical_key,
@@ -460,7 +465,7 @@ impl ShortcutsScreen {
         }
     }
 
-    fn finish(mut self, active: &mut KeyConfig, custom: &mut KeyConfig) -> bool {
+    pub(crate) fn finish(mut self, active: &mut KeyConfig, custom: &mut KeyConfig) -> bool {
         if self.accepted {
             crate::options_model::promote_shortcut_edits(
                 &self.working,
@@ -677,6 +682,7 @@ mod tests {
                 reserved_overlay: false,
                 focused_button: None,
                 done: true,
+                exit_requested: false,
                 accepted,
                 keyboard_button_activation: None,
                 input_state: ModalInputState::new(),

@@ -175,7 +175,9 @@ impl EngineInner {
         } else {
             ai.list_them.clear();
         }
-        for target in self.world.fighter_registry_order() {
+        let fighter_count = self.world.fighter_registry_ids.len();
+        for index in 0..fighter_count {
+            let target = self.world.fighter_registry_ids[index];
             let entity = self.expect_entity(target, "near fighter");
             if self.camps_are_allied(camp, entity.camp()) != friendly {
                 continue;
@@ -256,20 +258,13 @@ impl EngineInner {
             Substate::AttackingOverviewLookLeft,
         );
         self.stop_ai_owner(sim, assets, owner);
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("overview look"))
-            .base
-            .outbox
-            .actor
-            .look_sidewards = Some(crate::ai::LookDirection::Left);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_look_sidewards(owner, crate::ai::LookDirection::Left);
     }
 
     pub(in crate::engine) fn execute_ai_make_battle_predecisions(
         &self,
         sim: &SimulationContext,
-        _assets: &LevelAssets,
+        assets: &LevelAssets,
         owner: EntityId,
     ) -> crate::ai::Decision {
         use crate::ai::Decision;
@@ -305,14 +300,16 @@ impl EngineInner {
                         .world
                         .entities
                         .expect_enemy_ai(friend, format_args!("battle predecision soldier"));
-                    officer |= friend != owner && ally.get_rank() == ProfileRank::Officer;
-                    100_u16.wrapping_add(ally.soldier_profile_pride)
+                    officer |= friend != owner
+                        && ally.get_rank(&assets.profile_manager) == ProfileRank::Officer;
+                    100_u16.wrapping_add(ally.profile(&assets.profile_manager).pride)
                 }
                 _ => panic!("battle ally must be a PC or soldier"),
             };
             points = points.wrapping_add(value);
         }
         ai.battle_predecision_from_points(
+            &assets.profile_manager,
             sim,
             points,
             ai.list_them.len() as u16,
@@ -414,8 +411,8 @@ impl EngineInner {
             .entities
             .expect_enemy_ai_mut(owner, format_args!("battle entry"));
         let old_substate = ai.base.current_substate;
-        ai.base.outbox.actor.set_unfocus();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_unfocus(owner);
+
         let camp = self.expect_entity(owner, "battle camp").camp();
         let mut visible = self
             .world
@@ -466,7 +463,9 @@ impl EngineInner {
 
         // One registration-order scan performs admission and target injection.
         // Visibility precedes the soldier-state gate.
-        for friend in self.world.fighter_registry_order() {
+        let fighter_count = self.world.fighter_registry_ids.len();
+        for index in 0..fighter_count {
+            let friend = self.world.fighter_registry_ids[index];
             if friend == owner {
                 continue;
             }
@@ -482,7 +481,7 @@ impl EngineInner {
                 .entities
                 .expect_enemy_ai(owner, format_args!("battle ally owner"));
             let company = ai.company_number;
-            let pride = ai.soldier_profile_pride;
+            let pride = ai.profile(&assets.profile_manager).pride;
             let reaction_time = ai.base.current_substate == Substate::AttackingReactiontime;
             if matches!(
                 self.expect_entity(friend, "battle ally kind"),
@@ -517,8 +516,9 @@ impl EngineInner {
             if company > ally.company_number && (reaction_time || attacking) {
                 inputs.friends_lower_company = inputs.friends_lower_company.wrapping_add(1);
             }
-            inputs.soldiers_lower_pride |= pride > ally.soldier_profile_pride;
-            inputs.simple_soldiers_near |= ally.get_rank() == crate::profiles::ProfileRank::Soldier;
+            inputs.soldiers_lower_pride |= pride > ally.profile(&assets.profile_manager).pride;
+            inputs.simple_soldiers_near |=
+                ally.get_rank(&assets.profile_manager) == crate::profiles::ProfileRank::Soldier;
             let ai = self
                 .world
                 .entities
@@ -635,7 +635,7 @@ fn battle_fighter_able(entity: &Entity) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::Position;
+    use crate::ai::{Decision, Position};
     use crate::coordinates::WorldPoint3D;
     use crate::element::Posture;
     use crate::engine::test_support::{
@@ -706,7 +706,7 @@ mod tests {
 
     #[test]
     fn live_predecision_reads_current_pride_with_uword_wrap_and_conditional_rng() {
-        let (mut engine, assets, owner, personal, _, _) = battle_fixture();
+        let (mut engine, mut assets, owner, personal, _, _) = battle_fixture();
         let ai = engine
             .world
             .entities
@@ -714,13 +714,18 @@ mod tests {
         ai.base.list_us = vec![owner.index()];
         ai.list_them = vec![personal.index(); 2];
         ai.is_archer_unit = false;
-        ai.soldier_profile_courage = 0;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.courage = 0
+        });
         for (pride, draws) in [(0, true), (1000, false), (u16::MAX, true)] {
-            engine
-                .world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("live pride"))
-                .soldier_profile_pride = pride;
+            crate::engine::test_support::actors::edit_enemy_profile(
+                &mut assets,
+                engine
+                    .world
+                    .entities
+                    .expect_enemy_ai_mut(owner, format_args!("live pride")),
+                |profile| profile.pride = pride,
+            );
             let sim = crate::sim_rng::SimulationContext::with_seed(19);
             let expected = crate::sim_rng::SimulationContext::with_seed(19);
             let decision = engine.execute_ai_make_battle_predecisions(&sim, &assets, owner);
@@ -877,6 +882,138 @@ mod tests {
                 None
             );
         }
+    }
+
+    #[test]
+    fn observe_selection_keeps_the_fractional_courage_threshold() {
+        let (mut engine, mut assets, owner, personal, _, _) = battle_fixture();
+        let ai = engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap();
+        ai.forced_next_battle_decision = Decision::None;
+        ai.base.list_us = vec![owner.index()];
+        ai.list_them = vec![personal.index()];
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.courage = 45;
+            profile.pride = 100;
+        });
+        let sim = crate::sim_rng::test_context();
+        for (friends, expected) in [(3, Decision::Fight), (4, Decision::Observe)] {
+            let (decision, _) = engine.choose_live_battle_decision(
+                &sim,
+                &assets,
+                owner,
+                BattleDecisionInputs {
+                    friends_lower_company: 0,
+                    soldiers_lower_pride: false,
+                    simple_soldiers_near: false,
+                    alerting_soldier_near: false,
+                    min_square_enemy_distance: 100,
+                    num_enemies_i_can_see: 1,
+                    friends_nearer_to_enemy: friends,
+                },
+            );
+            assert_eq!(decision, expected);
+        }
+    }
+
+    #[test]
+    fn appended_target_reads_prior_owner_reset_and_live_primary_claim() {
+        let (mut engine, assets, owner, personal, ally, contributed) = battle_fixture();
+        engine
+            .ai
+            .global
+            .primary_target_multiplicity_scratch
+            .insert(contributed.index(), 7);
+        engine
+            .get_entity_mut(ally)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(personal);
+        // The first owner's personal reset touches only its actual enemy list.
+        engine
+            .get_entity_mut(ally)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .list_them = vec![contributed.index()];
+        engine.prepare_live_battle_decisions(&crate::sim_rng::test_context(), &assets, ally);
+        assert_eq!(
+            engine.ai.global.primary_target_multiplicity_scratch[&contributed.index()],
+            0
+        );
+        engine.prepare_live_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
+        assert_eq!(
+            engine.ai.global.primary_target_multiplicity_scratch[&contributed.index()],
+            1
+        );
+        assert_eq!(
+            engine.ai.global.primary_target_multiplicity_scratch[&personal.index()],
+            0
+        );
+    }
+
+    #[test]
+    fn rejected_shot_rebuilds_live_claims_before_the_next_selector() {
+        let (mut engine, mut assets, owner, personal, ally, contributed) = battle_fixture();
+        let physical_profile = engine
+            .get_entity(owner)
+            .unwrap()
+            .soldier_data()
+            .unwrap()
+            .soldier_profile_index;
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles.soldiers[usize::from(physical_profile)].shooting_weapon_id = 1;
+        profiles.bows.resize_with(1, Default::default);
+        profiles.bows[0].has_long_shoot = false;
+        profiles.bows[0].normal_shoot.range = 0;
+        let ai = engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap();
+        ai.list_them = vec![personal.index(), contributed.index()];
+        ai.base.list_us = vec![owner.index(), ally.index()];
+        engine
+            .ai
+            .global
+            .primary_target_multiplicity_scratch
+            .insert(personal.index(), 2);
+        engine
+            .ai
+            .global
+            .primary_target_multiplicity_scratch
+            .insert(contributed.index(), 3);
+        let sim = crate::sim_rng::test_context();
+        assert_eq!(engine.propose_live_shot_target(&sim, &assets, owner), None);
+        assert_eq!(
+            engine.ai.global.primary_target_multiplicity_scratch[&personal.index()],
+            0
+        );
+        assert_eq!(
+            engine.ai.global.primary_target_multiplicity_scratch[&contributed.index()],
+            0
+        );
+        engine
+            .get_entity_mut(ally)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .base
+            .current_substate = Substate::AttackingBowAiming;
+        assert_eq!(engine.propose_live_shot_target(&sim, &assets, owner), None);
+        assert_eq!(
+            engine.ai.global.primary_target_multiplicity_scratch[&contributed.index()],
+            1
+        );
+        assert_eq!(
+            engine.ai.global.primary_target_multiplicity_scratch[&personal.index()],
+            0
+        );
     }
 
     #[test]

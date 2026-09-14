@@ -13,7 +13,7 @@ const TMP16: u16 = 0xC010;
 #[test]
 fn movement_recording_without_start_is_rejected() {
     for native in [NativeFn::RecordMove, NativeFn::RecordMoveNear] {
-        let mut host = BoundScriptEffects::new();
+        let mut host = NativeTestHost::new();
         let mut soldier = native_test_soldier();
         soldier
             .element_data_mut()
@@ -110,12 +110,12 @@ fn call_native_return(index: u32, args: &[i32]) -> Vec<crate::vm::Instruction> {
 
 fn run_native(index: u32, args: &[i32]) -> StopReason {
     let prog = call_native_return(index, args);
-    let host = BoundScriptEffects::new();
+    let host = NativeTestHost::new();
     let mut vm = Vm::new().with_host(Box::new(host));
     vm.run(&prog)
 }
 
-fn seed_zone(host: &mut BoundScriptEffects, zone_idx: usize, handles: &[i32]) {
+fn seed_zone(host: &mut NativeTestHost, zone_idx: usize, handles: &[i32]) {
     host.script_domains
         .zones
         .scripts
@@ -130,16 +130,30 @@ fn seed_zone(host: &mut BoundScriptEffects, zone_idx: usize, handles: &[i32]) {
         .collect();
 }
 
-fn call_host_native(
-    host: &mut BoundScriptEffects,
-    native: NativeFn,
-    stack: &mut NativeStack,
-) -> i32 {
+fn call_host_native(host: &mut NativeTestHost, native: NativeFn, stack: &mut NativeStack) -> i32 {
     HostFunctions::call(host, native as u32, stack).expect_return("non-nested native test")
 }
 
+fn call_host_command(
+    host: &mut NativeTestHost,
+    native: NativeFn,
+    stack: &mut NativeStack,
+    expected_return: i32,
+) -> NativeCommand {
+    match HostFunctions::call(host, native as u32, stack) {
+        NativeCallOutcome::Yield(NativeYield {
+            operation: NativeOperation::Command(command),
+            resume: ResumePolicy::Fixed(value),
+        }) => {
+            assert_eq!(value, expected_return);
+            command
+        }
+        other => panic!("expected an engine native operation, got {other:?}"),
+    }
+}
+
 fn call_host_native_with_queries(
-    host: &mut BoundScriptEffects,
+    host: &mut NativeTestHost,
     native: NativeFn,
     stack: &mut NativeStack,
     queries: TestQueryViews<'_>,
@@ -153,7 +167,7 @@ fn call_host_native_with_queries(
     // Production sessions always attach the mission diplomacy; allegiance
     // natives (`Sees` on forest levels, `GetAIAttitude`, ...) require it.
     let mut diplomacy = crate::diplomacy::DiplomacyState::default();
-    let capabilities = queries.attach_to(
+    let mut capabilities = queries.attach_to(
         NativeSessionCapabilities::new(
             &sim,
             &mut host.entities,
@@ -165,18 +179,17 @@ fn call_host_native_with_queries(
         .with_diplomacy(&mut diplomacy),
     );
     let mut context = NativeContext::with_bindings(
-        &mut host.host,
         &mut host.state,
         &mut host.script_domains,
         AttachedScriptBindings::empty_ref(),
-        &capabilities,
+        &mut capabilities,
     );
     <NativeContext<'_, '_> as HostFunctions>::call(&mut context, native as u32, stack)
         .expect_return("non-nested native query test")
 }
 
 fn call_bound_host_native(
-    host: &mut BoundScriptEffects,
+    host: &mut NativeTestHost,
     bindings: &AttachedScriptBindings,
     native: NativeFn,
     stack: &mut NativeStack,
@@ -187,7 +200,7 @@ fn call_bound_host_native(
         .pcs()
         .map(|(id, _)| EntityId::Pc(id))
         .collect::<Vec<_>>();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut host.entities,
         &mut host.ai_global,
@@ -196,18 +209,16 @@ fn call_bound_host_native(
     )
     .with_pc_registry(&pc_registry);
     let mut context = NativeContext::with_bindings(
-        &mut host.host,
         &mut host.state,
         &mut host.script_domains,
         bindings,
-        &capabilities,
+        &mut capabilities,
     );
     <NativeContext<'_, '_> as HostFunctions>::call(&mut context, native as u32, stack)
         .expect_return("non-nested native test")
 }
 
 fn with_campaign_context<R>(
-    host: &mut ScriptEffects,
     bindings: &AttachedScriptBindings,
     campaign: &mut crate::campaign::Campaign,
     mission_stat: &mut crate::mission_stat::MissionStat,
@@ -218,7 +229,7 @@ fn with_campaign_context<R>(
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
     let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut entities,
         &mut ai_global,
@@ -228,25 +239,20 @@ fn with_campaign_context<R>(
     .with_campaign(campaign, mission_stat);
     let mut state = ScriptState::default();
     let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut context = NativeContext::with_bindings(
-        host,
-        &mut state,
-        &mut script_domains,
-        bindings,
-        &capabilities,
-    );
+    let mut context =
+        NativeContext::with_bindings(&mut state, &mut script_domains, bindings, &mut capabilities);
     f(&mut context)
 }
 
 fn with_bound_campaign_context<R>(
-    host: &mut BoundScriptEffects,
+    host: &mut NativeTestHost,
     bindings: &AttachedScriptBindings,
     campaign: &mut crate::campaign::Campaign,
     mission_stat: &mut crate::mission_stat::MissionStat,
     f: impl FnOnce(&mut NativeContext<'_, '_>) -> R,
 ) -> R {
     let sim = crate::sim_rng::test_context();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut host.entities,
         &mut host.ai_global,
@@ -255,24 +261,21 @@ fn with_bound_campaign_context<R>(
     )
     .with_campaign(campaign, mission_stat);
     let mut context = NativeContext::with_bindings(
-        &mut host.host,
         &mut host.state,
         &mut host.script_domains,
         bindings,
-        &capabilities,
+        &mut capabilities,
     );
     f(&mut context)
 }
 
 fn call_campaign_native(
-    host: &mut ScriptEffects,
     campaign: &mut crate::campaign::Campaign,
     mission_stat: &mut crate::mission_stat::MissionStat,
     native: NativeFn,
     stack: &mut NativeStack,
 ) -> i32 {
     with_campaign_context(
-        host,
         AttachedScriptBindings::empty_ref(),
         campaign,
         mission_stat,
@@ -283,8 +286,7 @@ fn call_campaign_native(
     )
 }
 
-struct CampaignScriptEffects {
-    host: ScriptEffects,
+struct CampaignNativeHost {
     entities: crate::entities::Entities,
     ai_global: crate::ai::AiGlobalState,
     fast_grid: crate::fast_find_grid::FastFindGrid,
@@ -296,10 +298,10 @@ struct CampaignScriptEffects {
     short_briefings: crate::short_briefings::ShortBriefings,
 }
 
-impl HostFunctions for CampaignScriptEffects {
+impl HostFunctions for CampaignNativeHost {
     fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
         let sim = crate::sim_rng::test_context();
-        let capabilities = NativeSessionCapabilities::new(
+        let mut capabilities = NativeSessionCapabilities::new(
             &sim,
             &mut self.entities,
             &mut self.ai_global,
@@ -309,19 +311,18 @@ impl HostFunctions for CampaignScriptEffects {
         .with_campaign(&mut self.campaign, &mut self.mission_stat)
         .with_short_briefings(&mut self.short_briefings);
         NativeContext::with_bindings(
-            &mut self.host,
             &mut self.state,
             &mut self.script_domains,
             AttachedScriptBindings::empty_ref(),
-            &capabilities,
+            &mut capabilities,
         )
         .call(index, stack)
     }
 }
 
-struct BoundScriptEffects {
+struct NativeTestHost {
     simulation: crate::sim_rng::SimulationContext,
-    host: ScriptEffects,
+
     entities: crate::entities::Entities,
     ai_global: crate::ai::AiGlobalState,
     fast_grid: crate::fast_find_grid::FastFindGrid,
@@ -342,11 +343,11 @@ struct BoundScriptEffects {
     mission_stat: crate::mission_stat::MissionStat,
 }
 
-impl BoundScriptEffects {
+impl NativeTestHost {
     fn new() -> Self {
         Self {
             simulation: crate::sim_rng::test_context(),
-            host: ScriptEffects::new(),
+
             entities: crate::entities::Entities::new(),
             ai_global: crate::ai::AiGlobalState::default(),
             fast_grid: crate::fast_find_grid::FastFindGrid::default(),
@@ -402,21 +403,7 @@ impl BoundScriptEffects {
     }
 }
 
-impl std::ops::Deref for BoundScriptEffects {
-    type Target = ScriptEffects;
-
-    fn deref(&self) -> &Self::Target {
-        &self.host
-    }
-}
-
-impl std::ops::DerefMut for BoundScriptEffects {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.host
-    }
-}
-
-impl HostFunctions for BoundScriptEffects {
+impl HostFunctions for NativeTestHost {
     fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
         let pc_registry = self.pc_registry_override.clone().unwrap_or_else(|| {
             self.entities
@@ -424,7 +411,7 @@ impl HostFunctions for BoundScriptEffects {
                 .map(|(id, _)| EntityId::Pc(id))
                 .collect()
         });
-        let capabilities = NativeSessionCapabilities::new(
+        let mut capabilities = NativeSessionCapabilities::new(
             &self.simulation,
             &mut self.entities,
             &mut self.ai_global,
@@ -445,11 +432,10 @@ impl HostFunctions for BoundScriptEffects {
         .with_standard_view_radius(&mut self.standard_view_radius)
         .with_campaign(&mut self.campaign, &mut self.mission_stat);
         NativeContext::with_bindings(
-            &mut self.host,
             &mut self.state,
             &mut self.script_domains,
             &self.bindings,
-            &capabilities,
+            &mut capabilities,
         )
         .call(index, stack)
     }
@@ -457,7 +443,7 @@ impl HostFunctions for BoundScriptEffects {
 
 #[test]
 fn nested_sequence_immediates_finish_before_parent_continuation() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let mut soldier = native_test_soldier();
     soldier.element_data_mut().blipped = true;
     host.entities.push(Some(soldier));
@@ -510,15 +496,6 @@ fn nested_sequence_immediates_finish_before_parent_continuation() {
     );
 }
 
-/// Run a native and return the queued deferred commands for inspection.
-fn run_native_deferred(index: u32, args: &[i32]) -> (StopReason, Vec<DeferredCommand>) {
-    let prog = call_native_return(index, args);
-    let mut vm = Vm::new().with_host(BoundScriptEffects::new());
-    let stop = vm.run(&prog);
-    let host = vm.take_host();
-    (stop, host.simulation_barriers())
-}
-
 #[test]
 fn enter_and_leave_game_accept_original_movement_style_codes() {
     assert!(NativeContext::validate_style(0, "RecordEnterGame"));
@@ -541,7 +518,7 @@ fn enter_and_leave_game_styles_map_to_expected_orders() {
 
 #[test]
 fn send_message_native_launches_and_yields_inline() {
-    let (stop, commands) = run_native_deferred(NativeFn::SendMessage as u32, &[0, 1234]);
+    let stop = run_native(NativeFn::SendMessage as u32, &[0, 1234]);
     assert!(matches!(
         stop,
         StopReason::Yield(crate::interp::NativeYield {
@@ -549,9 +526,8 @@ fn send_message_native_launches_and_yields_inline() {
             resume: crate::interp::ResumePolicy::Fixed(0),
         })
     ));
-    assert!(commands.is_empty());
 
-    let (stop, commands) = run_native_deferred(
+    let stop = run_native(
         NativeFn::SendMessageWithArguments as u32,
         &[0, 2345, -11, 22],
     );
@@ -562,7 +538,6 @@ fn send_message_native_launches_and_yields_inline() {
             resume: crate::interp::ResumePolicy::Fixed(0),
         })
     ));
-    assert!(commands.is_empty());
 }
 
 #[test]
@@ -573,8 +548,8 @@ fn sequence_recording_errors_and_empty_completion_leave_no_persisted_history() {
         }))
         .is_err()
     );
-    let mut host = BoundScriptEffects::new();
-    let call = |host: &mut BoundScriptEffects, native: NativeFn| {
+    let mut host = NativeTestHost::new();
+    let call = |host: &mut NativeTestHost, native: NativeFn| {
         HostFunctions::call(host, native as u32, &mut NativeStack::default())
             .expect_return("recording control is synchronous")
     };
@@ -597,11 +572,11 @@ fn sequence_recording_errors_and_empty_completion_leave_no_persisted_history() {
 
 #[test]
 fn sequence_recording_continues_after_json_and_native_state_snapshots() {
-    let call = |host: &mut BoundScriptEffects, native: NativeFn| {
+    let call = |host: &mut NativeTestHost, native: NativeFn| {
         HostFunctions::call(host, native as u32, &mut NativeStack::default())
             .expect_return("recording control is synchronous")
     };
-    let record_timer = |host: &mut BoundScriptEffects| {
+    let record_timer = |host: &mut NativeTestHost| {
         let mut args = NativeStack::default();
         args.push_i32(12);
         assert_eq!(
@@ -610,7 +585,7 @@ fn sequence_recording_continues_after_json_and_native_state_snapshots() {
             1
         );
     };
-    let mut original = BoundScriptEffects::new();
+    let mut original = NativeTestHost::new();
     assert_eq!(call(&mut original, NativeFn::Start), 1);
     for level in [2, 3] {
         record_timer(&mut original);
@@ -624,7 +599,7 @@ fn sequence_recording_continues_after_json_and_native_state_snapshots() {
     let json_state: ScriptState = serde_json::from_value(json).unwrap();
     let native_state: ScriptState = bitcode::decode(&bitcode::encode(&original.state)).unwrap();
     for state in [json_state, native_state] {
-        let mut restored = BoundScriptEffects::new();
+        let mut restored = NativeTestHost::new();
         restored.state = state;
         assert_eq!(robin_util::state_hash::compute(&restored.state), hash);
         assert_eq!(call(&mut restored, NativeFn::Start), 0);
@@ -661,7 +636,7 @@ fn sequence_recording_continues_after_json_and_native_state_snapshots() {
 
 #[test]
 fn thanx_returns_true_for_an_empty_active_recording() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     assert_eq!(
         HostFunctions::call(
             &mut host,
@@ -685,7 +660,7 @@ fn thanx_returns_true_for_an_empty_active_recording() {
 
 #[test]
 fn global_natives_share_allocated_slots_across_sessions() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let mut stack = NativeStack::default();
     stack.push_i32(0);
     stack.push_i32(7);
@@ -780,7 +755,7 @@ fn scb_globals_access_initialized_padding_slots() {
             Aff1NativeGetReturn { sym: TMP8 },
             ReturnVal { sym: TMP8 },
         ];
-        let mut vm = Vm::new().with_host(Box::new(BoundScriptEffects::new()));
+        let mut vm = Vm::new().with_host(Box::new(NativeTestHost::new()));
         assert_eq!(
             vm.run(&program),
             StopReason::ReturnedValue(expected),
@@ -819,30 +794,22 @@ fn globals_init_set_get() {
         Aff1NativeGetReturn { sym: TMP8 },
         ReturnVal { sym: TMP8 },
     ];
-    let host = BoundScriptEffects::new();
+    let host = NativeTestHost::new();
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&program), StopReason::ReturnedValue(200));
 }
 
 #[test]
-fn stub_returns_zero_and_logs() {
-    let program = vec![
-        BeginFunction {
-            volatile_count: 0,
-            temp_count: 2,
-        },
-        Aff0IConstant {
-            dst: TMP0,
-            constant: 5,
-        },
-        NativeParam { sym: TMP0 },
-        NativeCall { index: 17 }, // StartDialog (stub)
-        Aff1NativeGetReturn { sym: TMP4 },
-        ReturnVal { sym: TMP4 },
-    ];
-    let host = BoundScriptEffects::new();
-    let mut vm = Vm::new().with_host(Box::new(host));
-    assert_eq!(vm.run(&program), StopReason::ReturnedValue(0));
+fn dialog_native_suspends_before_returning_to_the_vm() {
+    assert!(matches!(
+        run_native(NativeFn::StartDialog as u32, &[5]),
+        StopReason::Yield(NativeYield {
+            operation: NativeOperation::Command(NativeCommand::Engine(
+                EngineCommand::StartDialog { dialog_id: 5 }
+            )),
+            resume: ResumePolicy::Fixed(0),
+        })
+    ));
 }
 
 #[test]
@@ -854,34 +821,10 @@ fn name_lookup() {
 }
 
 #[test]
-fn script_effects_json_omits_runtime_entities() {
-    let mut host = BoundScriptEffects::new();
-    let mut npc = native_test_soldier();
-    npc.npc_data_mut().unwrap().custom_values[7] = 456;
-    host.entities.push(Some(npc));
-
-    let value = serde_json::to_value(&*host).expect("save/rollback JSON value");
-    assert!(value.get("entities").is_none());
-    let json = serde_json::to_string(&*host).expect("serialize ScriptEffects");
-    let _decoded: ScriptEffects = serde_json::from_str(&json).expect("deserialize ScriptEffects");
-
-    assert_eq!(
-        host.entities
-            .get_legacy_slot(0)
-            .unwrap()
-            .1
-            .npc_data()
-            .unwrap()
-            .custom_values[7],
-        456
-    );
-}
-
-#[test]
 fn npc_custom_values_participate_in_state_hash() {
-    let mut baseline = BoundScriptEffects::new();
-    let mut same = BoundScriptEffects::new();
-    let mut changed = BoundScriptEffects::new();
+    let mut baseline = NativeTestHost::new();
+    let mut same = NativeTestHost::new();
+    let mut changed = NativeTestHost::new();
     for (host, value) in [(&mut baseline, 456), (&mut same, 456), (&mut changed, 457)] {
         let mut npc = native_test_soldier();
         npc.npc_data_mut().unwrap().custom_values[7] = value;
@@ -900,7 +843,7 @@ fn npc_custom_values_participate_in_state_hash() {
 
 #[test]
 fn door_sector_goal_resolves_click_polygon_door_index() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let mut door = Door {
         active: true,
         click_polygon: vec![(10.0, 10.0), (30.0, 10.0), (30.0, 30.0), (10.0, 30.0)],
@@ -917,7 +860,7 @@ fn door_sector_goal_resolves_click_polygon_door_index() {
 
 #[test]
 fn door_mutation_is_visible_to_later_native_in_same_callback() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.script_domains.interactables.doors.push(Door {
         active: false,
         locked_pc: true,
@@ -946,45 +889,43 @@ fn door_mutation_is_visible_to_later_native_in_same_callback() {
 }
 
 #[test]
-fn patch_mutation_is_visible_to_later_native_in_same_callback() {
-    let mut host = BoundScriptEffects::new();
-    host.script_domains.interactables.patches.push(Patch {
+fn patch_native_completes_before_the_next_native_query() {
+    let mut engine = crate::engine::EngineInner::new();
+    let assets = crate::engine::LevelAssets::new();
+    engine.script_domains.interactables.patches.push(Patch {
         active: true,
         initially_active: true,
         ..Default::default()
     });
+    engine
+        .scripts
+        .install_mission(crate::engine::test_support::asm::empty_mission_script(
+            "patch_native.scs",
+        ));
+    engine.scripts.attach_native_capabilities(&assets);
+    let sim = crate::sim_rng::test_context();
     let patch = ScriptHandleCodec::patch_handle_from_index(0);
-
-    let mut apply = NativeStack::default();
-    apply.push_i32(patch);
     assert_eq!(
-        call_host_native(&mut host, NativeFn::ApplyPatch, &mut apply),
+        engine
+            .call_external_native(&sim, &assets, "ApplyPatch", &[patch])
+            .unwrap(),
         1
     );
-
-    let mut query = NativeStack::default();
-    query.push_i32(patch);
     assert_eq!(
-        call_host_native(&mut host, NativeFn::IsPatchApplied, &mut query),
+        engine
+            .call_external_native(&sim, &assets, "IsPatchApplied", &[patch])
+            .unwrap(),
         1
     );
-    assert!(matches!(
-        host.simulation_barriers().as_slice(),
-        [DeferredCommand::ProcessPatchEffects { patch_index, .. }]
-            if usize::from(*patch_index) == 0
-    ));
 }
 
 #[test]
 fn mission_ui_mutations_are_visible_in_same_callback() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
 
     let mut set_outline = NativeStack::default();
     set_outline.push_i32(1);
-    assert_eq!(
-        call_host_native(&mut host, NativeFn::SetOutlineDisplay, &mut set_outline),
-        0
-    );
+    let command = call_host_command(&mut host, NativeFn::SetOutlineDisplay, &mut set_outline, 0);
     assert_eq!(
         call_host_native(
             &mut host,
@@ -995,8 +936,8 @@ fn mission_ui_mutations_are_visible_in_same_callback() {
     );
     assert!(host.script_domains.mission_ui.outline_display);
     assert!(matches!(
-        host.engine_commands().as_slice(),
-        [EngineCommand::SetOutlineDisplay { display: true }]
+        command,
+        NativeCommand::Engine(EngineCommand::SetOutlineDisplay { display: true })
     ));
 
     assert_eq!(
@@ -1027,7 +968,7 @@ fn recorded_direct_gate_route_retains_pass_door_direction() {
     // script RecordMove builds a direct route from sector_out to sector_in.
     // Its approach/exit geometry was correct, but the separately recorded
     // PassDoor used SequenceElementData's default direction (indirect).
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_soldier())]);
     host.script_domains.interactables.doors.push(Door {
         point_out: MapPoint::new(876.0, 879.0),
@@ -1042,7 +983,7 @@ fn recorded_direct_gate_route_retains_pass_door_direction() {
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
 
     {
-        let capabilities = NativeSessionCapabilities::new(
+        let mut capabilities = NativeSessionCapabilities::new(
             &host.simulation,
             &mut host.entities,
             &mut host.ai_global,
@@ -1050,11 +991,10 @@ fn recorded_direct_gate_route_retains_pass_door_direction() {
             &mut host.globals,
         );
         let mut context = NativeContext::with_bindings(
-            &mut host.host,
             &mut host.state,
             &mut host.script_domains,
             &host.bindings,
-            &capabilities,
+            &mut capabilities,
         );
         assert!(context.append_move_to_sequence(SequenceMoveRequest {
             actor_handle: actor,
@@ -1114,7 +1054,7 @@ fn recorded_move_recovers_exact_source_before_same_sector_comparison() {
     use crate::sector::{SectorNumber, SectorType};
     use crate::sequence::{RecordingSession, SequenceElementData};
 
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_soldier())]);
     host.fast_grid.size_map(8, 8);
     host.fast_grid.allocate_layers(1);
@@ -1152,7 +1092,7 @@ fn recorded_move_recovers_exact_source_before_same_sector_comparison() {
     );
 
     {
-        let capabilities = NativeSessionCapabilities::new(
+        let mut capabilities = NativeSessionCapabilities::new(
             &host.simulation,
             &mut host.entities,
             &mut host.ai_global,
@@ -1160,11 +1100,10 @@ fn recorded_move_recovers_exact_source_before_same_sector_comparison() {
             &mut host.globals,
         );
         let mut context = NativeContext::with_bindings(
-            &mut host.host,
             &mut host.state,
             &mut host.script_domains,
             &host.bindings,
-            &capabilities,
+            &mut capabilities,
         );
         assert!(context.append_move_to_sequence(SequenceMoveRequest {
             actor_handle: actor,
@@ -1242,7 +1181,7 @@ fn recorded_move_retains_exact_four_gate_pointer_route_with_numeric_legacy_contr
     }
 
     for exact in [true, false] {
-        let mut host = BoundScriptEffects::new();
+        let mut host = NativeTestHost::new();
         host.entities =
             crate::entities::Entities::from_legacy_slots(vec![Some(native_test_soldier())]);
         host.entities
@@ -1377,7 +1316,7 @@ fn recorded_move_retains_exact_four_gate_pointer_route_with_numeric_legacy_contr
         );
         let location = ScriptHandleCodec::location_handle_from_index(0);
         {
-            let capabilities = NativeSessionCapabilities::new(
+            let mut capabilities = NativeSessionCapabilities::new(
                 &host.simulation,
                 &mut host.entities,
                 &mut host.ai_global,
@@ -1385,11 +1324,10 @@ fn recorded_move_retains_exact_four_gate_pointer_route_with_numeric_legacy_contr
                 &mut host.globals,
             );
             let context = NativeContext::with_bindings(
-                &mut host.host,
                 &mut host.state,
                 &mut host.script_domains,
                 &host.bindings,
-                &capabilities,
+                &mut capabilities,
             );
             assert_eq!(
                 context
@@ -1473,7 +1411,7 @@ fn then_outside_recording_returns_zero() {
         Aff1NativeGetReturn { sym: TMP8 },
         ReturnVal { sym: TMP8 },
     ];
-    let host = BoundScriptEffects::new();
+    let host = NativeTestHost::new();
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&program), StopReason::ReturnedValue(0));
 }
@@ -1510,7 +1448,7 @@ fn mobile_fx(mobile_index: u16) -> Entity {
 
 #[test]
 fn mobile_master_is_appended_to_script_actor_indices() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities
         .push(Some(Entity::Fx(crate::element::ElementFx {
             element: {
@@ -1543,29 +1481,26 @@ fn mobile_master_is_appended_to_script_actor_indices() {
 }
 
 #[test]
-fn generic_mobile_activation_propagates_to_all_children() {
-    let mut host = BoundScriptEffects::new();
+fn mobile_activation_yields_the_canonical_master_operation() {
+    let mut host = NativeTestHost::new();
     host.entities.push(Some(mobile_fx(0)));
     host.entities.push(Some(mobile_fx(0)));
     let handle = ScriptHandleCodec::actor_handle_from_index(0);
 
     let mut deactivate = NativeStack::default();
     deactivate.push_i32(handle);
-    assert_eq!(
-        call_host_native(&mut host, NativeFn::Deactivate, &mut deactivate),
-        1
-    );
+    let command = call_host_command(&mut host, NativeFn::Deactivate, &mut deactivate, 1);
     assert!(
         host.entities
             .occupied()
-            .all(|(_, entity)| !entity.is_active())
+            .all(|(_, entity)| entity.is_active())
     );
     assert!(matches!(
-        host.engine_commands().as_slice(),
-        [EngineCommand::SetMobileActive {
+        command,
+        NativeCommand::Engine(EngineCommand::SetMobileActive {
             mobile_index: 0,
             active: false
-        }]
+        })
     ));
 }
 
@@ -1580,21 +1515,25 @@ fn activating_a_rescue_pc_makes_it_player_controllable() {
     pc.mission_role = MissionRole::RescueTarget;
     pc.combat_stance = CombatStance::Defensive;
 
-    let mut host = BoundScriptEffects::new();
-    host.entities.push(Some(prisoner));
-    let handle = ScriptHandleCodec::actor_handle_from_index(0);
-    let mut activate = NativeStack::default();
-    activate.push_i32(handle);
-
-    assert_eq!(
-        call_host_native(&mut host, NativeFn::Activate, &mut activate),
-        1
-    );
-
-    let pc = host
-        .entity_at_legacy_slot(0)
-        .pc_data()
-        .expect("activated rescue fixture remains a PC");
+    let mut engine = crate::engine::EngineInner::new();
+    let owner = engine.add_test_entity(prisoner);
+    let mut assets = crate::engine::LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .scripts
+        .install_mission(crate::engine::test_support::asm::empty_mission_script(
+            "rescue_native.scs",
+        ));
+    engine.scripts.attach_native_capabilities(&assets);
+    engine
+        .call_external_native(
+            &crate::sim_rng::test_context(),
+            &assets,
+            "Activate",
+            &[ScriptHandleCodec::actor_handle(owner)],
+        )
+        .unwrap();
+    let pc = engine.world.entities.get(owner).unwrap().pc_data().unwrap();
     assert!(pc.playable);
     assert_eq!(pc.command_interface, CommandInterface::HeroActions);
     assert_eq!(pc.mission_role, MissionRole::PlayerParty);
@@ -1643,80 +1582,85 @@ fn god_returns_null_handle() {
 #[test]
 fn stop_actor_unknown_handle_noop() {
     // Invalid handle → warn, no deferred command.
-    let (stop, cmds) = run_native_deferred(103, &[5]);
+    let stop = run_native(103, &[5]);
     assert_eq!(stop, StopReason::ReturnedValue(0));
-    assert!(cmds.is_empty());
 }
 
 #[test]
-fn select_select_all_queues_command() {
-    // `Select` returns true unconditionally (including the error branch).
-    let (stop, cmds) = run_native_deferred(112, &[31]);
-    assert_eq!(stop, StopReason::ReturnedValue(1));
+fn select_select_all_yields_before_vm_continues() {
     assert!(matches!(
-        cmds.first(),
-        Some(DeferredCommand::SelectPC {
-            actor: 0,
-            select: true
+        run_native(112, &[31]),
+        StopReason::Yield(NativeYield {
+            operation: NativeOperation::Command(NativeCommand::World(
+                WorldNativeCommand::SelectPC {
+                    actor: 0,
+                    select: true
+                }
+            )),
+            resume: ResumePolicy::Fixed(1),
         })
     ));
 }
 
 #[test]
-fn select_unselect_all_queues_command() {
-    let (stop, cmds) = run_native_deferred(112, &[0]);
-    assert_eq!(stop, StopReason::ReturnedValue(1));
+fn select_unselect_all_yields_before_vm_continues() {
     assert!(matches!(
-        cmds.first(),
-        Some(DeferredCommand::SelectPC {
-            actor: 0,
-            select: false
+        run_native(112, &[0]),
+        StopReason::Yield(NativeYield {
+            operation: NativeOperation::Command(NativeCommand::World(
+                WorldNativeCommand::SelectPC {
+                    actor: 0,
+                    select: false
+                }
+            )),
+            resume: ResumePolicy::Fixed(1),
         })
     ));
 }
 
 #[test]
 fn select_unknown_code_warns_but_no_command() {
-    let (stop, cmds) = run_native_deferred(112, &[5]);
+    let stop = run_native(112, &[5]);
     assert_eq!(stop, StopReason::ReturnedValue(1));
-    assert!(cmds.is_empty());
 }
 
 #[test]
 fn select_all_and_unselect_all_are_immediately_query_visible() {
-    let mut host = BoundScriptEffects::new();
-    host.entities
-        .push(Some(native_test_pc(Vec::new(), Vec::new())));
-    host.entities
-        .push(Some(native_test_pc(Vec::new(), Vec::new())));
-
-    let mut select = NativeStack::default();
-    select.push_i32(31);
+    let mut engine = crate::engine::EngineInner::new();
+    for _ in 0..2 {
+        engine.add_test_entity(native_test_pc(Vec::new(), Vec::new()));
+    }
+    let mut assets = crate::engine::LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .scripts
+        .install_mission(crate::engine::test_support::asm::empty_mission_script(
+            "select_all.scs",
+        ));
+    engine.scripts.attach_native_capabilities(&assets);
+    let sim = crate::sim_rng::test_context();
     assert_eq!(
-        call_host_native(&mut host, NativeFn::Select, &mut select),
+        engine
+            .call_external_native(&sim, &assets, "Select", &[31])
+            .unwrap(),
         1
     );
     assert_eq!(
-        call_host_native(
-            &mut host,
-            NativeFn::GetNumberOfSelectedPCs,
-            &mut NativeStack::default(),
-        ),
+        engine
+            .call_external_native(&sim, &assets, "GetNumberOfSelectedPCs", &[])
+            .unwrap(),
         2
     );
-
-    let mut unselect = NativeStack::default();
-    unselect.push_i32(0);
     assert_eq!(
-        call_host_native(&mut host, NativeFn::Select, &mut unselect),
+        engine
+            .call_external_native(&sim, &assets, "Select", &[0])
+            .unwrap(),
         1
     );
     assert_eq!(
-        call_host_native(
-            &mut host,
-            NativeFn::GetNumberOfSelectedPCs,
-            &mut NativeStack::default(),
-        ),
+        engine
+            .call_external_native(&sim, &assets, "GetNumberOfSelectedPCs", &[])
+            .unwrap(),
         0
     );
 }
@@ -1749,22 +1693,28 @@ fn freeze_unknown_handle_noop() {
 }
 
 #[test]
-fn freeze_all_queues_command() {
-    let (stop, cmds) = run_native_deferred(139, &[1]);
-    assert_eq!(stop, StopReason::ReturnedValue(0));
+fn freeze_all_yields_before_vm_continues() {
     assert!(matches!(
-        cmds.first(),
-        Some(DeferredCommand::FreezeAll { freeze: true })
+        run_native(139, &[1]),
+        StopReason::Yield(NativeYield {
+            operation: NativeOperation::Command(NativeCommand::World(
+                WorldNativeCommand::FreezeAll { freeze: true }
+            )),
+            resume: ResumePolicy::Fixed(0),
+        })
     ));
 }
 
 #[test]
-fn freeze_all_unfreeze_queues_command() {
-    let (stop, cmds) = run_native_deferred(139, &[0]);
-    assert_eq!(stop, StopReason::ReturnedValue(0));
+fn freeze_all_unfreeze_yields_before_vm_continues() {
     assert!(matches!(
-        cmds.first(),
-        Some(DeferredCommand::FreezeAll { freeze: false })
+        run_native(139, &[0]),
+        StopReason::Yield(NativeYield {
+            operation: NativeOperation::Command(NativeCommand::World(
+                WorldNativeCommand::FreezeAll { freeze: false }
+            )),
+            resume: ResumePolicy::Fixed(0),
+        })
     ));
 }
 
@@ -1777,7 +1727,7 @@ fn nowhere_returns_zero() {
 
 #[test]
 fn get_distance_with_positions() {
-    let host = BoundScriptEffects::new();
+    let host = NativeTestHost::new();
     let bindings = AttachedScriptBindings {
         script_location_count: 2,
         script_point_count: 2,
@@ -1791,7 +1741,7 @@ fn get_distance_with_positions() {
             ScriptHandleCodec::location_handle_from_index(1),
         ],
     );
-    let mut vm = Vm::new().with_host(Box::new(BoundScriptEffects { bindings, ..host }));
+    let mut vm = Vm::new().with_host(Box::new(NativeTestHost { bindings, ..host }));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(50)); // sqrt(30²+40²)=50
 }
 
@@ -1802,7 +1752,7 @@ fn get_distance_invalid_handle() {
 
 #[test]
 fn camera_commands_copy_static_and_vm_local_computed_points() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.state
         .computed_locations
         .push(Some(ComputedScriptLocation {
@@ -1819,42 +1769,34 @@ fn camera_commands_copy_static_and_vm_local_computed_points() {
         ..Default::default()
     };
 
+    host.bindings = bindings;
     let mut jump = NativeStack::default();
     jump.push_i32(ScriptHandleCodec::location_handle_from_index(1));
-    assert_eq!(
-        call_bound_host_native(&mut host, &bindings, NativeFn::JumpCameraTo, &mut jump),
-        0
-    );
+    let jump_command = call_host_command(&mut host, NativeFn::JumpCameraTo, &mut jump, 0);
 
     let mut scroll = NativeStack::default();
     scroll.push_i32(ScriptHandleCodec::location_handle_from_index(0));
     scroll.push_i32(0.75_f32.to_bits() as i32);
-    assert_eq!(
-        call_bound_host_native(
-            &mut host,
-            &bindings,
-            NativeFn::ScrollCameraSlowlyTo,
-            &mut scroll,
-        ),
-        0
-    );
+    let scroll_command =
+        call_host_command(&mut host, NativeFn::ScrollCameraSlowlyTo, &mut scroll, 0);
 
     assert!(matches!(
-        host.engine_commands().as_slice(),
-        [
-            EngineCommand::JumpCameraTo { x: 90.0, y: 123.0 },
-            EngineCommand::ScrollCameraTo {
-                x: 12.0,
-                y: 34.0,
-                speed: 0.75,
-            },
-        ]
+        jump_command,
+        NativeCommand::Engine(EngineCommand::JumpCameraTo { x: 90.0, y: 123.0 })
+    ));
+    assert!(matches!(
+        scroll_command,
+        NativeCommand::Engine(EngineCommand::ScrollCameraTo {
+            x: 12.0,
+            y: 34.0,
+            speed: 0.75
+        })
     ));
 }
 
 #[test]
 fn is_inside_building_specific() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let actor = ScriptHandleCodec::actor_handle_from_index(4);
     let building = ScriptHandleCodec::building_handle_from_index(2);
     host.script_domains
@@ -1868,7 +1810,7 @@ fn is_inside_building_specific() {
 
 #[test]
 fn is_inside_building_wrong() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let actor = ScriptHandleCodec::actor_handle_from_index(4);
     host.script_domains
         .buildings
@@ -1884,7 +1826,7 @@ fn is_inside_building_wrong() {
 
 #[test]
 fn is_inside_building_null_checks_any() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let actor = ScriptHandleCodec::actor_handle_from_index(4);
     host.script_domains
         .buildings
@@ -1898,7 +1840,7 @@ fn is_inside_building_null_checks_any() {
 
 #[test]
 fn is_inside_building_not_in_any() {
-    let host = BoundScriptEffects::new();
+    let host = NativeTestHost::new();
     let prog = call_native_return(98, &[ScriptHandleCodec::actor_handle_from_index(4), 0]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
@@ -1906,7 +1848,7 @@ fn is_inside_building_not_in_any() {
 
 #[test]
 fn is_inside_zone() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let actor = ScriptHandleCodec::actor_handle_from_index(4);
     let loc = ScriptHandleCodec::location_handle_from_index(1);
     seed_zone(
@@ -1925,7 +1867,7 @@ fn is_inside_zone() {
 
 #[test]
 fn is_inside_zone_not_present() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let actor = ScriptHandleCodec::actor_handle_from_index(4);
     let loc = ScriptHandleCodec::location_handle_from_index(1);
     seed_zone(
@@ -1941,7 +1883,7 @@ fn is_inside_zone_not_present() {
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
 }
 
-fn geometric_is_inside_host(actor_sector: u16, actor_layer: Option<u16>) -> BoundScriptEffects {
+fn geometric_is_inside_host(actor_sector: u16, actor_layer: Option<u16>) -> NativeTestHost {
     let mut actor = native_test_soldier();
     let element = actor.element_data_mut();
     element.set_position_map(crate::coordinates::MapPoint::new(5.0, 5.0));
@@ -1963,7 +1905,7 @@ fn geometric_is_inside_host(actor_sector: u16, actor_layer: Option<u16>) -> Boun
         bounding_box.expand_point(point);
     }
 
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(actor)]);
     std::sync::Arc::make_mut(&mut host.fast_grid.level)
         .sectors
@@ -2045,7 +1987,7 @@ fn actors_in_sector() {
     // handles via `is_script_sector_handle` (sector handles live in
     // `script_point_count < loc <= script_location_count`), so seed
     // counts so loc=2 is a valid sector handle.
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let bindings = AttachedScriptBindings {
         script_point_count: 1,
         script_location_count: 2,
@@ -2063,11 +2005,11 @@ fn actors_in_sector() {
     );
 
     let prog = call_native_return(204, &[loc]);
-    let mut vm = Vm::new().with_host(Box::new(BoundScriptEffects { bindings, ..host }));
+    let mut vm = Vm::new().with_host(Box::new(NativeTestHost { bindings, ..host }));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(3));
 
     // Re-add occupants since vm takes ownership
-    let mut host2 = BoundScriptEffects::new();
+    let mut host2 = NativeTestHost::new();
     let bindings2 = AttachedScriptBindings {
         script_point_count: 1,
         script_location_count: 2,
@@ -2083,7 +2025,7 @@ fn actors_in_sector() {
         ],
     );
     let prog2 = call_native_return(205, &[loc, 1]);
-    let mut vm2 = Vm::new().with_host(Box::new(BoundScriptEffects {
+    let mut vm2 = Vm::new().with_host(Box::new(NativeTestHost {
         bindings: bindings2,
         ..host2
     }));
@@ -2095,7 +2037,7 @@ fn actors_in_sector() {
 
 #[test]
 fn compute_location_between() {
-    let host = BoundScriptEffects::new();
+    let host = NativeTestHost::new();
     let bindings = AttachedScriptBindings {
         script_location_count: 2,
         script_point_count: 2,
@@ -2113,7 +2055,7 @@ fn compute_location_between() {
             lambda_bits,
         ],
     );
-    let mut vm = Vm::new().with_host(Box::new(BoundScriptEffects { bindings, ..host }));
+    let mut vm = Vm::new().with_host(Box::new(NativeTestHost { bindings, ..host }));
     // Should return a handle >= 3 (first computed location)
     match vm.run(&prog) {
         StopReason::ReturnedValue(handle) => {
@@ -2125,7 +2067,7 @@ fn compute_location_between() {
 
 #[test]
 fn get_actor_location_retains_exact_sector_for_later_record_move() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let mut soldier = native_test_soldier();
     let arena = crate::fast_find_grid::SectorIndex::new(91).unwrap();
     soldier
@@ -2150,7 +2092,7 @@ fn get_actor_location_retains_exact_sector_for_later_record_move() {
 
 #[test]
 fn get_actor_location_accepts_live_no_layer_element_without_fabricating_metadata() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let mut soldier = native_test_soldier();
     soldier
         .element_data_mut()
@@ -2180,7 +2122,7 @@ fn get_actor_location_accepts_live_no_layer_element_without_fabricating_metadata
 #[test]
 #[should_panic(expected = "exact position provenance is required")]
 fn record_move_rejects_mixed_exact_source_and_legacy_number_only_computed_goal() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let mut soldier = native_test_soldier();
     let source_arena = crate::fast_find_grid::SectorIndex::new(90).unwrap();
     soldier
@@ -2213,7 +2155,7 @@ fn record_move_rejects_mixed_exact_source_and_legacy_number_only_computed_goal()
 
 #[test]
 fn are_all_pcs_inside() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
@@ -2234,7 +2176,7 @@ fn are_all_pcs_inside() {
 
 #[test]
 fn are_all_pcs_inside_not_all() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
@@ -2252,7 +2194,7 @@ fn are_all_pcs_inside_not_all() {
 
 #[test]
 fn are_all_pcs_inside_ignores_pc_retired_from_original_registry() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
@@ -2274,7 +2216,7 @@ fn are_all_pcs_inside_ignores_pc_retired_from_original_registry() {
 
 #[test]
 fn register_production_sector() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.bindings.script_point_count = 1;
     host.bindings.script_location_count = 2;
     host.bindings.location_positions = std::sync::Arc::new(vec![(12.0, 34.0), (20.0, 40.0)]);
@@ -2329,14 +2271,11 @@ fn register_production_sector() {
         (12.0, 34.0, 2, 7)
     );
     assert_eq!(saved.obstacle, None);
-    assert!(host.engine_commands().is_empty());
-    assert!(host.sound_commands().is_empty());
-    assert!(host.simulation_barriers().is_empty());
 }
 
 #[test]
 fn make_noise_preserves_the_script_points_exact_sector_identity() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.bindings.script_location_count = 1;
     host.bindings.script_point_count = 1;
     // H01_Lin_VL Node_15: DrawBridgeRoom passes this point to MakeNoise.
@@ -2354,26 +2293,23 @@ fn make_noise_preserves_the_script_points_exact_sector_identity() {
     let mut stack = NativeStack::default();
     stack.push_i32(ScriptHandleCodec::location_handle_from_index(0));
     stack.push_i32(1);
-    assert_eq!(
-        call_host_native(&mut host, NativeFn::MakeNoise, &mut stack),
-        0
-    );
+    let command = call_host_command(&mut host, NativeFn::MakeNoise, &mut stack, 0);
     assert!(matches!(
-        host.engine_commands().as_slice(),
-        [EngineCommand::MakeNoise {
+        command,
+        NativeCommand::Engine(EngineCommand::MakeNoise {
             noise_type: crate::ai::NoiseType::Drawbridge,
             x: 1135.0,
             y: 1843.0,
             layer: 0,
             sector,
-        }] if *sector == exact_sector
+        }) if sector == exact_sector
     ));
 }
 
 #[test]
 #[should_panic(expected = "is already attached")]
 fn production_sector_rejects_duplicate_attachment() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.bindings.script_location_count = 1;
     host.script_domains
         .zones
@@ -2405,7 +2341,7 @@ fn production_sector_rejects_duplicate_attachment() {
 #[test]
 #[should_panic(expected = "has no attached script sector")]
 fn production_point_requires_registered_sector() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.bindings.script_point_count = 1;
     host.bindings.script_location_count = 1;
     host.bindings.location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);
@@ -2449,8 +2385,7 @@ fn campaign_values_set_get() {
         Aff1NativeGetReturn { sym: TMP8 },
         ReturnVal { sym: TMP8 },
     ];
-    let host = CampaignScriptEffects {
-        host: ScriptEffects::new(),
+    let host = CampaignNativeHost {
         entities: crate::entities::Entities::new(),
         ai_global: crate::ai::AiGlobalState::default(),
         fast_grid: crate::fast_find_grid::FastFindGrid::default(),
@@ -2503,7 +2438,7 @@ fn npc_values_set_then_get_from_canonical_entity() {
         Aff1NativeGetReturn { sym: TMP8 },
         ReturnVal { sym: TMP8 },
     ];
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities.push(Some(native_test_soldier()));
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&program), StopReason::ReturnedValue(77));
@@ -2512,7 +2447,6 @@ fn npc_values_set_then_get_from_canonical_entity() {
 #[test]
 fn custom_values_are_isolated_between_script_hosts() {
     fn set_campaign(
-        host: &mut ScriptEffects,
         campaign: &mut crate::campaign::Campaign,
         stat: &mut crate::mission_stat::MissionStat,
         value: i32,
@@ -2521,168 +2455,95 @@ fn custom_values_are_isolated_between_script_hosts() {
         stack.push_i32(3);
         stack.push_i32(value);
         assert_eq!(
-            call_campaign_native(
-                host,
-                campaign,
-                stat,
-                NativeFn::SetCustomCampaignValue,
-                &mut stack,
-            ),
+            call_campaign_native(campaign, stat, NativeFn::SetCustomCampaignValue, &mut stack,),
             0
         );
     }
 
     fn get_campaign(
-        host: &mut ScriptEffects,
         campaign: &mut crate::campaign::Campaign,
         stat: &mut crate::mission_stat::MissionStat,
     ) -> i32 {
         let mut stack = NativeStack::default();
         stack.push_i32(3);
-        call_campaign_native(
-            host,
-            campaign,
-            stat,
-            NativeFn::GetCustomCampaignValue,
-            &mut stack,
-        )
+        call_campaign_native(campaign, stat, NativeFn::GetCustomCampaignValue, &mut stack)
     }
 
-    let mut first = ScriptEffects::new();
     let mut first_campaign = crate::campaign::Campaign::default();
     let mut first_stat = crate::mission_stat::MissionStat::default();
-    let mut second = ScriptEffects::new();
+
     let mut second_campaign = crate::campaign::Campaign::default();
     let mut second_stat = crate::mission_stat::MissionStat::default();
 
-    set_campaign(&mut first, &mut first_campaign, &mut first_stat, 11);
-    set_campaign(&mut second, &mut second_campaign, &mut second_stat, 22);
+    set_campaign(&mut first_campaign, &mut first_stat, 11);
+    set_campaign(&mut second_campaign, &mut second_stat, 22);
 
-    assert_eq!(
-        get_campaign(&mut first, &mut first_campaign, &mut first_stat),
-        11
-    );
-    assert_eq!(
-        get_campaign(&mut second, &mut second_campaign, &mut second_stat),
-        22
-    );
+    assert_eq!(get_campaign(&mut first_campaign, &mut first_stat), 11);
+    assert_eq!(get_campaign(&mut second_campaign, &mut second_stat), 22);
 }
 
 #[test]
-fn ordered_script_effect_stream_round_trips_and_hashes_in_order() {
-    let mut effects = ScriptEffects::new();
-    effects.emit_engine(EngineCommand::DisplayMap { show: true });
-    effects.emit_sound(crate::natives::SoundCommand::SuspendAll);
-    effects.emit_engine(EngineCommand::ChooseVictoryDefeatText { id: 7 });
-    effects.emit_barrier(DeferredCommand::SetPlayable {
-        actor: 17,
-        playable: false,
-    });
-    assert!(matches!(
-        effects.ordered.as_slices().0,
-        [
-            ScriptEffect::Presentation(EngineCommand::DisplayMap { show: true }),
-            ScriptEffect::ExternalSound(crate::natives::SoundCommand::SuspendAll),
-            ScriptEffect::Simulation(SimulationEffect::Engine(
-                EngineCommand::ChooseVictoryDefeatText { id: 7 },
-            )),
-            ScriptEffect::Simulation(SimulationEffect::Deferred(DeferredCommand::SetPlayable {
-                actor: 17,
-                playable: false,
-            },)),
-        ]
-    ));
-
-    let json = serde_json::to_string(&effects).expect("serialize ordered effects");
-    let decoded: ScriptEffects = serde_json::from_str(&json).expect("deserialize ordered effects");
-    assert_eq!(
-        serde_json::to_value(&decoded).expect("ordered JSON value"),
-        serde_json::to_value(&effects).expect("source JSON value")
+fn selection_native_completes_portrait_cleanup_before_later_queries() {
+    let mut engine = crate::engine::EngineInner::new();
+    let target = engine.add_test_entity(native_test_pc(Vec::new(), Vec::new()));
+    let previous = engine.add_test_entity(native_test_pc(Vec::new(), Vec::new()));
+    engine.players.seats[0].selection = vec![previous];
+    engine
+        .world
+        .entities
+        .get_mut(previous)
+        .unwrap()
+        .pc_data_mut()
+        .unwrap()
+        .portrait
+        .open = true;
+    let mut assets = crate::engine::LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .scripts
+        .install_mission(crate::engine::test_support::asm::empty_mission_script(
+            "selection.scs",
+        ));
+    engine.scripts.attach_native_capabilities(&assets);
+    let sim = crate::sim_rng::test_context();
+    let target_handle = ScriptHandleCodec::actor_handle(target);
+    engine
+        .call_external_native(&sim, &assets, "SelectActorPC", &[target_handle, 1])
+        .unwrap();
+    assert_eq!(engine.players.seats[0].selection, [target]);
+    assert!(
+        !engine
+            .world
+            .entities
+            .get(previous)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .portrait
+            .open
     );
     assert_eq!(
-        robin_util::state_hash::compute(&decoded),
-        robin_util::state_hash::compute(&effects)
-    );
-
-    let mut reordered = ScriptEffects::new();
-    reordered.emit_sound(crate::natives::SoundCommand::SuspendAll);
-    reordered.emit_engine(EngineCommand::DisplayMap { show: true });
-    reordered.emit_engine(EngineCommand::ChooseVictoryDefeatText { id: 7 });
-    reordered.emit_barrier(DeferredCommand::SetPlayable {
-        actor: 17,
-        playable: false,
-    });
-    assert_ne!(
-        robin_util::state_hash::compute(&reordered),
-        robin_util::state_hash::compute(&effects),
-        "cross-domain emission order participates in deterministic state"
-    );
-}
-
-#[test]
-fn selection_mutates_canonical_state_before_a_later_native_in_the_same_callback() {
-    let mut host = BoundScriptEffects::new();
-    host.entities
-        .push(Some(native_test_pc(Vec::new(), Vec::new())));
-    host.entities
-        .push(Some(native_test_pc(Vec::new(), Vec::new())));
-    let actor = ScriptHandleCodec::actor_handle_from_index(0);
-    let previously_selected = ScriptHandleCodec::actor_handle_from_index(1);
-    let mut sequences = crate::sequence::SequenceManager::new();
-    let mut selected = vec![EntityId::Pc(crate::entity_id::PcId(1))];
-    let mut sounds = crate::sound_source::SoundSourceManager::new();
-    let weather = crate::engine::WeatherState::default();
-    let frame = 17;
-    let mut select = NativeStack::default();
-    select.push_i32(actor);
-    select.push_i32(1);
-    assert_eq!(
-        call_host_native_with_queries(
-            &mut host,
-            NativeFn::SelectActorPC,
-            &mut select,
-            TestQueryViews::new(&mut sequences, &mut selected, &mut sounds, &weather, &frame),
-        ),
-        0
-    );
-
-    let mut is_selected = NativeStack::default();
-    is_selected.push_i32(actor);
-    assert_eq!(
-        call_host_native_with_queries(
-            &mut host,
-            NativeFn::IsPCSelected,
-            &mut is_selected,
-            TestQueryViews::new(&mut sequences, &mut selected, &mut sounds, &weather, &frame),
-        ),
+        engine
+            .call_external_native(&sim, &assets, "IsPCSelected", &[target_handle])
+            .unwrap(),
         1
     );
-    assert_eq!(selected, [EntityId::Pc(crate::entity_id::PcId(0))]);
-
-    let mut old_is_selected = NativeStack::default();
-    old_is_selected.push_i32(previously_selected);
     assert_eq!(
-        call_host_native_with_queries(
-            &mut host,
-            NativeFn::IsPCSelected,
-            &mut old_is_selected,
-            TestQueryViews::new(&mut sequences, &mut selected, &mut sounds, &weather, &frame),
-        ),
-        0,
-        "Original MSG_SELECT_CHARACTER replaces the old selection"
+        engine
+            .call_external_native(
+                &sim,
+                &assets,
+                "IsPCSelected",
+                &[ScriptHandleCodec::actor_handle(previous)]
+            )
+            .unwrap(),
+        0
     );
-    assert!(matches!(
-        host.simulation_barriers().as_slice(),
-        [DeferredCommand::SelectPC {
-            actor: queued_actor,
-            select: true,
-        }] if *queued_actor == actor
-    ));
 }
 
 #[test]
 fn ai_lock_yields_before_the_script_can_launch_replacement_work() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities.push(Some(native_test_soldier()));
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
     let mut sequences = crate::sequence::SequenceManager::new();
@@ -2691,7 +2552,7 @@ fn ai_lock_yields_before_the_script_can_launch_replacement_work() {
     let weather = crate::engine::WeatherState::default();
     let frame = 17;
     let sim = crate::sim_rng::test_context();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut host.entities,
         &mut host.ai_global,
@@ -2701,11 +2562,10 @@ fn ai_lock_yields_before_the_script_can_launch_replacement_work() {
     .with_world_views(&[], &[], &[])
     .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
     let mut context = NativeContext::with_bindings(
-        &mut host.host,
         &mut host.state,
         &mut host.script_domains,
         AttachedScriptBindings::empty_ref(),
-        &capabilities,
+        &mut capabilities,
     );
 
     let mut lock = NativeStack::default();
@@ -2732,7 +2592,7 @@ fn ai_lock_yields_before_the_script_can_launch_replacement_work() {
 
 #[test]
 fn assign_path_yields_until_return_to_duty_finishes() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities.push(Some(native_test_soldier()));
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
     let mut sequences = crate::sequence::SequenceManager::new();
@@ -2741,7 +2601,7 @@ fn assign_path_yields_until_return_to_duty_finishes() {
     let weather = crate::engine::WeatherState::default();
     let frame = 17;
     let sim = crate::sim_rng::test_context();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut host.entities,
         &mut host.ai_global,
@@ -2751,11 +2611,10 @@ fn assign_path_yields_until_return_to_duty_finishes() {
     .with_world_views(&[], &[], &[])
     .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
     let mut context = NativeContext::with_bindings(
-        &mut host.host,
         &mut host.state,
         &mut host.script_domains,
         AttachedScriptBindings::empty_ref(),
-        &capabilities,
+        &mut capabilities,
     );
 
     let mut assign = NativeStack::default();
@@ -2782,7 +2641,7 @@ fn assign_path_yields_until_return_to_duty_finishes() {
 
 #[test]
 fn stare_actor_preserves_entity_slot_zero_and_turn_flag() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities
         .push(Some(native_test_pc(Vec::new(), Vec::new())));
     host.entities.push(Some(native_test_soldier()));
@@ -2811,7 +2670,7 @@ fn stare_actor_preserves_entity_slot_zero_and_turn_flag() {
 
 #[test]
 fn assign_post_yield_preserves_the_script_points_position_topology() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities.push(Some(native_test_soldier()));
     host.bindings.script_location_count = 1;
     host.bindings.script_point_count = 1;
@@ -2920,7 +2779,7 @@ fn assign_post_yield_preserves_the_script_points_position_topology() {
 
 #[test]
 fn assign_post_static_legacy_binding_preserves_number_only_compatibility() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities.push(Some(native_test_soldier()));
     host.bindings.script_location_count = 1;
     host.bindings.script_point_count = 1;
@@ -2954,7 +2813,7 @@ fn assign_post_static_legacy_binding_preserves_number_only_compatibility() {
 #[test]
 #[should_panic(expected = "exact position provenance is required")]
 fn assign_post_rejects_number_only_computed_location() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities.push(Some(native_test_soldier()));
     host.state
         .computed_locations
@@ -2976,9 +2835,9 @@ fn assign_post_rejects_number_only_computed_location() {
 
 #[test]
 fn thanx_launches_into_the_live_sequence_manager_before_returning() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let simulation = crate::sim_rng::test_context();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &simulation,
         &mut host.entities,
         &mut host.ai_global,
@@ -2995,11 +2854,10 @@ fn thanx_launches_into_the_live_sequence_manager_before_returning() {
     .with_short_briefings(&mut host.short_briefings)
     .with_standard_view_radius(&mut host.standard_view_radius);
     let mut context = NativeContext::with_bindings(
-        &mut host.host,
         &mut host.state,
         &mut host.script_domains,
         &host.bindings,
-        &capabilities,
+        &mut capabilities,
     );
 
     assert_eq!(
@@ -3050,11 +2908,11 @@ fn thanx_launches_into_the_live_sequence_manager_before_returning() {
 
 #[test]
 fn set_view_radius_updates_live_ai_and_every_npc_before_returning() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities.push(Some(native_test_soldier()));
     host.standard_view_radius = 400;
     let simulation = crate::sim_rng::test_context();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &simulation,
         &mut host.entities,
         &mut host.ai_global,
@@ -3063,11 +2921,10 @@ fn set_view_radius_updates_live_ai_and_every_npc_before_returning() {
     )
     .with_standard_view_radius(&mut host.standard_view_radius);
     let mut context = NativeContext::with_bindings(
-        &mut host.host,
         &mut host.state,
         &mut host.script_domains,
         &host.bindings,
-        &capabilities,
+        &mut capabilities,
     );
     let mut set = NativeStack::default();
     set.push_i32(275);
@@ -3088,17 +2945,13 @@ fn set_view_radius_updates_live_ai_and_every_npc_before_returning() {
     assert_eq!(npc.view_radius, 275);
     assert_eq!(npc.view_radius_base, 275);
     assert_eq!(npc.view_radius_goal, 275);
-    assert!(
-        context.script_effects().engine_commands().is_empty(),
-        "SetViewRadius has no host presentation effect"
-    );
 }
 
 #[test]
 fn briefing_and_objective_writes_share_the_live_canonical_model() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let simulation = crate::sim_rng::test_context();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &simulation,
         &mut host.entities,
         &mut host.ai_global,
@@ -3107,11 +2960,10 @@ fn briefing_and_objective_writes_share_the_live_canonical_model() {
     )
     .with_short_briefings(&mut host.short_briefings);
     let mut context = NativeContext::with_bindings(
-        &mut host.host,
         &mut host.state,
         &mut host.script_domains,
         &host.bindings,
-        &capabilities,
+        &mut capabilities,
     );
 
     let mut add_briefing = NativeStack::default();
@@ -3146,12 +2998,11 @@ fn briefing_and_objective_writes_share_the_live_canonical_model() {
     assert!(briefings.entries(true)[0].done);
     assert_eq!(briefings.entries(false)[0].id, 11);
     assert!(briefings.entries(false)[0].done);
-    assert!(context.script_effects().engine_commands().is_empty());
 }
 
 #[test]
 fn honolulu_location_native_yields_canonical_engine_action() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities.push(Some(native_test_soldier()));
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
     let mut sequences = crate::sequence::SequenceManager::new();
@@ -3160,7 +3011,7 @@ fn honolulu_location_native_yields_canonical_engine_action() {
     let weather = crate::engine::WeatherState::default();
     let frame = 17;
     let sim = crate::sim_rng::test_context();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut host.entities,
         &mut host.ai_global,
@@ -3170,11 +3021,10 @@ fn honolulu_location_native_yields_canonical_engine_action() {
     .with_world_views(&[], &[], &[])
     .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
     let mut context = NativeContext::with_bindings(
-        &mut host.host,
         &mut host.state,
         &mut host.script_domains,
         AttachedScriptBindings::empty_ref(),
-        &capabilities,
+        &mut capabilities,
     );
 
     let mut set_location = NativeStack::default();
@@ -3200,49 +3050,25 @@ fn honolulu_location_native_yields_canonical_engine_action() {
 }
 
 #[test]
-fn location_yield_precedes_later_presentation_effect() {
-    let mut host = BoundScriptEffects::new();
+fn building_placement_yields_a_complete_native_operation() {
+    let mut host = NativeTestHost::new();
     host.entities
         .push(Some(native_test_pc(Vec::new(), Vec::new())));
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
     let building = ScriptHandleCodec::building_handle_from_index(0);
-
-    let mut teleport = NativeStack::default();
-    teleport.push_i32(actor);
-    teleport.push_i32(0);
-    assert!(matches!(
-        HostFunctions::call(&mut host, NativeFn::SetActorLocation as u32, &mut teleport),
-        NativeCallOutcome::Yield(crate::interp::NativeYield {
-            operation: crate::interp::NativeOperation::EngineAction(
-                crate::interp::SynchronousScriptRequest::SetActorLocation { .. }
-            ),
-            ..
-        })
-    ));
     let mut put = NativeStack::default();
     put.push_i32(actor);
     put.push_i32(building);
-    assert_eq!(
-        HostFunctions::call(&mut host, NativeFn::PutActorInBuilding as u32, &mut put)
-            .expect_return("PutActorInBuilding"),
-        0
+    assert!(
+        matches!(call_host_command(&mut host, NativeFn::PutActorInBuilding, &mut put, 0),
+        NativeCommand::World(WorldNativeCommand::PutActorInBuilding { actor: owner, building: destination })
+            if owner == actor && destination == building)
     );
-
-    assert!(matches!(
-        host.ordered.as_slices().0,
-        [ScriptEffect::Simulation(SimulationEffect::Deferred(
-            DeferredCommand::PutActorInBuilding {
-                actor: building_actor,
-                building: queued_building,
-            },
-        ))] if *building_actor == actor
-            && *queued_building == building
-    ));
 }
 
 #[test]
 fn set_actor_posture_ko_yields_one_canonical_engine_action() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let mut soldier = native_test_soldier();
     let Entity::Soldier(soldier_data) = &mut soldier else {
         unreachable!()
@@ -3256,7 +3082,6 @@ fn set_actor_posture_ko_yields_one_canonical_engine_action() {
     active.priority = crate::sequence::SequencePriority::Normal;
     let active_id = host.sequence_manager.launch_element(active);
     host.sequence_manager.take_pending_synchronous_actions();
-    host.sequence_manager.element_in_progress(active_id, 0);
 
     let mut posture = NativeStack::default();
     posture.push_i32(actor);
@@ -3279,98 +3104,90 @@ fn set_actor_posture_ko_yields_one_canonical_engine_action() {
             .get_element(active_id, 0)
             .expect("old active element")
             .state,
-        crate::sequence::SequenceState::InProgress,
+        crate::sequence::SequenceState::Todo,
         "the native adapter must not duplicate the engine posture pipeline"
     );
 }
 
 #[test]
-fn scroll_status_mutates_canonical_state_before_a_later_native_in_the_same_callback() {
-    let mut host = BoundScriptEffects::new();
-    host.entities
-        .push(Some(Entity::Scroll(crate::element::ElementScroll {
-            element: {
-                let mut initial_element = crate::element::ElementData::default();
-                initial_element.kind = crate::element::ElementKind::ObjectScroll;
-                initial_element
-            },
-            ..Default::default()
-        })));
-    let scroll = ScriptHandleCodec::actor_handle_from_index(0);
-
-    let mut set = NativeStack::default();
-    set.push_i32(scroll);
-    set.push_i32(3);
+fn scroll_status_native_finishes_the_open_animation_before_querying() {
+    let mut engine = crate::engine::EngineInner::new();
+    let owner = engine.add_test_entity(Entity::Scroll(crate::element::ElementScroll {
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ObjectScroll;
+            initial_element
+        },
+        ..Default::default()
+    }));
+    let assets = crate::engine::LevelAssets::new();
+    engine
+        .scripts
+        .install_mission(crate::engine::test_support::asm::empty_mission_script(
+            "scroll_native.scs",
+        ));
+    engine.scripts.attach_native_capabilities(&assets);
+    let sim = crate::sim_rng::test_context();
+    let scroll = ScriptHandleCodec::actor_handle(owner);
+    engine
+        .call_external_native(&sim, &assets, "SetScrollStatus", &[scroll, 3])
+        .unwrap();
     assert_eq!(
-        call_host_native(&mut host, NativeFn::SetScrollStatus, &mut set),
-        0
-    );
-
-    let mut get = NativeStack::default();
-    get.push_i32(scroll);
-    assert_eq!(
-        call_host_native(&mut host, NativeFn::GetScrollStatus, &mut get),
+        engine
+            .call_external_native(&sim, &assets, "GetScrollStatus", &[scroll])
+            .unwrap(),
         3
     );
-    assert_eq!(host.script_domains.scrolls.status.get(&scroll), Some(&3));
-    assert!(matches!(
-        host.engine_commands().as_slice(),
-        [EngineCommand::SetScrollStatus {
-            scroll_handle,
-            status: 3,
-        }] if *scroll_handle == scroll
-    ));
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .object_data()
+            .unwrap()
+            .animation,
+        crate::order::OrderType::BonusThree
+    );
 }
 
 #[test]
-fn sound_destruction_mutates_the_live_source_manager_before_returning() {
-    let mut host = BoundScriptEffects::new();
-    let mut sequences = crate::sequence::SequenceManager::new();
-    let mut sounds = crate::sound_source::SoundSourceManager::new();
-    sounds.sources_push_some(crate::sound_source::SoundSource::default());
-    let weather = crate::engine::WeatherState::default();
-    let frame = 23;
-    let mut selected = Vec::new();
+fn sound_destruction_completes_before_the_next_native_query() {
+    let mut engine = crate::engine::EngineInner::new();
+    let assets = crate::engine::LevelAssets::new();
+    engine
+        .scripts
+        .install_mission(crate::engine::test_support::asm::empty_mission_script(
+            "sound_native.scs",
+        ));
+    engine.scripts.attach_native_capabilities(&assets);
+    engine
+        .feedback
+        .sound_sim
+        .sources
+        .sources_push_some(crate::sound_source::SoundSource::default());
     let handle = ScriptHandleCodec::sound_source_handle_from_index(0);
-
-    let mut destroy = NativeStack::default();
-    destroy.push_i32(handle);
+    let sim = crate::sim_rng::test_context();
     assert_eq!(
-        call_host_native_with_queries(
-            &mut host,
-            NativeFn::DestroySoundSource,
-            &mut destroy,
-            TestQueryViews::new(&mut sequences, &mut selected, &mut sounds, &weather, &frame),
-        ),
+        engine
+            .call_external_native(&sim, &assets, "DestroySoundSource", &[handle])
+            .unwrap(),
         1
     );
-
-    let mut lookup = NativeStack::default();
-    lookup.push_i32(0);
+    assert!(engine.feedback.sound_sim.sources.get(0).is_none());
     assert_eq!(
-        call_host_native_with_queries(
-            &mut host,
-            NativeFn::GetSoundSourceScript,
-            &mut lookup,
-            TestQueryViews::new(&mut sequences, &mut selected, &mut sounds, &weather, &frame),
-        ),
+        engine
+            .call_external_native(&sim, &assets, "GetSoundSourceScript", &[0])
+            .unwrap(),
         0
     );
-    assert!(
-        sounds.get(0).is_none(),
-        "same-callback lookup must read the canonical destroyed slot"
-    );
-    assert!(matches!(
-        host.sound_commands().as_slice(),
-        [SoundCommand::Destroy(queued)] if *queued == handle
-    ));
 }
 
 #[test]
 fn current_action_and_frame_queries_read_canonical_runtime_state() {
     let pc_id = EntityId::Pc(crate::entity_id::PcId(0));
     let pc_handle = ScriptHandleCodec::actor_handle(pc_id);
-    let mut pc_host = BoundScriptEffects::new();
+    let mut pc_host = NativeTestHost::new();
     let mut pc = native_test_pc(Vec::new(), Vec::new());
     // The current-action query reads the actor's installed order (Original
     // actor order), which instruction handling publishes from the selected sequence order.
@@ -3388,8 +3205,7 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
         0.0,
         std::num::NonZeroU32::new(1).unwrap(),
     ));
-    let sequence_id = sequences.launch_element(element);
-    sequences.element_in_progress(sequence_id, 0);
+    sequences.launch_element(element);
     let mut sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();
     let frame = 123;
@@ -3407,7 +3223,7 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
         crate::order::OrderType::RunningUpright as i32
     );
 
-    let mut npc_host = BoundScriptEffects::new();
+    let mut npc_host = NativeTestHost::new();
     npc_host.entities.push(Some(native_test_soldier()));
     let mut emoticon = NativeStack::default();
     emoticon.push_i32(ScriptHandleCodec::actor_handle_from_index(0));
@@ -3436,7 +3252,7 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
 fn current_action_returns_nonanimation_end_without_an_installed_order() {
     let pc_id = EntityId::Pc(crate::entity_id::PcId(0));
     let pc_handle = ScriptHandleCodec::actor_handle(pc_id);
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities
         .push(Some(native_test_pc(Vec::new(), Vec::new())));
     let mut sequences = crate::sequence::SequenceManager::new();
@@ -3462,7 +3278,7 @@ fn current_action_returns_nonanimation_end_without_an_installed_order() {
 fn any_action_selected_reads_the_messenger_action_not_the_pcs_remembered_action() {
     let pc_id = EntityId::Pc(crate::entity_id::PcId(0));
     let pc_handle = ScriptHandleCodec::actor_handle(pc_id);
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities
         .push(Some(native_test_pc(Vec::new(), Vec::new())));
     host.selected_pcs.push(pc_id);
@@ -3529,8 +3345,8 @@ fn canonical_query_views_are_isolated_between_engine_instances() {
         &second_weather,
         &second_frame,
     );
-    let mut first_host = BoundScriptEffects::new();
-    let mut second_host = BoundScriptEffects::new();
+    let mut first_host = NativeTestHost::new();
+    let mut second_host = NativeTestHost::new();
 
     assert_eq!(
         call_host_native_with_queries(
@@ -3554,7 +3370,6 @@ fn canonical_query_views_are_isolated_between_engine_instances() {
 
 #[test]
 fn sight_query_view_borrows_canonical_world_arrays() {
-    let mut host = ScriptEffects::new();
     let mut state = ScriptState::default();
     let mut script_domains = crate::engine::ScriptDomains::default();
     let mut entities = crate::entities::Entities::new();
@@ -3565,7 +3380,7 @@ fn sight_query_view_borrows_canonical_world_arrays() {
     let dynamic_obstacles = vec![crate::sight_obstacle::SightObstacle::new_default(1)];
     let static_active = vec![false];
     let sim = crate::sim_rng::test_context();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut entities,
         &mut ai_global,
@@ -3574,11 +3389,10 @@ fn sight_query_view_borrows_canonical_world_arrays() {
     )
     .with_world_views(&static_obstacles, &dynamic_obstacles, &static_active);
     let context = NativeContext::with_bindings(
-        &mut host,
         &mut state,
         &mut script_domains,
         AttachedScriptBindings::empty_ref(),
-        &capabilities,
+        &mut capabilities,
     );
     let sight = context.sight_obstacles.expect("canonical sight view");
 
@@ -3598,73 +3412,9 @@ fn sight_query_view_borrows_canonical_world_arrays() {
 }
 
 #[test]
-fn query_only_state_is_not_persisted_in_script_effects_json() {
-    let mut value = serde_json::to_value(ScriptEffects::new()).expect("serialize ScriptEffects");
-    let object = value
-        .as_object_mut()
-        .expect("ScriptEffects serializes as an object");
-    for (field, old_value) in [
-        ("current_animations", serde_json::json!({"123": 7})),
-        ("selected_pc_handles", serde_json::json!([123, 456])),
-        ("sound_source_alive", serde_json::json!([true, false])),
-        ("sound_source_count", serde_json::json!(2)),
-        ("ambiance", serde_json::json!("Night")),
-        ("is_forest_level", serde_json::json!(true)),
-        ("frame_counter", serde_json::json!(9876)),
-        ("verbose", serde_json::json!(true)),
-    ] {
-        object.insert(field.into(), old_value);
-    }
-
-    let restored: ScriptEffects =
-        serde_json::from_value(value).expect("unknown query-only fields are ignored");
-    let saved_again = serde_json::to_value(&restored).expect("re-serialize ScriptEffects");
-    for field in [
-        "current_animations",
-        "selected_pc_handles",
-        "sound_source_alive",
-        "sound_source_count",
-        "ambiance",
-        "is_forest_level",
-        "frame_counter",
-        "verbose",
-    ] {
-        assert!(
-            saved_again.get(field).is_none(),
-            "query-only field {field} returned"
-        );
-    }
-
-    let mut sequences = crate::sequence::SequenceManager::new();
-    let mut selection = vec![EntityId::Pc(crate::entity_id::PcId(4))];
-    let mut sounds = crate::sound_source::SoundSourceManager::new();
-    let weather = crate::engine::WeatherState::default();
-    let frame = 4;
-    assert_eq!(
-        call_host_native_with_queries(
-            &mut BoundScriptEffects {
-                host: restored,
-                ..BoundScriptEffects::new()
-            },
-            NativeFn::GetNumberOfSelectedPCs,
-            &mut NativeStack::default(),
-            TestQueryViews::new(
-                &mut sequences,
-                &mut selection,
-                &mut sounds,
-                &weather,
-                &frame
-            ),
-        ),
-        1,
-        "loaded hosts query canonical runtime state, not stale save mirrors"
-    );
-}
-
-#[test]
 fn animation_state_write_is_immediately_visible_from_canonical_entity() {
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities
         .push(Some(Entity::Fx(crate::element::ElementFx {
             element: {
@@ -3761,16 +3511,23 @@ fn compute_border_point_matches_original_rounded_half_line_arithmetic() {
 
 #[test]
 fn direct_owner_add_campaign_value_ransom_credits_stat_and_queues_jingle() {
-    let mut host = ScriptEffects::new();
     let mut campaign = crate::campaign::Campaign::default();
     let mut mission_stat = crate::mission_stat::MissionStat::default();
     with_campaign_context(
-        &mut host,
         AttachedScriptBindings::empty_ref(),
         &mut campaign,
         &mut mission_stat,
         |context| {
             context.add_campaign_value(crate::campaign::CampaignValue::Ransom, 250, 100);
+            assert!(matches!(
+                context.pending_yield,
+                Some(NativeYield {
+                    operation: NativeOperation::Command(NativeCommand::Sound(
+                        SoundCommand::PlayJingle(crate::sound::Jingle::CashWon)
+                    )),
+                    ..
+                })
+            ));
         },
     );
 
@@ -3779,57 +3536,49 @@ fn direct_owner_add_campaign_value_ransom_credits_stat_and_queues_jingle() {
         crate::campaign::INITIAL_RANSOM + 250
     );
     assert_eq!(mission_stat.collected_money, 250);
-    let jingle_count = host
-        .sound_commands()
-        .iter()
-        .filter(|c| matches!(c, SoundCommand::PlayJingle(crate::sound::Jingle::CashWon)))
-        .count();
-    assert_eq!(jingle_count, 1);
 }
 
 #[test]
 fn direct_owner_set_campaign_value_ransom_jingle_only_when_growing() {
-    let mut host = ScriptEffects::new();
     let mut campaign = crate::campaign::Campaign::default();
     let mut mission_stat = crate::mission_stat::MissionStat::default();
     campaign.values[crate::campaign::CampaignValue::Ransom] = 200;
 
     // Lowering: no jingle.
     with_campaign_context(
-        &mut host,
         AttachedScriptBindings::empty_ref(),
         &mut campaign,
         &mut mission_stat,
         |context| {
             context.set_campaign_value(crate::campaign::CampaignValue::Ransom, 100, 50);
+            assert!(context.pending_yield.is_none());
         },
     );
-    assert!(host.engine_commands().is_empty());
-    assert!(host.sound_commands().is_empty());
 
     // Raising: jingle queued.
     with_campaign_context(
-        &mut host,
         AttachedScriptBindings::empty_ref(),
         &mut campaign,
         &mut mission_stat,
         |context| {
             context.set_campaign_value(crate::campaign::CampaignValue::Ransom, 500, 50);
+            assert!(matches!(
+                context.pending_yield,
+                Some(NativeYield {
+                    operation: NativeOperation::Command(NativeCommand::Sound(
+                        SoundCommand::PlayJingle(crate::sound::Jingle::CashWon)
+                    )),
+                    ..
+                })
+            ));
         },
     );
-    let jingle_count = host
-        .sound_commands()
-        .iter()
-        .filter(|c| matches!(c, SoundCommand::PlayJingle(crate::sound::Jingle::CashWon)))
-        .count();
-    assert_eq!(jingle_count, 1);
     // Value assignment does NOT credit collected_money.
     assert_eq!(mission_stat.collected_money, 0);
 }
 
 #[test]
 fn ransom_natives_round_trip_through_borrowed_campaign_owner() {
-    let mut host = ScriptEffects::new();
     let mut campaign = crate::campaign::Campaign::default();
     let mut mission_stat = crate::mission_stat::MissionStat::default();
     let mut sequences = crate::sequence::SequenceManager::new();
@@ -3844,7 +3593,7 @@ fn ransom_natives_round_trip_through_borrowed_campaign_owner() {
     let mut globals = Vec::new();
     let mut selected = Vec::new();
     let sim = crate::sim_rng::test_context();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut entities,
         &mut ai_global,
@@ -3854,21 +3603,21 @@ fn ransom_natives_round_trip_through_borrowed_campaign_owner() {
     .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame)
     .with_campaign(&mut campaign, &mut mission_stat);
     let mut context = NativeContext::with_bindings(
-        &mut host,
         &mut state,
         &mut script_domains,
         AttachedScriptBindings::empty_ref(),
-        &capabilities,
+        &mut capabilities,
     );
 
     let mut set = NativeStack::default();
     set.push_i32(1_234);
-    assert_eq!(
-        context
-            .call(NativeFn::SetRansomMoney as u32, &mut set)
-            .expect_return("SetRansomMoney is synchronous"),
-        0
-    );
+    assert!(matches!(
+        context.call(NativeFn::SetRansomMoney as u32, &mut set),
+        NativeCallOutcome::Yield(NativeYield {
+            operation: NativeOperation::Command(NativeCommand::Sound(SoundCommand::PlayJingle(_))),
+            resume: ResumePolicy::Fixed(0)
+        })
+    ));
     let mut get = NativeStack::default();
     assert_eq!(
         context
@@ -3887,11 +3636,9 @@ fn ransom_natives_round_trip_through_borrowed_campaign_owner() {
 
 #[test]
 fn direct_owner_add_campaign_value_score_credits_added_score_silently() {
-    let mut host = ScriptEffects::new();
     let mut campaign = crate::campaign::Campaign::default();
     let mut mission_stat = crate::mission_stat::MissionStat::default();
     with_campaign_context(
-        &mut host,
         AttachedScriptBindings::empty_ref(),
         &mut campaign,
         &mut mission_stat,
@@ -3901,7 +3648,6 @@ fn direct_owner_add_campaign_value_score_credits_added_score_silently() {
     );
 
     assert_eq!(mission_stat.added_score, 750);
-    assert!(host.engine_commands().is_empty());
 }
 
 fn native_test_soldier() -> Entity {
@@ -3928,37 +3674,44 @@ fn native_test_soldier() -> Entity {
 
 #[test]
 fn set_always_attentive_promotes_green_view_when_music_is_already_yellow() {
-    let mut soldier = native_test_soldier();
+    let mut soldier = crate::engine::test_support::actors::make_test_ai_soldier(
+        crate::element::Camp::Lacklandists,
+    );
     let enemy = soldier
         .enemy_ai_mut()
         .expect("native test soldier requires an enemy AI");
     enemy.base.current_music_alert_status = crate::ai::AlertLevel::Yellow;
     enemy.base.view_alert_status = crate::ai::AlertLevel::Green;
 
-    let mut host = BoundScriptEffects::new();
-    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(soldier)]);
-    let actor = ScriptHandleCodec::actor_handle_from_index(0);
-    let mut sequences = crate::sequence::SequenceManager::new();
-    let mut selected = Vec::new();
-    let mut sounds = crate::sound_source::SoundSourceManager::new();
-    let weather = crate::engine::WeatherState::default();
-    let frame = 656;
-    let mut stack = NativeStack::default();
-    stack.push_i32(actor);
-    stack.push_i32(1);
+    let mut engine = crate::engine::EngineInner::new();
+    let owner = engine.add_test_entity(soldier);
+    engine.control.frame_counter = 656;
+    let mut assets = crate::engine::LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .scripts
+        .install_mission(crate::engine::test_support::asm::empty_mission_script(
+            "attentive_native.scs",
+        ));
+    engine.scripts.attach_native_capabilities(&assets);
 
     assert_eq!(
-        call_host_native_with_queries(
-            &mut host,
-            NativeFn::SetAlwaysAttentive,
-            &mut stack,
-            TestQueryViews::new(&mut sequences, &mut selected, &mut sounds, &weather, &frame),
-        ),
+        engine
+            .call_external_native(
+                &crate::sim_rng::test_context(),
+                &assets,
+                "SetAlwaysAttentive",
+                &[ScriptHandleCodec::actor_handle(owner), 1],
+            )
+            .expect("attentive native must complete through its engine callback"),
         0
     );
 
-    let enemy = host
-        .entity_at_legacy_slot(0)
+    let enemy = engine
+        .world
+        .entities
+        .get(owner)
+        .expect("native retains owner")
         .enemy_ai()
         .expect("native must retain the soldier's enemy AI");
     assert!(enemy.forced_attentive);
@@ -4039,7 +3792,9 @@ fn set_always_attentive_preserves_ordinary_alert_branches() {
     ];
 
     for case in cases {
-        let mut soldier = native_test_soldier();
+        let mut soldier = crate::engine::test_support::actors::make_test_ai_soldier(
+            crate::element::Camp::Lacklandists,
+        );
         let enemy = soldier
             .enemy_ai_mut()
             .expect("native test soldier requires an enemy AI");
@@ -4048,35 +3803,39 @@ fn set_always_attentive_preserves_ordinary_alert_branches() {
         enemy.base.current_music_alert_status = case.music;
         enemy.base.view_alert_status = case.view;
 
-        let mut host = BoundScriptEffects::new();
-        host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(soldier)]);
-        let mut sequences = crate::sequence::SequenceManager::new();
-        let mut selected = Vec::new();
-        let mut sounds = crate::sound_source::SoundSourceManager::new();
-        let weather = crate::engine::WeatherState::default();
-        let mut stack = NativeStack::default();
-        stack.push_i32(ScriptHandleCodec::actor_handle_from_index(0));
-        stack.push_i32(i32::from(case.target));
+        let mut engine = crate::engine::EngineInner::new();
+        let owner = engine.add_test_entity(soldier);
+        engine.control.frame_counter = case.frame;
+        let mut assets = crate::engine::LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine
+            .scripts
+            .install_mission(crate::engine::test_support::asm::empty_mission_script(
+                "attentive_native.scs",
+            ));
+        engine.scripts.attach_native_capabilities(&assets);
         assert_eq!(
-            call_host_native_with_queries(
-                &mut host,
-                NativeFn::SetAlwaysAttentive,
-                &mut stack,
-                TestQueryViews::new(
-                    &mut sequences,
-                    &mut selected,
-                    &mut sounds,
-                    &weather,
-                    &case.frame,
-                ),
-            ),
+            engine
+                .call_external_native(
+                    &crate::sim_rng::test_context(),
+                    &assets,
+                    "SetAlwaysAttentive",
+                    &[
+                        ScriptHandleCodec::actor_handle(owner),
+                        i32::from(case.target)
+                    ],
+                )
+                .expect("attentive native must complete through its engine callback"),
             0,
             "{}",
             case.name
         );
 
-        let enemy = host
-            .entity_at_legacy_slot(0)
+        let enemy = engine
+            .world
+            .entities
+            .get(owner)
+            .expect("native retains owner")
             .enemy_ai()
             .expect("native must retain the soldier's enemy AI");
         assert_eq!(enemy.forced_attentive, case.target, "{}", case.name);
@@ -4121,20 +3880,25 @@ fn mission_team_identity_pc(
     pc
 }
 
-fn call_mission_team_native(host: &mut BoundScriptEffects, native: NativeFn, actor: i32) {
+fn call_mission_team_native(host: &mut NativeTestHost, native: NativeFn, actor: i32) {
     let mut stack = NativeStack::default();
     stack.push_i32(actor);
-    assert_eq!(
-        HostFunctions::call(host, native as u32, &mut stack)
-            .expect_return("mission-team native is synchronous"),
-        0
-    );
+    assert!(matches!(
+        HostFunctions::call(host, native as u32, &mut stack),
+        NativeCallOutcome::Return(0)
+            | NativeCallOutcome::Yield(NativeYield {
+                operation: NativeOperation::Command(NativeCommand::Engine(
+                    EngineCommand::MarkPc { .. }
+                )),
+                resume: ResumePolicy::Fixed(0)
+            })
+    ));
 }
 
 #[test]
 fn mission_team_natives_use_exact_description_identity_for_shared_profiles() {
     let shared_profile = crate::profiles::CharacterProfileIdx(8);
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.campaign.characters = vec![crate::campaign::PcDescription::default(); 33];
     for index in [3, 11, 32] {
         host.campaign.characters[index].character_profile_idx = Some(shared_profile);
@@ -4164,7 +3928,7 @@ fn mission_team_natives_reject_corrupt_live_pc_description_identity() {
         ("out of bounds", Some(99)),
         ("profile mismatch", Some(11)),
     ] {
-        let mut host = BoundScriptEffects::new();
+        let mut host = NativeTestHost::new();
         host.campaign.characters = vec![crate::campaign::PcDescription::default(); 33];
         host.campaign.characters[3].character_profile_idx = Some(shared_profile);
         host.campaign.characters[11].character_profile_idx = Some(other_profile);
@@ -4177,7 +3941,7 @@ fn mission_team_natives_reject_corrupt_live_pc_description_identity() {
 
         call_mission_team_native(&mut host, NativeFn::AddPCToMissionTeam, actor);
         assert_eq!(host.campaign.mission_team_indices, [32], "{name}: add");
-        assert!(host.engine_commands().is_empty(), "{name}: mark");
+
         call_mission_team_native(&mut host, NativeFn::RemovePCFromMissionTeam, actor);
         assert_eq!(host.campaign.mission_team_indices, [32], "{name}: remove");
     }
@@ -4191,7 +3955,7 @@ fn mission_team_natives_keep_raw_profile_fallback_without_live_actor() {
         .characters
         .resize_with(9, crate::profiles::CharacterProfile::default);
 
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.bindings.profile_manager = std::sync::Arc::new(profiles);
     host.campaign.characters = vec![crate::campaign::PcDescription::default(); 4];
     host.campaign.characters[3].character_profile_idx = Some(profile_index);
@@ -4207,7 +3971,7 @@ fn mission_team_natives_keep_raw_profile_fallback_without_live_actor() {
 fn persistent_property_test_host(
     with_campaign: bool,
 ) -> (
-    BoundScriptEffects,
+    NativeTestHost,
     AttachedScriptBindings,
     Option<crate::campaign::Campaign>,
     i32,
@@ -4220,7 +3984,7 @@ fn persistent_property_test_host(
         action_max_ammo: [12, 6, 6],
         ..Default::default()
     });
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     let bindings = AttachedScriptBindings {
         profile_manager: std::sync::Arc::new(profiles),
         ..Default::default()
@@ -4259,7 +4023,7 @@ fn persistent_property_test_host(
 }
 
 fn call_set_persistent_property(
-    host: &mut BoundScriptEffects,
+    host: &mut NativeTestHost,
     bindings: &AttachedScriptBindings,
     actor: i32,
     prop: i32,
@@ -4273,7 +4037,7 @@ fn call_set_persistent_property(
 }
 
 fn call_get_persistent_property(
-    host: &mut BoundScriptEffects,
+    host: &mut NativeTestHost,
     bindings: &AttachedScriptBindings,
     actor: i32,
     prop: i32,
@@ -4285,7 +4049,7 @@ fn call_get_persistent_property(
 }
 
 fn call_set_persistent_property_with_campaign(
-    host: &mut BoundScriptEffects,
+    host: &mut NativeTestHost,
     bindings: &AttachedScriptBindings,
     campaign: &mut crate::campaign::Campaign,
     mission_stat: &mut crate::mission_stat::MissionStat,
@@ -4305,7 +4069,7 @@ fn call_set_persistent_property_with_campaign(
 }
 
 fn call_get_persistent_property_with_campaign(
-    host: &mut BoundScriptEffects,
+    host: &mut NativeTestHost,
     bindings: &AttachedScriptBindings,
     campaign: &mut crate::campaign::Campaign,
     mission_stat: &mut crate::mission_stat::MissionStat,
@@ -4364,7 +4128,7 @@ fn set_then_get_persistent_program(
 fn persistent_life_and_concussion_use_typed_engine_yields() {
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
 
-    let mut life_host = BoundScriptEffects::new();
+    let mut life_host = NativeTestHost::new();
     let mut pc = native_test_pc(Vec::new(), Vec::new());
     let Entity::Pc(pc_data) = &mut pc else {
         unreachable!()
@@ -4382,7 +4146,7 @@ fn persistent_life_and_concussion_use_typed_engine_yields() {
         })
     ));
 
-    let mut concussion_host = BoundScriptEffects::new();
+    let mut concussion_host = NativeTestHost::new();
     concussion_host
         .entities
         .push(Some(native_test_pc(Vec::new(), Vec::new())));
@@ -4518,7 +4282,7 @@ fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
 }
 
 fn native_sees(
-    host: &mut BoundScriptEffects,
+    host: &mut NativeTestHost,
     weather: &crate::engine::WeatherState,
     npc_index: usize,
     target_index: usize,
@@ -4530,7 +4294,7 @@ fn native_sees(
 /// like the Original surface cache, so a query under changed ambiance must
 /// run on a fresh frame to observe the recomputed radius.
 fn native_sees_at_frame(
-    host: &mut BoundScriptEffects,
+    host: &mut NativeTestHost,
     weather: &crate::engine::WeatherState,
     npc_index: usize,
     target_index: usize,
@@ -4550,7 +4314,7 @@ fn native_sees_at_frame(
     )
 }
 
-fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> BoundScriptEffects {
+fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> NativeTestHost {
     let mut npc = native_test_soldier();
     npc.element_data_mut()
         .set_position_map(crate::coordinates::MapPoint::ZERO);
@@ -4572,7 +4336,7 @@ fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> BoundSc
     pc.element_data_mut()
         .publish_order_posture(Posture::Upright);
 
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(npc), Some(pc)]);
     host
 }
@@ -4673,7 +4437,7 @@ fn sees_uses_ambiance_adjusted_view_radius() {
     assert_eq!(native_sees_at_frame(&mut host, &weather, 0, 1, 1), 0);
 }
 
-fn set_experiences_test_host() -> (BoundScriptEffects, crate::campaign::Campaign, i32) {
+fn set_experiences_test_host() -> (NativeTestHost, crate::campaign::Campaign, i32) {
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
     let profile_idx = crate::profiles::CharacterProfileIdx(0);
     let mut status = crate::pc_status::PcStatus::default();
@@ -4693,7 +4457,7 @@ fn set_experiences_test_host() -> (BoundScriptEffects, crate::campaign::Campaign
         status,
     });
 
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_pc(
         Vec::new(),
         Vec::new(),
@@ -4702,7 +4466,7 @@ fn set_experiences_test_host() -> (BoundScriptEffects, crate::campaign::Campaign
 }
 
 fn call_set_experiences(
-    host: &mut BoundScriptEffects,
+    host: &mut NativeTestHost,
     campaign: &mut crate::campaign::Campaign,
     mission_stat: &mut crate::mission_stat::MissionStat,
     actor: i32,
@@ -4763,7 +4527,7 @@ fn set_experiences_capacities_persist_with_campaign_description() {
 
 #[test]
 fn set_action_available_validates_but_does_not_mutate_disabled_actions() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_pc(
         vec![false, false, false],
         vec![false, false, false],
@@ -4781,7 +4545,7 @@ fn set_action_available_validates_but_does_not_mutate_disabled_actions() {
 
 #[test]
 fn is_action_available_rejects_out_of_range_slot() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_pc(
         vec![false, false, false],
         vec![false, false, false],
@@ -4796,7 +4560,7 @@ fn is_action_available_rejects_out_of_range_slot() {
 
 #[test]
 fn is_action_available_reads_persistent_and_temp_slot_masks() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_pc(
         vec![false, true, false],
         vec![false, false, true],
@@ -4830,7 +4594,7 @@ fn is_action_available_reads_persistent_and_temp_slot_masks() {
 
 #[test]
 fn add_as_subordinate_requests_patrol_reinit() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![
         Some(native_test_soldier()),
         Some(native_test_soldier()),
@@ -4839,8 +4603,11 @@ fn add_as_subordinate_requests_patrol_reinit() {
     let mut stack = NativeStack::default();
     stack.push_i32(ScriptHandleCodec::actor_handle_from_index(0));
     stack.push_i32(ScriptHandleCodec::actor_handle_from_index(1));
-    let ret = call_host_native(&mut host, NativeFn::AddAsSubordinate, &mut stack);
-    assert_eq!(ret, 0);
+    let command = call_host_command(&mut host, NativeFn::AddAsSubordinate, &mut stack, 0);
+    assert!(matches!(
+        command,
+        NativeCommand::World(WorldNativeCommand::AddAsSubordinateInitialize { .. })
+    ));
 
     let chief_ai = host
         .entity_at_legacy_slot(0)
@@ -4857,7 +4624,7 @@ fn add_as_subordinate_requests_patrol_reinit() {
 
 #[test]
 fn add_as_subordinate_existing_membership_preserves_patrol_and_rejects_transfer() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![
         Some(native_test_soldier()),
         Some(native_test_soldier()),
@@ -4915,7 +4682,7 @@ fn add_as_subordinate_existing_membership_preserves_patrol_and_rejects_transfer(
 
 #[test]
 fn remove_all_subordinates_yields_engine_clear_before_vm_continues() {
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_soldier())]);
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
 
@@ -4937,16 +4704,12 @@ fn remove_all_subordinates_yields_engine_clear_before_vm_continues() {
             resume: crate::interp::ResumePolicy::Fixed(0),
         }) if yielded_actor == actor
     ));
-    assert!(
-        host.simulation_barriers().is_empty(),
-        "the native must not also enqueue the serialized compatibility command"
-    );
 }
 
 #[test]
 fn remove_all_subordinates_rejects_invalid_or_non_npc_chief_without_yielding() {
     let invalid_actor = ScriptHandleCodec::actor_handle_from_index(1);
-    let mut host = BoundScriptEffects::new();
+    let mut host = NativeTestHost::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_pc(
         Vec::new(),
         Vec::new(),
@@ -4964,5 +4727,4 @@ fn remove_all_subordinates_rejects_invalid_or_non_npc_chief_without_yielding() {
             NativeCallOutcome::Return(0)
         );
     }
-    assert!(host.simulation_barriers().is_empty());
 }

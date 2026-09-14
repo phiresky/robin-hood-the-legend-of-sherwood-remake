@@ -141,68 +141,24 @@ impl ScriptProgram {
 ///
 /// Serialization carries only mutable VM state. Immutable bytecode is a
 /// level asset and is reattached after decode through [`attach_program`].
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ScriptManager {
     /// Shared immutable bytecode + class metadata.
+    #[serde(skip)]
+    #[bitcode(skip)]
     pub program: std::sync::Arc<ScriptProgram>,
     /// Shared static area. The VM's 0x0000..0x3FFF symbol range reads/writes
     /// here — a single byte array shared by all VM instances in a level.
     pub static_area: std::sync::Arc<Vec<u8>>,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
-pub struct ScriptManagerSnapshot {
-    static_area: Vec<u8>,
-}
-
-impl ScriptManagerSnapshot {
-    pub(crate) fn capture(value: &ScriptManager) -> Self {
-        let ScriptManager {
-            program: _,
-            static_area,
-        } = value;
+impl ScriptManager {
+    /// Share static storage until the next VM write, detaching executable resources.
+    pub(crate) fn persisted_clone(&self) -> Self {
         Self {
-            static_area: static_area.as_ref().clone(),
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> ScriptManager {
-        ScriptManager {
             program: std::sync::Arc::new(ScriptProgram::default()),
-            static_area: self.static_area.into(),
+            static_area: self.static_area.clone(),
         }
-    }
-}
-
-impl crate::bitcode_adapters::NativeBitcode for ScriptManager {
-    type Wire = ScriptManagerSnapshot;
-
-    fn to_wire(&self) -> Self::Wire {
-        ScriptManagerSnapshot::capture(self)
-    }
-
-    fn from_wire(snapshot: Self::Wire) -> Self {
-        snapshot.into_runtime()
-    }
-}
-
-crate::bitcode_adapters::impl_native_bitcode!(ScriptManager);
-
-impl serde::Serialize for ScriptManager {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        ScriptManagerSnapshot::capture(self).serialize(serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for ScriptManager {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(ScriptManagerSnapshot::deserialize(deserializer)?.into_runtime())
     }
 }
 
@@ -483,6 +439,29 @@ mod preparation_tests {
                     })
                     .collect(),
             }],
+        }
+    }
+
+    #[test]
+    fn persisted_static_storage_survives_live_writes_and_resource_reattachment() {
+        use std::sync::Arc;
+
+        let mut live = ScriptManager::new(program(&[0]));
+        Arc::make_mut(&mut live.static_area)[7] = 41;
+        let saved = live.persisted_clone();
+        assert!(Arc::ptr_eq(&saved.static_area, &live.static_area));
+        Arc::make_mut(&mut live.static_area)[7] = 99;
+
+        let json: ScriptManager =
+            serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        let binary: ScriptManager = bitcode::decode(&bitcode::encode(&saved)).unwrap();
+        for mut restored in [saved, json, binary] {
+            assert_eq!(restored.static_area[7], 41);
+            assert!(restored.program.programs.is_empty());
+            restored.attach_program(live.program.clone());
+            assert!(Arc::ptr_eq(&restored.program, &live.program));
+            Arc::make_mut(&mut restored.static_area)[7] = 12;
+            assert_eq!(live.static_area[7], 99);
         }
     }
 

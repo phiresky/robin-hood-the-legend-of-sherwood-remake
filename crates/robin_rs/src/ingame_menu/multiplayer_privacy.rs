@@ -28,6 +28,7 @@ pub struct MultiplayerPrivacyModalState {
     input: ModalInputState,
     accepted: bool,
     done: bool,
+    pub(crate) exit_requested: bool,
 }
 
 impl MultiplayerPrivacyModalState {
@@ -76,6 +77,7 @@ impl MultiplayerPrivacyModalState {
             input,
             accepted: false,
             done: false,
+            exit_requested: false,
         }
     }
 
@@ -89,7 +91,11 @@ impl MultiplayerPrivacyModalState {
         let screen = ScreenFrame::begin(io, &mut self.input);
         for key in screen.keys() {
             match key {
-                ScreenKey::Quit | ScreenKey::Cancel => self.done = true,
+                ScreenKey::Quit => {
+                    self.exit_requested = true;
+                    self.done = true;
+                }
+                ScreenKey::Cancel => self.done = true,
                 ScreenKey::Confirm => {
                     self.accepted = true;
                     self.done = true;
@@ -191,6 +197,7 @@ mod tests {
             input: ModalInputState::new(),
             accepted: false,
             done: false,
+            exit_requested: false,
         }
     }
 

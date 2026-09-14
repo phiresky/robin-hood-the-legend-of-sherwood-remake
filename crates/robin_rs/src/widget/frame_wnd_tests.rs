@@ -1,6 +1,26 @@
 use super::*;
-use crate::ui::{MouseButtons, UiMsg, resource_widget_id::NO_RESOURCE};
-use crate::widget::{WidgetButton, WidgetRadioButton, WidgetRenderer};
+use crate::ui::{MouseButtons, UiMsg};
+use crate::widget::{WidgetButton, WidgetRadioButton};
+
+#[test]
+fn moving_widget_uses_live_bounds_for_pixel_hits() {
+    let mut button = WidgetButton::new(1);
+    button
+        .base
+        .create_with_resource("Move", ScreenBBox::from_coords(0.0, 0.0, 2.0, 2.0), 0, 99);
+    button.base.appearance.as_mut().unwrap().alpha_mask =
+        Some(crate::ui::AlphaMask::from_pixels(2, 2, 2, &[0, 1, 0, 0], 0));
+    let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(10.0, 20.0, 30.0, 40.0), 0);
+    frame.add_widget(Widget::Button(button));
+    let base = frame.widget_mut(1).unwrap().base_mut();
+    assert!(base.is_inside(ScreenPoint::new(11.0, 20.0)));
+    assert!(!base.is_inside(ScreenPoint::new(10.0, 20.0)));
+    base.set_position(ScreenBBox::from_coords(30.0, 40.0, 32.0, 42.0));
+    assert!(!base.is_inside(ScreenPoint::new(11.0, 20.0)));
+    assert!(base.is_inside(ScreenPoint::new(31.0, 40.0)));
+    assert!(!base.is_inside(ScreenPoint::new(30.0, 40.0)));
+    assert!(!base.is_inside(ScreenPoint::new(32.0, 40.0)));
+}
 
 use crate::widget::test_support::mouse_input as make_input;
 
@@ -8,12 +28,7 @@ fn make_button_widget(id: WidgetId, x: f32, y: f32, w: f32, h: f32) -> Widget {
     let mut btn = WidgetButton::new(id);
     let bbox = ScreenBBox::from_coords(x, y, x + w, y + h);
     btn.base.create("Test", bbox, 0);
-    btn.base.renderer = WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
-        base: crate::ui::RendererBase {
-            bbox,
-            ..Default::default()
-        },
-    });
+    btn.base.appearance = Some(crate::ui::WidgetAppearance::default());
     Widget::Button(btn)
 }
 
@@ -81,150 +96,6 @@ fn disabled_frame_returns_no_events() {
     let input = make_input(50.0, 20.0, MouseButtons::LEFT_CLICK);
     let events = frame.process_input(&input);
     assert!(events.is_empty());
-}
-
-#[test]
-fn disabled_frame_refresh_skips_children() {
-    use crate::ui::resource_widget_id::{BUTTON_DEFAULT, NO_RESOURCE};
-
-    let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
-    frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
-
-    assert_eq!(
-        frame
-            .widget(1)
-            .unwrap()
-            .base()
-            .renderer
-            .base()
-            .unwrap()
-            .sub_resource,
-        NO_RESOURCE,
-    );
-
-    frame.set_enable(false);
-    frame.refresh();
-    assert_eq!(
-        frame
-            .widget(1)
-            .unwrap()
-            .base()
-            .renderer
-            .base()
-            .unwrap()
-            .sub_resource,
-        NO_RESOURCE,
-        "refresh() on disabled frame must not render children",
-    );
-
-    frame.set_enable(true);
-    frame.refresh();
-    assert_eq!(
-        frame
-            .widget(1)
-            .unwrap()
-            .base()
-            .renderer
-            .base()
-            .unwrap()
-            .sub_resource,
-        BUTTON_DEFAULT,
-        "refresh() on enabled frame must render children",
-    );
-}
-
-#[test]
-fn disabled_frame_restore_and_probe_skip_children() {
-    let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
-    frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
-    // Dirty last_rendered so we can detect whether restore() cleared it.
-    frame
-        .widget_mut(1)
-        .unwrap()
-        .base_mut()
-        .renderer
-        .base_mut()
-        .unwrap()
-        .last_rendered = [42, 42];
-
-    frame.set_enable(false);
-    frame.restore();
-    assert_eq!(
-        frame
-            .widget(1)
-            .unwrap()
-            .base()
-            .renderer
-            .base()
-            .unwrap()
-            .last_rendered,
-        [42, 42],
-        "restore() on disabled frame must not touch children",
-    );
-
-    let region = ScreenBBox::from_coords(0.0, 0.0, 100.0, 100.0);
-    frame.restore_region(&region);
-    assert_eq!(
-        frame
-            .widget(1)
-            .unwrap()
-            .base()
-            .renderer
-            .base()
-            .unwrap()
-            .last_rendered,
-        [42, 42],
-        "restore_region() on disabled frame must not touch children",
-    );
-
-    let probes = frame.probe_refresh(0);
-    assert!(
-        probes.is_empty(),
-        "probe_refresh() on disabled frame must return no probes",
-    );
-}
-
-#[test]
-fn restore_region_calls_both_restore_and_refresh() {
-    use crate::ui::resource_widget_id::{BUTTON_DEFAULT, NO_RESOURCE};
-
-    let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
-    frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
-    // Sentinel for restore() detection: reset_save will reset this to [MAX; 2].
-    frame
-        .widget_mut(1)
-        .unwrap()
-        .base_mut()
-        .renderer
-        .base_mut()
-        .unwrap()
-        .last_rendered = [42, 42];
-
-    assert_eq!(
-        frame
-            .widget(1)
-            .unwrap()
-            .base()
-            .renderer
-            .base()
-            .unwrap()
-            .sub_resource,
-        NO_RESOURCE,
-    );
-
-    let region = ScreenBBox::from_coords(0.0, 0.0, 100.0, 100.0);
-    frame.restore_region(&region);
-
-    let rbase = frame.widget(1).unwrap().base().renderer.base().unwrap();
-    assert_eq!(
-        rbase.last_rendered,
-        [u32::MAX; 2],
-        "restore() must have cleared last_rendered",
-    );
-    assert_eq!(
-        rbase.sub_resource, BUTTON_DEFAULT,
-        "refresh() must have run after restore() for intersecting widget",
-    );
 }
 
 #[test]
@@ -304,12 +175,7 @@ fn make_radio_widget(id: WidgetId, x: f32, y: f32, w: f32, h: f32) -> WidgetRadi
     let mut rb = WidgetRadioButton::new(id);
     let bbox = ScreenBBox::from_coords(x, y, x + w, y + h);
     rb.base.create("Radio", bbox, 0);
-    rb.base.renderer = WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
-        base: crate::ui::RendererBase {
-            bbox,
-            ..Default::default()
-        },
-    });
+    rb.base.appearance = Some(crate::ui::WidgetAppearance::default());
     rb
 }
 
@@ -418,29 +284,6 @@ fn radio_activation_without_group_does_not_touch_others() {
 }
 
 #[test]
-fn restore_region_skips_non_intersecting() {
-    let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
-    frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
-
-    // Region far outside the widget's bbox.
-    let region = ScreenBBox::from_coords(150.0, 150.0, 200.0, 200.0);
-    frame.restore_region(&region);
-
-    assert_eq!(
-        frame
-            .widget(1)
-            .unwrap()
-            .base()
-            .renderer
-            .base()
-            .unwrap()
-            .sub_resource,
-        NO_RESOURCE,
-        "non-intersecting widget must not be refreshed",
-    );
-}
-
-#[test]
 fn keyboard_navigation_uses_widget_ids_and_skips_disabled_entries() {
     let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
     for id in [91, 4, 700] {
@@ -473,22 +316,4 @@ fn keyboard_navigation_handles_empty_disabled_and_single_widget_frames() {
         assert_eq!(frame.next_enabled_widget(42, forward), None);
         assert_eq!(frame.next_enabled_widget(999, forward), None);
     }
-}
-
-#[test]
-fn render_traversal_preserves_order_and_does_not_touch_excluded_widgets() {
-    let mut frame = FrameWnd::default();
-    for id in [3, 1, 2] {
-        frame.add_widget_absolute(make_button_widget(id, 0.0, 0.0, 10.0, 10.0));
-    }
-    assert!(frame.exclude_widget(1));
-    let mut visited = Vec::new();
-    for widget in frame.non_excluded_widgets_mut() {
-        visited.push(widget.id());
-        widget.base_mut().set_tooltip_text("visited");
-    }
-    assert_eq!(visited, [3, 2]);
-    assert_eq!(frame.widget(1).unwrap().base().tooltip_text, "");
-    assert_eq!(frame.widget(2).unwrap().base().tooltip_text, "visited");
-    assert_eq!(frame.widget(3).unwrap().base().tooltip_text, "visited");
 }

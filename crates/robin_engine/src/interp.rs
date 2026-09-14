@@ -83,6 +83,16 @@ pub enum StopReason {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SynchronousScriptRequest {
+    ForceAiAttentive {
+        actor: i32,
+        target: bool,
+        native_return: i32,
+    },
+    SetAiAlertStatus {
+        actor: i32,
+        level: crate::ai::AlertLevel,
+        native_return: i32,
+    },
     ApplyAiStateNative {
         actor: i32,
         effect: ScriptAiStateNativeEffect,
@@ -192,6 +202,7 @@ pub enum NativeOperation {
     ScriptCall(ScriptCallRequest),
     SequenceAction(SynchronousSequenceOperation),
     EngineAction(SynchronousScriptRequest),
+    Command(crate::natives::NativeCommand),
 }
 
 /// One immediately executed sequence action plus the remainder of the
@@ -223,6 +234,8 @@ impl SynchronousScriptRequest {
     pub fn native_return(&self) -> i32 {
         match *self {
             Self::ApplyAiStateNative { native_return, .. }
+            | Self::ForceAiAttentive { native_return, .. }
+            | Self::SetAiAlertStatus { native_return, .. }
             | Self::SetActorPosture { native_return, .. }
             | Self::SetPersistentLifePoints { native_return, .. }
             | Self::SetPersistentConcussion { native_return, .. }

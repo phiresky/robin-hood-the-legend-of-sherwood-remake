@@ -108,14 +108,6 @@ fn recorded_lock_ai_stops_old_animation_before_its_unlock_and_starts_new_animati
         .ai_controller()
         .expect("receiver NPC AI");
     assert!(ai.script_locked, "the replacement lock must remain held");
-    assert!(
-        !ai.outbox
-            .reentrant
-            .self_stimuli
-            .iter()
-            .any(|queued| queued.stimulus_type == crate::ai::StimulusType::EventReturnToDuty),
-        "the interrupted old UnlockAi must not schedule ReturnToDuty"
-    );
 }
 
 #[test]
@@ -134,10 +126,13 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
             Some(receiver),
             OrderType::RunningUpright,
         ));
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(active_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        active_id,
+        0,
+    );
     assert_eq!(
         engine
             .orders

@@ -240,13 +240,6 @@ impl EngineInner {
                 )
             })
         });
-        let self_stimuli_count = |owner: EntityId| {
-            self.get_entity(owner)
-                .and_then(Entity::ai_controller)
-                .map(|ai| ai.outbox.reentrant.self_stimuli.len())
-        };
-        let victim_self_stimuli_count = self_stimuli_count(victim);
-        let attacker_self_stimuli_count = attacker.and_then(self_stimuli_count);
         let rng_cursor = self.control.rng.original_replay_cursor();
         tracing::trace!(
             target: "parity_sword_damage_lifecycle",
@@ -263,8 +256,6 @@ impl EngineInner {
             ?damage_orders,
             ?actor_state,
             ?rng_cursor,
-            ?victim_self_stimuli_count,
-            ?attacker_self_stimuli_count,
             "sword-damage lifecycle"
         );
     }
@@ -730,7 +721,7 @@ impl EngineInner {
         };
         let outcome = combat::set_concussion(human, value, &ctx);
 
-        self.finish_applied_concussion(assets, entity_id, outcome)
+        self.finish_applied_concussion(sim, assets, entity_id, outcome)
     }
 
     /// Strict scripted concussion path. Native validation guarantees the
@@ -767,16 +758,17 @@ impl EngineInner {
             .expect("validated scripted concussion target lost HumanData during apply");
         let outcome = combat::set_concussion(human, value, &ctx);
 
-        self.finish_applied_concussion(assets, entity_id, outcome)
+        self.finish_applied_concussion(sim, assets, entity_id, outcome)
     }
 
     fn finish_applied_concussion(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
         outcome: crate::combat::ConcussionOutcome,
     ) -> crate::combat::ConcussionOutcome {
-        self.finish_scripted_concussion(assets, entity_id, outcome);
+        self.finish_concussion_transition(sim, assets, entity_id, outcome);
         let pc_is_unconscious = self.get_entity(entity_id).is_some_and(|entity| {
             entity.is_pc()
                 && entity
@@ -790,10 +782,10 @@ impl EngineInner {
         outcome
     }
 
-    /// Complete cross-system concussion effects after a script native has
-    /// already changed canonical HumanData synchronously.
-    pub(crate) fn finish_scripted_concussion(
+    /// Complete the human transition and its NPC callbacks before returning.
+    fn finish_concussion_transition(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
         outcome: ConcussionOutcome,
@@ -805,6 +797,8 @@ impl EngineInner {
         );
         match outcome {
             ConcussionOutcome::WentUnconscious => {
+                self.quit_swordfight(sim, assets, entity_id);
+                self.add_unconscious_star(entity_id);
                 // Healing-timeout init.
                 let h = self
                     .get_entity_mut(entity_id)
@@ -814,14 +808,41 @@ impl EngineInner {
                     h.concussion_healing_timeout = healing_speed;
                 }
 
-                self.orders
-                    .pending_concussion_side_effects
-                    .push((entity_id, outcome));
+                if let Some(npc) = self
+                    .get_entity_mut(entity_id)
+                    .and_then(Entity::ai_actor_data_mut)
+                {
+                    npc.clear_all_suspects();
+                    self.execute_ai_callback(
+                        sim,
+                        assets,
+                        entity_id,
+                        &crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
+                    );
+                    self.world
+                        .entities
+                        .expect_ai_actor_data_mut(
+                            entity_id,
+                            format_args!("concussion callback owner"),
+                        )
+                        .inform_my_friends = false;
+                }
             }
             ConcussionOutcome::WokeUp => {
-                self.orders
-                    .pending_concussion_side_effects
-                    .push((entity_id, outcome));
+                let has_ai = self
+                    .get_entity(entity_id)
+                    .expect("waking concussion owner disappeared")
+                    .ai_controller()
+                    .is_some();
+                if has_ai {
+                    self.execute_ai_callback(
+                        sim,
+                        assets,
+                        entity_id,
+                        &crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
+                    );
+                }
+                self.apply_wake_redetection_blinks(entity_id);
             }
             ConcussionOutcome::NoChange => {}
         }
@@ -952,24 +973,21 @@ impl EngineInner {
                 entity_id,
                 crate::element::DetectableType::MissedFriend,
             );
+            self.execute_ai_set_alert_status(
+                assets,
+                entity_id,
+                crate::ai::AlertLevel::Green,
+                crate::ai::AlertFlags::INSTANT_MUSIC_CHANGE,
+            );
             let entity = self
                 .get_entity_mut(entity_id)
                 .expect("script-killed AI owner vanished during virtual Kill");
-            let forced_attentive = entity
-                .enemy_ai()
-                .is_some_and(|enemy| enemy.forced_attentive);
             let ai = entity
                 .ai_controller_mut()
                 .expect("script-killed AI owner has no AI controller");
-            ai.set_alert_status_with_flags(
-                crate::ai::AlertLevel::Green,
-                crate::ai::AlertFlags::INSTANT_MUSIC_CHANGE,
-                forced_attentive,
-            );
             ai.current_state = crate::ai::AiState::Sleeping;
             ai.current_substate = crate::ai::Substate::SleepingForever;
             ai.clear_emoticon();
-            ai.clear_all_pending();
             let npc = entity
                 .ai_actor_data_mut()
                 .expect("script-killed AI owner has no AI actor data");
@@ -1009,77 +1027,6 @@ impl EngineInner {
         human.unconscious = false;
         human.concussion_of_the_brain = 0;
         human.concussion_healing_timeout = 0;
-    }
-
-    /// Drain `pending_concussion_side_effects` (queued by
-    /// `apply_concussion`).  Runs inside `perform_hourglass` where
-    /// `&LevelAssets` is available for `quit_swordfight`.
-    ///
-    /// On `WentUnconscious`: `quit_swordfight` + `add_unconscious_star`
-    ///     + `EventLoseConsciousness` stimulus.
-    ///
-    /// On `WokeUp`: `EventFitAgain` stimulus + the PC/soldier
-    /// `BlinkEnemy` redetect loop.
-    pub(crate) fn drain_pending_concussion_side_effects(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        use crate::combat::ConcussionOutcome;
-
-        if self.orders.pending_concussion_side_effects.is_empty() {
-            return;
-        }
-        let entries = std::mem::take(&mut self.orders.pending_concussion_side_effects);
-        for (entity_id, outcome) in entries {
-            match outcome {
-                ConcussionOutcome::WentUnconscious => {
-                    self.quit_swordfight(sim, assets, entity_id);
-                    self.add_unconscious_star(entity_id);
-                    if let Some(npc) = self
-                        .get_entity_mut(entity_id)
-                        .and_then(|entity| entity.ai_actor_data_mut())
-                    {
-                        npc.clear_all_suspects();
-                    }
-                    self.dispatch_ai_stimulus(
-                        entity_id,
-                        crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
-                    );
-                    if let Some(npc) = self
-                        .get_entity_mut(entity_id)
-                        .and_then(|entity| entity.ai_actor_data_mut())
-                    {
-                        // Script setters have no who-dunnit actor.
-                        npc.inform_my_friends = false;
-                    }
-                }
-                ConcussionOutcome::WokeUp => {
-                    let (is_pc, has_ai) = self
-                        .get_entity(entity_id)
-                        .map(|entity| (entity.is_pc(), entity.ai_controller().is_some()))
-                        .unwrap_or((false, false));
-                    if has_ai {
-                        self.dispatch_ai_stimulus(
-                            entity_id,
-                            crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
-                        );
-                    } else if is_pc {
-                        // PCs have no NPC update slot or AI decision call.
-                        self.apply_wake_redetection_blinks(entity_id);
-                    } else {
-                        // NPC soldiers/civilians dispatch FITAGAIN at their
-                        // owner prelude. The inline BlinkEnemy fan-out follows
-                        // that synchronous Think there.
-                        self.dispatch_ai_stimulus(
-                            entity_id,
-                            crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
-                        );
-                    }
-                }
-                ConcussionOutcome::NoChange => {}
-            }
-        }
     }
 
     /// Apply the original game's inline enemy blink during concussion
@@ -2513,7 +2460,6 @@ mod damage;
 #[cfg(test)]
 pub(crate) use damage::capture_sword_damage_observations;
 mod dispatch;
-pub(super) use dispatch::ShieldCommandContext;
 mod effects;
 mod evaluate;
 mod speech;

@@ -67,7 +67,7 @@ impl EngineInner {
     ) {
         let charly = self.expect_human_id_for_ai_handle(target, "seen checkpoint");
         if self.observation_ai(owner).base.current_state == AiState::Seeking {
-            match self.observation_ai(owner).get_rank() {
+            match self.observation_ai(owner).get_rank(&assets.profile_manager) {
                 ProfileRank::Officer => {
                     if matches!(
                         self.observation_ai(owner).base.current_substate,
@@ -88,7 +88,9 @@ impl EngineInner {
                     if self
                         .expect_entity(charly, "checkpoint rank")
                         .enemy_ai()
-                        .is_some_and(|ai| ai.get_rank() == ProfileRank::Soldier)
+                        .is_some_and(|ai| {
+                            ai.get_rank(&assets.profile_manager) == ProfileRank::Soldier
+                        })
                     {
                         self.observation_say(sim, assets, owner, Remark::FoundCharly);
                         let mut call = Stimulus::new(StimulusType::CallGoToOfficer);
@@ -100,7 +102,7 @@ impl EngineInner {
                             self.world
                                 .entities
                                 .expect_enemy_ai(charly, format_args!("called checkpoint rank"))
-                                .get_rank(),
+                                .get_rank(&assets.profile_manager),
                             ProfileRank::Soldier
                         );
                         self.observation_face_entity(sim, assets, owner, charly, false);
@@ -121,7 +123,8 @@ impl EngineInner {
                             .expect_entity(charly, "checkpoint referral")
                             .enemy_ai()
                             .is_some_and(|ai| {
-                                ai.get_rank() == ProfileRank::Soldier && !ai.reported_to_officer
+                                ai.get_rank(&assets.profile_manager) == ProfileRank::Soldier
+                                    && !ai.reported_to_officer
                             })
                     {
                         self.observation_ai_mut(owner)
@@ -171,20 +174,22 @@ impl EngineInner {
             self.observation_say(sim, assets, owner, Remark::FoundCharly);
         }
         self.observation_ai_mut(owner).base.sorrow_level = 0;
-        self.observation_ai_mut(owner)
-            .base
-            .set_checkpoint_charly(None);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_set_checkpoint_charly(owner, None);
+
         let ai = &self.observation_ai(owner).base;
         if ai.synchronize_index == u16::MAX
             || ai.synchronize_charly.is_none()
             || !ai.macro_in_progress
         {
-            self.observation_ai_mut(owner).base.outbox.actor.halt = true;
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
-            self.observation_ai_mut(owner)
-                .set_alert_status(AlertLevel::Green);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.halt_actor(sim, assets, owner);
+
+            self.execute_ai_set_alert_status(
+                assets,
+                owner,
+                AlertLevel::Green,
+                crate::ai::AlertFlags::empty(),
+            );
+
             self.observation_face_entity(sim, assets, owner, charly, false);
             if self.observation_ai(owner).base.current_state == AiState::Default {
                 self.duty_set_state(
@@ -283,7 +288,7 @@ impl EngineInner {
                 continue;
             }
             let ai = self.observation_ai(owner);
-            if ai.get_rank() != ProfileRank::Officer
+            if ai.get_rank(&assets.profile_manager) != ProfileRank::Officer
                 && ai
                     .base
                     .antagonist

@@ -50,7 +50,9 @@ mod tests {
             .world
             .soldier_registry
             .rebuild_from_order(&engine.world.entities, ids.iter().copied());
-        (engine, LevelAssets::new(), ids)
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        (engine, assets, ids)
     }
 
     fn knockout(engine: &mut EngineInner, target: EntityId) {
@@ -82,8 +84,12 @@ mod tests {
 
     #[test]
     fn money_morale_reads_current_knockout_flags_and_skips_dead_candidates() {
-        let (mut engine, assets, ids) = fixture(&[500.0, 600.0, 700.0, 800.0, 900.0]);
-        engine.money_ai_mut(ids[0]).soldier_profile_money = 40;
+        let (mut engine, mut assets, ids) = fixture(&[500.0, 600.0, 700.0, 800.0, 900.0]);
+        crate::engine::test_support::actors::edit_enemy_profile(
+            &mut assets,
+            engine.money_ai_mut(ids[0]),
+            |profile| profile.money = 40,
+        );
         engine.money_ai_mut(ids[1]).base.current_substate = Substate::WonderingBrawlHitting;
         knockout(&mut engine, ids[2]);
         knockout(&mut engine, ids[3]);
@@ -219,7 +225,6 @@ impl EngineInner {
         owner: EntityId,
         operation: MoneyFightOperation,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         match operation {
             MoneyFightOperation::CleanUpAfterBrawl => {
                 self.create_live_money_fight_victims(assets, owner);
@@ -277,7 +282,6 @@ impl EngineInner {
                 self.handle_stolen_money(sim, assets, owner, object, thief)
             }
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     fn create_live_money_fight_victims(&mut self, assets: &LevelAssets, owner: EntityId) {
@@ -334,7 +338,7 @@ impl EngineInner {
 
     fn wants_live_money_fight(&self, assets: &LevelAssets, owner: EntityId) -> bool {
         let camp = self.expect_entity(owner, "money morale scan camp").camp();
-        if self.money_ai(owner).soldier_profile_money == 100
+        if self.money_ai(owner).profile(&assets.profile_manager).money == 100
             || self.money_ai(owner).base.blood_alcohol > 0
         {
             return true;
@@ -363,7 +367,7 @@ impl EngineInner {
             }
         }
         (100 * u32::from(sleeping)) / (u32::from(sleeping) + u32::from(upright))
-            < u32::from(self.money_ai(owner).soldier_profile_money)
+            < u32::from(self.money_ai(owner).profile(&assets.profile_manager).money)
     }
 
     fn create_live_money_fight_enemies(&mut self, assets: &LevelAssets, owner: EntityId) {
@@ -532,7 +536,7 @@ impl EngineInner {
         );
         let camp = self.expect_entity(owner, "finish brawl scan camp").camp();
         assert_eq!(
-            self.money_ai(owner).get_rank(),
+            self.money_ai(owner).get_rank(&assets.profile_manager),
             crate::profiles::ProfileRank::Officer
         );
         self.money_ai_mut(owner).base.antagonist = None;
@@ -540,7 +544,7 @@ impl EngineInner {
         for index in 0..self.world.soldier_registry.camp(camp).len() {
             let target = self.money_camp_soldier(camp, index);
             let ai = self.money_ai(target);
-            if ai.get_rank() != crate::profiles::ProfileRank::Soldier
+            if ai.get_rank(&assets.profile_manager) != crate::profiles::ProfileRank::Soldier
                 || !(ai.base.current_substate.is_take_money()
                     || ai.base.current_substate.is_fight_for_money())
                 || !self.patrol_member_visible(assets, target, owner)
@@ -574,7 +578,7 @@ impl EngineInner {
         self.money_ai_mut(owner)
             .base
             .set_emoticon(crate::ai::EmoticonType::Thunderstorm);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         self.money_timer(owner, 200);
     }
 
@@ -637,9 +641,7 @@ impl EngineInner {
                 AiState::Wondering,
                 Substate::WonderingWatchingForMoreMoney,
             );
-            self.money_ai_mut(owner).base.outbox.actor.look_sidewards =
-                Some(crate::ai::LookDirection::LeftRight);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_look_sidewards(owner, crate::ai::LookDirection::LeftRight);
         }
     }
 
@@ -726,7 +728,7 @@ impl EngineInner {
                 && self
                     .entity_building_sector(entity.element_data().sector())
                     .is_none()
-                && ai.soldier_profile_money > 0);
+                && ai.profile(&assets.profile_manager).money > 0);
         if !wants_money {
             return;
         }
@@ -737,13 +739,13 @@ impl EngineInner {
         }
         let substate = self.money_ai(owner).base.current_substate;
         if substate.is_take_money() {
-            self.money_ai_mut(owner).base.break_macro();
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_break_macro(owner);
+
             self.face_money_human(sim, assets, owner, thief);
             self.money_ai_mut(owner)
                 .base
                 .set_emoticon(crate::ai::EmoticonType::QuestionMark);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             self.duty_set_state(
                 sim,
                 assets,
@@ -754,7 +756,7 @@ impl EngineInner {
             self.money_ai_mut(owner)
                 .money_fight_enemies
                 .push(thief.get());
-            self.react_to_stolen_money(sim, owner);
+            self.react_to_stolen_money(sim, assets, owner);
             self.money_ai_mut(owner).base.friend_in_trouble = Some(thief);
         } else if substate.is_fight_for_money() {
             self.money_ai_mut(owner)
@@ -763,7 +765,12 @@ impl EngineInner {
         }
     }
 
-    fn react_to_stolen_money(&mut self, sim: &SimulationContext, owner: EntityId) {
+    fn react_to_stolen_money(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
         let entity = self.expect_entity(owner, "money reaction owner");
         if self.is_player_aligned_camp(entity.camp())
             && self.world.weather.is_forest_level
@@ -786,7 +793,11 @@ impl EngineInner {
         } else {
             1.0
         };
-        let frames = ((100.0 - self.money_ai(owner).soldier_profile_iq as f32)
+        let frames = ((100.0
+            - self
+                .money_ai(owner)
+                .profile(&assets.profile_manager)
+                .intelligence as f32)
             * 0.01
             * crate::parameters_ai::AI_MAX_ENEMY_REACTIONTIME as f32
             * modifier

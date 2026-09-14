@@ -181,7 +181,16 @@ fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
         Some(target),
     );
     let sequence = engine.launch_element(strike);
-    engine.dispatch_sword_strike(&assets, attacker, target, SwordStrike::A, sequence, 0);
+    engine.dispatch_sword_strike(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        attacker,
+        target,
+        SwordStrike::A,
+        sequence,
+        0,
+    );
 
     let element = engine
         .orders
@@ -199,41 +208,37 @@ fn circle_tail_retains_candidate_past_final_in_the_same_sector() {
     let mut engine = make_engine();
     let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
     let pending_victim = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
-    let assets = assets_with_nonstraight_profile(
+    let mut assets = assets_with_nonstraight_profile(
         SwordStrike::F,
         crate::profiles::WeaponThrustKind::FalseHalfCircle,
     );
+    std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].thrusts
+        [SwordStrike::F as usize]
+        .rotation_angle = 43;
+    install_test_melee_order(&mut engine, attacker, pending_victim, SwordStrike::F, true);
     engine
         .get_entity_mut(attacker)
         .unwrap()
-        .actor_data_mut()
+        .human_data_mut()
         .unwrap()
-        .sweep_state = Some(crate::movement::SweepState {
-        pending_victims: vec![pending_victim],
+        .sword_sweep = crate::element::HumanSwordSweepState {
+        victims: vec![pending_victim],
         initial_angle: 0.0,
         current_angle: 0.0,
         final_angle: 0.70,
-        rotation_per_frame: 0.75,
-        direction: crate::profiles::WeaponThrustDirection::LeftToRight,
-        strike: SwordStrike::F,
-        attacker_profile_idx: Some(1),
-        gesture_quality: crate::player_command::GestureQuality::PERFECT,
-        strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
-    });
+    };
 
     engine.tick_sweep_for(&assets, attacker, false);
 
     let current = engine
         .get_entity(attacker)
         .unwrap()
-        .actor_data()
+        .human_data()
         .unwrap()
-        .sweep_state
-        .as_ref()
-        .expect("unreached victim keeps the circle sweep observable")
+        .sword_sweep
         .current_angle;
     assert!(
-        (current - 0.75).abs() < f32::EPSILON,
+        (current - strike_profile_angle(43)).abs() < f32::EPSILON,
         "a candidate past 0.70 in the same final sector must be retained instead of clamped"
     );
 }

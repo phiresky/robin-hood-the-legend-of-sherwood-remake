@@ -469,6 +469,20 @@ impl ShippingDatadir {
     }
 
     pub fn install_mission(&self, mission: &str, payload: ShippingMission) -> Result<()> {
+        let mut staged = self.stage_mission_install(mission, payload)?;
+        while !staged.step(usize::MAX)? {}
+        self.finish_mission_install(staged)
+    }
+
+    /// Validate a merged mission payload and take ownership of its sprite
+    /// chunks for incremental decode. Nothing installed or mounted changes
+    /// until [`Self::finish_mission_install`]; dropping the staged install
+    /// abandons it.
+    pub fn stage_mission_install(
+        &self,
+        mission: &str,
+        mut payload: ShippingMission,
+    ) -> Result<StagedMissionInstall> {
         if !payload.levels.contains_key(mission) {
             return Err(anyhow!(
                 "shipping payload for {mission} does not contain its level"
@@ -481,7 +495,36 @@ impl ShippingDatadir {
                 "shipping mission {mission} sprite bank is incompatible with boot dictionaries"
             ));
         }
-        let prepared = payload.prepare(mission)?;
+        let sprites = payload
+            .payload
+            .sprite_bank
+            .as_mut()
+            .map(|bank| SpriteChunkMaterializer::new(bank, SpriteChunkKinds::All))
+            .transpose()
+            .with_context(|| format!("materialize VQ sprite chunks for mission {mission}"))?;
+        Ok(StagedMissionInstall {
+            mission: mission.to_owned(),
+            payload,
+            sprites,
+        })
+    }
+
+    /// Publish a staged install whose sprite chunks are fully materialized.
+    pub fn finish_mission_install(&self, staged: StagedMissionInstall) -> Result<()> {
+        let StagedMissionInstall {
+            mission,
+            payload,
+            sprites,
+        } = staged;
+        let mission = mission.as_str();
+        if let Some(sprites) = sprites.as_ref()
+            && sprites.stage() != SpriteChunkStage::Done
+        {
+            return Err(anyhow!(
+                "shipping mission {mission} finished installing before its sprite chunks materialized"
+            ));
+        }
+        let prepared = payload.seal(mission)?;
         let mut loaded = self
             .runtime
             .loaded_missions
@@ -836,6 +879,54 @@ impl ShippingDatadir {
     }
 }
 
+/// A validated mission payload whose sprite chunks decode in bounded steps,
+/// so asynchronous loaders can report progress and yield between steps.
+/// Transient install state — deliberately no serde derives.
+pub struct StagedMissionInstall {
+    mission: String,
+    payload: ShippingMission,
+    sprites: Option<SpriteChunkMaterializer>,
+}
+
+impl StagedMissionInstall {
+    pub fn mission(&self) -> &str {
+        &self.mission
+    }
+
+    /// Sprite decode progress; an install without a sprite bank is complete.
+    pub fn progress(&self) -> SpriteMaterializeProgress {
+        self.sprites
+            .as_ref()
+            .map(SpriteChunkMaterializer::progress)
+            .unwrap_or_default()
+    }
+
+    /// Decode at most `max_items` sprite work items. `Ok(true)` once the
+    /// install is ready for [`ShippingDatadir::finish_mission_install`].
+    pub fn step(&mut self, max_items: usize) -> Result<bool> {
+        let Some(sprites) = self.sprites.as_mut() else {
+            return Ok(true);
+        };
+        let mission = &self.mission;
+        let payload = &mut self.payload.payload;
+        let bank = payload
+            .sprite_bank
+            .as_mut()
+            .ok_or_else(|| anyhow!("staged shipping mission {mission} lost its sprite bank"))?;
+        let stage = sprites.stage();
+        sprites
+            .step(bank, &payload.rhs_files, max_items)
+            .with_context(|| match stage {
+                SpriteChunkStage::Vq | SpriteChunkStage::Done => {
+                    format!("materialize VQ sprite chunks for mission {mission}")
+                }
+                SpriteChunkStage::RleJxl => {
+                    format!("materialize RLE-JXL sprite chunks for mission {mission}")
+                }
+            })
+    }
+}
+
 /// English substitution is deliberately limited to optional recorded media.
 /// All matching uses canonical shipping keys (relative to `Data/`).
 pub fn is_optional_english_fallback_key(path: &str) -> bool {
@@ -876,16 +967,20 @@ impl ShippingMission {
         &self.sprite_streaming
     }
 
-    /// Consume staging ownership before publishing runtime data. No installed
-    /// mission or VFS generation is mutated if decoding/validation fails.
+    /// Materialize every sprite chunk and seal, as one blocking install would.
+    #[cfg(test)]
     pub(super) fn prepare(mut self, mission: &str) -> Result<PreparedShippingMission> {
         if let Some(bank) = self.payload.sprite_bank.as_mut() {
-            bank.materialize_vq_chunks(&self.payload.rhs_files)
-                .with_context(|| format!("materialize VQ sprite chunks for mission {mission}"))?;
-            bank.materialize_rle_jxl_chunks().with_context(|| {
-                format!("materialize RLE-JXL sprite chunks for mission {mission}")
-            })?;
+            let mut sprites = SpriteChunkMaterializer::new(bank, SpriteChunkKinds::All)?;
+            while !sprites.step(bank, &self.payload.rhs_files, usize::MAX)? {}
         }
+        self.seal(mission)
+    }
+
+    /// Consume staging ownership of a payload whose sprite chunks are already
+    /// materialized (see [`StagedMissionInstall`]). No installed mission or
+    /// VFS generation is mutated if this fails.
+    fn seal(mut self, mission: &str) -> Result<PreparedShippingMission> {
         let raw = std::mem::take(&mut self.payload.raw)
             .into_iter()
             .map(|(path, bytes)| (path, bytes.into()))

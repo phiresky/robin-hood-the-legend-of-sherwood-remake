@@ -114,6 +114,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -123,9 +124,7 @@ impl EngineInner {
         match self.try_dispatch_move_path(sim, assets, owner, seq_id, elem_idx, dest, move_action) {
             MovePathOutcome::Success | MovePathOutcome::Pending => OwnerActionBarrier::Reach,
             MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
+                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                 OwnerActionBarrier::Skip
             }
             MovePathOutcome::Failed => {
@@ -209,19 +208,19 @@ fn read_sequence_map_point_property(
 /// directly from `Translate`: a sector-less assertion compares max-norm
 /// distance against `tolerance + 5`, while a sector assertion compares only
 /// the sector. Both paths interrupt on mismatch and terminate on success.
-pub(in crate::engine) struct PositionAssertionContext<'a> {
-    pub(in crate::engine) entities: &'a crate::entities::Entities,
-    pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-}
 
-impl PositionAssertionContext<'_> {
-    pub(in crate::engine) fn dispatch(
+impl EngineInner {
+    pub(in crate::engine) fn dispatch_position_assertion(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
         let movement = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|element| match &element.data {
@@ -234,14 +233,17 @@ impl PositionAssertionContext<'_> {
                 _ => None,
             });
 
-        let Some(entity) = self.entities.get(owner) else {
+        let Some(entity) = self.world.entities.get(owner) else {
             tracing::warn!(
                 ?owner,
                 ?seq_id,
                 elem_idx,
                 "interrupting AssertPosition because its owner no longer exists"
             );
-            self.sequence_manager.element_interrupted(
+            self.element_interrupted(
+                sim,
+                assets,
+                active_scripts,
                 seq_id,
                 elem_idx,
                 crate::sequence::CascadeFlags::NEXT_LEVEL,
@@ -267,13 +269,16 @@ impl PositionAssertionContext<'_> {
         });
 
         if mismatches {
-            self.sequence_manager.element_interrupted(
+            self.element_interrupted(
+                sim,
+                assets,
+                active_scripts,
                 seq_id,
                 elem_idx,
                 crate::sequence::CascadeFlags::NEXT_LEVEL,
             );
         } else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         }
         // Position assertion changes state directly during translation. That
         // synchronous condolence clears the actor's selected sequence element, so
@@ -288,21 +293,19 @@ impl PositionAssertionContext<'_> {
 /// Translation books the same stationary order as WAIT. This context is then
 /// invoked once per actual owner Execute while the element remains current,
 /// matching the game's projectile-launch behavior.
-pub(in crate::engine) struct LiftWaitCommandContext<'a> {
-    pub(in crate::engine) entities: &'a mut crate::entities::Entities,
-    pub(in crate::engine) fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
-    pub(in crate::engine) doors: &'a [crate::gate::Door],
-    pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-}
 
-impl LiftWaitCommandContext<'_> {
-    pub(in crate::engine) fn authorize_and_reserve(
+impl EngineInner {
+    pub(in crate::engine) fn authorize_and_reserve_lift_wait(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> bool {
         let element = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .unwrap_or_else(|| {
@@ -324,7 +327,7 @@ impl LiftWaitCommandContext<'_> {
                 "WAIT_FREE_LIFT owner {owner:?} requires movement gate and sector at {seq_id:?}/{elem_idx}, found {data:?}"
             ),
         };
-        let door = self.doors.get(usize::from(gate_id)).unwrap_or_else(|| {
+        let door = self.script_domains.interactables.doors.get(usize::from(gate_id)).unwrap_or_else(|| {
             panic!(
                 "WAIT_FREE_LIFT owner {owner:?} references missing door {gate_id} at {seq_id:?}/{elem_idx}"
             )
@@ -344,6 +347,7 @@ impl LiftWaitCommandContext<'_> {
             i16::from(door.sector_in)
         );
         let owner_sector = self
+            .world
             .entities
             .get(owner)
             .unwrap_or_else(|| panic!("WAIT_FREE_LIFT owner {owner:?} is missing"))
@@ -354,8 +358,7 @@ impl LiftWaitCommandContext<'_> {
             return false;
         }
         let sector_number = door.sector_in;
-        let grid_idx = *self
-            .fast_grid
+        let grid_idx = *self.world.fast_grid_mut()
             .level
             .sector_number_map
             .get(&sector_number)
@@ -364,8 +367,7 @@ impl LiftWaitCommandContext<'_> {
                     "WAIT_FREE_LIFT owner {owner:?} door {gate_id} references missing lift sector {sector_number:?}"
                 )
             });
-        let sector = self
-            .fast_grid
+        let sector = self.world.fast_grid_mut()
             .level
             .sectors
             .get(grid_idx)
@@ -383,7 +385,7 @@ impl LiftWaitCommandContext<'_> {
         // occupancy is recorded before the element terminates so another
         // actor dispatched in the same frame observes the reservation.
         let authorized = {
-            let lift = self.fast_grid.lift_state_mut(grid_idx as u32);
+            let lift = self.world.fast_grid_mut().lift_state_mut(grid_idx as u32);
             if is_high {
                 lift.is_authorized_downwards()
             } else {
@@ -393,19 +395,20 @@ impl LiftWaitCommandContext<'_> {
 
         if authorized {
             let owner_is_pc = self
+                .world
                 .entities
                 .expect_entity(
                     owner,
                     format_args!("WAIT_FREE_LIFT owner during reservation"),
                 )
                 .is_pc();
-            let lift = self.fast_grid.lift_state_mut(grid_idx as u32);
+            let lift = self.world.fast_grid_mut().lift_state_mut(grid_idx as u32);
             if is_high {
                 lift.set_occupied_downwards(true, owner_is_pc);
             } else {
                 lift.set_occupied_upwards(true, owner_is_pc);
             }
-            let actor = self.entities.expect_actor_data_mut(
+            let actor = self.world.entities.expect_actor_data_mut(
                 owner,
                 format_args!("WAIT_FREE_LIFT owner during reservation"),
             );
@@ -420,22 +423,19 @@ impl LiftWaitCommandContext<'_> {
 
 /// Translate one WAIT-priority smalltalk strike/parry at the synchronous
 /// owner boundary where it was launched.
-pub(in crate::engine) struct SmalltalkCommandContext<'a> {
-    pub(in crate::engine) entities: &'a crate::entities::Entities,
-    pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) orders: OrderEmitter<'a>,
-}
 
-impl SmalltalkCommandContext<'_> {
-    pub(in crate::engine) fn dispatch(
+impl EngineInner {
+    pub(in crate::engine) fn dispatch_smalltalk_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
-        let antagonist = self
-            .sequence_manager
+        let antagonist = self.orders.sequence_manager
             .get_element(seq_id, elem_idx)
             .unwrap_or_else(|| {
                 panic!(
@@ -450,11 +450,11 @@ impl SmalltalkCommandContext<'_> {
                 "smalltalk owner {owner:?} command {command:?} requires an interaction antagonist at {seq_id:?}/{elem_idx}, found {data:?}"
             ),
         };
-        let owner_entity = self
-            .entities
-            .get(owner)
-            .unwrap_or_else(|| panic!("smalltalk command {command:?} owner {owner:?} is missing"));
-        let opponent = self.entities.expect_entity(
+        let owner_entity =
+            self.world.entities.get(owner).unwrap_or_else(|| {
+                panic!("smalltalk command {command:?} owner {owner:?} is missing")
+            });
+        let opponent = self.world.entities.expect_entity(
             antagonist,
             format_args!("smalltalk command {command:?} owner {owner:?} antagonist"),
         );
@@ -484,25 +484,33 @@ impl SmalltalkCommandContext<'_> {
             _ => unreachable!("non-smalltalk command passed to SmalltalkCommandContext"),
         };
         let blocked = self
+            .orders
             .sequence_manager
             .current_order_for_actor(owner)
             .is_some_and(|(_, _, order)| {
                 super::melee::sword_strike_from_animation(order.order_type).is_some()
             });
         if blocked {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         }
 
-        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, self.orders.alloc_id());
+        let mut order = crate::order::Order::new(
+            order_type,
+            0.0,
+            0.0,
+            crate::order::alloc_order_id(&mut self.orders.next_order_id),
+        );
         // Human-actor translation stores the interaction antagonist on
         // every smalltalk strike/parry order. Execute uses it for live strike
         // facing and later wound geometry; parry variants retain the same
         // authored pointer even though their live facing uses the principal
         // opponent.
         order.antagonist = Some(antagonist);
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .push_order_on(seq_id, elem_idx, order);
+        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         OwnerActionBarrier::Reach
     }
 }
@@ -512,21 +520,20 @@ impl SmalltalkCommandContext<'_> {
 /// The original command bodies read actor posture/action state, append
 /// transition orders, and update the sequence element. They do not need the
 /// mission, scripts, AI, players, feedback, or spatial world domains.
-struct BowTransitionContext<'a> {
-    entities: &'a crate::entities::Entities,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-    orders: OrderEmitter<'a>,
-}
 
-impl BowTransitionContext<'_> {
-    fn dispatch(
+impl EngineInner {
+    fn dispatch_bow_transition(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
         let owner_entity = self
+            .world
             .entities
             .get(owner)
             .unwrap_or_else(|| panic!("bow command owner missing: {owner:?}"));
@@ -543,11 +550,12 @@ impl BowTransitionContext<'_> {
             // transitions-only mode disabled) command body afterward. That body
             // terminates redundant equip commands whenever the actor is
             // already aiming.
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         }
 
         let command_body_already_queued = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .is_some_and(|element| {
@@ -584,6 +592,7 @@ impl BowTransitionContext<'_> {
         if !command_body_already_queued {
             let anonymous = posture == crate::element::Posture::AnonymousArcher;
             let target_xy = self
+                .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
                 .and_then(|element| element.orders.back())
@@ -595,16 +604,16 @@ impl BowTransitionContext<'_> {
             match command {
                 Command::EquipBow => {
                     if anonymous {
-                        self.orders.push(
-                            self.sequence_manager,
+                        OrderEmitter::new(&mut self.orders.next_order_id).push(
+                            &mut self.orders.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionEquipBowAnonymous,
                             (0.0, 0.0),
                             false,
                         );
-                        self.orders.push(
-                            self.sequence_manager,
+                        OrderEmitter::new(&mut self.orders.next_order_id).push(
+                            &mut self.orders.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionLoadingBowAnonymous,
@@ -612,16 +621,16 @@ impl BowTransitionContext<'_> {
                             false,
                         );
                     } else {
-                        self.orders.push(
-                            self.sequence_manager,
+                        OrderEmitter::new(&mut self.orders.next_order_id).push(
+                            &mut self.orders.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionEquipBow,
                             (0.0, 0.0),
                             false,
                         );
-                        self.orders.push(
-                            self.sequence_manager,
+                        OrderEmitter::new(&mut self.orders.next_order_id).push(
+                            &mut self.orders.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionLoadingBow,
@@ -629,38 +638,44 @@ impl BowTransitionContext<'_> {
                             false,
                         );
                     }
-                    self.set_action_state_after_transition(
+                    self.sequence_bow_set_action_state_after_transition(
+                        sim,
+                        assets,
+                        active_scripts,
                         seq_id,
                         elem_idx,
                         ActionState::AimingWithBow,
                     );
                 }
                 Command::EquipBowDown => {
-                    self.orders.push(
-                        self.sequence_manager,
+                    OrderEmitter::new(&mut self.orders.next_order_id).push(
+                        &mut self.orders.sequence_manager,
                         seq_id,
                         elem_idx,
                         OrderType::TransitionEquipBow,
                         (0.0, 0.0),
                         false,
                     );
-                    self.orders.push(
-                        self.sequence_manager,
+                    OrderEmitter::new(&mut self.orders.next_order_id).push(
+                        &mut self.orders.sequence_manager,
                         seq_id,
                         elem_idx,
                         OrderType::TransitionLoadingBow,
                         (0.0, 0.0),
                         false,
                     );
-                    self.orders.push(
-                        self.sequence_manager,
+                    OrderEmitter::new(&mut self.orders.next_order_id).push(
+                        &mut self.orders.sequence_manager,
                         seq_id,
                         elem_idx,
                         OrderType::TransitionLoweringBowLeaningOut,
                         (0.0, 0.0),
                         false,
                     );
-                    self.set_action_state_after_transition(
+                    self.sequence_bow_set_action_state_after_transition(
+                        sim,
+                        assets,
+                        active_scripts,
                         seq_id,
                         elem_idx,
                         ActionState::AimingWithBowDown,
@@ -669,16 +684,16 @@ impl BowTransitionContext<'_> {
                 Command::UnequipBow => {
                     let (x, y) = target_xy;
                     if anonymous {
-                        self.orders.push(
-                            self.sequence_manager,
+                        OrderEmitter::new(&mut self.orders.next_order_id).push(
+                            &mut self.orders.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionUnloadBowAnonymous,
                             (x, y),
                             false,
                         );
-                        self.orders.push(
-                            self.sequence_manager,
+                        OrderEmitter::new(&mut self.orders.next_order_id).push(
+                            &mut self.orders.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionUnequipBowAnonymous,
@@ -686,16 +701,16 @@ impl BowTransitionContext<'_> {
                             false,
                         );
                     } else {
-                        self.orders.push(
-                            self.sequence_manager,
+                        OrderEmitter::new(&mut self.orders.next_order_id).push(
+                            &mut self.orders.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionUnloadBow,
                             (x, y),
                             false,
                         );
-                        self.orders.push(
-                            self.sequence_manager,
+                        OrderEmitter::new(&mut self.orders.next_order_id).push(
+                            &mut self.orders.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionUnequipBow,
@@ -703,11 +718,18 @@ impl BowTransitionContext<'_> {
                             false,
                         );
                     }
-                    self.set_action_state_after_transition(seq_id, elem_idx, ActionState::Waiting);
+                    self.sequence_bow_set_action_state_after_transition(
+                        sim,
+                        assets,
+                        active_scripts,
+                        seq_id,
+                        elem_idx,
+                        ActionState::Waiting,
+                    );
                 }
                 Command::RaiseBow => {
-                    self.orders.push(
-                        self.sequence_manager,
+                    OrderEmitter::new(&mut self.orders.next_order_id).push(
+                        &mut self.orders.sequence_manager,
                         seq_id,
                         elem_idx,
                         if anonymous {
@@ -718,15 +740,18 @@ impl BowTransitionContext<'_> {
                         (0.0, 0.0),
                         false,
                     );
-                    self.set_action_state_after_transition(
+                    self.sequence_bow_set_action_state_after_transition(
+                        sim,
+                        assets,
+                        active_scripts,
                         seq_id,
                         elem_idx,
                         ActionState::AimingWithBowUp,
                     );
                 }
                 Command::LowerBow => {
-                    self.orders.push(
-                        self.sequence_manager,
+                    OrderEmitter::new(&mut self.orders.next_order_id).push(
+                        &mut self.orders.sequence_manager,
                         seq_id,
                         elem_idx,
                         if anonymous {
@@ -737,7 +762,10 @@ impl BowTransitionContext<'_> {
                         (0.0, 0.0),
                         false,
                     );
-                    self.set_action_state_after_transition(
+                    self.sequence_bow_set_action_state_after_transition(
+                        sim,
+                        assets,
+                        active_scripts,
                         seq_id,
                         elem_idx,
                         ActionState::AimingWithBow,
@@ -748,23 +776,28 @@ impl BowTransitionContext<'_> {
         }
 
         let has_orders = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .is_some_and(|element| !element.orders.is_empty());
         if has_orders {
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         } else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         }
         OwnerActionBarrier::Reach
     }
-    fn set_action_state_after_transition(
+    fn sequence_bow_set_action_state_after_transition(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         state: crate::element::ActionState,
     ) {
         let element = self
+            .orders
             .sequence_manager
             .get_element_mut(seq_id, elem_idx)
             .expect("bow transition sequence element disappeared during dispatch");
@@ -773,13 +806,13 @@ impl BowTransitionContext<'_> {
 }
 
 /// Script-target activation resolution with no mutable world access.
-struct TargetActivationContext<'a> {
-    entities: &'a crate::entities::Entities,
-}
 
-impl TargetActivationContext<'_> {
-    fn dispatch(
+impl EngineInner {
+    fn dispatch_target_activation(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         antagonist: Option<EntityId>,
@@ -797,7 +830,8 @@ impl TargetActivationContext<'_> {
             _ => unreachable!("non-activation command passed to target activation context"),
         };
         debug_assert!(
-            self.entities
+            self.world
+                .entities
                 .get(owner)
                 .is_some_and(|entity| entity.kind().is_fx_target()),
             "{method} dispatched on non-FX-target owner {owner:?}",
@@ -811,21 +845,19 @@ impl TargetActivationContext<'_> {
 }
 
 /// Actor/FX animation and target-interaction translation.
-struct TargetAnimationContext<'a> {
-    entities: &'a mut crate::entities::Entities,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-    orders: OrderEmitter<'a>,
-    preserve_trigger_visual: bool,
-}
 
-impl TargetAnimationContext<'_> {
+impl EngineInner {
     fn dispatch_play_animation(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         animation: Option<crate::order::OrderType>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
+        preserve_trigger_visual: bool,
     ) -> OwnerActionBarrier {
         let Some(animation) = animation else {
             tracing::warn!(
@@ -833,12 +865,12 @@ impl TargetAnimationContext<'_> {
                 cmd = ?command,
                 "PlayAnim*: missing/invalid AnimationId — terminating",
             );
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         };
 
-        let Some(owner_entity) = self.entities.get(owner) else {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+        let Some(owner_entity) = self.world.entities.get(owner) else {
+            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         };
         if owner_entity.is_human() {
@@ -849,11 +881,13 @@ impl TargetAnimationContext<'_> {
                 Command::PlayAnimFrozen => crate::order::OrderType::PlayCustomFrozen,
                 _ => unreachable!("non-animation command passed to target animation context"),
             };
-            let id = self.orders.alloc_id();
+            let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
             let mut order = crate::order::Order::new(wrapper, 0.0, 0.0, id);
             order.compute_direction = false;
-            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .push_order_on(seq_id, elem_idx, order);
+            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             // This is an ordinary accepted actor-instruction boundary. Let the
             // outer dispatcher publish the actor order and project IN_PROGRESS after
             // the manager drain, just like every other translated actor
@@ -863,11 +897,11 @@ impl TargetAnimationContext<'_> {
         }
 
         if !owner_entity.kind().is_fx_target() {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         }
 
-        if self.preserve_trigger_visual
+        if preserve_trigger_visual
             && matches!(command, Command::PlayAnimFreeze | Command::PlayAnimFrozen)
         {
             // One-shot mechanisms can freeze on an entirely transparent spent
@@ -875,7 +909,7 @@ impl TargetAnimationContext<'_> {
             // control visible and pixel-pickable. This queued command executes
             // after ActivatedBy* returns and captures its reversible patches.
             // Complete normally so following mission messages still run once.
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         }
 
@@ -887,6 +921,7 @@ impl TargetAnimationContext<'_> {
             _ => unreachable!("non-animation command passed to target animation context"),
         };
         let entity = self
+            .world
             .entities
             .get_mut(owner)
             .expect("FX target disappeared during PlayAnim dispatch");
@@ -906,22 +941,20 @@ impl TargetAnimationContext<'_> {
                 "PlayAnim*: animation unmapped for this sprite profile — skipping",
             );
         }
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         OwnerActionBarrier::Reach
     }
 }
 
 /// PC-side FX-target orders need read-only entity classification plus the two
 /// order fields they mutate; they never need mutable world access.
-struct TargetInteractionContext<'a> {
-    entities: &'a crate::entities::Entities,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-    orders: OrderEmitter<'a>,
-}
 
-impl TargetInteractionContext<'_> {
-    fn dispatch(
+impl EngineInner {
+    fn dispatch_sequence_target_interaction(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         owner_command: Command,
         target: Option<EntityId>,
@@ -938,7 +971,7 @@ impl TargetInteractionContext<'_> {
         // sequence). Applying the
         // fx-target gate to it terminated all of those before they animated.
         if owner_command == Command::SearchCmd {
-            let crouched = self.entities.get(owner).is_some_and(|entity| {
+            let crouched = self.world.entities.get(owner).is_some_and(|entity| {
                 entity.element_data().posture() == crate::element::Posture::Crouched
             });
             let order_type = if crouched {
@@ -946,24 +979,27 @@ impl TargetInteractionContext<'_> {
             } else {
                 crate::order::OrderType::Searching
             };
-            let id = self.orders.alloc_id();
+            let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
             let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
             order.compute_direction = false;
             order.antagonist = target;
-            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .push_order_on(seq_id, elem_idx, order);
+            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         }
         let Some(target) = target else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         };
         if !self
+            .world
             .entities
             .get(target)
             .is_some_and(|entity| entity.kind().is_fx_target())
         {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         }
         let order_types: &[crate::order::OrderType] = match owner_command {
@@ -983,30 +1019,30 @@ impl TargetInteractionContext<'_> {
             _ => unreachable!("non-target command passed to target interaction context"),
         };
         for &order_type in order_types {
-            let id = self.orders.alloc_id();
+            let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
             let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
             order.compute_direction = false;
             if order_type == crate::order::OrderType::HittingTarget || order_types.len() == 1 {
                 order.antagonist = Some(target);
             }
-            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            self.orders
+                .sequence_manager
+                .push_order_on(seq_id, elem_idx, order);
         }
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         OwnerActionBarrier::Reach
     }
 }
 
 /// Directional and one-shot owner commands that only mutate entity facing
 /// plus the owning sequence/order allocator.
-pub(in crate::engine) struct TurnCommandContext<'a> {
-    pub(in crate::engine) entities: &'a mut crate::entities::Entities,
-    pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) orders: OrderEmitter<'a>,
-}
 
-impl TurnCommandContext<'_> {
-    pub(in crate::engine) fn dispatch(
+impl EngineInner {
+    pub(in crate::engine) fn dispatch_turn_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
@@ -1014,7 +1050,7 @@ impl TurnCommandContext<'_> {
     ) -> OwnerActionBarrier {
         match command {
             Command::Turn | Command::TurnFast => {
-                let element = self.sequence_manager.get_element(seq_id, elem_idx);
+                let element = self.orders.sequence_manager.get_element(seq_id, elem_idx);
                 let camera_point = element
                     .and_then(|element| {
                         read_sequence_map_point_property(
@@ -1037,7 +1073,7 @@ impl TurnCommandContext<'_> {
                         crate::sequence::FieldValue::GeoPoint2D { x, y } => Some((*x, *y)),
                         _ => None,
                     });
-                if let Some(entity) = self.entities.get_mut(owner) {
+                if let Some(entity) = self.world.entities.get_mut(owner) {
                     if let Some(direction) = explicit_direction {
                         entity.element_data_mut().set_direction_goal(direction);
                     } else if let Some((target_x, target_y)) = camera_point {
@@ -1072,8 +1108,8 @@ impl TurnCommandContext<'_> {
                             .set_map_goal(crate::coordinates::MapPoint::new(x, y));
                     }
                 }
-                self.orders.push(
-                    self.sequence_manager,
+                OrderEmitter::new(&mut self.orders.next_order_id).push(
+                    &mut self.orders.sequence_manager,
                     seq_id,
                     elem_idx,
                     crate::order::OrderType::Turning,
@@ -1083,6 +1119,7 @@ impl TurnCommandContext<'_> {
             }
             Command::TurnElement => {
                 let antagonist = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|element| match &element.data {
@@ -1093,11 +1130,12 @@ impl TurnCommandContext<'_> {
                     });
                 if let Some(antagonist) = antagonist {
                     let antagonist_position = self
+                        .world
                         .entities
                         .get(antagonist)
                         .map(|entity| entity.element_data().position_map());
                     if let (Some(antagonist_position), Some(entity)) =
-                        (antagonist_position, self.entities.get_mut(owner))
+                        (antagonist_position, self.world.entities.get_mut(owner))
                     {
                         let position = entity.element_data().position_map();
                         let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -1111,8 +1149,8 @@ impl TurnCommandContext<'_> {
                         entity.element_data_mut().set_direction_goal(direction);
                     }
                 }
-                self.orders.push(
-                    self.sequence_manager,
+                OrderEmitter::new(&mut self.orders.next_order_id).push(
+                    &mut self.orders.sequence_manager,
                     seq_id,
                     elem_idx,
                     crate::order::OrderType::Turning,
@@ -1121,8 +1159,8 @@ impl TurnCommandContext<'_> {
                 );
             }
             Command::Freeze => {
-                self.orders.push(
-                    self.sequence_manager,
+                OrderEmitter::new(&mut self.orders.next_order_id).push(
+                    &mut self.orders.sequence_manager,
                     seq_id,
                     elem_idx,
                     crate::order::OrderType::Freezing,
@@ -1136,8 +1174,8 @@ impl TurnCommandContext<'_> {
                     Command::GatherSoldiers => crate::order::OrderType::GatheringSoldiers,
                     _ => unreachable!(),
                 };
-                self.orders.push(
-                    self.sequence_manager,
+                OrderEmitter::new(&mut self.orders.next_order_id).push(
+                    &mut self.orders.sequence_manager,
                     seq_id,
                     elem_idx,
                     order_type,
@@ -1147,19 +1185,13 @@ impl TurnCommandContext<'_> {
             }
             _ => unreachable!("non-turn command passed to turn command context"),
         }
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         OwnerActionBarrier::Reach
     }
 }
 
 /// WAIT/WAIT_TIMER translation against entity state, sequence state, and the
 /// immutable profile table used by the carried-VIP animation branch.
-pub(in crate::engine) struct WaitCommandContext<'a> {
-    pub(in crate::engine) entities: &'a mut crate::entities::Entities,
-    pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) orders: OrderEmitter<'a>,
-    pub(in crate::engine) profiles: &'a crate::profiles::ProfileManager,
-}
 
 /// The base actor WAIT posture switch.
 ///
@@ -1194,9 +1226,12 @@ fn base_wait_animation(
     }
 }
 
-impl WaitCommandContext<'_> {
-    pub(in crate::engine) fn dispatch(
+impl EngineInner {
+    pub(in crate::engine) fn dispatch_wait_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
@@ -1216,7 +1251,7 @@ impl WaitCommandContext<'_> {
         ) = {
             // Keep "Wait translation owner" in the context: asserted by
             // `wait_context_rejects_stale_owner_contextually`.
-            let entity = self.entities.expect_entity(
+            let entity = self.world.entities.expect_entity(
                 owner,
                 format_args!("Wait translation owner for {command:?} at {seq_id:?}/{elem_idx}"),
             );
@@ -1241,19 +1276,18 @@ impl WaitCommandContext<'_> {
                     .human_data()
                     .is_some_and(|human| human.stuck_under_nets_counter > 0),
                 carrier.is_some_and(|carrier_id| {
-                    let carrier = self.entities.expect_entity(
+                    let carrier = self.world.entities.expect_entity(
                         carrier_id,
                         format_args!(
                             "Wait translation owner {owner:?} carrier at {seq_id:?}/{elem_idx}"
                         ),
                     );
-                    self.is_entity_vip(carrier)
+                    self.sequence_wait_is_entity_vip(sim, assets, active_scripts, carrier)
                 }),
             )
         };
 
-        let wait_element = self
-            .sequence_manager
+        let wait_element = self.orders.sequence_manager
             .get_element(seq_id, elem_idx)
             .unwrap_or_else(|| {
                 panic!(
@@ -1476,6 +1510,7 @@ impl WaitCommandContext<'_> {
 
         if command == Command::WaitTimer {
             let timer = self
+                .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
                 .unwrap_or_else(|| {
@@ -1492,6 +1527,7 @@ impl WaitCommandContext<'_> {
                 ),
             };
             let actor = self
+                .world
                 .entities
                 .expect_actor_data_mut(owner, format_args!("WAIT_TIMER owner during translation"));
             // The original game has one overloaded wait-time scalar. Keep the
@@ -1507,6 +1543,7 @@ impl WaitCommandContext<'_> {
             && action_state == crate::element::ActionState::Listening
         {
             let actor = self
+                .world
                 .entities
                 .expect_actor_data_mut(owner, format_args!("Wait translation listening owner"));
             const TIME_LISTEN_WAIT: u32 = 25;
@@ -1514,7 +1551,7 @@ impl WaitCommandContext<'_> {
             actor.wait_time = TIME_LISTEN_WAIT;
         }
         if set_posture_stuck_under_net {
-            let entity = self.entities.expect_entity_mut(
+            let entity = self.world.entities.expect_entity_mut(
                 owner,
                 format_args!("Wait translation owner while setting net posture"),
             );
@@ -1532,19 +1569,24 @@ impl WaitCommandContext<'_> {
                 is_unconscious,
                 "upright wait on a downed actor; collapsing"
             );
-            self.sequence_manager.clear_orders_on(seq_id, elem_idx);
-            let id = self.orders.alloc_id();
+            self.orders
+                .sequence_manager
+                .clear_orders_on(seq_id, elem_idx);
+            let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
             let mut order = crate::order::Order::new(falling, 0.0, 0.0, id);
             order.compute_direction = false;
-            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            self.orders
+                .sequence_manager
+                .push_order_on(seq_id, elem_idx, order);
         }
 
         if human_wait_discards_preallocated_order {
-            let _discarded_original_order_id = self.orders.alloc_id();
+            let _discarded_original_order_id =
+                crate::order::alloc_order_id(&mut self.orders.next_order_id);
         }
 
         if let Some(animation) = animation {
-            let id = self.orders.alloc_id();
+            let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
             let mut order = crate::order::Order::new(animation, 0.0, 0.0, id);
             // Human command translation deliberately delegates a plain dead-back wait
             // to base actor translation. The base translator leaves the order's
@@ -1553,22 +1595,30 @@ impl WaitCommandContext<'_> {
             // by the original game. This can refresh the corpse's
             // facing from a newly stamped placement destination.
             order.compute_direction = animation == crate::order::OrderType::BeingDeadFallenBack;
-            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .push_order_on(seq_id, elem_idx, order);
+            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         } else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         }
         OwnerActionBarrier::Reach
     }
 
-    fn is_entity_vip(&self, entity: &Entity) -> bool {
+    fn sequence_wait_is_entity_vip(
+        &self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
+        entity: &Entity,
+    ) -> bool {
         match entity {
-            Entity::Soldier(soldier) => self
-                .profiles
+            Entity::Soldier(soldier) => assets
+                .profile_manager
                 .get_soldier(soldier.soldier.soldier_profile_index)
                 .is_some_and(|profile| profile.vip),
-            Entity::Civilian(civilian) => self
-                .profiles
+            Entity::Civilian(civilian) => assets
+                .profile_manager
                 .civilians
                 .get(usize::from(civilian.civilian.civilian_profile_index))
                 .is_some_and(|profile| profile.civilian_type == crate::profiles::CivilianType::Vip),
@@ -1578,14 +1628,13 @@ impl WaitCommandContext<'_> {
 }
 
 /// Fixed NPC posture/action-state transition order translation.
-pub(in crate::engine) struct NpcStateCommandContext<'a> {
-    pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) orders: OrderEmitter<'a>,
-}
 
-impl NpcStateCommandContext<'_> {
-    pub(in crate::engine) fn dispatch(
+impl EngineInner {
+    pub(in crate::engine) fn dispatch_npc_state_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -1600,15 +1649,15 @@ impl NpcStateCommandContext<'_> {
                     }
                     _ => unreachable!(),
                 };
-                self.orders.push(
-                    self.sequence_manager,
+                OrderEmitter::new(&mut self.orders.next_order_id).push(
+                    &mut self.orders.sequence_manager,
                     seq_id,
                     elem_idx,
                     order_type,
                     (0.0, 0.0),
                     false,
                 );
-                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             }
             Command::StartMenace
             | Command::StopMenace
@@ -1617,16 +1666,16 @@ impl NpcStateCommandContext<'_> {
             | Command::RaiseBowLeanOut => {
                 match command {
                     Command::StartMenace => {
-                        self.orders.push(
-                            self.sequence_manager,
+                        OrderEmitter::new(&mut self.orders.next_order_id).push(
+                            &mut self.orders.sequence_manager,
                             seq_id,
                             elem_idx,
                             crate::order::OrderType::TransitionRaisingSword,
                             (0.0, 0.0),
                             false,
                         );
-                        self.orders.push(
-                            self.sequence_manager,
+                        OrderEmitter::new(&mut self.orders.next_order_id).push(
+                            &mut self.orders.sequence_manager,
                             seq_id,
                             elem_idx,
                             crate::order::OrderType::TransitionWaitingSwordMenacing,
@@ -1635,16 +1684,16 @@ impl NpcStateCommandContext<'_> {
                         );
                     }
                     Command::StopMenace => {
-                        self.orders.push(
-                            self.sequence_manager,
+                        OrderEmitter::new(&mut self.orders.next_order_id).push(
+                            &mut self.orders.sequence_manager,
                             seq_id,
                             elem_idx,
                             crate::order::OrderType::TransitionMenacingWaitingSword,
                             (0.0, 0.0),
                             false,
                         );
-                        self.orders.push(
-                            self.sequence_manager,
+                        OrderEmitter::new(&mut self.orders.next_order_id).push(
+                            &mut self.orders.sequence_manager,
                             seq_id,
                             elem_idx,
                             crate::order::OrderType::TransitionLoweringSword,
@@ -1652,30 +1701,32 @@ impl NpcStateCommandContext<'_> {
                             false,
                         );
                     }
-                    Command::StopSleep => self.orders.push(
-                        self.sequence_manager,
+                    Command::StopSleep => OrderEmitter::new(&mut self.orders.next_order_id).push(
+                        &mut self.orders.sequence_manager,
                         seq_id,
                         elem_idx,
                         crate::order::OrderType::TransitionSleepingWaitingUpright,
                         (0.0, 0.0),
                         false,
                     ),
-                    Command::LowerBowLeanOut => self.orders.push(
-                        self.sequence_manager,
-                        seq_id,
-                        elem_idx,
-                        crate::order::OrderType::TransitionLoweringBowLeaningOut,
-                        (0.0, 0.0),
-                        false,
-                    ),
-                    Command::RaiseBowLeanOut => self.orders.push(
-                        self.sequence_manager,
-                        seq_id,
-                        elem_idx,
-                        crate::order::OrderType::TransitionRaisingBowLeaningOut,
-                        (0.0, 0.0),
-                        false,
-                    ),
+                    Command::LowerBowLeanOut => OrderEmitter::new(&mut self.orders.next_order_id)
+                        .push(
+                            &mut self.orders.sequence_manager,
+                            seq_id,
+                            elem_idx,
+                            crate::order::OrderType::TransitionLoweringBowLeaningOut,
+                            (0.0, 0.0),
+                            false,
+                        ),
+                    Command::RaiseBowLeanOut => OrderEmitter::new(&mut self.orders.next_order_id)
+                        .push(
+                            &mut self.orders.sequence_manager,
+                            seq_id,
+                            elem_idx,
+                            crate::order::OrderType::TransitionRaisingBowLeaningOut,
+                            (0.0, 0.0),
+                            false,
+                        ),
                     _ => unreachable!(),
                 }
                 // These translated orders remain owned by the command's
@@ -1683,7 +1734,7 @@ impl NpcStateCommandContext<'_> {
                 // final order. The original game only appends the translated orders;
                 // it never terminates START_MENACE / STOP_MENACE /
                 // STOP_SLEEP at instruction time.
-                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             }
             _ => unreachable!("non-NPC-state command passed to NPC state context"),
         }
@@ -1697,15 +1748,13 @@ impl NpcStateCommandContext<'_> {
 /// Soldier swordfight setup appends these
 /// orders synchronously from `Translate`. The sequence phase must therefore
 /// still reach its after-action splice immediately after this context returns.
-pub(in crate::engine) struct NpcAttentionCommandContext<'a> {
-    pub(in crate::engine) entities: &'a mut crate::entities::Entities,
-    pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) orders: OrderEmitter<'a>,
-}
 
-impl NpcAttentionCommandContext<'_> {
-    pub(in crate::engine) fn dispatch(
+impl EngineInner {
+    pub(in crate::engine) fn dispatch_npc_attention_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
@@ -1713,7 +1762,7 @@ impl NpcAttentionCommandContext<'_> {
     ) -> OwnerActionBarrier {
         match command {
             Command::LookLeft | Command::LookRight | Command::LeanOut => {
-                let order_type = self.entities.get(owner).map(|entity| {
+                let order_type = self.world.entities.get(owner).map(|entity| {
                     let attentive = entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
                     match command {
                         Command::LookLeft if attentive => {
@@ -1731,41 +1780,45 @@ impl NpcAttentionCommandContext<'_> {
                     }
                 });
                 if let Some(order_type) = order_type {
-                    self.orders.push(
-                        self.sequence_manager,
+                    OrderEmitter::new(&mut self.orders.next_order_id).push(
+                        &mut self.orders.sequence_manager,
                         seq_id,
                         elem_idx,
                         order_type,
                         (0.0, 0.0),
                         false,
                     );
-                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                    self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
                 } else {
-                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                 }
             }
             Command::EnterAttentiveMode
             | Command::LeaveAttentiveMode
             | Command::LeaveAttentiveModeOfficer => {
                 let posture_after_transition = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .map(|element| element.posture_after_transition)
                     .unwrap_or_default();
-                if self.dispatch_attentive(
+                if self.sequence_dispatch_attentive(
+                    sim,
+                    assets,
+                    active_scripts,
                     owner,
                     command,
                     posture_after_transition,
                     seq_id,
                     elem_idx,
                 ) {
-                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                    self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
                 } else {
                     // Soldier translation terminates the element in this
                     // branch. That can replace the selected sequence element while
                     // Translation is still active, so actor instruction handling
                     // returns before publishing the actor order or IN_PROGRESS.
-                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 }
             }
@@ -1774,8 +1827,11 @@ impl NpcAttentionCommandContext<'_> {
         OwnerActionBarrier::Reach
     }
 
-    fn dispatch_attentive(
+    fn sequence_dispatch_attentive(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         posture_after_transition: crate::element::Posture,
@@ -1799,8 +1855,8 @@ impl NpcAttentionCommandContext<'_> {
         // The officer salute-and-drop transition is unconditional in the
         // original translator and in the pre-split Rust path.
         if command == Command::LeaveAttentiveModeOfficer {
-            self.orders.push(
-                self.sequence_manager,
+            OrderEmitter::new(&mut self.orders.next_order_id).push(
+                &mut self.orders.sequence_manager,
                 seq_id,
                 elem_idx,
                 animation,
@@ -1811,7 +1867,7 @@ impl NpcAttentionCommandContext<'_> {
         }
 
         let posture_upright_after = posture_after_transition == crate::element::Posture::Upright;
-        let Some(entity) = self.entities.get(owner) else {
+        let Some(entity) = self.world.entities.get(owner) else {
             return false;
         };
         let currently_attentive = entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
@@ -1836,8 +1892,8 @@ impl NpcAttentionCommandContext<'_> {
         );
 
         if can_play_transition {
-            self.orders.push(
-                self.sequence_manager,
+            OrderEmitter::new(&mut self.orders.next_order_id).push(
+                &mut self.orders.sequence_manager,
                 seq_id,
                 elem_idx,
                 animation,
@@ -1846,7 +1902,12 @@ impl NpcAttentionCommandContext<'_> {
             );
             true
         } else {
-            if let Some(enemy) = self.entities.get_mut(owner).and_then(Entity::enemy_ai_mut) {
+            if let Some(enemy) = self
+                .world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::enemy_ai_mut)
+            {
                 enemy.attentive = target_attentive;
             }
             false
@@ -1857,24 +1918,20 @@ impl NpcAttentionCommandContext<'_> {
 /// Stealth-posture command translation with the exact mutable domains it
 /// touches: entities, the owning sequence, order allocation, and HIDDEN
 /// titbits. Character profiles are read only to derive the HIDDEN phase.
-pub(in crate::engine) struct StealthCommandContext<'a> {
-    pub(in crate::engine) entities: &'a mut crate::entities::Entities,
-    pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) orders: OrderEmitter<'a>,
-    pub(in crate::engine) titbit_manager: &'a mut crate::titbit::TitbitManager,
-    pub(in crate::engine) profiles: &'a crate::profiles::ProfileManager,
-}
 
-impl StealthCommandContext<'_> {
-    pub(in crate::engine) fn dispatch(
+impl EngineInner {
+    pub(in crate::engine) fn dispatch_stealth_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
-        let Some(entity) = self.entities.get(owner) else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+        let Some(entity) = self.world.entities.get(owner) else {
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         };
         let live_posture = entity.element_data().posture();
@@ -1892,7 +1949,7 @@ impl StealthCommandContext<'_> {
         // the actor upright before the body executes.
 
         let Some(transition) = crate::stealth::stealth_transition(command) else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         };
 
@@ -1917,12 +1974,14 @@ impl StealthCommandContext<'_> {
                 std::slice::from_ref(&transition.animation)
             };
             for &animation in animations {
-                let id = self.orders.alloc_id();
+                let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
                 let mut order = crate::order::Order::new(animation, 0.0, 0.0, id);
                 order.compute_direction = false;
-                self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+                self.orders
+                    .sequence_manager
+                    .push_order_on(seq_id, elem_idx, order);
             }
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         }
 
@@ -1931,21 +1990,23 @@ impl StealthCommandContext<'_> {
         // translating the command. Keep the element selected/in-progress so
         // The command query reports CROUCH_{DOWN,UP} during that interval.
         if matches!(command, Command::CrouchDown | Command::CrouchUp) {
-            let id = self.orders.alloc_id();
+            let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
             let mut order = crate::order::Order::new(transition.animation, 0.0, 0.0, id);
             order.compute_direction = false;
-            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .push_order_on(seq_id, elem_idx, order);
+            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         }
 
         let hidden_phase = if transition.result_posture.is_hidden() {
-            let Some(Entity::Pc(pc)) = self.entities.get(owner) else {
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+            let Some(Entity::Pc(pc)) = self.world.entities.get(owner) else {
+                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                 return OwnerActionBarrier::Reach;
             };
-            let profile = self
-                .profiles
+            let profile = assets
+                .profile_manager
                 .get_character(pc.pc.profile_index)
                 .unwrap_or_else(|| {
                     panic!(
@@ -1961,6 +2022,7 @@ impl StealthCommandContext<'_> {
 
         let old_posture = live_posture;
         let entity = self
+            .world
             .entities
             .get_mut(owner)
             .expect("stealth command owner disappeared during dispatch");
@@ -1968,10 +2030,12 @@ impl StealthCommandContext<'_> {
         if let Some(actor) = entity.actor_data_mut() {
             actor.action_state = transition.result_action_state;
         }
-        let id = self.orders.alloc_id();
+        let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
         let mut order = crate::order::Order::new(transition.animation, 0.0, 0.0, id);
         order.compute_direction = false;
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        self.orders
+            .sequence_manager
+            .push_order_on(seq_id, elem_idx, order);
 
         tracing::debug!(
             ?owner,
@@ -1986,7 +2050,7 @@ impl StealthCommandContext<'_> {
         let layer = entity.element_data().layer();
         let handle = ElementHandle(owner.index());
         if transition.result_posture.is_hidden() && !old_posture.is_hidden() {
-            self.titbit_manager.add_titbit(
+            self.feedback.titbit_manager.add_titbit(
                 WorldPoint3D::default(),
                 layer,
                 TitbitKind::Hidden,
@@ -2000,7 +2064,8 @@ impl StealthCommandContext<'_> {
                 Some(layer),
             );
         } else if !transition.result_posture.is_hidden() && old_posture.is_hidden() {
-            self.titbit_manager
+            self.feedback
+                .titbit_manager
                 .remove_titbit(TitbitKind::Hidden, handle);
         }
 
@@ -2013,14 +2078,18 @@ impl StealthCommandContext<'_> {
         if transition.result_posture == crate::element::Posture::SimulatingBeggar
             && old_posture != crate::element::Posture::SimulatingBeggar
         {
-            super::beggar::set_flags_of_near_coins_on_ground(self.entities, owner, true);
+            super::beggar::set_flags_of_near_coins_on_ground(&mut self.world.entities, owner, true);
         } else if old_posture == crate::element::Posture::SimulatingBeggar
             && transition.result_posture != crate::element::Posture::SimulatingBeggar
         {
-            super::beggar::set_flags_of_near_coins_on_ground(self.entities, owner, false);
+            super::beggar::set_flags_of_near_coins_on_ground(
+                &mut self.world.entities,
+                owner,
+                false,
+            );
         }
 
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         OwnerActionBarrier::Reach
     }
 }
@@ -2029,16 +2098,13 @@ impl StealthCommandContext<'_> {
 /// sequence state, order-id allocation, and immutable animation profiles.
 /// Campaign-backed ammo checks are evaluated by the caller and passed as a
 /// value so this context cannot reach mission or campaign ownership.
-pub(in crate::engine) struct DirectAbilityCommandContext<'a> {
-    pub(in crate::engine) entities: &'a mut crate::entities::Entities,
-    pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) orders: OrderEmitter<'a>,
-    pub(in crate::engine) profiles: &'a crate::profiles::ProfileManager,
-}
 
-impl DirectAbilityCommandContext<'_> {
-    pub(in crate::engine) fn dispatch(
+impl EngineInner {
+    pub(in crate::engine) fn dispatch_direct_ability_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         ammo_available: bool,
@@ -2047,140 +2113,220 @@ impl DirectAbilityCommandContext<'_> {
     ) -> OwnerActionBarrier {
         match command {
             Command::TieCmd => {
-                let Some(target) = self.interaction_target(seq_id, elem_idx) else {
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                let Some(target) = self.sequence_ability_interaction_target(
+                    sim,
+                    assets,
+                    active_scripts,
+                    seq_id,
+                    elem_idx,
+                ) else {
+                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Reach;
                 };
                 let result = abilities::begin_tie(
-                    self.entities,
-                    self.sequence_manager,
+                    &mut self.world.entities,
+                    &mut self.orders.sequence_manager,
                     owner,
                     target,
                     seq_id,
                     elem_idx,
-                    self.orders.counter(),
+                    &mut self.orders.next_order_id,
                 );
-                self.finish_begin(result, seq_id, elem_idx)
+                self.sequence_ability_finish_begin(
+                    sim,
+                    assets,
+                    active_scripts,
+                    result,
+                    seq_id,
+                    elem_idx,
+                )
             }
             Command::Untie => {
-                let Some(target) = self.interaction_target(seq_id, elem_idx) else {
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                let Some(target) = self.sequence_ability_interaction_target(
+                    sim,
+                    assets,
+                    active_scripts,
+                    seq_id,
+                    elem_idx,
+                ) else {
+                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Reach;
                 };
                 let result = abilities::begin_untie(
-                    self.entities,
-                    self.sequence_manager,
+                    &mut self.world.entities,
+                    &mut self.orders.sequence_manager,
                     owner,
                     target,
                     seq_id,
                     elem_idx,
-                    self.orders.counter(),
+                    &mut self.orders.next_order_id,
                 );
-                self.finish_begin(result, seq_id, elem_idx)
+                self.sequence_ability_finish_begin(
+                    sim,
+                    assets,
+                    active_scripts,
+                    result,
+                    seq_id,
+                    elem_idx,
+                )
             }
             Command::HealCmd => {
-                let Some(target) = self.interaction_target(seq_id, elem_idx) else {
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                let Some(target) = self.sequence_ability_interaction_target(
+                    sim,
+                    assets,
+                    active_scripts,
+                    seq_id,
+                    elem_idx,
+                ) else {
+                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Reach;
                 };
                 if !ammo_available {
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Reach;
                 }
                 let result = abilities::begin_heal(
-                    self.entities,
-                    self.sequence_manager,
+                    &mut self.world.entities,
+                    &mut self.orders.sequence_manager,
                     owner,
                     target,
                     seq_id,
                     elem_idx,
-                    self.orders.counter(),
+                    &mut self.orders.next_order_id,
                 );
-                self.finish_begin(result, seq_id, elem_idx)
+                self.sequence_ability_finish_begin(
+                    sim,
+                    assets,
+                    active_scripts,
+                    result,
+                    seq_id,
+                    elem_idx,
+                )
             }
             Command::WhistleCmd => {
                 let result = abilities::begin_whistle(
-                    self.entities,
-                    self.sequence_manager,
+                    &mut self.world.entities,
+                    &mut self.orders.sequence_manager,
                     owner,
                     seq_id,
                     elem_idx,
-                    self.orders.counter(),
+                    &mut self.orders.next_order_id,
                 );
-                self.finish_begin(result, seq_id, elem_idx)
+                self.sequence_ability_finish_begin(
+                    sim,
+                    assets,
+                    active_scripts,
+                    result,
+                    seq_id,
+                    elem_idx,
+                )
             }
             Command::EatCmd => {
                 if !ammo_available {
-                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 }
                 let result = abilities::begin_eat(
-                    self.entities,
-                    self.sequence_manager,
+                    &mut self.world.entities,
+                    &mut self.orders.sequence_manager,
                     owner,
                     seq_id,
                     elem_idx,
-                    self.orders.counter(),
+                    &mut self.orders.next_order_id,
                 );
-                self.finish_begin(result, seq_id, elem_idx)
+                self.sequence_ability_finish_begin(
+                    sim,
+                    assets,
+                    active_scripts,
+                    result,
+                    seq_id,
+                    elem_idx,
+                )
             }
             Command::HitCmd | Command::StrangleCmd => {
-                let Some(target) = self.interaction_target(seq_id, elem_idx) else {
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                let Some(target) = self.sequence_ability_interaction_target(
+                    sim,
+                    assets,
+                    active_scripts,
+                    seq_id,
+                    elem_idx,
+                ) else {
+                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Reach;
                 };
                 let result = match command {
                     Command::HitCmd => abilities::begin_hit(
-                        self.entities,
-                        self.sequence_manager,
+                        &mut self.world.entities,
+                        &mut self.orders.sequence_manager,
                         owner,
                         target,
                         seq_id,
                         elem_idx,
-                        self.orders.counter(),
+                        &mut self.orders.next_order_id,
                     ),
                     Command::StrangleCmd => abilities::begin_strangle(
-                        self.entities,
-                        self.sequence_manager,
+                        &mut self.world.entities,
+                        &mut self.orders.sequence_manager,
                         owner,
                         target,
                         seq_id,
                         elem_idx,
-                        self.orders.counter(),
+                        &mut self.orders.next_order_id,
                     ),
                     _ => unreachable!(),
                 };
-                self.finish_begin(result, seq_id, elem_idx)
+                self.sequence_ability_finish_begin(
+                    sim,
+                    assets,
+                    active_scripts,
+                    result,
+                    seq_id,
+                    elem_idx,
+                )
             }
             Command::ReceivePurse => {
                 let result = abilities::begin_receive_purse(
-                    self.entities,
-                    self.sequence_manager,
+                    &mut self.world.entities,
+                    &mut self.orders.sequence_manager,
                     owner,
                     seq_id,
                     elem_idx,
-                    self.orders.counter(),
+                    &mut self.orders.next_order_id,
                 );
-                self.finish_begin(result, seq_id, elem_idx)
+                self.sequence_ability_finish_begin(
+                    sim,
+                    assets,
+                    active_scripts,
+                    result,
+                    seq_id,
+                    elem_idx,
+                )
             }
             Command::EnterListen => {
                 let result = abilities::begin_listen(
-                    self.entities,
-                    self.profiles,
-                    self.sequence_manager,
+                    &mut self.world.entities,
+                    &assets.profile_manager,
+                    &mut self.orders.sequence_manager,
                     owner,
                     seq_id,
                     elem_idx,
-                    self.orders.counter(),
+                    &mut self.orders.next_order_id,
                 );
-                self.finish_begin(result, seq_id, elem_idx)
+                self.sequence_ability_finish_begin(
+                    sim,
+                    assets,
+                    active_scripts,
+                    result,
+                    seq_id,
+                    elem_idx,
+                )
             }
             Command::LeaveListen => {
                 // EnterListen is NON_INTERRUPTABLE in Original, so production
                 // arbitration postpones LeaveListen until the complete
                 // entry/listening/exit chain has restored Waiting. Re-dispatch
                 // then fails MUST_BE_LISTENING and is Impossible.
-                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                 OwnerActionBarrier::Reach
             }
             Command::ThrowNet | Command::ThrowPurse | Command::ThrowWaspNest => {
@@ -2191,56 +2337,65 @@ impl DirectAbilityCommandContext<'_> {
                     _ => unreachable!(),
                 };
                 let Some(target) = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|element| read_sequence_map_point_property(element, field))
                 else {
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Reach;
                 };
                 if !ammo_available {
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Reach;
                 }
                 let result = match command {
                     Command::ThrowNet => abilities::begin_throw_net(
-                        self.entities,
-                        self.sequence_manager,
+                        &mut self.world.entities,
+                        &mut self.orders.sequence_manager,
                         owner,
                         target,
                         seq_id,
                         elem_idx,
-                        self.orders.counter(),
+                        &mut self.orders.next_order_id,
                     ),
                     Command::ThrowPurse => abilities::begin_throw_purse(
-                        self.entities,
-                        self.sequence_manager,
+                        &mut self.world.entities,
+                        &mut self.orders.sequence_manager,
                         owner,
                         target,
                         seq_id,
                         elem_idx,
-                        self.orders.counter(),
+                        &mut self.orders.next_order_id,
                     ),
                     Command::ThrowWaspNest => abilities::begin_throw_wasp_nest(
-                        self.entities,
-                        self.sequence_manager,
+                        &mut self.world.entities,
+                        &mut self.orders.sequence_manager,
                         owner,
                         target,
                         seq_id,
                         elem_idx,
-                        self.orders.counter(),
+                        &mut self.orders.next_order_id,
                     ),
                     _ => unreachable!(),
                 };
-                self.finish_begin(result, seq_id, elem_idx)
+                self.sequence_ability_finish_begin(
+                    sim,
+                    assets,
+                    active_scripts,
+                    result,
+                    seq_id,
+                    elem_idx,
+                )
             }
             Command::ThrowApple | Command::ThrowStone => {
                 if !ammo_available {
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 }
                 if command == Command::ThrowStone
                     && let Some(target) = self
+                        .orders
                         .sequence_manager
                         .get_element(seq_id, elem_idx)
                         .and_then(|element| {
@@ -2258,53 +2413,77 @@ impl DirectAbilityCommandContext<'_> {
                         })
                 {
                     let result = abilities::begin_throw_stone_at_ground(
-                        self.entities,
-                        self.sequence_manager,
+                        &mut self.world.entities,
+                        &mut self.orders.sequence_manager,
                         owner,
                         target,
                         seq_id,
                         elem_idx,
-                        self.orders.counter(),
+                        &mut self.orders.next_order_id,
                     );
-                    return self.finish_begin(result, seq_id, elem_idx);
+                    return self.sequence_ability_finish_begin(
+                        sim,
+                        assets,
+                        active_scripts,
+                        result,
+                        seq_id,
+                        elem_idx,
+                    );
                 }
-                let Some(target) = self.interaction_target(seq_id, elem_idx) else {
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                let Some(target) = self.sequence_ability_interaction_target(
+                    sim,
+                    assets,
+                    active_scripts,
+                    seq_id,
+                    elem_idx,
+                ) else {
+                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 };
                 let result = match command {
                     Command::ThrowApple => abilities::begin_throw_apple(
-                        self.entities,
-                        self.sequence_manager,
+                        &mut self.world.entities,
+                        &mut self.orders.sequence_manager,
                         owner,
                         target,
                         seq_id,
                         elem_idx,
-                        self.orders.counter(),
+                        &mut self.orders.next_order_id,
                     ),
                     Command::ThrowStone => abilities::begin_throw_stone(
-                        self.entities,
-                        self.sequence_manager,
+                        &mut self.world.entities,
+                        &mut self.orders.sequence_manager,
                         owner,
                         target,
                         seq_id,
                         elem_idx,
-                        self.orders.counter(),
+                        &mut self.orders.next_order_id,
                     ),
                     _ => unreachable!(),
                 };
-                self.finish_begin(result, seq_id, elem_idx)
+                self.sequence_ability_finish_begin(
+                    sim,
+                    assets,
+                    active_scripts,
+                    result,
+                    seq_id,
+                    elem_idx,
+                )
             }
             _ => unreachable!("non-direct ability passed to direct ability context"),
         }
     }
 
-    fn interaction_target(
+    fn sequence_ability_interaction_target(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> Option<EntityId> {
-        self.sequence_manager
+        self.orders
+            .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|element| match &element.data {
                 crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
@@ -2312,18 +2491,21 @@ impl DirectAbilityCommandContext<'_> {
             })
     }
 
-    fn finish_begin(
+    fn sequence_ability_finish_begin(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         result: AbilityBeginResult,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
         match result {
             AbilityBeginResult::Started => {
-                self.sequence_manager.element_in_progress(seq_id, elem_idx)
+                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx)
             }
             AbilityBeginResult::Impossible => {
-                self.sequence_manager.element_impossible(seq_id, elem_idx)
+                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx)
             }
         }
         OwnerActionBarrier::Reach
@@ -2332,15 +2514,13 @@ impl DirectAbilityCommandContext<'_> {
 
 /// Owner recovery and wake-up animations touch only entity state, sequence
 /// state, and the deterministic order-id stream.
-struct RecoveryCommandContext<'a> {
-    entities: &'a mut crate::entities::Entities,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-    orders: OrderEmitter<'a>,
-}
 
-impl RecoveryCommandContext<'_> {
-    fn dispatch(
+impl EngineInner {
+    fn dispatch_recovery_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
@@ -2350,23 +2530,25 @@ impl RecoveryCommandContext<'_> {
 
         match command {
             Command::Fainted => {
-                self.orders.push(
-                    self.sequence_manager,
+                OrderEmitter::new(&mut self.orders.next_order_id).push(
+                    &mut self.orders.sequence_manager,
                     seq_id,
                     elem_idx,
                     OrderType::BeingUnconsciousSword,
                     (0.0, 0.0),
                     true,
                 );
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             }
             Command::Recover | Command::StandUp => {
                 let already_queued = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .is_some_and(|element| !element.orders.is_empty());
                 if !already_queued {
                     let standing_up = self
+                        .world
                         .entities
                         .get(owner)
                         .and_then(Entity::actor_data)
@@ -2391,8 +2573,8 @@ impl RecoveryCommandContext<'_> {
                             );
                             OrderType::StandingUp
                         });
-                    self.orders.push(
-                        self.sequence_manager,
+                    OrderEmitter::new(&mut self.orders.next_order_id).push(
+                        &mut self.orders.sequence_manager,
                         seq_id,
                         elem_idx,
                         standing_up,
@@ -2401,17 +2583,19 @@ impl RecoveryCommandContext<'_> {
                     );
                 }
                 if self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .is_some_and(|element| !element.orders.is_empty())
                 {
-                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                    self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
                 } else {
-                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                 }
             }
             Command::WakeUp => {
                 let target = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|element| match element.data {
@@ -2422,10 +2606,11 @@ impl RecoveryCommandContext<'_> {
                     });
                 let Some(target) = target else {
                     tracing::warn!(?owner, ?seq_id, elem_idx, "WakeUp element has no target");
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 };
                 let Some(target_position) = self
+                    .world
                     .entities
                     .get(target)
                     .map(|entity| entity.element_data().position_map())
@@ -2437,10 +2622,11 @@ impl RecoveryCommandContext<'_> {
                         elem_idx,
                         "WakeUp target is missing"
                     );
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 };
                 let owner_position = self
+                    .world
                     .entities
                     .expect_entity(owner, format_args!("WakeUp owner before direction setup"))
                     .element_data()
@@ -2449,7 +2635,8 @@ impl RecoveryCommandContext<'_> {
                     target_position.x - owner_position.x,
                     target_position.y - owner_position.y,
                 );
-                self.entities
+                self.world
+                    .entities
                     .expect_entity_mut(owner, format_args!("WakeUp owner during direction setup"))
                     .element_data_mut()
                     .set_direction_goal(direction);
@@ -2458,11 +2645,13 @@ impl RecoveryCommandContext<'_> {
                 // after setting the progressive direction goal toward the
                 // target, then appends the non-direction-computing WAKING_UP
                 // action.
-                let turn_id = self.orders.alloc_id();
+                let turn_id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
                 let turn = crate::order::Order::new(OrderType::Turning, 0.0, 0.0, turn_id);
-                self.sequence_manager.push_order_on(seq_id, elem_idx, turn);
+                self.orders
+                    .sequence_manager
+                    .push_order_on(seq_id, elem_idx, turn);
 
-                let id = self.orders.alloc_id();
+                let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
                 let mut order = crate::order::Order::new(
                     OrderType::WakingUp,
                     target_position.x,
@@ -2471,19 +2660,21 @@ impl RecoveryCommandContext<'_> {
                 )
                 .with_antagonist(target);
                 order.compute_direction = false;
-                self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .push_order_on(seq_id, elem_idx, order);
+                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             }
             Command::Knee => {
-                self.orders.push(
-                    self.sequence_manager,
+                OrderEmitter::new(&mut self.orders.next_order_id).push(
+                    &mut self.orders.sequence_manager,
                     seq_id,
                     elem_idx,
                     OrderType::FallingBackSword,
                     (0.0, 0.0),
                     true,
                 );
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             }
             _ => unreachable!("non-recovery command passed to recovery context"),
         }
@@ -2493,22 +2684,21 @@ impl RecoveryCommandContext<'_> {
 
 /// Drink/take translation reads only the interaction pair and object payload,
 /// then books one deterministic animation order on the owning element.
-struct ObjectInteractionCommandContext<'a> {
-    entities: &'a mut crate::entities::Entities,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-    orders: OrderEmitter<'a>,
-}
 
-impl ObjectInteractionCommandContext<'_> {
-    fn dispatch(
+impl EngineInner {
+    fn dispatch_object_interaction_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
-        let owner_is_pc = self.entities.get(owner).is_some_and(Entity::is_pc);
+        let owner_is_pc = self.world.entities.get(owner).is_some_and(Entity::is_pc);
         let antagonist = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|element| match element.data {
@@ -2517,6 +2707,7 @@ impl ObjectInteractionCommandContext<'_> {
             });
         if let Some(antagonist) = antagonist {
             let object_type = self
+                .world
                 .entities
                 .get(antagonist)
                 .and_then(|entity| entity.object_data().map(|object| object.object_type));
@@ -2545,7 +2736,7 @@ impl ObjectInteractionCommandContext<'_> {
         }
 
         let antagonist_is_net = antagonist
-            .and_then(|id| self.entities.get(id))
+            .and_then(|id| self.world.entities.get(id))
             .is_some_and(|entity| matches!(entity, Entity::Net(_)));
         // Player-character take translation selects the ordinary
         // object's pickup row from the interaction element's stamped
@@ -2553,6 +2744,7 @@ impl ObjectInteractionCommandContext<'_> {
         // postponed behind a crouched Seek: the live actor is crouched too,
         // but the authored sequence stamp is authoritative.
         let posture_after_transition = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|element| element.posture_after_transition)
@@ -2568,40 +2760,42 @@ impl ObjectInteractionCommandContext<'_> {
             Command::Take => crate::order::OrderType::Taking,
             _ => unreachable!(),
         };
-        let id = self.orders.alloc_id();
+        let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
         let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
         if let Some(antagonist) = antagonist {
             order = order.with_antagonist(antagonist);
         }
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .push_order_on(seq_id, elem_idx, order);
+        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         OwnerActionBarrier::Reach
     }
 }
 
 /// Immediate mobile controls cannot reach any other world or mission state.
-struct MobileImmediateContext<'a> {
-    entities: &'a mut crate::entities::Entities,
-    mobiles: &'a mut [crate::mobile::MobileElement],
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-}
 
-impl MobileImmediateContext<'_> {
-    fn dispatch(
+impl EngineInner {
+    fn dispatch_mobile_immediate(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
         let mobile_index = self
+            .world
             .entities
             .get(owner)
             .and_then(Entity::as_fx)
             .and_then(|fx| fx.fx.mobile_index)
             .unwrap_or_else(|| panic!("{command:?} owner {owner} is not a mobile child FX"));
         let mobile = self
-            .mobiles
+            .world
+            .mobile_elements
             .get_mut(usize::from(mobile_index))
             .unwrap_or_else(|| panic!("{command:?} references missing mobile {mobile_index}"));
         match command {
@@ -2617,26 +2811,26 @@ impl MobileImmediateContext<'_> {
         }
         let active = mobile.active;
         for child_id in mobile.sprite_ids.clone() {
-            self.entities
+            self.world
+                .entities
                 .get_mut(child_id)
                 .unwrap_or_else(|| panic!("mobile {mobile_index} child {child_id} is missing"))
                 .element_data_mut()
                 .active = active;
         }
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
     }
 }
 
 /// Immediate sprite metadata commands are isolated from mobile, AI, camera,
 /// script, and mission ownership.
-struct SpriteImmediateContext<'a> {
-    entities: &'a mut crate::entities::Entities,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-}
 
-impl SpriteImmediateContext<'_> {
-    fn dispatch(
+impl EngineInner {
+    fn dispatch_sprite_immediate(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
@@ -2644,42 +2838,64 @@ impl SpriteImmediateContext<'_> {
     ) {
         match command {
             Command::Unblip => {
-                if let Some(entity) = self.entities.get_mut(owner)
+                if let Some(entity) = self.world.entities.get_mut(owner)
                     && entity.element_data().blipped
                 {
                     entity.reveal_blip();
                 }
             }
             Command::ReplaceAnim => {
-                let old =
-                    self.animation_property(seq_id, elem_idx, crate::sequence::Field::OldAnimation);
-                let new =
-                    self.animation_property(seq_id, elem_idx, crate::sequence::Field::NewAnimation);
+                let old = self.sequence_sprite_animation_property(
+                    sim,
+                    assets,
+                    active_scripts,
+                    seq_id,
+                    elem_idx,
+                    crate::sequence::Field::OldAnimation,
+                );
+                let new = self.sequence_sprite_animation_property(
+                    sim,
+                    assets,
+                    active_scripts,
+                    seq_id,
+                    elem_idx,
+                    crate::sequence::Field::NewAnimation,
+                );
                 if let (Some(old), Some(new), Some(entity)) =
-                    (old, new, self.entities.get_mut(owner))
+                    (old, new, self.world.entities.get_mut(owner))
                 {
                     entity.element_data_mut().sprite.replace_anim(old, new);
                 }
             }
             Command::RestoreAnim => {
-                let old =
-                    self.animation_property(seq_id, elem_idx, crate::sequence::Field::OldAnimation);
-                if let (Some(old), Some(entity)) = (old, self.entities.get_mut(owner)) {
+                let old = self.sequence_sprite_animation_property(
+                    sim,
+                    assets,
+                    active_scripts,
+                    seq_id,
+                    elem_idx,
+                    crate::sequence::Field::OldAnimation,
+                );
+                if let (Some(old), Some(entity)) = (old, self.world.entities.get_mut(owner)) {
                     entity.element_data_mut().sprite.restore_anim(old);
                 }
             }
             _ => unreachable!("non-sprite command passed to sprite context"),
         }
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
     }
 
-    fn animation_property(
+    fn sequence_sprite_animation_property(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         field: crate::sequence::Field,
     ) -> Option<crate::order::OrderType> {
-        self.sequence_manager
+        self.orders
+            .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|element| element.get_property(field))
             .and_then(|value| match value {
@@ -2689,13 +2905,6 @@ impl SpriteImmediateContext<'_> {
                 _ => None,
             })
     }
-}
-
-#[cfg(test)]
-struct UserLockImmediateContext<'a> {
-    user_locked: &'a mut bool,
-    side_effects: &'a mut SideEffects,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
 }
 
 fn synchronous_action_element_ref(
@@ -2724,24 +2933,17 @@ fn synchronous_action_element_ref(
     }
 }
 
-#[cfg(test)]
-impl UserLockImmediateContext<'_> {
-    fn dispatch(&mut self, command: Command, seq_id: crate::sequence::SequenceId, elem_idx: usize) {
-        *self.user_locked = command == Command::LockUser;
-        if command == Command::UnlockUser {
-            self.side_effects.pending_reset_input = true;
-        }
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
-    }
-}
-
-struct TimerImmediateContext<'a> {
-    sequence_manager: &'a crate::sequence::SequenceManager,
-}
-
-impl TimerImmediateContext<'_> {
-    fn entry(&self, seq_id: crate::sequence::SequenceId, elem_idx: usize) -> TimerEntry {
+impl EngineInner {
+    fn timer_immediate_entry(
+        &self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> TimerEntry {
         let remaining = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|element| element.get_property(crate::sequence::Field::Timer))
@@ -2761,18 +2963,21 @@ impl TimerImmediateContext<'_> {
 
 /// Map/dialog/popup commands emit presentation outputs and the messenger
 /// reset-input edge without borrowing host UI state.
-struct PresentationCommandContext<'a> {
-    fast_forward: bool,
-    side_effects: &'a mut SideEffects,
-    messenger: &'a mut crate::messenger::Messenger,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-}
 
-impl PresentationCommandContext<'_> {
-    fn dispatch(&mut self, command: Command, seq_id: crate::sequence::SequenceId, elem_idx: usize) {
+impl EngineInner {
+    fn dispatch_presentation_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
+        command: Command,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
         match command {
             Command::DisplayMap => {
                 let show = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|element| element.get_property(crate::sequence::Field::MapDisplay))
@@ -2781,44 +2986,64 @@ impl PresentationCommandContext<'_> {
                         _ => None,
                     })
                     .unwrap_or(false);
-                self.side_effects.host_events.push(HostEvent::Minimap(
-                    MinimapHostEvent::DisplayMap {
+                self.feedback
+                    .pending_side_effects
+                    .host_events
+                    .push(HostEvent::Minimap(MinimapHostEvent::DisplayMap {
                         show,
                         restore_position: false,
-                    },
-                ));
+                    }));
             }
             Command::PlayDialog => {
-                if !self.fast_forward {
-                    let id =
-                        self.integer_property(seq_id, elem_idx, crate::sequence::Field::DialogId);
-                    self.side_effects.pending_dialogues.push(id);
+                if !self.control.fast_forward {
+                    let id = self.sequence_presentation_integer_property(
+                        sim,
+                        assets,
+                        active_scripts,
+                        seq_id,
+                        elem_idx,
+                        crate::sequence::Field::DialogId,
+                    );
+                    self.feedback
+                        .pending_side_effects
+                        .pending_dialogues
+                        .push(id);
                 }
-                self.reset_input();
+                self.sequence_presentation_reset_input(sim, assets, active_scripts);
             }
             Command::DisplayPopupText => {
-                if !self.fast_forward {
-                    let id = self.integer_property(
+                if !self.control.fast_forward {
+                    let id = self.sequence_presentation_integer_property(
+                        sim,
+                        assets,
+                        active_scripts,
                         seq_id,
                         elem_idx,
                         crate::sequence::Field::PopupTextId,
                     );
-                    self.side_effects.pending_popup_texts.push(id);
+                    self.feedback
+                        .pending_side_effects
+                        .pending_popup_texts
+                        .push(id);
                 }
-                self.reset_input();
+                self.sequence_presentation_reset_input(sim, assets, active_scripts);
             }
             _ => unreachable!("non-presentation command passed to presentation context"),
         }
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
     }
 
-    fn integer_property(
+    fn sequence_presentation_integer_property(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         field: crate::sequence::Field,
     ) -> i32 {
-        self.sequence_manager
+        self.orders
+            .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|element| element.get_property(field))
             .and_then(|value| match value {
@@ -2828,20 +3053,29 @@ impl PresentationCommandContext<'_> {
             .unwrap_or(0)
     }
 
-    fn reset_input(&mut self) {
-        self.messenger
+    fn sequence_presentation_reset_input(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
+    ) {
+        self.orders
+            .messenger
             .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
     }
 }
 
-struct FreezeImmediateContext<'a> {
-    control: &'a mut SimulationControl,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-}
-
-impl FreezeImmediateContext<'_> {
-    fn dispatch(&mut self, seq_id: crate::sequence::SequenceId, elem_idx: usize) {
+impl EngineInner {
+    fn dispatch_freeze_immediate(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
         let frozen = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|element| element.get_property(crate::sequence::Field::Freeze))
@@ -2851,21 +3085,24 @@ impl FreezeImmediateContext<'_> {
             })
             .unwrap_or(false);
         self.control.set_actors_frozen(frozen);
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
     }
 }
 
 /// Character/action availability affects only PC metadata and the ordered
 /// messenger stream consumed after the simulation tick.
-struct AvailabilityImmediateContext<'a> {
-    entities: &'a mut crate::entities::Entities,
-    messenger: &'a mut crate::messenger::Messenger,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-}
 
-impl AvailabilityImmediateContext<'_> {
-    fn dispatch(&mut self, command: Command, seq_id: crate::sequence::SequenceId, elem_idx: usize) {
-        let element = self.sequence_manager.get_element(seq_id, elem_idx);
+impl EngineInner {
+    fn dispatch_availability_immediate(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
+        command: Command,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
+        let element = self.orders.sequence_manager.get_element(seq_id, elem_idx);
         let owner = element.and_then(|element| element.owner);
         match command {
             Command::CharacterAvailable => {
@@ -2879,7 +3116,11 @@ impl AvailabilityImmediateContext<'_> {
                     })
                     .unwrap_or(false);
                 if let Some(owner) = owner
-                    && let Some(pc) = self.entities.get_mut(owner).and_then(Entity::pc_data_mut)
+                    && let Some(pc) = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::pc_data_mut)
                 {
                     pc.set_playable(available);
                     let message = if available {
@@ -2887,7 +3128,9 @@ impl AvailabilityImmediateContext<'_> {
                     } else {
                         crate::messenger::PcMessage::DisableCharacter
                     };
-                    self.messenger.send(Message::pc(message, Some(owner)));
+                    self.orders
+                        .messenger
+                        .send(Message::pc(message, Some(owner)));
                 }
             }
             Command::ActionAvailable => {
@@ -2913,13 +3156,16 @@ impl AvailabilityImmediateContext<'_> {
                     } else {
                         crate::messenger::PcMessage::DisableAction
                     };
-                    self.messenger
-                        .send(Message::pc_with_value(message, Some(owner), action_id));
+                    self.orders.messenger.send(Message::pc_with_value(
+                        message,
+                        Some(owner),
+                        action_id,
+                    ));
                 }
             }
             _ => unreachable!("non-availability command passed to availability context"),
         }
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
     }
 }
 
@@ -3043,7 +3289,8 @@ mod sequence_phase_context_tests {
             .sequence_manager
             .get_element(sequence, 0)
             .expect("admitted wait remains live");
-        assert_eq!(element.state, SequenceState::Postponed);
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert!(!element.orders.is_empty());
     }
 
     fn interaction_object(object_type: crate::element::ObjectType) -> Entity {
@@ -3082,12 +3329,15 @@ mod sequence_phase_context_tests {
         ));
         let seq_id = engine.orders.sequence_manager.launch_element(element);
 
-        let barrier = BowTransitionContext {
-            entities: &engine.world.entities,
-            sequence_manager: &mut engine.orders.sequence_manager,
-            orders: OrderEmitter::new(&mut engine.orders.next_order_id),
-        }
-        .dispatch(owner, Command::EquipBow, seq_id, 0);
+        let barrier = engine.dispatch_bow_transition(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            &mut Vec::new(),
+            owner,
+            Command::EquipBow,
+            seq_id,
+            0,
+        );
 
         let element = engine
             .orders
@@ -3129,12 +3379,15 @@ mod sequence_phase_context_tests {
                 ),
             );
 
-            ObjectInteractionCommandContext {
-                entities: &mut engine.world.entities,
-                sequence_manager: &mut engine.orders.sequence_manager,
-                orders: OrderEmitter::new(&mut engine.orders.next_order_id),
-            }
-            .dispatch(owner, command, seq_id, 0);
+            engine.dispatch_object_interaction_command(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::default(),
+                &mut Vec::new(),
+                owner,
+                command,
+                seq_id,
+                0,
+            );
 
             assert_eq!(
                 engine
@@ -3179,12 +3432,15 @@ mod sequence_phase_context_tests {
                 Some(antagonist),
             ),
         );
-        ObjectInteractionCommandContext {
-            entities: &mut engine.world.entities,
-            sequence_manager: &mut engine.orders.sequence_manager,
-            orders: OrderEmitter::new(&mut engine.orders.next_order_id),
-        }
-        .dispatch(owner, Command::Take, seq_id, 0);
+        engine.dispatch_object_interaction_command(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            &mut Vec::new(),
+            owner,
+            Command::Take,
+            seq_id,
+            0,
+        );
         assert_eq!(
             engine
                 .get_entity(owner)
@@ -3223,13 +3479,15 @@ mod sequence_phase_context_tests {
         wait.action_state_after_transition = ActionState::Bored;
         let sequence = engine.orders.sequence_manager.launch_element(wait);
 
-        WaitCommandContext {
-            entities: &mut engine.world.entities,
-            sequence_manager: &mut engine.orders.sequence_manager,
-            orders: OrderEmitter::new(&mut engine.orders.next_order_id),
-            profiles: &crate::profiles::ProfileManager::default(),
-        }
-        .dispatch(owner, Command::Wait, sequence, 0);
+        engine.dispatch_wait_command(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            &mut Vec::new(),
+            owner,
+            Command::Wait,
+            sequence,
+            0,
+        );
 
         assert_eq!(
             engine
@@ -3261,13 +3519,15 @@ mod sequence_phase_context_tests {
         wait.action_state_after_transition = ActionState::Bored;
         let sequence = engine.orders.sequence_manager.launch_element(wait);
 
-        WaitCommandContext {
-            entities: &mut engine.world.entities,
-            sequence_manager: &mut engine.orders.sequence_manager,
-            orders: OrderEmitter::new(&mut engine.orders.next_order_id),
-            profiles: &crate::profiles::ProfileManager::default(),
-        }
-        .dispatch(owner, Command::Wait, sequence, 0);
+        engine.dispatch_wait_command(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            &mut Vec::new(),
+            owner,
+            Command::Wait,
+            sequence,
+            0,
+        );
 
         let order = engine
             .orders
@@ -3313,13 +3573,15 @@ mod sequence_phase_context_tests {
         wait.action_state_after_transition = ActionState::Waiting;
         let sequence = engine.orders.sequence_manager.launch_element(wait);
 
-        WaitCommandContext {
-            entities: &mut engine.world.entities,
-            sequence_manager: &mut engine.orders.sequence_manager,
-            orders: OrderEmitter::new(&mut engine.orders.next_order_id),
-            profiles: &crate::profiles::ProfileManager::default(),
-        }
-        .dispatch(owner, Command::Wait, sequence, 0);
+        engine.dispatch_wait_command(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            &mut Vec::new(),
+            owner,
+            Command::Wait,
+            sequence,
+            0,
+        );
 
         let order = engine
             .orders
@@ -3445,101 +3707,24 @@ mod sequence_phase_context_tests {
     }
 
     #[test]
-    fn immediate_family_successor_is_spliced_before_older_hourglass_work() {
-        use crate::sequence::{Field, FieldValue, Sequence, SequenceAction, SequenceElement};
-
-        let older = SequenceAction::EngineCommand {
-            sequence_id: crate::sequence::SequenceId(900),
-            element_index: 0,
-        };
-        let mut phase = SequencePhase {
-            actions: [older].into(),
-        };
-
-        let mut orders = OrderRuntime::new();
-        let mut sequence = Sequence::new();
-        sequence.append_element(SequenceElement::new(1, Command::LockUser, None));
-        let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
-        timer.set_property(Field::Timer, FieldValue::Integer(7));
-        sequence.append_element(timer);
-        let sequence_id = orders.sequence_manager.launch_sequence(sequence);
-
-        phase.splice_registered_actions(&mut orders);
-        let lock_action = phase.pop_action().expect("LockUser is synchronous");
-        assert!(matches!(
-            lock_action,
-            SequenceAction::ExecuteImmediateEngine {
-                sequence_id: id,
-                element_index: 0,
-            } if id == sequence_id
-        ));
-
-        let mut user_locked = false;
-        let mut side_effects = SideEffects::default();
-        UserLockImmediateContext {
-            user_locked: &mut user_locked,
-            side_effects: &mut side_effects,
-            sequence_manager: &mut orders.sequence_manager,
-        }
-        .dispatch(Command::LockUser, sequence_id, 0);
-        assert!(user_locked);
-
-        // Terminating LockUser synchronously starts Timer. The sequence-phase
-        // splice must put that continuation ahead of the older manager action.
-        phase.splice_registered_actions(&mut orders);
-        let timer_action = phase.pop_action().expect("Timer successor is synchronous");
-        assert!(matches!(
-            timer_action,
-            SequenceAction::ExecuteImmediateEngine {
-                sequence_id: id,
-                element_index: 1,
-            } if id == sequence_id
-        ));
-        assert!(matches!(
-            phase.pop_action(),
-            Some(SequenceAction::EngineCommand {
-                sequence_id: crate::sequence::SequenceId(900),
-                element_index: 0,
-            })
-        ));
-
-        let timer = TimerImmediateContext {
-            sequence_manager: &orders.sequence_manager,
-        }
-        .entry(sequence_id, 1);
-        assert_eq!(timer.remaining, 7);
-        assert_eq!(timer.element_ref.sequence_id, sequence_id);
-        assert_eq!(timer.element_ref.element_index, 1);
-    }
-
-    #[test]
     fn availability_executor_preserves_command_message_order() {
         use crate::messenger::{MessageType, PcMessage};
         use crate::sequence::{Field, FieldValue, SequenceElement};
 
         let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let sim = crate::sim_rng::test_context();
         let owner = engine.add_test_entity(shield_pc(crate::element::ActionState::Waiting));
         let mut character =
             SequenceElement::new_generic(1, Command::CharacterAvailable, Some(owner));
         character.set_property(Field::CharacterAvailable, FieldValue::Bool(false));
-        let character_sequence = engine.orders.sequence_manager.launch_element(character);
+        engine.launch_element(character);
+        engine.drain_pending_immediate_actions_sync(&sim, &assets);
         let mut action = SequenceElement::new_generic(1, Command::ActionAvailable, Some(owner));
         action.set_property(Field::ActionId, FieldValue::Integer(12));
         action.set_property(Field::ActionAvailable, FieldValue::Bool(true));
-        let action_sequence = engine.orders.sequence_manager.launch_element(action);
-
-        AvailabilityImmediateContext {
-            entities: &mut engine.world.entities,
-            messenger: &mut engine.orders.messenger,
-            sequence_manager: &mut engine.orders.sequence_manager,
-        }
-        .dispatch(Command::CharacterAvailable, character_sequence, 0);
-        AvailabilityImmediateContext {
-            entities: &mut engine.world.entities,
-            messenger: &mut engine.orders.messenger,
-            sequence_manager: &mut engine.orders.sequence_manager,
-        }
-        .dispatch(Command::ActionAvailable, action_sequence, 0);
+        engine.launch_element(action);
+        engine.drain_pending_immediate_actions_sync(&sim, &assets);
 
         let messages = engine.orders.messenger.drain();
         assert!(matches!(
@@ -3574,12 +3759,14 @@ mod sequence_phase_context_tests {
         character.set_property(Field::CharacterAvailable, FieldValue::Bool(true));
         let sequence = engine.orders.sequence_manager.launch_element(character);
 
-        AvailabilityImmediateContext {
-            entities: &mut engine.world.entities,
-            messenger: &mut engine.orders.messenger,
-            sequence_manager: &mut engine.orders.sequence_manager,
-        }
-        .dispatch(Command::CharacterAvailable, sequence, 0);
+        engine.dispatch_availability_immediate(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            &mut Vec::new(),
+            Command::CharacterAvailable,
+            sequence,
+            0,
+        );
 
         let pc = engine
             .get_entity(owner)
@@ -3598,6 +3785,7 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn shield_context_preserves_transition_orders_and_states() {
+        let assets = LevelAssets::new();
         use crate::element::ActionState;
         use crate::order::OrderType;
         use crate::sequence::{SequenceElement, SequenceState};
@@ -3616,12 +3804,15 @@ mod sequence_phase_context_tests {
                     Some(target),
                 ));
 
-        let follow_up = crate::engine::melee::ShieldCommandContext::new(
-            &mut engine.world.entities,
-            &mut engine.orders.sequence_manager,
-            &mut engine.orders.next_order_id,
-        )
-        .dispatch(owner, Command::RaiseShield, seq_id, 0);
+        let follow_up = engine.dispatch_shield_command(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            owner,
+            Command::RaiseShield,
+            seq_id,
+            0,
+        );
 
         assert!(follow_up.is_none());
         let element = engine
@@ -3656,12 +3847,15 @@ mod sequence_phase_context_tests {
                 Command::RaiseShieldInstantly,
                 Some(owner),
             ));
-        crate::engine::melee::ShieldCommandContext::new(
-            &mut engine.world.entities,
-            &mut engine.orders.sequence_manager,
-            &mut engine.orders.next_order_id,
-        )
-        .dispatch(owner, Command::RaiseShieldInstantly, instant_seq, 0);
+        engine.dispatch_shield_command(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            owner,
+            Command::RaiseShieldInstantly,
+            instant_seq,
+            0,
+        );
         let instant = engine
             .orders
             .sequence_manager
@@ -3692,12 +3886,15 @@ mod sequence_phase_context_tests {
             .actor_data_mut()
             .expect("shield owner has actor data")
             .action_state = ActionState::HoldingShield;
-        crate::engine::melee::ShieldCommandContext::new(
-            &mut engine.world.entities,
-            &mut engine.orders.sequence_manager,
-            &mut engine.orders.next_order_id,
-        )
-        .dispatch(owner, Command::LowerShield, lower_seq, 0);
+        engine.dispatch_shield_command(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            owner,
+            Command::LowerShield,
+            lower_seq,
+            0,
+        );
         let lower = engine
             .orders
             .sequence_manager
@@ -3713,12 +3910,15 @@ mod sequence_phase_context_tests {
             .orders
             .sequence_manager
             .launch_element(SequenceElement::new(1, Command::ParryShield, Some(owner)));
-        crate::engine::melee::ShieldCommandContext::new(
-            &mut engine.world.entities,
-            &mut engine.orders.sequence_manager,
-            &mut engine.orders.next_order_id,
-        )
-        .dispatch(owner, Command::ParryShield, parry_seq, 0);
+        engine.dispatch_shield_command(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            owner,
+            Command::ParryShield,
+            parry_seq,
+            0,
+        );
         let parry = engine
             .orders
             .sequence_manager
@@ -3742,6 +3942,7 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn lower_shield_survives_a_completed_stand_up_transition() {
+        let assets = LevelAssets::new();
         use crate::element::ActionState;
         use crate::order::{Order, OrderType};
         use crate::sequence::{SequenceElement, SequenceState};
@@ -3773,12 +3974,15 @@ mod sequence_phase_context_tests {
             .expect("lower-shield element exists")
             .initialize_transition_orders();
 
-        crate::engine::melee::ShieldCommandContext::new(
-            &mut engine.world.entities,
-            &mut engine.orders.sequence_manager,
-            &mut engine.orders.next_order_id,
-        )
-        .dispatch(owner, Command::LowerShield, seq_id, 0);
+        engine.dispatch_shield_command(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            owner,
+            Command::LowerShield,
+            seq_id,
+            0,
+        );
 
         let element = engine
             .orders
@@ -3824,12 +4028,15 @@ mod sequence_phase_context_tests {
                 .sequence_manager
                 .launch_element(SequenceElement::new(1, command, Some(owner)));
 
-            RecoveryCommandContext {
-                entities: &mut engine.world.entities,
-                sequence_manager: &mut engine.orders.sequence_manager,
-                orders: OrderEmitter::new(&mut engine.orders.next_order_id),
-            }
-            .dispatch(owner, command, seq_id, 0);
+            engine.dispatch_recovery_command(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::default(),
+                &mut Vec::new(),
+                owner,
+                command,
+                seq_id,
+                0,
+            );
 
             let element = engine
                 .orders
@@ -3855,6 +4062,7 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn raise_shield_from_sword_state_preserves_lowering_transition() {
+        let assets = LevelAssets::new();
         use crate::element::ActionState;
         use crate::order::{Order, OrderType};
         use crate::sequence::{SequenceElement, SequenceState};
@@ -3883,12 +4091,15 @@ mod sequence_phase_context_tests {
             .expect("raise-shield element exists")
             .initialize_transition_orders();
 
-        let follow_up = crate::engine::melee::ShieldCommandContext::new(
-            &mut engine.world.entities,
-            &mut engine.orders.sequence_manager,
-            &mut engine.orders.next_order_id,
-        )
-        .dispatch(owner, Command::RaiseShield, seq_id, 0);
+        let follow_up = engine.dispatch_shield_command(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            owner,
+            Command::RaiseShield,
+            seq_id,
+            0,
+        );
 
         assert!(follow_up.is_none());
         let element = engine
@@ -3909,6 +4120,7 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn shield_refresh_seek_is_registered_before_the_action_splice() {
+        let assets = LevelAssets::new();
         use crate::element::ActionState;
         use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement};
 
@@ -3938,13 +4150,17 @@ mod sequence_phase_context_tests {
             }) if action_owner == owner && sequence_id == raise_seq
         ));
 
-        let follow_up = crate::engine::melee::ShieldCommandContext::new(
-            &mut engine.world.entities,
-            &mut engine.orders.sequence_manager,
-            &mut engine.orders.next_order_id,
-        )
-        .dispatch(owner, Command::RaiseShield, raise_seq, 0)
-        .expect("already-shielding protector gets an immediate Seek");
+        let follow_up = engine
+            .dispatch_shield_command(
+                &crate::sim_rng::test_context(),
+                &assets,
+                &mut Vec::new(),
+                owner,
+                Command::RaiseShield,
+                raise_seq,
+                0,
+            )
+            .expect("already-shielding protector gets an immediate Seek");
         match &follow_up.data {
             crate::sequence::SequenceElementData::Movement {
                 element,

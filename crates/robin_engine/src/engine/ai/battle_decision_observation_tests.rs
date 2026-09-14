@@ -73,7 +73,9 @@ pub(super) fn fixture(disconnected: bool) -> (EngineInner, LevelAssets, EntityId
     ai.base.current_substate = Substate::AttackingReactiontimeRunning;
     ai.base.primary_target = Some(AiEntityHandle::new(target.index()));
     ai.list_them = vec![target.index()];
-    ai.soldier_profile_courage = 0;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+        profile.courage = 0
+    });
     ai.hth_weapon_id = 1;
     std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
         [crate::weapons::WeaponDistance::Default as usize] = 50;

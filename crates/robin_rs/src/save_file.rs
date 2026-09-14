@@ -472,7 +472,7 @@ pub const SAVE_MAGIC: &str = "RHSG";
 
 /// Current save format version. Bump on incompatible serialized-field changes.
 /// See `docs/SAVE_FORMAT.md` for the version history.
-pub const SAVE_FORMAT_VERSION: u32 = 83;
+pub const SAVE_FORMAT_VERSION: u32 = 84;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -1084,11 +1084,6 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn save_format_version_uses_synchronous_ai_execution() {
-        assert_eq!(SAVE_FORMAT_VERSION, 83);
-    }
-
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
         use robin_engine::campaign::Campaign;
         let mut assets = engine_api::LevelAssets::new();
@@ -1366,12 +1361,14 @@ mod tests {
     }
 
     #[test]
-    fn replay_save_projection_matches_disk_and_discards_clone_only_ai_continuations() {
-        let (mut engine, assets) = fresh_engine();
+    fn replay_save_projection_matches_disk_and_preserves_live_ai_state() {
+        let (mut engine, mut assets) = fresh_engine();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .soldiers
+            .push(robin_engine::profiles::SoldierProfile::default());
         let mut ai = robin_engine::ai_enemy::EnemyAi::new(0);
-        ai.base.open_end_think_frames = 2;
-        ai.base.engine_deferred_end_think_frames = 1;
-        ai.base.engine_completion_verdict_resolved = true;
+        ai.base.blood_alcohol = 23;
+        ai.base.frame_when_enemy_detected = 41;
         let owner = engine.test_add_entity(robin_engine::element::Entity::Soldier(
             robin_engine::element::ActorSoldier {
                 element: {
@@ -1390,10 +1387,13 @@ mod tests {
                         ..Default::default()
                     }
                 },
-                soldier: Default::default(),
+                soldier: robin_engine::element::SoldierData {
+                    cached_camp: robin_engine::element_kinds::Camp::Lacklandists,
+                    ..Default::default()
+                },
             },
         ));
-        let continuation = |engine: &Engine| {
+        let live_ai_state = |engine: &Engine| {
             let ai = engine
                 .get_entity(owner)
                 .unwrap()
@@ -1402,15 +1402,10 @@ mod tests {
                 .ai_brain
                 .base()
                 .unwrap();
-            (
-                ai.open_end_think_frames,
-                ai.engine_deferred_end_think_frames,
-                ai.engine_completion_verdict_resolved,
-            )
+            (ai.blood_alcohol, ai.frame_when_enemy_detected)
         };
         let host = Host::scratch(800.0, 600.0);
         let game = crate::game::Game::default();
-        let clone = engine.clone();
         let pinned =
             GameRuntimeSnapshot::capture(&engine, &host, &game).expect("canonical replay save");
         assert_eq!(
@@ -1420,14 +1415,13 @@ mod tests {
         let pinned_engine = Engine::from_persisted_state(pinned.engine.clone());
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("QuickSave.json");
-        GameSaveFile::capture(&engine, &host, 7, "continuations".into())
+        GameSaveFile::capture(&engine, &host, 7, "live AI state".into())
             .write_to(&path)
             .expect("write live save");
         let disk = GameSaveFile::read_from(&path).expect("read live save");
-        assert_eq!(continuation(&engine), (2, 1, true), "capture is read-only");
-        assert_eq!(continuation(&clone), (2, 1, true));
-        assert_eq!(continuation(&disk.engine), (0, 0, false));
-        assert_eq!(continuation(&pinned_engine), continuation(&disk.engine));
+        assert_eq!(live_ai_state(&engine), (23, 41), "capture is read-only");
+        assert_eq!(live_ai_state(&disk.engine), (23, 41));
+        assert_eq!(live_ai_state(&pinned_engine), live_ai_state(&disk.engine));
         let mut replay_engine = engine.clone();
         let mut replay_host = Host::scratch(800.0, 600.0);
         let mut replay_game = crate::game::Game::default();
@@ -1447,7 +1441,7 @@ mod tests {
             robin_engine::replay::state_hash(&replay_engine),
             robin_engine::replay::state_hash(&engine)
         );
-        assert_eq!(continuation(&replay_engine), continuation(&engine));
+        assert_eq!(live_ai_state(&replay_engine), live_ai_state(&engine));
     }
 
     #[test]
@@ -1592,7 +1586,10 @@ mod tests {
 
     #[test]
     fn save_apply_round_trips_live_ai_slot_zero_without_null_collapse() {
-        let (mut engine, assets) = fresh_engine();
+        let (mut engine, mut assets) = fresh_engine();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .soldiers
+            .push(robin_engine::profiles::SoldierProfile::default());
         let mut ai = robin_engine::ai_enemy::EnemyAi::new(0);
         ai.base.primary_target = Some(robin_engine::ai::AiEntityHandle::new(0));
         let owner = engine.test_add_entity(robin_engine::element::Entity::Soldier(
@@ -1613,7 +1610,10 @@ mod tests {
                         ..Default::default()
                     }
                 },
-                soldier: Default::default(),
+                soldier: robin_engine::element::SoldierData {
+                    cached_camp: robin_engine::element_kinds::Camp::Lacklandists,
+                    ..Default::default()
+                },
             },
         ));
         assert_eq!(owner.index(), 0, "fixture must occupy live arena slot zero");
@@ -1629,7 +1629,8 @@ mod tests {
             serde_json::json!({"kind": "soldier", "index": 0})
         );
 
-        let (mut restored, restored_assets) = fresh_engine();
+        let (mut restored, _) = fresh_engine();
+        let restored_assets = assets;
         let mut restored_host = Host::scratch(800.0, 600.0);
         decoded
             .apply_to(&mut restored, &mut restored_host, &restored_assets)

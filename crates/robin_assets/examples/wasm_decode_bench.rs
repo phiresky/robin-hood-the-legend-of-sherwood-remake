@@ -134,8 +134,41 @@ mod mission {
                 .map_err(js_err)?;
         }
         let materialize_ms = now() - t1;
+        // Investigation branch: also time the serial RLE-JXL atlas decode,
+        // which install_mission runs right after VQ on the non-threaded build.
+        let t2 = now();
+        let (rle_chunks, rle_atlases) = merged
+            .payload
+            .sprite_bank
+            .as_ref()
+            .map(|bank| {
+                (
+                    bank.rle_jxl_chunks.len(),
+                    bank.rle_jxl_chunks
+                        .iter()
+                        .map(|c| c.jxl_blobs.len())
+                        .sum::<usize>(),
+                )
+            })
+            .unwrap_or_default();
+        if let Some(bank) = merged.payload.sprite_bank.as_mut() {
+            bank.materialize_rle_jxl_chunks().map_err(js_err)?;
+        }
+        let rle_ms = now() - t2;
+        web_sys_log(&format!(
+            "rle_jxl: {rle_chunks} chunks / {rle_atlases} atlases in {rle_ms:.0} ms"
+        ));
 
         report(&merged, part_bytes, decode_ms, materialize_ms, stats)
+    }
+
+    fn web_sys_log(message: &str) {
+        #[wasm_bindgen]
+        extern "C" {
+            #[wasm_bindgen(js_namespace = console)]
+            fn log(s: &str);
+        }
+        log(message);
     }
 
     /// [`bench_mission`] with the worker-pool materialization path of the

@@ -32,7 +32,11 @@ const { values } = parseArgs({ options: {
     'repeat-replay': { type: 'string', multiple: true, default: [] },
     'seek-replay': { type: 'string', multiple: true, default: [] },
     query: { type: 'string', multiple: true, default: [] },
+    // deploy: apply the checked-in Cloudflare `_headers` (COOP/COEP/CORP, CSP,
+    // cache) per origin; off: the same minus Cross-Origin-* (non-isolated page).
+    isolation: { type: 'string', default: 'deploy' },
 } });
+if (!['deploy', 'off'].includes(values.isolation)) throw new Error('--isolation must be deploy or off');
 if (!values.pkg || !values.datadir || !values.output) throw new Error('--pkg, --datadir and --output are required');
 const pkg = resolve(values.pkg), datadir = resolve(values.datadir), site = resolve(values.site), core = resolve(values.core);
 const outputBase = resolve(values.output);
@@ -82,8 +86,8 @@ for (const [kind, file] of [['wasm', 'robin_bg.wasm'], ['admission', 'replay_adm
 }
 const hash = replayBuild ?? '000000000000'; // Replay builds retain their real envelope identity.
 const runtimePrefix = `/wasm/${hash}/`;
-const dataPrefix = '/datadirs/demo-leicester/v16r2/';
-const demoDatadirName = 'v16r2-web-opus-q80.rhdata.zst';
+const dataPrefix = '/datadirs/demo-leicester/v17/';
+const demoDatadirName = 'v17-web-opus-q80.rhdata.zst';
 const preload = [];
 const { readdir } = await import('node:fs/promises');
 preload.push({ path: 'Data/AudioDurations.json', url: 'Data/AudioDurations.json' });
@@ -145,6 +149,41 @@ async function asset(path) {
     }
     const result = { body, type, encoding }; cache.set(path, result); return result;
 }
+// Minimal Cloudflare `_headers` model: rules apply in file order, `* ` matches
+// any run of characters, `! Name` detaches a header set by an earlier rule.
+function parseHeaderRules(text) {
+    const rules = [];
+    for (const line of text.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed === '' || trimmed.startsWith('#')) continue;
+        if (!/^\s/.test(line)) {
+            const pattern = trimmed.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*');
+            rules.push({ pattern: new RegExp(`^${pattern}$`), ops: [] });
+        } else if (trimmed.startsWith('! ')) {
+            rules.at(-1).ops.push({ detach: trimmed.slice(2).trim().toLowerCase() });
+        } else {
+            const colon = trimmed.indexOf(':');
+            rules.at(-1).ops.push({ name: trimmed.slice(0, colon).trim().toLowerCase(), value: trimmed.slice(colon + 1).trim() });
+        }
+    }
+    return rules;
+}
+const deployDirectory = resolve(import.meta.dirname, '../wasm-www/deploy');
+const headerRules = Object.fromEntries(await Promise.all(['public', 'runtime', 'datadir'].map(async kind =>
+    [kind, parseHeaderRules(await readFile(join(deployDirectory, `${kind}-headers.txt`), 'utf8'))])));
+function deployHeaders(path) {
+    const rules = headerRules[path.startsWith('/wasm/') ? 'runtime' : path.startsWith('/datadirs/') ? 'datadir' : 'public'];
+    const headers = new Map();
+    for (const rule of rules) {
+        if (!rule.pattern.test(path)) continue;
+        for (const op of rule.ops) {
+            if (op.detach) headers.delete(op.detach);
+            else headers.set(op.name, [...(headers.get(op.name) ?? []), op.value]);
+        }
+    }
+    if (values.isolation === 'off') for (const name of [...headers.keys()]) if (name.startsWith('cross-origin-')) headers.delete(name);
+    return headers;
+}
 // Precompute compression before navigation, keeping server CPU out of startup.
 await asset('/'); await asset('/wasm/latest.json'); await asset(runtimePrefix + 'robin_bg.wasm.gz');
 for (const path of ['robin.js', 'preload-assets.json']) await asset(runtimePrefix + path);
@@ -152,10 +191,7 @@ const server = createServer(async (req, res) => {
     const path = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
     const record = { path, requestedAt: performance.now(), bytes: 0, chunks: [] };
     records.push(record);
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-    const immutable = path.startsWith(runtimePrefix) || path.startsWith(dataPrefix) || path.startsWith('/assets/');
-    res.setHeader('Cache-Control', immutable ? 'public, max-age=31536000, immutable' : 'public, max-age=0, must-revalidate');
+    for (const [name, headerValues] of deployHeaders(path)) res.setHeader(name, headerValues.join(', '));
     try {
         const { body, type, encoding } = await asset(path);
         record.payloadBytes = body.length;
@@ -314,7 +350,7 @@ try {
             await writeFile(output + '.seeks.json', JSON.stringify(seeks, null, 2));
         }
         if (logs.some(({ line }) => /replay.*desync/i.test(line))) throw new Error('Replay logged a state desync');
-        const probe = await send('Runtime.evaluate', { expression: `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve({timeOrigin:performance.timeOrigin, screenshotRequestAt:performance.now(), canvas:{width:document.querySelector('#canvas').width,height:document.querySelector('#canvas').height}, resources:performance.getEntriesByType('resource').map(e=>e.toJSON()), marks:performance.getEntriesByType('mark').map(e=>e.toJSON())}))))`, awaitPromise: true, returnByValue: true });
+        const probe = await send('Runtime.evaluate', { expression: `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve({timeOrigin:performance.timeOrigin, crossOriginIsolated:globalThis.crossOriginIsolated, screenshotRequestAt:performance.now(), canvas:{width:document.querySelector('#canvas').width,height:document.querySelector('#canvas').height}, resources:performance.getEntriesByType('resource').map(e=>e.toJSON()), marks:performance.getEntriesByType('mark').map(e=>e.toJSON())}))))`, awaitPromise: true, returnByValue: true });
         const page = probe.result.value;
         await sleep(500);
         const screenshotStart = performance.now();
@@ -350,7 +386,7 @@ try {
             httpAdmissionBrotli: httpAdmissionBr ? { path: resolve(values['http-admission-br']), bytes: httpAdmissionBr.length, sha256: sha256(httpAdmissionBr), rawSha256: sha256(await readFile(join(pkg, 'replay_admission_bg.wasm'))), caveat: 'Supplied encoded fixture is verified against admission package bytes; retain capture provenance separately.' } : null,
             httpWasmBrotli: httpWasmBr ? { path: resolve(values['http-wasm-br']), bytes: httpWasmBr.length, sha256: sha256(httpWasmBr), caveat: 'Supplied encoded fixture is verified against package bytes; retain capture provenance separately.' } : null,
             replay: replayContent === undefined ? null : { path: resolve(replayRun.path), sha256: sha256(Buffer.from(replayRun.content)), build: replayBuild, state: replayState },
-            pkg, datadir, site, mission: values.mission, query: [...query], browser: await send('Browser.getVersion'),
+            pkg, datadir, site, mission: values.mission, query: [...query], isolation: values.isolation, browser: await send('Browser.getVersion'),
             diagnostics: { trace: values.trace, cpuProfile: values['cpu-profile'], caveat: 'Optional profiling adds overhead; use uninstrumented runs for timing comparisons.' },
             network: { mbit: rate === null ? 'unlimited' : Number(values.mbit), scope: throttle ? 'single shared server queue for all response payloads including worker fetches' : 'unshaped loopback responses', chunkBytes: throttle ? 16384 : null, latencyMs: 0, compression: 'gzip -9 -n CLI for raw explicit wasm.gz sibling; Node gzip level9 HTTP encoding for text', cache: runIndex === 0 ? 'fresh browser profile; normal intra-navigation HTTP caching' : 'same browser profile and origin; normal HTTP cache reuse', caveat: 'HTTP/1.1 loopback, no TCP overhead or packet loss; cumulative deadlines avoid per-chunk timer-rounding loss'  },
             endpoints: { bootstrapMs: bootstrapEpoch - page.timeOrigin, firstMissionPresentReturnedMs: presentEpoch ? presentEpoch - page.timeOrigin : null, afterTwoRafMs: page.screenshotRequestAt, screenshotRequestMs: screenshotStart - navigationServerAt, screenshotCompleteMs: screenshotEnd - navigationServerAt, screenshotSettleMs: 500, screenshotServerDurationMs: screenshotEnd - screenshotStart, caveat: 'Screenshot after bootstrap, two animation callbacks and 500ms settle is an inspectable image, not a physical display presentation timestamp. present returned is submission-side only.' },

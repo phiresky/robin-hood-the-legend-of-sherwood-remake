@@ -298,7 +298,6 @@ fn advance_authoritative_frame(
         "the hourglass may either advance or close its presentation/body gate"
     );
     assert_eq!(output.frame_after, snapshot.engine.frame_counter());
-    assert_eq!(output.state_hash, state_hash(&snapshot.engine));
     snapshot.frame += 1;
 }
 

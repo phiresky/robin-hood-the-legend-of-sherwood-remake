@@ -290,15 +290,12 @@ pub struct FogOfWarState {
     pub(crate) scan_cache: FogScanCache,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
-pub(crate) struct PersistedFogOfWarState(FogOfWarState);
-
-impl PersistedFogOfWarState {
-    pub(crate) fn capture(value: &FogOfWarState) -> Self {
+impl FogOfWarState {
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let value = self;
         // Do not clone the potentially large process-local scan cache only
         // to discard it. The wire schema itself is derived on the owner.
-        Self(FogOfWarState {
+        Self {
             level_size: value.level_size,
             explored: value.explored.clone(),
             visible: value.visible.clone(),
@@ -307,11 +304,7 @@ impl PersistedFogOfWarState {
             intelligence: value.intelligence.clone(),
             generation: value.generation,
             scan_cache: FogScanCache::default(),
-        })
-    }
-
-    pub(crate) fn into_runtime(self) -> FogOfWarState {
-        self.0
+        }
     }
 }
 

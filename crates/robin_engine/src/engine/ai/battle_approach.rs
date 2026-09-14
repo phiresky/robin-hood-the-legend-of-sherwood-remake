@@ -2,15 +2,96 @@
 
 use super::swordfight_candidates::LiveCombatFighters;
 use super::*;
-use crate::ai::{
-    AiEntityHandle, AiSpeechAttempt, AiState, EnterSwordfightRequest, GotoFlags, Position, Remark,
-    Substate,
-};
+use crate::ai::{AiEntityHandle, AiSpeechAttempt, AiState, GotoFlags, Position, Remark, Substate};
 use crate::ai_enemy::{AiMapVec, CombatFighterAccess, rider_charge_goal_geometry};
 use crate::sim_rng::SimulationContext;
 use crate::weapons::WeaponDistance;
 
 impl EngineInner {
+    pub(in crate::engine) fn execute_ai_rebalance_swordfight(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        target: EntityId,
+    ) {
+        if self.direct_enter_swordfight(sim, assets, owner, target) {
+            self.world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("combat rebalance"))
+                .base
+                .primary_target = Some(AiEntityHandle::new(target.index()));
+        }
+    }
+
+    pub(in crate::engine) fn execute_ai_end_swordfight(&mut self, owner: EntityId) {
+        if self
+            .expect_entity(owner, "end swordfight owner")
+            .human_data()
+            .expect("swordfighter is human")
+            .opponents
+            .is_empty()
+        {
+            return;
+        }
+        self.launch_element(crate::sequence::SequenceElement::new(
+            1,
+            crate::element::Command::QuitSwordfight,
+            Some(owner),
+        ));
+    }
+
+    pub(in crate::engine) fn launch_ai_raise_sword(&mut self, owner: EntityId) {
+        let mut element = crate::sequence::SequenceElement::new_generic(
+            1,
+            crate::element::Command::EnterSwordfight,
+            Some(owner),
+        );
+        element.set_property(
+            crate::sequence::Field::Opponent,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        element.set_property(
+            crate::sequence::Field::JumplineDestination,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        self.launch_element(element);
+    }
+
+    pub(in crate::engine) fn set_live_guarded_pc(
+        &mut self,
+        owner: EntityId,
+        new_pc: Option<crate::entity_id::PcId>,
+    ) {
+        let old_pc = self
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("guard owner"))
+            .guarded_pc;
+        if let Some(old_pc) = old_pc {
+            self.world
+                .entities
+                .get_mut(EntityId::Pc(old_pc))
+                .expect("previous guarded PC exists")
+                .pc_data_mut()
+                .expect("guarded actor is a PC")
+                .guard = None;
+        }
+        self.world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("guard owner"))
+            .guarded_pc = new_pc;
+        if let Some(new_pc) = new_pc {
+            self.world
+                .entities
+                .get_mut(EntityId::Pc(new_pc))
+                .expect("new guarded PC exists")
+                .pc_data_mut()
+                .expect("guarded actor is a PC")
+                .guard = Some(owner);
+        }
+    }
+
     pub(in crate::engine) fn clear_live_combat_neighbours(&mut self, owner: EntityId) {
         let left = self
             .world
@@ -50,18 +131,10 @@ impl EngineInner {
         owner: EntityId,
         target: Option<EntityId>,
     ) {
-        let actor = &mut self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("approach focus"))
-            .outbox
-            .actor;
-        if let Some(target) = target {
-            actor.set_focus(AiEntityHandle::new(target.index()));
-        } else {
-            actor.set_unfocus();
-        }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_focus(
+            owner,
+            target.map(|target| AiEntityHandle::new(target.index())),
+        );
     }
 
     fn approach_sword_range(&self, assets: &LevelAssets, owner: EntityId) -> u16 {
@@ -81,24 +154,60 @@ impl EngineInner {
     ) {
         self.stop_ai_owner(sim, assets, owner);
         self.nearby_civilians_panic(sim, assets, owner);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         let target = self.approach_primary(owner);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("swordfight target stop"))
-            .outbox
-            .actor
-            .stop_target = Some(AiEntityHandle::new(target.index()));
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let entity = self.expect_entity(target, "swordfight target stop");
+        if entity
+            .human_data()
+            .expect("swordfight target is human")
+            .opponents
+            .is_empty()
+            && entity
+                .actor_data()
+                .expect("swordfight target is actor")
+                .action_state
+                .is_moving()
+        {
+            self.stop_actor_orders(
+                sim,
+                assets,
+                &mut Vec::new(),
+                target,
+                crate::sequence::SequencePriority::Normal,
+            );
+        }
         let ai = self
             .world
             .entities
-            .expect_enemy_ai_mut(owner, format_args!("swordfight entry"));
-        ai.base.outbox.actor.enter_swordfight = Some(EnterSwordfightRequest::Engage(
-            ai.base.primary_target.expect("swordfight primary"),
-        ));
-        ai.base.outbox.actor.enter_swordfight_jump_line = ai.my_line_jump;
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            .expect_enemy_ai(owner, format_args!("swordfight entry"));
+        let target = self.expect_human_id_for_ai_handle(
+            ai.base.primary_target.expect("swordfight primary").get(),
+            "swordfight entry target",
+        );
+        let jump_line = ai
+            .my_line_jump
+            .and_then(crate::jump_line::JumpLineIndex::new);
+        let mut element = crate::sequence::SequenceElement::new_generic(
+            1,
+            crate::element::Command::EnterSwordfight,
+            Some(owner),
+        );
+        element.set_property(
+            crate::sequence::Field::Opponent,
+            crate::sequence::FieldValue::Element(target),
+        );
+        element.set_property(
+            crate::sequence::Field::JumplineDestination,
+            jump_line
+                .map(crate::sequence::FieldValue::LineId)
+                .unwrap_or(crate::sequence::FieldValue::Integer(0)),
+        );
+        element.set_property(
+            crate::sequence::Field::SwordfightPrepared,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        self.launch_element(element);
+
         self.clear_live_combat_neighbours(owner);
         self.approach_focus(sim, assets, owner, None);
         let vip = self.expect_entity(owner, "swordfight speech").is_vip();
@@ -175,7 +284,7 @@ impl EngineInner {
             .world
             .entities
             .expect_enemy_ai(owner, format_args!("approach courage"))
-            .get_courage();
+            .get_courage(&assets.profile_manager);
         let mut run_distance = (2 * (100 - courage)).max(sword_range);
         let my_position = self.live_ai_position(owner);
         let mut target_position = self.live_ai_position(target);
@@ -207,7 +316,9 @@ impl EngineInner {
             .my_line_jump = line;
         let camp = self.expect_entity(owner, "approach friend camp").camp();
         // Every successful exchange changes the next comparison's primary target.
-        for friend in self.world.fighter_registry_order() {
+        let fighter_count = self.world.fighter_registry_ids.len();
+        for index in 0..fighter_count {
+            let friend = self.world.fighter_registry_ids[index];
             if friend == owner
                 || !matches!(
                     self.expect_entity(friend, "approach friend kind"),
@@ -300,7 +411,8 @@ impl EngineInner {
             }
             Substate::AttackingReactiontime | Substate::AttackingReactiontimeRunning => (
                 ai.sword_is_charge_weapon
-                    && ai.get_courage() >= crate::ai_enemy::combat::CHARGE_MIN_COURAGE
+                    && ai.get_courage(&assets.profile_manager)
+                        >= crate::ai_enemy::combat::CHARGE_MIN_COURAGE
                     && i32::from(distance) >= crate::ai_enemy::combat::CHARGE_MIN_DISTANCE
                     && ai.my_line_jump.is_none()
                     && !self
@@ -642,7 +754,9 @@ impl EngineInner {
         );
         let camp = self.expect_entity(owner, "rider corridor camp").camp();
         use geo::Contains;
-        for friend in self.world.fighter_registry_order() {
+        let fighter_count = self.world.fighter_registry_ids.len();
+        for index in 0..fighter_count {
+            let friend = self.world.fighter_registry_ids[index];
             let entity = self.expect_entity(friend, "rider corridor friend");
             if friend == owner
                 || entity.camp() != camp
@@ -785,7 +899,13 @@ mod tests {
         *gate_id = Some(DoorIndex::new(0).unwrap());
         *direction = 1;
         let id = engine.orders.sequence_manager.launch_element(pass);
-        engine.orders.sequence_manager.element_in_progress(id, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            id,
+            0,
+        );
         Position {
             x: 410.0,
             y: 120.0,
@@ -934,7 +1054,13 @@ mod tests {
             // Path waiting retains the priority assigned before Move was translated.
             element.priority = crate::sequence::SequencePriority::Normal;
             let id = engine.orders.sequence_manager.launch_element(element);
-            engine.orders.sequence_manager.element_in_progress(id, 0);
+            engine.element_in_progress(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                &mut Vec::new(),
+                id,
+                0,
+            );
         }
         (
             engine,
@@ -1002,6 +1128,50 @@ mod tests {
             }
             assert_eq!(engine.ai_think_depth(), 1);
         }
+    }
+
+    #[test]
+    fn reconsider_approach_uses_raw_truncated_map_distance_at_sword_range() {
+        let (mut engine, assets, owner, friend, target) = prepare_approach(62);
+        move_actor(&mut engine, owner, 655.007_8, 1744.445);
+        move_actor(&mut engine, target, 585.0, 1726.0);
+        engine
+            .get_entity_mut(friend)
+            .unwrap()
+            .element_data_mut()
+            .active = false;
+        engine.execute_ai_reconsider_enemy_approach(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            false,
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .enemy_ai()
+                .unwrap()
+                .base
+                .current_substate,
+            Substate::AttackingSwordfight
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .pending_elements_for_owner(owner)
+                .iter()
+                .any(|&(sequence, index)| {
+                    engine
+                        .orders
+                        .sequence_manager
+                        .get_element(sequence, index)
+                        .unwrap()
+                        .command
+                        == crate::element::Command::EnterSwordfight
+                })
+        );
     }
 
     fn prepare_approach(range: u16) -> (EngineInner, LevelAssets, EntityId, EntityId, EntityId) {
@@ -1386,7 +1556,19 @@ mod tests {
                     .entities
                     .expect_ai_actor_data(owner, format_args!("rider focus"))
                     .follow_target,
-                if passing { None } else { Some(target) }
+                Some(target)
+            );
+            assert_eq!(
+                engine
+                    .world
+                    .entities
+                    .expect_ai_actor_data(owner, format_args!("rider eyes"))
+                    .eye_status,
+                if passing {
+                    crate::element::EyeStatus::LookForward
+                } else {
+                    crate::element::EyeStatus::Follow
+                }
             );
         }
     }

@@ -7,51 +7,8 @@ use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 use crate::sim_rng::SimulationContext;
 
 use super::map_vec_ext::AiMapVec;
-use super::util::vec_to_sector;
-use super::{
-    EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, archer, combat,
-};
+use super::{EnemyAi, ProfileRank, combat};
 use crate::coordinates::MapVec;
-
-/// Enemy-approach reconsideration uses raw saved-position map coordinates and stores
-/// their Euclidean norm in an unsigned 16-bit value. This is deliberately different from the
-/// game's general aspect-corrected distance helpers.
-fn reconsider_approach_distance(a: Position, b: Position) -> f32 {
-    let dx = a.x - b.x;
-    let dy = a.y - b.y;
-    let truncated = (dx * dx + dy * dy).sqrt() as u16;
-    f32::from(truncated)
-}
-
-fn enough_nearer_friends_to_observe(
-    nearer_friends: u16,
-    visible_enemies: usize,
-    courage: u16,
-) -> bool {
-    let visible_enemies = visible_enemies as f32;
-    // Preserve Original's floating comparison and operation grouping:
-    //   friends >= enemies + enemies * (0.045f * courage)
-    // Truncating the courage bonus first lets a soldier observe with too few
-    // friends at every non-integral threshold.
-    f32::from(nearer_friends)
-        >= visible_enemies + visible_enemies * (0.045_f32 * f32::from(courage))
-}
-
-/// Derive the original game's nearby-alerting-soldier state from the friends already admitted
-/// to the ally list. The admission walk has performed the authoritative 360-degree
-/// detection query; querying the camp again here changes both call order and
-/// the opaque-visibility cache.
-fn has_nearby_alerting_soldier(
-    owner: NpcHandle,
-    admitted_friends: &[HumanHandle],
-    candidates: impl IntoIterator<Item = (NpcHandle, Substate)>,
-) -> bool {
-    candidates.into_iter().any(|(handle, substate)| {
-        handle != owner
-            && admitted_friends.contains(&handle)
-            && substate == Substate::SeekingRunningToOfficer
-    })
-}
 
 /// The original game compares the actors' literal squared distance
 /// 3D sprite positions, stretches world Y, includes Z, and then truncates the
@@ -87,56 +44,10 @@ pub(crate) fn increment_battle_target_multiplicity(
     *count = u32::from((*count as u16).wrapping_add(1));
 }
 
-/// Preserve the shared counter for a target appended after battle planning's
-/// reset pass. Original resets multiplicity only for the enemies already in
-/// enemy list; a nearby friend's previously unseen target retains its live
-/// global value when it is inserted later in the same decision.
-pub(crate) fn seed_appended_battle_target_multiplicity(
-    multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
-    target: HumanHandle,
-    shared_multiplicity: &std::collections::BTreeMap<HumanHandle, u32>,
-) {
-    multiplicity
-        .entry(target)
-        .or_insert_with(|| shared_multiplicity.get(&target).copied().unwrap_or(0));
-}
-
-/// Preserve shot-target selection's use of the actors' shared multiplicity scratch:
-/// clear all current enemies, then count only friends actively using a bow.
-/// A failed shot proposal can immediately fall through to another battle
-/// decision, so that later selector must observe this rebuilt state.
-fn rebuild_battle_target_multiplicity_for_shot(
-    multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
-    enemies: &[HumanHandle],
-    bow_targets: impl IntoIterator<Item = HumanHandle>,
-) {
-    multiplicity.clear();
-    for &enemy in enemies {
-        multiplicity.insert(enemy, 0);
-    }
-    for target in bow_targets {
-        increment_battle_target_multiplicity(multiplicity, target);
-    }
-}
-
-/// Return the live primary-target claim used by battle decisions' friend
-/// scan. This is deliberately independent of both the friend's swordfight
-/// opponent list and any earlier enemy-attack target recorded during the
-/// same owner pass: later AI work can retarget the primary target while the
-/// melee opponent remains unchanged.
-fn battle_friend_primary_target(
-    state: AiState,
-    primary_target: Option<AiEntityHandle>,
-) -> Option<HumanHandle> {
-    (state == AiState::Attacking)
-        .then_some(primary_target)
-        .flatten()
-        .map(AiEntityHandle::get)
-}
-
 impl EnemyAi {
     pub(crate) fn battle_predecision_from_points(
         &self,
+        profiles: &crate::profiles::ProfileManager,
         sim: &SimulationContext,
         us_points: u16,
         enemies: u16,
@@ -159,10 +70,10 @@ impl EnemyAi {
         if life_points < max_life_points {
             odds = (i32::from(odds) * i32::from(life_points) / i32::from(max_life_points)) as i16;
         }
-        if self.get_rank() == ProfileRank::Soldier && there_is_an_officer {
+        if self.get_rank(profiles) == ProfileRank::Soldier && there_is_an_officer {
             odds = (i32::from(odds) * combat::OFFICER_ODDS_BONUS) as i16;
         }
-        let courage = self.get_courage();
+        let courage = self.get_courage(profiles);
         if i32::from(odds) < (50 - i32::from(courage) / 2)
             && crate::sim_rng::u16(sim, crate::sim_rng::RngSite::BattleCourage, 0..100) > courage
         {
@@ -359,88 +270,6 @@ fn battle_target_multiplicity_stacks_duplicate_friend_claims_as_uword() {
 
     assert_eq!(multiplicity[&174], 0);
 }
-
-#[test]
-fn appended_battle_target_retains_global_multiplicity_after_personal_reset() {
-    // Battle planning resets only the target already in its personal enemy
-    // list. A target appended by a nearby friend keeps the shared counter.
-    let mut decision = std::collections::BTreeMap::from([(343, 0)]);
-    let global = std::collections::BTreeMap::from([(343, 4), (345, 1)]);
-
-    seed_appended_battle_target_multiplicity(&mut decision, 343, &global);
-    seed_appended_battle_target_multiplicity(&mut decision, 345, &global);
-
-    assert_eq!(decision[&343], 0, "personal target stays reset");
-    assert_eq!(decision[&345], 1, "appended target retains shared count");
-
-    increment_battle_target_multiplicity(&mut decision, 345);
-    assert_eq!(decision[&345], 2, "a live friend claim still stacks");
-}
-
-#[test]
-fn appended_battle_target_observes_an_earlier_owners_serial_reset() {
-    // Task #146: S131 resets PC101's shared 16-bit value before S178 appends that
-    // target in a later owner slot. Re-deriving occupancy from live fighter
-    // states would resurrect the stale claim and count it twice.
-    let mut shared = std::collections::BTreeMap::from([(101, 1)]);
-    shared.insert(101, 0);
-
-    let mut later_decision = std::collections::BTreeMap::from([(100, 0)]);
-    seed_appended_battle_target_multiplicity(&mut later_decision, 101, &shared);
-    increment_battle_target_multiplicity(&mut later_decision, 101);
-    increment_battle_target_multiplicity(&mut shared, 101);
-
-    assert_eq!(later_decision[&101], 1);
-    assert_eq!(shared[&101], 1, "later owners retain the serial mutation");
-}
-
-#[test]
-fn failed_shot_proposal_resets_melee_multiplicity_before_observe_fallback() {
-    // Task #134: two swordfighters claimed target 174 during
-    // battle planning, but the archer's shot-target proposal reset the shared
-    // counters before returning no shot. The ensuing Observe selector must
-    // therefore see zero melee claims (plus only any live bow claims).
-    let mut decision = std::collections::BTreeMap::from([(172, 1), (171, 0), (174, 2)]);
-
-    rebuild_battle_target_multiplicity_for_shot(&mut decision, &[172, 171, 174], []);
-
-    assert_eq!(
-        decision,
-        std::collections::BTreeMap::from([(171, 0), (172, 0), (174, 0)])
-    );
-
-    rebuild_battle_target_multiplicity_for_shot(&mut decision, &[172, 171, 174], [171, 171]);
-    assert_eq!(decision[&171], 2, "bow claims are rebuilt after the reset");
-    assert_eq!(decision[&174], 0, "stale melee claims remain cleared");
-}
-
-#[test]
-fn battle_friend_claim_uses_primary_target_not_swordfight_opponent() {
-    // Task #61/#134 control: both friends still had PC174 in their melee
-    // opponent lists, while their live AI primary target had retargeted to
-    // PC173. An earlier same-frame attack on enemy 174 must not
-    // overwrite the later primary-target value used by battle decisions.
-    let swordfight_opponent = 174;
-    let stale_attack_enemy_claim = swordfight_opponent;
-    let live_primary_target = 173;
-    let mut multiplicity =
-        std::collections::BTreeMap::from([(live_primary_target, 0), (swordfight_opponent, 0)]);
-
-    for _ in 0..2 {
-        let target = battle_friend_primary_target(
-            AiState::Attacking,
-            Some(AiEntityHandle::new(live_primary_target)),
-        )
-        .expect("attacking friend has a live primary target");
-        assert_ne!(target, stale_attack_enemy_claim);
-        increment_battle_target_multiplicity(&mut multiplicity, target);
-    }
-
-    assert_eq!(multiplicity[&live_primary_target], 2);
-    assert_eq!(multiplicity[&swordfight_opponent], 0);
-}
-
-impl EnemyAi {}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 /// Decision-local aggregates handed from `battle_decisions` to the

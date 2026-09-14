@@ -15,7 +15,7 @@ fn set_test_soldier_brawl_got_hit(engine: &mut EngineInner, soldier: EntityId) {
 }
 
 #[test]
-fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
+fn completion_callback_recurses_before_returning() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     use crate::ai::{StimulusType, Substate};
@@ -23,15 +23,14 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
     let mut engine = EngineInner::new();
     let soldier = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     set_test_soldier_brawl_got_hit(&mut engine, soldier);
-    engine
-        .get_entity_mut(soldier)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .fire_self_stimulus(StimulusType::EventDone);
 
     let assets = engine.test_runtime_assets();
-    engine.drain_pending_self_stimuli(sim, &assets);
+    engine.execute_ai_callback(
+        sim,
+        &assets,
+        soldier,
+        &crate::ai::Stimulus::new(StimulusType::EventDone),
+    );
 
     let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
     assert_eq!(
@@ -39,11 +38,6 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
         Substate::WonderingWatchingForMoreMoney,
         "GotHit EventDone recursively fires EventDone in Recovering before the outer Think returns"
     );
-    assert!(
-        ai.outbox.reentrant.self_stimuli.is_empty(),
-        "a recursive self-stimulus must not leak into the next frame"
-    );
-    assert!(ai.outbox.actor.look_sidewards.is_none());
     assert!(
         engine.orders.sequence_manager.sequences_iter().any(|seq| {
             seq.elements.iter().any(|elem| {
@@ -58,7 +52,7 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
 }
 
 #[test]
-fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
+fn change_way_tail_finishes_before_callers_next_callback() {
     use crate::ai::{AiState, MacroOpcode, StimulusType, Substate};
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
@@ -93,29 +87,12 @@ fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
         friendly.base.macro_command = vec![MacroOpcode::ChangeWay as u8, 0, 0];
         friendly.base.number_of_remaining_macro_bytes = 3;
         friendly.fleeing_seen_enemy_counter = 5;
-        friendly
-            .base
-            .outbox
-            .reentrant
-            .self_stimuli
-            .push(StimulusType::EventGaloppLoopEnd.into());
     }
 
     let mut assets = LevelAssets::new();
     assets.navigation.hiking_paths = std::sync::Arc::new(paths);
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.run_ai_macro(sim, &assets, civilian);
-    assert_eq!(
-        engine
-            .get_entity(civilian)
-            .and_then(Entity::ai_controller)
-            .expect("test civilian retains AI")
-            .outbox
-            .reentrant
-            .self_stimuli,
-        [StimulusType::EventGaloppLoopEnd],
-        "unrelated sibling C must remain queued until explicit virtual tail B has returned"
-    );
     {
         let friendly = engine
             .get_entity(civilian)
@@ -133,7 +110,12 @@ fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
                     && line.info == StimulusType::EventGaloppLoopEnd as u16)
         );
     }
-    engine.drain_self_stimuli_for_npc(sim, civilian, &assets);
+    engine.execute_ai_callback(
+        sim,
+        &assets,
+        civilian,
+        &crate::ai::Stimulus::new(StimulusType::EventGaloppLoopEnd),
+    );
 
     let friendly = engine
         .get_entity(civilian)
@@ -146,7 +128,6 @@ fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
         !friendly.base.macro_timer_is_running,
         "the delayed opcode tail must execute its explicit second macro interruption"
     );
-    assert!(friendly.base.outbox.reentrant.self_stimuli.is_empty());
     assert_eq!(
         friendly
             .base
@@ -294,7 +275,6 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
         .get_entity(soldier)
         .and_then(Entity::ai_controller)
         .expect("test soldier retains AI");
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     assert_eq!(ai.current_substate, Substate::DefaultGotoRoute);
     assert!(!ai.macro_timer_is_running);
     assert!(
@@ -369,13 +349,21 @@ fn condolation_reenters_think_before_dispatch_returns() {
         .orders
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::LookLeft, Some(soldier)));
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(seq_id, 0);
-    engine.orders.sequence_manager.element_terminated(seq_id, 0);
     let assets = engine.test_runtime_assets();
-    engine.dispatch_condolations(sim, &assets);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        seq_id,
+        0,
+    );
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        seq_id,
+        0,
+    );
 
     let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
     assert_eq!(
@@ -383,8 +371,6 @@ fn condolation_reenters_think_before_dispatch_returns() {
         Substate::WonderingWatchingForMoreMoney,
         "state change, removal notification, and completion-event decision tick must finish before dispatch returns"
     );
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
-    assert!(ai.outbox.actor.look_sidewards.is_none());
     assert!(
         engine.orders.sequence_manager.sequences_iter().any(|seq| {
             seq.elements.iter().any(|elem| {
@@ -408,16 +394,20 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
 
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     let movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
     let movement_seq = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(movement_seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        movement_seq,
+        0,
+    );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(movement_seq, 0);
@@ -434,17 +424,23 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
         .orders
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::LookLeft, Some(owner)));
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(unrelated_seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        unrelated_seq,
+        0,
+    );
     engine.orders.sequence_manager.set_halt_pending(true);
-    engine
-        .orders
-        .sequence_manager
-        .element_interrupted(unrelated_seq, 0, CascadeFlags::NEXT_LEVEL);
+    engine.element_interrupted(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        unrelated_seq,
+        0,
+        CascadeFlags::NEXT_LEVEL,
+    );
     engine.orders.sequence_manager.set_halt_pending(false);
-    engine.dispatch_condolations(sim, &LevelAssets::new());
 
     let entity = engine.get_entity(owner).unwrap();
     assert_eq!(
@@ -458,12 +454,15 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
     );
 
     engine.orders.sequence_manager.set_halt_pending(true);
-    engine
-        .orders
-        .sequence_manager
-        .element_interrupted(movement_seq, 0, CascadeFlags::NEXT_LEVEL);
+    engine.element_interrupted(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        movement_seq,
+        0,
+        CascadeFlags::NEXT_LEVEL,
+    );
     engine.orders.sequence_manager.set_halt_pending(false);
-    engine.dispatch_condolations(sim, &LevelAssets::new());
 
     let entity = engine.get_entity(owner).unwrap();
     assert_eq!(
@@ -486,6 +485,7 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
     use crate::sequence::SequenceElement;
 
     let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::OnWall));
     engine
@@ -508,15 +508,17 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
         .orders
         .sequence_manager
         .begin_instruct_callback(owner, sequence, 0);
-    engine
-        .orders
-        .sequence_manager
-        .element_terminated(sequence, 0);
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     engine
         .orders
         .sequence_manager
         .end_instruct_callback(owner, sequence, 0);
-    engine.dispatch_condolations(&sim, &LevelAssets::new());
 
     assert_eq!(
         engine
@@ -530,7 +532,7 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
 }
 
 #[test]
-fn delayed_selected_movement_card_clears_goal_after_wait_is_selected() {
+fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};
     use crate::movement::ActiveMovement;
@@ -538,6 +540,7 @@ fn delayed_selected_movement_card_clears_goal_after_wait_is_selected() {
     use crate::sequence::{CascadeFlags, SequenceElement, SequencePriority};
 
     let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let goal = MapPoint::new(536.9613, 447.9872);
@@ -545,10 +548,13 @@ fn delayed_selected_movement_card_clears_goal_after_wait_is_selected() {
     let movement =
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
     let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(movement_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        movement_sequence,
+        0,
+    );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.actor_data_mut().unwrap().active_movement =
@@ -556,23 +562,33 @@ fn delayed_selected_movement_card_clears_goal_after_wait_is_selected() {
         entity.position_iface_mut().set_map_goal(goal);
     }
 
-    // State change snapshots that this was the selected element, but Rust queues
-    // the condolence instead of invoking it recursively. A later actor slot
-    // can install Wait before the queue is drained.
-    engine.orders.sequence_manager.element_interrupted(
+    // Interruption closes the selected movement before its caller selects Wait.
+    engine.element_interrupted(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
         movement_sequence,
         0,
         CascadeFlags::NEXT_LEVEL,
     );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        MapPoint::ZERO
+    );
     let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
     wait.priority = SequencePriority::Wait;
     let wait_sequence = engine.orders.sequence_manager.launch_element(wait);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(wait_sequence, 0);
-
-    engine.dispatch_condolations(&sim, &LevelAssets::new());
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        wait_sequence,
+        0,
+    );
 
     assert_eq!(
         engine
@@ -581,7 +597,7 @@ fn delayed_selected_movement_card_clears_goal_after_wait_is_selected() {
             .position_iface()
             .map_goal(),
         MapPoint::ZERO,
-        "terminal-time selected identity must survive delayed card dispatch"
+        "selecting Wait must preserve the completed movement cleanup"
     );
     assert_eq!(
         engine
@@ -589,7 +605,7 @@ fn delayed_selected_movement_card_clears_goal_after_wait_is_selected() {
             .sequence_manager
             .current_element_for_actor(owner),
         Some((wait_sequence, 0)),
-        "delayed cleanup must not detach the newly selected Wait"
+        "the caller's subsequent Wait remains selected"
     );
 }
 
@@ -601,6 +617,7 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
     use crate::order::{Order, OrderType};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let goal = MapPoint::new(1183.0403, 743.6907);
@@ -615,10 +632,13 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
         engine.orders.allocate_order_id(),
     ));
     let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(movement_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        movement_sequence,
+        0,
+    );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.actor_data_mut().unwrap().active_movement =
@@ -629,7 +649,13 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
     // Preference-priority actor stopping rewrites Walking to the stopping transition but
     // deliberately keeps the selected movement alive. The stronger attentive
     // command then POSTPONE_CURRENTs it without a condolence card.
-    engine.stop_owner(owner, SequencePriority::Preference);
+    engine.stop_actor_orders(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        SequencePriority::Preference,
+    );
     engine.set_soldier_attentive_mode(owner, true, false);
     // The attentive element is only registered here; drive the manager
     // update so its deferred instruction performs the POSTPONE_CURRENT.
@@ -667,6 +693,7 @@ fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
     use crate::sequence::SequenceElement;
 
     let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let goal = MapPoint::new(70.0, 80.0);
@@ -674,10 +701,13 @@ fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
     let movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
     let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(movement_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        movement_sequence,
+        0,
+    );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.actor_data_mut().unwrap().active_movement =
@@ -689,11 +719,13 @@ fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
     let sibling_sequence = engine.orders.sequence_manager.launch_element(sibling);
     // The player speech override terminates before delegating to actor instruction handling,
     // so it never replaces the selected movement pointer.
-    engine
-        .orders
-        .sequence_manager
-        .element_terminated(sibling_sequence, 0);
-    engine.dispatch_condolations(&sim, &LevelAssets::new());
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sibling_sequence,
+        0,
+    );
 
     assert_eq!(
         engine
@@ -712,16 +744,20 @@ fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
     use crate::order::OrderType;
     use crate::sequence::{Sequence, SequenceElement, SequencePriority, SequenceState};
 
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::SimulatingBeggar));
 
     let mut leave_beggar = SequenceElement::new(1, Command::LeaveBeggar, Some(owner));
     leave_beggar.priority = SequencePriority::NonInterruptable;
     let blocker = engine.orders.sequence_manager.launch_element(leave_beggar);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(blocker, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        blocker,
+        0,
+    );
 
     let mut sequence = Sequence::new();
     sequence.append_element(SequenceElement::new_movement(
@@ -738,8 +774,20 @@ fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
     sequence.append_element(SequenceElement::new(2, Command::EnterBeggar, Some(owner)));
     let movement = engine.launch_sequence(sequence);
 
-    assert!(engine.non_interruptable_guard(owner, movement, 0));
-    assert!(engine.non_interruptable_guard(owner, movement, 1));
+    assert!(engine.non_interruptable_guard(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+        movement,
+        0
+    ));
+    assert!(engine.non_interruptable_guard(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+        movement,
+        1
+    ));
 
     let sequence = engine
         .orders
@@ -764,6 +812,7 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
     use crate::sequence::{CascadeFlags, SequenceElement};
 
     let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let goal = MapPoint::new(1004.836, 1774.2802);
@@ -771,10 +820,13 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
     let movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
     let movement_seq = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(movement_seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        movement_seq,
+        0,
+    );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(movement_seq, 0);
@@ -793,11 +845,15 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
         .orders
         .sequence_manager
         .begin_instruct_callback(owner, incoming_seq, 0);
-    engine
-        .orders
-        .sequence_manager
-        .element_interrupted(movement_seq, 0, CascadeFlags::NEXT_LEVEL);
-    engine.dispatch_condolations(&sim, &LevelAssets::new());
+    engine.element_interrupted(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        movement_seq,
+        0,
+        CascadeFlags::NEXT_LEVEL,
+    );
+
     engine
         .orders
         .sequence_manager
@@ -823,27 +879,34 @@ fn halt_condolation_does_not_instruct_a_registered_replacement_move() {
     use crate::sequence::{CascadeFlags, SequenceElement};
 
     let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let outgoing =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
     let outgoing_seq = engine.orders.sequence_manager.launch_element(outgoing);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(outgoing_seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        outgoing_seq,
+        0,
+    );
 
     let replacement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
     let replacement_seq = engine.orders.sequence_manager.launch_element(replacement);
 
     engine.orders.sequence_manager.set_halt_pending(true);
-    engine
-        .orders
-        .sequence_manager
-        .element_interrupted(outgoing_seq, 0, CascadeFlags::NEXT_LEVEL);
+    engine.element_interrupted(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        outgoing_seq,
+        0,
+        CascadeFlags::NEXT_LEVEL,
+    );
     engine.orders.sequence_manager.set_halt_pending(false);
-    engine.dispatch_condolations(&sim, &LevelAssets::new());
 
     assert!(
         engine
@@ -876,16 +939,21 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
 
     let initial = engine.orders.sequence_manager.hourglass();
     assert_eq!(initial.len(), 1);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(parent_id, 0);
-    engine
-        .orders
-        .sequence_manager
-        .element_terminated(parent_id, 0);
     let assets = engine.test_runtime_assets();
-    engine.dispatch_condolations(sim, &assets);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        parent_id,
+        0,
+    );
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        parent_id,
+        0,
+    );
 
     let commands: Vec<_> = engine
         .orders
@@ -944,6 +1012,7 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
     use crate::element::Command;
     use crate::sequence::{CascadeFlags, Sequence, SequenceElement, SequenceState};
 
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let first = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let second = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
@@ -971,11 +1040,14 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
     ));
     let seq_id = engine.orders.sequence_manager.launch_sequence(seq);
 
-    engine
-        .orders
-        .sequence_manager
-        .element_interrupted(seq_id, 0, CascadeFlags::NEXT_LEVEL);
-    engine.dispatch_condolations(sim, &LevelAssets::new());
+    engine.element_interrupted(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        seq_id,
+        0,
+        CascadeFlags::NEXT_LEVEL,
+    );
 
     for (idx, owner) in [(1, second), (2, third)] {
         assert_eq!(
@@ -997,13 +1069,6 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
             "cross-owner notification {idx} must run inside the originating state-change cascade"
         );
     }
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .drain_pending_condolations()
-            .is_empty()
-    );
 }
 
 #[test]
@@ -1013,6 +1078,7 @@ fn condolation_ready_executes_immediate_timer_successor_inline() {
 
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
 
@@ -1034,18 +1100,22 @@ fn condolation_ready_executes_immediate_timer_successor_inline() {
     // the continuation of state change after removal notification returns.
     engine.orders.sequence_manager.set_halt_pending(true);
     for element_index in 0..3 {
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence_id, element_index);
-        engine
-            .orders
-            .sequence_manager
-            .element_terminated(sequence_id, element_index);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence_id,
+            element_index,
+        );
+        engine.element_terminated(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence_id,
+            element_index,
+        );
     }
     engine.orders.sequence_manager.set_halt_pending(false);
-
-    engine.dispatch_condolations(sim, &LevelAssets::new());
 
     assert_eq!(engine.orders.timer_elements.len(), 1);
     assert_eq!(engine.orders.timer_elements[0].remaining, 12);

@@ -168,51 +168,6 @@ impl ActiveShot {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  Sweep strike state
-// ═══════════════════════════════════════════════════════════════════
-
-/// Per-frame sweep strike state for lateral/circle sword strikes.
-///
-/// Tracks the angular sweep: each frame the current angle advances by
-/// `rotation_per_frame`, and pending victims whose direction from the
-/// attacker falls within the swept arc receive damage.
-#[derive(
-    Debug,
-    Clone,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct SweepState {
-    /// Entities not yet hit by the sweep.
-    pub pending_victims: Vec<crate::element::EntityId>,
-    /// Initial sweep angle (radians).
-    pub initial_angle: f32,
-    /// Current sweep angle (radians) — advances each frame.
-    pub current_angle: f32,
-    /// Final sweep angle (radians).
-    pub final_angle: f32,
-    /// How much to rotate per frame (radians), signed by direction.
-    pub rotation_per_frame: f32,
-    /// Strike direction (determines sweep direction).
-    pub direction: crate::profiles::WeaponThrustDirection,
-    /// The strike type for damage application.
-    pub strike: crate::weapons::SwordStrike,
-    /// Attacker's weapon profile index for damage calculation.
-    pub attacker_profile_idx: Option<u32>,
-    /// Resolved gesture tier for the strike that owns this sweep. Keeping it
-    /// on the serialized sweep prevents a save at the action point from
-    /// restoring authored damage instead of the player's reduced damage.
-    pub gesture_quality: crate::player_command::GestureQuality,
-    /// The thrust kind — TrueCircle/FalseCircle need extended duration
-    /// and per-frame attacker rotation.
-    pub strike_kind: crate::profiles::WeaponThrustKind,
-}
-
-// ═══════════════════════════════════════════════════════════════════
 //  Active ability tracking
 // ═══════════════════════════════════════════════════════════════════
 
@@ -878,36 +833,6 @@ mod tests {
 
         am.clear();
         assert!(!am.is_active());
-    }
-
-    #[test]
-    fn sweep_gesture_quality_survives_snapshot_formats() {
-        let sweep = SweepState {
-            gesture_quality: crate::player_command::GestureQuality::GOOD,
-            ..Default::default()
-        };
-        let json = serde_json::to_value(&sweep).expect("serialize sweep");
-        let decoded: SweepState = serde_json::from_value(json).expect("deserialize sweep");
-        assert_eq!(
-            decoded.gesture_quality,
-            crate::player_command::GestureQuality::GOOD
-        );
-        let wire = bitcode::encode(&sweep);
-        let decoded: SweepState = bitcode::decode(&wire).expect("decode sweep snapshot");
-        assert_eq!(
-            decoded.gesture_quality,
-            crate::player_command::GestureQuality::GOOD
-        );
-
-        let mut pre_gesture = serde_json::to_value(&sweep).expect("serialize legacy sweep");
-        pre_gesture
-            .as_object_mut()
-            .expect("sweep object")
-            .remove("gesture_quality");
-        assert!(
-            serde_json::from_value::<SweepState>(pre_gesture).is_err(),
-            "a native sweep without gesture quality must not enter the current schema"
-        );
     }
 
     #[test]

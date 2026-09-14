@@ -401,16 +401,22 @@ fn interrupted_mid_grab_installs_wait_without_executing_the_dropped_body() {
         order_id,
     ));
     let take_sequence = engine.orders.sequence_manager.launch_element(take);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(take_sequence, 0);
-    engine
-        .orders
-        .sequence_manager
-        .element_interrupted(take_sequence, 0, CascadeFlags::NEXT_LEVEL);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        take_sequence,
+        0,
+    );
+    engine.element_interrupted(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        take_sequence,
+        0,
+        CascadeFlags::NEXT_LEVEL,
+    );
     let sim = crate::sim_rng::test_context();
-    engine.dispatch_condolations(&sim, &LevelAssets::new());
 
     let body_entity = engine.get_entity(body).unwrap();
     assert_eq!(body_entity.element_data().position_map(), carrier_position);
@@ -543,10 +549,13 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
         NonZeroU32::new(779).unwrap(),
     ));
     let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(movement_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        movement_sequence,
+        0,
+    );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
@@ -554,7 +563,7 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
             ActiveMovement::new(movement_sequence, 0);
         entity.position_iface_mut().set_map_goal(old_goal);
     }
-    engine.halt_actor(owner);
+    engine.halt_actor(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
     engine.duty_go_to(
         &sim,
         &assets,
@@ -613,10 +622,13 @@ fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm(
     let order_id = order.order_id;
     element.orders.push_back(order);
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -624,7 +636,7 @@ fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm(
         .unwrap()
         .execution_frozen = true;
 
-    let (_, outcomes, result) = engine.tick_actor_animation_for(
+    let result = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
@@ -634,7 +646,6 @@ fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm(
     assert_eq!(result.entry_elem_idx, 0);
     assert_eq!(result.order_type, OrderType::WaitingUpright);
     assert_eq!(result.motion, crate::sprite::MotionState::InProgress);
-    assert!(outcomes.seq_advance.is_empty());
     assert_ne!(
         engine
             .get_entity(owner)
@@ -661,10 +672,13 @@ fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_e
     let order_id = order.order_id;
     element.orders.push_back(order);
     let seq_id = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(seq_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        seq_id,
+        0,
+    );
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -799,7 +813,13 @@ fn injury_postponement_rebuilds_eat_with_a_fresh_ability_identity() {
             .state,
         SequenceState::InProgress
     );
-    engine.orders.sequence_manager.element_terminated(injury, 0);
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        injury,
+        0,
+    );
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     let resumed = engine
@@ -897,7 +917,13 @@ fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
     let order_id = order.order_id;
     element.orders.push_back(order);
     let seq = engine.orders.sequence_manager.launch_element(element);
-    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        seq,
+        0,
+    );
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -1040,7 +1066,13 @@ fn translate_pay_without_facing_or_speech(
         ),
         crate::abilities::BeginResult::Started
     );
-    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        seq,
+        0,
+    );
     assert_eq!(
         engine
             .get_entity(pc)
@@ -1521,7 +1553,13 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
     let order = Order::test_new(OrderType::SimulatingBeggar, 0.0, 0.0);
     element.orders.push_back(order);
     let seq = engine.orders.sequence_manager.launch_element(element);
-    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        seq,
+        0,
+    );
     engine
         .get_entity_mut(beggar)
         .unwrap()
@@ -1919,7 +1957,14 @@ fn listen_done_wait_survives_same_frame_reselection(fx: &mut LeaveListenFixture)
         ),
         "Listen DONE Wait must remain live before terminal advance"
     );
-    engine.select_pc(assets, 0, owner, false, false);
+    engine.select_pc(
+        &crate::sim_rng::test_context(),
+        assets,
+        0,
+        owner,
+        false,
+        false,
+    );
     let listen_done_waits_after_reselection: Vec<_> = engine
         .orders
         .sequence_manager

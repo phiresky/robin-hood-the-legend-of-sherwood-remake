@@ -1051,11 +1051,20 @@ impl LiftRuntimeState {
 /// deep copy. The fields directly on this struct are the runtime
 /// per-element mutable flags + sparse overlays (cheap to clone, and
 /// what `EngineSnapshot` actually carries).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct FastFindGrid {
     /// Static level-loaded grid data, shared with rollback snapshots.
     #[serde(skip)]
     #[state_hash(skip)]
+    #[bitcode(skip)]
     pub level: std::sync::Arc<LevelGrid>,
 
     // ── Runtime per-element flags ──
@@ -1083,45 +1092,11 @@ pub struct FastFindGrid {
     pub sector_type_overlay: std::collections::BTreeMap<u32, crate::sector::SectorType>,
 }
 
-#[derive(Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub struct FastFindGridSnapshot {
-    line_active: Vec<bool>,
-    sector_active: Vec<bool>,
-    mask_active: Vec<bool>,
-    lift_state: std::collections::BTreeMap<u32, LiftRuntimeState>,
-    sector_type_overlay: std::collections::BTreeMap<u32, crate::sector::SectorType>,
-}
-
-impl FastFindGridSnapshot {
-    pub(crate) fn capture(value: &FastFindGrid) -> Self {
-        let FastFindGrid {
-            level: _,
-            line_active: _,
-            sector_active: _,
-            mask_active: _,
-            lift_state: _,
-            sector_type_overlay: _,
-        } = value;
-        <FastFindGrid as crate::bitcode_adapters::NativeBitcode>::to_wire(value)
-    }
-
-    pub(crate) fn into_runtime(self) -> FastFindGrid {
-        FastFindGrid {
+impl FastFindGrid {
+    /// Own the mutable grid state while leaving level geometry detached.
+    pub(crate) fn persisted_clone(&self) -> Self {
+        Self {
             level: std::sync::Arc::new(LevelGrid::default()),
-            line_active: self.line_active,
-            sector_active: self.sector_active,
-            mask_active: self.mask_active,
-            lift_state: self.lift_state,
-            sector_type_overlay: self.sector_type_overlay,
-        }
-    }
-}
-
-impl crate::bitcode_adapters::NativeBitcode for FastFindGrid {
-    type Wire = FastFindGridSnapshot;
-
-    fn to_wire(&self) -> Self::Wire {
-        FastFindGridSnapshot {
             line_active: self.line_active.clone(),
             sector_active: self.sector_active.clone(),
             mask_active: self.mask_active.clone(),
@@ -1129,20 +1104,7 @@ impl crate::bitcode_adapters::NativeBitcode for FastFindGrid {
             sector_type_overlay: self.sector_type_overlay.clone(),
         }
     }
-
-    fn from_wire(snapshot: Self::Wire) -> Self {
-        Self {
-            level: std::sync::Arc::new(LevelGrid::default()),
-            line_active: snapshot.line_active,
-            sector_active: snapshot.sector_active,
-            mask_active: snapshot.mask_active,
-            lift_state: snapshot.lift_state,
-            sector_type_overlay: snapshot.sector_type_overlay,
-        }
-    }
 }
-
-crate::bitcode_adapters::impl_native_bitcode!(FastFindGrid);
 
 impl Default for FastFindGrid {
     fn default() -> Self {

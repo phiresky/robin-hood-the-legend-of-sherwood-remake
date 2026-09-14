@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, TryLockError};
 
 use mlua::Lua;
-use robin_engine::natives::{NativeSessionCapabilities, ScriptEffects, ScriptState};
+use robin_engine::natives::{NativeSessionCapabilities, ScriptState};
 
 use crate::natives::{AttachedNativeCall, NativeCallSession};
 
@@ -240,7 +240,7 @@ impl MissionLuaState {
         self.natives_registered = true;
     }
 
-    /// Run `f` with the engine's [`ScriptEffects`] attached as Lua app
+    /// Run `f` with the engine's native capabilities attached as Lua app
     /// data. All registered natives can reach into the host while
     /// `f` is on the stack; once `f` returns, the pointer is
     /// removed so a stray Lua coroutine resumed later can't see
@@ -254,27 +254,24 @@ impl MissionLuaState {
     /// unwind paths.
     pub fn with_host<R>(
         &self,
-        host: &mut ScriptEffects,
         script_domains: &mut robin_engine::engine::ScriptDomains,
-        capabilities: &NativeSessionCapabilities<'_>,
+        capabilities: &mut NativeSessionCapabilities<'_>,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         let mut script_state = ScriptState::default();
-        self.with_host_and_state(host, &mut script_state, script_domains, capabilities, f)
+        self.with_host_and_state(&mut script_state, script_domains, capabilities, f)
     }
 
     /// Variant used by mission execution, where script-owned state must
     /// persist across Lua events alongside the SCB VMs.
     pub fn with_host_and_state<R>(
         &self,
-        host: &mut ScriptEffects,
         script_state: &mut ScriptState,
         script_domains: &mut robin_engine::engine::ScriptDomains,
-        capabilities: &NativeSessionCapabilities<'_>,
+        capabilities: &mut NativeSessionCapabilities<'_>,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         self.with_host_state_and_bindings(
-            host,
             script_state,
             script_domains,
             robin_engine::natives::AttachedScriptBindings::empty_ref(),
@@ -285,16 +282,15 @@ impl MissionLuaState {
 
     pub fn with_host_state_and_bindings<R>(
         &self,
-        host: &mut ScriptEffects,
         script_state: &mut ScriptState,
         script_domains: &mut robin_engine::engine::ScriptDomains,
         bindings: &robin_engine::natives::AttachedScriptBindings,
-        capabilities: &NativeSessionCapabilities<'_>,
+        capabilities: &mut NativeSessionCapabilities<'_>,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         self.reset_execution_budget();
         let mut session =
-            NativeCallSession::new(host, script_state, script_domains, bindings, capabilities);
+            NativeCallSession::new(script_state, script_domains, bindings, capabilities);
         let _attachment =
             NativeCallAttachment::attach(&self.lua, &self.native_call_scope_gate, &mut session)?;
         f(&self.lua)
@@ -587,14 +583,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let take5 = |seed: u64| {
             let state = MissionLuaState::new(dir.path()).unwrap();
-            let mut host = ScriptEffects::new();
             let mut script_domains = robin_engine::engine::ScriptDomains::default();
             let mut entities = robin_engine::entities::Entities::new();
             let mut ai_global = robin_engine::ai::AiGlobalState::default();
             let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
             let simulation = robin_engine::sim_rng::SimulationContext::with_seed(seed);
             let mut native_globals = Vec::new();
-            let capabilities = NativeSessionCapabilities::new(
+            let mut capabilities = NativeSessionCapabilities::new(
                 &simulation,
                 &mut entities,
                 &mut ai_global,
@@ -602,7 +597,7 @@ mod tests {
                 &mut native_globals,
             );
             state
-                .with_host(&mut host, &mut script_domains, &capabilities, |lua| {
+                .with_host(&mut script_domains, &mut capabilities, |lua| {
                     (0..5)
                         .map(|_| lua.load("return math.random(1, 1000000)").eval::<i64>())
                         .collect::<mlua::Result<Vec<_>>>()
@@ -625,14 +620,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let roll = |source: &str| {
             let state = MissionLuaState::new(dir.path()).unwrap();
-            let mut host = ScriptEffects::new();
             let mut script_domains = robin_engine::engine::ScriptDomains::default();
             let mut entities = robin_engine::entities::Entities::new();
             let mut ai_global = robin_engine::ai::AiGlobalState::default();
             let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
             let simulation = robin_engine::sim_rng::SimulationContext::with_seed(7);
             let mut native_globals = Vec::new();
-            let capabilities = NativeSessionCapabilities::new(
+            let mut capabilities = NativeSessionCapabilities::new(
                 &simulation,
                 &mut entities,
                 &mut ai_global,
@@ -640,7 +634,7 @@ mod tests {
                 &mut native_globals,
             );
             state
-                .with_host(&mut host, &mut script_domains, &capabilities, |lua| {
+                .with_host(&mut script_domains, &mut capabilities, |lua| {
                     lua.load(source).eval::<i64>()
                 })
                 .unwrap()

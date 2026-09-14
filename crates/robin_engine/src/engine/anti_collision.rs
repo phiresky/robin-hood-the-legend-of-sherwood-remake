@@ -10,7 +10,7 @@ use crate::ai::RepulsivePoint as StaticRepulsivePoint;
 use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBox, MoveBoxHalfDiagonal};
 use crate::element::{Entity, EntityId};
 use crate::element_kinds::{ElementKind, Posture};
-use crate::entities::{Entities, EntitySlots};
+use crate::entities::EntityNeighbours;
 use crate::fast_find_grid::FastFindGrid;
 use crate::position_interface::{RADIUS_GUY, compute_deviated_future};
 use crate::profiles::ProfileManager;
@@ -55,142 +55,40 @@ pub(super) fn goal_owner_anti_debug_frame(mover: EntityId) -> Option<u32> {
         .then_some(frame)
 }
 
-/// Snapshot of everything the anti-collision pre-pass needs from a
-/// neighbour actor.  Captured once per tick — neighbour positions are
-/// not re-read as the mutable loop walks entities, matching the
-/// deterministic start-of-tick view the replay system relies on.
-#[derive(Debug, Clone)]
-pub struct ActorSnapshot {
+#[derive(Clone, Copy)]
+pub(super) struct CollisionWorld<'a> {
+    pub neighbours: EntityNeighbours<'a>,
+    pub profiles: &'a ProfileManager,
+}
+
+/// Inputs retained only while the mover's position interface is mutably borrowed.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct CollisionMover {
     pub id: EntityId,
     pub active: bool,
-    pub is_actor: bool,
-    pub is_human: bool,
-    pub is_ignored_for_anti_collision: bool,
-    /// Map-space position captured at the start of the anti-collision pass.
     pub position_map: MapPoint,
     pub layer: u16,
     pub sector: Option<crate::position_interface::SectorHandle>,
-    pub posture: Posture,
-    /// Element kind — used to filter static repulsive points by
-    /// their `affects_*` flags.
     pub element_kind: ElementKind,
-    /// Mover's current movement target / antagonist.  The mover
-    /// never treats its target as disturbing.
     pub target_element: Option<EntityId>,
-    /// True when the mover is actively swordfighting — drives the
-    /// corpse-skip filter.  Only meaningful when `is_human == true`.
     pub is_swordfighting: bool,
-    /// The primary repulsive point this actor contributes when
-    /// disturbed, or `None` if the actor's posture produces no
-    /// repulsive zone.
-    pub repulsive_point: Option<RepulsivePoint>,
-    /// Additional points (animal front/back).  Empty for humans and
-    /// objects — they only contribute the primary point.
-    pub extra_repulsive_points: Vec<RepulsivePoint>,
-    /// Repulsive lines (animal body-line).  Empty for everything
-    /// except upright animals.
-    pub repulsive_lines: Vec<crate::repulsive::RepulsiveLine>,
 }
 
-/// Build a snapshot array indexed by entity slot. Slots without an actor or
-/// object are filled with `None`.
-///
-/// `profile_manager` is used to look up per-entity sword / rider
-/// overrides so the right force parameters end up on each snapshot.
-pub fn snapshot_all(
-    entities: &Entities,
-    profile_manager: &ProfileManager,
-) -> EntitySlots<Option<ActorSnapshot>> {
-    let mut snapshots = EntitySlots::filled(entities.len(), None);
-    for (snapshot_id, entity) in entities.occupied() {
-        if entity.actor_data().is_none() && !entity.is_object() {
-            continue;
-        }
+impl CollisionMover {
+    pub fn new(id: EntityId, entity: &Entity) -> Self {
         let elem = entity.element_data();
-        // The original game's disturbing-element loop tests activity before it
-        // reads layer, sector, or any repulsive geometry. Loaded
-        // replaced-PC corpses can be inactive and retain the serialized
-        // no-layer sentinel, so do not eagerly inspect state the original
-        // short-circuit never reaches.
-        if !elem.active {
-            continue;
-        }
-        let is_actor = entity.is_actor();
-        let Some(layer) = elem.optional_layer() else {
-            // Original compares the raw 0xffff "no layer" value against the
-            // moving actor's real layer before asking an object for repulsive
-            // geometry. In-flight
-            // projectiles legitimately remain active while carrying that
-            // sentinel, so they cannot disturb a placed actor and need no
-            // snapshot. A live actor without a layer is not a supported
-            // boundary state: it could itself become the anti-collision mover.
-            assert!(
-                !is_actor,
-                "active actor {snapshot_id:?} has no layer during anti-collision snapshot"
-            );
-            continue;
-        };
-        let actor = entity.actor_data();
-        // Sprite motion copies the current order's antagonist into
-        // the position interface's target element whenever a motion order starts.
-        // Intermediate path orders deliberately have no antagonist, even
-        // though the owning Seek element and ActorData still retain their
-        // eventual target. Using either persistent value here makes actors
-        // ignore that target for the entire path instead of only on the final
-        // approach order.
-        let target_element = entity.position_iface().target_element();
-        snapshots[snapshot_id] = Some(ActorSnapshot {
-            id: snapshot_id,
+        Self {
+            id,
             active: elem.active,
-            is_actor,
-            is_human: entity.is_human(),
-            is_ignored_for_anti_collision: actor
-                .map(|a| a.is_ignored_for_anti_collision)
-                .unwrap_or(false),
             position_map: elem.position_map(),
-            layer: layer.get(),
+            layer: elem.optional_layer().map_or(u16::MAX, |layer| layer.get()),
             sector: elem.sector(),
-            posture: elem.posture(),
             element_kind: elem.kind,
-            // Prefer the live seek target, then fall back to the
-            // active movement element's antagonist/target field.
-            // For combat / pickup movements this is the opponent
-            // / item the actor is closing on — the "don't repel
-            // my target" rule applies to it.
-            target_element,
+            target_element: entity.position_iface().target_element(),
             is_swordfighting: entity
                 .human_data()
-                .map(|h| !h.opponents.is_empty())
-                .unwrap_or(false),
-            repulsive_point: entity_repulsive_point(entity, profile_manager),
-            extra_repulsive_points: entity_extra_repulsive_points(entity),
-            repulsive_lines: entity_repulsive_lines(entity),
-        });
-    }
-    snapshots
-}
-
-/// Update a cached actor snapshot after its movement step is committed.
-/// Later actors in the same serial movement pass must see the moved
-/// footprint, including animal offset points and body lines.
-pub fn sync_snapshot_after_move(
-    snapshot: &mut ActorSnapshot,
-    new_position: MapPoint,
-    movement: MapVec,
-) {
-    snapshot.position_map = new_position;
-    if let Some(point) = snapshot.repulsive_point.as_mut() {
-        point.position = new_position;
-    }
-    for point in &mut snapshot.extra_repulsive_points {
-        point.position.x += movement.x;
-        point.position.y += movement.y;
-    }
-    for line in &mut snapshot.repulsive_lines {
-        line.a.x += movement.x;
-        line.a.y += movement.y;
-        line.b.x += movement.x;
-        line.b.y += movement.y;
+                .is_some_and(|human| !human.opponents.is_empty()),
+        }
     }
 }
 
@@ -201,8 +99,8 @@ pub fn sync_snapshot_after_move(
 ///
 /// `flags` bit layout:
 /// bit 0 = affects PCs, bit 1 = soldiers, bit 2 = civilians, bit 3 = animals.
-pub fn gather_static_repulsive_points(
-    mover: &ActorSnapshot,
+pub(super) fn gather_static_repulsive_points(
+    mover: &CollisionMover,
     static_points: &[StaticRepulsivePoint],
     box_future: &MapBBox,
 ) -> Vec<RepulsivePoint> {
@@ -251,7 +149,7 @@ pub fn gather_static_repulsive_points(
 /// For static scenery and animal-specific geometry we currently
 /// handle the common single-point case here; animals' secondary
 /// front/back points and their body line are assembled by the caller
-/// via [`entity_repulsive_lines`].
+/// from the entity when it passes the candidate filters.
 pub fn entity_repulsive_point(
     entity: &Entity,
     profile_manager: &ProfileManager,
@@ -391,13 +289,6 @@ pub fn entity_repulsive_point(
     }
 }
 
-/// Animals only ever emit a single point — there's no secondary
-/// front/back or body line in any code path, even though the engine
-/// has fields for them.  Empty for every entity.
-pub fn entity_repulsive_lines(_entity: &Entity) -> Vec<crate::repulsive::RepulsiveLine> {
-    Vec::new()
-}
-
 /// Secondary repulsive points produced by specific entity subtypes.
 /// Animals emit nothing here (single-point).  Landed nets with
 /// victims emit an outer ring in addition to the inner point.
@@ -444,41 +335,36 @@ fn direction_vector(dir: u16) -> (f32, f32) {
 /// perimeter lines are supplied separately to [`apply_anti_collision_step`]
 /// because their master elements do not occupy entity slots.
 ///
-/// `mover` is a snapshot of the actor that's about to move;
-/// `neighbours` is the full snapshot array.  `box_future` is the
-/// axis-aligned bounding box around the mover's prospective future
-/// position — neighbours outside are rejected.
+/// Neighbours are borrowed directly from the entity arena. `box_future`
+/// bounds the mover's prospective position; neighbours outside are rejected.
 ///
 /// Movement direction is passed in via `increment` (the unit vector
 /// the mover is currently heading along).  The "dot product ≥ 5"
 /// prefilter rejects neighbours that are fully behind the mover's
 /// direction of travel.
-pub fn gather_disturbing(
-    mover: &ActorSnapshot,
-    neighbours: &[Option<ActorSnapshot>],
+pub(super) fn gather_disturbing(
+    mover: &CollisionMover,
+    world: CollisionWorld<'_>,
     box_future: &MapBBox,
     increment: MapVec,
 ) -> (Vec<RepulsivePoint>, Vec<crate::repulsive::RepulsiveLine>) {
     let mut points = Vec::new();
-    let mut lines = Vec::new();
-    for slot in neighbours {
-        let other = match slot {
-            Some(o) => o,
-            None => continue,
-        };
-        if other.id == mover.id {
+    let lines = Vec::new();
+    for (other_id, other) in world.neighbours.occupied() {
+        if other_id == mover.id {
             continue;
         }
-        if !other.active {
+        let elem = other.element_data();
+        if !elem.active {
             continue;
         }
-        if other.layer != mover.layer {
+        if elem.optional_layer().map(|layer| layer.get()) != Some(mover.layer) {
             continue;
         }
         // Strict sector equality — sector handles compare directly,
         // so a sectorless mover rejects sectored neighbours and vice
         // versa.
-        if other.sector != mover.sector {
+        if elem.sector() != mover.sector {
             continue;
         }
         // Target-element filter: mover never treats its own target
@@ -486,24 +372,30 @@ pub fn gather_disturbing(
         // mount, carrying onto a corpse they'll pick up, etc. need
         // to pass through without deviation.
         if let Some(tgt) = mover.target_element
-            && tgt == other.id
+            && tgt == other_id
         {
             continue;
         }
         // Objects and actors share the ignored-for-anti-collision
         // check.
-        if other.is_ignored_for_anti_collision {
+        if other
+            .actor_data()
+            .is_some_and(|actor| actor.is_ignored_for_anti_collision)
+        {
             continue;
         }
-        let is_object = !other.is_actor;
+        if !other.is_actor() && !other.is_object() {
+            continue;
+        }
+        let is_object = other.is_object();
         if !is_object {
             // Actor-specific filters.
-            if other.position_map.x == mover.position_map.x
-                && other.position_map.y == mover.position_map.y
+            if elem.position_map().x == mover.position_map.x
+                && elem.position_map().y == mover.position_map.y
             {
                 continue;
             }
-            if other.is_human && other.posture == Posture::Carried {
+            if other.is_human() && elem.posture() == Posture::Carried {
                 continue;
             }
             // Swordfighters close on downed opponents without being
@@ -512,34 +404,32 @@ pub fn gather_disturbing(
             // DeadBack is *not* in the skip set — that looks like a
             // bug in the original game, but we preserve it so
             // behaviour matches.
-            if mover.is_human
-                && mover.is_swordfighting
+            if mover.is_swordfighting
                 && matches!(
-                    other.posture,
+                    elem.posture(),
                     Posture::Lying | Posture::Dead | Posture::StuckUnderNet
                 )
             {
                 continue;
             }
         }
-        if !box_future.contains_point(other.position_map) {
+        if !box_future.contains_point(elem.position_map()) {
             continue;
         }
         if !is_object {
             let rel = MapVec::new(
-                other.position_map.x - mover.position_map.x,
-                other.position_map.y - mover.position_map.y,
+                elem.position_map().x - mover.position_map.x,
+                elem.position_map().y - mover.position_map.y,
             );
             let dot = increment.x * rel.x + increment.y * rel.y;
             if dot < 5.0 {
                 continue;
             }
         }
-        if let Some(pt) = other.repulsive_point {
+        if let Some(pt) = entity_repulsive_point(other, world.profiles) {
             points.push(pt);
         }
-        points.extend(other.extra_repulsive_points.iter().copied());
-        lines.extend(other.repulsive_lines.iter().copied());
+        points.extend(entity_extra_repulsive_points(other));
     }
     (points, lines)
 }
@@ -593,9 +483,9 @@ impl AntiCollisionState<'_> {
 /// barge / `find_authorized_position` escape hatch fires.  When
 /// `state` is `None`, only the pure deviation math runs (for
 /// standalone call sites and unit tests).
-pub fn apply_anti_collision_step(
-    mover: &ActorSnapshot,
-    neighbours: &[Option<ActorSnapshot>],
+pub(super) fn apply_anti_collision_step(
+    mover: &CollisionMover,
+    world: CollisionWorld<'_>,
     static_points: &[StaticRepulsivePoint],
     mobile_points: &[RepulsivePoint],
     mobile_lines: &[crate::fast_find_grid::GridLine],
@@ -607,16 +497,17 @@ pub fn apply_anti_collision_step(
     speed: f32,
     anti_collision_on: bool,
 ) -> (f32, f32) {
+    let mut mover = *mover;
+    if let Some(state) = state.as_deref() {
+        mover.position_map = state.pi.map_position();
+        mover.target_element = state.pi.target_element();
+    }
+    let mover = &mover;
     let naive = (nx * speed, ny * speed);
     // Sprite motion only updates anti-collision position when the
     // owning actor is active. Inactive actors still execute scripted motion,
     // but commit the naive step without touching persistent deviation state.
     if !anti_collision_on || !mover.active {
-        return naive;
-    }
-    if mover.repulsive_point.is_none() && !mover.is_actor {
-        // Non-actors don't have their own repulsive footprint —
-        // they just stomp through.
         return naive;
     }
 
@@ -636,7 +527,7 @@ pub fn apply_anti_collision_step(
     );
 
     let increment = MapVec::new(nx, ny);
-    let (mut points, mut lines) = gather_disturbing(mover, neighbours, &box_future, increment);
+    let (mut points, mut lines) = gather_disturbing(mover, world, &box_future, increment);
     // Mobile repulsive-object lookup first rejects a mobile whose
     // complete motion sector misses boxFuture, then contributes all of that
     // mobile's repulsive objects. Released missions contain one mobile per
@@ -694,10 +585,13 @@ pub fn apply_anti_collision_step(
     }
 
     if let Some(frame) = goal_owner_anti_debug_frame(mover.id) {
-        let relevant_neighbours = neighbours
-            .iter()
-            .flatten()
-            .filter(|candidate| box_future.contains_point(candidate.position_map))
+        let relevant_neighbours = world
+            .neighbours
+            .occupied()
+            .filter(|(_, candidate)| {
+                box_future.contains_point(candidate.element_data().position_map())
+            })
+            .map(|(id, candidate)| (id, candidate.element_data().position_map()))
             .collect::<Vec<_>>();
         eprintln!(
             "[GOAL_OWNER frame={frame} owner={:?} stage=anti_gather origin_bits={:08x},{:08x} increment_bits={:08x},{:08x} speed_bits={:08x} future_bits={:08x},{:08x} goal_bits={:08x},{:08x} layer={} radius_bits={:08x} was_deviated={} blocked_count={} mobile_interferes={} neighbours={relevant_neighbours:?} points={points:?} lines={lines:?}]",
@@ -1127,6 +1021,262 @@ pub fn gather_level_repulsive_points(
 mod tests {
     use super::*;
     use crate::coordinates::map_pt;
+    use crate::element::{ActorPc, ElementData};
+    use crate::entities::Entities;
+    use crate::entity_id::PcId;
+
+    fn pc(x: f32, posture: Posture) -> Entity {
+        let mut element = ElementData::from_initial_posture(posture);
+        element.active = true;
+        element.kind = ElementKind::ActorPc;
+        element.set_layer(0);
+        element.set_sector(crate::position_interface::SectorHandle::new(1));
+        element.set_position_map(map_pt(x, 0.0));
+        Entity::Pc(ActorPc {
+            element,
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        })
+    }
+
+    fn step(entities: &mut Entities, speed: f32, anti_on: bool) -> (f32, f32) {
+        let profiles = ProfileManager::new();
+        let (entity, neighbours) = entities.split_owner(PcId(0)).unwrap();
+        let mover = CollisionMover::new(PcId(0).into(), entity);
+        apply_anti_collision_step(
+            &mover,
+            CollisionWorld {
+                neighbours,
+                profiles: &profiles,
+            },
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            speed,
+            anti_on,
+        )
+    }
+
+    #[test]
+    fn live_candidate_filters_preserve_the_straight_step() {
+        let cases: &[(&str, fn(&mut Entity, &mut Entity))] = &[
+            ("inactive", |_, other| {
+                other.element_data_mut().active = false
+            }),
+            ("different layer", |_, other| {
+                other.element_data_mut().set_layer(1)
+            }),
+            ("different sector", |_, other| {
+                other.element_data_mut().set_sector(None)
+            }),
+            ("carried", |_, other| *other = pc(8.0, Posture::Carried)),
+            ("ignored", |_, other| {
+                other
+                    .actor_data_mut()
+                    .unwrap()
+                    .is_ignored_for_anti_collision = true
+            }),
+            ("outside future box", |_, other| {
+                other
+                    .element_data_mut()
+                    .set_position_map(map_pt(200.0, 0.0))
+            }),
+            ("behind", |_, other| {
+                other.element_data_mut().set_position_map(map_pt(-8.0, 0.0))
+            }),
+            ("same position", |_, other| {
+                other.element_data_mut().set_position_map(map_pt(0.0, 0.0))
+            }),
+            ("current target", |mover, _| {
+                mover
+                    .position_iface_mut()
+                    .set_target_element(Some(PcId(1).into()))
+            }),
+            ("swordfighter corpse", |mover, other| {
+                mover
+                    .human_data_mut()
+                    .unwrap()
+                    .opponents
+                    .push(PcId(1).into());
+                *other = pc(8.0, Posture::Dead);
+            }),
+        ];
+        for (name, configure) in cases {
+            let mut mover = pc(0.0, Posture::Upright);
+            let mut other = pc(8.0, Posture::Upright);
+            configure(&mut mover, &mut other);
+            let mut entities = Entities::from_legacy_slots(vec![Some(mover), Some(other)]);
+            assert_eq!(step(&mut entities, 1.0, true), (1.0, 0.0), "{name}");
+        }
+    }
+
+    #[test]
+    fn candidate_mutations_are_visible_on_the_next_owner_borrow() {
+        let mut entities = Entities::from_legacy_slots(vec![
+            Some(pc(0.0, Posture::Upright)),
+            Some(pc(8.0, Posture::Upright)),
+        ]);
+        assert_ne!(step(&mut entities, 1.0, true), (1.0, 0.0));
+        entities
+            .get_mut(PcId(1))
+            .unwrap()
+            .element_data_mut()
+            .set_position_map(map_pt(200.0, 0.0));
+        assert_eq!(step(&mut entities, 1.0, true), (1.0, 0.0));
+        entities
+            .get_mut(PcId(1))
+            .unwrap()
+            .element_data_mut()
+            .set_position_map(map_pt(8.0, 0.0));
+        assert_ne!(step(&mut entities, 1.0, true), (1.0, 0.0));
+        assert_eq!(step(&mut entities, 1.0, false), (1.0, 0.0));
+        entities.get_mut(PcId(0)).unwrap().element_data_mut().active = false;
+        assert_eq!(step(&mut entities, 1.0, true), (1.0, 0.0));
+    }
+
+    #[test]
+    fn split_owner_preserves_candidate_slot_order_and_only_invalidates_owner() {
+        let mut entities = Entities::from_legacy_slots(vec![
+            Some(pc(10.0, Posture::Upright)),
+            None,
+            Some(pc(0.0, Posture::Upright)),
+            Some(pc(20.0, Posture::Upright)),
+        ]);
+        let profiles = ProfileManager::new();
+        let (owner, neighbours) = entities.split_owner(PcId(2)).unwrap();
+        assert_eq!(
+            neighbours.occupied().map(|(id, _)| id).collect::<Vec<_>>(),
+            vec![EntityId::Pc(PcId(0)), EntityId::Pc(PcId(3))]
+        );
+        let mover = CollisionMover::new(PcId(2).into(), owner);
+        let (points, _) = gather_disturbing(
+            &mover,
+            CollisionWorld {
+                neighbours,
+                profiles: &profiles,
+            },
+            &MapBBox::from_corners(map_pt(-60.0, -60.0), map_pt(60.0, 60.0)),
+            MapVec::new(1.0, 0.0),
+        );
+        assert_eq!(
+            points
+                .iter()
+                .map(|point| point.position)
+                .collect::<Vec<_>>(),
+            vec![map_pt(10.0, 0.0), map_pt(20.0, 0.0)]
+        );
+        assert_eq!(entities.generation(PcId(2)), 1);
+        assert_eq!(entities.generation(PcId(0)), 0);
+        assert_eq!(entities.generation(PcId(3)), 0);
+    }
+
+    #[test]
+    fn current_motion_target_overrides_stale_seek_target() {
+        let mut mover = pc(0.0, Posture::Upright);
+        mover.actor_data_mut().unwrap().seek_target = Some(PcId(1).into());
+        let mut entities =
+            Entities::from_legacy_slots(vec![Some(mover), Some(pc(8.0, Posture::Dead))]);
+        assert_ne!(step(&mut entities, 1.0, true), (1.0, 0.0));
+        entities
+            .get_mut(PcId(0))
+            .unwrap()
+            .position_iface_mut()
+            .set_target_element(Some(PcId(1).into()));
+        assert_eq!(step(&mut entities, 1.0, true), (1.0, 0.0));
+    }
+
+    #[test]
+    fn no_layer_neighbors_are_rejected_before_repulsive_geometry() {
+        let mut inactive = pc(8.0, Posture::Upright);
+        inactive.element_data_mut().active = false;
+        inactive.element_data_mut().clear_layer();
+        let mut projectile_element = ElementData::default();
+        projectile_element.active = true;
+        projectile_element.kind = ElementKind::ObjectProjectile;
+        projectile_element.clear_layer();
+        let projectile = Entity::Projectile(crate::element::ElementProjectile {
+            element: projectile_element,
+            object: crate::element::ObjectData {
+                object_type: crate::element_kinds::ObjectType::Purse,
+                ..Default::default()
+            },
+            projectile: Default::default(),
+        });
+        let mut entities = Entities::from_legacy_slots(vec![
+            Some(pc(0.0, Posture::Upright)),
+            Some(inactive),
+            Some(projectile),
+        ]);
+        assert_eq!(step(&mut entities, 1.0, true), (1.0, 0.0));
+    }
+
+    #[test]
+    fn dropped_ale_contributes_live_repulsive_geometry() {
+        let mut element = ElementData::default();
+        element.active = true;
+        element.kind = ElementKind::ObjectOther;
+        element.set_layer(0);
+        element.set_sector(crate::position_interface::SectorHandle::new(1));
+        element.set_position_map(map_pt(10.0, 0.0));
+        let ale = Entity::Bonus(crate::element::ElementBonus {
+            element,
+            object: crate::element::ObjectData {
+                object_type: crate::element_kinds::ObjectType::Ale,
+                ..Default::default()
+            },
+        });
+        let mut entities =
+            Entities::from_legacy_slots(vec![Some(pc(0.0, Posture::Upright)), Some(ale)]);
+        assert_ne!(step(&mut entities, 1.0, true), (1.0, 0.0));
+    }
+
+    #[test]
+    fn zero_step_recovers_only_when_repulsive_lists_are_empty() {
+        for disturbed in [false, true] {
+            let mut entities = Entities::from_legacy_slots(vec![
+                Some(pc(0.0, Posture::Upright)),
+                disturbed.then(|| pc(8.0, Posture::Upright)),
+            ]);
+            let profiles = ProfileManager::new();
+            let grid = FastFindGrid::default();
+            let (entity, neighbours) = entities.split_owner(PcId(0)).unwrap();
+            let mover = CollisionMover::new(PcId(0).into(), entity);
+            entity.position_iface_mut().deviated = true;
+            let mut state = AntiCollisionState {
+                pi: entity.position_iface_mut(),
+                move_box: Default::default(),
+                half_diagonal: MoveBoxHalfDiagonal::new(6.0, 4.0),
+                goal_map: map_pt(10.0, 0.0),
+            };
+            assert_eq!(
+                apply_anti_collision_step(
+                    &mover,
+                    CollisionWorld {
+                        neighbours,
+                        profiles: &profiles
+                    },
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    Some(&grid),
+                    Some(&mut state),
+                    1.0,
+                    0.0,
+                    0.0,
+                    true,
+                ),
+                (0.0, 0.0)
+            );
+            assert_eq!(state.pi.deviated, disturbed);
+        }
+    }
 
     #[test]
     fn level_repulsive_lines_preserve_area_oriented_normals() {
@@ -1144,547 +1294,6 @@ mod tests {
         let obstacle_repulsive = repulsive_line_from_grid(&obstacle);
         assert_eq!(obstacle_repulsive.normal, MapVec::new(0.0, -1.0));
         assert!(!obstacle_repulsive.is_area);
-    }
-
-    #[test]
-    fn snapshot_all_skips_inactive_no_layer_actor_before_layer_access() {
-        use crate::element::{ActorData, ActorPc, ElementData, HumanData, PcData};
-        use crate::entity_id::PcId;
-
-        let entity = Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::default();
-                initial_element.active = false;
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element
-            },
-            actor: ActorData::default(),
-            human: HumanData::default(),
-            pc: PcData::default(),
-        });
-        let entities = Entities::from_legacy_slots(vec![Some(entity)]);
-
-        let snapshots = snapshot_all(&entities, &ProfileManager::new());
-        assert!(snapshots[PcId(0)].is_none());
-    }
-
-    #[test]
-    fn snapshot_all_skips_active_no_layer_projectile_before_repulsive_geometry() {
-        use crate::element::{ElementData, ElementProjectile, ObjectData, ProjectileData};
-        use crate::element_kinds::ObjectType;
-        use crate::entity_id::ProjectileId;
-
-        let mut element = {
-            let mut initial_element = ElementData::default();
-            initial_element.active = true;
-            initial_element.kind = ElementKind::ObjectProjectile;
-            initial_element
-        };
-        element.clear_layer();
-        let entity = Entity::Projectile(ElementProjectile {
-            element,
-            object: ObjectData {
-                object_type: ObjectType::Purse,
-                ..Default::default()
-            },
-            projectile: ProjectileData::default(),
-        });
-        let entities = Entities::from_legacy_slots(vec![Some(entity)]);
-
-        let snapshots = snapshot_all(&entities, &ProfileManager::new());
-        assert!(snapshots[ProjectileId(0)].is_none());
-    }
-
-    fn snapshot_mover_and_corpse(
-        order_antagonist: Option<EntityId>,
-    ) -> (ActorSnapshot, ActorSnapshot) {
-        use crate::element::{
-            ActorData, ActorPc, ActorSoldier, ElementData, HumanData, NpcData, PcData, SoldierData,
-        };
-        use crate::entity_id::{PcId, SoldierId};
-        use crate::movement::ActiveMovement;
-        use crate::sequence::SequenceId;
-
-        let corpse_id = EntityId::Soldier(SoldierId(1));
-
-        let mut mover_element = {
-            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-            initial_element.active = true;
-            initial_element.kind = ElementKind::ActorPc;
-            initial_element
-        };
-        mover_element.set_position_map(map_pt(0.0, 0.0));
-        mover_element.set_sector(crate::position_interface::SectorHandle::new(1));
-        mover_element
-            .sprite
-            .position_iface
-            .set_target_element(order_antagonist);
-        let mover_actor = ActorData {
-            // Deliberately stale: the preceding Seek targeted this soldier,
-            // but the current sprite order is authoritative for anti-collision.
-            seek_target: Some(corpse_id),
-            // Friday cleanup can remove an interrupted movement sequence
-            // before this derived Rust latch is reconciled. Original's
-            // anti-collision reads the retained target element and
-            // never dereferences the old sequence pointer here.
-            active_movement: ActiveMovement::new(SequenceId(999), 5),
-            ..Default::default()
-        };
-
-        let mut corpse_element = {
-            let mut initial_element = ElementData::from_initial_posture(Posture::Dead);
-            initial_element.active = true;
-            initial_element.kind = ElementKind::ActorSoldier;
-            initial_element
-        };
-        corpse_element.set_position_map(map_pt(8.0, 0.0));
-        corpse_element.set_sector(crate::position_interface::SectorHandle::new(1));
-
-        let entities = Entities::from_legacy_slots(vec![
-            Some(Entity::Pc(ActorPc {
-                element: mover_element,
-                actor: mover_actor,
-                human: HumanData::default(),
-                pc: PcData::default(),
-            })),
-            Some(Entity::Soldier(ActorSoldier {
-                element: corpse_element,
-                actor: ActorData::default(),
-                human: HumanData::default(),
-                npc: NpcData::default(),
-                soldier: SoldierData::default(),
-            })),
-        ]);
-        let snapshots = snapshot_all(&entities, &ProfileManager::new());
-        (
-            snapshots[PcId(0)].clone().expect("mover snapshot"),
-            snapshots[SoldierId(1)].clone().expect("corpse snapshot"),
-        )
-    }
-
-    #[test]
-    fn snapshot_all_includes_dropped_ale_as_a_repulsive_object() {
-        use crate::element::{ElementBonus, ElementData, ObjectData};
-        use crate::element_kinds::ObjectType;
-        use crate::entity_id::BonusId;
-
-        let mut element = {
-            let mut initial_element = ElementData::default();
-            initial_element.active = true;
-            initial_element.kind = ElementKind::ObjectOther;
-            initial_element
-        };
-        element.set_position_map(map_pt(557.0, 1184.0));
-        element.set_sector(crate::position_interface::SectorHandle::new(0));
-        let entities = Entities::from_legacy_slots(vec![Some(Entity::Bonus(ElementBonus {
-            element,
-            object: ObjectData {
-                object_type: ObjectType::Ale,
-                ..Default::default()
-            },
-        }))]);
-
-        let snapshots = snapshot_all(&entities, &ProfileManager::new());
-        let ale = snapshots[BonusId(0)]
-            .as_ref()
-            .expect("dropped ale snapshot");
-        assert!(!ale.is_actor);
-        assert_eq!(ale.position_map, map_pt(557.0, 1184.0));
-        assert_eq!(
-            ale.repulsive_point,
-            Some(RepulsivePoint::new(map_pt(557.0, 1184.0), 5.0, 10.0))
-        );
-
-        let mut mover = mk_snapshot(1, 545.0, 1184.0);
-        mover.sector = crate::position_interface::SectorHandle::new(0);
-        let movement = apply_anti_collision_step(
-            &mover,
-            snapshots.as_slice(),
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert_ne!(movement, (1.0, 0.0));
-    }
-
-    fn mk_snapshot(id: u32, x: f32, y: f32) -> ActorSnapshot {
-        ActorSnapshot {
-            id: EntityId::Pc(crate::entity_id::PcId(id)),
-            active: true,
-            is_actor: true,
-            is_human: true,
-            is_ignored_for_anti_collision: false,
-            position_map: map_pt(x, y),
-            layer: 0,
-            sector: crate::position_interface::SectorHandle::new(1),
-            posture: Posture::Upright,
-            element_kind: ElementKind::ActorPc,
-            target_element: None,
-            is_swordfighting: false,
-            repulsive_point: Some(RepulsivePoint::new(
-                map_pt(x, y),
-                RADIUS_GUY,
-                ACTIONRADIUS_GUY,
-            )),
-            extra_repulsive_points: Vec::new(),
-            repulsive_lines: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn inactive_mover_bypasses_anti_collision() {
-        let mut mover = mk_snapshot(0, 0.0, 0.0);
-        mover.active = false;
-        let neighbour = mk_snapshot(1, 8.0, 0.0);
-        let snapshots = vec![Some(mover.clone()), Some(neighbour)];
-
-        let movement = apply_anti_collision_step(
-            &mover,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-
-        assert_eq!(movement, (1.0, 0.0));
-    }
-
-    #[test]
-    fn zero_step_with_repulsive_object_preserves_deviation() {
-        let mover = mk_snapshot(0, 0.0, 0.0);
-        let mut object = mk_snapshot(1, 10.0, 0.0);
-        object.is_actor = false;
-        object.is_human = false;
-        object.repulsive_point = Some(RepulsivePoint::new(map_pt(10.0, 0.0), 5.0, 10.0));
-        let snapshots = vec![Some(mover.clone()), Some(object)];
-
-        let mut pi = crate::position_interface::PositionInterface::default();
-        pi.deviated = true;
-        let mut state = AntiCollisionState {
-            pi: &mut pi,
-            move_box: Default::default(),
-            half_diagonal: MoveBoxHalfDiagonal::new(6.0, 4.0),
-            goal_map: map_pt(10.0, 0.0),
-        };
-        let grid = FastFindGrid::default();
-
-        let movement = apply_anti_collision_step(
-            &mover,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            Some(&grid),
-            Some(&mut state),
-            0.0,
-            0.0,
-            1.8,
-            true,
-        );
-
-        assert_eq!(movement, (0.0, 0.0));
-        assert!(state.pi.deviated);
-    }
-
-    #[test]
-    fn zero_step_with_empty_repulsive_lists_recovers_deviation_first() {
-        let mover = mk_snapshot(0, 0.0, 0.0);
-        let snapshots = vec![Some(mover.clone())];
-
-        let mut pi = crate::position_interface::PositionInterface::default();
-        pi.deviated = true;
-        let mut state = AntiCollisionState {
-            pi: &mut pi,
-            move_box: Default::default(),
-            half_diagonal: MoveBoxHalfDiagonal::new(6.0, 4.0),
-            goal_map: map_pt(10.0, 0.0),
-        };
-        let grid = FastFindGrid::default();
-
-        let movement = apply_anti_collision_step(
-            &mover,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            Some(&grid),
-            Some(&mut state),
-            0.0,
-            0.0,
-            1.8,
-            true,
-        );
-
-        assert_eq!(movement, (0.0, 0.0));
-        assert!(!state.pi.deviated);
-    }
-
-    #[test]
-    fn two_actors_head_on_are_pushed_apart() {
-        // A at (0,0) walking +X toward B at (8,0) — within Upright's
-        // RADIUS_GUY (4) + ACTIONRADIUS_GUY (12) → deviation required.
-        let a = mk_snapshot(0, 0.0, 0.0);
-        let b = mk_snapshot(1, 8.0, 0.0);
-        let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        // The step should be pushed sideways (|dy| > 0) and shortened
-        // or redirected from the naive (1.0, 0.0).
-        assert!(
-            dy.abs() > 0.01,
-            "expected sideways push, got dx={dx} dy={dy}"
-        );
-    }
-
-    #[test]
-    fn two_actors_back_to_back_are_not_affected() {
-        // A walks -X, B is behind A at +X — the `increment · rel >= 5`
-        // prefilter rejects neighbours behind the mover.
-        let a = mk_snapshot(0, 0.0, 0.0);
-        let b = mk_snapshot(1, 8.0, 0.0);
-        let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            -1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!((dx - -1.0).abs() < 1e-4);
-        assert!(dy.abs() < 1e-4);
-    }
-
-    #[test]
-    fn disabled_anti_collision_skips_deviation() {
-        let a = mk_snapshot(0, 0.0, 0.0);
-        let b = mk_snapshot(1, 8.0, 0.0);
-        let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        // anti_collision_on = false ⇒ naive step.
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            false,
-        );
-        assert!((dx - 1.0).abs() < 1e-4);
-        assert!(dy.abs() < 1e-4);
-    }
-
-    #[test]
-    fn different_layer_neighbour_is_ignored() {
-        let a = mk_snapshot(0, 0.0, 0.0);
-        let mut b = mk_snapshot(1, 8.0, 0.0);
-        b.layer = 1;
-        let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!((dx - 1.0).abs() < 1e-4);
-        assert!(dy.abs() < 1e-4);
-    }
-
-    #[test]
-    fn ignored_for_anti_collision_neighbour_is_skipped() {
-        let a = mk_snapshot(0, 0.0, 0.0);
-        let mut b = mk_snapshot(1, 8.0, 0.0);
-        b.is_ignored_for_anti_collision = true;
-        let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!((dx - 1.0).abs() < 1e-4);
-        assert!(dy.abs() < 1e-4);
-    }
-
-    #[test]
-    fn far_neighbour_is_outside_box_future() {
-        // Neighbour at x=200 — outside MAX_REPULSIVE_DISTANCE + radius
-        // around the future position.
-        let a = mk_snapshot(0, 0.0, 0.0);
-        let b = mk_snapshot(1, 200.0, 0.0);
-        let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!((dx - 1.0).abs() < 1e-4);
-        assert!(dy.abs() < 1e-4);
-    }
-
-    #[test]
-    fn target_element_is_skipped() {
-        // Mover's seek_target == B's id → B contributes no push.
-        let mut a = mk_snapshot(0, 0.0, 0.0);
-        a.target_element = Some(EntityId::Pc(crate::entity_id::PcId(1)));
-        let b = mk_snapshot(1, 8.0, 0.0);
-        let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!((dx - 1.0).abs() < 1e-4);
-        assert!(dy.abs() < 1e-4);
-    }
-
-    #[test]
-    fn stale_seek_target_does_not_hide_corpse_from_targetless_current_order() {
-        let (mover, corpse) = snapshot_mover_and_corpse(None);
-        assert_eq!(mover.target_element, None);
-
-        let neighbours = vec![Some(mover.clone()), Some(corpse)];
-        let (dx, dy) = apply_anti_collision_step(
-            &mover,
-            &neighbours,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!(
-            dy.abs() > 0.01 || (dx - 1.0).abs() > 0.01,
-            "the current targetless Move must be repelled by the corpse, got dx={dx} dy={dy}"
-        );
-    }
-
-    #[test]
-    fn current_order_antagonist_is_hidden_from_anti_collision() {
-        let corpse_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
-        let (mover, corpse) = snapshot_mover_and_corpse(Some(corpse_id));
-        assert_eq!(mover.target_element, Some(corpse_id));
-
-        let neighbours = vec![Some(mover.clone()), Some(corpse)];
-        let (dx, dy) = apply_anti_collision_step(
-            &mover,
-            &neighbours,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!((dx - 1.0).abs() < 1e-4);
-        assert!(dy.abs() < 1e-4);
-    }
-
-    #[test]
-    fn swordfighter_skips_corpses() {
-        let mut a = mk_snapshot(0, 0.0, 0.0);
-        a.is_swordfighting = true;
-        let mut b = mk_snapshot(1, 8.0, 0.0);
-        b.posture = Posture::Dead;
-        let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!((dx - 1.0).abs() < 1e-4);
-        assert!(dy.abs() < 1e-4);
     }
 
     #[test]
@@ -1726,100 +1335,8 @@ mod tests {
     }
 
     #[test]
-    fn sectorless_mover_rejects_sectored_neighbour() {
-        // Strict sector equality — sectorless vs. Some(1) should skip.
-        let mut a = mk_snapshot(0, 0.0, 0.0);
-        a.sector = None;
-        let b = mk_snapshot(1, 8.0, 0.0);
-        let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!((dx - 1.0).abs() < 1e-4);
-        assert!(dy.abs() < 1e-4);
-    }
-
-    #[test]
-    fn carried_neighbour_is_skipped() {
-        let a = mk_snapshot(0, 0.0, 0.0);
-        let mut b = mk_snapshot(1, 8.0, 0.0);
-        b.posture = Posture::Carried;
-        let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!((dx - 1.0).abs() < 1e-4);
-        assert!(dy.abs() < 1e-4);
-    }
-
-    #[test]
-    fn static_repulsive_point_with_matching_flag_deflects_pc() {
-        // Static point at (8, 0) with flags = 1 (affects PCs).  A PC
-        // walking +X should be deflected by the static point alone.
-        let a = mk_snapshot(0, 0.0, 0.0);
-        let snapshots = vec![Some(a.clone())];
-        let static_points = vec![StaticRepulsivePoint {
-            id: 1,
-            position: crate::ai::Position {
-                x: 8.0,
-                y: 0.0,
-                sector: None,
-                level: 0,
-            },
-            radius: RADIUS_GUY,
-            action_radius: RADIUS_GUY + ACTIONRADIUS_GUY,
-            force_a: 1.0 / ACTIONRADIUS_GUY,
-            force_b: -RADIUS_GUY / ACTIONRADIUS_GUY,
-            concave: false,
-            limit_left: crate::coordinates::MapVec::ZERO,
-            limit_right: crate::coordinates::MapVec::ZERO,
-            flags: 1,
-        }];
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &static_points,
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!(
-            dy.abs() > 0.01,
-            "expected static-point push, got dx={dx} dy={dy}"
-        );
-    }
-
-    #[test]
     fn static_repulsive_point_retains_saved_force_and_field_geometry() {
-        let a = mk_snapshot(0, 0.0, 0.0);
+        let a = CollisionMover::new(PcId(0).into(), &pc(0.0, Posture::Upright));
         let saved = StaticRepulsivePoint {
             id: 7,
             position: crate::ai::Position {
@@ -1853,84 +1370,5 @@ mod tests {
         assert!(point.is_concave);
         assert_eq!(point.limit_left, crate::coordinates::MapVec::new(1.0, 2.0));
         assert_eq!(point.limit_right, crate::coordinates::MapVec::new(3.0, 4.0));
-    }
-
-    #[test]
-    fn static_repulsive_point_with_wrong_flag_skipped_for_pc() {
-        let a = mk_snapshot(0, 0.0, 0.0);
-        let snapshots = vec![Some(a.clone())];
-        // flags = 2 → affects soldiers only, not PCs.
-        let static_points = vec![StaticRepulsivePoint {
-            id: 1,
-            position: crate::ai::Position {
-                x: 8.0,
-                y: 0.0,
-                sector: None,
-                level: 0,
-            },
-            radius: RADIUS_GUY,
-            action_radius: RADIUS_GUY + ACTIONRADIUS_GUY,
-            force_a: 1.0 / ACTIONRADIUS_GUY,
-            force_b: -RADIUS_GUY / ACTIONRADIUS_GUY,
-            concave: false,
-            limit_left: crate::coordinates::MapVec::ZERO,
-            limit_right: crate::coordinates::MapVec::ZERO,
-            flags: 2,
-        }];
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &static_points,
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!((dx - 1.0).abs() < 1e-4);
-        assert!(dy.abs() < 1e-4);
-    }
-
-    #[test]
-    fn static_repulsive_point_different_layer_ignored() {
-        let a = mk_snapshot(0, 0.0, 0.0);
-        let snapshots = vec![Some(a.clone())];
-        let static_points = vec![StaticRepulsivePoint {
-            id: 1,
-            position: crate::ai::Position {
-                x: 8.0,
-                y: 0.0,
-                sector: None,
-                level: 99,
-            },
-            radius: RADIUS_GUY,
-            action_radius: RADIUS_GUY + ACTIONRADIUS_GUY,
-            force_a: 1.0 / ACTIONRADIUS_GUY,
-            force_b: -RADIUS_GUY / ACTIONRADIUS_GUY,
-            concave: false,
-            limit_left: crate::coordinates::MapVec::ZERO,
-            limit_right: crate::coordinates::MapVec::ZERO,
-            flags: 1,
-        }];
-        let (dx, dy) = apply_anti_collision_step(
-            &a,
-            &snapshots,
-            &static_points,
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            1.0,
-            0.0,
-            1.0,
-            true,
-        );
-        assert!((dx - 1.0).abs() < 1e-4);
-        assert!(dy.abs() < 1e-4);
     }
 }

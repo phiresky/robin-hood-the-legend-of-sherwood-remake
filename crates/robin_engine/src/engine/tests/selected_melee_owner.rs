@@ -70,6 +70,7 @@ fn install_selected_melee(
     attacker: EntityId,
     victim: EntityId,
 ) -> crate::sequence::SequenceId {
+    let assets = LevelAssets::new();
     let seq_id = engine
         .orders
         .sequence_manager
@@ -85,10 +86,13 @@ fn install_selected_melee(
         .orders
         .sequence_manager
         .push_order_on(seq_id, 0, order);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(seq_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        seq_id,
+        0,
+    );
     let entity = engine.get_entity_mut(attacker).expect("attacker exists");
     entity.element_data_mut().active = true;
     seq_id
@@ -99,6 +103,7 @@ fn install_selected_smalltalk(
     attacker: EntityId,
     victim: EntityId,
 ) -> crate::sequence::SequenceId {
+    let assets = LevelAssets::new();
     let seq_id = engine
         .orders
         .sequence_manager
@@ -114,10 +119,13 @@ fn install_selected_smalltalk(
         .orders
         .sequence_manager
         .push_order_on(seq_id, 0, order);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(seq_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        seq_id,
+        0,
+    );
     engine
         .get_entity_mut(attacker)
         .expect("attacker exists")
@@ -132,12 +140,16 @@ fn run_owner_walk(engine: &mut EngineInner, assets: &LevelAssets) {
 
 #[test]
 fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
+    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::WaitingUpright);
     let melee_sequence = install_selected_melee(&mut engine, attacker, victim);
-    engine.orders.sequence_manager.element_interrupted(
+    engine.element_interrupted(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
         melee_sequence,
         0,
         crate::sequence::CascadeFlags::empty(),
@@ -152,10 +164,13 @@ fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
         0,
         Order::new(OrderType::WaitingUpright, 0.0, 0.0, order_id),
     );
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(interrupt, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        interrupt,
+        0,
+    );
     run_owner_walk(&mut engine, &LevelAssets::new());
     assert_eq!(
         engine
@@ -252,7 +267,7 @@ fn frozen_all_bound_melee_animation_leaves_sprite_strike_and_order_untouched() {
         rng_trace.is_empty(),
         "FrozenAll must not run strike-start warning RNG: {rng_trace:?}"
     );
-    assert!(entity.actor_data().unwrap().sweep_state.is_none());
+    assert!(entity.human_data().unwrap().sword_sweep.victims.is_empty());
     assert_eq!(
         entity.element_data().sprite.current_frame,
         before_sprite.current_frame
@@ -358,6 +373,7 @@ fn eligible_principal_is_warned_once_on_start_and_not_again_in_progress() {
 
 #[test]
 fn lateral_start_warns_in_original_actor_creation_order_before_rng() {
+    let mut assets = straight_warning_assets(0, 100);
     let mut engine = EngineInner::new();
     let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
     let lower_slot_later = engine.add_test_entity(make_test_pc(Posture::Upright));
@@ -450,17 +466,19 @@ fn lateral_start_warns_in_original_actor_creation_order_before_rng() {
         .orders
         .sequence_manager
         .push_order_on(sequence, 0, order);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     engine
         .get_entity_mut(attacker)
         .unwrap()
         .element_data_mut()
         .active = true;
 
-    let mut assets = straight_warning_assets(0, 100);
     let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].thrusts
         [SwordStrike::D as usize];
     thrust.kind = crate::profiles::WeaponThrustKind::Lateral;
@@ -877,7 +895,10 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
                 return;
             }
             let selected = melee.expect("melee was selected at Execute entry");
-            engine.orders.sequence_manager.element_interrupted(
+            engine.element_interrupted(
+                &crate::sim_rng::test_context(),
+                &assets,
+                &mut Vec::new(),
                 melee_sequence,
                 0,
                 crate::sequence::CascadeFlags::empty(),
@@ -892,10 +913,13 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
                 0,
                 Order::new(OrderType::WaitingUpright, 0.0, 0.0, order_id),
             );
-            engine
-                .orders
-                .sequence_manager
-                .element_in_progress(replacement, 0);
+            engine.element_in_progress(
+                &crate::sim_rng::test_context(),
+                &assets,
+                &mut Vec::new(),
+                replacement,
+                0,
+            );
             engine.tick_selected_melee_owner(
                 &crate::sim_rng::test_context(),
                 &assets,

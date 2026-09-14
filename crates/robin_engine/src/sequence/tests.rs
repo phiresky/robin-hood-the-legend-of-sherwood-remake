@@ -1,28 +1,310 @@
 use super::*;
+use crate::engine::{EngineInner, LevelAssets};
+use crate::sim_rng::test_context;
+
+fn live_sequence_fixture() -> (EngineInner, LevelAssets, EntityId) {
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    (engine, assets, owner)
+}
+
+#[test]
+fn interruption_reads_following_link_after_owner_callback() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let mut sequence = Sequence::new();
+    for _ in 0..3 {
+        sequence.append_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    }
+    let id = engine.orders.sequence_manager.launch_sequence(sequence);
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            if card.elem_idx == 0 {
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(id, 0)
+                    .unwrap()
+                    .legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(id, 2))));
+            }
+        },
+        || {
+            engine.element_interrupted(
+                &test_context(),
+                &assets,
+                &mut Vec::new(),
+                id,
+                0,
+                CascadeFlags::FOLLOWING,
+            )
+        },
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(id, 1)
+            .unwrap()
+            .state,
+        SequenceState::Todo
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(id, 2)
+            .unwrap()
+            .state,
+        SequenceState::Interrupted
+    );
+}
+
+#[test]
+fn termination_starts_postponed_link_selected_by_owner_callback() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let root = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    let old = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    let replacement = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    engine.postpone_element(&test_context(), &assets, &mut Vec::new(), old, 0);
+    engine.postpone_element(&test_context(), &assets, &mut Vec::new(), replacement, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(root, 0)
+        .unwrap()
+        .cross_postponed = Some((old, 0));
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            if card.seq_id == root {
+                let element = engine
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(root, 0)
+                    .unwrap();
+                assert_eq!(
+                    element.cross_postponed,
+                    Some((old, 0)),
+                    "the callback sees the current postponed pointer"
+                );
+                element.cross_postponed = Some((replacement, 0));
+            }
+        },
+        || engine.element_terminated(&test_context(), &assets, &mut Vec::new(), root, 0),
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(old, 0)
+            .unwrap()
+            .state,
+        SequenceState::Postponed
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(replacement, 0)
+            .unwrap()
+            .state,
+        SequenceState::Postponed
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .is_registered_to_go(replacement, 0)
+    );
+    assert!(!engine.orders.sequence_manager.is_registered_to_go(old, 0));
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(root, 0)
+            .unwrap()
+            .cross_postponed,
+        None
+    );
+}
+
+#[test]
+fn next_level_cascade_reads_callback_replaced_cross_sequence_chain() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let root = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    let mut continuation = Sequence::new();
+    continuation.append_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    continuation.append_element(SequenceElement::new(2, Command::Generic, Some(owner)));
+    let tail = engine.orders.sequence_manager.launch_sequence(continuation);
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            if card.seq_id == root {
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(root, 0)
+                    .unwrap()
+                    .legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(tail, 0))));
+            }
+        },
+        || {
+            engine.element_interrupted(
+                &test_context(),
+                &assets,
+                &mut Vec::new(),
+                root,
+                0,
+                CascadeFlags::NEXT_LEVEL,
+            )
+        },
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(tail, 0)
+            .unwrap()
+            .state,
+        SequenceState::Todo
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(tail, 1)
+            .unwrap()
+            .state,
+        SequenceState::Interrupted
+    );
+}
+
+#[test]
+fn stop_preserves_live_replacement_following_link_after_nested_callback() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let mut sequence = Sequence::new();
+    for priority in [
+        SequencePriority::NonInterruptable,
+        SequencePriority::Normal,
+        SequencePriority::NonInterruptable,
+    ] {
+        let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
+        element.priority = priority;
+        sequence.append_element(element);
+    }
+    let id = engine.orders.sequence_manager.launch_sequence(sequence);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(id, 1)
+        .unwrap()
+        .legacy_v48 = Some(loaded_v48_state(None));
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            if card.elem_idx == 1 {
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(id, 0)
+                    .unwrap()
+                    .legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(id, 2))));
+            }
+        },
+        || {
+            engine.stop_owner_current_from_root(
+                &test_context(),
+                &assets,
+                &mut Vec::new(),
+                owner,
+                Some((id, 0)),
+                SequencePriority::Normal,
+                &|_, element| element.priority,
+            )
+        },
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(id, 1)
+            .unwrap()
+            .state,
+        SequenceState::Interrupted
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(id, 2)
+            .unwrap()
+            .state,
+        SequenceState::Todo
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_sequence(id)
+            .unwrap()
+            .live_following_ref(0),
+        Some(SequenceElementRef::new(id, 2))
+    );
+}
 
 #[test]
 fn populated_actor_indexes_round_trip_through_json() {
-    let mut manager = SequenceManager::new();
-    for owner in [
-        EntityId::Pc(crate::entity_id::PcId(7)),
-        EntityId::Soldier(crate::entity_id::SoldierId(12)),
-    ] {
-        let sequence = manager.launch_element(SequenceElement::new(1, Command::Move, Some(owner)));
-        manager.element_in_progress(sequence, 0);
-        manager
+    let (mut engine, mut assets, owner) = live_sequence_fixture();
+    let other = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    for owner in [owner, other] {
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::Move, Some(owner)));
+        engine.element_in_progress(&test_context(), &assets, &mut Vec::new(), sequence, 0);
+        engine
+            .orders
+            .sequence_manager
             .actor_instructing
             .insert(owner, vec![(SequenceElementRef::new(sequence, 0), true)]);
     }
-    assert_eq!(manager.actor_live.len(), 2);
-    assert_eq!(manager.actor_in_progress.len(), 2);
-    let json = serde_json::to_string(&manager).expect("serialize populated actor indexes");
+    assert_eq!(engine.orders.sequence_manager.actor_live.len(), 2);
+    assert_eq!(engine.orders.sequence_manager.actor_in_progress.len(), 2);
+    let json = serde_json::to_string(&engine.orders.sequence_manager)
+        .expect("serialize populated actor indexes");
     let restored: SequenceManager = serde_json::from_str(&json).expect("restore actor indexes");
-    assert_eq!(restored.actor_live, manager.actor_live);
-    assert_eq!(restored.actor_in_progress, manager.actor_in_progress);
-    assert_eq!(restored.actor_instructing, manager.actor_instructing);
+    assert_eq!(
+        restored.actor_live,
+        engine.orders.sequence_manager.actor_live
+    );
+    assert_eq!(
+        restored.actor_in_progress,
+        engine.orders.sequence_manager.actor_in_progress
+    );
+    assert_eq!(
+        restored.actor_instructing,
+        engine.orders.sequence_manager.actor_instructing
+    );
     assert_eq!(
         robin_util::state_hash::compute(&restored),
-        robin_util::state_hash::compute(&manager),
+        robin_util::state_hash::compute(&engine.orders.sequence_manager),
     );
 }
 
@@ -30,33 +312,32 @@ fn make_simple_element(level: u16, cmd: Command, owner: Option<EntityId>) -> Seq
     SequenceElement::new(level, cmd, owner)
 }
 
-/// SequenceManager unit tests have no EngineInner owner callback. Resume the
-/// synchronous state-change continuation at the point where that callback would
-/// have returned.
-fn finish_test_condolations(mgr: &mut SequenceManager) {
-    loop {
-        let pending = mgr.drain_pending_condolations();
-        if pending.is_empty() {
-            break;
-        }
-        for dispatch in pending {
-            mgr.finish_pending_condolation(dispatch);
-        }
-    }
-}
-
 #[test]
 fn replacement_interruption_marks_outgoing_card_unselected() {
-    let owner = EntityId::Pc(crate::entity_id::PcId(7));
-    let mut manager = SequenceManager::new();
-    let outgoing = manager.launch_element(SequenceElement::new(1, Command::Move, Some(owner)));
-    manager.element_in_progress(outgoing, 0);
-
-    manager.element_interrupted_after_replacement_selected(outgoing, 0, CascadeFlags::NEXT_LEVEL);
-
-    let pending = manager.drain_pending_condolations();
-    assert_eq!(pending.len(), 1);
-    assert!(!pending[0].card.was_selected);
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let outgoing = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Move, Some(owner)));
+    engine.element_in_progress(&test_context(), &assets, &mut Vec::new(), outgoing, 0);
+    let cards = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let observed = cards.clone();
+    EngineInner::with_condolation_callback(
+        move |_, card| {
+            observed.borrow_mut().push((card.seq_id, card.was_selected));
+        },
+        || {
+            engine.element_interrupted_after_replacement_selected(
+                &test_context(),
+                &assets,
+                &mut Vec::new(),
+                outgoing,
+                0,
+                CascadeFlags::NEXT_LEVEL,
+            );
+        },
+    );
+    assert_eq!(*cards.borrow(), [(outgoing, false)]);
 }
 
 #[test]
@@ -130,41 +411,71 @@ fn sequence_launch_and_advance() {
 
 #[test]
 fn postponed_shoulder_climb_resumes_only_for_its_completed_helper() {
-    let climber = EntityId::Pc(crate::entity_id::PcId(1));
-    let helper = EntityId::Pc(crate::entity_id::PcId(2));
-    let other_helper = EntityId::Pc(crate::entity_id::PcId(3));
-    let mut manager = SequenceManager::new();
-    let sequence = manager.launch_element(SequenceElement::new_interaction(
-        2,
-        Command::ClimbUpOnShoulders,
-        Some(climber),
-        Some(helper),
-    ));
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+    let fixture_owner_1 = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    let fixture_owner_2 = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let climber = fixture_owner_0;
+    let helper = fixture_owner_1;
+    let other_helper = fixture_owner_2;
+
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new_interaction(
+            2,
+            Command::ClimbUpOnShoulders,
+            Some(climber),
+            Some(helper),
+        ));
 
     assert!(matches!(
-        manager.pop_next_hourglass_action(),
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
         Some(SequenceAction::InstructOwner {
             owner,
             sequence_id,
             element_index: 0,
         }) if owner == climber && sequence_id == sequence
     ));
-    manager.postpone_element(sequence, 0);
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence, 0);
     assert_eq!(
-        manager.get_element(sequence, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
         SequenceState::Postponed
     );
-    assert!(manager.hourglass().is_empty());
+    assert!(engine.orders.sequence_manager.hourglass().is_empty());
 
-    manager.resume_postponed_climbs_for_helper(other_helper);
-    assert!(manager.hourglass().is_empty());
+    engine
+        .orders
+        .sequence_manager
+        .resume_postponed_climbs_for_helper(other_helper);
+    assert!(engine.orders.sequence_manager.hourglass().is_empty());
 
-    manager.resume_postponed_climbs_for_helper(helper);
-    let resumed = manager.get_element(sequence, 0).unwrap();
+    engine
+        .orders
+        .sequence_manager
+        .resume_postponed_climbs_for_helper(helper);
+    let resumed = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .unwrap();
     assert_eq!(resumed.state, SequenceState::Todo);
     assert_eq!(resumed.posture_after_transition, Posture::Undefined);
     assert!(matches!(
-        manager.pop_next_hourglass_action(),
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
         Some(SequenceAction::InstructOwner {
             owner,
             sequence_id,
@@ -180,50 +491,50 @@ fn postponed_shoulder_climb_resumes_only_for_its_completed_helper() {
 /// the same variant to feed `force_animation`.  Verify the
 /// round-trip end-to-end.
 #[test]
-fn lazy_stop_priority_updates_cached_summary_like_a_rebuild() {
-    let owner = EntityId::Pc(crate::entity_id::PcId(1));
+fn lazy_stop_priority_is_used_by_live_stop() {
     for resolved in [
         SequencePriority::None,
         SequencePriority::Script,
         SequencePriority::NonInterruptable,
     ] {
-        let mut manager = SequenceManager::new();
-        let root = manager.launch_element(movement_elem(owner, OrderType::WalkingUpright));
-        assert_eq!(
-            manager.actor_stop_summary(owner).unwrap().weakest_priority,
-            SequencePriority::NotYetSet
-        );
+        let (mut engine, assets, owner) = live_sequence_fixture();
+        let root = engine
+            .orders
+            .sequence_manager
+            .launch_element(movement_elem(owner, OrderType::WalkingUpright));
         let expected = if resolved == SequencePriority::None {
             SequencePriority::Normal
         } else {
             resolved
         };
         assert_eq!(
-            manager.resolve_element_stop_priority(root, 0, &|_| resolved),
+            engine
+                .orders
+                .sequence_manager
+                .resolve_element_stop_priority(root, 0, &|_| resolved),
             expected
         );
-        let mut rebuilt = manager.clone();
-        rebuilt.rebuild_indices();
-        let cached = manager.actor_stop_summary(owner).unwrap();
-        let fresh = rebuilt.actor_stop_summary(owner).unwrap();
-        assert_eq!(cached.weakest_priority, expected);
-        assert_eq!(cached.weakest_priority, fresh.weakest_priority);
-        assert_eq!(cached.cross_only, fresh.cross_only);
-        for candidate in [&mut manager, &mut rebuilt] {
-            candidate.stop_owner_current_from_root(
-                owner,
-                Some((root, 0)),
-                SequencePriority::Preference,
-                &|_| panic!("priority was already resolved"),
-            );
-        }
-        assert_eq!(
-            manager.get_element(root, 0).unwrap().state,
-            rebuilt.get_element(root, 0).unwrap().state
+        engine.stop_owner_current_from_root(
+            &test_context(),
+            &assets,
+            &mut Vec::new(),
+            owner,
+            Some((root, 0)),
+            SequencePriority::Preference,
+            &|_, _| panic!("priority was already resolved"),
         );
         assert_eq!(
-            robin_util::state_hash::compute(&manager),
-            robin_util::state_hash::compute(&rebuilt)
+            engine
+                .orders
+                .sequence_manager
+                .get_element(root, 0)
+                .unwrap()
+                .state,
+            if resolved == SequencePriority::None {
+                SequenceState::Interrupted
+            } else {
+                SequenceState::Todo
+            }
         );
     }
 }
@@ -249,32 +560,39 @@ fn lazy_stop_priority_preserves_already_resolved_none_and_other_priorities() {
 }
 
 #[test]
-fn movement_stop_priority_refreshes_live_actor_summary_even_when_too_strong_to_rewrite() {
-    let owner = EntityId::Pc(crate::entity_id::PcId(1));
-    let mut manager = SequenceManager::new();
+fn movement_stop_resolves_priority_before_deciding_to_rewrite() {
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
+
     let mut movement = movement_elem(owner, OrderType::WalkingUpright);
     movement.push_order(Order::test_new(OrderType::WalkingUpright, 100.0, 0.0));
-    let sequence = manager.launch_element(movement);
-    manager.element_in_progress(sequence, 0);
-    assert_eq!(
-        manager.actor_stop_summary(owner).unwrap().weakest_priority,
-        SequencePriority::NotYetSet
-    );
-    assert!(!manager.stop_movement_from_root(
+    let sequence = engine.orders.sequence_manager.launch_element(movement);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
+    assert!(!engine.stop_movement_from_root(
+        &sim,
+        &assets,
+        &mut Vec::new(),
         owner,
         (sequence, 0),
         crate::coordinates::MapPoint::new(0.0, 0.0),
         SequencePriority::Preference,
-        &|_| SequencePriority::Script,
-        &mut 100,
-        &mut |_| panic!("strong movement must not cancel its path")
+        &|_, _| SequencePriority::Script,
     ));
     assert_eq!(
-        manager.actor_stop_summary(owner).unwrap().weakest_priority,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .priority,
         SequencePriority::Script
     );
     assert_eq!(
-        manager
+        engine
+            .orders
+            .sequence_manager
             .get_element(sequence, 0)
             .unwrap()
             .orders
@@ -399,9 +717,26 @@ fn state_change_interrupted_cascades() {
 
     let effects = seq.set_element_state(0, SequenceState::Interrupted, CascadeFlags::NEXT_LEVEL);
 
-    // Should cascade to the next level (element 1)
-    assert_eq!(effects.cascade.len(), 1);
-    assert_eq!(effects.cascade[0].0, 1); // element index 1
+    assert_eq!(
+        effects.cascade_after_card,
+        Some((0, SequenceState::Interrupted, CascadeFlags::NEXT_LEVEL))
+    );
+    let id = seq.id;
+    let mut manager = SequenceManager::new();
+    manager.sequences.insert(id, seq);
+    assert_eq!(
+        manager.live_cascade_target(id, 0, CascadeFlags::NEXT_LEVEL),
+        Some(SequenceElementRef::new(id, 1))
+    );
+    // A completion callback may sever the next link before the cascade resumes.
+    manager
+        .get_sequence_mut(id)
+        .unwrap()
+        .sever_following_link(0);
+    assert_eq!(
+        manager.live_cascade_target(id, 0, CascadeFlags::NEXT_LEVEL),
+        None
+    );
 }
 
 #[test]
@@ -418,15 +753,12 @@ fn state_change_interrupted_does_not_resume_postponed_elements() {
         Some(EntityId::Pc(crate::entity_id::PcId(0))),
     ));
     seq.elements[0].postponed_element_index = Some(1);
-    let cross = (SequenceId(91), 3);
-    seq.elements[0].cross_postponed = Some(cross);
 
     let effects = seq.set_element_state(0, SequenceState::Interrupted, CascadeFlags::empty());
 
     assert_eq!(effects.start_postponed, None);
-    assert_eq!(effects.resume_cross_postponed, None);
     assert_eq!(seq.elements[0].postponed_element_index, Some(1));
-    assert_eq!(seq.elements[0].cross_postponed, Some(cross));
+    assert_eq!(seq.elements[0].cross_postponed, None);
     assert_eq!(seq.elements[1].state, SequenceState::Todo);
 }
 
@@ -477,230 +809,142 @@ fn manager_launch_and_hourglass() {
 /// callback may terminate synchronously, enter `Ready()`, and dispatch a
 /// WAIT successor before the outer launch/callback chain unwinds.
 #[test]
-fn wait_go_is_emitted_at_launch_return_in_registration_order_and_reentrant() {
-    let mut mgr = SequenceManager::new();
-    let wait_owner = EntityId::Pc(crate::entity_id::PcId(1));
-
+fn wait_instruction_runs_before_immediate_sibling_and_leaves_normal_work_on_fifo() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
     let mut sequence = Sequence::new();
-    let mut normal = make_simple_element(
-        1,
-        Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    );
+    let mut normal = make_simple_element(1, Command::Move, Some(owner));
     normal.priority = SequencePriority::Normal;
     sequence.append_element(normal);
-
-    let mut wait = make_simple_element(1, Command::Wait, Some(wait_owner));
+    let mut wait = make_simple_element(1, Command::Wait, Some(owner));
     wait.priority = SequencePriority::Wait;
     sequence.append_element(wait);
-
     let mut immediate = make_simple_element(1, Command::LockUser, None);
     immediate.priority = SequencePriority::Normal;
     sequence.append_element(immediate);
+    let id = engine.launch_sequence(sequence);
+    engine
+        .drain_script_synchronous_actions(&test_context(), &assets, &mut Vec::new())
+        .unwrap();
+    assert!(engine.players.user_locked);
+    let manager = &engine.orders.sequence_manager;
+    assert_eq!(
+        manager.get_element(id, 1).unwrap().state,
+        SequenceState::InProgress
+    );
+    assert!(!manager.get_element(id, 1).unwrap().orders.is_empty());
+    assert_eq!(
+        manager.get_element(id, 2).unwrap().state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        manager.elements_to_go.iter().copied().collect::<Vec<_>>(),
+        vec![(id, 0)]
+    );
+}
 
-    let sequence_id = mgr.launch_sequence(sequence);
-
-    let launched = mgr
-        .get_sequence(sequence_id)
-        .expect("sequence is registered");
-    assert!(launched.started);
-    assert_eq!(launched.cursor, 3);
-    assert_eq!(launched.running_elements, 3);
+#[test]
+fn wait_priority_instruction_bypasses_hourglass() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let mut wait = make_simple_element(1, Command::Wait, Some(owner));
+    wait.priority = SequencePriority::Wait;
+    let id = engine.orders.sequence_manager.launch_element(wait);
+    engine
+        .drain_script_synchronous_actions(&test_context(), &assets, &mut Vec::new())
+        .unwrap();
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(id, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress
+    );
     assert!(
-        launched
-            .elements
-            .iter()
-            .all(|element| element.state == SequenceState::Todo),
-        "emitting Go must not invent the callback's state transition"
+        !engine
+            .orders
+            .sequence_manager
+            .get_element(id, 0)
+            .unwrap()
+            .orders
+            .is_empty()
     );
-    assert_eq!(
-        mgr.elements_to_go.iter().copied().collect::<Vec<_>>(),
-        vec![(sequence_id, 0)],
-        "only NORMAL non-immediate work belongs on the hourglass FIFO"
-    );
+    assert!(engine.orders.sequence_manager.elements_to_go.is_empty());
+}
 
-    // The loop stops at the WAIT `Go()`: element 2's registration — and
-    // therefore its immediate execution — is a later
-    // iteration of the same original-game loop and only runs once that `Go()` has
-    // returned.
-    let synchronous = mgr.take_settled_synchronous_actions();
-    assert_eq!(synchronous.len(), 1);
-    assert!(matches!(
-        synchronous[0],
-        SequenceAction::InstructOwner {
-            owner,
-            sequence_id: action_sequence_id,
-            element_index: 1,
-        } if owner == wait_owner && action_sequence_id == sequence_id
-    ));
-    let after_wait_go = mgr.take_settled_synchronous_actions();
-    assert_eq!(after_wait_go.len(), 1);
-    assert!(matches!(
-        after_wait_go[0],
-        SequenceAction::ExecuteImmediateEngine {
-            sequence_id: action_sequence_id,
-            element_index: 2,
-        } if action_sequence_id == sequence_id
-    ));
-    let deferred = mgr.hourglass();
-    assert_eq!(deferred.len(), 1);
-    assert!(matches!(
-        deferred[0],
-        SequenceAction::InstructOwner {
-            sequence_id: action_sequence_id,
-            element_index: 0,
-            ..
-        } if action_sequence_id == sequence_id
-    ));
-
-    // Re-entrant completion: the callback for level 1 reaches Ready(),
-    // which must emit the level-2 WAIT into the synchronous stream. It
-    // must not fall back onto `elements_to_go` for another hourglass.
-    let mut mgr = SequenceManager::new();
+#[test]
+fn wait_completion_instructs_next_level_before_returning() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
     let mut sequence = Sequence::new();
-    let mut first = make_simple_element(1, Command::Wait, None);
-    first.priority = SequencePriority::Wait;
-    sequence.append_element(first);
-    let mut successor = make_simple_element(2, Command::Wait, None);
-    successor.priority = SequencePriority::Wait;
-    sequence.append_element(successor);
-
-    let sequence_id = mgr.launch_sequence(sequence);
-    let first_action = mgr.take_settled_synchronous_actions();
-    assert!(matches!(
-        first_action.as_slice(),
-        [SequenceAction::EngineCommand {
-            sequence_id: action_sequence_id,
-            element_index: 0,
-        }] if *action_sequence_id == sequence_id
-    ));
-
-    mgr.element_in_progress(sequence_id, 0);
-    mgr.element_terminated(sequence_id, 0);
-
-    let successor_action = mgr.take_settled_synchronous_actions();
-    assert!(matches!(
-        successor_action.as_slice(),
-        [SequenceAction::EngineCommand {
-            sequence_id: action_sequence_id,
-            element_index: 1,
-        }] if *action_sequence_id == sequence_id
-    ));
-    assert!(mgr.elements_to_go.is_empty());
-    assert!(mgr.hourglass().is_empty());
+    for level in [1, 2] {
+        let mut wait = make_simple_element(level, Command::Wait, Some(owner));
+        wait.priority = SequencePriority::Wait;
+        sequence.append_element(wait);
+    }
+    let id = engine.launch_sequence(sequence);
+    engine
+        .drain_script_synchronous_actions(&test_context(), &assets, &mut Vec::new())
+        .unwrap();
     assert_eq!(
-        mgr.get_element(sequence_id, 0)
-            .expect("first element")
+        engine
+            .orders
+            .sequence_manager
+            .get_element(id, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress
+    );
+    engine.element_terminated(&test_context(), &assets, &mut Vec::new(), id, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(id, 0)
+            .unwrap()
             .state,
         SequenceState::Terminated
     );
     assert_eq!(
-        mgr.get_element(sequence_id, 1)
-            .expect("successor element")
+        engine
+            .orders
+            .sequence_manager
+            .get_element(id, 1)
+            .unwrap()
             .state,
-        SequenceState::Todo
+        SequenceState::InProgress
     );
-}
-
-#[test]
-fn manager_wait_priority_go_bypasses_executed_immediately() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Pc(crate::entity_id::PcId(0));
-    let mut wait = make_simple_element(1, Command::Speak, Some(owner));
-    wait.priority = SequencePriority::Wait;
-
-    let seq_id = mgr.launch_element(wait);
-
-    let actions = mgr.take_settled_synchronous_actions();
-    assert_eq!(actions.len(), 1);
-    assert!(matches!(
-        actions[0],
-        SequenceAction::InstructOwner {
-            owner: action_owner,
-            sequence_id,
-            element_index: 0,
-        } if action_owner == owner && sequence_id == seq_id
-    ));
     assert!(
-        mgr.hourglass().is_empty(),
-        "WAIT-priority Go must not remain deferred on elements_to_go"
+        !engine
+            .orders
+            .sequence_manager
+            .get_element(id, 1)
+            .unwrap()
+            .orders
+            .is_empty()
     );
-}
-
-#[test]
-fn manager_reentrant_wait_completion_queues_next_level_inline() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Pc(crate::entity_id::PcId(0));
-    let mut first = make_simple_element(1, Command::Wait, Some(owner));
-    first.priority = SequencePriority::Wait;
-    let mut second = make_simple_element(2, Command::Wait, Some(owner));
-    second.priority = SequencePriority::Wait;
-    let mut seq = Sequence::new();
-    seq.append_element(first);
-    seq.append_element(second);
-
-    let seq_id = mgr.launch_sequence(seq);
-    let first_actions = mgr.take_settled_synchronous_actions();
-    assert!(matches!(
-        first_actions.as_slice(),
-        [SequenceAction::InstructOwner {
-            sequence_id,
-            element_index: 0,
-            ..
-        }] if *sequence_id == seq_id
-    ));
-
-    // Simulate an instruction callback that starts and completes the first
-    // WAIT before the outer synchronous action drain returns. The owner
-    // condolation is itself a synchronous boundary; finishing it resumes
-    // Ready() and opens level 2 re-entrantly.
-    mgr.element_in_progress(seq_id, 0);
-    mgr.element_terminated(seq_id, 0);
-    finish_test_condolations(&mut mgr);
-
-    let reentrant_actions = mgr.take_settled_synchronous_actions();
-    assert!(matches!(
-        reentrant_actions.as_slice(),
-        [SequenceAction::InstructOwner {
-            owner: action_owner,
-            sequence_id,
-            element_index: 1,
-        }] if *action_owner == owner && *sequence_id == seq_id
-    ));
-    assert!(
-        mgr.hourglass().is_empty(),
-        "the re-entrant next-level WAIT must not wait for hourglass"
-    );
+    assert!(engine.orders.sequence_manager.elements_to_go.is_empty());
 }
 
 #[test]
 fn manager_element_terminated_advances() {
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
 
     let mut seq = Sequence::new();
-    seq.append_element(make_simple_element(
-        1,
-        Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-    seq.append_element(make_simple_element(
-        2,
-        Command::Turn,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
+    seq.append_element(make_simple_element(1, Command::Move, Some(fixture_owner_0)));
+    seq.append_element(make_simple_element(2, Command::Turn, Some(fixture_owner_0)));
 
-    let seq_id = mgr.launch_sequence(seq);
+    let seq_id = engine.orders.sequence_manager.launch_sequence(seq);
 
     // Drain the first hourglass
-    let _ = mgr.hourglass();
+    let _ = engine.orders.sequence_manager.hourglass();
 
     // Mark element 0 as in-progress then terminated
-    mgr.element_in_progress(seq_id, 0);
-    mgr.element_terminated(seq_id, 0);
-    finish_test_condolations(&mut mgr);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), seq_id, 0);
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), seq_id, 0);
 
     // The next level's element should now be queued
-    let actions = mgr.hourglass();
+    let actions = engine.orders.sequence_manager.hourglass();
     assert_eq!(actions.len(), 1);
     match &actions[0] {
         SequenceAction::InstructOwner { element_index, .. } => assert_eq!(*element_index, 1),
@@ -710,29 +954,46 @@ fn manager_element_terminated_advances() {
 
 #[test]
 fn live_hourglass_places_normal_successor_after_older_fifo_work() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Pc(crate::entity_id::PcId(319));
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+    let fixture_owner_1 = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    let fixture_owner_2 = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let owner = fixture_owner_0;
 
     let mut route = Sequence::new();
     route.append_element(make_simple_element(1, Command::AssertPosition, Some(owner)));
     route.append_element(make_simple_element(2, Command::Move, Some(owner)));
-    let route_id = mgr.launch_sequence(route);
+    let route_id = engine.orders.sequence_manager.launch_sequence(route);
 
-    let older_owner_a = EntityId::Soldier(crate::entity_id::SoldierId(4));
-    let older_owner_b = EntityId::Soldier(crate::entity_id::SoldierId(5));
-    let older_a = mgr.launch_element(make_simple_element(
-        1,
-        Command::LookLeft,
-        Some(older_owner_a),
-    ));
-    let older_b = mgr.launch_element(make_simple_element(
-        1,
-        Command::LookRight,
-        Some(older_owner_b),
-    ));
+    let older_owner_a = fixture_owner_1;
+    let older_owner_b = fixture_owner_2;
+    let older_a = engine
+        .orders
+        .sequence_manager
+        .launch_element(make_simple_element(
+            1,
+            Command::LookLeft,
+            Some(older_owner_a),
+        ));
+    let older_b = engine
+        .orders
+        .sequence_manager
+        .launch_element(make_simple_element(
+            1,
+            Command::LookRight,
+            Some(older_owner_b),
+        ));
 
     assert!(matches!(
-        mgr.pop_next_hourglass_action(),
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
         Some(SequenceAction::InstructOwner {
             sequence_id,
             element_index: 0,
@@ -742,14 +1003,13 @@ fn live_hourglass_places_normal_successor_after_older_fifo_work() {
 
     // AssertPosition terminates inside actor translation. Ready registers
     // the level-2 Move at the live manager FIFO tail before Go returns.
-    mgr.element_in_progress(route_id, 0);
-    mgr.element_terminated(route_id, 0);
-    finish_test_condolations(&mut mgr);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), route_id, 0);
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), route_id, 0);
 
     let remaining = [
-        mgr.pop_next_hourglass_action(),
-        mgr.pop_next_hourglass_action(),
-        mgr.pop_next_hourglass_action(),
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
     ];
     assert!(matches!(
         remaining[0],
@@ -771,26 +1031,35 @@ fn live_hourglass_places_normal_successor_after_older_fifo_work() {
 
 #[test]
 fn released_cross_postponed_action_keeps_owner_fifo_behind_ready_successor() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Pc(crate::entity_id::PcId(0));
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
 
     let mut old = Sequence::new();
     old.append_element(make_simple_element(1, Command::PassDoor, Some(owner)));
     old.append_element(make_simple_element(2, Command::Move, Some(owner)));
-    let old_id = mgr.launch_sequence(old);
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(old_id, 0);
+    let old_id = engine.orders.sequence_manager.launch_sequence(old);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), old_id, 0);
 
-    let replacement_id =
-        mgr.launch_element(make_simple_element(1, Command::AssertPosition, Some(owner)));
-    let _ = mgr.hourglass();
-    mgr.postpone_element(replacement_id, 0);
-    mgr.get_element_mut(old_id, 0).unwrap().cross_postponed = Some((replacement_id, 0));
+    let replacement_id = engine
+        .orders
+        .sequence_manager
+        .launch_element(make_simple_element(1, Command::AssertPosition, Some(owner)));
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), replacement_id, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(old_id, 0)
+        .unwrap()
+        .cross_postponed = Some((replacement_id, 0));
 
-    mgr.element_terminated(old_id, 0);
-    finish_test_condolations(&mut mgr);
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), old_id, 0);
 
-    let actions: Vec<_> = std::iter::from_fn(|| mgr.pop_next_hourglass_action()).collect();
+    let actions: Vec<_> =
+        std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action()).collect();
     assert!(matches!(
         actions.as_slice(),
         [
@@ -809,101 +1078,110 @@ fn released_cross_postponed_action_keeps_owner_fifo_behind_ready_successor() {
 }
 
 #[test]
-fn released_cross_postponed_assert_frontier_leaves_old_terminal_move_last() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(50));
+fn released_cross_postponed_assertions_keep_ready_before_postponed_fifo() {
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
 
     let mut old = Sequence::new();
     old.append_element(make_simple_element(4, Command::PassDoor, Some(owner)));
     old.append_element(make_simple_element(5, Command::AssertPosition, Some(owner)));
     old.append_element(make_simple_element(6, Command::Move, Some(owner)));
-    let old_id = mgr.launch_sequence(old);
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(old_id, 0);
+    let old_id = engine.orders.sequence_manager.launch_sequence(old);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), old_id, 0);
 
     let mut replacement = Sequence::new();
     replacement.append_element(make_simple_element(1, Command::AssertPosition, Some(owner)));
     replacement.append_element(make_simple_element(2, Command::Move, Some(owner)));
-    let replacement_id = mgr.launch_sequence(replacement);
-    let _ = mgr.hourglass();
-    mgr.postpone_element(replacement_id, 0);
-    mgr.get_element_mut(old_id, 0).unwrap().cross_postponed = Some((replacement_id, 0));
+    let replacement_id = engine.orders.sequence_manager.launch_sequence(replacement);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), replacement_id, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(old_id, 0)
+        .unwrap()
+        .cross_postponed = Some((replacement_id, 0));
 
-    mgr.element_terminated(old_id, 0);
-    finish_test_condolations(&mut mgr);
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), old_id, 0);
 
-    // The replacement assertion runs first. Both assertions terminate in
-    // Translate and publish their following Move at the live FIFO tail, so
-    // the old route's terminal Move is instructed last and reclaims the
-    // actor's destination.
+    // Ready registers the current sequence's assertion before postponed
+    // startup registers the replacement assertion. Completing either appends
+    // its following Move after the other work already in the manager FIFO.
     assert!(matches!(
-        mgr.pop_next_hourglass_action(),
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
+        Some(SequenceAction::InstructOwner {
+            sequence_id,
+            element_index: 1,
+            ..
+        }) if sequence_id == old_id
+    ));
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), old_id, 1);
+
+    assert!(matches!(
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
         Some(SequenceAction::InstructOwner {
             sequence_id,
             element_index: 0,
             ..
         }) if sequence_id == replacement_id
     ));
-    mgr.element_terminated(replacement_id, 0);
-    finish_test_condolations(&mut mgr);
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), replacement_id, 0);
 
     assert!(matches!(
-        mgr.pop_next_hourglass_action(),
-        Some(SequenceAction::InstructOwner {
-            sequence_id,
-            element_index: 1,
-            ..
-        }) if sequence_id == old_id
-    ));
-    mgr.element_terminated(old_id, 1);
-    finish_test_condolations(&mut mgr);
-
-    assert!(matches!(
-        mgr.pop_next_hourglass_action(),
-        Some(SequenceAction::InstructOwner {
-            sequence_id,
-            element_index: 1,
-            ..
-        }) if sequence_id == replacement_id
-    ));
-    assert!(matches!(
-        mgr.pop_next_hourglass_action(),
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
         Some(SequenceAction::InstructOwner {
             sequence_id,
             element_index: 2,
             ..
         }) if sequence_id == old_id
     ));
+    assert!(matches!(
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
+        Some(SequenceAction::InstructOwner {
+            sequence_id,
+            element_index: 1,
+            ..
+        }) if sequence_id == replacement_id
+    ));
 }
 
 #[test]
 fn released_multi_door_route_keeps_ready_before_postponed_fifo() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Pc(crate::entity_id::PcId(50));
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
 
     let mut old = Sequence::new();
     old.append_element(make_simple_element(4, Command::PassDoor, Some(owner)));
     old.append_element(make_simple_element(5, Command::AssertPosition, Some(owner)));
     old.append_element(make_simple_element(6, Command::Move, Some(owner)));
-    let old_id = mgr.launch_sequence(old);
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(old_id, 0);
+    let old_id = engine.orders.sequence_manager.launch_sequence(old);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), old_id, 0);
 
     let mut replacement = Sequence::new();
     replacement.append_element(make_simple_element(1, Command::AssertPosition, Some(owner)));
     replacement.append_element(make_simple_element(2, Command::Move, Some(owner)));
     replacement.append_element(make_simple_element(3, Command::AssertPosition, Some(owner)));
     replacement.append_element(make_simple_element(4, Command::PassDoor, Some(owner)));
-    let replacement_id = mgr.launch_sequence(replacement);
-    let _ = mgr.hourglass();
-    mgr.postpone_element(replacement_id, 0);
-    mgr.get_element_mut(old_id, 0).unwrap().cross_postponed = Some((replacement_id, 0));
+    let replacement_id = engine.orders.sequence_manager.launch_sequence(replacement);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), replacement_id, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(old_id, 0)
+        .unwrap()
+        .cross_postponed = Some((replacement_id, 0));
 
-    mgr.element_terminated(old_id, 0);
-    finish_test_condolations(&mut mgr);
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), old_id, 0);
 
     assert!(matches!(
-        mgr.pop_next_hourglass_action(),
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
         Some(SequenceAction::InstructOwner {
             sequence_id,
             element_index: 1,
@@ -911,7 +1189,7 @@ fn released_multi_door_route_keeps_ready_before_postponed_fifo() {
         }) if sequence_id == old_id
     ));
     assert!(matches!(
-        mgr.pop_next_hourglass_action(),
+        engine.orders.sequence_manager.pop_next_hourglass_action(),
         Some(SequenceAction::InstructOwner {
             sequence_id,
             element_index: 0,
@@ -922,33 +1200,40 @@ fn released_multi_door_route_keeps_ready_before_postponed_fifo() {
 
 #[test]
 fn released_same_sequence_postponed_action_clears_blocker_edge() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(0));
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
 
     let mut sequence = Sequence::new();
     sequence.append_element(make_simple_element(1, Command::Wait, Some(owner)));
     sequence.append_element(make_simple_element(1, Command::AssertPosition, Some(owner)));
-    let sequence_id = mgr.launch_sequence(sequence);
-    let _ = mgr.hourglass();
+    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    let _ = engine.orders.sequence_manager.hourglass();
 
-    mgr.element_in_progress(sequence_id, 0);
-    mgr.postpone_element(sequence_id, 1);
-    mgr.get_element_mut(sequence_id, 0)
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence_id, 0);
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence_id, 1);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence_id, 0)
         .unwrap()
         .postponed_element_index = Some(1);
 
-    mgr.element_terminated(sequence_id, 0);
-    finish_test_condolations(&mut mgr);
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), sequence_id, 0);
 
     assert_eq!(
-        mgr.get_element(sequence_id, 0)
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
             .unwrap()
             .postponed_element_index,
         None,
         "starting a postponed sequence element must detach the released edge"
     );
     assert!(matches!(
-        mgr.hourglass().as_slice(),
+        engine.orders.sequence_manager.hourglass().as_slice(),
         [SequenceAction::InstructOwner {
             owner: action_owner,
             sequence_id: action_sequence,
@@ -959,74 +1244,119 @@ fn released_same_sequence_postponed_action_clears_blocker_edge() {
 
 #[test]
 fn finishing_condolation_stops_at_nested_card_before_cascade_continues() {
-    let mut mgr = SequenceManager::new();
-    let owner = Some(EntityId::Pc(crate::entity_id::PcId(0)));
-    let mut seq = Sequence::new();
-    seq.append_element(make_simple_element(1, Command::Move, owner));
-    seq.append_element(make_simple_element(2, Command::Turn, owner));
-    seq.append_element(make_simple_element(3, Command::LookLeft, owner));
-    let seq_id = mgr.launch_sequence(seq);
-
-    mgr.element_interrupted(seq_id, 0, CascadeFlags::NEXT_LEVEL);
-    let mut pending = mgr.drain_pending_condolations();
-    assert_eq!(pending.len(), 1);
-
-    // During a sequence-element state change, the outer callback returns and the
-    // cascade enters element 1, whose own completion callback must run
-    // before CASCADE_FOLLOWING is allowed to touch element 2.
-    mgr.finish_pending_condolation(pending.remove(0));
-
-    assert_eq!(
-        mgr.get_element(seq_id, 1).unwrap().state,
-        SequenceState::Interrupted
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let mut sequence = Sequence::new();
+    for level in 1..=3 {
+        sequence.append_element(SequenceElement::new(level, Command::Generic, Some(owner)));
+    }
+    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    let cards = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let observed = cards.clone();
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            observed.borrow_mut().push(card.elem_idx);
+            if card.elem_idx < 2 {
+                assert_eq!(
+                    engine
+                        .orders
+                        .sequence_manager
+                        .get_element(sequence_id, usize::from(card.elem_idx) + 1)
+                        .unwrap()
+                        .state,
+                    SequenceState::Todo,
+                    "the next element is untouched during its predecessor's callback"
+                );
+            }
+        },
+        || {
+            engine.element_interrupted(
+                &test_context(),
+                &assets,
+                &mut Vec::new(),
+                sequence_id,
+                0,
+                CascadeFlags::NEXT_LEVEL,
+            )
+        },
     );
-    assert_eq!(
-        mgr.get_element(seq_id, 2).unwrap().state,
-        SequenceState::Todo,
-        "the nested owner callback is a synchronous boundary in the cascade"
-    );
-    let nested = mgr.drain_pending_condolations();
-    assert_eq!(nested.len(), 1);
-    assert_eq!(nested[0].card.elem_idx, 1);
+    assert_eq!(*cards.borrow(), [0, 1, 2]);
+    assert!((0..3).all(|index| {
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, index)
+            .unwrap()
+            .state
+            == SequenceState::Interrupted
+    }));
 }
 
 #[test]
 fn stop_owner_interrupts_actor_work_postponed_by_injury() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
 
     // A preference action is current until an injury postpones it.
     let mut parry = make_simple_element(1, Command::ParrySword, Some(owner));
     parry.priority = SequencePriority::Preference;
-    let parry_seq = mgr.launch_element(parry);
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(parry_seq, 0);
-    mgr.postpone_element(parry_seq, 0);
+    let parry_seq = engine.orders.sequence_manager.launch_element(parry);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), parry_seq, 0);
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), parry_seq, 0);
 
     // During the injury's terminal condolence callback, actor stopping sees
     // the injury as current in the original and recursively stops the
     // postponed parry. Model the cross-sequence postponed link explicitly.
     let mut injury = make_simple_element(1, Command::ReceiveSwordDamage, Some(owner));
     injury.priority = SequencePriority::Injury;
-    let injury_seq = mgr.launch_element(injury);
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(injury_seq, 0);
-    mgr.get_element_mut(injury_seq, 0).unwrap().cross_postponed = Some((parry_seq, 0));
+    let injury_seq = engine.orders.sequence_manager.launch_element(injury);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), injury_seq, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(injury_seq, 0)
+        .unwrap()
+        .cross_postponed = Some((parry_seq, 0));
 
-    mgr.stop_owner(owner, SequencePriority::Preference, &|elem| elem.priority);
+    engine.stop_owner(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        owner,
+        SequencePriority::Preference,
+        &|_, elem| elem.priority,
+    );
 
     assert_eq!(
-        mgr.get_element(injury_seq, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(injury_seq, 0)
+            .unwrap()
+            .state,
         SequenceState::InProgress,
         "Preference StopAll must not interrupt the stronger injury callback"
     );
     assert_eq!(
-        mgr.get_element(parry_seq, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(parry_seq, 0)
+            .unwrap()
+            .state,
         SequenceState::Interrupted,
         "the parry hidden underneath the injury must not resume after StopAll"
     );
     assert_eq!(
-        mgr.get_element(injury_seq, 0).unwrap().cross_postponed,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(injury_seq, 0)
+            .unwrap()
+            .cross_postponed,
         None,
         "the injury must not retain a resumable link to stopped actor work"
     );
@@ -1034,24 +1364,34 @@ fn stop_owner_interrupts_actor_work_postponed_by_injury() {
 
 #[test]
 fn split_stop_scans_work_registered_by_selected_element_callback() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
-    let resolver = |element: &SequenceElement| element.priority;
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
+    let resolver = |_: &EngineInner, element: &SequenceElement| element.priority;
 
     let mut current = make_simple_element(1, Command::Turn, Some(owner));
     current.priority = SequencePriority::Normal;
-    let current_seq = mgr.launch_element(current);
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(current_seq, 0);
+    let current_seq = engine.orders.sequence_manager.launch_element(current);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), current_seq, 0);
 
-    mgr.stop_owner_current_from_root(
+    engine.stop_owner_current_from_root(
+        &sim,
+        &assets,
+        &mut Vec::new(),
         owner,
         Some((current_seq, 0)),
         SequencePriority::Preference,
         &resolver,
     );
     assert_eq!(
-        mgr.get_element(current_seq, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(current_seq, 0)
+            .unwrap()
+            .state,
         SequenceState::Interrupted
     );
 
@@ -1059,21 +1399,43 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
     // Actor stopping is still between its selected and pending phases.
     let mut callback_look = make_simple_element(1, Command::LookLeft, Some(owner));
     callback_look.priority = SequencePriority::Normal;
-    let callback_look_seq = mgr.launch_element(callback_look);
+    let callback_look_seq = engine.orders.sequence_manager.launch_element(callback_look);
 
-    let pending_snapshot = mgr.pending_elements_for_owner(owner);
+    let pending_snapshot = engine
+        .orders
+        .sequence_manager
+        .pending_elements_for_owner(owner);
 
     // Model a card from the pending scan registering another command
     // after the scan captured its stable membership.
     let mut pending_card_look = make_simple_element(1, Command::LookRight, Some(owner));
     pending_card_look.priority = SequencePriority::Normal;
-    let pending_card_look_seq = mgr.launch_element(pending_card_look);
+    let pending_card_look_seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(pending_card_look);
     for root in pending_snapshot {
-        mgr.stop_pending_element_from_root(owner, root, SequencePriority::Preference, &resolver);
+        engine.stop_pending_element_from_root(
+            &sim,
+            &assets,
+            &mut Vec::new(),
+            owner,
+            root,
+            SequencePriority::Preference,
+            &resolver,
+        );
     }
-    mgr.compact_terminal_elements_to_go();
+    engine
+        .orders
+        .sequence_manager
+        .compact_terminal_elements_to_go();
     assert_eq!(
-        mgr.get_element(callback_look_seq, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(callback_look_seq, 0)
+            .unwrap()
+            .state,
         SequenceState::Interrupted,
         "pending-work cancellation must see work registered by the selected element's synchronous callback"
     );
@@ -1082,119 +1444,185 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
     // Work registered by a captured entry's card belongs to the next
     // manager update, not this scan.
     assert_eq!(
-        mgr.get_element(pending_card_look_seq, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(pending_card_look_seq, 0)
+            .unwrap()
+            .state,
         SequenceState::Todo
     );
     assert!(
-        mgr.v48_elements_to_go()
+        engine
+            .orders
+            .sequence_manager
+            .v48_elements_to_go()
             .contains(&(pending_card_look_seq, 0))
     );
 }
 
 #[test]
-fn stop_owner_batches_cleanup_for_long_cross_postponed_chain() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
-    let unrelated_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+fn stop_owner_completes_deep_cross_postponed_chain() {
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+    let fixture_owner_1 = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    // Replays retain a large amount of historical sequence state until the
-    // Friday cleanup pass. Keep enough unrelated sequences here to catch a
-    // regression that scans the whole manager for every stopped chain node.
+    let owner = fixture_owner_0;
+    let unrelated_owner = fixture_owner_1;
+
+    // Retained work for a different owner must stay outside this traversal.
     for _ in 0..4096 {
-        mgr.launch_element(make_simple_element(1, Command::Wait, Some(unrelated_owner)));
+        engine
+            .orders
+            .sequence_manager
+            .launch_element(make_simple_element(1, Command::Wait, Some(unrelated_owner)));
     }
 
     let mut chain = Vec::with_capacity(4096);
     for _ in 0..4096 {
         let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
         element.priority = SequencePriority::Normal;
-        let sequence = mgr.launch_element(element);
-        mgr.postpone_element(sequence, 0);
+        let sequence = engine.orders.sequence_manager.launch_element(element);
+        engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence, 0);
         if let Some(&previous) = chain.last() {
-            mgr.get_element_mut(previous, 0).unwrap().cross_postponed = Some((sequence, 0));
+            engine
+                .orders
+                .sequence_manager
+                .get_element_mut(previous, 0)
+                .unwrap()
+                .cross_postponed = Some((sequence, 0));
         }
         chain.push(sequence);
     }
 
-    mgr.stop_owner_current_from_root(
+    engine.stop_owner_current_from_root(
+        &sim,
+        &assets,
+        &mut Vec::new(),
         owner,
         Some((chain[0], 0)),
         SequencePriority::Preference,
-        &|element| element.priority,
+        &|_, element| element.priority,
     );
 
     for sequence in chain {
-        let element = mgr.get_element(sequence, 0).unwrap();
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap();
         assert_eq!(element.state, SequenceState::Interrupted);
         assert_eq!(element.cross_postponed, None);
     }
 }
 
 #[test]
-fn repeated_preference_stops_skip_growing_strong_postponed_prefix() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+fn deep_selected_stop_preserves_strong_prefix_and_reaches_weak_tail() {
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
 
     let mut root_element = make_simple_element(1, Command::QuitSwordfight, Some(owner));
     root_element.priority = SequencePriority::PostponeEverythingButInjuries;
-    let root = mgr.launch_element(root_element);
-    mgr.element_in_progress(root, 0);
+    let root = engine.orders.sequence_manager.launch_element(root_element);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), root, 0);
 
-    // EnterSwordfight can add one equal-priority postponed element between
-    // successive preference-priority stops while preparing for swordfights. The original game's
-    // pointer walk is effect-free for this graph; rescanning the full prefix
-    // after every append makes the Rust representation triangular.
+    // Exercise the full depth on the default test stack. Building the chain
+    // first keeps this a traversal regression rather than a repeated-scan benchmark.
     let mut tail = root;
     let mut chain = Vec::with_capacity(8192);
     for _ in 0..8192 {
         let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
         element.priority = SequencePriority::PostponeEverythingButInjuries;
-        let sequence = mgr.launch_element(element);
-        mgr.postpone_element(sequence, 0);
-        mgr.get_element_mut(tail, 0).unwrap().cross_postponed = Some((sequence, 0));
+        let sequence = engine.orders.sequence_manager.launch_element(element);
+        engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence, 0);
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(tail, 0)
+            .unwrap()
+            .cross_postponed = Some((sequence, 0));
         tail = sequence;
         chain.push(sequence);
-
-        mgr.stop_owner_current_from_root(
-            owner,
-            Some((root, 0)),
-            SequencePriority::Preference,
-            &|element| element.priority,
-        );
     }
 
-    assert_eq!(
-        mgr.get_element(root, 0).unwrap().state,
-        SequenceState::InProgress
-    );
-    assert!(chain.iter().all(|sequence| {
-        mgr.get_element(*sequence, 0).unwrap().state == SequenceState::Postponed
-    }));
-
-    // The ceiling is only an admission shortcut. A newly linked weak tail
-    // must disable it and remain observable to the exact Original traversal.
-    let mut weak = make_simple_element(1, Command::Turn, Some(owner));
-    weak.priority = SequencePriority::Normal;
-    let weak = mgr.launch_element(weak);
-    mgr.postpone_element(weak, 0);
-    mgr.get_element_mut(tail, 0).unwrap().cross_postponed = Some((weak, 0));
-    mgr.stop_owner_current_from_root(
+    engine.stop_owner_current_from_root(
+        &sim,
+        &assets,
+        &mut Vec::new(),
         owner,
         Some((root, 0)),
         SequencePriority::Preference,
-        &|element| element.priority,
+        &|_, element| element.priority,
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(root, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress
+    );
+    assert!(chain.iter().all(|sequence| {
+        engine
+            .orders
+            .sequence_manager
+            .get_element(*sequence, 0)
+            .unwrap()
+            .state
+            == SequenceState::Postponed
+    }));
+
+    // The strong prefix must not hide a subsequently linked weak tail.
+    let mut weak = make_simple_element(1, Command::Turn, Some(owner));
+    weak.priority = SequencePriority::Normal;
+    let weak = engine.orders.sequence_manager.launch_element(weak);
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), weak, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(tail, 0)
+        .unwrap()
+        .cross_postponed = Some((weak, 0));
+    engine.stop_owner_current_from_root(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Some((root, 0)),
+        SequencePriority::Preference,
+        &|_, element| element.priority,
     );
     assert_eq!(
-        mgr.get_element(weak, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(weak, 0)
+            .unwrap()
+            .state,
         SequenceState::Interrupted
     );
 }
 
 #[test]
-fn strong_owner_summary_does_not_hide_weak_same_sequence_successor() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
-    let successor_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+fn strong_selected_element_does_not_hide_weak_same_sequence_successor() {
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+    let fixture_owner_1 = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let owner = fixture_owner_0;
+    let successor_owner = fixture_owner_1;
     let mut sequence = Sequence::new();
     let mut root = make_simple_element(1, Command::QuitSwordfight, Some(owner));
     root.priority = SequencePriority::PostponeEverythingButInjuries;
@@ -1202,17 +1630,25 @@ fn strong_owner_summary_does_not_hide_weak_same_sequence_successor() {
     let mut successor = make_simple_element(2, Command::Turn, Some(successor_owner));
     successor.priority = SequencePriority::Normal;
     sequence.append_element(successor);
-    let sequence = mgr.launch_sequence(sequence);
+    let sequence = engine.orders.sequence_manager.launch_sequence(sequence);
 
-    mgr.stop_owner_current_from_root(
+    engine.stop_owner_current_from_root(
+        &sim,
+        &assets,
+        &mut Vec::new(),
         owner,
         Some((sequence, 0)),
         SequencePriority::Preference,
-        &|element| element.priority,
+        &|_, element| element.priority,
     );
 
     assert_eq!(
-        mgr.get_element(sequence, 1).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 1)
+            .unwrap()
+            .state,
         SequenceState::Interrupted,
         "actor-wide priority shortcut must preserve Original's same-sequence recursion"
     );
@@ -1220,122 +1656,111 @@ fn strong_owner_summary_does_not_hide_weak_same_sequence_successor() {
 
 #[test]
 fn repeated_selected_stops_do_not_scan_unrelated_retained_sequences() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
-    let unrelated_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+    let fixture_owner_1 = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let owner = fixture_owner_0;
+    let unrelated_owner = fixture_owner_1;
 
     for _ in 0..4096 {
-        mgr.launch_element(make_simple_element(1, Command::Turn, Some(unrelated_owner)));
+        engine
+            .orders
+            .sequence_manager
+            .launch_element(make_simple_element(1, Command::Turn, Some(unrelated_owner)));
     }
-    let _ = mgr.hourglass();
+    let _ = engine.orders.sequence_manager.hourglass();
 
     let mut roots = Vec::with_capacity(2048);
     for _ in 0..2048 {
         let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
         element.priority = SequencePriority::Normal;
-        let sequence = mgr.launch_element(element);
-        mgr.postpone_element(sequence, 0);
+        let sequence = engine.orders.sequence_manager.launch_element(element);
+        engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence, 0);
         roots.push(sequence);
     }
 
     for &sequence in &roots {
-        mgr.stop_owner_current_from_root(
+        engine.stop_owner_current_from_root(
+            &sim,
+            &assets,
+            &mut Vec::new(),
             owner,
             Some((sequence, 0)),
             SequencePriority::Preference,
-            &|element| element.priority,
+            &|_, element| element.priority,
         );
     }
 
     for sequence in roots {
         assert_eq!(
-            mgr.get_element(sequence, 0).unwrap().state,
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .state,
             SequenceState::Interrupted
-        );
-    }
-}
-
-#[test]
-fn stop_pending_matching_batches_terminal_link_cleanup() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
-    let unrelated_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
-
-    for _ in 0..4096 {
-        mgr.launch_element(make_simple_element(1, Command::Wait, Some(unrelated_owner)));
-    }
-
-    let mut matching = Vec::with_capacity(4096);
-    for _ in 0..4096 {
-        let mut element = make_simple_element(1, Command::ShootBow, Some(owner));
-        element.priority = SequencePriority::Normal;
-        matching.push(mgr.launch_element(element));
-    }
-
-    assert_eq!(
-        mgr.stop_pending_elements_matching(
-            owner,
-            Command::ShootBow,
-            SequencePriority::Preference,
-            &|element| element.priority,
-        ),
-        matching.len(),
-    );
-    for sequence in matching {
-        assert_eq!(
-            mgr.get_element(sequence, 0).unwrap().state,
-            SequenceState::Interrupted
-        );
-    }
-
-    // EnterSwordfight performs this check for every queued entry even when
-    // there is no bow work left. Keep the retained manager large enough that
-    // an accidental all-sequence terminal-link cleanup per no-op call is
-    // immediately visible in this stress regression.
-    for _ in 0..4096 {
-        assert_eq!(
-            mgr.stop_pending_elements_matching(
-                owner,
-                Command::ShootBow,
-                SequencePriority::Preference,
-                &|element| element.priority,
-            ),
-            0,
         );
     }
 }
 
 #[test]
 fn stop_pending_roots_do_not_scan_unrelated_retained_sequences() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
-    let unrelated_owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+    let fixture_owner_1 = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let owner = fixture_owner_0;
+    let unrelated_owner = fixture_owner_1;
 
     for _ in 0..4096 {
-        mgr.launch_element(make_simple_element(1, Command::Turn, Some(unrelated_owner)));
+        engine
+            .orders
+            .sequence_manager
+            .launch_element(make_simple_element(1, Command::Turn, Some(unrelated_owner)));
     }
-    let _ = mgr.hourglass();
+    let _ = engine.orders.sequence_manager.hourglass();
 
     let mut roots = Vec::with_capacity(2048);
     for _ in 0..2048 {
         let mut element = make_simple_element(1, Command::EnterSwordfight, Some(owner));
         element.priority = SequencePriority::Normal;
-        roots.push(mgr.launch_element(element));
+        roots.push(engine.orders.sequence_manager.launch_element(element));
     }
 
     for &sequence in &roots {
-        mgr.stop_pending_element_from_root(
+        engine.stop_pending_element_from_root(
+            &sim,
+            &assets,
+            &mut Vec::new(),
             owner,
             (sequence, 0),
             SequencePriority::Preference,
-            &|element| element.priority,
+            &|_, element| element.priority,
         );
     }
-    mgr.compact_terminal_elements_to_go();
+    engine
+        .orders
+        .sequence_manager
+        .compact_terminal_elements_to_go();
 
     for sequence in roots {
         assert_eq!(
-            mgr.get_element(sequence, 0).unwrap().state,
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .state,
             SequenceState::Interrupted
         );
     }
@@ -1343,133 +1768,225 @@ fn stop_pending_roots_do_not_scan_unrelated_retained_sequences() {
 
 #[test]
 fn stop_owner_walks_nested_cross_postponed_graph() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
 
     let mut deepest = make_simple_element(1, Command::ParrySword, Some(owner));
     deepest.priority = SequencePriority::Preference;
-    let deepest_seq = mgr.launch_element(deepest);
-    mgr.postpone_element(deepest_seq, 0);
+    let deepest_seq = engine.orders.sequence_manager.launch_element(deepest);
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), deepest_seq, 0);
 
     let mut middle = make_simple_element(1, Command::EnterSwordfight, Some(owner));
     middle.priority = SequencePriority::Preference;
-    let middle_seq = mgr.launch_element(middle);
-    mgr.postpone_element(middle_seq, 0);
-    mgr.get_element_mut(middle_seq, 0).unwrap().cross_postponed = Some((deepest_seq, 0));
+    let middle_seq = engine.orders.sequence_manager.launch_element(middle);
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), middle_seq, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(middle_seq, 0)
+        .unwrap()
+        .cross_postponed = Some((deepest_seq, 0));
 
     let mut injury = make_simple_element(1, Command::ReceiveSwordDamage, Some(owner));
     injury.priority = SequencePriority::Injury;
-    let injury_seq = mgr.launch_element(injury);
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(injury_seq, 0);
-    mgr.get_element_mut(injury_seq, 0).unwrap().cross_postponed = Some((middle_seq, 0));
+    let injury_seq = engine.orders.sequence_manager.launch_element(injury);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), injury_seq, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(injury_seq, 0)
+        .unwrap()
+        .cross_postponed = Some((middle_seq, 0));
 
-    mgr.stop_owner(owner, SequencePriority::Preference, &|element| {
-        element.priority
-    });
+    engine.stop_owner(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        owner,
+        SequencePriority::Preference,
+        &|_, element| element.priority,
+    );
 
     assert_eq!(
-        mgr.get_element(injury_seq, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(injury_seq, 0)
+            .unwrap()
+            .state,
         SequenceState::InProgress
     );
     for sequence in [middle_seq, deepest_seq] {
         assert_eq!(
-            mgr.get_element(sequence, 0).unwrap().state,
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .state,
             SequenceState::Interrupted,
             "every recursively postponed actor action must be stopped"
         );
     }
     assert_eq!(
-        mgr.get_element(injury_seq, 0).unwrap().cross_postponed,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(injury_seq, 0)
+            .unwrap()
+            .cross_postponed,
         None
     );
     assert_eq!(
-        mgr.get_element(middle_seq, 0).unwrap().cross_postponed,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(middle_seq, 0)
+            .unwrap()
+            .cross_postponed,
         None
     );
 }
 
 #[test]
 fn stop_owner_walks_postponed_graph_from_pending_strong_blocker() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
 
     let mut turn = make_simple_element(1, Command::Turn, Some(owner));
     turn.priority = SequencePriority::Normal;
-    let turn_seq = mgr.launch_element(turn);
-    mgr.postpone_element(turn_seq, 0);
+    let turn_seq = engine.orders.sequence_manager.launch_element(turn);
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), turn_seq, 0);
 
     let mut attentive = make_simple_element(1, Command::EnterAttentiveMode, Some(owner));
     attentive.priority = SequencePriority::PostponeEverythingButInjuries;
-    let attentive_seq = mgr.launch_element(attentive);
-    mgr.postpone_element(attentive_seq, 0);
-    mgr.get_element_mut(attentive_seq, 0)
+    let attentive_seq = engine.orders.sequence_manager.launch_element(attentive);
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), attentive_seq, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(attentive_seq, 0)
         .unwrap()
         .cross_postponed = Some((turn_seq, 0));
 
     let mut leave_attentive = make_simple_element(1, Command::LeaveAttentiveMode, Some(owner));
     leave_attentive.priority = SequencePriority::PostponeEverythingButInjuries;
-    let leave_seq = mgr.launch_element(leave_attentive);
-    mgr.get_element_mut(leave_seq, 0).unwrap().cross_postponed = Some((attentive_seq, 0));
+    let leave_seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(leave_attentive);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(leave_seq, 0)
+        .unwrap()
+        .cross_postponed = Some((attentive_seq, 0));
 
     assert_eq!(
-        mgr.current_element_for_actor(owner),
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
         None,
         "Todo manager entries are not the actor's current element"
     );
 
-    mgr.stop_owner(owner, SequencePriority::Preference, &|element| {
-        element.priority
-    });
+    engine.stop_owner(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        owner,
+        SequencePriority::Preference,
+        &|_, element| element.priority,
+    );
 
     for sequence in [leave_seq, attentive_seq] {
         assert_ne!(
-            mgr.get_element(sequence, 0).unwrap().state,
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .state,
             SequenceState::Interrupted,
             "StopAll must preserve attentive-mode blockers"
         );
     }
     assert_eq!(
-        mgr.get_element(turn_seq, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(turn_seq, 0)
+            .unwrap()
+            .state,
         SequenceState::Interrupted,
         "stopping follows a pending blocker's postponed reference even when the blocker is too strong to stop"
     );
     assert_eq!(
-        mgr.get_element(attentive_seq, 0).unwrap().cross_postponed,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(attentive_seq, 0)
+            .unwrap()
+            .cross_postponed,
         None
     );
 }
 
 #[test]
 fn stop_owner_does_not_scan_unselected_postponed_branches() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Pc(crate::entity_id::PcId(3));
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
 
     // This branch belongs to the actor but is not reachable from the
     // actor's authoritative current element. Original-game actor stopping never
     // discovers it by scanning sequence ownership.
     let mut stale = make_simple_element(1, Command::EquipBow, Some(owner));
     stale.priority = SequencePriority::Preference;
-    let stale_seq = mgr.launch_element(stale);
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(stale_seq, 0);
-    mgr.postpone_element(stale_seq, 0);
+    let stale_seq = engine.orders.sequence_manager.launch_element(stale);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), stale_seq, 0);
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), stale_seq, 0);
 
     let mut current = make_simple_element(1, Command::UnequipBow, Some(owner));
     current.priority = SequencePriority::Preference;
-    let current_seq = mgr.launch_element(current);
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(current_seq, 0);
+    let current_seq = engine.orders.sequence_manager.launch_element(current);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), current_seq, 0);
 
-    mgr.stop_owner(owner, SequencePriority::Preference, &|elem| elem.priority);
+    engine.stop_owner(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        owner,
+        SequencePriority::Preference,
+        &|_, elem| elem.priority,
+    );
 
     assert_eq!(
-        mgr.get_element(current_seq, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(current_seq, 0)
+            .unwrap()
+            .state,
         SequenceState::Interrupted,
         "stopping an actor must stop its selected sequence element"
     );
     assert_eq!(
-        mgr.get_element(stale_seq, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(stale_seq, 0)
+            .unwrap()
+            .state,
         SequenceState::Postponed,
         "unlinked postponed ownership is not an Original traversal root"
     );
@@ -1477,108 +1994,130 @@ fn stop_owner_does_not_scan_unselected_postponed_branches() {
 
 #[test]
 fn postpone_element_consumes_its_existing_manager_registration() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Pc(crate::entity_id::PcId(3));
-    let sequence_id = mgr.launch_element(make_simple_element(1, Command::EquipBow, Some(owner)));
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
 
-    mgr.postpone_element(sequence_id, 0);
+    let owner = fixture_owner_0;
+    let sequence_id = engine
+        .orders
+        .sequence_manager
+        .launch_element(make_simple_element(1, Command::EquipBow, Some(owner)));
+
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence_id, 0);
 
     assert!(
-        mgr.hourglass().is_empty(),
+        engine.orders.sequence_manager.hourglass().is_empty(),
         "Postpone runs after Original's manager pop and must consume Rust's eager registration"
     );
     assert_eq!(
-        mgr.get_element(sequence_id, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap()
+            .state,
         SequenceState::Postponed
     );
 }
 
 #[test]
-fn stop_pending_elements_matching_clears_cross_postponed_shoot_bow() {
-    let mut mgr = SequenceManager::new();
-    let owner = EntityId::Pc(crate::entity_id::PcId(0));
+fn manager_friday_evening_cleanup() {
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
 
-    let mut current = make_simple_element(1, Command::ShootBow, Some(owner));
-    current.priority = SequencePriority::Preference;
-    current
-        .orders
-        .push_back(Order::test_new(OrderType::ShootingWithBow, 10.0, 0.0));
-    let current_seq = mgr.launch_element(current);
-    mgr.element_in_progress(current_seq, 0);
+    let mut seq = Sequence::new();
+    seq.append_element(make_simple_element(1, Command::Move, Some(fixture_owner_0)));
+    let seq_id = engine.orders.sequence_manager.launch_sequence(seq);
 
-    let mut queued = make_simple_element(1, Command::ShootBow, Some(owner));
-    queued.priority = SequencePriority::Preference;
-    let queued_seq = mgr.launch_element(queued);
+    assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
 
-    mgr.get_element_mut(current_seq, 0).unwrap().cross_postponed = Some((queued_seq, 0));
-    mgr.postpone_element(queued_seq, 0);
+    // Mark element as terminated
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), seq_id, 0);
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), seq_id, 0);
 
-    assert!(mgr.queued_element_exists(owner, Command::ShootBow));
-
-    let resolver = |_elem: &SequenceElement| SequencePriority::Preference;
-    let stopped = mgr.stop_pending_elements_matching(
-        owner,
-        Command::ShootBow,
-        SequencePriority::Preference,
-        &resolver,
-    );
-
-    assert_eq!(stopped, 1);
-    assert_eq!(
-        mgr.get_element(queued_seq, 0).unwrap().state,
-        SequenceState::Interrupted
-    );
-    assert_eq!(
-        mgr.get_element(current_seq, 0).unwrap().cross_postponed,
-        None
-    );
-    assert!(!mgr.queued_element_exists(owner, Command::ShootBow));
+    // Now cleanup should remove it
+    engine.orders.sequence_manager.friday_evening_cleanup();
+    assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
 }
 
 #[test]
-fn manager_friday_evening_cleanup() {
-    let mut mgr = SequenceManager::new();
+fn cleanup_severs_inbound_links_only_when_their_target_is_deleted() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let sim = test_context();
+    let blocker = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    let target = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(2, Command::Generic, None));
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(blocker, 0)
+        .unwrap();
+    element.cross_postponed = Some((target, 0));
+    element.legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(target, 0))));
+    engine.element_interrupted(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        target,
+        0,
+        CascadeFlags::empty(),
+    );
 
-    let mut seq = Sequence::new();
-    seq.append_element(make_simple_element(
-        1,
-        Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-    let seq_id = mgr.launch_sequence(seq);
+    engine
+        .orders
+        .sequence_manager
+        .friday_evening_cleanup_preserving(&BTreeSet::from([target]));
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(blocker, 0)
+        .unwrap();
+    assert_eq!(element.cross_postponed, Some((target, 0)));
+    assert_eq!(
+        element.legacy_v48.as_ref().unwrap().next,
+        Some(SequenceElementRef::new(target, 0))
+    );
 
-    assert_eq!(mgr.sequence_count(), 1);
+    engine.orders.sequence_manager.friday_evening_cleanup();
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .get_sequence(target)
+            .is_none()
+    );
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(blocker, 0)
+        .unwrap();
+    assert_eq!(element.cross_postponed, None);
+    assert_eq!(element.legacy_v48.as_ref().unwrap().next, None);
+    assert!(element.next_link_severed);
 
-    // Mark element as terminated
-    mgr.element_in_progress(seq_id, 0);
-    mgr.element_terminated(seq_id, 0);
-
-    // Now cleanup should remove it
-    mgr.friday_evening_cleanup();
-    assert_eq!(mgr.sequence_count(), 0);
+    // Finishing the blocker must not try to restart the destroyed successor.
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), blocker, 0);
 }
 
 #[test]
 fn manager_terminate_sequence() {
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
 
     let mut seq = Sequence::new();
-    seq.append_element(make_simple_element(
-        1,
-        Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-    seq.append_element(make_simple_element(
-        2,
-        Command::Turn,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-    let seq_id = mgr.launch_sequence(seq);
+    seq.append_element(make_simple_element(1, Command::Move, Some(fixture_owner_0)));
+    seq.append_element(make_simple_element(2, Command::Turn, Some(fixture_owner_0)));
+    let seq_id = engine.orders.sequence_manager.launch_sequence(seq);
 
-    assert!(mgr.terminate_sequence(seq_id));
+    assert!(engine.terminate_sequence(&sim, &assets, &mut Vec::new(), seq_id));
 
     // Both elements should be interrupted
-    let s = mgr.get_sequence(seq_id).unwrap();
+    let s = engine.orders.sequence_manager.get_sequence(seq_id).unwrap();
     assert_eq!(s.elements[0].state, SequenceState::Interrupted);
 }
 
@@ -1892,46 +2431,38 @@ fn serde_roundtrip() {
 
 #[test]
 fn parallel_elements_at_same_level() {
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+    let fixture_owner_1 = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let mut seq = Sequence::new();
-    seq.append_element(make_simple_element(
-        1,
-        Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-    seq.append_element(make_simple_element(
-        1,
-        Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(1))),
-    ));
-    seq.append_element(make_simple_element(
-        2,
-        Command::Turn,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
+    seq.append_element(make_simple_element(1, Command::Move, Some(fixture_owner_0)));
+    seq.append_element(make_simple_element(1, Command::Move, Some(fixture_owner_1)));
+    seq.append_element(make_simple_element(2, Command::Turn, Some(fixture_owner_0)));
 
-    let seq_id = mgr.launch_sequence(seq);
+    let seq_id = engine.orders.sequence_manager.launch_sequence(seq);
 
     // Should get two actions (both level-1 elements)
-    let actions = mgr.hourglass();
+    let actions = engine.orders.sequence_manager.hourglass();
     assert_eq!(actions.len(), 2);
 
     // Terminate both
-    mgr.element_in_progress(seq_id, 0);
-    mgr.element_in_progress(seq_id, 1);
-    mgr.element_terminated(seq_id, 0);
-    finish_test_condolations(&mut mgr);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), seq_id, 0);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), seq_id, 1);
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), seq_id, 0);
 
     // Level 2 not yet started — one still running
-    let actions = mgr.hourglass();
+    let actions = engine.orders.sequence_manager.hourglass();
     assert!(actions.is_empty());
 
-    mgr.element_terminated(seq_id, 1);
-    finish_test_condolations(&mut mgr);
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), seq_id, 1);
 
     // Now level 2 should start
-    let actions = mgr.hourglass();
+    let actions = engine.orders.sequence_manager.hourglass();
     assert_eq!(actions.len(), 1);
 }
 
@@ -1969,14 +2500,19 @@ fn element_about_to_be_launched() {
 
 #[test]
 fn pending_command_query_follows_only_current_elements_postponed_successor() {
-    let owner = EntityId::Pc(crate::entity_id::PcId(0));
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
 
     let mut current_seq = Sequence::new();
     current_seq.append_element(make_simple_element(1, Command::Move, Some(owner)));
-    let current_seq_id = mgr.launch_sequence(current_seq);
-    mgr.element_in_progress(current_seq_id, 0);
-    mgr.elements_to_go
+    let current_seq_id = engine.orders.sequence_manager.launch_sequence(current_seq);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), current_seq_id, 0);
+    engine
+        .orders
+        .sequence_manager
+        .elements_to_go
         .retain(|&(seq_id, elem_idx)| (seq_id, elem_idx) != (current_seq_id, 0));
 
     let mut postponed_seq = Sequence::new();
@@ -1985,28 +2521,43 @@ fn pending_command_query_follows_only_current_elements_postponed_successor() {
         Command::EnterSwordfight,
         Some(owner),
     ));
-    let postponed_seq_id = mgr.launch_sequence(postponed_seq);
-    mgr.elements_to_go
+    let postponed_seq_id = engine
+        .orders
+        .sequence_manager
+        .launch_sequence(postponed_seq);
+    engine
+        .orders
+        .sequence_manager
+        .elements_to_go
         .retain(|&(seq_id, elem_idx)| (seq_id, elem_idx) != (postponed_seq_id, 0));
-    mgr.postpone_element(postponed_seq_id, 0);
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), postponed_seq_id, 0);
 
     // A postponed command elsewhere is not what Original's
     // current-element postponed pointer asks about.
     assert!(
-        !mgr.element_is_about_to_be_launched_or_postponed_by_current(
-            owner,
-            Command::EnterSwordfight
-        )
+        !engine
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched_or_postponed_by_current(
+                owner,
+                Command::EnterSwordfight
+            )
     );
 
-    mgr.get_element_mut(current_seq_id, 0)
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(current_seq_id, 0)
         .unwrap()
         .cross_postponed = Some((postponed_seq_id, 0));
     assert!(
-        mgr.element_is_about_to_be_launched_or_postponed_by_current(
-            owner,
-            Command::EnterSwordfight
-        )
+        engine
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched_or_postponed_by_current(
+                owner,
+                Command::EnterSwordfight
+            )
     );
 }
 
@@ -2040,25 +2591,18 @@ fn pending_command_query_ignores_element_during_translation() {
 
 #[test]
 fn cancel_pending_move_commands() {
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
 
     let mut seq = Sequence::new();
-    seq.append_element(make_simple_element(
-        1,
-        Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-    seq.append_element(make_simple_element(
-        1,
-        Command::Turn,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-    let _seq_id = mgr.launch_sequence(seq);
+    seq.append_element(make_simple_element(1, Command::Move, Some(fixture_owner_0)));
+    seq.append_element(make_simple_element(1, Command::Turn, Some(fixture_owner_0)));
+    let _seq_id = engine.orders.sequence_manager.launch_sequence(seq);
 
-    mgr.cancel_pending_move_commands(EntityId::Pc(crate::entity_id::PcId(0)));
+    engine.cancel_pending_move_commands(&sim, &assets, &mut Vec::new(), fixture_owner_0);
 
     // Only Turn should remain (Move was cancelled)
-    let actions = mgr.hourglass();
+    let actions = engine.orders.sequence_manager.hourglass();
     assert_eq!(actions.len(), 1);
     match &actions[0] {
         SequenceAction::InstructOwner { element_index, .. } => assert_eq!(*element_index, 1),
@@ -2148,23 +2692,27 @@ fn make_fast_preserves_unrelated_orders() {
 
 #[test]
 fn make_fast_rewrites_only_the_selected_elements_linked_chain() {
-    let owner = EntityId::Pc(crate::entity_id::PcId(0));
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
 
     let mut selected = Sequence::new();
     selected.append_element(movement_elem(owner, OrderType::WalkingUpright));
     selected.append_element(movement_elem(owner, OrderType::WalkingUpright));
-    let selected_id = mgr.launch_sequence(selected);
-    mgr.element_in_progress(selected_id, 0);
+    let selected_id = engine.orders.sequence_manager.launch_sequence(selected);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), selected_id, 0);
 
     let mut unrelated = Sequence::new();
     unrelated.append_element(movement_elem(owner, OrderType::WalkingUpright));
-    let unrelated_id = mgr.launch_sequence(unrelated);
+    let unrelated_id = engine.orders.sequence_manager.launch_sequence(unrelated);
 
-    mgr.make_fast(owner);
+    engine.orders.sequence_manager.make_fast(owner);
 
     for idx in 0..2 {
-        let SequenceElementData::Movement { action, flags, .. } = &mgr
+        let SequenceElementData::Movement { action, flags, .. } = &engine
+            .orders
+            .sequence_manager
             .get_element(selected_id, idx)
             .expect("selected chain element remains present")
             .data
@@ -2175,7 +2723,9 @@ fn make_fast_rewrites_only_the_selected_elements_linked_chain() {
         assert!(flags.contains(MoveFlags::FAST));
     }
 
-    let SequenceElementData::Movement { action, flags, .. } = &mgr
+    let SequenceElementData::Movement { action, flags, .. } = &engine
+        .orders
+        .sequence_manager
         .get_element(unrelated_id, 0)
         .expect("unrelated sequence remains present")
         .data
@@ -2188,20 +2738,25 @@ fn make_fast_rewrites_only_the_selected_elements_linked_chain() {
 
 #[test]
 fn make_fast_rewrites_a_terminal_same_owner_follower() {
-    let owner = EntityId::Pc(crate::entity_id::PcId(0));
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
+
     let mut sequence = Sequence::new();
     sequence.append_element(movement_elem(owner, OrderType::WalkingUpright));
     let mut finished = movement_elem(owner, OrderType::WalkingUpright);
     finished.state = SequenceState::Terminated;
     finished.push_order(Order::test_new(OrderType::WalkingUpright, 0.0, 0.0));
     sequence.append_element(finished);
-    let sequence_id = mgr.launch_sequence(sequence);
-    mgr.element_in_progress(sequence_id, 0);
+    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence_id, 0);
 
-    mgr.make_fast(owner);
+    engine.orders.sequence_manager.make_fast(owner);
 
-    let follower = mgr
+    let follower = engine
+        .orders
+        .sequence_manager
         .get_element(sequence_id, 1)
         .expect("terminal following element remains present");
     let SequenceElementData::Movement { action, flags, .. } = &follower.data else {
@@ -2448,75 +3003,139 @@ fn set_action_recursive_follows_cross_postponed_link() {
 
 #[test]
 fn loaded_nonadjacent_next_controls_interruption_cascade() {
-    let owner = EntityId::Pc(crate::entity_id::PcId(1));
-    let mut mgr = SequenceManager::new();
+    let (mut engine, assets, owner) = live_sequence_fixture();
     let mut sequence = Sequence::new();
     for _ in 0..3 {
         sequence.append_element(SequenceElement::new(1, Command::Generic, Some(owner)));
     }
-    let sequence_id = mgr.launch_sequence(sequence);
-    mgr.get_element_mut(sequence_id, 0).unwrap().legacy_v48 = Some(loaded_v48_state(Some(
-        SequenceElementRef::new(sequence_id, 2),
-    )));
-
-    mgr.element_interrupted(sequence_id, 0, CascadeFlags::FOLLOWING);
-    // The owner's condolence card is a synchronous boundary; the
-    // cascade only continues once the card's Think has completed.
-    let mut pending = mgr.drain_pending_condolations();
-    assert_eq!(pending.len(), 1);
-    mgr.finish_pending_condolation(pending.remove(0));
-
+    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence_id, 0)
+        .unwrap()
+        .legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(
+        sequence_id,
+        2,
+    ))));
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            if card.elem_idx == 0 {
+                assert_eq!(
+                    engine
+                        .orders
+                        .sequence_manager
+                        .get_element(sequence_id, 2)
+                        .unwrap()
+                        .state,
+                    SequenceState::Todo
+                );
+            }
+        },
+        || {
+            engine.element_interrupted(
+                &test_context(),
+                &assets,
+                &mut Vec::new(),
+                sequence_id,
+                0,
+                CascadeFlags::FOLLOWING,
+            )
+        },
+    );
     assert_eq!(
-        mgr.get_element(sequence_id, 1).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 1)
+            .unwrap()
+            .state,
         SequenceState::Todo
     );
     assert_eq!(
-        mgr.get_element(sequence_id, 2).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 2)
+            .unwrap()
+            .state,
         SequenceState::Interrupted
     );
 }
 
 #[test]
 fn loaded_movement_interruption_reaches_cross_sequence_linked_seek() {
-    let owner = EntityId::Pc(crate::entity_id::PcId(1));
-    let mut mgr = SequenceManager::new();
-
-    let mut linked = Sequence::new();
-    linked.append_element(movement_elem(owner, OrderType::WalkingUpright));
-    let linked_id = mgr.launch_sequence(linked);
-
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let linked_id = engine
+        .orders
+        .sequence_manager
+        .launch_element(movement_elem(owner, OrderType::WalkingUpright));
     let mut movement = movement_elem(owner, OrderType::WalkingUpright);
     movement.command = Command::MoveWaiting;
-    let movement_id = mgr.launch_element(movement);
-    mgr.get_element_mut(movement_id, 0).unwrap().legacy_v48 = Some(LegacyV48SequenceElementState {
+    let movement_id = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(movement_id, 0)
+        .unwrap()
+        .legacy_v48 = Some(LegacyV48SequenceElementState {
         linked_seek: Some(Some(SequenceElementRef::new(linked_id, 0))),
         ..loaded_v48_state(None)
     });
-
-    mgr.element_interrupted(movement_id, 0, CascadeFlags::NEXT_LEVEL);
-
+    let cards = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let observed = cards.clone();
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            observed.borrow_mut().push(card.seq_id);
+            if card.seq_id == linked_id {
+                let parent = engine
+                    .orders
+                    .sequence_manager
+                    .get_element(movement_id, 0)
+                    .unwrap();
+                assert_eq!(parent.command, Command::Move);
+                assert_eq!(
+                    parent.state,
+                    SequenceState::Todo,
+                    "the linked callback completes before its parent changes state"
+                );
+            }
+        },
+        || {
+            engine.element_interrupted(
+                &test_context(),
+                &assets,
+                &mut Vec::new(),
+                movement_id,
+                0,
+                CascadeFlags::NEXT_LEVEL,
+            )
+        },
+    );
+    assert_eq!(*cards.borrow(), [linked_id, movement_id]);
     assert_eq!(
-        mgr.get_element(movement_id, 0).unwrap().command,
-        Command::Move,
-        "path-request cancellation restores MOVE_WAITING to MOVE"
+        engine
+            .orders
+            .sequence_manager
+            .get_element(linked_id, 0)
+            .unwrap()
+            .state,
+        SequenceState::Interrupted
     );
     assert_eq!(
-        mgr.get_element(linked_id, 0).unwrap().state,
-        SequenceState::Interrupted,
-        "movement override interrupts its exact loaded linked Seek"
+        engine
+            .orders
+            .sequence_manager
+            .get_element(movement_id, 0)
+            .unwrap()
+            .state,
+        SequenceState::Interrupted
     );
-    let cards = mgr.drain_pending_condolations();
-    assert_eq!(cards.len(), 2);
-    assert_eq!(cards[0].card.seq_id, linked_id);
-    assert_eq!(cards[1].card.seq_id, movement_id);
-    assert_eq!(cards[0].card.cancel_path_request_owner, Some(owner));
-    assert_eq!(cards[1].card.cancel_path_request_owner, None);
 }
 
 #[test]
 fn loaded_nonadjacent_next_controls_stop_recursion() {
-    let owner = EntityId::Pc(crate::entity_id::PcId(1));
-    let mut mgr = SequenceManager::new();
+    let (mut engine, assets, owner) = live_sequence_fixture();
     let mut sequence = Sequence::new();
     for priority in [
         SequencePriority::NonInterruptable,
@@ -2527,66 +3146,93 @@ fn loaded_nonadjacent_next_controls_stop_recursion() {
         element.priority = priority;
         sequence.append_element(element);
     }
-    let sequence_id = mgr.launch_sequence(sequence);
-    mgr.get_element_mut(sequence_id, 0).unwrap().legacy_v48 = Some(loaded_v48_state(Some(
-        SequenceElementRef::new(sequence_id, 2),
-    )));
-
-    mgr.get_sequence_mut(sequence_id)
+    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence_id, 0)
         .unwrap()
-        .stop_element(0, SequencePriority::Normal, &|_| SequencePriority::Normal);
-
+        .legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(
+        sequence_id,
+        2,
+    ))));
+    engine.stop_owner_current_from_root(
+        &test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Some((sequence_id, 0)),
+        SequencePriority::Normal,
+        &|_, element| element.priority,
+    );
     assert_eq!(
-        mgr.get_element(sequence_id, 1).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 1)
+            .unwrap()
+            .state,
         SequenceState::Todo
     );
     assert_eq!(
-        mgr.get_element(sequence_id, 2).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 2)
+            .unwrap()
+            .state,
         SequenceState::Interrupted
     );
     assert_eq!(
-        mgr.get_element(sequence_id, 0)
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
             .unwrap()
             .legacy_v48
             .as_ref()
             .unwrap()
             .next,
-        None,
-        "Original clears mpsqeNextSequenceElement after Stop interrupts it"
+        None
     );
 }
 
 #[test]
 fn stop_movement_rewrites_order_and_shortens_only_element_destination() {
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
     let mut seq = Sequence::new();
     let mut elem = SequenceElement::new_movement(
         1,
         Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(1))),
+        Some(fixture_owner_0),
         OrderType::WalkingUpright,
     );
     elem.push_order(Order::test_new(OrderType::WalkingUpright, 100.0, 0.0));
     elem.push_order(Order::test_new(OrderType::WalkingUpright, 200.0, 0.0));
     seq.append_element(elem);
-    let seq_id = mgr.launch_sequence(seq);
+    let seq_id = engine.orders.sequence_manager.launch_sequence(seq);
 
     // Advance to InProgress so stop_movement_for_owner applies.
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(seq_id, 0);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), seq_id, 0);
 
-    let mut cancellations: Vec<EntityId> = Vec::new();
-    let mut next_order_id = 1u32;
-    let changed = mgr.stop_movement_for_owner(
-        EntityId::Pc(crate::entity_id::PcId(1)),
+    engine.orders.pending_path_requests =
+        crate::engine::PendingPathRequestQueue::restore_v48_waiting(vec![
+            crate::engine::PendingPathRequest::test_request(fixture_owner_0, seq_id, 0),
+        ]);
+    let changed = engine.stop_movement_for_owner(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        fixture_owner_0,
         crate::coordinates::MapPoint { x: 0.0, y: 0.0 },
         SequencePriority::NonInterruptable,
-        &|_| SequencePriority::Normal,
-        &mut next_order_id,
-        &mut |id| cancellations.push(id),
+        &|_, _| SequencePriority::Normal,
     );
     assert!(changed);
-    let s = mgr.get_sequence(seq_id).unwrap();
+    let s = engine.orders.sequence_manager.get_sequence(seq_id).unwrap();
     let first = s.elements[0].current_order().unwrap();
     assert_eq!(
         first.order_type,
@@ -2599,19 +3245,27 @@ fn stop_movement_rewrites_order_and_shortens_only_element_destination() {
     assert!(destination.x <= 10.0 + 0.001);
     // Trailing order should have been dropped.
     assert_eq!(s.elements[0].orders.len(), 1);
-    assert!(cancellations.is_empty()); // No MoveWaiting — no cancellation.
+    assert_eq!(engine.orders.pending_path_requests.v48_waiting().len(), 1);
 
     // The generic half of actor stopping runs after movement stopping. The original game
     // leaves this rewritten movement InProgress so the transition can
     // play; only movement actions without a rewrite arm were interrupted
     // above.
-    mgr.stop_owner(
-        EntityId::Pc(crate::entity_id::PcId(1)),
+    engine.stop_owner(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        fixture_owner_0,
         SequencePriority::NonInterruptable,
-        &|_| SequencePriority::Normal,
+        &|_, _| SequencePriority::Normal,
     );
     assert_eq!(
-        mgr.get_element(seq_id, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap()
+            .state,
         SequenceState::InProgress
     );
 }
@@ -2622,32 +3276,37 @@ fn stop_movement_rewrite_does_not_cancel_path_for_move_waiting() {
     // `Interrupted` (default switch branch).  A successful rewrite
     // keeps the element in INPROGRESS and the path request stays
     // alive.
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
     let mut seq = Sequence::new();
     let mut elem = SequenceElement::new_movement(
         1,
         Command::MoveWaiting,
-        Some(EntityId::Pc(crate::entity_id::PcId(1))),
+        Some(fixture_owner_0),
         OrderType::WalkingUpright,
     );
     elem.push_order(Order::test_new(OrderType::WalkingUpright, 100.0, 0.0));
     seq.append_element(elem);
-    let seq_id = mgr.launch_sequence(seq);
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(seq_id, 0);
+    let seq_id = engine.orders.sequence_manager.launch_sequence(seq);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), seq_id, 0);
 
-    let mut cancellations: Vec<EntityId> = Vec::new();
-    let mut next_order_id = 1u32;
-    mgr.stop_movement_for_owner(
-        EntityId::Pc(crate::entity_id::PcId(1)),
+    engine.orders.pending_path_requests =
+        crate::engine::PendingPathRequestQueue::restore_v48_waiting(vec![
+            crate::engine::PendingPathRequest::test_request(fixture_owner_0, seq_id, 0),
+        ]);
+    engine.stop_movement_for_owner(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        fixture_owner_0,
         crate::coordinates::MapPoint::default(),
         SequencePriority::NonInterruptable,
-        &|_| SequencePriority::Normal,
-        &mut next_order_id,
-        &mut |id| cancellations.push(id),
+        &|_, _| SequencePriority::Normal,
     );
-    assert!(cancellations.is_empty());
-    let s = mgr.get_sequence(seq_id).unwrap();
+    assert_eq!(engine.orders.pending_path_requests.v48_waiting().len(), 1);
+    let s = engine.orders.sequence_manager.get_sequence(seq_id).unwrap();
     assert_eq!(s.elements[0].command, Command::MoveWaiting);
 }
 
@@ -2656,63 +3315,73 @@ fn stop_movement_cancels_path_on_interrupt() {
     // With an action that has no waiting-transition variant, the
     // element falls into the default branch and gets interrupted;
     // a MoveWaiting command goes through path cancellation.
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
     let mut seq = Sequence::new();
     let mut elem = SequenceElement::new_movement(
         1,
         Command::MoveWaiting,
-        Some(EntityId::Pc(crate::entity_id::PcId(1))),
+        Some(fixture_owner_0),
         OrderType::Turning,
     );
     elem.push_order(Order::test_new(OrderType::Turning, 100.0, 0.0));
     seq.append_element(elem);
-    let seq_id = mgr.launch_sequence(seq);
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(seq_id, 0);
+    let seq_id = engine.orders.sequence_manager.launch_sequence(seq);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), seq_id, 0);
 
-    let mut cancellations: Vec<EntityId> = Vec::new();
-    let mut next_order_id = 1u32;
-    mgr.stop_movement_for_owner(
-        EntityId::Pc(crate::entity_id::PcId(1)),
+    engine.orders.pending_path_requests =
+        crate::engine::PendingPathRequestQueue::restore_v48_waiting(vec![
+            crate::engine::PendingPathRequest::test_request(fixture_owner_0, seq_id, 0),
+        ]);
+    engine.stop_movement_for_owner(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        fixture_owner_0,
         crate::coordinates::MapPoint::default(),
         SequencePriority::NonInterruptable,
-        &|_| SequencePriority::Normal,
-        &mut next_order_id,
-        &mut |id| cancellations.push(id),
+        &|_, _| SequencePriority::Normal,
     );
-    assert_eq!(cancellations, vec![EntityId::Pc(crate::entity_id::PcId(1))]);
-    let s = mgr.get_sequence(seq_id).unwrap();
+    assert_eq!(engine.orders.pending_path_requests.v48_waiting().len(), 1);
+    assert_eq!(
+        serde_json::to_value(&engine.orders.pending_path_requests).unwrap()["ignore_next_path"],
+        true
+    );
+    let s = engine.orders.sequence_manager.get_sequence(seq_id).unwrap();
     assert_eq!(s.elements[0].command, Command::Move);
     assert_eq!(s.elements[0].state, SequenceState::Interrupted);
 }
 
 #[test]
 fn stop_movement_interrupts_element_with_unknown_action() {
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
     let mut seq = Sequence::new();
-    let mut elem = SequenceElement::new_movement(
-        1,
-        Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(1))),
-        OrderType::Turning,
-    );
+    let mut elem =
+        SequenceElement::new_movement(1, Command::Move, Some(fixture_owner_0), OrderType::Turning);
     elem.push_order(Order::test_new(OrderType::Turning, 100.0, 0.0));
     seq.append_element(elem);
-    let seq_id = mgr.launch_sequence(seq);
-    let _ = mgr.hourglass();
-    mgr.element_in_progress(seq_id, 0);
+    let seq_id = engine.orders.sequence_manager.launch_sequence(seq);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), seq_id, 0);
 
-    let mut cancellations: Vec<EntityId> = Vec::new();
-    let mut next_order_id = 1u32;
-    mgr.stop_movement_for_owner(
-        EntityId::Pc(crate::entity_id::PcId(1)),
+    engine.orders.pending_path_requests =
+        crate::engine::PendingPathRequestQueue::restore_v48_waiting(vec![
+            crate::engine::PendingPathRequest::test_request(fixture_owner_0, seq_id, 0),
+        ]);
+    engine.stop_movement_for_owner(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        fixture_owner_0,
         crate::coordinates::MapPoint::default(),
         SequencePriority::NonInterruptable,
-        &|_| SequencePriority::Normal,
-        &mut next_order_id,
-        &mut |id| cancellations.push(id),
+        &|_, _| SequencePriority::Normal,
     );
-    let s = mgr.get_sequence(seq_id).unwrap();
+    let s = engine.orders.sequence_manager.get_sequence(seq_id).unwrap();
     assert_eq!(s.elements[0].state, SequenceState::Interrupted);
 }
 
@@ -3139,33 +3808,50 @@ fn clearing_actor_goal_snapshots_removes_typed_and_generic_caches() {
 
 #[test]
 fn non_interruptable_impossible_guard_only_protects_in_progress_owner() {
-    let owner = EntityId::Pc(crate::entity_id::PcId(1));
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
 
     let mut todo = SequenceElement::new(1, Command::LeaveListen, Some(owner));
     todo.priority = SequencePriority::NonInterruptable;
-    let todo_seq = mgr.launch_element(todo);
-    mgr.element_impossible(todo_seq, 0);
+    let todo_seq = engine.orders.sequence_manager.launch_element(todo);
+    engine.element_impossible(&sim, &assets, &mut Vec::new(), todo_seq, 0);
     assert_eq!(
-        mgr.get_element(todo_seq, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(todo_seq, 0)
+            .unwrap()
+            .state,
         SequenceState::Impossible,
         "preflight failure must reject a Todo non-interruptable element"
     );
 
     let mut active = SequenceElement::new(1, Command::EnterListen, Some(owner));
     active.priority = SequencePriority::NonInterruptable;
-    let active_seq = mgr.launch_element(active);
-    mgr.element_in_progress(active_seq, 0);
-    mgr.element_impossible(active_seq, 0);
+    let active_seq = engine.orders.sequence_manager.launch_element(active);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), active_seq, 0);
+    engine.element_impossible(&sim, &assets, &mut Vec::new(), active_seq, 0);
     assert_eq!(
-        mgr.get_element(active_seq, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(active_seq, 0)
+            .unwrap()
+            .state,
         SequenceState::InProgress,
         "an executing non-interruptable owner remains protected"
     );
 
-    mgr.element_impossible_from_execute(active_seq, 0);
+    engine.element_impossible_from_execute(&sim, &assets, &mut Vec::new(), active_seq, 0);
     assert_eq!(
-        mgr.get_element(active_seq, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(active_seq, 0)
+            .unwrap()
+            .state,
         SequenceState::Impossible,
         "the owner's intrinsic execution abort follows the game's behavior"
     );
@@ -3173,8 +3859,11 @@ fn non_interruptable_impossible_guard_only_protects_in_progress_owner() {
 
 #[test]
 fn death_cleanup_preserves_exact_dead_human_todo_whitelist() {
-    let owner = EntityId::Pc(crate::entity_id::PcId(38));
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
+
+    let owner = fixture_owner_0;
+
     let admitted = [
         Command::ReceiveHitDamage,
         Command::ReceiveSwordDamage,
@@ -3185,26 +3874,42 @@ fn death_cleanup_preserves_exact_dead_human_todo_whitelist() {
         Command::GetKilledAtBottom,
     ]
     .map(|command| {
-        let sequence = mgr.launch_element(SequenceElement::new(1, command, Some(owner)));
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, command, Some(owner)));
         (command, sequence)
     });
     let rejected = [Command::ReceiveStoneDamage, Command::WaitTimer].map(|command| {
-        let sequence = mgr.launch_element(SequenceElement::new(1, command, Some(owner)));
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, command, Some(owner)));
         (command, sequence)
     });
 
-    mgr.kill_owner_sequences(owner, SequenceId(u32::MAX));
+    engine.kill_owner_sequences(&sim, &assets, &mut Vec::new(), owner, SequenceId(u32::MAX));
 
     for (command, sequence) in admitted {
         assert_eq!(
-            mgr.get_element(sequence, 0).unwrap().state,
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .state,
             SequenceState::Todo,
             "dead-human instruction handling admits queued {command:?}"
         );
     }
     for (command, sequence) in rejected {
         assert_eq!(
-            mgr.get_element(sequence, 0).unwrap().state,
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .state,
             SequenceState::Interrupted,
             "dead-human instruction handling rejects queued {command:?}"
         );
@@ -3213,31 +3918,62 @@ fn death_cleanup_preserves_exact_dead_human_todo_whitelist() {
 
 #[test]
 fn death_cleanup_preserves_postponed_wait_transferred_to_damage_replacement() {
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(197));
-    let mut mgr = SequenceManager::new();
+    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let sim = test_context();
 
-    let damage = mgr.launch_element(SequenceElement::new(1, Command::ReceiveDamage, Some(owner)));
-    let wait = mgr.launch_element(SequenceElement::new(1, Command::Wait, Some(owner)));
-    mgr.postpone_element(wait, 0);
-    mgr.get_element_mut(damage, 0).unwrap().cross_postponed = Some((wait, 0));
+    let owner = fixture_owner_0;
 
-    let rejected = mgr.launch_element(SequenceElement::new(1, Command::WaitTimer, Some(owner)));
-    mgr.postpone_element(rejected, 0);
+    let damage = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::ReceiveDamage, Some(owner)));
+    let wait = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), wait, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(damage, 0)
+        .unwrap()
+        .cross_postponed = Some((wait, 0));
 
-    mgr.kill_owner_sequences(owner, damage);
+    let rejected = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::WaitTimer, Some(owner)));
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), rejected, 0);
+
+    engine.kill_owner_sequences(&sim, &assets, &mut Vec::new(), owner, damage);
 
     assert_eq!(
-        mgr.get_element(wait, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(wait, 0)
+            .unwrap()
+            .state,
         SequenceState::Postponed,
         "human death leaves the dead-admissible Wait queued behind lethal damage"
     );
     assert_eq!(
-        mgr.get_element(damage, 0).unwrap().cross_postponed,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(damage, 0)
+            .unwrap()
+            .cross_postponed,
         Some((wait, 0)),
         "death cleanup must preserve the replacement's transferred postponed chain"
     );
     assert_eq!(
-        mgr.get_element(rejected, 0).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(rejected, 0)
+            .unwrap()
+            .state,
         SequenceState::Interrupted,
         "non-whitelisted postponed work must still be discarded on death"
     );

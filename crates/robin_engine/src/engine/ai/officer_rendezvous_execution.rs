@@ -6,7 +6,6 @@ use crate::ai::{
     Stimulus, StimulusInfo, Substate,
 };
 use crate::ai_enemy::{EnemyAi, SeekFlags, task_priority};
-use crate::element::{Element as _, Human as _};
 use crate::parameters_ai;
 use crate::profiles::ProfileRank;
 use crate::sim_rng::SimulationContext;
@@ -105,8 +104,12 @@ mod tests {
             level: 0,
         };
         let ai = engine.seek_enemy_mut(owner);
-        ai.soldier_profile_rank = ProfileRank::Soldier;
-        ai.soldier_profile_initiative = 0;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = ProfileRank::Soldier
+        });
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.initiative = 0
+        });
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingGetAlertingReportFromCivilianLook;
         ai.base.seek_position = report;
@@ -348,8 +351,7 @@ impl Rendezvous<'_> {
                         20,
                         frame,
                     );
-                    self.engine
-                        .drain_direct_ai_owner_boundary(self.sim, self.owner, self.assets);
+
                     self.say(Remark::OfficerCallsSoldier, SpeechFlags::empty());
                     self.timer(20);
                 } else {
@@ -580,16 +582,22 @@ impl Rendezvous<'_> {
                         let body = self
                             .engine
                             .expect_human_id_for_ai_handle(body.get(), "instructed body");
-                        self.enemy_mut()
-                            .base
-                            .outbox
-                            .actor
-                            .add_detectable((body, crate::element::DetectableType::Body));
-                        self.engine.drain_direct_ai_owner_boundary(
-                            self.sim,
-                            self.owner,
-                            self.assets,
-                        );
+                        let already_detectable = self
+                            .engine
+                            .world
+                            .entities
+                            .expect_ai_actor_data(self.owner, format_args!("instructed soldier"))
+                            .detectable_lists
+                            [crate::element::DetectableType::Body as usize]
+                            .iter()
+                            .any(|entry| entry.element == Some(body));
+                        if !already_detectable {
+                            self.engine.execute_ai_add_detectable(
+                                self.owner,
+                                body,
+                                crate::element::DetectableType::Body,
+                            );
+                        }
                     }
                     self.enemy_mut().current_task_priority = task_priority::SEEKING;
                     let point = self
@@ -848,16 +856,11 @@ impl Rendezvous<'_> {
                     {
                         self.forecast_officer();
                     } else {
-                        self.enemy_mut()
-                            .base
-                            .outbox
-                            .actor
-                            .delete_detectable_type(crate::element::DetectableType::Friend);
-                        self.engine.drain_direct_ai_owner_boundary(
-                            self.sim,
+                        self.engine.execute_ai_delete_detectable_type(
                             self.owner,
-                            self.assets,
+                            crate::element::DetectableType::Friend,
                         );
+
                         self.state(Substate::SeekingRunningToOfficerSeen);
                         self.call(self.owner, StimulusType::EventReachPoint, false);
                     }
@@ -885,11 +888,14 @@ impl Rendezvous<'_> {
             tracing::trace!("indoor initiative question falls back to the stay-on-post answer");
             return false;
         }
-        self.enemy().soldier_profile_initiative >= 50
+        self.enemy()
+            .profile(&self.assets.profile_manager)
+            .initiative
+            >= 50
     }
 
     fn act_on_civilian_report(&mut self) {
-        match self.enemy().get_rank() {
+        match self.enemy().get_rank(&self.assets.profile_manager) {
             ProfileRank::Officer => {
                 if self.seek_before_alert() {
                     self.seek(

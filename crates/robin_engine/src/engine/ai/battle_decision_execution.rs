@@ -125,8 +125,8 @@ impl EngineInner {
             .world
             .entities
             .expect_ai_controller_mut(owner, format_args!("battle focus"));
-        ai.outbox.actor.set_focus(ai.primary_target);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let target = ai.primary_target;
+        self.execute_ai_focus(owner, target);
     }
 
     pub(super) fn battle_state_timer(
@@ -173,14 +173,11 @@ impl EngineInner {
         owner: EntityId,
         command: crate::element::Command,
     ) {
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("battle command"))
-            .outbox
-            .actor
-            .launch_commands
-            .push(command);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.launch_element(crate::sequence::SequenceElement::new(
+            1,
+            command,
+            Some(owner),
+        ));
     }
 
     fn battle_panic_remark(
@@ -410,7 +407,7 @@ impl EngineInner {
             {
                 Decision::RunForNewArrows
             } else if !ai.base.friends_are_alerted && !only_soldiers && ai.base.blood_alcohol == 0 {
-                match ai.get_rank() {
+                match ai.get_rank(&assets.profile_manager) {
                     crate::profiles::ProfileRank::Soldier => Decision::LookForHelp,
                     crate::profiles::ProfileRank::Officer => Decision::RunAndAlertSoldiers,
                     _ => Decision::Cassos,
@@ -481,7 +478,7 @@ impl EngineInner {
                 0,
             );
         }
-        if ai.get_rank() == crate::profiles::ProfileRank::Officer
+        if ai.get_rank(&assets.profile_manager) == crate::profiles::ProfileRank::Officer
             && inputs.simple_soldiers_near
             && !ai.base.friends_are_alerted
             && ai.base.blood_alcohol == 0
@@ -508,7 +505,7 @@ impl EngineInner {
                 .world
                 .entities
                 .expect_enemy_ai(owner, format_args!("observe courage"))
-                .get_courage();
+                .get_courage(&assets.profile_manager);
             let enemies = inputs.num_enemies_i_can_see as f32;
             if f32::from(inputs.friends_nearer_to_enemy)
                 >= enemies + enemies * (0.045_f32 * f32::from(courage))
@@ -581,21 +578,15 @@ impl EngineInner {
                             .sector_with_aspect(crate::position_interface::ASPECT_RATIO);
                             self.world
                                 .entities
-                                .expect_ai_controller_mut(owner, format_args!("reserve direction"))
-                                .outbox
-                                .actor
-                                .set_direction_instantly = Some(direction as i16);
-                            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                                .expect_entity_mut(
+                                    owner,
+                                    format_args!("instant AI direction owner"),
+                                )
+                                .element_data_mut()
+                                .set_direction_instantly(direction as i16);
                         }
                     } else {
-                        let ai = self
-                            .world
-                            .entities
-                            .expect_ai_controller_mut(owner, format_args!("reserve sword"));
-                        ai.outbox.actor.enter_swordfight =
-                            Some(crate::ai::EnterSwordfightRequest::RaiseSword);
-                        ai.outbox.actor.enter_swordfight_jump_line = None;
-                        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                        self.launch_ai_raise_sword(owner);
                     }
                     self.focus_battle_primary(sim, assets, owner);
                     self.battle_state_timer(
@@ -620,26 +611,14 @@ impl EngineInner {
                         let target =
                             self.select_battle_primary(owner, PrimaryTargetFlags::VIPS_ALLOWED);
                         let center = target.map(|target| self.live_ai_position(target));
-                        let ai = self
-                            .world
-                            .entities
-                            .expect_ai_controller_mut(owner, format_args!("battle panic"));
-                        let already = matches!(
-                            ai.current_substate,
-                            Substate::FleeingPanic | Substate::FleeingRunToDoor
-                        );
-                        ai.directed_panic = center.is_some();
-                        if let Some(center) = center {
-                            ai.panic_center_x = center.x;
-                            ai.panic_center_y = center.y;
-                        }
-                        ai.outbox.actor.begin_panic = Some(crate::ai::PanicRequest {
+                        self.execute_ai_panic(
+                            sim,
+                            assets,
+                            owner,
                             center,
-                            runs: crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
-                            alert: crate::ai::AlertLevel::Red,
-                            is_new_panic: !already,
-                        });
-                        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                            crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+                            crate::ai::AlertLevel::Red,
+                        );
                     }
                     ControlFlow::Break(true)
                 }
@@ -827,7 +806,7 @@ impl EngineInner {
             let distance = crate::ai::AiController::value_between(
                 crate::parameters_ai::OBSERVE_SWORDFIGHT_MAX_DISTANCE,
                 crate::parameters_ai::OBSERVE_SWORDFIGHT_MIN_DISTANCE,
-                ai.get_courage() as u8,
+                ai.get_courage(&assets.profile_manager) as u8,
             );
             self.duty_go_near(
                 sim,

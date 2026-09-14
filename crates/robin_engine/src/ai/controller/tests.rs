@@ -33,47 +33,6 @@ fn approach_tolerance_requires_the_actor_layer_even_when_ai_position_is_snapped(
 }
 
 #[test]
-fn repeated_checkpoint_charly_calls_preserve_immediate_original_order() {
-    use crate::element::{DetectableType, EntityId};
-    use crate::entity_id::SoldierId;
-
-    let mut cleared = AiController::new(17);
-    cleared.set_checkpoint_charly(Some(AiEntityHandle::new(10)));
-    cleared.set_checkpoint_charly(None);
-    assert_eq!(
-        cleared.outbox.actor.detectable_mutations,
-        vec![
-            DetectableMutation::DeleteType(DetectableType::MissedFriend),
-            DetectableMutation::Add(
-                EntityId::Soldier(SoldierId(10)),
-                DetectableType::MissedFriend
-            ),
-            DetectableMutation::DeleteType(DetectableType::MissedFriend),
-            DetectableMutation::DeleteType(DetectableType::MissedFriend),
-        ]
-    );
-
-    let mut replaced = AiController::new(17);
-    replaced.set_checkpoint_charly(Some(AiEntityHandle::new(10)));
-    replaced.set_checkpoint_charly(Some(AiEntityHandle::new(11)));
-    assert_eq!(
-        replaced.outbox.actor.detectable_mutations,
-        vec![
-            DetectableMutation::DeleteType(DetectableType::MissedFriend),
-            DetectableMutation::Add(
-                EntityId::Soldier(SoldierId(10)),
-                DetectableType::MissedFriend
-            ),
-            DetectableMutation::DeleteType(DetectableType::MissedFriend),
-            DetectableMutation::Add(
-                EntityId::Soldier(SoldierId(11)),
-                DetectableType::MissedFriend
-            ),
-        ]
-    );
-}
-
-#[test]
 fn fleeing_seek_distance_uses_original_uword_wrap_and_sentinel() {
     let point = |x, sector| SeekPoint {
         position: Position {
@@ -105,44 +64,4 @@ fn fleeing_seek_distance_uses_original_uword_wrap_and_sentinel() {
         ),
         Some(0)
     );
-}
-
-#[test]
-fn raise_shield_records_the_targets_world_ground_point() {
-    use crate::element::EntityId;
-    use crate::entity_id::EntityIdKind;
-    use crate::sequence::{Field, FieldValue};
-
-    let mut ai = AiController::new(17);
-    ai.owner_entity_id = Some(EntityId::new(17, EntityIdKind::Soldier));
-    ai.raise_shield(
-        Position {
-            x: 1083.0,
-            y: 1563.0,
-            ..Position::default()
-        },
-        160.0,
-    );
-
-    let element = ai.outbox.actor.launch_sequences[0]
-        .elements
-        .first()
-        .expect("RaiseShield sequence contains its command");
-    assert!(matches!(
-        element.get_property(Field::ShieldDangerPoint),
-        Some(FieldValue::Point3D {
-            x: 1083.0,
-            y: 1723.0,
-            z: 160.0,
-        })
-    ));
-}
-
-#[test]
-fn lower_shield_requests_the_explicit_command() {
-    let mut ai = AiController::new(17);
-
-    ai.lower_shield();
-
-    assert!(ai.outbox.actor.lower_shield);
 }

@@ -167,25 +167,24 @@ fn keyboard_updates_tracked_and_raw_only_keys_once_per_frame() {
 }
 
 #[test]
-fn renderer_base_defaults() {
-    let r = RendererBase::default();
+fn widget_appearance_defaults() {
+    let r = WidgetAppearance::default();
     assert_eq!(r.resource_id, -1);
-    assert_eq!(r.last_rendered, [u32::MAX; 2]);
     assert!(r.alpha_mask.is_none());
 }
 
 #[test]
-fn renderer_base_is_real_point_bbox_only() {
-    let mut r = RendererBase::default();
-    r.set_position_bbox(ScreenBBox::from_coords(10.0, 10.0, 30.0, 30.0));
-    assert!(r.is_real_point(ScreenPoint::new(15.0, 15.0)));
-    assert!(!r.is_real_point(ScreenPoint::new(5.0, 5.0)));
+fn widget_appearance_is_real_point_bbox_only() {
+    let r = WidgetAppearance::default();
+    let bbox = ScreenBBox::from_coords(10.0, 10.0, 30.0, 30.0);
+    assert!(r.is_real_point(bbox, ScreenPoint::new(15.0, 15.0)));
+    assert!(!r.is_real_point(bbox, ScreenPoint::new(5.0, 5.0)));
     // Without a mask, every in-bbox pixel is opaque.
-    assert!(r.is_real_point(ScreenPoint::new(10.0, 10.0)));
+    assert!(r.is_real_point(bbox, ScreenPoint::new(10.0, 10.0)));
 }
 
 #[test]
-fn renderer_base_is_real_point_with_mask() {
+fn widget_appearance_is_real_point_with_mask() {
     // 4x4 surface, color-key = 0x07C0; pixel (1,1) is opaque,
     // everything else is keyed transparent.
     const KEY: u16 = 0x07C0;
@@ -193,141 +192,16 @@ fn renderer_base_is_real_point_with_mask() {
     pixels[5] = 0x1234;
     let mask = AlphaMask::from_pixels(4, 4, 4, &pixels, KEY);
 
-    let mut r = RendererBase::default();
-    r.set_position_bbox(ScreenBBox::from_coords(10.0, 20.0, 14.0, 24.0));
-    r.set_alpha_mask(Some(mask));
+    let mut r = WidgetAppearance::default();
+    let bbox = ScreenBBox::from_coords(10.0, 20.0, 14.0, 24.0);
+    r.alpha_mask = Some(mask);
 
     // bbox top-left = (10, 20); only local (1, 1) is opaque.
-    assert!(r.is_real_point(ScreenPoint::new(11.0, 21.0)));
-    assert!(!r.is_real_point(ScreenPoint::new(10.0, 20.0)));
-    assert!(!r.is_real_point(ScreenPoint::new(13.0, 23.0)));
+    assert!(r.is_real_point(bbox, ScreenPoint::new(11.0, 21.0)));
+    assert!(!r.is_real_point(bbox, ScreenPoint::new(10.0, 20.0)));
+    assert!(!r.is_real_point(bbox, ScreenPoint::new(13.0, 23.0)));
     // Outside the bbox: rejected before the mask check.
-    assert!(!r.is_real_point(ScreenPoint::new(50.0, 50.0)));
-}
-
-#[test]
-fn renderer_listbox_defaults() {
-    let lb = RendererListbox::new();
-    assert_eq!(lb.indent_size, 20);
-    assert_eq!(lb.font_height, 0);
-    assert_eq!(lb.knob_width, 0);
-    assert_eq!(lb.scrollbar_track_width, 0);
-    // Sentinels: "surface not yet created".
-    assert_eq!(lb.surface_knob, u32::MAX);
-    assert_eq!(lb.surface_scrollbar, u32::MAX);
-}
-
-#[test]
-fn renderer_listbox_displayable_items() {
-    let mut lb = RendererListbox::new();
-    lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
-    lb.set_font_height(20);
-    assert_eq!(lb.displayable_item_count(), 5); // 100 / 20
-
-    lb.set_font_height(0);
-    assert_eq!(lb.displayable_item_count(), 0); // guard against zero
-}
-
-#[test]
-fn renderer_listbox_knob_params() {
-    let mut lb = RendererListbox::new();
-    lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
-    lb.set_font_height(20);
-    lb.set_scrollbar_track_width(16);
-
-    // 50 items, starting at index 10
-    lb.set_knob_parameters(10, 50);
-    assert_eq!(lb.number_of_items, 50);
-    // knob_ratio = 5/50 = 0.1, before_ratio = 10/50 = 0.2
-    assert!((lb.knob_ratio - 0.1).abs() < 1e-6);
-    assert!((lb.before_ratio - 0.2).abs() < 1e-6);
-}
-
-#[test]
-fn renderer_listbox_knob_params_few_items() {
-    let mut lb = RendererListbox::new();
-    lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
-    lb.set_font_height(20);
-    // Only 3 items, but can display 5 → full knob
-    lb.set_knob_parameters(0, 3);
-    assert!((lb.knob_ratio - 1.0).abs() < 1e-6);
-    assert!((lb.before_ratio - 0.0).abs() < 1e-6);
-}
-
-#[test]
-fn renderer_listbox_text_box() {
-    let mut lb = RendererListbox::new();
-    lb.base.bbox = ScreenBBox::from_coords(10.0, 20.0, 210.0, 120.0);
-    lb.set_font_height(15);
-    lb.set_scrollbar_track_width(16);
-
-    // Item 0, no flags
-    let b0 = lb.text_box_for_item(0, 0);
-    let r0 = b0.0.unwrap();
-    assert!((r0.min().x - 10.0).abs() < 1e-6); // bbox left
-    assert!((r0.min().y - 20.0).abs() < 1e-6); // bbox top
-    assert!((r0.max().x - (10.0 + 200.0 - 16.0)).abs() < 1e-6); // bbox left + width - scrollbar
-    assert!((r0.max().y - 35.0).abs() < 1e-6); // bbox top + fontHeight
-
-    // Item 2, with indent
-    let b2 = lb.text_box_for_item(2, listbox_flags::INDENT);
-    let r2 = b2.0.unwrap();
-    assert!((r2.min().x - (10.0 + 20.0)).abs() < 1e-6); // indented by 20
-    assert!((r2.min().y - (20.0 + 30.0)).abs() < 1e-6); // 2 * 15 offset
-}
-
-#[test]
-fn renderer_listbox_scrollbar_bbox() {
-    let mut lb = RendererListbox::new();
-    lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
-    lb.set_scrollbar_track_width(16);
-    lb.surface_scrollbar = 0; // not 0xFFFFFFFF
-
-    let sb = lb.scrollbar_bbox();
-    let r = sb.0.unwrap();
-    assert!((r.min().x - 184.0).abs() < 1e-6); // 200 - 16
-    assert!((r.min().y - 0.0).abs() < 1e-6);
-    assert!((r.max().x - 200.0).abs() < 1e-6);
-    assert!((r.max().y - 100.0).abs() < 1e-6);
-}
-
-#[test]
-fn renderer_listbox_scrollbar_uninitialized() {
-    let lb = RendererListbox::new();
-    let sb = lb.scrollbar_bbox();
-    // Returns degenerate `(0,0,0,0)` here, not "no box".
-    let r = sb.0.expect("expected degenerate (0,0,0,0) box");
-    assert_eq!(r.min().x, 0.0);
-    assert_eq!(r.min().y, 0.0);
-    assert_eq!(r.max().x, 0.0);
-    assert_eq!(r.max().y, 0.0);
-}
-
-#[test]
-fn renderer_listbox_knob_bbox() {
-    let mut lb = RendererListbox::new();
-    lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
-    lb.set_knob_width(16);
-    lb.before_ratio = 0.0;
-    lb.knob_ratio = 0.5;
-
-    let kb = lb.knob_bbox();
-    let r = kb.0.unwrap();
-    // x: 200 - 1 - 16 = 183
-    assert!((r.min().x - 183.0).abs() < 1e-6);
-    // y_start: (100-2)*0.0 + 0 + 1 = 1
-    assert!((r.min().y - 1.0).abs() < 1e-6);
-    // y_end: (100-2)*0.5 + 0 + 1 = 50
-    assert!((r.max().y - 50.0).abs() < 1e-6);
-}
-
-#[test]
-fn renderer_listbox_knob_height_for_one_item() {
-    let mut lb = RendererListbox::new();
-    lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 102.0);
-    lb.number_of_items = 10;
-    // (102 - 2) / 10 = 10
-    assert_eq!(lb.knob_height_for_one_item(), 10);
+    assert!(!r.is_real_point(bbox, ScreenPoint::new(50.0, 50.0)));
 }
 
 // ── Serde roundtrip tests ──

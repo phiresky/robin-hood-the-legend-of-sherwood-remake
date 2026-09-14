@@ -6,9 +6,7 @@
 //! compare native bindings against a direct Lua call path.
 
 use robin_engine::engine::ScriptDomains;
-use robin_engine::natives::{
-    AttachedScriptBindings, NativeSessionCapabilities, ScriptEffects, ScriptState,
-};
+use robin_engine::natives::{AttachedScriptBindings, NativeSessionCapabilities, ScriptState};
 use robin_lua::MissionLuaState;
 use tempfile::TempDir;
 
@@ -54,9 +52,9 @@ pub(super) enum LegacyEventError {
 #[derive(Debug, thiserror::Error)]
 pub(super) enum LegacyStartupError {
     #[error(
-        "required Spellforge event `{event}` for mission `{mission}` has no mission-script ScriptEffects"
+        "required Spellforge event `{event}` for mission `{mission}` has no mission native session"
     )]
-    MissingScriptEffects {
+    MissingNativeSession {
         mission: String,
         event: &'static str,
     },
@@ -75,7 +73,7 @@ impl LegacyVmSession {
     }
 
     /// Look up a top-level event function on the Lua globals and call it with
-    /// the engine's [`ScriptEffects`] attached. A missing function or no
+    /// the engine's native capabilities attached. A missing function or no
     /// explicit return is a successful no-op; a Lua failure or incompatible
     /// return is preserved as a typed [`LegacyEventError`].
     ///
@@ -84,15 +82,13 @@ impl LegacyVmSession {
     /// source becomes available. Runtime errors must remain errors regardless.
     pub(super) fn run_event(
         &self,
-        host: &mut ScriptEffects,
         script_state: &mut ScriptState,
         script_domains: &mut ScriptDomains,
-        capabilities: &NativeSessionCapabilities<'_>,
+        capabilities: &mut NativeSessionCapabilities<'_>,
         event_name: &str,
         args: &[i32],
     ) -> Result<i32, LegacyEventError> {
         self.run_event_with_bindings(
-            host,
             script_state,
             script_domains,
             AttachedScriptBindings::empty_ref(),
@@ -104,16 +100,14 @@ impl LegacyVmSession {
 
     fn run_event_with_bindings(
         &self,
-        host: &mut ScriptEffects,
         script_state: &mut ScriptState,
         script_domains: &mut ScriptDomains,
         bindings: &AttachedScriptBindings,
-        capabilities: &NativeSessionCapabilities<'_>,
+        capabilities: &mut NativeSessionCapabilities<'_>,
         event_name: &str,
         args: &[i32],
     ) -> Result<i32, LegacyEventError> {
         let result = self.state.with_host_state_and_bindings(
-            host,
             script_state,
             script_domains,
             bindings,
@@ -176,17 +170,15 @@ impl LegacyVmSession {
     pub(super) fn run_required_startup_events(
         &self,
         native_parts: Option<(
-            &mut ScriptEffects,
             &mut ScriptState,
             &mut ScriptDomains,
             &AttachedScriptBindings,
-            &NativeSessionCapabilities<'_>,
+            &mut NativeSessionCapabilities<'_>,
         )>,
         initialization_seed: i32,
     ) -> Result<(), LegacyStartupError> {
-        let Some((host, script_state, script_domains, bindings, capabilities)) = native_parts
-        else {
-            return Err(LegacyStartupError::MissingScriptEffects {
+        let Some((script_state, script_domains, bindings, capabilities)) = native_parts else {
+            return Err(LegacyStartupError::MissingNativeSession {
                 mission: self.mission().to_owned(),
                 event: "Initialize",
             });
@@ -196,7 +188,6 @@ impl LegacyVmSession {
             ("PostInitialize", &[][..]),
         ] {
             self.run_event_with_bindings(
-                host,
                 script_state,
                 script_domains,
                 bindings,

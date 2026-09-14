@@ -105,15 +105,11 @@ impl EngineInner {
     #[inline(never)]
     fn trace_sweep_phase(&self, attacker_id: EntityId, phase: SweepTickPhase) {
         eprintln!(
-            "[SWEEPPHASE f={} attacker={:?} (co {}) phase={:?} sweep_state={:?} human_victims={:?}]",
+            "[SWEEPPHASE f={} attacker={:?} (co {}) phase={:?} victims={:?}]",
             self.control.frame_counter,
             attacker_id,
             self.world.original_creation_order(attacker_id),
             phase,
-            self.get_entity(attacker_id)
-                .and_then(Entity::actor_data)
-                .and_then(|a| a.sweep_state.as_ref())
-                .map(|s| s.pending_victims.len()),
             self.get_entity(attacker_id)
                 .and_then(Entity::human_data)
                 .map(|h| h.sword_sweep.victims.len()),
@@ -195,26 +191,6 @@ impl EngineInner {
         );
     }
 
-    #[inline(never)]
-    fn trace_special_strike_authorization_consumed(&self, frame: u32, owner: EntityId) {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("special-strike owner"));
-        self.trace_special_strike(
-            frame,
-            owner,
-            format_args!(
-                "phase=authorization_consumed pending_consideration={} pending_special={} state={:?} substate={:?}",
-                ai.pending_sword_strike_consideration,
-                ai.pending_special_strike,
-                ai.base.current_state,
-                ai.base.current_substate,
-            ),
-        );
-    }
-
-    /// `[owner, target]` ids and creation orders.
     #[inline(never)]
     fn trace_opponent_sprite_timing(
         frame: u32,
@@ -378,18 +354,13 @@ pub(crate) enum SweepTickPhase {
     Initialized,
 }
 
-fn sweep_rotation_complete(sweep: &crate::movement::SweepState) -> bool {
-    match sweep.direction {
-        crate::profiles::WeaponThrustDirection::LeftToRight => {
-            sweep.current_angle >= sweep.final_angle
-        }
-        _ => sweep.current_angle <= sweep.final_angle,
-    }
-}
-
-fn advance_circle_angle(sweep: &mut crate::movement::SweepState) {
-    let candidate = sweep.current_angle + sweep.rotation_per_frame;
-    let past_final = match sweep.direction {
+fn advance_circle_angle(
+    sweep: &mut crate::element::HumanSwordSweepState,
+    rotation_per_frame: f32,
+    direction: crate::profiles::WeaponThrustDirection,
+) {
+    let candidate = sweep.current_angle + rotation_per_frame;
+    let past_final = match direction {
         crate::profiles::WeaponThrustDirection::LeftToRight => candidate >= sweep.final_angle,
         _ => candidate <= sweep.final_angle,
     };
@@ -398,12 +369,6 @@ fn advance_circle_angle(sweep: &mut crate::movement::SweepState) {
     } else {
         sweep.current_angle = sweep.final_angle;
     }
-}
-
-fn advance_lateral_angle(sweep: &mut crate::movement::SweepState) {
-    // Lateral sword strikes apply the signed rotation directly. They have
-    // no circle-style final-angle clamp or same-sector overshoot branch.
-    sweep.current_angle += sweep.rotation_per_frame;
 }
 
 fn is_circle_sweep(kind: WeaponThrustKind) -> bool {
@@ -565,19 +530,6 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
-        let gesture_quality = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(attacker_id)
-            .and_then(|(sequence_id, element_index)| {
-                self.orders
-                    .sequence_manager
-                    .get_element(sequence_id, element_index)
-            })
-            .unwrap_or_else(|| {
-                panic!("melee MotionState::Start owner {attacker_id:?} has no sequence element")
-            })
-            .gesture_quality;
         let profile_idx = {
             let entity = self.expect_entity_mut(attacker_id, "melee MotionState::Start owner");
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
@@ -616,56 +568,11 @@ impl EngineInner {
         // angles, so full circles deliberately retain the old geometry here.
         // Do not create a sweep for an ordinary fresh strike here; its real
         // victim list is still initialized only at MotionState::Done.
-        let retained_victims = self.get_entity(attacker_id).and_then(|entity| {
-            entity
-                .actor_data()
-                .and_then(|actor| actor.sweep_state.as_ref())
-                .map(|sweep| sweep.pending_victims.clone())
-                .filter(|victims| !victims.is_empty())
-                .or_else(|| {
-                    entity
-                        .human_data()
-                        .map(|human| human.sword_sweep.victims.clone())
-                        .filter(|victims| !victims.is_empty())
-                })
-                .or_else(|| {
-                    entity
-                        .actor_data()
-                        .map(|actor| actor.pending_push_swordfight.clone())
-                        .filter(|victims| !victims.is_empty())
-                })
-        });
-        let strike_kind = profile_idx
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
-            .map(|profile| profile.thrusts[strike as usize].kind);
-        if strike_kind.is_some_and(|kind| {
-            matches!(
-                kind,
-                WeaponThrustKind::Lateral
-                    | WeaponThrustKind::TrueHalfCircle
-                    | WeaponThrustKind::FalseHalfCircle
-            )
-        }) && let Some(retained_victims) = retained_victims
-        {
-            self.initialize_sweep(
-                assets,
-                attacker_id,
-                strike,
-                profile_idx,
-                strike_kind.expect("rebased warning strike kind disappeared"),
-                retained_victims,
-                gesture_quality,
-            );
-            if let Some(actor) = self
-                .get_entity_mut(attacker_id)
-                .and_then(Entity::actor_data_mut)
-            {
-                // These are two Rust mirrors of Original's single shared
-                // victim list. Once the replacement sweep takes ownership,
-                // the push-completion mirror must not retain a duplicate.
-                actor.pending_push_swordfight.clear();
-            }
-        }
+        self.apply_strike_selection_sweep_rebase(
+            assets,
+            attacker_id,
+            Some(crate::combat::StrikeSelectionSweepRebase { strike }),
+        );
 
         let mut victims =
             self.collect_sword_strike_warning_victims(assets, attacker_id, strike, profile_idx);
@@ -1045,6 +952,7 @@ impl EngineInner {
         }
         if completed {
             self.complete_melee_strike(
+                sim,
                 assets,
                 attacker_id,
                 Some(selected.seq_id),
@@ -1118,6 +1026,7 @@ impl EngineInner {
 
     pub(super) fn complete_melee_strike(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         actor_id: EntityId,
         sequence_id: Option<crate::sequence::SequenceId>,
@@ -1149,41 +1058,40 @@ impl EngineInner {
                     WeaponThrustKind::PushAside
                 )
             });
-        let pending_swordfights = if let Some(entity) = self.world.entities.get_mut(actor_id)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            if clears_shared_sweep {
-                actor.sweep_state = None;
+        if completes_push_strike {
+            while let Some(victim_id) = self
+                .expect_entity(actor_id, "push completion attacker")
+                .human_data()
+                .expect("push attacker must be human")
+                .sword_sweep
+                .victims
+                .first()
+                .copied()
+            {
+                let attacker = self.expect_entity(actor_id, "push completion attacker");
+                let victim = self.expect_entity(victim_id, "push completion victim");
+                if should_enter_swordfight_after_strike(
+                    attacker,
+                    victim,
+                    &assets.profile_manager,
+                    &self.mission_domain.diplomacy,
+                ) {
+                    self.queue_enter_swordfight_after_strike(victim_id, actor_id);
+                }
+                self.expect_entity_mut(actor_id, "push completion attacker")
+                    .human_data_mut()
+                    .expect("push attacker must be human")
+                    .sword_sweep
+                    .victims
+                    .remove(0);
             }
-            let pending_swordfights = if completes_push_strike {
-                std::mem::take(&mut actor.pending_push_swordfight)
-            } else {
-                Vec::new()
-            };
-            if clears_shared_sweep && let Some(human) = entity.human_data_mut() {
-                // Lateral and circle sword-strike execution delete
-                // their human-owned victim list when the strike genuinely
-                // terminates. Keep the serialized mirror in lockstep with
-                // the executable Rust sweep so a later fresh strike cannot
-                // mistake terminated geometry for a resumed saved sweep.
-                human.sword_sweep = crate::element::HumanSwordSweepState::default();
-            }
-            pending_swordfights
-        } else {
-            Vec::new()
-        };
-        for victim_id in pending_swordfights {
-            let attacker = self.expect_entity(actor_id, "push completion attacker");
-            let victim = self.expect_entity(victim_id, "push completion victim");
-            let should_enter = should_enter_swordfight_after_strike(
-                attacker,
-                victim,
-                &assets.profile_manager,
-                &self.mission_domain.diplomacy,
-            );
-            if should_enter {
-                self.queue_enter_swordfight_after_strike(victim_id, actor_id);
-            }
+        } else if clears_shared_sweep {
+            self.expect_entity_mut(actor_id, "sweep completion attacker")
+                .human_data_mut()
+                .expect("sweep attacker must be human")
+                .sword_sweep
+                .victims
+                .clear();
         }
 
         match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
@@ -1243,9 +1151,7 @@ impl EngineInner {
                     "tick_melee_strikes: skipping stale completed strike callback"
                 );
             } else {
-                self.orders
-                    .sequence_manager
-                    .element_terminated(sequence_id, element_index);
+                self.element_terminated(sim, assets, &mut Vec::new(), sequence_id, element_index);
             }
         }
     }
@@ -1399,11 +1305,7 @@ impl EngineInner {
                 strike_kind,
                 WeaponThrustKind::TrueCircle | WeaponThrustKind::TrueHalfCircle
             )
-            .then(|| {
-                entity
-                    .actor_data()
-                    .and_then(|actor| actor.sweep_state.as_ref())
-            })
+            .then(|| entity.human_data().map(|human| &human.sword_sweep))
             .flatten()
             .filter(|_| {
                 entity.element_data().sprite.last_processed_order_id == selected.order_id.get()
@@ -1549,10 +1451,7 @@ impl EngineInner {
                     all_victims,
                     hit.gesture_quality,
                 );
-                initialized_sweep = self
-                    .get_entity(hit.attacker_id)
-                    .and_then(|entity| entity.actor_data())
-                    .is_some_and(|actor| actor.sweep_state.is_some());
+                initialized_sweep = hit.attacker_profile_idx.is_some();
             } else if is_push {
                 // Push strike: apply damage to all victims at the
                 // hit frame (no AI warn tolerance), but defer the
@@ -1576,9 +1475,9 @@ impl EngineInner {
                     }
                 }
                 if let Some(entity) = self.world.entities.get_mut(hit.attacker_id)
-                    && let Some(actor) = entity.actor_data_mut()
+                    && let Some(human) = entity.human_data_mut()
                 {
-                    actor.pending_push_swordfight = all_victims;
+                    human.sword_sweep.victims = all_victims;
                 }
             } else {
                 self.resolve_straight_melee_hit(
@@ -1595,6 +1494,7 @@ impl EngineInner {
         // Phase 3: notify the sequence manager before the next creation slot.
         for completed_strike in completed {
             self.complete_melee_strike(
+                sim,
                 assets,
                 completed_strike.actor_id,
                 completed_strike.sequence_id,
@@ -1684,11 +1584,8 @@ impl EngineInner {
                         == entity.element_data().sprite.action_done_frame
                     && entity.element_data().sprite.frame_count
                         == entity.element_data().sprite.action_done_counter;
-                let retained_circle_off_action_point = self
-                    .get_entity(attacker_id)
-                    .and_then(|entity| entity.actor_data())
-                    .and_then(|actor| actor.sweep_state.as_ref())
-                    .is_some_and(|_| is_circle_sweep(active_kind) && !at_action_point);
+                let retained_circle_off_action_point =
+                    is_circle_sweep(active_kind) && !at_action_point;
                 if retained_circle_off_action_point {
                     // Circle sword-strike execution always runs the effect with
                     // the current Execute call's strike, even before that
@@ -1696,138 +1593,11 @@ impl EngineInner {
                     // gate only protects the tail angle advance.  Preserve
                     // the retained victim/angle geometry, but rebind the
                     // payload and direction to the replacement strike.
-                    self.rebind_retained_sweep_to_active_strike(assets, attacker_id);
                     self.tick_sweep_for_mode(assets, attacker_id, false, true);
                     return;
                 }
-                self.rebind_retained_sweep_to_active_strike(assets, attacker_id);
                 self.tick_sweep_for(assets, attacker_id, false);
             }
-        }
-    }
-
-    /// Original stores sweep victims and angles on the human, but reads the
-    /// strike direction, rotation, kind, and damage payload from the current
-    /// Execute call. If a strike is interrupted after its action point, a new
-    /// sweep strike therefore advances the retained geometry using its own
-    /// semantics.
-    pub(super) fn rebind_retained_sweep_to_active_strike(
-        &mut self,
-        assets: &LevelAssets,
-        attacker_id: EntityId,
-    ) {
-        let Some((strike, active_order_id, gesture_quality)) = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(attacker_id)
-            .and_then(|(sequence_id, element_index, order)| {
-                let strike = sword_strike_from_animation(order.order_type)?;
-                let gesture_quality = self
-                    .orders
-                    .sequence_manager
-                    .get_element(sequence_id, element_index)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "active sweep owner {attacker_id:?} lost sequence element {sequence_id:?}/{element_index}"
-                        )
-                    })
-                    .gesture_quality;
-                Some((strike, order.order_id, gesture_quality))
-            })
-        else {
-            return;
-        };
-        let Some(entity) = self.get_entity(attacker_id) else {
-            return;
-        };
-        // The legacy save owns these fields on the human actor itself.
-        // Rust's SweepState is only the executable mirror, so reconstruct it
-        // lazily when a loaded strike resumes in the middle of its sweep.
-        let serialized_sweep = entity.human_data().map(|human| human.sword_sweep.clone());
-        let Some(profile_idx) = get_hth_weapon_id_full(entity, &assets.profile_manager) else {
-            return;
-        };
-        let profile = assets
-            .profile_manager
-            .get_hth_weapon(profile_idx)
-            .unwrap_or_else(|| {
-                panic!(
-                    "retained sweep attacker {attacker_id:?} references missing weapon profile {profile_idx}"
-                )
-            });
-        let thrust = &profile.thrusts[strike as usize];
-        if !matches!(
-            thrust.kind,
-            WeaponThrustKind::Lateral
-                | WeaponThrustKind::TrueHalfCircle
-                | WeaponThrustKind::FalseHalfCircle
-                | WeaponThrustKind::TrueCircle
-                | WeaponThrustKind::FalseCircle
-        ) {
-            return;
-        }
-        // Original serializes the victim FIFO and the three sweep angles as
-        // independent human-actor fields. The angles remain live
-        // for a true-circle rotation even when its victim scan found nobody:
-        // True-circle sword-strike execution unconditionally presents
-        // current strike angle once the sprite reaches its action point.
-        //
-        // A fresh strike's untouched serialized mirror is all zeroes.  Keep
-        // that sentinel from fabricating a pre-action sweep, while accepting
-        // non-default true-circle geometry without requiring a victim.
-        let saved_sweep = serialized_sweep.filter(|saved| {
-            let sprite = &entity.element_data().sprite;
-            // This hook runs after the action executor, so the DONE call may
-            // already have incremented the frame counter.  It must still be
-            // on the action-done frame: accepting later animation frames
-            // would resurrect the same serialized sweep on the next tick.
-            let on_action_point_frame = sprite.last_processed_order_id == active_order_id.get()
-                && sprite.current_frame == sprite.action_done_frame
-                && sprite.frame_count >= sprite.action_done_counter;
-            !saved.victims.is_empty()
-                || (matches!(
-                    thrust.kind,
-                    WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::TrueCircle
-                ) && on_action_point_frame
-                    && (saved.initial_angle.to_bits() != 0
-                        || saved.current_angle.to_bits() != 0
-                        || saved.final_angle.to_bits() != 0))
-        });
-        let signed_rotation = strike_profile_angle(thrust.rotation_angle)
-            * if thrust.direction == crate::profiles::WeaponThrustDirection::RightToLeft {
-                -1.0
-            } else {
-                1.0
-            };
-        if let Some(actor) = self
-            .get_entity_mut(attacker_id)
-            .and_then(Entity::actor_data_mut)
-        {
-            if actor.sweep_state.is_none()
-                && let Some(saved) = saved_sweep
-            {
-                actor.sweep_state = Some(crate::movement::SweepState {
-                    pending_victims: saved.victims,
-                    initial_angle: saved.initial_angle,
-                    current_angle: saved.current_angle,
-                    final_angle: saved.final_angle,
-                    rotation_per_frame: signed_rotation,
-                    direction: thrust.direction,
-                    strike,
-                    attacker_profile_idx: Some(profile_idx),
-                    gesture_quality,
-                    strike_kind: thrust.kind,
-                });
-            }
-            let Some(sweep) = actor.sweep_state.as_mut() else {
-                return;
-            };
-            sweep.rotation_per_frame = signed_rotation;
-            sweep.direction = thrust.direction;
-            sweep.strike = strike;
-            sweep.attacker_profile_idx = Some(profile_idx);
-            sweep.gesture_quality = gesture_quality;
-            sweep.strike_kind = thrust.kind;
         }
     }
 
@@ -1899,15 +1669,6 @@ impl EngineInner {
             human.sword_sweep.initial_angle = initial;
             human.sword_sweep.current_angle = dir_angle;
             human.sword_sweep.final_angle = final_a;
-        }
-        // The executable mirror shares the same storage in the Original, so
-        // a live sweep must follow the rebase too.
-        if let Some(actor) = entity.actor_data_mut()
-            && let Some(sweep) = actor.sweep_state.as_mut()
-        {
-            sweep.initial_angle = initial;
-            sweep.current_angle = dir_angle;
-            sweep.final_angle = final_a;
         }
     }
 
@@ -2006,32 +1767,16 @@ impl EngineInner {
                 [initial, dir_angle, final_a, signed_rotation],
             );
         }
-        let sweep = crate::movement::SweepState {
-            pending_victims: victims,
+        let human = self
+            .expect_entity_mut(attacker_id, "sweep initialization attacker")
+            .human_data_mut()
+            .expect("sweep attacker must be human");
+        human.sword_sweep = crate::element::HumanSwordSweepState {
+            victims,
             initial_angle: initial,
             current_angle: dir_angle,
             final_angle: final_a,
-            rotation_per_frame: signed_rotation,
-            direction,
-            strike,
-            attacker_profile_idx: Some(profile_idx),
-            gesture_quality,
-            strike_kind,
         };
-
-        if let Some(entity) = self.world.entities.get_mut(attacker_id) {
-            if let Some(human) = entity.human_data_mut() {
-                human.sword_sweep = crate::element::HumanSwordSweepState {
-                    victims: sweep.pending_victims.clone(),
-                    initial_angle: sweep.initial_angle,
-                    current_angle: sweep.current_angle,
-                    final_angle: sweep.final_angle,
-                };
-            }
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.sweep_state = Some(sweep);
-            }
-        }
 
         tracing::debug!(
             attacker = ?attacker_id,
@@ -2063,215 +1808,174 @@ impl EngineInner {
         initialized_this_hourglass: bool,
         effect_only_before_action_point: bool,
     ) {
-        if self
-            .get_entity(attacker_id)
-            .and_then(Entity::actor_data)
-            .is_some_and(|actor| actor.execution_frozen)
+        use crate::profiles::WeaponThrustDirection;
+        let entity = self.expect_entity(attacker_id, "sweep attacker");
+        if entity
+            .actor_data()
+            .expect("sweep attacker must be an actor")
+            .execution_frozen
         {
             return;
         }
-
-        use crate::profiles::WeaponThrustDirection;
-
-        // Phase 1: collect active sweeps (clone to avoid borrow conflicts)
-        struct ActiveSweep {
-            attacker_id: EntityId,
-            attacker_pos: (f32, f32),
-            sweep: crate::movement::SweepState,
-            rotation_complete_on_entry: bool,
-        }
-        let mut sweeps: Vec<ActiveSweep> = Vec::new();
-
-        {
-            let entity_id = attacker_id;
-            let Some(entity) = self.world.entities.get(attacker_id) else {
-                return;
+        let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager)
+            .expect("sweep attacker must have a melee weapon");
+        let (sequence_id, element_index, order) = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(attacker_id)
+            .expect("sweep attacker must have a selected order");
+        let strike = sword_strike_from_animation(order.order_type)
+            .expect("sweep attacker must have a selected strike");
+        let gesture_quality = self
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, element_index)
+            .expect("selected sweep sequence must exist")
+            .gesture_quality;
+        let thrust = &assets
+            .profile_manager
+            .get_hth_weapon(profile_idx)
+            .expect("sweep weapon profile must exist")
+            .thrusts[strike as usize];
+        let kind = thrust.kind;
+        let direction = thrust.direction;
+        let rotation_per_frame = strike_profile_angle(thrust.rotation_angle)
+            * if direction == WeaponThrustDirection::RightToLeft {
+                -1.0
+            } else {
+                1.0
             };
-            let Some(actor) = entity.actor_data() else {
-                // Sweep polling admits entities without actor capability.
-                return;
-            };
-            if let Some(sweep) = &actor.sweep_state {
-                let pos = entity.element_data().position_map();
-                sweeps.push(ActiveSweep {
-                    attacker_id: entity_id,
-                    attacker_pos: (pos.x, pos.y),
-                    rotation_complete_on_entry: sweep_rotation_complete(sweep),
-                    sweep: sweep.clone(),
-                });
+        let circle = is_circle_sweep(kind);
+        assert!(
+            circle || kind == WeaponThrustKind::Lateral,
+            "selected strike is not a sweep"
+        );
+        let sweep = &entity
+            .human_data()
+            .expect("sweep attacker must be human")
+            .sword_sweep;
+        if initialized_this_hourglass {
+            if circle {
+                let sweep = &mut self
+                    .expect_entity_mut(attacker_id, "sweep attacker")
+                    .human_data_mut()
+                    .expect("sweep attacker must be human")
+                    .sword_sweep;
+                advance_circle_angle(sweep, rotation_per_frame, direction);
             }
+            return;
         }
-
-        // Phase 2: preserve the two Original effect orders:
-        // - lateral IN_PROGRESS advances, then tests victims;
-        // - circle IN_PROGRESS tests the existing angle, then advances at
-        //   circle sword-strike execution's tail.
-        // A circle DONE call still reaches that tail and advances once, but
-        // neither family tests victims (or rotates a true-circle sprite) on
-        // its initialization call.
-        for active in &mut sweeps {
-            let circle = is_circle_sweep(active.sweep.strike_kind);
-            if initialized_this_hourglass {
-                if circle {
-                    advance_circle_angle(&mut active.sweep);
+        if kind == WeaponThrustKind::Lateral {
+            if sweep.victims.is_empty() {
+                return;
+            }
+            self.expect_entity_mut(attacker_id, "sweep attacker")
+                .human_data_mut()
+                .expect("sweep attacker must be human")
+                .sword_sweep
+                .current_angle += rotation_per_frame;
+        }
+        if !effect_only_before_action_point
+            && matches!(
+                kind,
+                WeaponThrustKind::TrueCircle | WeaponThrustKind::TrueHalfCircle
+            )
+        {
+            let entity = self.expect_entity_mut(attacker_id, "sweep attacker");
+            let new_dir = angle_to_sector(
+                entity
+                    .human_data()
+                    .expect("sweep attacker must be human")
+                    .sword_sweep
+                    .current_angle,
+            );
+            let element = entity.element_data_mut();
+            element.set_direction_instantly(new_dir as i16);
+            element
+                .sprite
+                .force_action_direction(strike_to_animation(strike), new_dir.into());
+        }
+        let sweep = &self
+            .expect_entity(attacker_id, "sweep attacker")
+            .human_data()
+            .expect("sweep attacker must be human")
+            .sword_sweep;
+        let initial_sector = angle_to_sector(sweep.initial_angle);
+        let current_sector = angle_to_sector(sweep.current_angle);
+        if sword_damage_debug_enabled() {
+            Self::trace_sweep_tick(
+                self.control.frame_counter,
+                attacker_id,
+                kind,
+                [initial_sector, current_sector],
+                sweep.current_angle,
+                sweep.victims.len(),
+            );
+        }
+        let mut index = 0;
+        loop {
+            let attacker = self.expect_entity(attacker_id, "sweep attacker");
+            let Some(victim_id) = attacker
+                .human_data()
+                .expect("sweep attacker must be human")
+                .sword_sweep
+                .victims
+                .get(index)
+                .copied()
+            else {
+                break;
+            };
+            let position = attacker.element_data().position_map();
+            let hit = self.get_entity(victim_id).map(|victim| {
+                let victim_position = victim.element_data().position_map();
+                let sector = crate::position_interface::vector_to_sector_0_to_15(
+                    victim_position.x - position.x,
+                    (victim_position.y - position.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO,
+                ) as u8;
+                match direction {
+                    WeaponThrustDirection::LeftToRight => {
+                        is_sector_between(sector, initial_sector, current_sector)
+                    }
+                    _ => is_sector_between(sector, current_sector, initial_sector),
                 }
+            });
+            if hit == Some(false) {
+                index += 1;
                 continue;
             }
-            if !effect_only_before_action_point
-                && matches!(active.sweep.strike_kind, WeaponThrustKind::Lateral)
-            {
-                advance_lateral_angle(&mut active.sweep);
+            if hit == Some(true) {
+                self.queue_scaled_sword_damage(
+                    victim_id,
+                    attacker_id,
+                    strike,
+                    profile_idx,
+                    gesture_quality,
+                );
             }
-
-            // Rotate the attacker's sprite direction to follow the
-            // circle using the angle that existed on entry. Only the TRUE
-            // variants rotate; FALSE variants do not.
-            if !effect_only_before_action_point
-                && matches!(
-                    active.sweep.strike_kind,
-                    crate::profiles::WeaponThrustKind::TrueCircle
-                        | crate::profiles::WeaponThrustKind::TrueHalfCircle
+            self.expect_entity_mut(attacker_id, "sweep attacker")
+                .human_data_mut()
+                .expect("sweep attacker must be human")
+                .sword_sweep
+                .victims
+                .remove(index);
+            if hit == Some(true)
+                && should_enter_swordfight_after_strike(
+                    self.expect_entity(attacker_id, "sweep attacker"),
+                    self.expect_entity(victim_id, "sweep victim"),
+                    &assets.profile_manager,
+                    &self.mission_domain.diplomacy,
                 )
             {
-                let new_dir = angle_to_sector(active.sweep.current_angle);
-                if let Some(entity) = self.world.entities.get_mut(active.attacker_id) {
-                    let elem = entity.element_data_mut();
-                    elem.set_direction_instantly(new_dir as i16);
-                    elem.sprite.force_action_direction(
-                        strike_to_animation(active.sweep.strike),
-                        new_dir.into(),
-                    );
-                }
-            }
-
-            let initial_sector = angle_to_sector(active.sweep.initial_angle);
-            let current_sector = angle_to_sector(active.sweep.current_angle);
-            if sword_damage_debug_enabled() {
-                Self::trace_sweep_tick(
-                    self.control.frame_counter,
-                    active.attacker_id,
-                    active.sweep.strike_kind,
-                    [initial_sector, current_sector],
-                    active.sweep.current_angle,
-                    active.sweep.pending_victims.len(),
-                );
-            }
-
-            let mut hit_indices = Vec::new();
-
-            // Victim eligibility is settled once, when the sweep seeds its
-            // list.  The per-frame pass only asks whether the arc has reached
-            // the victim's sector; a victim who dies, falls unconscious or
-            // otherwise stops qualifying mid-sweep still takes the blow that
-            // was already on its way.
-            for (i, &victim_id) in active.sweep.pending_victims.iter().enumerate() {
-                let victim_pos = match self.get_entity(victim_id) {
-                    Some(e) => e.element_data().position_map(),
-                    None => {
-                        hit_indices.push(i); // remove dead/gone victims
-                        continue;
-                    }
-                };
-                let dx = victim_pos.x - active.attacker_pos.0;
-                let dy = (victim_pos.y - active.attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-                let victim_sector =
-                    crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
-
-                // Check if victim is in the swept arc
-                let is_hit = match active.sweep.direction {
-                    WeaponThrustDirection::LeftToRight => {
-                        is_sector_between(victim_sector, initial_sector, current_sector)
-                    }
-                    _ => is_sector_between(victim_sector, current_sector, initial_sector),
-                };
-
-                if is_hit {
-                    hit_indices.push(i);
-                }
-            }
-
-            // Apply damage to hit victims (separate pass to avoid borrow issues)
-            let hit_victim_ids: Vec<EntityId> = hit_indices
-                .iter()
-                .filter_map(|&i| {
-                    let vid = active.sweep.pending_victims[i];
-                    // Only apply damage if the entity still exists
-                    if self.get_entity(vid).is_some() {
-                        Some(vid)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            for victim_id in hit_victim_ids {
-                if let Some(profile_idx) = active.sweep.attacker_profile_idx {
-                    self.queue_scaled_sword_damage(
-                        victim_id,
-                        active.attacker_id,
-                        active.sweep.strike,
-                        profile_idx,
-                        active.sweep.gesture_quality,
-                    );
-                }
-                let should_enter = match (
-                    self.get_entity(active.attacker_id),
-                    self.get_entity(victim_id),
-                ) {
-                    (Some(a), Some(v)) => should_enter_swordfight_after_strike(
-                        a,
-                        v,
-                        &assets.profile_manager,
-                        &self.mission_domain.diplomacy,
-                    ),
-                    _ => false,
-                };
-                if should_enter {
-                    self.queue_enter_swordfight_after_strike(victim_id, active.attacker_id);
-                }
-            }
-
-            // Remove hit victims (reverse to preserve indices)
-            for &i in hit_indices.iter().rev() {
-                active.sweep.pending_victims.remove(i);
-            }
-
-            if circle && !effect_only_before_action_point {
-                advance_circle_angle(&mut active.sweep);
+                self.queue_enter_swordfight_after_strike(victim_id, attacker_id);
             }
         }
-
-        // Phase 3: write back updated sweep states
-        for active in sweeps {
-            if let Some(entity) = self.world.entities.get_mut(active.attacker_id) {
-                let true_sweep = matches!(
-                    active.sweep.strike_kind,
-                    WeaponThrustKind::TrueCircle | WeaponThrustKind::TrueHalfCircle
-                );
-                // An incomplete true sweep remains live while rotating. If
-                // this tick's tail reaches the final angle, the same rule
-                // retains it once more so the next Execute call can present
-                // that terminal direction before clearing it.
-                let keep_for_terminal_execute = true_sweep && !active.rotation_complete_on_entry;
-                // Circle effects test victims before their tail advance. If
-                // that advance reaches the final angle, retain pending
-                // victims and true-circle rotation state for the next
-                // update so the final sector is observable before the
-                // state is cleared.
-                let retain_executable =
-                    !active.sweep.pending_victims.is_empty() || keep_for_terminal_execute;
-                if let Some(human) = entity.human_data_mut() {
-                    human.sword_sweep = crate::element::HumanSwordSweepState {
-                        victims: active.sweep.pending_victims.clone(),
-                        initial_angle: active.sweep.initial_angle,
-                        current_angle: active.sweep.current_angle,
-                        final_angle: active.sweep.final_angle,
-                    };
-                }
-                if let Some(actor) = entity.actor_data_mut() {
-                    actor.sweep_state = retain_executable.then_some(active.sweep);
-                }
-            }
+        if circle && !effect_only_before_action_point {
+            let sweep = &mut self
+                .expect_entity_mut(attacker_id, "sweep attacker")
+                .human_data_mut()
+                .expect("sweep attacker must be human")
+                .sword_sweep;
+            advance_circle_angle(sweep, rotation_per_frame, direction);
         }
     }
 
@@ -2849,28 +2553,7 @@ impl EngineInner {
                 (concussion, life_points)
             };
             let new_value = crate::combat::compute_concussion_effect(concussion, 71, life_points);
-            let concussion_outcome =
-                self.apply_concussion(sim, assets, victim_id, new_value, false);
-            if concussion_outcome == crate::combat::ConcussionOutcome::WentUnconscious {
-                // The original game's ladder/wall fall execution calls
-                // concussion accumulation here. Its threshold transition
-                // synchronously closes swordfight exit (including reciprocal
-                // opponent removal and exit events), then NPC concussion
-                // handling synchronously dispatches loss of consciousness.
-                // That decision tick sets dead-or-unconscious view status before execution
-                // sets the landing posture and returns Terminated
-                // in the original game. The ordinary per-frame
-                // concussion drain has already run by this actor slot, so
-                // close every part of this newly-created knockout boundary
-                // now. Drain the existing FIFO as well: earlier synchronous
-                // calls represented by Rust's borrow-boundary queue precede
-                // the just-appended lose-consciousness event.
-                self.drain_pending_concussion_side_effects(sim, assets);
-                if matches!(victim_id, EntityId::Soldier(_) | EntityId::Civilian(_)) {
-                    self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, victim_id, assets);
-                    self.tick_ai_pending_resurrection_and_eyes_for_npc(victim_id);
-                }
-            }
+            self.apply_concussion(sim, assets, victim_id, new_value, false);
 
             if let Some(entity) = self.get_entity_mut(victim_id) {
                 let posture = if entity.is_dead() {
@@ -2900,7 +2583,7 @@ impl EngineInner {
                 {
                     actor.continuation.motion_state = crate::sprite::MotionState::Terminated;
                 }
-                self.do_next_order(seq_id, elem_idx);
+                self.do_next_order(sim, assets, seq_id, elem_idx);
                 if self
                     .orders
                     .sequence_manager
@@ -3137,744 +2820,391 @@ impl EngineInner {
         }
     }
 
-    /// When a soldier's attack cooldown expires and its target is in sword
-    /// range, apply a sword strike directly (bypassing the sequence system).
-    ///
-    /// Simplified version of the engine-level combat loop where the AI
-    /// launches individual `SwordstrikeThrust*` sequence elements.
+    /// Reconcile the lifetime of already launched special-strike sequences.
     pub(super) fn tick_enemy_sword_attacks(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
-        self.tick_enemy_sword_attacks_for(sim, assets, None);
+        let mut flagged: Vec<EntityId> = Vec::new();
+        for npc_id in self.world.entities.ai_owner_ids() {
+            if self
+                .world
+                .entities
+                .get(npc_id)
+                .and_then(Entity::enemy_ai)
+                .is_some_and(|ai| ai.pending_special_strike)
+            {
+                flagged.push(npc_id);
+            }
+        }
+        for npc_id in flagged {
+            let has_active = self
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(npc_id, |cmd| {
+                    cmd.is_swordstrike() || cmd == crate::element::Command::WaitTimer
+                });
+            self.reconcile_ai_special_strike(sim, assets, npc_id, has_active);
+        }
     }
 
-    /// Consume an event-driven swordfight-reconsideration authorization before
-    /// the originating AI update returns. The original game calls
-    /// strike selection directly in that handler, so postponing this
-    /// to the global melee pass can reorder its RNG draw behind later owners.
-    pub(crate) fn consume_pending_enemy_sword_attack_for(
+    /// Propose and launch one strike at the current swordfight decision statement.
+    pub(in crate::engine) fn execute_ai_sword_strike_proposal(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        self.tick_enemy_sword_attacks_for(sim, assets, Some(owner));
-    }
-
-    fn tick_enemy_sword_attacks_for(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        only_owner: Option<EntityId>,
-    ) {
         let current_frame = self.control.frame_counter;
-
-        // Per-tick reconciliation for `EnemyAi::pending_special_strike`.
-        // Single chokepoint: if a soldier is flagged
-        // mid-special-strike but the sequence manager has no live
-        // preparation timer or sword-strike element for them, the
-        // sequence has ended (any reason — natural completion,
-        // terminate_sequence, stop_owner, friday_evening_cleanup) so
-        // we clear the flag and relaunch the 20-frame swordfight
-        // heartbeat.  Drift is bounded to one tick, and the
-        // cancellation paths that don't fire an EventDone all fall
-        // through here.
-        //
-        // Collecting flagged-npcs first so we can query the sequence
-        // manager and then mutate the AI without aliasing `self`.
-        if only_owner.is_none() {
-            let mut flagged: Vec<EntityId> = Vec::new();
-            for npc_id in self.world.entities.ai_owner_ids() {
-                if self
-                    .world
-                    .entities
-                    .get(npc_id)
-                    .and_then(Entity::enemy_ai)
-                    .is_some_and(|ai| ai.pending_special_strike)
-                {
-                    flagged.push(npc_id);
-                }
-            }
-            for npc_id in flagged {
-                let has_active = self
-                    .orders
-                    .sequence_manager
-                    .has_live_element_for_actor_matching(npc_id, |cmd| {
-                        cmd.is_swordstrike() || cmd == crate::element::Command::WaitTimer
-                    });
-                self.reconcile_ai_special_strike(sim, assets, npc_id, has_active);
-            }
+        if !self.tactical_allows_normal_strikes(owner) {
+            return;
+        }
+        let player_selected = self
+            .players
+            .tactical
+            .seats
+            .iter()
+            .any(|seat| seat.selection.contains(&owner));
+        if player_selected
+            && self
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(owner, |command| {
+                    command.is_swordstrike()
+                        || matches!(
+                            command,
+                            Command::SwordstrikeSmalltalkLeft
+                                | Command::SwordstrikeSmalltalkRight
+                                | Command::ParrySmalltalkLeft
+                                | Command::ParrySmalltalkRight
+                        )
+                })
+        {
+            return;
         }
 
-        // Enemy swordfight reconsideration is event-driven and
-        // selects a strike at most once per invocation. Consume
-        // that authorization up front so every downstream rejection
-        // (substate, tiredness, honour, range, or selection failure) remains
-        // one-shot instead of being retried by this per-frame engine pass.
-        // Hold forbids ordinary damaging strikes. Also discard an AI proposal
-        // for a selected ally while any player/smalltalk strike is already
-        // live: the explicit action owns this combat turn and must not leave a
-        // delayed AI strike queued behind it. The flag is still consumed below
-        // so the rejected proposal cannot leak out after a stance change or
-        // after the player action completes.
-        let mut suppressed_considerations = std::collections::HashSet::new();
-        for seat in &self.players.tactical.seats {
-            for &id in &seat.selection {
-                if self
-                    .orders
-                    .sequence_manager
-                    .has_live_element_for_actor_matching(id, |command| {
-                        command.is_swordstrike()
-                            || matches!(
-                                command,
-                                Command::SwordstrikeSmalltalkLeft
-                                    | Command::SwordstrikeSmalltalkRight
-                                    | Command::ParrySmalltalkLeft
-                                    | Command::ParrySmalltalkRight
-                            )
-                    })
-                {
-                    suppressed_considerations.insert(id);
-                }
-            }
-        }
+        let attacker = self.expect_entity(owner, "sword-strike proposal owner");
+        let ai = attacker
+            .enemy_ai()
+            .expect("sword-strike proposal requires Enemy AI");
+        let weapon_id = ai.hth_weapon_id;
+        let target_handle = ai
+            .base
+            .primary_target
+            .expect("sword-strike proposal requires principal");
+        let target_id =
+            self.expect_entity_id_for_index(target_handle.get(), "sword-strike principal");
+        let fighting_ability = fighting_ability_from_profile(
+            attacker,
+            &assets.profile_manager,
+            sim.config().difficulty,
+            &self.mission_domain.diplomacy,
+        );
+        let blood_alcohol = ai.base.blood_alcohol;
+        let is_rank_soldier =
+            ai.profile(&assets.profile_manager).rank == crate::profiles::ProfileRank::Soldier;
+        let attacker_direction = attacker.element_data().direction();
+        let attacker_camp = attacker.camp();
+        let map = attacker.element_data().position_map();
+        let attacker_pos = (map.x, map.y);
+        let attacker_elevation = attacker.element_data().position().z;
+        let human = attacker
+            .human_data()
+            .expect("sword-strike owner must be human");
+        let is_swordfighting = !human.opponents.is_empty();
+        let mut boredom = human.sword_strike_boredom.clone();
 
-        let ai_owner_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
-        let mut pending_considerations = std::collections::HashSet::new();
-        for npc_id in ai_owner_ids {
-            if only_owner.is_some_and(|owner| owner != npc_id) {
-                continue;
-            }
-            let Some(ai) = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::enemy_ai_mut)
-            else {
-                continue;
-            };
-            let pending = std::mem::take(&mut ai.pending_sword_strike_consideration);
-            if pending
-                && !suppressed_considerations.contains(&npc_id)
-                && self.tactical_allows_normal_strikes(npc_id)
-            {
-                pending_considerations.insert(npc_id);
-            }
-        }
-        for &owner in &pending_considerations {
-            if special_strike_lifecycle_debug_matches(current_frame, owner.index()) {
-                self.trace_special_strike_authorization_consumed(current_frame, owner);
-            }
-        }
-
-        // Collect pending attacks
-        struct PendingAttack {
-            soldier_id: EntityId,
-            target_id: EntityId,
-            weapon_id: u32,
-            fighting_ability: u16,
-            blood_alcohol: u8,
-            is_rank_soldier: bool,
-            attacker_direction: i16,
-            attacker_camp: crate::element::Camp,
-            attacker_pos: (f32, f32),
-            attacker_elevation: f32,
-            is_swordfighting: bool,
-            boredom: Vec<u16>,
-        }
-
-        let mut attacks: Vec<PendingAttack> = Vec::new();
-        for npc_id in pending_considerations.iter().copied() {
-            let attacker = self.expect_entity(npc_id, "authorized sword-strike owner");
-            if !pending_considerations.contains(&npc_id) {
-                continue;
-            }
-
-            // Swordfight reconsideration emitted this one-shot authorization at
-            // the exact point where the original game proposes a good sword strike.
-            // Do not reapply polling-era owner state, cooldown, tiredness, or
-            // active-strike gates here: EventAfterCombatInjury can reach that
-            // point from any real swordfight substate (including Parade),
-            // and Original still performs the proposal before arbitration
-            // decides what work survives.
-            let Some(ai) = attacker.enemy_ai() else {
-                continue;
-            };
-
-            let weapon_id = ai.hth_weapon_id;
-            let target_handle = ai.base.primary_target.unwrap_or_else(|| {
-                panic!(
-                    "authorized sword-strike proposal owner {:?} has no principal opponent",
-                    npc_id
-                )
-            });
-            let target_id = self
-                .world
-                .entities
-                .id_at_legacy_slot(target_handle.get())
-                .unwrap_or_else(|| {
-                    panic!(
-                        "authorized sword-strike proposal owner {:?} requires missing principal opponent slot {}",
-                        npc_id,
-                        target_handle
-                    )
-                });
-            let target = self.expect_entity(target_id, "resolved principal opponent");
-            assert!(
-                target.is_human(),
-                "authorized sword-strike principal opponent {target_id:?} is not human"
-            );
-
-            // Honour — don't hit an enemy in a recovery animation.
-            // Target must also be in a sword action state.  These are
-            // two separate checks: animation for visual recovery, then
-            // action state for logical sword readiness.
-            let target_in_sword = self
-                .world
-                .entities
-                .expect_actor_data(target_id, format_args!("sword-strike principal opponent"))
-                .action_state
-                .is_sword();
-            let target_in_recovery = self.actor_is_in_sword_recovery(target_id);
-            if target_in_recovery || !target_in_sword {
-                tracing::debug!(
-                    npc = npc_id.index(), target = target_id.index(),
-                    %target_in_sword, %target_in_recovery,
-                );
-                continue;
-            }
-
-            // Soldier fighting-ability lookup applies the active
-            // difficulty modifier for Lacklandists. Strike availability,
-            // damage estimation, and the special-strike skill gate all call
-            // that specialized original-game query rather than reading the raw
-            // soldier-profile capacity.
-            let fa = fighting_ability_from_profile(
-                self.expect_entity(
-                    npc_id,
-                    "authorized sword-strike owner before ability lookup",
-                ),
-                &assets.profile_manager,
-                sim.config().difficulty,
-                &self.mission_domain.diplomacy,
-            );
-            let is_rank = ai.soldier_profile_rank == crate::profiles::ProfileRank::Soldier;
-            let ba = ai.base.blood_alcohol;
-
-            attacks.push(PendingAttack {
-                soldier_id: npc_id,
-                target_id,
-                weapon_id,
-                fighting_ability: fa,
-                blood_alcohol: ba,
-                is_rank_soldier: is_rank,
-                attacker_direction: attacker.element_data().direction(),
-                attacker_camp: attacker.camp(),
-                attacker_pos: {
-                    // Sword-strike victim collection subtracts
-                    // map positions for both actors. Elevation remains a
-                    // separate input to the strike estimator; adding it to
-                    // only the attacker's projected Y mixes world and map
-                    // coordinates and can turn an adjacent opponent into a
-                    // target hundreds of units away.
-                    let map = attacker.element_data().position_map();
-                    (map.x, map.y)
-                },
-                attacker_elevation: attacker.element_data().position().z,
-                is_swordfighting: attacker
-                    .human_data()
-                    .is_some_and(|human| !human.opponents.is_empty()),
-                boredom: attacker
-                    .human_data()
-                    .map(|human| human.sword_strike_boredom.clone())
-                    .unwrap_or_else(|| panic!("AI sword-strike owner {npc_id:?} is not human")),
-            });
-        }
-
-        // Process attacks — launch SwordstrikeThrust* sequence
-        // elements as Interaction(1, command, this,
-        // principal_opponent).
-        for mut attack in attacks {
-            let special_debug =
-                special_strike_lifecycle_debug_matches(current_frame, attack.soldier_id.index());
-            if special_debug {
-                self.trace_special_strike(
-                    current_frame,
-                    attack.soldier_id,
-                    format_args!("phase=before_proposal target={}", attack.target_id.index()),
-                );
-            }
-            let distance =
-                entity_distance(&self.world.entities, attack.soldier_id, attack.target_id);
-
-            // Select the best strike using the shared proposal logic.
-            let attacker_profile = assets
-                .profile_manager
-                .get_hth_weapon(attack.weapon_id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "authorized sword-strike proposal owner {:?} requires missing HtH weapon {}",
-                        attack.soldier_id, attack.weapon_id
-                    )
-                });
-
-            // ── Sprite timing ──────────────────────────────────────────
-            // Compute opponent_time_limit from target's sprite.
-            // If the target isn't in an active strike animation,
-            // time_limit = 1000 (permissive).  Otherwise, take the
-            // sprite's frames-from-now-till-action-done (or 1000 if
-            // unavailable).
-            let sprite_timing_debug = opponent_sprite_timing_debug_matches(
+        let special_debug = special_strike_lifecycle_debug_matches(current_frame, owner.index());
+        if special_debug {
+            self.trace_special_strike(
                 current_frame,
-                attack.soldier_id.index(),
-                attack.target_id.index(),
+                owner,
+                format_args!("phase=before_proposal target={}", target_id.index()),
             );
-            let sprite_timing_creation_orders = sprite_timing_debug.then(|| {
-                (
-                    self.world.original_creation_order(attack.soldier_id),
-                    self.world.original_creation_order(attack.target_id),
+        }
+        let distance = entity_distance(&self.world.entities, owner, target_id);
+
+        // Select the best strike using the shared proposal logic.
+        let attacker_profile = assets
+            .profile_manager
+            .get_hth_weapon(weapon_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "authorized sword-strike proposal owner {:?} requires missing HtH weapon {}",
+                    owner, weapon_id
                 )
             });
-            let selected_opponent_time_limit = self
-                .enemy_reconsider_sword_strike_time_limit_for_actor(
-                    attack.soldier_id,
-                    attack.target_id,
-                );
-            let opponent_time_limit: Option<i16> =
-                self.get_entity(attack.target_id).and_then(|e| {
-                    let animation = self.live_actor_animation(attack.target_id)?;
-                    if let Some((owner_creation_order, target_creation_order)) =
-                        sprite_timing_creation_orders
-                    {
-                        Self::trace_opponent_sprite_timing(
-                            current_frame,
-                            [attack.soldier_id, attack.target_id],
-                            [owner_creation_order, target_creation_order],
-                            only_owner,
-                            animation,
-                            e,
-                        );
-                    }
-                    selected_opponent_time_limit
-                });
 
-            // Compute per-strike startup frames from attacker's
-            // sprite (`frames_from_start_till_action_done(anim)`).
-            let attacker_sprite_frames: Option<[i16; crate::weapons::NUM_NORMAL_SWORD_STRIKES]> =
-                self.get_entity(attack.soldier_id)
-                    .map(|e| &e.element_data().sprite)
-                    .map(|sprite| {
-                        use crate::combat::NORMAL_STRIKES;
-                        let mut frames = [0i16; crate::weapons::NUM_NORMAL_SWORD_STRIKES];
-                        for (i, &s) in NORMAL_STRIKES.iter().enumerate() {
-                            let anim = strike_to_animation(s);
-                            frames[i] = sprite.frames_from_start_till_action_done(anim) as i16;
-                        }
-                        frames
-                    });
-
-            // Parry startup frames from attacker's sprite.
-            let parry_startup: Option<i16> = self
-                .get_entity(attack.soldier_id)
-                .map(|e| &e.element_data().sprite)
-                .map(|sprite| {
-                    sprite.frames_from_start_till_action_done(
-                        crate::order::OrderType::TransitionWaitingSwordParryingSword,
-                    ) as i16
-                });
-
-            // Collect nearby victims for multi-target strike
-            // estimation.  Use `INVERSE_SWORDFIGHT_ASPECT_RATIO`
-            // (= 1.0): the isometric correction is intentionally
-            // disabled for sword-fight math.
-            let nearby = self.collect_strike_estimation_victims(
-                assets,
-                attack.soldier_id,
-                attack.attacker_pos,
-                Some(attack.target_id),
-                attack.target_id,
-            );
-
-            let ctx = crate::combat::StrikeSelectionContext {
-                attacker_profile,
-                fighting_ability: attack.fighting_ability,
-                blood_alcohol: attack.blood_alcohol,
-                is_rank_soldier: attack.is_rank_soldier,
-                attacker_direction: attack.attacker_direction,
-                attacker_elevation: attack.attacker_elevation,
-                attacker_camp: attack.attacker_camp,
-                diplomacy: &self.mission_domain.diplomacy,
-                is_swordfighting: attack.is_swordfighting,
-                opponent_time_limit,
-                strike_startup_frames: attacker_sprite_frames,
-                parry_startup_frames: parry_startup,
-                is_npc: true,
-            };
-            let debug = super::evaluate::reactive_sword_debug_frame_matches(current_frame)
-                .then(|| {
-                    let creation_order = self.world.original_creation_order(attack.soldier_id);
-                    super::evaluate::reactive_sword_debug_creation_order_matches(creation_order)
-                        .then_some(crate::combat::SwordStrikeProposalDebug {
-                            frame: current_frame,
-                            victim: attack.soldier_id.index(),
-                            victim_creation_order: creation_order,
-                            attacker: attack.target_id.index(),
-                        })
-                })
-                .flatten();
-            if let Some(debug) = debug {
-                self.trace_reactive_sword_enemy_principal(
-                    debug,
-                    attack.target_id,
-                    opponent_time_limit,
-                );
-            }
-            let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
-            let mut sweep_rebase = None;
-            let proposed = crate::combat::propose_good_sword_strike_with_debug(
-                sim,
-                &ctx,
-                &nearby,
-                &mut attack.boredom,
-                false,
-                false,
-                debug,
-                &mut sweep_rebase,
-            );
-            self.apply_strike_selection_sweep_rebase(assets, attack.soldier_id, sweep_rebase);
-            if special_debug {
-                self.trace_special_strike(
+        // ── Sprite timing ──────────────────────────────────────────
+        // Compute opponent_time_limit from target's sprite.
+        // If the target isn't in an active strike animation,
+        // time_limit = 1000 (permissive).  Otherwise, take the
+        // sprite's frames-from-now-till-action-done (or 1000 if
+        // unavailable).
+        let sprite_timing_debug =
+            opponent_sprite_timing_debug_matches(current_frame, owner.index(), target_id.index());
+        let sprite_timing_creation_orders = sprite_timing_debug.then(|| {
+            (
+                self.world.original_creation_order(owner),
+                self.world.original_creation_order(target_id),
+            )
+        });
+        let selected_opponent_time_limit =
+            self.enemy_reconsider_sword_strike_time_limit_for_actor(owner, target_id);
+        let opponent_time_limit: Option<i16> = self.get_entity(target_id).and_then(|e| {
+            let animation = self.live_actor_animation(target_id)?;
+            if let Some((owner_creation_order, target_creation_order)) =
+                sprite_timing_creation_orders
+            {
+                Self::trace_opponent_sprite_timing(
                     current_frame,
-                    attack.soldier_id,
-                    format_args!("phase=after_proposal result={:?}", proposed),
+                    [owner, target_id],
+                    [owner_creation_order, target_creation_order],
+                    Some(owner),
+                    animation,
+                    e,
                 );
             }
-            if let Some(debug) = debug {
-                self.trace_reactive_sword_proposal_boundary(
-                    debug,
-                    "enemy_reconsider",
-                    rng_before,
-                    &proposed,
-                );
-            }
-            let strike = match proposed {
-                Some(crate::combat::ProposedCombatAction::Strike(s)) => Some(s),
-                _ => None,
-            };
+            selected_opponent_time_limit
+        });
 
-            // Strike selection mutates its boredom history even when no
-            // viable strike is selected, so persist it before branching on
-            // the proposal result.
-            let owner = self.expect_entity_mut(
-                attack.soldier_id,
-                "sword-strike proposal owner during selection",
-            );
-            owner
-                .human_data_mut()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "sword-strike proposal owner {:?} is no longer human",
-                        attack.soldier_id
-                    )
-                })
-                .sword_strike_boredom = attack.boredom;
-
-            let strike = match strike {
-                Some(s) => s,
-                None => continue, // No viable strike this tick
-            };
-            let command = strike.to_command();
-
-            // Telegraph attacks against a player-controlled PC with the hulk
-            // glow and difficulty-dependent preparation delay. Autonomous PCs
-            // are EnemyAi combatants rather than players awaiting a warning,
-            // so PC-vs-PC battle missions use the normal immediate cadence.
-            let target_is_player_controlled_pc = match self.get_entity(attack.target_id) {
-                Some(entity @ Entity::Pc(_)) => entity.accepts_hero_commands(),
-                Some(_) => false,
-                None => panic!(
-                    "sword-strike target {:?} disappeared before preparation",
-                    attack.target_id
-                ),
-            };
-
-            let wait_time: u32 = if target_is_player_controlled_pc {
-                // Start the striking-outline hulk with width 2.
-                if let Some(entity) = self.world.entities.get_mut(attack.soldier_id) {
-                    if let Some(human) = entity.human_data_mut() {
-                        human.start_hulk(true, 1.0);
-                    }
-                    let elem = entity.element_data_mut();
-                    elem.current_outline = crate::element::OutlineColorName::Striking;
-                    elem.outline_width = 2;
+        // Compute per-strike startup frames from attacker's
+        // sprite (`frames_from_start_till_action_done(anim)`).
+        let attacker_sprite_frames: Option<[i16; crate::weapons::NUM_NORMAL_SWORD_STRIKES]> = self
+            .get_entity(owner)
+            .map(|e| &e.element_data().sprite)
+            .map(|sprite| {
+                use crate::combat::NORMAL_STRIKES;
+                let mut frames = [0i16; crate::weapons::NUM_NORMAL_SWORD_STRIKES];
+                for (i, &s) in NORMAL_STRIKES.iter().enumerate() {
+                    let anim = strike_to_animation(s);
+                    frames[i] = sprite.frames_from_start_till_action_done(anim) as i16;
                 }
-                compute_special_strike_preparation_time(
-                    sim.config().difficulty,
-                    attack.fighting_ability,
-                )
-            } else {
-                0
-            };
+                frames
+            });
 
-            if special_debug {
-                self.trace_special_strike(
-                    current_frame,
-                    attack.soldier_id,
-                    format_args!(
-                        "phase=before_begin strike={:?} command={:?} wait_time={}",
-                        strike, command, wait_time,
-                    ),
-                );
-            }
+        // Parry startup frames from attacker's sprite.
+        let parry_startup: Option<i16> = self
+            .get_entity(owner)
+            .map(|e| &e.element_data().sprite)
+            .map(|sprite| {
+                sprite.frames_from_start_till_action_done(
+                    crate::order::OrderType::TransitionWaitingSwordParryingSword,
+                ) as i16
+            });
 
-            // Flag the pending special strike and cancel movement so the
-            // EnemyAi owner stands still during the delay.
-            // `begin_special_strike` sets the lifecycle latch and enters the
-            // observable legacy special-strike substate; the
-            // immediate stop-all side effect stays engine-side so it
-            // runs before the new strike sequence is queued.
-            self.begin_ai_special_strike(sim, assets, attack.soldier_id);
-            self.stop_ai_owner(sim, assets, attack.soldier_id);
-            if special_debug {
-                self.trace_special_strike_state(current_frame, attack.soldier_id, "after_begin");
-            }
-            if special_debug {
-                self.trace_special_strike_state(
-                    current_frame,
-                    attack.soldier_id,
-                    "after_begin_drain",
-                );
-            }
+        // Collect nearby victims for multi-target strike
+        // estimation.  Use `INVERSE_SWORDFIGHT_ASPECT_RATIO`
+        // (= 1.0): the isometric correction is intentionally
+        // disabled for sword-fight math.
+        let nearby = self.collect_strike_estimation_victims(
+            assets,
+            owner,
+            attacker_pos,
+            Some(target_id),
+            target_id,
+        );
 
-            // War-cry remarks for thrusts C/F/G/H/I.  Placed after
-            // the state-set + stop-all so the say-order is correct.
-            if matches!(
-                strike,
-                SwordStrike::C | SwordStrike::F | SwordStrike::G | SwordStrike::H | SwordStrike::I
-            ) {
-                let owner = self.expect_entity(attack.soldier_id, "warcry owner");
-                let is_vip = is_vip_from_profile(owner, &assets.profile_manager);
-                self.execute_ai_speech(
-                    sim,
-                    assets,
-                    attack.soldier_id,
-                    crate::ai::AiSpeechAttempt {
-                        remark: if is_vip {
-                            crate::ai::Remark::VipWarcry
-                        } else {
-                            crate::ai::Remark::Warcry
-                        },
-                        flags: 0,
-                    },
-                );
-            }
-
-            // Build sequence: level-1 wait timer (preparation delay),
-            // then level-2 interaction (the actual strike command).
-            let mut seq = crate::sequence::Sequence::new();
-
-            let mut wait_elem = crate::sequence::SequenceElement::new_generic(
-                1,
-                Command::WaitTimer,
-                Some(attack.soldier_id),
-            );
-            wait_elem.priority = crate::sequence::SequencePriority::Normal;
-            wait_elem.set_property(
-                crate::sequence::Field::Timer,
-                crate::sequence::FieldValue::Integer(wait_time),
-            );
-            seq.append_element(wait_elem);
-
-            let mut strike_elem = crate::sequence::SequenceElement::new_interaction(
-                2,
-                command,
-                Some(attack.soldier_id),
-                Some(attack.target_id),
-            );
-            strike_elem.priority = crate::sequence::SequencePriority::Preference;
-            seq.append_element(strike_elem);
-
-            self.launch_sequence(seq);
-
-            if special_debug {
-                self.trace_special_strike_state(current_frame, attack.soldier_id, "after_launch");
-            }
-
-            tracing::debug!(
-                soldier = ?attack.soldier_id,
-                target = ?attack.target_id,
-                ?command,
-                ?strike,
-                distance,
-                "Enemy AI sword strike sequence launched"
-            );
+        let ctx = crate::combat::StrikeSelectionContext {
+            attacker_profile,
+            fighting_ability: fighting_ability,
+            blood_alcohol: blood_alcohol,
+            is_rank_soldier: is_rank_soldier,
+            attacker_direction: attacker_direction,
+            attacker_elevation: attacker_elevation,
+            attacker_camp: attacker_camp,
+            diplomacy: &self.mission_domain.diplomacy,
+            is_swordfighting: is_swordfighting,
+            opponent_time_limit,
+            strike_startup_frames: attacker_sprite_frames,
+            parry_startup_frames: parry_startup,
+            is_npc: true,
+        };
+        let debug = super::evaluate::reactive_sword_debug_frame_matches(current_frame)
+            .then(|| {
+                let creation_order = self.world.original_creation_order(owner);
+                super::evaluate::reactive_sword_debug_creation_order_matches(creation_order)
+                    .then_some(crate::combat::SwordStrikeProposalDebug {
+                        frame: current_frame,
+                        victim: owner.index(),
+                        victim_creation_order: creation_order,
+                        attacker: target_id.index(),
+                    })
+            })
+            .flatten();
+        if let Some(debug) = debug {
+            self.trace_reactive_sword_enemy_principal(debug, target_id, opponent_time_limit);
         }
-
-        // Complete the statement immediately following Original's inline
-        // strike-selection call. A successful proposal has entered the
-        // (folded) special-strike state and therefore suppresses CombatInsult;
-        // a rejection leaves the ordinary swordfight state and says it.
-        // Keep this after every rejection/launch path, but before returning
-        // to the dispatcher's owner-work drain.
-        for owner in pending_considerations {
-            let ai = self.world.entities.expect_enemy_ai_mut(
+        let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
+        let mut sweep_rebase = None;
+        let proposed = crate::combat::propose_good_sword_strike_with_debug(
+            sim,
+            &ctx,
+            &nearby,
+            &mut boredom,
+            false,
+            false,
+            debug,
+            &mut sweep_rebase,
+        );
+        self.apply_strike_selection_sweep_rebase(assets, owner, sweep_rebase);
+        if special_debug {
+            self.trace_special_strike(
+                current_frame,
                 owner,
-                format_args!("sword-strike consideration owner {owner:?} lost Enemy AI"),
+                format_args!("phase=after_proposal result={:?}", proposed),
             );
-            if std::mem::take(&mut ai.pending_combat_insult_after_strike_consideration)
-                && ai.base.current_substate == crate::ai::Substate::AttackingSwordfight
-                && !ai.pending_special_strike
-            {
-                self.execute_ai_speech(
-                    sim,
-                    assets,
-                    owner,
-                    crate::ai::AiSpeechAttempt {
-                        remark: crate::ai::Remark::CombatInsult,
-                        flags: 0,
+        }
+        if let Some(debug) = debug {
+            self.trace_reactive_sword_proposal_boundary(
+                debug,
+                "enemy_reconsider",
+                rng_before,
+                &proposed,
+            );
+        }
+        let strike = match proposed {
+            Some(crate::combat::ProposedCombatAction::Strike(s)) => Some(s),
+            _ => None,
+        };
+
+        // Strike selection mutates its boredom history even when no
+        // viable strike is selected, so persist it before branching on
+        // the proposal result.
+        let owner_entity =
+            self.expect_entity_mut(owner, "sword-strike proposal owner during selection");
+        owner_entity
+            .human_data_mut()
+            .unwrap_or_else(|| panic!("sword-strike proposal owner {:?} is no longer human", owner))
+            .sword_strike_boredom = boredom;
+
+        let strike = match strike {
+            Some(s) => s,
+            None => return, // No viable strike for this proposal
+        };
+        let command = strike.to_command();
+
+        // Telegraph attacks against a player-controlled PC with the hulk
+        // glow and difficulty-dependent preparation delay. Autonomous PCs
+        // are EnemyAi combatants rather than players awaiting a warning,
+        // so PC-vs-PC battle missions use the normal immediate cadence.
+        let target_is_player_controlled_pc = match self.get_entity(target_id) {
+            Some(entity @ Entity::Pc(_)) => entity.accepts_hero_commands(),
+            Some(_) => false,
+            None => panic!(
+                "sword-strike target {:?} disappeared before preparation",
+                target_id
+            ),
+        };
+
+        let wait_time: u32 = if target_is_player_controlled_pc {
+            // Start the striking-outline hulk with width 2.
+            if let Some(entity) = self.world.entities.get_mut(owner) {
+                if let Some(human) = entity.human_data_mut() {
+                    human.start_hulk(true, 1.0);
+                }
+                let elem = entity.element_data_mut();
+                elem.current_outline = crate::element::OutlineColorName::Striking;
+                elem.outline_width = 2;
+            }
+            compute_special_strike_preparation_time(sim.config().difficulty, fighting_ability)
+        } else {
+            0
+        };
+
+        if special_debug {
+            self.trace_special_strike(
+                current_frame,
+                owner,
+                format_args!(
+                    "phase=before_begin strike={:?} command={:?} wait_time={}",
+                    strike, command, wait_time,
+                ),
+            );
+        }
+
+        // Flag the pending special strike and cancel movement so the
+        // EnemyAi owner stands still during the delay.
+        // `begin_special_strike` sets the lifecycle latch and enters the
+        // observable legacy special-strike substate; the
+        // immediate stop-all side effect stays engine-side so it
+        // runs before the new strike sequence is queued.
+        self.begin_ai_special_strike(sim, assets, owner);
+        self.stop_ai_owner(sim, assets, owner);
+        if special_debug {
+            self.trace_special_strike_state(current_frame, owner, "after_begin");
+        }
+        if special_debug {
+            self.trace_special_strike_state(current_frame, owner, "after_begin_drain");
+        }
+
+        // War-cry remarks for thrusts C/F/G/H/I.  Placed after
+        // the state-set + stop-all so the say-order is correct.
+        if matches!(
+            strike,
+            SwordStrike::C | SwordStrike::F | SwordStrike::G | SwordStrike::H | SwordStrike::I
+        ) {
+            let owner_entity = self.expect_entity(owner, "warcry owner");
+            let is_vip = is_vip_from_profile(owner_entity, &assets.profile_manager);
+            self.execute_ai_speech(
+                sim,
+                assets,
+                owner,
+                crate::ai::AiSpeechAttempt {
+                    remark: if is_vip {
+                        crate::ai::Remark::VipWarcry
+                    } else {
+                        crate::ai::Remark::Warcry
                     },
-                );
-            }
-        }
-    }
-
-    /// Per-frame concussion healing for all humans.
-    #[cfg(test)]
-    pub(crate) fn tick_concussion_healing(&mut self, assets: &LevelAssets) {
-        let mut pending_fit_again: Vec<EntityId> = Vec::new();
-        let is_sherwood = self.is_sherwood(&assets.profile_manager);
-        // Standup / BeingStunnedSword chains discovered during the
-        // entity-iter loop are launched after the loop ends to avoid
-        // borrowing `self.world.entities` and `self` simultaneously.
-        let mut pending_recover: Vec<crate::sequence::SequenceElement> = Vec::new();
-        // Disjoint-borrow: pull the id counter out as a `&mut u32` so
-        // the inner loop can stamp fresh ids via
-        // `crate::order::alloc_order_id` while still holding
-        // `self.world.entities.humans_mut()`.
-        let next_order_id = &mut self.orders.next_order_id;
-        for (entity_id, entity) in self.world.entities.humans_mut() {
-            if entity.is_dead() {
-                continue;
-            }
-
-            // Scroll-attached beggars short-circuit
-            // `add_concussion_of_the_brain`, and the per-frame heal
-            // calls `add_concussion(-1)` — so the heal is suppressed
-            // for them.  Skip the whole tick.
-            if let Entity::Civilian(c) = entity
-                && c.npc.attached_scroll.is_some()
-            {
-                continue;
-            }
-
-            let life_points = get_life_points(entity);
-            if life_points <= 0 {
-                continue;
-            }
-
-            let ctx = concussion_ctx_full(
-                entity,
-                is_sherwood,
-                Some(&self.mission_domain.campaign),
-                self.control.sim_config.difficulty,
-            );
-
-            // Determine healing speed: per-profile `wake_up` for PCs
-            // and soldiers, civilian default otherwise.
-            let healing_speed =
-                concussion_healing_speed_for_entity(entity, &assets.profile_manager);
-
-            let was_unconscious = entity.is_unconscious();
-
-            if let Some(human) = entity.human_data_mut() {
-                combat::concussion_healing_tick(human, healing_speed, life_points, &ctx);
-            }
-
-            // Check if entity woke up
-            let is_unconscious = entity.is_unconscious();
-            if was_unconscious && !is_unconscious {
-                // Wake up: restore posture and play standup
-                // animation.  The standup path chains standup +
-                // (optional) BeingStunnedSword as orders on the same
-                // sequence element, so we launch a Recover element
-                // with both orders pre-pushed and let `do_next_order`
-                // play them in sequence.
-                let standing_anim = {
-                    let posture = entity.element_data().posture();
-                    // Only reached for a human that was unconscious, so
-                    // the actor state is required.
-                    let action = entity
-                        .actor_data()
-                        .expect("waking concussion owner must be an actor")
-                        .action_state;
-                    select_combat_animations(posture, action).map(|a| a.standing_up)
-                };
-                let concussion = entity
-                    .human_data()
-                    .map(|h| h.concussion_of_the_brain)
-                    .unwrap_or(0);
-                let still_stunned = concussion > STUNNING_THRESHOLD;
-
-                let npc_id = entity_id;
-                if standing_anim.is_some() || still_stunned {
-                    let mut elem = crate::sequence::SequenceElement::new(
-                        1,
-                        crate::element::Command::Recover,
-                        Some(npc_id.into()),
-                    );
-                    if let Some(anim) = standing_anim {
-                        elem.push_order(crate::order::Order::new(
-                            anim,
-                            0.0,
-                            0.0,
-                            crate::order::alloc_order_id(next_order_id),
-                        ));
-                    }
-                    if still_stunned {
-                        // Reference path only adds this if
-                        // Swordfighting; we apply unconditionally here
-                        // since `handle_post_concussion` only runs
-                        // after damage that already implies a sword
-                        // context for stunned soldiers.
-                        elem.push_order(crate::order::Order::new(
-                            crate::order::OrderType::BeingStunnedSword,
-                            0.0,
-                            0.0,
-                            crate::order::alloc_order_id(next_order_id),
-                        ));
-                    }
-                    pending_recover.push(elem);
-                }
-
-                // Dispatch EventFitAgain to the revived NPC's AI:
-                // when concussion drops below threshold and the NPC
-                // was in SleepingUnconscious, fire EventFitAgain so
-                // it can leave Sleeping and return to duty.  Scripted
-                // sleeps (SleepingForever, SleepingNapping, etc.)
-                // don't trigger the wake-to-duty path even if
-                // concussion happens to be cleared from outside.
-                let in_sleeping_unconscious = entity
-                    .ai_controller()
-                    .map(|ai| ai.current_substate == crate::ai::Substate::SleepingUnconscious)
-                    .unwrap_or(false);
-                if in_sleeping_unconscious {
-                    pending_fit_again.push(npc_id.into());
-                }
-            }
-        }
-
-        for elem in pending_recover {
-            self.launch_element(elem);
-        }
-
-        for victim_id in pending_fit_again {
-            self.dispatch_ai_stimulus(
-                victim_id,
-                crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
+                    flags: 0,
+                },
             );
         }
+
+        // Build sequence: level-1 wait timer (preparation delay),
+        // then level-2 interaction (the actual strike command).
+        let mut seq = crate::sequence::Sequence::new();
+
+        let mut wait_elem =
+            crate::sequence::SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
+        wait_elem.priority = crate::sequence::SequencePriority::Normal;
+        wait_elem.set_property(
+            crate::sequence::Field::Timer,
+            crate::sequence::FieldValue::Integer(wait_time),
+        );
+        seq.append_element(wait_elem);
+
+        let principal = *self
+            .expect_entity(owner, "strike launch owner")
+            .human_data()
+            .expect("strike owner must remain human")
+            .opponents
+            .first()
+            .expect("strike launch requires live principal opponent");
+        let mut strike_elem = crate::sequence::SequenceElement::new_interaction(
+            2,
+            command,
+            Some(owner),
+            Some(principal),
+        );
+        strike_elem.priority = crate::sequence::SequencePriority::Preference;
+        seq.append_element(strike_elem);
+
+        self.launch_sequence(seq);
+
+        if special_debug {
+            self.trace_special_strike_state(current_frame, owner, "after_launch");
+        }
+
+        tracing::debug!(
+            soldier = ?owner,
+            target = ?target_id,
+            ?command,
+            ?strike,
+            distance,
+            "Enemy AI sword strike sequence launched"
+        );
     }
 
     /// Run one human's concussion prelude and close a natural/script wake
@@ -3994,20 +3324,14 @@ impl EngineInner {
             .get(owner)
             .is_some_and(|entity| entity.ai_controller().is_some());
         if naturally_woke && owner_has_ai {
-            self.dispatch_ai_stimulus(
+            self.execute_ai_callback(
+                sim,
+                assets,
                 owner,
-                crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
+                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
             );
         }
-        let dispatched_wake = if owner_has_ai {
-            self.dispatch_pending_fit_again_for_npc(sim, owner, assets)
-        } else {
-            naturally_woke
-        };
-        if dispatched_wake && owner_has_ai {
-            // EVENT_FITAGAIN's resurrection fan-out and eye reset are inline
-            // consequences of Think in Original, including under FrozenAll.
-            self.tick_ai_pending_resurrection_and_eyes_for_npc(owner);
+        if naturally_woke {
             self.apply_wake_redetection_blinks(owner);
         }
     }
@@ -4151,15 +3475,19 @@ mod tests {
     }
 
     fn install_falling_pushed_order(engine: &mut EngineInner, victim: EntityId) {
+        let assets = LevelAssets::new();
         let damage =
             SequenceElement::new_damage(1, Command::ReceiveSwordDamage, Some(victim), None, 20, 0);
         let sequence = engine.orders.sequence_manager.launch_element(damage);
         let order_id =
             engine.push_new_order(sequence, 0, OrderType::FallingPushedUpright, 0.0, 0.0);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(victim)
             .unwrap()
@@ -4270,14 +3598,18 @@ mod tests {
     }
 
     fn install_falling_ladder_order(engine: &mut EngineInner, victim: EntityId) {
+        let assets = LevelAssets::new();
         let damage =
             SequenceElement::new_damage(1, Command::ReceiveSwordDamage, Some(victim), None, 20, 0);
         let sequence = engine.orders.sequence_manager.launch_element(damage);
         let order_id = engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(victim)
             .unwrap()
@@ -4736,10 +4068,13 @@ mod tests {
             SequenceElement::new_damage(1, Command::ReceiveArrowDamage, Some(victim), None, 20, 0);
         let sequence = engine.orders.sequence_manager.launch_element(damage);
         let order_id = engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(victim)
             .unwrap()
@@ -4766,16 +4101,6 @@ mod tests {
             entity.npc_data().unwrap().eye_status,
             crate::element::EyeStatus::DieOrGetUnconscious,
             "the ladder landing's synchronous lose-consciousness Think must close its eye write"
-        );
-        assert_eq!(
-            entity
-                .ai_controller()
-                .unwrap()
-                .outbox
-                .recovery
-                .set_eye_status,
-            None,
-            "the ladder landing must not leave view-status assignment deferred past its actor slot"
         );
         assert_eq!(
             entity.position_iface().layer_goal(),
@@ -4838,10 +4163,6 @@ mod tests {
 
         engine.tick_push_flight_for_owner(&sim, &assets, victim);
 
-        assert!(
-            engine.orders.pending_concussion_side_effects.is_empty(),
-            "the ladder Execute boundary must close its own knockout side effects"
-        );
         for fighter in [victim, opponent] {
             assert!(
                 engine
@@ -4927,7 +4248,6 @@ mod tests {
                 .opponents,
             vec![victim]
         );
-        assert!(engine.orders.pending_concussion_side_effects.is_empty());
     }
 
     #[test]
@@ -5020,10 +4340,19 @@ mod tests {
         engine
             .get_entity_mut(attacker_id)
             .unwrap()
-            .actor_data_mut()
+            .human_data_mut()
             .unwrap()
-            .pending_push_swordfight = vec![victim_id];
-        engine.complete_melee_strike(&assets, attacker_id, None, 0, SwordStrike::A, Some(1));
+            .sword_sweep
+            .victims = vec![victim_id];
+        engine.complete_melee_strike(
+            &crate::sim_rng::test_context(),
+            &assets,
+            attacker_id,
+            None,
+            0,
+            SwordStrike::A,
+            Some(1),
+        );
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
 
         if let Entity::Soldier(soldier) = engine.get_entity_mut(victim_id).unwrap() {
@@ -5032,10 +4361,19 @@ mod tests {
         engine
             .get_entity_mut(attacker_id)
             .unwrap()
-            .actor_data_mut()
+            .human_data_mut()
             .unwrap()
-            .pending_push_swordfight = vec![victim_id];
-        engine.complete_melee_strike(&assets, attacker_id, None, 0, SwordStrike::A, Some(1));
+            .sword_sweep
+            .victims = vec![victim_id];
+        engine.complete_melee_strike(
+            &crate::sim_rng::test_context(),
+            &assets,
+            attacker_id,
+            None,
+            0,
+            SwordStrike::A,
+            Some(1),
+        );
 
         let sequence = engine
             .orders

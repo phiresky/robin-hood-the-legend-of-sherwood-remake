@@ -46,7 +46,9 @@ fn fixture(points: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
         .world
         .entities
         .expect_enemy_ai_mut(ids[0], format_args!("pride fixture"));
-    ai.soldier_profile_pride = 1;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+        profile.pride = 1
+    });
     ai.base.current_substate = Substate::AttackingOfficerGivingOrdersWaiting;
     ai.list_them = ids[1..].iter().map(|id| id.index()).collect();
     (engine, assets, ids)
@@ -109,10 +111,13 @@ fn pride_range_uses_close_body_during_door_pass() {
     *gate_id = Some(crate::gate::DoorIndex::new(0).unwrap());
     *direction = 1;
     let sequence = engine.orders.sequence_manager.launch_element(pass);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     assert_eq!(
         engine.live_ai_position(target).map_point(),
         MapPoint::new(2301.0, 381.0)

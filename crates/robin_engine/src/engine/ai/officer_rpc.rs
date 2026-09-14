@@ -130,10 +130,7 @@ impl OfficerRpc<'_> {
     fn ai_mut(&mut self) -> &mut EnemyAi {
         self.engine.observation_ai_mut(self.owner)
     }
-    fn settle(&mut self) {
-        self.engine
-            .drain_direct_ai_owner_boundary(self.sim, self.owner, self.assets);
-    }
+
     fn state(&mut self, substate: Substate) {
         self.engine.duty_set_state(
             self.sim,
@@ -165,8 +162,7 @@ impl OfficerRpc<'_> {
         )
     }
     fn halt(&mut self) {
-        self.ai_mut().base.outbox.actor.queue_halt();
-        self.settle();
+        self.engine.halt_actor(self.sim, self.assets, self.owner);
     }
     fn face(&mut self, target: EntityId) {
         self.engine
@@ -197,7 +193,6 @@ impl OfficerRpc<'_> {
         self.ai_mut()
             .base
             .set_transient_emoticon(emoticon, 20, frame);
-        self.settle();
     }
     fn say(&mut self, remark: Remark, flags: SpeechFlags) {
         self.engine.execute_ai_speech(
@@ -219,7 +214,7 @@ impl OfficerRpc<'_> {
             .world
             .entities
             .expect_enemy_ai(target, format_args!("officer call rank"))
-            .get_rank()
+            .get_rank(&self.assets.profile_manager)
     }
     fn accept(&mut self, state: Substate) {
         self.state(state);
@@ -246,7 +241,7 @@ impl OfficerRpc<'_> {
                 {
                     return false;
                 }
-                match self.ai().get_rank() {
+                match self.ai().get_rank(&self.assets.profile_manager) {
                     ProfileRank::Soldier => {
                         self.ai_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
                         if self.engine.execute_ai_callback(
@@ -297,12 +292,10 @@ impl OfficerRpc<'_> {
                         if self.engine.can_call_ai_soldier(self.owner, target) {
                             self.face(self.target());
                             self.state(SeekingOfficerCallSoldier);
-                            self.ai_mut()
-                                .base
-                                .outbox
-                                .actor
-                                .delete_detectable_type(crate::element::DetectableType::Friend);
-                            self.settle();
+                            self.engine.execute_ai_delete_detectable_type(
+                                self.owner,
+                                crate::element::DetectableType::Friend,
+                            );
                         }
                     }
                     ProfileRank::Knight | ProfileRank::None => {}
@@ -317,7 +310,7 @@ impl OfficerRpc<'_> {
                 self.ai_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
                 self.state(SeekingCharlySentToOfficer);
                 self.ai_mut().base.set_emoticon(EmoticonType::None);
-                self.settle();
+
                 self.timer(30);
                 self.ai_mut().reported_to_officer = true;
                 return true;
@@ -342,7 +335,10 @@ impl OfficerRpc<'_> {
                             | SeekingHeardstepsReactiontime
                             | SeekingBodyReactiontime
                     );
-                if !react || self.ai().get_rank() != ProfileRank::Soldier || !self.priority() {
+                if !react
+                    || self.ai().get_rank(&self.assets.profile_manager) != ProfileRank::Soldier
+                    || !self.priority()
+                {
                     return false;
                 }
                 self.ai_mut().current_task_priority = self.ai().new_task_priority;
@@ -367,7 +363,7 @@ impl OfficerRpc<'_> {
                     self.accept(SeekingWaitForAlertingCivilian);
                     return true;
                 }
-                match self.ai().get_rank() {
+                match self.ai().get_rank(&self.assets.profile_manager) {
                     ProfileRank::Soldier => {
                         let react = matches!(
                             self.ai().base.current_state,
@@ -445,11 +441,12 @@ impl OfficerRpc<'_> {
                     if self.ai().base.my_reconnaissance_report.charly
                         == Some(AiEntityHandle::new(target.index()))
                     {
-                        self.ai_mut().base.set_checkpoint_charly(Option::None);
-                        self.settle();
+                        self.engine
+                            .execute_ai_set_checkpoint_charly(self.owner, Option::None);
+
                         self.face(target);
                         self.ai_mut().base.clear_emoticon();
-                        self.settle();
+
                         self.ai_mut()
                             .seek_flags
                             .remove(SeekFlags::REPORT_OFFICER_AFTER);
@@ -462,8 +459,8 @@ impl OfficerRpc<'_> {
                         });
                     }
                 } else {
-                    self.ai_mut().base.set_checkpoint_charly(Option::None);
-                    self.settle();
+                    self.engine
+                        .execute_ai_set_checkpoint_charly(self.owner, Option::None);
                 }
             }
             _ => unreachable!(),
@@ -505,8 +502,7 @@ impl OfficerRpc<'_> {
                     } else {
                         crate::ai::LookDirection::RightLeft
                     };
-                    self.ai_mut().base.outbox.actor.look_sidewards = Some(direction);
-                    self.settle();
+                    self.engine.execute_ai_look_sidewards(self.owner, direction);
                 }
                 self.ai_mut().base.sorrow_level = self
                     .ai()
@@ -589,7 +585,8 @@ impl OfficerRpc<'_> {
             }
             (SeekingDetectedCharly, EventTimer) => {
                 self.ai_mut().base.my_reconnaissance_report.charly_seen = true;
-                if self.ai().get_rank() == ProfileRank::Officer && !self.ai().alerted_us.is_empty()
+                if self.ai().get_rank(&self.assets.profile_manager) == ProfileRank::Officer
+                    && !self.ai().alerted_us.is_empty()
                 {
                     let state = self.ai().previous_state.get("previous state");
                     let substate = self.ai().previous_substate.get("previous substate");
@@ -720,7 +717,7 @@ impl OfficerRpc<'_> {
                 ) {
                     self.face(self.target());
                     self.ai_mut().base.clear_emoticon();
-                    self.settle();
+
                     self.timer(20);
                 } else {
                     self.duty();
@@ -806,9 +803,10 @@ impl OfficerRpc<'_> {
                         self.duty();
                     } else {
                         self.state(SeekingCharlyWatching);
-                        self.ai_mut().base.outbox.actor.look_sidewards =
-                            Some(crate::ai::LookDirection::LeftRight);
-                        self.settle();
+                        self.engine.execute_ai_look_sidewards(
+                            self.owner,
+                            crate::ai::LookDirection::LeftRight,
+                        );
                     }
                 } else {
                     let point = self.ai().search_charly_way[0];

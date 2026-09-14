@@ -7,7 +7,15 @@ use crate::engine::{RankedSimulationPolicy, SimConfig, SimulationGateState, Simu
 ///
 /// This owns state only; [`crate::engine::EngineInner`] remains responsible for
 /// phase ordering and lifecycle orchestration.
-#[derive(Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[serde(remote = "Self")]
 pub(crate) struct SimulationControl {
     pub(crate) frame_counter: u32,
     pub(crate) simulation_gates: SimulationGateState,
@@ -26,6 +34,7 @@ pub(crate) struct SimulationControl {
     /// from an ordinary save or multiplayer snapshot.
     #[state_hash(skip)]
     #[bitcode(skip)]
+    #[serde(skip)]
     pub(crate) ranked_simulation_policy: Option<RankedSimulationPolicy>,
     /// A completed simulation tick is followed by presentation-only entity
     /// `Refresh` work. Parity snapshots sit between those calls, so Rust
@@ -33,12 +42,14 @@ pub(crate) struct SimulationControl {
     /// next hourglass instead of mutating sprite state during the entity tick.
     ///
     /// The field keeps its original name for native snapshot compatibility.
+    #[serde(default)]
     pub(crate) arrow_refresh_pending: bool,
     /// Universal frame of the most recently displayed popup scroll.
     ///
     /// The original game's popup-scroll frame tracking suppresses the
     /// colorized-background constructor (and therefore its nested Refresh)
     /// for a second popup displayed in the same engine frame.
+    #[serde(default)]
     pub(crate) popup_scroll_last_display_frame: Option<u32>,
     /// Captured Original results for the stale-sprite `0xffff` action-point
     /// over-read. The original-game getter indexes beyond its delay table, so this value is
@@ -48,44 +59,30 @@ pub(crate) struct SimulationControl {
     /// frame only.
     #[state_hash(skip)]
     #[bitcode(skip)]
+    #[serde(skip)]
     pub(crate) original_impossible_action_done_deadlines: BTreeMap<(u32, u32), VecDeque<i16>>,
 }
 
 impl serde::Serialize for SimulationControl {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedSimulationControl::capture(self)
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
+        self.sim_config
+            .validate()
+            .map_err(serde::ser::Error::custom)?;
+        self.mission_start_sim_config
+            .validate()
+            .map_err(serde::ser::Error::custom)?;
+        SimulationControl::serialize(self, serializer)
     }
 }
 impl<'de> serde::Deserialize<'de> for SimulationControl {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(PersistedSimulationControl::deserialize(deserializer)?.into_runtime())
+        SimulationControl::deserialize(deserializer)
     }
 }
 
-/// Save-owned clock/configuration state. Admission capabilities and parity
-/// callback observations belong to a live runtime, never a loaded mission.
-#[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct PersistedSimulationControl {
-    frame_counter: u32,
-    simulation_gates: SimulationGateState,
-    speed: f32,
-    speed_int: u16,
-    chorus_timer: u16,
-    rng: u64,
-    sim_config: SimConfig,
-    mission_start_rng_seed: u64,
-    mission_start_sim_config: SimConfig,
-    fast_forward: bool,
-    #[serde(default)]
-    arrow_refresh_pending: bool,
-    #[serde(default)]
-    popup_scroll_last_display_frame: Option<u32>,
-}
-
-impl PersistedSimulationControl {
-    pub(crate) fn capture(control: &SimulationControl) -> Result<Self, String> {
+impl SimulationControl {
+    pub(crate) fn persisted_clone(&self) -> Result<Self, String> {
+        let control = self;
         let SimulationControl {
             frame_counter,
             simulation_gates,
@@ -112,7 +109,9 @@ impl PersistedSimulationControl {
             speed: *speed,
             speed_int: *speed_int,
             chorus_timer: *chorus_timer,
-            rng: rng.persisted_seed()?,
+            rng: SimulationRng::with_seed(rng.persisted_seed()?),
+            ranked_simulation_policy: None,
+            original_impossible_action_done_deadlines: BTreeMap::new(),
             sim_config: *sim_config,
             mission_start_rng_seed: *mission_start_rng_seed,
             mission_start_sim_config: *mission_start_sim_config,
@@ -120,25 +119,6 @@ impl PersistedSimulationControl {
             arrow_refresh_pending: *arrow_refresh_pending,
             popup_scroll_last_display_frame: *popup_scroll_last_display_frame,
         })
-    }
-
-    pub(crate) fn into_runtime(self) -> SimulationControl {
-        SimulationControl {
-            frame_counter: self.frame_counter,
-            simulation_gates: self.simulation_gates,
-            speed: self.speed,
-            speed_int: self.speed_int,
-            chorus_timer: self.chorus_timer,
-            rng: SimulationRng::with_seed(self.rng),
-            sim_config: self.sim_config,
-            mission_start_rng_seed: self.mission_start_rng_seed,
-            mission_start_sim_config: self.mission_start_sim_config,
-            fast_forward: self.fast_forward,
-            arrow_refresh_pending: self.arrow_refresh_pending,
-            popup_scroll_last_display_frame: self.popup_scroll_last_display_frame,
-            ranked_simulation_policy: None,
-            original_impossible_action_done_deadlines: BTreeMap::new(),
-        }
     }
 }
 
@@ -265,10 +245,10 @@ mod tests {
             .original_impossible_action_done_deadlines
             .insert((7, 9), VecDeque::from([12, -3]));
         let raw = control.clone();
-        let persisted = PersistedSimulationControl::capture(&control).unwrap();
+        let persisted = control.persisted_clone().unwrap();
         let bytes = serde_json::to_vec(&persisted).unwrap();
         assert_eq!(bytes, serde_json::to_vec(&control).unwrap());
-        let restored = persisted.into_runtime();
+        let restored = persisted;
         assert_eq!(restored.frame_counter, 81);
         assert_eq!(restored.speed, 2.5);
         assert_eq!(restored.popup_scroll_last_display_frame, Some(80));

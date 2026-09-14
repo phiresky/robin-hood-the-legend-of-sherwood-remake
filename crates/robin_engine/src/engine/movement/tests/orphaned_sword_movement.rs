@@ -70,6 +70,7 @@ mod suite {
         destination: MapPoint,
         action_state: ActionState,
     ) -> EntityId {
+        let assets = LevelAssets::new();
         let mut pc = TestActor::pc(Posture::Upright).build();
         pc.element_data_mut().sprite = shield_movement_sprite();
         pc.element_data_mut().sprite.position_iface.set_move_box(
@@ -96,10 +97,13 @@ mod suite {
             destination.y,
         ));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         owner
     }
 
@@ -384,10 +388,13 @@ mod suite {
             .orders
             .push_back(Order::test_new(OrderType::WalkingWithShield, 140.0, 100.0));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine.set_actors_frozen(true);
 
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
@@ -422,6 +429,7 @@ mod suite {
         action: OrderType,
         initial_action_state: ActionState,
     ) -> (EngineInner, EntityId, crate::sequence::SequenceId) {
+        let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
         let start = MapPoint::new(100.0, 100.0);
         let destination = MapPoint::new(140.0, 100.0);
@@ -472,10 +480,13 @@ mod suite {
             .orders
             .push_back(Order::new(action, destination.x, destination.y, order_id));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         let owner_entity = engine.get_entity_mut(owner).unwrap();
         owner_entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(sequence, 0);
         owner_entity
@@ -555,6 +566,7 @@ mod suite {
         std::num::NonZeroU32,
         MapPoint,
     ) {
+        let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
         let start = MapPoint::new(100.0, 100.0);
         let destination = MapPoint::new(140.0, 100.0);
@@ -662,10 +674,13 @@ mod suite {
             *flags |= MoveFlags::FORCE_SWORD_MOVEMENT;
         }
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -836,7 +851,15 @@ mod suite {
                 })
             })
             .expect("opponent evaluation must register QuitSwordfight");
-        engine.engine_postpone(quit_sequence, 0, movement_sequence, 0);
+        engine.engine_postpone(
+            &sim,
+            &assets,
+            &mut Vec::new(),
+            quit_sequence,
+            0,
+            movement_sequence,
+            0,
+        );
 
         let movement = engine
             .orders
@@ -1041,10 +1064,7 @@ mod suite {
             crate::sequence::FieldValue::Integer(9),
         );
         let turn_sequence = engine.orders.sequence_manager.launch_element(turn);
-        engine
-            .orders
-            .sequence_manager
-            .postpone_element(turn_sequence, 0);
+        engine.postpone_element(&sim, &assets, &mut Vec::new(), turn_sequence, 0);
         engine
             .orders
             .sequence_manager
@@ -1152,42 +1172,6 @@ mod suite {
         assert!(
             turn_card < quit_event,
             "the Turn condolence callback must close before EVENT_QUIT_SWORDFIGHT"
-        );
-    }
-
-    #[test]
-    fn pc_pinch_abort_cancels_terminal_pop_before_impossible() {
-        let (mut engine, _owner, movement_sequence, _order_id, _start) =
-            install_sword_movement(false);
-        let unrelated = crate::sequence::SequenceId(movement_sequence.0 + 1);
-        let mut order_pops = vec![(movement_sequence, 0), (unrelated, 0)];
-
-        cancel_aborted_order_pop(&mut order_pops, movement_sequence, 0);
-        assert_eq!(order_pops, vec![(unrelated, 0)]);
-
-        engine
-            .orders
-            .sequence_manager
-            .element_impossible(movement_sequence, 0);
-        for (seq_id, elem_idx) in order_pops {
-            if engine
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .is_some()
-            {
-                engine.do_next_order(seq_id, elem_idx);
-            }
-        }
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(movement_sequence, 0)
-                .unwrap()
-                .state,
-            SequenceState::Impossible,
-            "the PC Execute ABORTED result must not be overwritten by the nested motion's queued TERMINATED pop"
         );
     }
 

@@ -48,6 +48,7 @@ pub struct LeaderboardSettingsModalState {
     tooltip: TooltipState,
     accepted: bool,
     done: bool,
+    pub(crate) exit_requested: bool,
 }
 
 impl LeaderboardSettingsModalState {
@@ -110,6 +111,7 @@ impl LeaderboardSettingsModalState {
             tooltip,
             accepted: false,
             done: false,
+            exit_requested: false,
         }
     }
 
@@ -123,7 +125,11 @@ impl LeaderboardSettingsModalState {
         let screen = ScreenFrame::begin(io, &mut self.input);
         for key in screen.keys() {
             match key {
-                ScreenKey::Quit | ScreenKey::Cancel => self.done = true,
+                ScreenKey::Quit => {
+                    self.exit_requested = true;
+                    self.done = true;
+                }
+                ScreenKey::Cancel => self.done = true,
                 ScreenKey::Confirm => {
                     self.accepted = true;
                     self.done = true;
@@ -253,6 +259,7 @@ mod tests {
             tooltip: TooltipState::new(),
             accepted: false,
             done: false,
+            exit_requested: false,
         }
     }
 

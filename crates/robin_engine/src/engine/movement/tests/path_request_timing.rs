@@ -38,6 +38,7 @@ mod suite {
 
     #[test]
     fn reachable_postponed_move_resumes_directly_at_terminal_door_handoff() {
+        let assets = LevelAssets::new();
         use crate::element::{
             ActorData, ActorSoldier, Command, ElementData, ElementKind, HumanData, NpcData,
             Posture, SoldierData,
@@ -127,18 +128,19 @@ mod suite {
                 .pop_next_hourglass_action()
                 .is_some()
         );
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(route_id, 0);
-        engine
-            .orders
-            .sequence_manager
-            .element_terminated(route_id, 0);
-        engine.dispatch_condolations_for_owner_boundary(
+        engine.element_in_progress(
             &crate::sim_rng::test_context(),
-            owner,
-            &LevelAssets::new(),
+            &assets,
+            &mut Vec::new(),
+            route_id,
+            0,
+        );
+        engine.element_terminated(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            route_id,
+            0,
         );
         assert!(
             engine
@@ -147,18 +149,19 @@ mod suite {
                 .pop_next_hourglass_action()
                 .is_some()
         );
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(route_id, 1);
-        engine
-            .orders
-            .sequence_manager
-            .element_terminated(route_id, 1);
-        engine.dispatch_condolations_for_owner_boundary(
+        engine.element_in_progress(
             &crate::sim_rng::test_context(),
-            owner,
-            &LevelAssets::new(),
+            &assets,
+            &mut Vec::new(),
+            route_id,
+            1,
+        );
+        engine.element_terminated(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            route_id,
+            1,
         );
 
         let mut postponed =

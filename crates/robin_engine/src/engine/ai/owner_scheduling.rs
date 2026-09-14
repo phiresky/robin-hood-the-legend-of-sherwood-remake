@@ -1,103 +1,6 @@
 use super::*;
 
 impl EngineInner {
-    /// Drain each NPC's `pending_self_stimuli` queue and re-dispatch each
-    /// stimulus through `think` on the same frame.  Matches
-    /// recursive decision processing within handlers (MYTALK callbacks from
-    /// `say()`, deferred `EventDone` from removal notification, etc.)
-    /// which in the original engine immediately re-enter the AI but in
-    /// Rust are queued to avoid nested `&mut AiGlobalState` borrows.
-    ///
-    /// Called unconditionally each tick.  Each NPC is drained to a fixed
-    /// point so a decision that recursively fires another self-stimulus
-    /// observes that stimulus in the originating frame, matching the
-    /// original game's immediate recursive evaluation.
-    pub(in crate::engine) fn drain_pending_self_stimuli(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
-        for npc_id in npc_ids {
-            self.drain_self_stimuli_for_npc(sim, npc_id, assets);
-        }
-    }
-
-    /// Per-NPC half of [`Self::drain_pending_self_stimuli`] — drains the
-    /// pending self-stimulus queue for a single NPC and re-dispatches
-    /// each through `think`.  Called both from the global end-of-tick
-    /// drain and from [`Self::dispatch_think_with_drain`] so the
-    /// re-entrant `think(EVENT_DONE)` that `send_condolation_card`
-    /// fires lands inside the same call stack as the outer think.
-    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
-    pub(in crate::engine) fn drain_self_stimuli_for_npc(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: crate::element::EntityId,
-        assets: &LevelAssets,
-    ) {
-        const MAX_REENTRANT_STIMULI: usize = 111;
-        let mut dispatched = 0usize;
-
-        loop {
-            let queued_stimulus = {
-                let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                    return;
-                };
-                let Some(ai) = entity.ai_controller_mut() else {
-                    return;
-                };
-                if ai.outbox.reentrant.self_stimuli.is_empty() {
-                    break;
-                }
-                ai.outbox.reentrant.self_stimuli.remove(0)
-            };
-
-            dispatched += 1;
-            if dispatched > MAX_REENTRANT_STIMULI {
-                tracing::warn!(
-                    npc = npc_id.index(),
-                    "self-stimulus recursion exceeded the original 111-call guard"
-                );
-                break;
-            }
-
-            let stimulus = crate::ai::Stimulus::from_queued_self(queued_stimulus);
-            match self.world.entities.get(npc_id) {
-                Some(entity) if entity.enemy_ai().is_some() => {
-                    self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, None);
-                }
-                Some(entity) if entity.friendly_ai().is_some() => {
-                    self.dispatch_filtered_friendly_stimulus(sim, assets, npc_id, &stimulus);
-                }
-                Some(other) => panic!(
-                    "owner-local self-stimulus recipient {} has invalid kind {:?}",
-                    npc_id.index(),
-                    other.element_data().kind
-                ),
-                None => panic!(
-                    "owner-local self-stimulus recipient {} disappeared",
-                    npc_id.index()
-                ),
-            };
-
-            // This path deliberately uses the raw filtered dispatch to avoid
-            // recursively entering the outer fixed-point drain. Preserve the
-            // same immediate decision-tick admission boundary as the top-level wrapper:
-            // publish eye/resurrection writes before waypoint or sibling
-            // self-stimulus work continues.
-            self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
-
-            // The original game's decision ticks execute their engine-facing side effects
-            // before returning.  Close that window after every recursive
-            // stimulus so a newly launched sequence participates in
-            // arbitration before the next sibling stimulus is delivered.
-            self.drain_pending_for_npc(sim, npc_id, assets);
-
-            self.dispatch_condolations(sim, assets);
-        }
-    }
-
     /// Run the waypoint VM inside the caller's existing decision frame.
     pub(in crate::engine) fn execute_ai_waypoint_script(
         &mut self,
@@ -159,15 +62,14 @@ impl EngineInner {
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
-        let admission = self.ai_admission(owner);
         let admitted = if self
             .expect_entity(owner, "patrol arrival")
             .enemy_ai()
             .is_some()
         {
-            self.begin_enemy_think(sim, assets, owner, stimulus, &admission)
+            self.begin_enemy_think(sim, assets, owner, stimulus)
         } else {
-            self.begin_friendly_think(sim, assets, owner, stimulus, &admission)
+            self.begin_friendly_think(sim, assets, owner, stimulus)
         };
         if !admitted {
             self.execute_ai_end_think(sim, assets, owner);
@@ -182,15 +84,6 @@ impl EngineInner {
                 .current_substate,
             crate::ai::Substate::DefaultGotoRoute
         );
-        // Queued siblings belong to the caller after this synchronous call.
-        let later_stimuli = {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("patrol arrival caller scope"));
-            std::mem::take(&mut ai.outbox.reentrant.self_stimuli)
-        };
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
         // State-change notifications ignore the callback's return value.
         self.call_ai_event_filter(
@@ -200,7 +93,6 @@ impl EngineInner {
             handle,
             crate::ai::AiState::Default.state_change_event_code(),
         );
-        self.drain_self_stimuli_for_npc(sim, owner, assets);
         {
             let ai = self
                 .world
@@ -235,15 +127,8 @@ impl EngineInner {
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventDone),
                 None,
             );
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
         }
         self.execute_ai_end_think(sim, assets, owner);
-        let entity = self
-            .world
-            .entities
-            .expect_entity_mut(owner, format_args!("patrol Think completion"));
-        let ai = entity.ai_controller_mut().expect("patrol completion AI");
-        ai.outbox.reentrant.self_stimuli.extend(later_stimuli);
         false
     }
 
@@ -388,67 +273,6 @@ impl EngineInner {
         )
     }
 
-    pub(in crate::engine) fn drain_direct_ai_owner_boundary(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
-        // This entry point models one direct, synchronous member-call stack.
-        // Cards that were already queued for other owners belong to their
-        // established later update boundaries; nested helpers below still
-        // use the global drain because cards they create on this stack are
-        // causal and must close re-entrantly. Detach only the pre-existing
-        // foreign backlog for the duration of the fixed point.
-        let pending = self.orders.sequence_manager.drain_pending_condolations();
-        let (owner_roots, foreign_backlog): (Vec<_>, Vec<_>) = pending
-            .into_iter()
-            .partition(|dispatch| dispatch.card.owner == npc_id);
-        self.orders
-            .sequence_manager
-            .restore_pending_condolations(owner_roots);
-
-        const MAX_ITERS: u32 = 8;
-        for iter in 0..MAX_ITERS {
-            self.drain_pending_for_npc(sim, npc_id, assets);
-
-            // All foreign cards that predated this direct boundary are held
-            // aside above. Any foreign-owner card visible here was therefore
-            // produced causally on this call stack and must close now.
-            self.dispatch_condolations(sim, assets);
-            let has_self_stimuli = {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller(npc_id, format_args!("direct-drain NPC"));
-                !ai.outbox.reentrant.self_stimuli.is_empty()
-            };
-            if has_self_stimuli {
-                self.drain_self_stimuli_for_npc(sim, npc_id, assets);
-            }
-
-            let still_pending = {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller(npc_id, format_args!("direct-drain NPC"));
-                ai.outbox.actor.has_boundary_work() || !ai.outbox.reentrant.self_stimuli.is_empty()
-            };
-            if !still_pending {
-                break;
-            }
-            assert!(
-                iter + 1 < MAX_ITERS,
-                "direct AI drain for NPC {} did not stabilise after {MAX_ITERS} passes",
-                npc_id.index()
-            );
-        }
-
-        self.orders
-            .sequence_manager
-            .restore_pending_condolations(foreign_backlog);
-    }
-
     // ── Every-16-frame AI tasks (staggered) ──────────────
     //
     // `the_16th_frame` runs every 16th frame from the NPC's
@@ -491,7 +315,6 @@ impl EngineInner {
         if frame_phase & 63 == 0 {
             self.finish_enemy_periodic_stuck_suffix_after_refresh(sim, npc_id, assets, frame_phase);
         }
-        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 
     fn run_enemy_periodic_prefix(
@@ -553,13 +376,14 @@ impl EngineInner {
                 .world
                 .entities
                 .expect_enemy_ai(npc_id, format_args!("periodic remark owner"));
-            let remark = if ai.get_rank() == crate::profiles::ProfileRank::Officer {
-                Some(crate::ai::Remark::OfficerComplains)
-            } else if ai.is_vip {
-                Some(crate::ai::Remark::VipSpeaksToHimself)
-            } else {
-                None
-            };
+            let remark =
+                if ai.get_rank(&assets.profile_manager) == crate::profiles::ProfileRank::Officer {
+                    Some(crate::ai::Remark::OfficerComplains)
+                } else if ai.is_vip {
+                    Some(crate::ai::Remark::VipSpeaksToHimself)
+                } else {
+                    None
+                };
             if let Some(remark) = remark {
                 self.execute_ai_speech(
                     sim,
@@ -568,7 +392,6 @@ impl EngineInner {
                     crate::ai::AiSpeechAttempt { remark, flags: 0 },
                 );
             }
-            self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
         }
     }
 
@@ -581,7 +404,6 @@ impl EngineInner {
         frame_phase: u8,
     ) {
         use crate::ai::{AiState, AlertLevel, Remark, Stimulus, StimulusType, Substate};
-        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
         let civilian = self
             .expect_entity(npc_id, "periodic watchdog owner")
             .is_civilian();
@@ -745,7 +567,6 @@ impl EngineInner {
                             flags: 0,
                         },
                     );
-                    self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
                 }
                 self.world
                     .entities
@@ -852,7 +673,6 @@ impl EngineInner {
             self.trace_civilian_random_speech_after_call(current_frame, creation_order, npc_id);
         }
         // Complete actor effects before the following NPC lock gate.
-        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
         if let Some(creation_order) = debug_creation_order {
             self.trace_civilian_random_speech_after_drain(current_frame, creation_order, npc_id);
         }
@@ -1001,6 +821,7 @@ impl EngineInner {
         }
         let ai = owner.enemy_ai().expect("ambush refresh requires enemy AI");
         let iq = ai.iq_for_difficulty(
+            &assets.profile_manager,
             self.control.sim_config.difficulty,
             self.mission_domain
                 .diplomacy
@@ -1112,12 +933,7 @@ impl EngineInner {
                 };
                 self.duty_set_state(sim, assets, npc_id, AiState::Seeking, next);
                 if let Some(look) = look {
-                    self.observation_ai_mut(npc_id)
-                        .base
-                        .outbox
-                        .actor
-                        .look_sidewards = Some(look);
-                    self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
+                    self.execute_ai_look_sidewards(npc_id, look);
                 } else {
                     let frame = self.control.frame_counter;
                     self.observation_ai_mut(npc_id).base.launch_timer(3, frame);
@@ -1172,7 +988,6 @@ impl EngineInner {
         if execute {
             self.run_ai_macro(sim, assets, npc_id);
         }
-        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 
     // ── Locked-frame timer bumps ─────────────────────────────────
@@ -1310,6 +1125,5 @@ impl EngineInner {
         }
 
         self.execute_ai_return_to_duty(sim, assets, npc_id, crate::ai::DutyFlags::empty());
-        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 }

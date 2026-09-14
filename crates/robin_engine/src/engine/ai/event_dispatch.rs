@@ -1,102 +1,88 @@
 use super::*;
+use crate::ai::Stimulus;
 
 impl EngineInner {
-    /// Recompute overall villain alert status from soldier NPCs, updating
-    /// global counters and triggering combat/alert music transitions.
-    ///
-    /// Ports the per-NPC work of `change_alert_status` into a
-    /// single-shot sweep that runs once per frame. The per-NPC
-    /// `set_alert_status` already writes `current_music_alert_status`
-    /// but doesn't touch the global counters or call
-    /// `set_music_mode`; this method fills that gap.
-    ///
-    /// Call once per frame before the sound `hourglass` so a transition
-    /// to yellow/red promptly bumps the music pool weight.
-    pub(crate) fn update_overall_villain_alert(
+    pub(in crate::engine) fn execute_ai_set_alert_status(
         &mut self,
-        profiles: &crate::profiles::ProfileManager,
+        assets: &LevelAssets,
+        owner: EntityId,
+        level: crate::ai::AlertLevel,
+        flags: crate::ai::AlertFlags,
     ) {
-        let mut yellow = 0u16;
-        let mut red = 0u16;
-        let mut green = 0u16;
-        // Per-call `ALERT_INSTANT_MUSIC_CHANGE` flag is staged on each
-        // AiController by `set_alert_status_with_flags`; OR it across
-        // soldiers here and clear after consumption.  Non-soldier flags
-        // are ignored to match the soldier-only gate.
-        let mut any_instant_change = false;
-        for (_, soldier) in self.world.entities.soldiers_mut() {
-            let Some(ai) = soldier.npc.ai_brain.base_mut() else {
-                continue;
+        use crate::ai::{AlertFlags, AlertLevel};
+        let entity = self
+            .world
+            .entities
+            .expect_entity(owner, format_args!("alert owner"));
+        let soldier = entity.is_soldier();
+        let forced_attentive = soldier
+            && entity
+                .enemy_ai()
+                .expect("soldier alert requires enemy AI")
+                .forced_attentive;
+        let previous = entity
+            .ai_controller()
+            .expect("alert owner requires AI")
+            .current_music_alert_status;
+        if soldier && previous != level {
+            let global = &mut self.ai.global;
+            let old_overall = global.overall_villain_alert();
+            let previous_count = match previous {
+                AlertLevel::Green => &mut global.green_alert_soldiers,
+                AlertLevel::Yellow => &mut global.yellow_alert_soldiers,
+                AlertLevel::Red => &mut global.red_alert_soldiers,
             };
-            match ai.current_music_alert_status {
-                crate::ai::AlertLevel::Green => green += 1,
-                crate::ai::AlertLevel::Yellow => yellow += 1,
-                crate::ai::AlertLevel::Red => red += 1,
-            }
-            if ai.outbox.music.instant_change {
-                any_instant_change = true;
-                ai.outbox.music.instant_change = false;
+            *previous_count = previous_count
+                .checked_sub(1)
+                .expect("soldier alert counter underflow");
+            let count = match level {
+                AlertLevel::Green => &mut global.green_alert_soldiers,
+                AlertLevel::Yellow => &mut global.yellow_alert_soldiers,
+                AlertLevel::Red => &mut global.red_alert_soldiers,
+            };
+            *count = count
+                .checked_add(1)
+                .expect("soldier alert counter overflow");
+            let overall = global.overall_villain_alert();
+            global.overall_villain_alert_status = overall;
+            global.overall_alert_status = overall;
+            let campaign = &self.mission_domain.campaign;
+            let is_sherwood = campaign
+                .current_mission_idx
+                .and_then(|index| campaign.missions.get(index))
+                .is_some_and(|mission| {
+                    mission.profile(&assets.profile_manager).location
+                        == crate::profiles::MissionLocation::Sherwood
+                });
+            if overall != old_overall && !is_sherwood {
+                use crate::sound::MusicMode;
+                let mode = match overall {
+                    AlertLevel::Green if !self.world.weather.is_forest_level => MusicMode::Quiet,
+                    AlertLevel::Green | AlertLevel::Yellow => MusicMode::Alert,
+                    AlertLevel::Red => MusicMode::Fight,
+                };
+                let command = if overall == AlertLevel::Green
+                    && flags.contains(AlertFlags::INSTANT_MUSIC_CHANGE)
+                {
+                    super::SoundCommand::ForceMusicMode(mode)
+                } else {
+                    super::SoundCommand::SetMusicMode(mode)
+                };
+                self.feedback.pending_side_effects.sounds.push(command);
             }
         }
-        self.ai.global.green_alert_soldiers = green;
-        self.ai.global.yellow_alert_soldiers = yellow;
-        self.ai.global.red_alert_soldiers = red;
-
-        let new_overall = self.ai.global.overall_villain_alert();
-        if new_overall == self.ai.global.overall_villain_alert_status {
-            return;
-        }
-        let prev = self.ai.global.overall_villain_alert_status;
-        self.ai.global.overall_villain_alert_status = new_overall;
-        self.ai.global.overall_alert_status = new_overall;
-
-        // Only call `set_music_mode` when not in Sherwood.  Sherwood
-        // has its own ambient track and shouldn't hear combat/alert
-        // cues even if a soldier briefly goes yellow.
-        let is_sherwood = Some(&self.mission_domain.campaign)
-            .and_then(|c| c.current_mission_idx)
-            .and_then(|idx| Some(&self.mission_domain.campaign).and_then(|c| c.missions.get(idx)))
-            .is_some_and(|m| {
-                m.profile(profiles).location == crate::profiles::MissionLocation::Sherwood
-            });
-
-        if !is_sherwood {
-            use crate::sound::MusicMode;
-            // On the Green arm, forest levels keep the alert track
-            // instead of dropping to quiet so the woodland ambient
-            // layer keeps playing under any residual yellow soldiers.
-            let mode = match new_overall {
-                crate::ai::AlertLevel::Green => {
-                    if self.world.weather.is_forest_level {
-                        MusicMode::Alert
-                    } else {
-                        MusicMode::Quiet
-                    }
-                }
-                crate::ai::AlertLevel::Yellow => MusicMode::Alert,
-                crate::ai::AlertLevel::Red => MusicMode::Fight,
-            };
-            // `set_alert_status` calls `force_music_mode` when the
-            // caller passes `ALERT_INSTANT_MUSIC_CHANGE`.  Known
-            // shipped call sites are all Green-target (two AI sites
-            // and the NPC death path).  The flag is now staged per-NPC
-            // on `AiController::pending_instant_music_change` by
-            // `set_alert_status_with_flags`; the sweep above OR'd it
-            // across soldiers into `any_instant_change`, so any
-            // transition direction passing the flag forces immediately.
-            let cmd = if any_instant_change {
-                super::SoundCommand::ForceMusicMode(mode)
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("alert assignment"));
+        ai.current_music_alert_status = level;
+        if !flags.contains(AlertFlags::ONLY_MUSIC) {
+            ai.view_alert_status = if forced_attentive && level == AlertLevel::Green {
+                AlertLevel::Yellow
             } else {
-                super::SoundCommand::SetMusicMode(mode)
+                level
             };
-            self.feedback.pending_side_effects.sounds.push(cmd);
         }
-
-        tracing::debug!(
-            "Overall villain alert {:?} → {:?} (green={green} yellow={yellow} red={red})",
-            prev,
-            new_overall,
-        );
     }
 
     // ─── EventGaloppLoopEnd dispatch ────────────────────────────
@@ -552,69 +538,6 @@ impl EngineInner {
         }
     }
 
-    /// Dispatch this NPC's natural-wakeup `EVENT_FITAGAIN` synchronously at
-    /// its base-human → NPC update boundary.
-    ///
-    /// `tick_concussion_healing` runs the globally batched stand-in for
-    /// human-actor update and queues the event. The original
-    /// processes `EVENT_FITAGAIN` inline before informing friends,
-    /// view, and detection refresh;
-    /// the NPC refresh phase. Drain the existing FIFO prefix through that wake
-    /// event here; never pluck it ahead of older stimuli. The suffix remains
-    /// queued for detection refresh's ordinary drain.
-    pub(in crate::engine) fn dispatch_pending_fit_again_for_npc(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) -> bool {
-        let (prefix_through_wake, mut suffix) = {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                return false;
-            };
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!(
-                    "NPC {} is missing its required AI controller while dispatching wakeup",
-                    npc_id.index()
-                )
-            });
-            let mut queued = std::mem::take(&mut ai.outbox.detection.stimuli);
-            let Some(wake_index) = queued
-                .iter()
-                .position(|stimulus| stimulus.stimulus_type == StimulusType::EventFitAgain)
-            else {
-                ai.outbox.detection.stimuli = queued;
-                return false;
-            };
-            let suffix = queued.split_off(wake_index + 1);
-            assert!(
-                !suffix
-                    .iter()
-                    .any(|stimulus| stimulus.stimulus_type == StimulusType::EventFitAgain),
-                "NPC {} queued more than one EVENT_FITAGAIN before its update slot",
-                npc_id.index()
-            );
-            (queued, suffix)
-        };
-
-        {
-            let ai = self.world.entities.expect_ai_controller_mut(
-                npc_id,
-                format_args!("NPC before its wakeup stimulus prefix"),
-            );
-            ai.outbox.detection.stimuli = prefix_through_wake;
-        }
-        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets);
-
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(npc_id, format_args!("NPC after synchronous EVENT_FITAGAIN"));
-        suffix.append(&mut ai.outbox.detection.stimuli);
-        ai.outbox.detection.stimuli = suffix;
-        true
-    }
-
     /// Iterates every NPC except the body itself and registers the
     /// body under DETECTABLE_BODY.
     #[tracing::instrument(level = "trace", skip_all, fields(body = body_id.index()))]
@@ -869,43 +792,6 @@ impl EngineInner {
         }
     }
 
-    /// Apply the resurrection fan-out and eye-status writes produced by
-    /// `EVENT_FITAGAIN`. The caller invokes this immediately after the
-    /// synchronous AI decision drain, before returning to the human/actor update.
-    pub(in crate::engine) fn tick_ai_pending_resurrection_and_eyes_for_npc(
-        &mut self,
-        npc_id: EntityId,
-    ) {
-        // Panic text is asserted by the recovery-state should_panic tests in
-        // `engine/tests/ai_detection/{perception,state}.rs`.
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-            panic!(
-                "NPC {} disappeared while applying synchronous recovery state",
-                npc_id.index()
-            )
-        });
-        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-            panic!(
-                "NPC {} is missing its required AI controller while applying recovery state",
-                npc_id.index()
-            )
-        });
-        let inform_resurrection = ai.outbox.recovery.inform_resurrection;
-        ai.outbox.recovery.inform_resurrection = false;
-        let eye_status = ai.outbox.recovery.set_eye_status.take();
-
-        if inform_resurrection {
-            self.broadcast_resurrection(npc_id);
-        }
-        if let Some(status) = eye_status {
-            let npc = self.world.entities.expect_ai_actor_data_mut(
-                npc_id,
-                format_args!("NPC while applying its pending eye status"),
-            );
-            crate::ai_vision::set_view_status(npc, status);
-        }
-    }
-
     /// Remove `resurrected_id` from every other NPC's
     /// `DETECTABLE_BODY` list.  The per-NPC body of
     /// `inform_on_resurrection` — the engine-side fan-out triggered by
@@ -1131,7 +1017,9 @@ impl EngineInner {
         );
     }
 
-    fn speech_finished_stimulus(flags: crate::ai::SpeechFlags) -> Option<StimulusType> {
+    pub(in crate::engine) fn speech_finished_stimulus(
+        flags: crate::ai::SpeechFlags,
+    ) -> Option<StimulusType> {
         use crate::ai::SpeechFlags;
         if flags.contains(SpeechFlags::MYTALK_1) {
             Some(StimulusType::EventMyTalk1)
@@ -1148,10 +1036,12 @@ impl EngineInner {
 
     fn reject_npc_speech_attempt(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         flags: crate::ai::SpeechFlags,
         reason: u16,
-    ) -> NpcSpeechSettlement {
+    ) {
         let ai = self
             .world
             .entities
@@ -1165,38 +1055,29 @@ impl EngineInner {
             reason,
             "Say rejected"
         );
-        let invoke_finished_callback = if let Some(stimulus) = Self::speech_finished_stimulus(flags)
-        {
-            ai.outbox.reentrant.self_stimuli.insert(0, stimulus.into());
-            true
-        } else {
-            false
-        };
+        let invoke_finished_callback = Self::speech_finished_stimulus(flags).is_some();
         self.debug_speech_lifecycle(
             owner.index(),
             "attempt_rejected",
             (reason, flags.bits(), invoke_finished_callback),
         );
-        NpcSpeechSettlement {
-            invoke_finished_callback,
-            category_rejection: None,
+        if let Some(event) = Self::speech_finished_stimulus(flags) {
+            self.execute_ai_callback(sim, assets, owner, &Stimulus::new(event));
         }
     }
 
-    /// Settle one queued Say invocation at the current AI owner's return
-    /// barrier.
-    ///
-    /// Ordering follows original-game AI speech
-    /// in the original game: blip,
+    /// Execute speech and its synchronous completion callbacks in call order:
+    /// blip,
     /// script forbid, recent-remark forbid, house, CYCLE_3 advance,
     /// active-speech arbitration, active remark assignment, speech-profile
     /// category dispatch, screen remark, then automatic forbidding.
-    pub(in crate::engine) fn settle_npc_speech_attempt(
+    pub(in crate::engine) fn execute_ai_speech(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         attempt: crate::ai::AiSpeechAttempt,
-    ) -> NpcSpeechSettlement {
+    ) {
         use crate::ai::{Remark, RemarkTargetFlags, SpeechFlags};
         use crate::sound::ExclamationGroup;
 
@@ -1326,10 +1207,10 @@ impl EngineInner {
         );
 
         if blipped {
-            return self.reject_npc_speech_attempt(owner, flags, 0);
+            return self.reject_npc_speech_attempt(sim, assets, owner, flags, 0);
         }
         if script_forbidden {
-            return self.reject_npc_speech_attempt(owner, flags, 1);
+            return self.reject_npc_speech_attempt(sim, assets, owner, flags, 1);
         }
 
         if !flags.contains(SpeechFlags::ALWAYS) {
@@ -1369,14 +1250,14 @@ impl EngineInner {
                 index += 1;
             }
             if forbidden {
-                return self.reject_npc_speech_attempt(owner, flags, 2);
+                return self.reject_npc_speech_attempt(sim, assets, owner, flags, 2);
             }
         }
 
         if !flags.contains(SpeechFlags::HOUSE)
             && (self.entity_building_sector(sector).is_some() || in_door_transit)
         {
-            return self.reject_npc_speech_attempt(owner, flags, 3);
+            return self.reject_npc_speech_attempt(sim, assets, owner, flags, 3);
         }
 
         // This is deliberately before the already-speaking gate, exactly as
@@ -1409,7 +1290,7 @@ impl EngineInner {
                     (attempt.remark, attempt.flags),
                 );
             } else {
-                return self.reject_npc_speech_attempt(owner, flags, 4);
+                return self.reject_npc_speech_attempt(sim, assets, owner, flags, 4);
             }
         }
 
@@ -1525,13 +1406,7 @@ impl EngineInner {
                 if log_before_callback {
                     ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
                 }
-                let invoke_finished_callback =
-                    if let Some(stimulus) = Self::speech_finished_stimulus(flags) {
-                        ai.outbox.reentrant.self_stimuli.insert(0, stimulus.into());
-                        true
-                    } else {
-                        false
-                    };
+                let invoke_finished_callback = Self::speech_finished_stimulus(flags).is_some();
                 self.debug_speech_lifecycle(
                     owner.index(),
                     "attempt_category_rejected",
@@ -1542,12 +1417,20 @@ impl EngineInner {
                         invoke_finished_callback,
                     ),
                 );
-                return NpcSpeechSettlement {
-                    invoke_finished_callback,
-                    category_rejection: Some(CategorySpeechRejectionFinalization {
-                        reason_after_callback: (!log_before_callback).then_some(reason),
-                    }),
-                };
+                if let Some(event) = Self::speech_finished_stimulus(flags) {
+                    self.execute_ai_callback(sim, assets, owner, &Stimulus::new(event));
+                }
+                // The outer rejection clears even a line started by its callback.
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    owner,
+                    format_args!("speech category rejection return"),
+                );
+                if !log_before_callback {
+                    ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
+                }
+                ai.current_remark = Remark::TheSoundOfSilence;
+                ai.current_remark_flags = 0;
+                return;
             };
 
             self.feedback
@@ -1597,29 +1480,6 @@ impl EngineInner {
             is_soldier,
             self.control.frame_counter,
         );
-        NpcSpeechSettlement::default()
-    }
-
-    /// Finish the unconditional tail of an original-game speech rejection by category.
-    /// Reasons 8/9 log only after remark-completion notification; every category
-    /// rejection clears the latch after that callback returns, overwriting any
-    /// recursively started emergency line.
-    pub(in crate::engine) fn finalize_category_speech_rejection(
-        &mut self,
-        owner: EntityId,
-        finalization: CategorySpeechRejectionFinalization,
-    ) {
-        use crate::ai::Remark;
-
-        let ai = self.world.entities.expect_ai_controller_mut(
-            owner,
-            format_args!("speech owner during category-rejection tail"),
-        );
-        if let Some(reason) = finalization.reason_after_callback {
-            ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
-        }
-        ai.current_remark = Remark::TheSoundOfSilence;
-        ai.current_remark_flags = 0;
     }
 
     /// Deliver deterministic SoundIsFinished callbacks at the first mutation
@@ -1743,9 +1603,8 @@ impl EngineInner {
             if let Some(stimulus) =
                 Self::speech_finished_stimulus(SpeechFlags::from_bits_truncate(flags))
             {
-                ai.outbox.reentrant.self_stimuli.push(stimulus.into());
+                self.execute_ai_callback(sim, assets, actor_id, &Stimulus::new(stimulus));
             }
-            self.drain_direct_ai_owner_boundary(sim, actor_id, assets);
         }
     }
 

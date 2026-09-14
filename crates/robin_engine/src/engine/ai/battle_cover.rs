@@ -48,8 +48,8 @@ impl EngineInner {
             .world
             .entities
             .expect_ai_controller_mut(owner, format_args!("cover focus"));
-        ai.outbox.actor.set_focus(ai.primary_target);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let target = ai.primary_target;
+        self.execute_ai_focus(owner, target);
     }
 
     fn cover_step_back_goal(
@@ -105,7 +105,7 @@ impl EngineInner {
             .world
             .entities
             .expect_enemy_ai(owner, format_args!("proud soldier"));
-        if ai.soldier_profile_pride == 0 || ai.base.blood_alcohol > 0 {
+        if ai.profile(&assets.profile_manager).pride == 0 || ai.base.blood_alcohol > 0 {
             return false;
         }
         let target = self.select_live_ai_primary_target(
@@ -157,7 +157,7 @@ impl EngineInner {
         {
             return true;
         }
-        let pride = ai.soldier_profile_pride;
+        let pride = ai.profile(&assets.profile_manager).pride;
         let count = ai.base.list_us.len();
         for index in 0..count {
             let handle = self
@@ -180,7 +180,7 @@ impl EngineInner {
                 .ai_brain
                 .enemy()
                 .expect("proud ally requires AI");
-            if ai.soldier_profile_pride >= pride {
+            if ai.profile(&assets.profile_manager).pride >= pride {
                 continue;
             }
             let state = ai.base.current_substate;
@@ -396,16 +396,17 @@ impl EngineInner {
                 .world
                 .entities
                 .expect_enemy_ai_mut(owner, format_args!("archer observer equip"));
-            ai.base
-                .outbox
-                .actor
-                .launch_commands
-                .push(if ai.enemy_seen_below {
-                    crate::element::Command::EquipBowDown
-                } else {
-                    crate::element::Command::EquipBow
-                });
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            let command = if ai.enemy_seen_below {
+                crate::element::Command::EquipBowDown
+            } else {
+                crate::element::Command::EquipBow
+            };
+            self.launch_element(crate::sequence::SequenceElement::new(
+                1,
+                command,
+                Some(owner),
+            ));
+
             self.duty_set_state(
                 sim,
                 assets,

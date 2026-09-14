@@ -62,24 +62,17 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
         stimulus: &Stimulus,
-        admission: &crate::ai::AiAdmission,
     ) -> bool {
-        let frozen = self.ai.global.freeze;
+        let frame = self.control.frame_counter;
         let ai = self.reporting_civilian_mut(owner);
-        ai.base.cached_frame = admission.frame;
-        ai.base.cached_in_building = admission.in_building;
-        if !ai.base.admit_think_before_role_gates(stimulus, frozen)
-            || !ai.base.admit_think_after_role_gates(stimulus, admission)
-        {
-            if stimulus.stimulus_type == StimulusType::EventAfterScriptGoOn {
-                ai.base.outbox.reentrant.engine_drains_after_script_go_on = false;
-            }
+        ai.base.cached_frame = frame;
+        if !self.admit_ai_think_live(owner, stimulus) {
             return false;
         }
         let (state, substate, eye_status, refused) = match stimulus.stimulus_type {
             StimulusType::EventLoseConsciousness => {
-                ai.base.break_macro();
-                ai.base.clear_emoticon();
+                self.execute_ai_break_macro(owner);
+                self.reporting_civilian_mut(owner).base.clear_emoticon();
                 (
                     AiState::Sleeping,
                     Substate::SleepingUnconscious,
@@ -88,8 +81,10 @@ impl EngineInner {
                 )
             }
             StimulusType::EventWasp => {
-                ai.base.break_macro();
-                ai.base.set_emoticon(crate::ai::EmoticonType::Thunderstorm);
+                self.execute_ai_break_macro(owner);
+                self.reporting_civilian_mut(owner)
+                    .base
+                    .set_emoticon(crate::ai::EmoticonType::Thunderstorm);
                 (
                     AiState::Wondering,
                     Substate::WonderingWaspInArmour,
@@ -98,7 +93,7 @@ impl EngineInner {
                 )
             }
             StimulusType::EventNet => {
-                ai.base.break_macro();
+                self.execute_ai_break_macro(owner);
                 (
                     AiState::Wondering,
                     Substate::WonderingUnderNet,
@@ -114,10 +109,15 @@ impl EngineInner {
             .entities
             .expect_ai_actor_data_mut(owner, format_args!("civilian admission eye status"));
         crate::ai_vision::set_view_status(actor, eye_status);
-        let ai = self.reporting_civilian_mut(owner);
         if stimulus.stimulus_type == StimulusType::EventLoseConsciousness {
-            ai.base.set_alert_status(crate::ai::AlertLevel::Green);
+            self.execute_ai_set_alert_status(
+                assets,
+                owner,
+                crate::ai::AlertLevel::Green,
+                crate::ai::AlertFlags::empty(),
+            );
         }
+        let ai = self.reporting_civilian_mut(owner);
         ai.base.sorrow_level = 0;
         ai.base
             .register_log_line(crate::ai::LogLineType::EventRefused, refused);
@@ -135,17 +135,6 @@ impl EngineInner {
         let event = stimulus.stimulus_type;
         let state = self.friendly_brain(owner).base.current_state;
         match event {
-            EventAfterScriptGoOn => {
-                if !self
-                    .friendly_brain(owner)
-                    .base
-                    .outbox
-                    .reentrant
-                    .engine_drains_after_script_go_on
-                {
-                    self.execute_civilian_after_script(sim, assets, owner);
-                }
-            }
             EventView => {
                 let StimulusInfo::Human(handle) = stimulus.info else {
                     panic!("civilian view needs human");
@@ -192,7 +181,7 @@ impl EngineInner {
                                     flags: SpeechFlags::HOUSE.bits(),
                                 },
                             );
-                            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                             self.civilian_panic_from_human(sim, assets, owner, target);
                         }
                     }
@@ -213,11 +202,14 @@ impl EngineInner {
                 let StimulusInfo::Position(position) = stimulus.info else {
                     panic!("civilian panic needs position");
                 };
-                self.reporting_civilian_mut(owner).panic_from_point_at(
-                    position,
+                self.execute_ai_panic(
+                    sim,
+                    assets,
+                    owner,
+                    Some(position),
                     crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+                    crate::ai::AlertLevel::Red,
                 );
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
             }
             EventStop => {
                 if state != AiState::Sleeping {
@@ -252,11 +244,14 @@ impl EngineInner {
             }
             EventNetAway => {
                 let position = self.friendly_brain(owner).base.seek_position;
-                self.reporting_civilian_mut(owner).panic_from_point_at(
-                    position,
+                self.execute_ai_panic(
+                    sim,
+                    assets,
+                    owner,
+                    Some(position),
                     crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+                    crate::ai::AlertLevel::Red,
                 );
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
             }
             EventPcShotAtMe
             | EventSeesObject
@@ -277,62 +272,6 @@ impl EngineInner {
         self.expect_entity(owner, "civilian behavior owner")
             .friendly_ai()
             .expect("civilian behavior requires FriendlyAi")
-    }
-
-    pub(in crate::engine) fn execute_civilian_after_script(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let ai = self.friendly_brain(owner);
-        if ai.base.current_state != AiState::Default {
-            return;
-        }
-        if ai
-            .base
-            .patrol_path
-            .as_ref()
-            .and_then(|path| path.current_waypoint(&assets.navigation.hiking_paths))
-            .is_none()
-        {
-            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-            return;
-        }
-        self.reporting_civilian_mut(owner)
-            .base
-            .patrol_path
-            .as_mut()
-            .expect("civilian path")
-            .advance();
-        self.duty_set_state(
-            sim,
-            assets,
-            owner,
-            AiState::Default,
-            Substate::DefaultEnroute,
-        );
-        let ai = self.friendly_brain(owner);
-        let path = ai
-            .base
-            .patrol_path
-            .as_ref()
-            .expect("civilian route after state callback");
-        let waypoint = path
-            .current_waypoint(&assets.navigation.hiking_paths)
-            .expect("civilian waypoint after state callback");
-        let destination = Position {
-            x: waypoint.x as f32,
-            y: waypoint.y as f32,
-            sector: assets.navigation.hiking_waypoint_sector(
-                usize::from(path.hiking_path_index),
-                usize::from(path.current_waypoint_index),
-                waypoint.sector,
-            ),
-            level: waypoint.level,
-        };
-        let flags = ai.base.default_path_walking_flags;
-        self.duty_go_to(sim, assets, owner, destination, flags);
     }
 
     fn civilian_timer(&mut self, owner: EntityId, duration: u32) {
@@ -411,9 +350,14 @@ impl EngineInner {
         target: EntityId,
     ) {
         let position = self.live_ai_position(target);
-        self.reporting_civilian_mut(owner)
-            .panic_from_point_at(position, crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_panic(
+            sim,
+            assets,
+            owner,
+            Some(position),
+            crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+            crate::ai::AlertLevel::Red,
+        );
     }
 
     fn execute_civilian_view(
@@ -450,7 +394,6 @@ impl EngineInner {
                         flags: 0,
                     },
                 );
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
             }
             self.civilian_stop(sim, assets, owner);
             self.civilian_face_human(sim, assets, owner, target);
@@ -467,10 +410,15 @@ impl EngineInner {
                     flags: SpeechFlags::HOUSE.bits(),
                 },
             );
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
-            self.reporting_civilian_mut(owner)
-                .panic_undirected(crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
+            self.execute_ai_panic(
+                sim,
+                assets,
+                owner,
+                None,
+                crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+                crate::ai::AlertLevel::Red,
+            );
         } else {
             let position = self.live_ai_position(target);
             let ai = self.reporting_civilian_mut(owner);
@@ -520,7 +468,7 @@ impl EngineInner {
                 flags: 0,
             },
         );
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         let position = self.live_ai_position(target);
         self.reporting_civilian_mut(owner)
             .base
@@ -580,7 +528,7 @@ impl EngineInner {
                             flags: 0,
                         },
                     );
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                     self.duty_set_state(
                         sim,
                         assets,
@@ -771,13 +719,12 @@ mod tests {
                 engine.reporting_civilian_mut(owner).base.locks_flag_field =
                     crate::ai::AiLockFlags::FREEZE;
             }
-            let admission = engine.ai_admission(owner);
+
             assert!(!engine.begin_friendly_think(
                 &crate::sim_rng::test_context(),
                 &assets,
                 owner,
                 &Stimulus::new(StimulusType::EventTimer),
-                &admission
             ));
             let queue = &engine.friendly_brain(owner).base.stimulus_queue;
             assert_eq!(queue.len(), usize::from(!global_freeze));
@@ -814,13 +761,12 @@ mod tests {
             let ai = engine.reporting_civilian_mut(owner);
             ai.base.macro_in_progress = true;
             ai.base.sorrow_level = 7;
-            let admission = engine.ai_admission(owner);
+
             assert!(!engine.begin_friendly_think(
                 &crate::sim_rng::test_context(),
                 &assets,
                 owner,
                 &Stimulus::new(event),
-                &admission
             ));
             let ai = engine.friendly_brain(owner);
             assert_eq!(ai.base.current_substate, substate);
@@ -884,9 +830,8 @@ mod tests {
     fn detectable_mutations_settle_before_live_state_change_and_roundtrip() {
         use crate::element::DetectableType::Friend;
         let (mut engine, assets, owner, target) = fixture();
-        let ai = engine.reporting_civilian_mut(owner);
-        ai.base.outbox.actor.append_detectable((target, Friend));
-        ai.base.outbox.actor.delete_detectable_type(Friend);
+        engine.execute_ai_append_detectable(owner, target, Friend);
+        engine.execute_ai_delete_detectable_type(owner, Friend);
         let sim = crate::sim_rng::test_context();
         engine.duty_set_state(
             &sim,
@@ -904,13 +849,7 @@ mod tests {
                 .detectable_lists[Friend as usize]
                 .is_empty()
         );
-        engine
-            .reporting_civilian_mut(owner)
-            .base
-            .outbox
-            .actor
-            .append_detectable((target, Friend));
-        engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
+        engine.execute_ai_append_detectable(owner, target, Friend);
         assert!(
             engine
                 .get_entity(owner)

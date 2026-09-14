@@ -1489,7 +1489,7 @@ fn human_data_encodings_match_golden_digests() {
 }
 
 /// SHA-256 digests of the entity table's bitcode bytes, the world save JSON
-/// (produced by the real `PersistedWorldState` save projection) and the entity
+/// (produced by the real `WorldState` save projection) and the entity
 /// table's `StateHash` byte stream (native-endian, little-endian host).
 fn world_entities_golden_digests(world: &crate::engine::state::WorldState) -> [String; 3] {
     use robin_util::state_hash::StateHash;
@@ -1505,7 +1505,7 @@ fn world_entities_golden_digests(world: &crate::engine::state::WorldState) -> [S
         }
     }
 
-    let persisted = crate::engine::state::PersistedWorldState::capture(world);
+    let persisted = world.persisted_clone();
     robin_util::persistence_validation::validate(&persisted).expect("valid world save");
     let sha = |bytes: &[u8]| hex::encode(sha2::Sha256::digest(bytes));
     let mut recorder = ByteRecorder(Vec::new());
@@ -1645,10 +1645,7 @@ fn golden_ai_actor_fixture(ai_brain: AiBrain, seed: u16) -> AiActorData {
 }
 
 fn golden_entities_fixture() -> crate::entities::Entities {
-    // The golden digests below were recorded while `EnemyAi::default()` still
-    // carried the original constructor starts; `EnemyAi` now derives an
-    // all-zero `Default` and those starts live in `EnemyAi::new`. Pin them
-    // explicitly so the digests keep guarding the encoding, not the default.
+    // Exercise persistent runtime values and immutable behavior identity.
     let enemy = EnemyAi {
         pending_special_strike: true,
         pc_gone_away_in_this_direction: 3,
@@ -1656,13 +1653,8 @@ fn golden_entities_fixture() -> crate::entities::Entities {
         previous_state: crate::ai::StoredEnumWord::new(crate::ai::AiState::Default),
         previous_substate: crate::ai::StoredEnumWord::new(crate::ai::Substate::DefaultOnPost),
         forced_next_battle_decision: crate::ai::Decision::None,
-        soldier_profile_iq: 50,
-        soldier_profile_courage: 50,
-        soldier_profile_shooting: 50,
+        behavior_profile: crate::profiles::SoldierProfileIdx(7),
         sword_range: 40,
-        soldier_profile_hearing_factor: 1.0,
-        soldier_profile_rank: crate::profiles::ProfileRank::Soldier,
-        soldier_profile_initiative: 50,
         ..EnemyAi::default()
     };
     let friendly = FriendlyAi {
@@ -1742,7 +1734,7 @@ fn golden_entities_fixture() -> crate::entities::Entities {
     ])
 }
 
-/// World save (JSON through `PersistedWorldState`), native snapshot (bitcode)
+/// World save (JSON through `WorldState`), native snapshot (bitcode)
 /// and state-hash encodings of the entity table survive serialization intact.
 #[test]
 fn entity_table_encodings_round_trip() {
@@ -1761,11 +1753,10 @@ fn entity_table_encodings_round_trip_body() {
     world.entities = golden_entities_fixture();
     let expected = world_entities_golden_digests(&world);
 
-    let json =
-        serde_json::to_string(&crate::engine::state::PersistedWorldState::capture(&world)).unwrap();
-    let decoded: crate::engine::state::PersistedWorldState = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&world.persisted_clone()).unwrap();
+    let decoded: crate::engine::state::WorldState = serde_json::from_str(&json).unwrap();
     let mut restored = crate::engine::state::WorldState::new();
-    restored.entities = decoded.into_runtime().entities;
+    restored.entities = decoded.entities;
     assert_eq!(world_entities_golden_digests(&restored), expected);
     let soldier = restored
         .entities
@@ -1786,7 +1777,7 @@ fn entity_table_encodings_round_trip_body() {
     assert_eq!(world_entities_golden_digests(&restored), expected);
 }
 
-/// `PersistedWorldState::capture` is also used without serialization (replay
+/// `WorldState::persisted_clone` is also used without serialization (replay
 /// save markers, rollback-safe snapshots), so its in-memory entity projection
 /// must equal a JSON save/load round trip, including runtime-only state that
 /// neither bitcode nor the state hash observe.
@@ -1808,6 +1799,12 @@ fn entity_persisted_projection_matches_json_round_trip_body() {
     let civilian_id = EntityId::Civilian(crate::entity_id::CivilianId(3));
     for id in [soldier_id, civilian_id] {
         let entity = entities.get_mut(id).expect("fixture npc");
+        let ai = entity.ai_controller_mut().expect("fixture NPC brain");
+        ai.script_locked = true;
+        ai.stimulus_queue = vec![
+            crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
+            crate::ai::Stimulus::new(crate::ai::StimulusType::EventDone),
+        ];
         let sprite = &mut entity.element_data_mut().sprite;
         sprite.alternate_scripts = Some(std::sync::Arc::new(vec![
             crate::sprite_script::SpriteScript::default(),
@@ -1864,9 +1861,7 @@ fn entity_persisted_projection_matches_json_round_trip_body() {
     // The world save capture is the projection, and restores it unchanged.
     let mut world = crate::engine::state::WorldState::new();
     world.entities = entities;
-    let restored = crate::engine::state::PersistedWorldState::capture(&world)
-        .into_runtime()
-        .entities;
+    let restored = world.persisted_clone().entities;
     for id in [soldier_id, civilian_id] {
         assert_eq!(
             runtime_only(&restored, id),

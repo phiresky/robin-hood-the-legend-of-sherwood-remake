@@ -2,39 +2,20 @@
 
 use super::*;
 
-/// Populate the behavior traits consumed by the established malignity battle
-/// state machine. `weapon_*`, shooting, and endurance come from the physical
-/// actor profile, allowing PCs to keep their actual character combat data
-/// while borrowing only decision personality from a soldier profile.
+/// Bind decision personality separately from the actor's physical combat profile.
 fn configure_enemy_ai_profile(
     ai: &mut crate::ai_enemy::EnemyAi,
-    behavior: &crate::profiles::SoldierProfile,
+    behavior_profile: crate::profiles::SoldierProfileIdx,
     actor_is_vip: bool,
     hth_weapon_id: u32,
     shooting_weapon_id: u32,
-    shooting: u16,
-    endurance: u16,
     profiles: &crate::profiles::ProfileManager,
     profile_number: u32,
-    ale_reliability_eligible: bool,
 ) {
-    ai.soldier_profile_courage = behavior.courage;
-    ai.soldier_profile_iq = behavior.intelligence;
-    ai.soldier_profile_shooting = shooting;
-    ai.soldier_profile_pride = behavior.pride;
-    ai.soldier_profile_rank = behavior.rank;
-    ai.soldier_profile_initiative = behavior.initiative;
-    ai.soldier_profile_beer = behavior.beer;
-    ai.ale_reliable_distraction = ale_reliability_eligible;
-    ai.soldier_profile_money = behavior.money;
-    ai.soldier_profile_apple = behavior.apple;
-    ai.soldier_profile_whistle = behavior.whistle;
-    ai.soldier_profile_duty = behavior.duty;
-    ai.soldier_profile_endurance = endurance;
+    ai.behavior_profile = behavior_profile;
     // Original-game VIP detection reads the physical actor's
     // profile, not the soldier profile that supplies an enemy-controlled
     // hero's decision personality.
-    ai.soldier_profile_vip = actor_is_vip;
     ai.is_vip = actor_is_vip;
     ai.hth_weapon_id = hth_weapon_id;
     ai.is_archer_unit = if shooting_weapon_id == 0 {
@@ -593,25 +574,16 @@ impl EngineInner {
                         profile_id: raw.profile_index,
                         reason,
                     })?;
-                let behavior_profile =
-                    profiles
-                        .get_soldier(behavior_profile_index)
-                        .unwrap_or_else(|| {
-                            panic!("resolved hero AI profile {behavior_profile_id:?} disappeared")
-                        });
                 let mut ai = crate::ai_enemy::EnemyAi::new(0);
                 ai.base.initial_action = raw.action;
                 configure_enemy_ai_profile(
                     &mut ai,
-                    behavior_profile,
+                    behavior_profile_index,
                     char_profile.vip,
                     char_profile.hth_weapon_id,
                     char_profile.shooting_weapon_id,
-                    char_profile.shooting,
-                    char_profile.endurance,
                     &profiles,
                     behavior_profile_index.0,
-                    false,
                 );
                 Some(Box::new(crate::element::AiActorData {
                     ai_brain: crate::element::AiBrain::Enemy(Box::new(ai)),
@@ -826,20 +798,14 @@ impl EngineInner {
             // company_number is u16, range asserted above.
             ai.company_number = raw.company_number as u16;
             ai.tower_guard = raw.tower_guard;
-            // Copy courage from soldier profile for the approach logic.
-            // Also pull the soldier's sword range from the HtH weapon
-            // profile's distance[Default] entry.
             configure_enemy_ai_profile(
                 &mut ai,
-                soldier_profile,
+                crate::profiles::SoldierProfileIdx(profile_number),
                 soldier_profile.vip,
                 soldier_profile.hth_weapon_id,
                 soldier_profile.shooting_weapon_id,
-                soldier_profile.shooting,
-                soldier_profile.endurance,
                 &profiles,
                 profile_number,
-                config.item_gameplay.ale_reliable_distraction && !soldier_profile.vip,
             );
 
             // Set the sprite's move box + pathfinder index from the
@@ -1397,28 +1363,44 @@ mod tests {
     use super::configure_enemy_ai_profile;
 
     #[test]
-    fn enemy_ai_vip_cache_comes_from_physical_actor_profile() {
-        let behavior = crate::profiles::SoldierProfile {
-            vip: false,
+    fn enemy_ai_personality_is_independent_of_physical_actor_profile() {
+        let mut profiles = crate::profiles::ProfileManager::default();
+        profiles
+            .soldiers
+            .push(crate::profiles::SoldierProfile::default());
+        profiles.soldiers.push(crate::profiles::SoldierProfile {
+            intelligence: 60,
+            courage: 75,
             ..Default::default()
-        };
+        });
         let mut ai = crate::ai_enemy::EnemyAi::default();
 
         configure_enemy_ai_profile(
             &mut ai,
-            &behavior,
+            crate::profiles::SoldierProfileIdx(1),
             true,
             0,
             0,
+            &profiles,
             0,
-            0,
-            &crate::profiles::ProfileManager::default(),
-            0,
-            false,
         );
 
         assert!(ai.is_vip);
-        assert!(ai.soldier_profile_vip);
+        assert!(!ai.profile(&profiles).vip);
+        assert_eq!(ai.get_courage(&profiles), 75);
+        use crate::player_profile::DifficultyLevel;
+        assert_eq!(
+            ai.iq_for_difficulty(&profiles, DifficultyLevel::Easy, true),
+            30
+        );
+        assert_eq!(
+            ai.iq_for_difficulty(&profiles, DifficultyLevel::Hard, true),
+            100
+        );
+        assert_eq!(
+            ai.iq_for_difficulty(&profiles, DifficultyLevel::Hard, false),
+            60
+        );
     }
 }
 

@@ -20,13 +20,11 @@ fn admit(
     owner: EntityId,
     event: StimulusType,
 ) -> bool {
-    let admission = engine.ai_admission(owner);
     engine.begin_enemy_think(
         &crate::sim_rng::test_context(),
         assets,
         owner,
         &Stimulus::new(event),
-        &admission,
     )
 }
 
@@ -210,15 +208,9 @@ fn carried_unconscious_actor_refuses_recovery() {
 }
 
 #[test]
-fn rejected_after_script_clears_engine_drain_latch_at_each_gate() {
+fn after_script_is_rejected_at_each_admission_gate() {
     for gate in 0..4 {
         let (mut engine, assets, owner) = fixture();
-        engine
-            .observation_ai_mut(owner)
-            .base
-            .outbox
-            .reentrant
-            .engine_drains_after_script_go_on = true;
         match gate {
             0 => engine.ai.global.freeze = true,
             1 => engine.observation_ai_mut(owner).base.locks_flag_field = AiLockFlags::BUSY,
@@ -245,14 +237,6 @@ fn rejected_after_script_clears_engine_drain_latch_at_each_gate() {
             owner,
             StimulusType::EventAfterScriptGoOn
         ));
-        assert!(
-            !engine
-                .observation_ai(owner)
-                .base
-                .outbox
-                .reentrant
-                .engine_drains_after_script_go_on
-        );
     }
 }
 

@@ -27,36 +27,6 @@ fn rider_charge_goal_matches_original_scalar_rounding() {
 }
 
 #[test]
-fn reconsider_approach_uses_raw_truncated_map_distance() {
-    let soldier = Position {
-        x: 655.007_8,
-        y: 1744.445,
-        ..Position::default()
-    };
-    let target = Position {
-        x: 585.0,
-        y: 1726.0,
-        ..Position::default()
-    };
-
-    assert_eq!(reconsider_approach_distance(soldier, target), 72.0);
-    let dx = soldier.x - target.x;
-    let dy = (soldier.y - target.y) * INVERSE_ASPECT_RATIO;
-    assert!(
-        (dx * dx + dy * dy).sqrt() > 75.0,
-        "the general aspect-corrected distance would miss this swordfight boundary"
-    );
-}
-
-#[test]
-fn observe_threshold_keeps_fractional_courage_bonus() {
-    // One visible enemy and courage 45 yields 3.025 in Original. Three
-    // nearer friends are therefore insufficient; four are sufficient.
-    assert!(!enough_nearer_friends_to_observe(3, 1, 45));
-    assert!(enough_nearer_friends_to_observe(4, 1, 45));
-}
-
-#[test]
 fn friend_distance_gate_uses_selected_target_with_source_units() {
     // Exercise the live battle helpers, not the removed detection-time
     // aggregate whose value was discarded before every decision.
@@ -122,13 +92,6 @@ fn elevated_owner_distance_does_not_count_two_door_friends_as_nearer() {
         }
     }
     assert_eq!(nearer_friends, 2);
-
-    let decision = if enough_nearer_friends_to_observe(nearer_friends, 1, 40) {
-        Decision::Observe
-    } else {
-        Decision::Fight
-    };
-    assert_eq!(decision, Decision::Fight);
 }
 
 #[test]

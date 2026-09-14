@@ -1,28 +1,10 @@
-//! Typed effects and engine barriers queued by script natives.
+//! Native operations that require engine ownership beyond the VM's short borrow.
 //!
-//! Native functions mutate deterministic state synchronously through
-//! [`NativeSessionCapabilities`](super::NativeSessionCapabilities). They only
-//! queue work that crosses into presentation/external systems or needs a wider
-//! `EngineInner` mutation context. The engine drains these streams after each
-//! script step without changing their command order.
-//!
-//! - `EngineCommand` — camera, dialog, map, fade, minimap, outline, …
-//! - `SoundCommand`  — sound source activate / suspend / destroy.
-//! - `DeferredCommand` — wider-context game-logic follow-ups such as SelectPC,
-//!   StopActor, FreezeAll, and patch application.
+//! These values belong to the current native invocation. The driver completes
+//! them before resuming the VM; only actual backend output remains buffered.
 
-/// Ordered engine-bound commands queued by native functions for processing
-/// after script execution. [`EngineCommand::domain`] distinguishes genuine
-/// presentation from deterministic follow-up barriers.
-#[derive(
-    Debug,
-    Clone,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+/// Engine operation requested by one suspended native invocation.
+#[derive(Debug, Clone, PartialEq)]
 pub enum EngineCommand {
     /// Smooth-scroll camera to a location's position.
     ///
@@ -83,8 +65,6 @@ pub enum EngineCommand {
     },
     /// Mission won.
     Win { show_window: bool },
-    /// Update information bars (blazon display, etc.).
-    UpdateInformationBars,
     /// Trigger a hero speech barked line on `pc_id`.  Used by script
     /// native helpers that need engine-owned `hero_speaking` state.
     HeroSpeak {
@@ -118,67 +98,23 @@ pub enum EngineCommand {
     /// Crouch a PC via the full sequence/animation rewrite path:
     /// rewrite an active movement sequence to its crouched variant, or
     /// launch a brand-new crouch-down command so the actor plays
-    /// the crouch-down animation.  The native arm runs in `ScriptEffects`
-    /// without the `EngineInner` borrow, so it queues this command for
-    /// the engine to drain via `actor_make_crouched`.
+    /// the crouch-down animation before the script continues.
     ScriptMakePCCrouched { actor_handle: i32 },
     /// Propagate generic Activate/Deactivate from the script-visible mobile
     /// handle to its non-entity mobile-element master.
     SetMobileActive { mobile_index: u16, active: bool },
 }
 
-/// Whether an ordered engine command is a genuine host-facing effect or a
-/// deterministic follow-up that still needs a wider engine mutation context.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScriptCommandDomain {
-    Presentation,
-    SimulationBarrier,
+/// One native invocation's operation, completed before its VM resumes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NativeCommand {
+    Engine(EngineCommand),
+    Sound(SoundCommand),
+    World(WorldNativeCommand),
 }
 
-impl EngineCommand {
-    /// Compiler-exhaustive queue classification. Adding a command variant must
-    /// make an explicit architectural choice here.
-    pub const fn domain(&self) -> ScriptCommandDomain {
-        use EngineCommand::*;
-        match self {
-            ScrollCameraTo { .. }
-            | JumpCameraTo { .. }
-            | SetZoomLevel { .. }
-            | DisplayMap { .. }
-            | DisplayConsole
-            | DisplayPopupText { .. }
-            | DisplaySherwoodReport
-            | UpdateInformationBars
-            | SetOutlineDisplay { .. }
-            | MarkPc { .. } => ScriptCommandDomain::Presentation,
-
-            StartDialog { .. }
-            | ChooseVictoryDefeatText { .. }
-            | FadeToBlack { .. }
-            | HeroSpeak { .. }
-            | CustomizeMinimapDisplay { .. }
-            | DefineFlatTrajectoryZone { .. }
-            | SetActorLocation { .. }
-            | Win { .. }
-            | MakeNoise { .. }
-            | SetScrollStatus { .. }
-            | ScriptMakePCCrouched { .. }
-            | SetMobileActive { .. } => ScriptCommandDomain::SimulationBarrier,
-        }
-    }
-}
-
-/// Commands queued by script natives for the engine's sound system.
-/// The engine drains these after each script execution step.
-#[derive(
-    Debug,
-    Clone,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+/// Sound-state operation completed before the native returns to its VM.
+#[derive(Debug, Clone, PartialEq)]
 pub enum SoundCommand {
     SuspendAll,
     ResumeAll,
@@ -188,18 +124,9 @@ pub enum SoundCommand {
     PlayJingle(crate::sound::Jingle),
 }
 
-/// Commands queued by script natives for the engine to process after
-/// script execution. Analogous to `SoundCommand` but for game logic.
-#[derive(
-    Debug,
-    Clone,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum DeferredCommand {
+/// World operation completed before the native returns to its VM.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WorldNativeCommand {
     /// Complete original-game patrol-member addition by running the
     /// chief's patrol initialization synchronously at the script-native
     /// boundary. The native has already appended the theoretical member;
@@ -207,41 +134,19 @@ pub enum DeferredCommand {
     /// that append, so the barrier initializes over the same prefix the
     /// append saw rather than over the roster's final state.
     AddAsSubordinateInitialize { chief: i32, member_count: usize },
-    /// Clear the patrol at the engine-owned
-    /// script barrier. Clearing the chief and each member pointer is
-    /// synchronous, and every default-state member immediately runs
-    /// forced return to duty; that nested AI work needs SimulationContext and
-    /// LevelAssets and therefore cannot be completed inside NativeContext.
-    RemoveAllSubordinates { actor: i32 },
-    /// Finish SelectActorPC(actor, select) after the native has already
-    /// updated the canonical selection synchronously. `actor == 0` means
-    /// "all PCs". The engine-side barrier performs action/sequence and
-    /// Sherwood-interface side effects.
+    /// Select or unselect through the canonical player-selection path,
+    /// including portrait and action changes. `actor == 0` means all PCs.
     SelectPC { actor: i32, select: bool },
-    /// Stop the actor's current and pending sequence elements
-    /// (script-level priority).
-    StopActor { actor: i32 },
     /// Set the engine-global freeze flag.
     FreezeAll { freeze: bool },
     /// Toggle PC playability via `MSG_ENABLE_CHARACTER` /
     /// `MSG_DISABLE_CHARACTER`. The engine should update the portrait
     /// bar when processing this command.
     SetPlayable { actor: i32, playable: bool },
-    /// Quit any active swordfight for the actor. Used when teleporting
-    /// an actor to "honolulu" (SetActorLocation with null location).
-    QuitSwordfight { actor: i32 },
-    /// Remove any unconscious-stars titbit for the actor (only fires
-    /// when the actor is no longer unconscious — `is_still_unconscious`
-    /// is checked in the handler).  Used when a human actor is sent to
-    /// honolulu (null location).
-    RemoveUnconsciousStars { actor: i32 },
-    /// Process patch effects produced by ApplyPatch/ResetPatch script natives.
-    /// The patch state was already mutated in the native; this deferred command
-    /// lets the engine apply the side effects (swap objects, toggle animations,
-    /// invalidate background, etc.) with full access to EngineInner state.
-    ProcessPatchEffects {
+    /// Apply or reset a patch and complete its world effects before returning.
+    ApplyPatch {
         patch_index: crate::patch::PatchIndex,
-        effects: Vec<crate::patch::PatchEffect>,
+        reset: bool,
     },
     /// Reset the actor's sprite to frame 0 of its current row.  Called
     /// from the `ResetAnim` script native.
@@ -250,10 +155,4 @@ pub enum DeferredCommand {
     /// the building's special layer + sector, teleport onto the first
     /// gate's `point_in`, and (for PCs) temporarily disable all actions.
     PutActorInBuilding { actor: i32, building: i32 },
-    /// Clear every quick-action memory slot on a PC: walk
-    /// `NUMBER_OF_QA_MEMORY` slots and remove each sequence, titbit,
-    /// quick-action icon, and associated markers. The per-slot logic lives in
-    /// the engine command path; we iterate here so the native keeps to
-    /// entity-state writes.
-    ClearAllQuickActionSlots { actor: i32 },
 }

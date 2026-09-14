@@ -35,6 +35,7 @@ fn dying_find_place_increment_after_crossing(
     patch_line_count: usize,
     precompute_increment: bool,
 ) -> (MapVec, MapVec, MapPoint) {
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     engine.world.fast_grid_mut().size_map(4, 4);
     engine.world.fast_grid_mut().allocate_layers(1);
@@ -100,10 +101,13 @@ fn dying_find_place_increment_after_crossing(
     order.compute_direction = false;
     dying.orders.push_back(order);
     let sequence_id = engine.orders.sequence_manager.launch_element(dying);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
 
     engine.tick_actor_animation_action_change_slots(
         &crate::sim_rng::test_context(),
@@ -157,6 +161,7 @@ fn find_place_to_die_multi_non_elevation_crossing_retains_cached_increment() {
 
 #[test]
 fn delayed_position_multi_non_elevation_crossing_recomputes_invalid_increment() {
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     engine.world.fast_grid_mut().size_map(4, 4);
     engine.world.fast_grid_mut().allocate_layers(1);
@@ -205,10 +210,13 @@ fn delayed_position_multi_non_elevation_crossing_recomputes_invalid_increment() 
     order.compute_direction = false;
     wait.orders.push_back(order);
     let sequence_id = engine.orders.sequence_manager.launch_element(wait);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
 
     let crossing_count = engine
         .world

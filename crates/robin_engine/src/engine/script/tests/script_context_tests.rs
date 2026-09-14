@@ -3,6 +3,262 @@ use crate::engine::test_support::asm::{STARTUP_CLASS, empty_mission_script};
 use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
 
 #[test]
+fn scripted_noise_finishes_live_listeners_before_resuming_the_same_actor_vm() {
+    use crate::engine::test_support::actors::TestActor;
+    use crate::engine::test_support::asm::*;
+    use crate::natives::{NativeFn, ScriptHandleCodec};
+    const A: u16 = 0xc000;
+    const B: u16 = 0xc004;
+    const C: u16 = 0xc008;
+    let location = ScriptHandleCodec::location_handle_from_index(0);
+    let mut quads = vec![
+        q_begin_function(0, 3),
+        q_aff0_iconstant(A, 0),
+        q_aff0_iconstant(B, 1),
+        q_native_param(A),
+        q_native_param(B),
+        q_native_call(NativeFn::SetGlobal as u32),
+        q_aff0_iconstant(A, location),
+        q_aff0_iconstant(B, 0),
+        q_native_param(A),
+        q_native_param(B),
+        q_native_call(NativeFn::MakeNoise as u32),
+        q_native_call(NativeFn::ThisActor as u32),
+        q_aff1_native_get_return(B),
+        q_aff0_iconstant(A, 2),
+        q_native_param(A),
+        q_native_param(B),
+        q_native_call(NativeFn::SetGlobal as u32),
+        q_aff0_iconstant(A, 0),
+        q_native_param(A),
+        q_native_call(NativeFn::GetGlobal as u32),
+        q_aff1_native_get_return(A),
+        q_return_val(A),
+        q_end_function(),
+    ];
+    let filter_address = quads.len() as i32;
+    quads.extend([
+        q_begin_function(0, 3),
+        q_native_call(NativeFn::ThisActor as u32),
+        q_aff1_native_get_return(A),
+        q_aff0_iconstant(B, 0),
+        q_native_param(B),
+        q_native_call(NativeFn::GetGlobal as u32),
+        q_aff1_native_get_return(C),
+        q_native_param(A),
+        q_native_param(B),
+        q_native_param(C),
+        q_native_call(NativeFn::SetCustomNPCValue as u32),
+        q_aff0_iconstant(C, 9),
+        q_native_param(B),
+        q_native_param(C),
+        q_native_call(NativeFn::SetGlobal as u32),
+        q_return_val(B),
+        q_end_function(),
+    ]);
+    let function = |name: &str, address, parameters| crate::scb::Function {
+        name: name.into(),
+        address,
+        num_parameters: parameters,
+        size_of_return_value: 4,
+        size_of_parameters: parameters * 4,
+        size_of_volatile: 0,
+        size_of_temporary: 12,
+    };
+    let scb = ScbFile {
+        version: SCB_VERSION,
+        classes: vec![
+            empty_startup_class("noise_boundary.scs".into()),
+            ClassEntry {
+                source_file: "noise_boundary.scs".into(),
+                class_name: "NoiseListener".into(),
+                size_of_member_variables: 0,
+                member_variables: vec![],
+                functions: vec![
+                    function("Probe", 0, 0),
+                    function("FilterAIEvent", filter_address, 2),
+                ],
+                quads,
+            },
+        ],
+    };
+    let mut engine = EngineInner::new();
+    let listeners = std::array::from_fn::<_, 2, _>(|_| {
+        let mut entity = TestActor::soldier(crate::element::Posture::Upright)
+            .enemy_ai(Default::default())
+            .life_points(50)
+            .script_class("NoiseListener")
+            .build();
+        entity.element_data_mut().active = true;
+        entity.element_data_mut().blipped = true;
+        engine.add_test_entity(entity)
+    });
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.world.fast_grid_mut().size_map(128, 128);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    let sector_index = engine.world.fast_grid_mut().add_sector(
+        crate::engine::test_support::square_sector(
+            1,
+            0,
+            crate::coordinates::MapPoint::new(-100.0, -100.0),
+            crate::coordinates::MapPoint::new(100.0, 100.0),
+        ),
+        0,
+    );
+    let sector_index = crate::fast_find_grid::SectorIndex::new(sector_index).unwrap();
+    let sector = crate::position_interface::SectorHandle::new(1)
+        .unwrap()
+        .with_arena_index(sector_index);
+    for owner in listeners {
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .element_data_mut()
+            .set_sector_topology(Some(sector), Some(sector_index));
+    }
+    engine
+        .scripts
+        .install_mission(MissionScript::from_scb(scb).unwrap());
+    engine.attach_script_bindings(&assets);
+    engine.scripts.globals = vec![0; 3];
+    let script = engine.scripts.mission.as_mut().unwrap();
+    script.bindings.script_location_count = 1;
+    script.bindings.script_point_count = 1;
+    script.bindings.location_positions = std::sync::Arc::new(vec![(10.0, 0.0)]);
+    script.bindings.location_layers = std::sync::Arc::new(vec![0]);
+    script.bindings.location_sectors = std::sync::Arc::new(vec![1]);
+    script.bindings.location_sector_handles = std::sync::Arc::new(vec![Some(sector)]);
+    for owner in listeners {
+        script.bind_actor(ScriptHandleCodec::actor_handle(owner), "NoiseListener");
+    }
+    let owner = ScriptHandleCodec::actor_handle(listeners[0]);
+    let result = engine
+        .call_script_vm(
+            &crate::sim_rng::test_context(),
+            &assets,
+            ScriptVmKey::Actor(owner),
+            "Probe",
+            &[],
+            crate::natives::ScriptCallFrame::actor(owner),
+        )
+        .unwrap();
+    assert_eq!(
+        result, 9,
+        "the caller must observe its synchronous hearing callbacks"
+    );
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(listeners[0])
+            .unwrap()
+            .npc_data()
+            .unwrap()
+            .custom_values[0],
+        1
+    );
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(listeners[1])
+            .unwrap()
+            .npc_data()
+            .unwrap()
+            .custom_values[0],
+        9
+    );
+    assert_eq!(
+        engine.scripts.globals[2], owner,
+        "nested listener calls must restore ThisActor"
+    );
+    engine
+        .scripts
+        .mission
+        .as_ref()
+        .unwrap()
+        .assert_no_active_call_frames();
+}
+
+#[test]
+fn fresh_callback_driver_obeys_live_vm_depth_and_ignores_receiver_guards() {
+    use crate::engine::test_support::asm::{
+        empty_startup_class, q_aff0_iconstant, q_begin_function, q_end_function, q_return_val,
+    };
+    let mut class = empty_startup_class("callback_depth.scs".into());
+    class.functions.push(crate::scb::Function {
+        name: "FilterAIEvent".into(),
+        address: 0,
+        num_parameters: 0,
+        size_of_return_value: 4,
+        size_of_parameters: 0,
+        size_of_volatile: 0,
+        size_of_temporary: 4,
+    });
+    class.quads = vec![
+        q_begin_function(0, 4),
+        q_aff0_iconstant(0xc000, 17),
+        q_return_val(0xc000),
+        q_end_function(),
+    ];
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![class],
+        })
+        .unwrap(),
+    );
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    let sim = crate::sim_rng::test_context();
+    let receiver = crate::natives::ScriptCallFrame::actor(77);
+    let outer = crate::natives::ScriptCallFrame::default();
+    let limit = usize::from(crate::natives::MAX_NESTED_CALL_DEPTH);
+    let script = engine.scripts.mission.as_mut().unwrap();
+    script.push_active_driver_frame(receiver, false);
+    for _ in 0..limit - 1 {
+        script.push_active_driver_frame(outer, true);
+    }
+
+    // Direct gameplay callbacks re-enter through this public driver with a
+    // fresh local Vec while the outer activation guards remain installed.
+    let invoke = |engine: &mut EngineInner| {
+        engine.call_script_vm(
+            &sim,
+            &assets,
+            ScriptVmKey::Global,
+            "FilterAIEvent",
+            &[],
+            outer,
+        )
+    };
+    assert_eq!(invoke(&mut engine).unwrap(), 17);
+    let script = engine.scripts.mission.as_mut().unwrap();
+    assert_eq!(script.active_vm_depth(), limit - 1);
+    assert_eq!(script.active_call_frame_count(), limit);
+    script.push_active_driver_frame(outer, true);
+    let error = invoke(&mut engine).expect_err("live caller activations must exhaust the limit");
+    assert!(error.contains("depth limit"), "{error}");
+    let script = engine.scripts.mission.as_mut().unwrap();
+    assert_eq!(script.active_vm_depth(), limit);
+    script.pop_active_driver_frame(outer);
+    assert_eq!(
+        invoke(&mut engine).unwrap(),
+        17,
+        "unwinding reopens one slot"
+    );
+
+    let script = engine.scripts.mission.as_mut().unwrap();
+    for _ in 0..limit - 1 {
+        script.pop_active_driver_frame(outer);
+    }
+    script.pop_active_driver_frame(receiver);
+    script.assert_no_active_call_frames();
+}
+
+#[test]
 fn repeated_patch_target_skips_one_shot_vm_and_respects_config_and_locks() {
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
@@ -279,21 +535,48 @@ fn put_actor_in_building_retains_exact_sector_across_special_layer() {
         "putting an actor in a building changes only that actor's topology and position"
     );
     assert_eq!(
-        engine.ai.global.houses[0].occupant_ids,
-        [actor_id, carried_id],
+        engine.script_domains.buildings.occupants[0],
+        [
+            crate::natives::ScriptHandleCodec::actor_handle(actor_id),
+            crate::natives::ScriptHandleCodec::actor_handle(carried_id),
+        ],
         "scripted entry and its carried occupant must reach indoor enemy alerts in game order"
     );
 }
 
 #[test]
 fn assign_post_engine_boundary_retains_exact_return_to_duty_sector() {
-    let mut ai = crate::ai::AiController::new(147);
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let owner = engine.add_test_entity(crate::engine::test_support::actors::make_test_ai_soldier(
+        crate::element::Camp::Royalists,
+    ));
+    engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("assigned post fixture"))
+        .script_locked = true;
     let arena = crate::fast_find_grid::SectorIndex::new(97).unwrap();
     let exact = crate::position_interface::SectorHandle::new(97)
         .unwrap()
         .with_arena_index(arena);
 
-    assign_post_from_script_request(&mut ai, 780.0, 995.0, exact, 3, 4);
+    engine.execute_ai_assign_post(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        crate::ai::Position {
+            x: 780.0,
+            y: 995.0,
+            sector: Some(exact),
+            level: 3,
+        },
+        4,
+    );
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("assigned post result"));
 
     assert_eq!(
         ai.initial_position,
@@ -313,11 +596,8 @@ fn assign_post_engine_boundary_retains_exact_return_to_duty_sector() {
         crate::fast_find_grid::SectorIndex::new(98),
         "same-public foreign topology must not replace the authored post"
     );
-    assert_eq!(
-        ai.outbox.reentrant.self_stimuli,
-        [crate::ai::StimulusType::EventReturnToDuty],
-        "the exact post must survive the same engine helper that triggers ReturnToDuty"
-    );
+    assert_eq!(ai.initial_view_direction, 4);
+    assert!(!ai.has_patrol_path);
 }
 
 #[test]
@@ -459,13 +739,6 @@ fn mission_script_snapshot_round_trips_state_and_reattaches_program() {
     let json = serde_json::to_string(&script).expect("serialize MissionScript");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse snapshot JSON");
     assert!(value.get("snapshot_version").is_none());
-    let effect_keys = value["script_effects"]
-        .as_object()
-        .expect("ScriptEffects snapshot object")
-        .keys()
-        .map(String::as_str)
-        .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(effect_keys, ["ordered"].into_iter().collect());
     assert!(value.get("bindings").is_none());
 
     let mut decoded: MissionScript =
@@ -1134,7 +1407,6 @@ fn native_mutation_writes_the_canonical_script_domains_in_place() {
             stack.push_i32(door);
             stack.push_i32(0);
             let mut context = crate::natives::NativeContext::with_bindings(
-                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -1176,7 +1448,6 @@ fn native_ai_mutation_writes_engine_inner_directly() {
 
     let result = engine.with_script_session(sim, &assets, |script, script_domains, queries| {
         let mut context = crate::natives::NativeContext::with_bindings(
-            &mut script.script_effects,
             &mut script.state,
             script_domains,
             &script.bindings,
@@ -1301,7 +1572,6 @@ fn script_callback_unwind_keeps_canonical_owners_in_place() {
         script_domains.mission_ui.outline_display = true;
         {
             let mut context = crate::natives::NativeContext::with_bindings(
-                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,

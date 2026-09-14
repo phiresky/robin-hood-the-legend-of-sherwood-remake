@@ -199,24 +199,6 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
 }
 
 #[test]
-#[should_panic(expected = "missing its required AI controller while applying recovery state")]
-fn think_with_drain_rejects_a_soldier_missing_its_required_ai() {
-    use crate::ai::{Stimulus, StimulusType};
-
-    let sim = &crate::sim_rng::test_context();
-    let mut engine = EngineInner::new();
-    let npc_id = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
-
-    engine.dispatch_think_with_drain(
-        sim,
-        npc_id,
-        &Stimulus::new(StimulusType::EventDone),
-        None,
-        &LevelAssets::new(),
-    );
-}
-
-#[test]
 fn ambush_owner_inputs_preserve_committed_door_side() {
     use crate::element::{ActiveDoorPass, Camp, Command};
     use crate::gate::{Door, DoorIndex, DoorType};
@@ -280,10 +262,13 @@ fn ambush_owner_inputs_preserve_committed_door_side() {
         *gate_id = Some(DoorIndex::new(0).unwrap());
         *pass_direction = direction;
         let sequence = engine.orders.sequence_manager.launch_element(pass);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
 
         let position = engine.live_ai_position(npc_id);
         assert_eq!(
@@ -304,7 +289,7 @@ fn ambush_idle_reset_preserves_the_low_intelligence_gate() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
-    let assets = engine.test_runtime_assets();
+    let mut assets = engine.test_runtime_assets();
     engine.ai.global.ambush_points = vec![AmbushPoint {
         position: Default::default(),
         direction: 0,
@@ -317,7 +302,9 @@ fn ambush_idle_reset_preserves_the_low_intelligence_gate() {
             .unwrap()
             .enemy_ai_mut()
             .unwrap();
-        enemy.soldier_profile_iq = iq;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, enemy, |profile| {
+            profile.intelligence = iq
+        });
         enemy.base.current_substate = Substate::DefaultInMacro;
         enemy.ambush_point_array_reset = false;
         enemy.ambush_point_status = vec![AmbushPointStatus::Near];
@@ -344,7 +331,7 @@ fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let assets = engine.test_runtime_assets();
+    let mut assets = engine.test_runtime_assets();
     let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("ambush owner exists")
     else {
         panic!("ambush owner changed kind")
@@ -359,7 +346,9 @@ fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
         .expect("ambush owner has enemy AI");
     enemy.base.current_state = AiState::Seeking;
     enemy.base.current_substate = Substate::SeekingSeekpoint;
-    enemy.soldier_profile_iq = 100;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, enemy, |profile| {
+        profile.intelligence = 100
+    });
     enemy.ambush_point_status = vec![AmbushPointStatus::Near];
     engine.ai.global.ambush_points = vec![AmbushPoint {
         position: Position {
@@ -382,7 +371,6 @@ fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
         enemy.base.current_substate,
         Substate::SeekingSeekpointCheckingAmbushPoint
     );
-    assert!(enemy.base.outbox.actor.look_sidewards.is_none());
     assert!(
         [Command::LookLeft, Command::LookRight]
             .into_iter()
@@ -504,10 +492,6 @@ fn panic_generated_reachpoint_precedes_retained_panic_sibling_and_draws_twice() 
     ai.current_state = AiState::Default;
     ai.current_substate = Substate::DefaultEnroute;
     ai.script_locked = false;
-    ai.outbox
-        .reentrant
-        .self_stimuli
-        .push(StimulusType::EventTimer.into());
     ai.stimulus_queue = vec![
         Stimulus::new(StimulusType::EventAfterScriptGoOn),
         Stimulus::with_position(
@@ -551,10 +535,9 @@ fn panic_generated_reachpoint_precedes_retained_panic_sibling_and_draws_twice() 
             StimulusType::EventAfterScriptGoOn as u16,
             StimulusType::EventPanic as u16,
             StimulusType::EventReachPoint as u16,
-            StimulusType::EventTimer as u16,
             StimulusType::EventPanic as u16,
         ],
-        "Panic's direct recursive Think must precede both an existing self backlog and the retained sibling"
+        "Panic's direct recursive Think must complete before the retained sibling"
     );
 }
 
@@ -705,8 +688,6 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
     assert_eq!(npc.npc_data().unwrap().eye_status, EyeStatus::LookForward);
     assert!(!npc.human_data().unwrap().unconscious);
     let ai = npc.ai_controller().unwrap();
-    assert!(!ai.outbox.recovery.inform_resurrection);
-    assert_eq!(ai.outbox.recovery.set_eye_status, None);
     assert!(
         engine
             .get_entity(observer_id)
@@ -720,48 +701,36 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
 }
 
 #[test]
-fn restored_quit_lose_quit_fifo_commits_unconscious_eyes_inline() {
+fn consecutive_combat_callbacks_commit_unconscious_eyes_inline() {
     use crate::ai::{Stimulus, StimulusType};
     use crate::element::{Camp, Entity, EyeStatus};
 
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let assets = engine.test_runtime_assets();
-    let ai = engine
-        .get_entity_mut(npc_id)
-        .and_then(Entity::ai_controller_mut)
-        .unwrap();
-    ai.outbox.detection.stimuli = vec![
+    let stimuli = [
         Stimulus::new(StimulusType::EventQuitSwordfight),
         Stimulus::new(StimulusType::EventLoseConsciousness),
         Stimulus::new(StimulusType::EventQuitSwordfight),
     ];
 
     crate::sim_rng::with_seed(0xA013_105E, |sim| {
-        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, &assets)
+        for stimulus in stimuli {
+            engine.execute_ai_callback(sim, &assets, npc_id, &stimulus);
+        }
     });
 
     let entity = engine.get_entity(npc_id).unwrap();
     assert_eq!(
         entity.npc_data().unwrap().eye_status,
         EyeStatus::DieOrGetUnconscious,
-        "the middle LOSE_CONSCIOUSNESS Think must publish its eye write despite the surrounding restored FIFO prefix/suffix"
-    );
-    assert_eq!(
-        entity
-            .ai_controller()
-            .unwrap()
-            .outbox
-            .recovery
-            .set_eye_status,
-        None,
-        "the restored FIFO must not strand its synchronous view-status write"
+        "the middle LOSE_CONSCIOUSNESS callback must publish its eye write before the following callback"
     );
 }
 
 #[test]
 fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
-    use crate::ai::{AiState, StimulusType, Substate};
+    use crate::ai::{AiState, Substate};
     use crate::combat::ConcussionOutcome;
     use crate::element::{Camp, Detectable, DetectableType, Entity, EyeStatus, Posture};
 
@@ -801,11 +770,9 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
         ai.script_locked = false;
         ai.current_state = AiState::Sleeping;
         ai.current_substate = Substate::SleepingUnconscious;
-        if natural {
-            waker.human.unconscious = true;
-            waker.human.concussion_of_the_brain = crate::combat::CONCUSSION_WAKEUP_THRESHOLD;
-            waker.human.concussion_healing_timeout = 0;
-        }
+        waker.human.unconscious = true;
+        waker.human.concussion_of_the_brain = crate::combat::CONCUSSION_WAKEUP_THRESHOLD;
+        waker.human.concussion_healing_timeout = 0;
         let Entity::Soldier(observer) = engine.get_entity_mut(observer_id).unwrap() else {
             unreachable!()
         };
@@ -819,26 +786,25 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
         }];
 
         if natural {
-            engine.tick_concussion_healing(&assets);
-        } else {
-            engine
-                .orders
-                .pending_concussion_side_effects
-                .push((waker_id, ConcussionOutcome::WokeUp));
             crate::sim_rng::with_seed(0x0A01_3B11, |sim| {
-                engine.drain_pending_concussion_side_effects(sim, &assets)
+                engine.tick_concussion_healing_for(sim, waker_id, &assets)
+            });
+        } else {
+            crate::sim_rng::with_seed(0x0A01_3B11, |sim| {
+                assert_eq!(
+                    engine.apply_scripted_concussion(sim, &assets, waker_id, 0, false),
+                    ConcussionOutcome::WokeUp
+                );
+                ()
             });
         }
-        assert!(
+        assert_ne!(
             engine
                 .get_entity(waker_id)
                 .and_then(Entity::ai_controller)
                 .unwrap()
-                .outbox
-                .detection
-                .stimuli
-                .iter()
-                .any(|stimulus| stimulus.stimulus_type == StimulusType::EventFitAgain),
+                .current_substate,
+            Substate::SleepingUnconscious,
             "producer natural={natural}, waker_before_observer={waker_before_observer}, unconscious={}",
             engine
                 .get_entity(waker_id)
@@ -1266,6 +1232,7 @@ fn entering_beggar_registers_every_transition_for_intelligent_lacklandist_seeker
     let low_iq = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let not_seeking = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let wrong_camp = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let mut assets = engine.test_runtime_assets();
 
     for (id, iq, substate) in [
         // Hard difficulty doubles enemy IQ: the recorded boundary has a
@@ -1286,13 +1253,16 @@ fn entering_beggar_registers_every_transition_for_intelligent_lacklandist_seeker
             .ai_brain
             .enemy_mut()
             .expect("test observer must retain enemy AI");
-        ai.soldier_profile_iq = iq;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.intelligence = iq
+        });
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = substate;
     }
 
     crate::engine::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
         &mut engine.world.entities,
+        &assets.profile_manager,
         &engine.mission_domain.diplomacy,
         beggar,
         crate::player_profile::DifficultyLevel::Hard,
@@ -1301,6 +1271,7 @@ fn entering_beggar_registers_every_transition_for_intelligent_lacklandist_seeker
     // same Beggar detectable again.
     crate::engine::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
         &mut engine.world.entities,
+        &assets.profile_manager,
         &engine.mission_domain.diplomacy,
         beggar,
         crate::player_profile::DifficultyLevel::Hard,

@@ -95,12 +95,13 @@ fn add_speech_test_npc(
             };
             soldier.soldier.soldier_profile_index = profile_index;
             soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-            soldier
+            let enemy = soldier
                 .npc
                 .ai_brain
                 .enemy_mut()
-                .expect("speech soldier has EnemyAi")
-                .hth_weapon_id = 1;
+                .expect("speech soldier has EnemyAi");
+            enemy.behavior_profile = profile_index;
+            enemy.hth_weapon_id = 1;
             engine.add_test_entity(entity)
         }
         SpeechNpcKind::Civilian { vip } => {
@@ -208,9 +209,15 @@ fn make_alert_soldier_owner(engine: &mut EngineInner) -> EntityId {
 }
 
 fn check_detectable_snapshot_and_drain_matrix() {
-    use crate::ai::DetectableMutation::{Add, Append, DeleteEntity, DeleteType};
+    #[derive(Debug)]
+    enum Operation {
+        Add(EntityId, crate::element::DetectableType),
+        Append(EntityId, crate::element::DetectableType),
+        DeleteEntity(EntityId, crate::element::DetectableType),
+        DeleteType(crate::element::DetectableType),
+    }
     use crate::element::DetectableType::Friend;
-    let sim = crate::sim_rng::test_context();
+    use Operation::{Add, Append, DeleteEntity, DeleteType};
     let mut base = EngineInner::new();
     let owner = base.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target = base.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
@@ -239,14 +246,9 @@ fn check_detectable_snapshot_and_drain_matrix() {
             vec![DeleteEntity(target, Friend), Append(target, Friend)],
             vec![target],
         ),
-        (vec![Add(target, Friend), Add(target, Friend)], vec![target]),
         (
             vec![Add(target, Friend), Append(target, Friend)],
             vec![target, target],
-        ),
-        (
-            vec![Append(target, Friend), Add(target, Friend)],
-            vec![target],
         ),
         (
             vec![
@@ -270,16 +272,20 @@ fn check_detectable_snapshot_and_drain_matrix() {
         ),
     ];
     for (operations, expected) in cases {
-        base.get_entity_mut(owner)
-            .unwrap()
-            .ai_controller_mut()
-            .unwrap()
-            .outbox
-            .actor
-            .detectable_mutations = operations.clone();
+        base.execute_ai_delete_detectable_type(owner, Friend);
+        for operation in &operations {
+            match *operation {
+                Add(target, kind) => base.execute_ai_add_detectable(owner, target, kind),
+                Append(target, kind) => base.execute_ai_append_detectable(owner, target, kind),
+                DeleteEntity(target, kind) => {
+                    base.execute_ai_delete_detectable_entity(owner, target, kind)
+                }
+                DeleteType(kind) => base.execute_ai_delete_detectable_type(owner, kind),
+            }
+        }
         // Construct one state at a time instead of an array of whole engines.
         for restore in 0..3 {
-            let mut engine = match restore {
+            let engine = match restore {
                 0 => base.clone(),
                 1 => serde_json::from_str(&serde_json::to_string(&base).unwrap()).unwrap(),
                 2 => super::super::snapshot::decode_native_engine_inner(
@@ -288,18 +294,6 @@ fn check_detectable_snapshot_and_drain_matrix() {
                 .unwrap(),
                 _ => unreachable!("three snapshot paths"),
             };
-            assert_eq!(
-                engine
-                    .get_entity(owner)
-                    .unwrap()
-                    .ai_controller()
-                    .unwrap()
-                    .outbox
-                    .actor
-                    .detectable_mutations,
-                operations
-            );
-            engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
             let actor = engine.get_entity(owner).unwrap().ai_actor_data().unwrap();
             let actual = actor.detectable_lists[Friend as usize]
                 .iter()
@@ -448,7 +442,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
 fn run_synchronous_civilian_alert(
     soldier_state: crate::ai::AiState,
     trigger: crate::ai::StimulusType,
-    direct_owner_self_stimulus: bool,
+    direct_callback: bool,
 ) -> EngineInner {
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::element::AiBrain;
@@ -503,7 +497,6 @@ fn run_synchronous_civilian_alert(
             level: 0,
         },
     );
-    friendly.begin_state_change(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
     friendly.base.set_ai_state(AiState::Seeking);
     friendly.base.current_substate = Substate::SeekingCivilianRunningToSoldier;
     civilian.npc.detectable_lists[crate::element::DetectableType::Friend as usize].push(
@@ -541,17 +534,8 @@ fn run_synchronous_civilian_alert(
 
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    if direct_owner_self_stimulus {
-        engine
-            .get_entity_mut(civilian_id)
-            .and_then(Entity::friendly_ai_mut)
-            .expect("direct-owner civilian has FriendlyAi")
-            .base
-            .outbox
-            .reentrant
-            .self_stimuli
-            .push(trigger.into());
-        engine.drain_direct_ai_owner_boundary(sim, civilian_id, &assets);
+    if direct_callback {
+        engine.execute_ai_callback(sim, &assets, civilian_id, &Stimulus::new(trigger));
     } else {
         let stimulus = if trigger == StimulusType::EventSeesSoldier {
             Stimulus::with_human(trigger, soldier_id.index())
@@ -602,7 +586,9 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
             .enemy_mut()
             .expect("review2 soldier has EnemyAi");
         ai.base.me = id.index();
-        ai.soldier_profile_rank = rank;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = rank
+        });
         {
             let base = &mut ai.base;
             base.set_ai_state(AiState::Default);

@@ -82,7 +82,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// hashes, retaining the initial soldier-camp set (save 82 / replay 40).
 /// Protocol 49 carries synchronous AI execution state and a versioned native
 /// snapshot envelope (save 83 / replay 41).
-pub const NET_PROTOCOL_VERSION: u32 = 49;
+pub const NET_PROTOCOL_VERSION: u32 = 51;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must
@@ -1948,42 +1948,6 @@ mod tests {
             },
             run_digest: robin_run_types::Digest32::from_bytes([byte.wrapping_add(2); 32]),
         }
-    }
-
-    #[test]
-    fn protocol_version_uses_synchronous_ai_execution() {
-        // Version 38 combines typed nullable runtime handles, exact spatial
-        // and save provenance, authenticated browser seats, exact-byte
-        // prepare/ready/commit snapshot transitions, canonical speech timing,
-        // rebalanced item rules, deterministic achievements, authoritative
-        // Sherwood trading, resolved Legendary/Custom difficulty, and
-        // deterministic authored timer/ambience state and commands, mission
-        // diplomacy state and relationship-change commands, plus
-        // authoritative combat-gesture rules and commands, completed planned
-        // quick actions, per-seat shield prompts, and deterministic tactical
-        // queue formations, and authoritative shared-vision fog state and
-        // commands. Older peers fail before decoding incompatible wire or
-        // snapshot bytes. Exact resumable full-mod admission and Spellforge
-        // package identity are also part of the protocol contract, as are the
-        // targeted authenticated leaderboard co-sign and official-ranked-
-        // session messages. Version 42 additionally carries pending detectable
-        // mutations in authoritative FIFO order in snapshots and state hashes.
-        // Version 43 replaces parallel imported-vector and live ID/value-map
-        // script-global storage with one canonical vector in snapshots and hashes.
-        // Version 44 removes the duplicate PostInitialize flag and stale
-        // imported Messenger blob from native snapshots.
-        // Version 45 removes unused imported sound and same-frame AI target
-        // claims from snapshots and state hashes.
-        // Version 46 replaces the recorder wrapper and write-only sequence
-        // ID with the optional recording session in snapshots and hashes.
-        // Version 47 removes the unused computed-location dummy, object
-        // repulsive-point copy, and engine-camera scratch fields. Hash-skipped
-        // fields emitted markers, so removing them also changes state hashes.
-        // Version 48 removes duplicate royalist/lacklandist presence flags,
-        // retaining the soldier-camp set as the initial authority.
-        // Version 49 removes deferred AI continuation state and versions the
-        // native snapshot envelope before decoding its domain payloads.
-        assert_eq!(NET_PROTOCOL_VERSION, 49);
     }
 
     #[test]

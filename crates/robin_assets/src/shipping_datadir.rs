@@ -39,8 +39,8 @@ pub use codec::{
 };
 use codec::{decode_native, zstd_decompress};
 pub use runtime::{
-    LocaleLayer, ShippingLookup, is_locale_overlay_key, is_optional_english_fallback_key,
-    is_required_locale_key,
+    LocaleLayer, ShippingLookup, StagedMissionInstall, is_locale_overlay_key,
+    is_optional_english_fallback_key, is_required_locale_key,
 };
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
 pub use scheduler::VqDecodeScheduler;
@@ -50,6 +50,10 @@ use scheduler::vq_downstream_costs;
 pub use scheduler_rle::RleJxlDecodeScheduler;
 #[cfg(test)]
 use scheduler_rle::order_rle_chunks_by_size;
+pub use sprite_bank::{
+    RLE_JXL_DECODE_WORK_PER_BYTE, SpriteChunkKinds, SpriteChunkMaterializer, SpriteChunkStage,
+    SpriteMaterializeProgress, VQ_DECODE_WORK_PER_BYTE,
+};
 
 /// Top-level shipping payload.
 ///
@@ -797,12 +801,12 @@ impl ShippingAssets {
 static GLOBAL: OnceLock<Arc<ShippingAssets>> = OnceLock::new();
 
 #[cfg(test)]
-#[path = "shipping_v16_contract.rs"]
-mod v16_contract;
+#[path = "shipping_v17_contract.rs"]
+mod v17_contract;
 
 #[cfg(test)]
-#[path = "shipping_v8_contract.rs"]
-mod v8_contract;
+#[path = "shipping_v9_contract.rs"]
+mod v9_contract;
 
 /// Explicit legacy adapter: install a shipping datadir as the process-wide instance so lower-level
 /// loaders can consult it for pre-parsed data. Installation and VFS mount

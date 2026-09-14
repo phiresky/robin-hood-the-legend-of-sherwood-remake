@@ -17,10 +17,10 @@ use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::resource_widget_id::{
     RADIO_FOCUS, RADIO_FOCUS_SELECTED, RADIO_SELECTED, RADIO_UNSELECTED,
 };
-use crate::ui::{MouseButtons, RendererBase, RendererBitmap, UiEvent, UiKeyboard, UiMsg, UiState};
+use crate::ui::{MouseButtons, UiEvent, UiKeyboard, UiMsg, UiState};
 use crate::widget::{
     CaptureSlot, FrameWnd, Widget, WidgetButton, WidgetId, WidgetInput, WidgetLabel,
-    WidgetMultiPicture, WidgetPicture, WidgetRenderer,
+    WidgetMultiPicture, WidgetPicture,
 };
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::coordinates as engine_coordinates;
@@ -400,22 +400,7 @@ pub fn make_button_with_resource(
     let bbox = ScreenBBox::from_coords(x as f32, y as f32, (x + w) as f32, (y + h) as f32);
     btn.base.create_with_resource(label, bbox, 0, resource_id);
     btn.base.enabled = enabled;
-    // `create_with_resource` leaves `renderer` as `None`; give it a
-    // bitmap renderer so hit testing against `bbox` works (the actual
-    // rendering is done by the bridge, not the widget's renderer).
-    btn.base.renderer = bitmap_renderer(bbox, resource_id);
     Widget::Button(btn)
-}
-
-/// Fresh bridge widgets have no renderer state to preserve.
-fn bitmap_renderer(bbox: ScreenBBox, resource_id: crate::ui::ResourceId) -> WidgetRenderer {
-    WidgetRenderer::Bitmap(RendererBitmap {
-        base: RendererBase {
-            bbox,
-            resource_id,
-            ..Default::default()
-        },
-    })
 }
 
 /// Create a [`FrameWnd`] with the given buttons.
@@ -445,7 +430,6 @@ pub fn make_picture_with_resource(
     let bbox = ScreenBBox::from_coords(x as f32, y as f32, (x + w) as f32, (y + h) as f32);
     pic.base.create_with_resource("", bbox, 0, resource_id);
     pic.base.with_focus = false;
-    pic.base.renderer = bitmap_renderer(bbox, resource_id);
     Widget::Picture(pic)
 }
 
@@ -464,7 +448,6 @@ pub fn make_multi_picture_with_resource(
     pic.base.create_with_resource("", bbox, 0, resource_id);
     pic.base.with_focus = false;
     pic.select_picture(sub_picture);
-    pic.base.renderer = bitmap_renderer(bbox, resource_id);
     Widget::MultiPicture(pic)
 }
 
@@ -842,7 +825,7 @@ pub fn attach_alpha_masks(
     renderer: &Renderer,
 ) {
     for widget in frame.widgets_mut() {
-        let resource_id = match widget.base().renderer.base() {
+        let resource_id = match widget.base().appearance.as_ref() {
             Some(rb) => rb.resource_id,
             None => continue,
         };
@@ -873,8 +856,8 @@ pub fn attach_alpha_masks(
         let mask = renderer
             .surface_alpha_mask(surf)
             .expect("live menu button mask");
-        if let Some(rb) = widget.base_mut().renderer.base_mut() {
-            rb.set_alpha_mask(Some(mask));
+        if let Some(rb) = widget.base_mut().appearance.as_mut() {
+            rb.alpha_mask = Some(mask);
         }
     }
 }
@@ -917,12 +900,12 @@ pub fn draw_widget_button(
     use crate::renderer::BLIT_SOURCE_TRANSPARENT;
 
     // Look up the sprite pack by the widget's resource ID.  Dispatching
-    // on `base.renderer.base().resource_id` lets the same draw routine
+    // on `base.appearance.as_ref().resource_id` lets the same draw routine
     // handle both rectangular menu buttons (`RHID_MENU_BUTTON`) and
     // round seal buttons (`RHID_OK`).
     let resource_id = base
-        .renderer
-        .base()
+        .appearance
+        .as_ref()
         .map(|b| b.resource_id)
         .unwrap_or(resource_ids::RHID_MENU_BUTTON);
     let sprite = match resource_id {
@@ -1022,7 +1005,7 @@ pub fn draw_frame_bitmap_widgets(
         if frame.is_excluded(widget.id()) {
             continue;
         }
-        let Some(resource_id) = widget.base().renderer.base().map(|b| b.resource_id) else {
+        let Some(resource_id) = widget.base().appearance.as_ref().map(|b| b.resource_id) else {
             continue;
         };
         let sub_resource = widget.transform_state_into_id();
@@ -1664,16 +1647,13 @@ fn bitmap_widget_constructors_preserve_geometry_resource_and_interaction_flags()
     for widget in [&button, &picture, &multi] {
         let base = widget.base();
         assert!(base.created);
-        let renderer = base
-            .renderer
-            .base()
-            .expect("bitmap widget owns hit-test geometry");
-        assert!(matches!(base.renderer, WidgetRenderer::Bitmap(_)));
-        assert_eq!(renderer.resource_id, 99);
-        assert_eq!(renderer.bbox.top_left(), ScreenPoint::new(10.0, 20.0));
-        assert_eq!(renderer.bbox.bottom_right(), ScreenPoint::new(40.0, 60.0));
-        assert_eq!(base.bbox.top_left(), renderer.bbox.top_left());
-        assert_eq!(base.bbox.bottom_right(), renderer.bbox.bottom_right());
+        let appearance = base
+            .appearance
+            .as_ref()
+            .expect("bitmap widget has an asset");
+        assert_eq!(appearance.resource_id, 99);
+        assert_eq!(base.bbox.top_left(), ScreenPoint::new(10.0, 20.0));
+        assert_eq!(base.bbox.bottom_right(), ScreenPoint::new(40.0, 60.0));
     }
     assert_eq!(button.base().text, "Sell");
     assert!(!button.base().enabled);

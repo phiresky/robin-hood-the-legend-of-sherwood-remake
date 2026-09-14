@@ -360,10 +360,13 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         unreachable!("PassDoor fixture must be a movement element")
     }
     let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(pass_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        pass_sequence,
+        0,
+    );
 
     let building_sector = SectorNumber::new(8);
     engine.script_domains.interactables.doors = vec![
@@ -458,13 +461,6 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         "the fixture must exercise BuildingExitGate when its prepared forecast is resolved"
     );
 
-    let (_, empty_drain_trace) =
-        with_draw_trace(|| engine.drain_pending_for_npc(sim, quiet_owner, &assets));
-    assert!(
-        !empty_drain_trace.contains(&RngSite::BuildingExitGate),
-        "an empty common outbox drain must not build forecast scratch"
-    );
-
     let (_, tail_trace) =
         with_draw_trace(|| engine.tick_npc_post_detection_tail_for_npc(sim, quiet_owner, &assets));
     assert!(
@@ -532,10 +528,13 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
     {
         // AI position resolves the chief from live committed PassDoor state.
         let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(pass_sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            pass_sequence,
+            0,
+        );
         assert_eq!(engine.live_ai_position(chief_id).x, 821.0);
         assert_eq!(engine.live_ai_position(chief_id).y, 1124.0);
         assert_eq!(engine.live_ai_position(chief_id).level, 2);
@@ -625,8 +624,7 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
 
         let sim = crate::sim_rng::test_context();
         engine.prepare_npc_owner_pass();
-        let mut shield_links_need_refresh = true;
-        engine.tick_npc_owner_pass(&sim, &assets, &mut shield_links_need_refresh, observer_id);
+        engine.tick_npc_owner_pass(&sim, &assets, observer_id);
 
         engine
             .get_entity(observer_id)
@@ -653,6 +651,7 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
 
 #[test]
 fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_noop() {
+    let mut assets = LevelAssets::new();
     use crate::ai::{AiLockFlags, AiState, StimulusType, Substate};
     use crate::ai_enemy::task_priority;
     use crate::element::{Camp, Detectable, DetectableType, Entity};
@@ -748,12 +747,15 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
             .orders
             .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
         let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(movement_sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            movement_sequence,
+            0,
+        );
 
-        let mut assets = engine.test_runtime_assets();
+        assets = engine.test_runtime_assets();
         let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
             .characters
             .get_mut(0)
@@ -951,6 +953,7 @@ fn inactive_npc_blip_detection_requires_door_or_building_eligibility() {
 
 #[test]
 fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
+    let mut assets = LevelAssets::new();
     use crate::ai::{AiLockFlags, AiState, StimulusType, Substate};
     use crate::ai_enemy::task_priority;
     use crate::element::{Camp, Detectable, DetectableType, Entity};
@@ -1009,12 +1012,15 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
         .orders
         .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
     let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(movement_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        movement_sequence,
+        0,
+    );
 
-    let assets = engine.test_runtime_assets();
+    assets = engine.test_runtime_assets();
 
     let Entity::Soldier(observer) = engine
         .get_entity_mut(observer_id)

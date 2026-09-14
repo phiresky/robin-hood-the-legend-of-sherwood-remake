@@ -625,7 +625,9 @@ impl LoadingScreenRenderer {
         // manager bg, etc.) doesn't bleed through during the multi-
         // hundred-ms pak/font load window.
         renderer.begin_gpu_frame_clear();
-        renderer.present();
+        // Blank placeholder: the page's boot overlay stays up until the first
+        // artwork frame from `refresh`.
+        let _ = renderer.try_present_unannounced();
 
         let mut state = LoadingScreen::default();
         state.initialize(width as u32, height as u32, max_level);

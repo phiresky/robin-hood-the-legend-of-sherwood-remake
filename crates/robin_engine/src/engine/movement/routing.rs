@@ -3,11 +3,13 @@ use super::*;
 impl EngineInner {
     pub(in crate::engine) fn launch_live_ai_turn(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         direction: i16,
         fast: bool,
     ) {
-        self.halt_actor(owner);
+        self.halt_actor(sim, assets, owner);
         let retained_goal = Some(
             self.expect_entity(owner, "turn owner")
                 .position_iface()
@@ -159,6 +161,7 @@ impl EngineInner {
     pub(in crate::engine) fn launch_ai_move(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         entity_id: EntityId,
         destination: crate::ai::Position,
         goto: crate::ai::GotoFlags,
@@ -594,7 +597,7 @@ impl EngineInner {
             Some(sequence_id)
         })();
         if launched.is_some() && was_computing_path {
-            self.halt_actor(entity_id);
+            self.halt_actor(sim, assets, entity_id);
             None
         } else {
             launched
@@ -1039,6 +1042,7 @@ mod exact_ai_goto_source_tests {
             let sequence = engine
                 .launch_ai_move(
                     &crate::sim_rng::test_context(),
+                    &LevelAssets::new(),
                     owner,
                     destination,
                     flags,
@@ -1151,6 +1155,7 @@ mod exact_ai_goto_source_tests {
         let sequence_id = engine
             .launch_ai_move(
                 &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
                 owner,
                 destination,
                 crate::ai::GotoFlags::RUN,

@@ -13,6 +13,39 @@ mod tests {
     use crate::element::{ActionState, EyeStatus, Posture};
     use crate::order::OrderType;
 
+    #[test]
+    fn soldier_alert_counts_follow_brain_publication_and_survive_removal_and_restore() {
+        use crate::ai::AlertLevel;
+        let mut engine = EngineInner::new();
+        let mut owners = Vec::new();
+        for (camp, level) in [
+            (crate::element::Camp::Lacklandists, AlertLevel::Green),
+            (crate::element::Camp::Royalists, AlertLevel::Yellow),
+            (crate::element::Camp::Custom(2), AlertLevel::Red),
+        ] {
+            let mut entity = crate::engine::test_support::actors::make_test_ai_soldier(camp);
+            entity
+                .ai_controller_mut()
+                .unwrap()
+                .current_music_alert_status = level;
+            owners.push(engine.add_test_entity(entity));
+        }
+        assert_eq!(engine.ai.global.green_alert_soldiers, 1);
+        assert_eq!(engine.ai.global.yellow_alert_soldiers, 1);
+        assert_eq!(engine.ai.global.red_alert_soldiers, 1);
+        engine.remove_entity(owners[0]);
+        assert_eq!(engine.ai.global.green_alert_soldiers, 1);
+        let json = serde_json::to_string(&engine).unwrap();
+        let restored: EngineInner = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.ai.global.green_alert_soldiers, 1);
+        assert_eq!(restored.ai.global.yellow_alert_soldiers, 1);
+        assert_eq!(restored.ai.global.red_alert_soldiers, 1);
+        assert_eq!(
+            robin_util::state_hash::compute(&engine.ai.global),
+            robin_util::state_hash::compute(&restored.ai.global)
+        );
+    }
+
     fn fixture(action: OrderType, indoors: bool) -> (EngineInner, LevelAssets, EntityId) {
         let mut engine = EngineInner::new();
         engine.world.fast_grid_mut().size_map(128, 128);
@@ -195,9 +228,8 @@ impl EngineInner {
         // Reset global AI state
         // think-method recursion depth = 0
         self.ai.global.soldier_camps.clear();
-        self.ai.global.overall_alert_status = crate::ai::AlertLevel::Green;
-        self.ai.global.overall_villain_alert_status = crate::ai::AlertLevel::Green;
-        self.ai.global.init_green_yellow_red_alert_soldiers();
+        // Alert counters already include each published soldier's constructed brain.
+        // Preserve them across AI initialization and restoration.
 
         // golden_eye_mode is set from CliArgs after initialize() returns
 
@@ -273,7 +305,6 @@ impl EngineInner {
             // callback/effect boundary before the next NPC initializes so a
             // state callback cannot leak to the first update tick or
             // observe later owners' initialized state.
-            self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
         }
 
         // Lift each ambush point's 2D position into 3D (eye height
@@ -814,7 +845,7 @@ impl EngineInner {
             _ => None,
         };
         if posture.is_none() || action == Some(OrderType::Sitting) {
-            let bored = self.ai_bored_time(sim, owner);
+            let bored = self.ai_bored_time(sim, assets, owner);
             let frame = self.control.frame_counter;
             let ai = self
                 .world
@@ -875,7 +906,7 @@ impl EngineInner {
             };
         }
         self.actor_wait(owner);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         let entity = self
             .world
             .entities
@@ -905,7 +936,7 @@ impl EngineInner {
             }
             _ => {}
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         false
     }
 
@@ -919,11 +950,6 @@ impl EngineInner {
     /// occupants are found by scanning entities currently in that
     /// sector, and one [`DoorRallyPoint`] is anchored at every door's
     /// `point_out`.
-    ///
-    /// Runtime occupant tracking is wired at the `execute_pass_door`
-    /// Enter / Leave branches in `engine::door_pass`: the same hook
-    /// that updates canonical `BuildingState` occupants also updates
-    /// `House::occupant_ids`.
     pub(super) fn initialize_buildings(&mut self) {
         use crate::ai::{AI_DOOR_RALLY_POINT_DISTANCE, DoorRallyPoint, House, Position};
 
@@ -941,14 +967,8 @@ impl EngineInner {
         > = std::collections::BTreeMap::new();
         let mut rally_points: Vec<DoorRallyPoint> = Vec::new();
 
-        // Include every building's doors — not just those occupied
-        // at init time — so the runtime enter/leave hooks have a
-        // pre-existing `House` to update when an NPC walks into a
-        // previously-empty building. The original game's restriction to
-        // NPC-populated buildings (the houses list being built from
-        // starting sectors) is an artifact of *how* it initializes,
-        // not a semantic invariant; live occupant tracking supersedes
-        // it. Original-game AI initialization walks every gate owned by
+        // Include every building's doors, including initially empty houses.
+        // AI initialization walks every gate owned by
         // each building when it builds rally points, and
         // Door-battle initialization walks that same gate list. This includes a
         // `DOOR_BUILDING_TRAP` whose inside sector is the building; excluding
@@ -1055,7 +1075,6 @@ impl EngineInner {
                 sector_index: u32::from(u16::from(sector_in)),
                 building_index,
                 door_indices,
-                occupant_ids,
                 arrow_reserve,
             });
         }

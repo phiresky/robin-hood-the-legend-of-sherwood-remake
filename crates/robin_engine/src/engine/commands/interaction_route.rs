@@ -754,11 +754,11 @@ impl EngineInner {
         // runs now while older deferred detection stimuli retain their FIFO.
         // Delaying EVENT_STOP to the end-of-frame self-stimulus drain lets a
         // registered gate successor enter non-interruptible PassDoor first.
-        self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+        self.execute_ai_callback(
             sim,
-            target,
             assets,
-            crate::ai::Stimulus::new(crate::ai::StimulusType::EventStop),
+            target,
+            &crate::ai::Stimulus::new(crate::ai::StimulusType::EventStop),
         );
     }
 

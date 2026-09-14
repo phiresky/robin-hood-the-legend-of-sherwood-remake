@@ -138,12 +138,7 @@ impl EngineInner {
         owner: EntityId,
         target: Option<AiEntityHandle>,
     ) {
-        self.observation_ai_mut(owner)
-            .base
-            .outbox
-            .actor
-            .set_focus(target);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_focus(owner, target);
     }
     pub(super) fn observation_emoticon(
         &mut self,
@@ -154,11 +149,11 @@ impl EngineInner {
         self.observation_ai_mut(owner)
             .base
             .set_emoticon(EmoticonType::QuestionMark);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
     pub(super) fn execute_ai_react_live(
         &mut self,
         sim: &SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         maximum: u16,
     ) {
@@ -183,7 +178,11 @@ impl EngineInner {
             } else {
                 1.0
             };
-            ((100.0 - self.observation_ai(owner).soldier_profile_iq as f32)
+            ((100.0
+                - self
+                    .observation_ai(owner)
+                    .profile(&assets.profile_manager)
+                    .intelligence as f32)
                 * 0.01
                 * f32::from(maximum)
                 * modifier
@@ -234,8 +233,11 @@ impl EngineInner {
         let ai = self.observation_ai_mut(owner);
         ai.base.frame_when_enemy_detected = frame;
         ai.enemy_seen_below = below;
-        ai.base.outbox.detection.mark_alerted = true;
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.world
+            .entities
+            .expect_ai_actor_data_mut(owner, format_args!("accepted enemy sighting"))
+            .alerted = true;
+
         self.observation_forget_object(owner);
         let position = self.live_ai_position(enemy);
         self.observation_ai_mut(owner)
@@ -393,11 +395,13 @@ impl EngineInner {
             AiState::Default,
             Substate::DefaultLookingShadow,
         );
-        self.observation_ai_mut(owner).set_alert_status_with_flags(
+        self.execute_ai_set_alert_status(
+            assets,
+            owner,
             crate::ai::AlertLevel::Yellow,
             crate::ai::AlertFlags::ONLY_MUSIC,
         );
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         self.duty_face_position_ground(sim, assets, owner, position);
         self.observation_timer(owner, 10);
     }
@@ -416,9 +420,9 @@ impl EngineInner {
             .my_reconnaissance_report
             .update(ReportType::Enemy, origin);
         let ai = self.observation_ai(owner);
-        let seeking =
-            ai.base.current_state == AiState::Seeking && ai.get_rank() != ProfileRank::Officer;
-        let rank = ai.get_rank();
+        let seeking = ai.base.current_state == AiState::Seeking
+            && ai.get_rank(&assets.profile_manager) != ProfileRank::Officer;
+        let rank = ai.get_rank(&assets.profile_manager);
         if !seeking
             && !matches!(
                 rank,
@@ -456,6 +460,7 @@ impl EngineInner {
         } else {
             self.execute_ai_react_live(
                 sim,
+                assets,
                 owner,
                 crate::parameters_ai::AI_MAX_STANDARD_REACTIONTIME as u16 + 50,
             );
@@ -504,7 +509,9 @@ impl EngineInner {
                 );
                 let object = self.observation_ai(owner).base.interesting_object;
                 self.observation_focus(sim, assets, owner, object);
-                let delay = if self.observation_ai(owner).get_rank() == ProfileRank::Officer {
+                let delay = if self.observation_ai(owner).get_rank(&assets.profile_manager)
+                    == ProfileRank::Officer
+                {
                     60
                 } else {
                     30
@@ -516,8 +523,8 @@ impl EngineInner {
                     self.observation_ai_mut(owner).other_seen_ale.push(object);
                     return;
                 }
-                self.observation_ai_mut(owner).base.break_macro();
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.execute_ai_break_macro(owner);
+
                 self.observation_say(sim, assets, owner, Remark::SeesObject);
                 self.observation_face_object(sim, assets, owner, target);
                 self.observation_emoticon(sim, assets, owner);
@@ -533,6 +540,7 @@ impl EngineInner {
                 );
                 self.execute_ai_react_live(
                     sim,
+                    assets,
                     owner,
                     crate::parameters_ai::AI_FIRST_LOOK_TIME as u16,
                 );
@@ -610,7 +618,7 @@ impl EngineInner {
             self.observation_ai_mut(owner)
                 .base
                 .set_emoticon(EmoticonType::Thunderstorm);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             self.duty_set_state(
                 sim,
                 assets,
@@ -633,13 +641,8 @@ impl EngineInner {
                 Some(owner),
                 Some(object),
             ));
-            self.observation_ai_mut(owner)
-                .base
-                .outbox
-                .actor
-                .launch_sequences
-                .push(sequence);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.launch_sequence(sequence);
+
             self.duty_set_state(
                 sim,
                 assets,
@@ -664,7 +667,8 @@ impl EngineInner {
             > crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
             || (actor.element_data().active
                 && !self.entity_data_in_building_sector(actor.element_data())
-                && (ai.soldier_profile_beer > 0 || ai.ale_reliable_distraction));
+                && (ai.profile(&assets.profile_manager).beer > 0
+                    || self.reliable_ale_for_actor(assets, owner)));
         if take {
             let ai = self.observation_ai_mut(owner);
             ai.base.object_of_desire = ai.base.interesting_object;
@@ -681,7 +685,7 @@ impl EngineInner {
                 20,
                 frame,
             );
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             self.observation_say(sim, assets, owner, Remark::AleYes);
             let target = self
                 .observation_ai(owner)
@@ -708,7 +712,7 @@ impl EngineInner {
                 50,
                 frame,
             );
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             let remark = if self.expect_entity(owner, "ale refusal owner").is_vip() {
                 Remark::VipAleNo
             } else {
@@ -717,6 +721,34 @@ impl EngineInner {
             self.observation_say(sim, assets, owner, remark);
             self.execute_ai_return_to_duty(sim, assets, owner, crate::ai::DutyFlags::KEEP_EMOTICON);
         }
+    }
+
+    pub(in crate::engine) fn reliable_ale_for_actor(
+        &self,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) -> bool {
+        if !self
+            .control
+            .sim_config
+            .item_gameplay
+            .ale_reliable_distraction
+        {
+            return false;
+        }
+        let Entity::Soldier(soldier) = self.expect_entity(owner, "ale reliability owner") else {
+            return false;
+        };
+        !assets
+            .profile_manager
+            .get_soldier(soldier.soldier.soldier_profile_index)
+            .unwrap_or_else(|| {
+                panic!(
+                    "ale reliability requires soldier profile {:?} for {owner:?}",
+                    soldier.soldier.soldier_profile_index
+                )
+            })
+            .vip
     }
 
     fn observation_object_position(&self, object: EntityId) -> Position {

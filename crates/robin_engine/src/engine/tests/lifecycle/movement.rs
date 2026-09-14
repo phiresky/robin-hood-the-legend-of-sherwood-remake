@@ -200,14 +200,17 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
         .orders
         .push_back(Order::test_new(transition, 0.0, 0.0));
     let sequence = engine.orders.sequence_manager.launch_element(selected);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     let mut executed_transition = false;
     for _ in 0..16 {
-        let (_, _, executed) = engine.tick_actor_animation_for(&sim, &assets, owner);
+        let executed = engine.tick_actor_animation_for(&sim, &assets, owner);
         executed_transition |= executed.is_some();
         if engine
             .get_entity(owner)
@@ -403,10 +406,13 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
         NonZeroU32::new(778).unwrap(),
     ));
     let old_sequence = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(old_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        old_sequence,
+        0,
+    );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.actor_data_mut().unwrap().action_state = ActionState::MovingFast;
@@ -423,17 +429,23 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
     replacement.priority = SequencePriority::Normal;
     replacement.retained_movement_goal = Some(old_goal);
     let replacement_sequence = engine.orders.sequence_manager.launch_element(replacement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(replacement_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        replacement_sequence,
+        0,
+    );
     engine.orders.sequence_manager.set_halt_pending(true);
-    engine
-        .orders
-        .sequence_manager
-        .element_interrupted_after_replacement_selected(old_sequence, 0, CascadeFlags::NEXT_LEVEL);
+    engine.element_interrupted_after_replacement_selected(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        old_sequence,
+        0,
+        CascadeFlags::NEXT_LEVEL,
+    );
     engine.orders.sequence_manager.set_halt_pending(false);
-    engine.dispatch_condolations(&sim, &assets);
 
     assert_eq!(
         engine
@@ -476,10 +488,13 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
     );
     waiting.priority = SequencePriority::Normal;
     let waiting_sequence = engine.orders.sequence_manager.launch_element(waiting);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(waiting_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        waiting_sequence,
+        0,
+    );
 
     engine.duty_go_to(
         &sim,
@@ -528,10 +543,13 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
     );
     waiting.priority = SequencePriority::Normal;
     let waiting_sequence = engine.orders.sequence_manager.launch_element(waiting);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(waiting_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        waiting_sequence,
+        0,
+    );
 
     let sequence_count_before_drain = engine.orders.sequence_manager.sequence_count();
     engine.duty_go_to(
@@ -577,6 +595,7 @@ fn ai_move_constructs_at_owner_boundary_and_waits_for_manager_instruction() {
     let first_sequence = engine
         .launch_ai_move(
             &sim,
+            &LevelAssets::new(),
             owner,
             crate::ai::Position {
                 x: 100.0,
@@ -591,6 +610,7 @@ fn ai_move_constructs_at_owner_boundary_and_waits_for_manager_instruction() {
     let second_sequence = engine
         .launch_ai_move(
             &sim,
+            &LevelAssets::new(),
             owner,
             crate::ai::Position {
                 x: 300.0,
@@ -638,6 +658,7 @@ fn ordinary_move_construction_does_not_invent_path_waiter_tail() {
     let launched = engine
         .launch_ai_move(
             &sim,
+            &LevelAssets::new(),
             owner,
             crate::ai::Position {
                 x: 100.0,

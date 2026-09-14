@@ -485,7 +485,13 @@ impl EngineInner {
     /// — its Execute arm consumes the event in
     /// `dispatch_arm_completion` (`engine/animation.rs`) and mutates
     /// the front order in place without popping.
-    pub(crate) fn do_next_order(&mut self, seq_id: crate::sequence::SequenceId, elem_idx: usize) {
+    pub(crate) fn do_next_order(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
         if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
             let element_state = self
                 .orders
@@ -671,9 +677,7 @@ impl EngineInner {
         // Removal-notification callback can synchronously instruct a real
         // successor. The actor's next update entry supplies Wait only if
         // that stack unwinds without one.
-        self.orders
-            .sequence_manager
-            .element_terminated(seq_id, elem_idx);
+        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
     }
 
     /// Guarantee that `entity_id` has a live `Command::Wait` sequence
@@ -759,8 +763,15 @@ impl EngineInner {
     /// Remove an entity. Leaves a None hole (IDs are stable).
     pub(crate) fn remove_entity<I: Into<EntityId>>(&mut self, id: I) {
         let id = id.into();
+        // Alert counters track constructed soldier brains, not registry membership.
+        // Removing an entity does not reverse its last music-alert contribution.
         self.world.entities.remove(id);
         self.world.soldier_registry.remove(id);
+        self.world.npc_registry_ids.retain(|&member| member != id);
+        self.world.actor_registry_ids.retain(|&member| member != id);
+        self.world
+            .fighter_registry_ids
+            .retain(|&member| member != id);
         // Remove from index lists
         self.world.pc_ids.retain(|&i| i != id);
         self.world.original_pc_registry_ids.retain(|&i| i != id);
@@ -968,23 +979,6 @@ impl EngineInner {
         self.scripts.mission.as_ref()
     }
 
-    /// Mutable access to ordered script effects for Lua/tool adapters.
-    ///
-    /// Exposed `pub` so the host crate's Lua scripting layer
-    /// (`robin_rs::lua_session`) can drive custom-mission Lua events
-    /// against the same effect buffer the `.scb` VM uses. The
-    /// `RollbackSafeEngine` invariant still holds — Lua sessions are
-    /// single-player only (see `docs/lua.md`) and never run during
-    /// rollback resimulation.
-    pub(crate) fn mission_script_effects_mut(
-        &mut self,
-    ) -> Option<&mut crate::natives::ScriptEffects> {
-        self.scripts
-            .mission
-            .as_mut()
-            .map(MissionScript::script_effects_mut)
-    }
-
     /// True iff men-to-blazon conversion mode is active. Read by titbit
     /// rendering to suppress the per-PC
     /// WorkIcon while the conversion screen is up.
@@ -997,15 +991,6 @@ impl EngineInner {
         self.script_domains
             .mission_ui
             .active_blinking_blazons(self.control.frame_counter)
-    }
-
-    /// Queue the `UpdateInformationBars` engine command on the script
-    /// host.  Called from the host after a save-load so the script
-    /// refreshes its side of the information-bar UI.
-    pub(crate) fn queue_update_information_bars(&mut self) {
-        if let Some(effects) = self.mission_script_effects_mut() {
-            effects.emit_engine(crate::natives::EngineCommand::UpdateInformationBars);
-        }
     }
 
     /// Toggle the engine-owned men-to-blazon conversion mode. Read by the

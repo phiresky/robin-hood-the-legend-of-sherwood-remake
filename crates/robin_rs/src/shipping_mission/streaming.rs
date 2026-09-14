@@ -117,6 +117,7 @@ impl InstallWorkModel {
             phase: MissionLoadPhase::Data,
             completed,
             total: Self::UNITS,
+            fraction: self.emitted,
             file: Some(label),
         });
     }
@@ -681,20 +682,28 @@ where
             rle_scheduler.dispatch_ready(bank, &mut pending_rle)?;
         }
         bank.rle_jxl_chunks.append(&mut pending_rle);
-        bank.materialize_rle_jxl_chunks()
-            .with_context(|| format!("materialize RLE-JXL sprite chunks for mission {mission}"))?;
+        if pooled {
+            // Stragglers only; keep them before the deferred tail snapshots
+            // the rows below.
+            bank.materialize_rle_jxl_chunks().with_context(|| {
+                format!("materialize RLE-JXL sprite chunks for mission {mission}")
+            })?;
+        }
+        // Without a pool every RLE-JXL chunk is still pending here; the
+        // cooperative install decodes them with progress and yields instead
+        // of blocking the browser main thread (no deferred tail exists then).
         tracing::info!(
             mission,
             elapsed_ms = rle_drain_start.elapsed().as_secs_f64() * 1000.0,
             "startup timing: RLE tail wait and apply"
         );
     }
-    progress(MissionLoadProgress {
-        phase: MissionLoadPhase::Data,
-        completed: InstallWorkModel::UNITS,
-        total: InstallWorkModel::UNITS,
-        file: None,
-    });
+    progress(MissionLoadProgress::counted(
+        MissionLoadPhase::Data,
+        InstallWorkModel::UNITS,
+        InstallWorkModel::UNITS,
+        None,
+    ));
     // Package the deferred tail (post-activation background streaming).
     let tail = match (deferral, merged.payload.sprite_bank.as_ref()) {
         (Some(deferral), Some(bank)) if !deferral.parked.is_empty() => {

@@ -134,7 +134,7 @@ pub(crate) fn reconcile_entities(
                     })
             }) {
                 enemy.base.primary_target = None;
-                enemy.base.outbox.actor.set_unfocus();
+                crate::ai_vision::unfocus(npc);
             }
         }
     }

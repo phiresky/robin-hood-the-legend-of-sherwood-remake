@@ -46,17 +46,9 @@ pub(crate) struct InteractableState {
     pub(crate) patches: Vec<crate::patch::Patch>,
 }
 
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedInteractableState {
-    doors: Vec<crate::gate::Door>,
-
-    patches: Vec<crate::patch::PersistedPatch>,
-}
-
-impl PersistedInteractableState {
-    pub(crate) fn capture(value: &InteractableState) -> Self {
+impl InteractableState {
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let value = self;
         let InteractableState {
             doors: _,
             patches: _,
@@ -66,18 +58,7 @@ impl PersistedInteractableState {
             patches: value
                 .patches
                 .iter()
-                .map(crate::patch::PersistedPatch::capture)
-                .collect(),
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> InteractableState {
-        InteractableState {
-            doors: self.doors,
-            patches: self
-                .patches
-                .into_iter()
-                .map(crate::patch::PersistedPatch::into_runtime)
+                .map(crate::patch::Patch::persisted_clone)
                 .collect(),
         }
     }
@@ -198,23 +179,9 @@ pub struct ScriptDomains {
     pub(crate) zones: ZoneState,
 }
 
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedScriptDomains {
-    buildings: BuildingState,
-
-    interactables: PersistedInteractableState,
-
-    mission_ui: MissionUiState,
-
-    scrolls: ScrollState,
-
-    zones: ZoneState,
-}
-
-impl PersistedScriptDomains {
-    pub(crate) fn capture(value: &ScriptDomains) -> Self {
+impl ScriptDomains {
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let value = self;
         let ScriptDomains {
             buildings: _,
             interactables: _,
@@ -224,20 +191,10 @@ impl PersistedScriptDomains {
         } = value;
         Self {
             buildings: value.buildings.clone(),
-            interactables: PersistedInteractableState::capture(&value.interactables),
+            interactables: value.interactables.persisted_clone(),
             mission_ui: value.mission_ui.clone(),
             scrolls: value.scrolls.clone(),
             zones: value.zones.clone(),
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> ScriptDomains {
-        ScriptDomains {
-            buildings: self.buildings,
-            interactables: self.interactables.into_runtime(),
-            mission_ui: self.mission_ui,
-            scrolls: self.scrolls,
-            zones: self.zones,
         }
     }
 }

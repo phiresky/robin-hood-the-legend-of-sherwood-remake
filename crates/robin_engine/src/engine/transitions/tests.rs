@@ -164,7 +164,15 @@ fn transition_stages_observe_live_state_without_reordering_effects() {
     );
     assert_eq!(
         target.stage(&mut engine, |engine| {
-            make_posture_transition_actor(engine, seq_id, elem_idx, owner, CP::MUST_BE_UPRIGHT)
+            make_posture_transition_actor(
+                engine,
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                seq_id,
+                elem_idx,
+                owner,
+                CP::MUST_BE_UPRIGHT,
+            )
         }),
         Ok(true)
     );
@@ -460,6 +468,8 @@ fn soldier_bow_down_entry_from_waiting_loads_before_lowering() {
 
     let ok = dispatch_make_final_action_transition(
         &mut engine,
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
         seq,
         idx,
         owner,
@@ -639,6 +649,8 @@ fn pc_pass_door_high_crenel_wall_from_crouched_keeps_authored_walk() {
     assert!(enter.is_empty());
     assert!(dispatch_make_posture_transition(
         &mut engine,
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
         seq,
         idx,
         owner,
@@ -681,6 +693,8 @@ fn pc_pass_door_high_wall_from_crouched_still_queues_crouch_up() {
     assert_eq!(change, CP::MUST_BE_UPRIGHT);
     assert!(dispatch_make_posture_transition(
         &mut engine,
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
         seq,
         idx,
         owner,
@@ -1014,7 +1028,13 @@ fn postponed_leave_after_enter_does_not_requeue_enter_transition() {
     if let Some(enemy) = engine.get_entity_mut(owner).and_then(Entity::enemy_ai_mut) {
         enemy.attentive = true;
     }
-    engine.orders.sequence_manager.element_terminated(enter, 0);
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        enter,
+        0,
+    );
 
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
@@ -1047,6 +1067,47 @@ fn attentive_soldier_enter_swordfight_no_double_alert() {
         !orders.contains(&OrderType::TransitionWaitingUprightWaitingAlerted),
         "already-attentive soldier should not re-queue the transition, got {:?}",
         orders
+    );
+}
+
+#[test]
+fn postponed_sword_entry_rebuilds_exit_from_live_moving_state() {
+    let mut engine = EngineInner::new();
+    let assets = crate::engine::LevelAssets::new();
+    let sim = crate::sim_rng::test_context();
+    let owner = engine.add_test_entity(TestActor::pc(P::Upright).action_state(AS::Waiting).build());
+    let (sequence, index) = launch(&mut engine, owner, Command::EnterSwordfight);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, index)
+        .unwrap()
+        .state = crate::sequence::SequenceState::Postponed;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = AS::Moving;
+
+    let mut display = crate::engine::HostDisplayState::default();
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    assert_eq!(
+        orders_for(&engine, sequence, index),
+        vec![
+            OrderType::TransitionWalkingUprightWaitingUpright,
+            OrderType::TransitionRaisingSword,
+        ],
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, index)
+            .unwrap()
+            .action_state_after_transition,
+        AS::Waiting,
     );
 }
 
@@ -1103,7 +1164,13 @@ fn throw_purse_keeps_bored_until_exit_transition_completes() {
         &mut engine.orders.next_order_id,
     );
     assert_eq!(result, crate::abilities::BeginResult::Started);
-    engine.orders.sequence_manager.element_in_progress(seq, idx);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        seq,
+        idx,
+    );
 
     assert_eq!(
         engine

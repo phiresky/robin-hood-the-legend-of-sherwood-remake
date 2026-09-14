@@ -5,6 +5,22 @@
 
 use crate::element::Entity;
 
+/// Give one fixture actor an independently authored behavior profile.
+pub(crate) fn edit_enemy_profile(
+    assets: &mut crate::engine::types::LevelAssets,
+    ai: &mut crate::ai_enemy::EnemyAi,
+    edit: impl FnOnce(&mut crate::profiles::SoldierProfile),
+) {
+    let mut profile = ai.profile(&assets.profile_manager).clone();
+    edit(&mut profile);
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    let index = crate::profiles::SoldierProfileIdx(
+        u32::try_from(profiles.soldiers.len()).expect("fixture profile count"),
+    );
+    profiles.soldiers.push(profile);
+    ai.behavior_profile = index;
+}
+
 /// Low-level actor fixture without a pathfinder, profile, or allegiance.
 /// Use `make_test_soldier` for scenarios that need a loaded enemy instead.
 pub(crate) fn unbound_soldier(posture: crate::element::Posture) -> crate::element::ActorSoldier {

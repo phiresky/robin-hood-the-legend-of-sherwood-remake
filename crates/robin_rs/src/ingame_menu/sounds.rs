@@ -70,7 +70,7 @@ pub async fn show_sounds(
 
 /// Live modal owner: keyboard capture and widget interaction state cannot be
 /// restored from serialization. Edited configuration remains ordinary data.
-struct SoundsScreen {
+pub(crate) struct SoundsScreen {
     edit: crate::options_model::SoundEdit,
     dirty: bool,
     frame: FrameWnd,
@@ -78,6 +78,7 @@ struct SoundsScreen {
     slider_labels: [String; SOUND_SLIDERS.len()],
     title: String,
     done: bool,
+    pub(crate) exit_requested: bool,
     accepted: bool,
     input_state: ModalInputState,
     noisy_tracker: widget_bridge::NoisyTracker,
@@ -86,7 +87,11 @@ struct SoundsScreen {
 }
 
 impl SoundsScreen {
-    fn new(io: &ModalScreenIo<'_, '_>, config: &SoundConfig, sound: Option<&SoundManager>) -> Self {
+    pub(crate) fn new(
+        io: &ModalScreenIo<'_, '_>,
+        config: &SoundConfig,
+        sound: Option<&SoundManager>,
+    ) -> Self {
         let resources = io.resources;
         let input_state = ModalInputState::for_screen(io.window, io.renderer);
         let edit = crate::options_model::SoundEdit::new(*config);
@@ -244,6 +249,7 @@ impl SoundsScreen {
             slider_labels,
             title,
             done,
+            exit_requested: false,
             accepted,
             input_state,
             noisy_tracker,
@@ -252,16 +258,35 @@ impl SoundsScreen {
         }
     }
 
+    pub(crate) fn with_host_authority(mut self, host_authority: bool) -> Self {
+        for (index, (setting, _)) in SOUND_SLIDERS.iter().enumerate() {
+            self.frame
+                .widget_mut(ID_SLIDER_BASE + index as u32)
+                .expect("sound setting slider")
+                .base_mut()
+                .enabled = host_authority || !setting.requires_host_authority();
+        }
+        self
+    }
+
     /// Poll and draw one frame. The frame that closes the screen is still
     /// drawn and paced: `Some(())` is only reported on the following tick.
-    fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>, audio: &mut ScreenAudio<'_>) -> Option<()> {
+    pub(crate) fn tick(
+        &mut self,
+        io: &mut ModalScreenIo<'_, '_>,
+        audio: &mut ScreenAudio<'_>,
+    ) -> Option<()> {
         if self.done {
             return Some(());
         }
         let screen = ScreenFrame::begin(io, &mut self.input_state);
         for key in screen.keys() {
             match key {
-                ScreenKey::Quit | ScreenKey::Cancel => self.done = true,
+                ScreenKey::Quit => {
+                    self.exit_requested = true;
+                    self.done = true;
+                }
+                ScreenKey::Cancel => self.done = true,
                 ScreenKey::Confirm => {
                     self.accepted = true;
                     self.done = true;
@@ -285,6 +310,7 @@ impl SoundsScreen {
             let idx = (ev.origin_widget_id - ID_SLIDER_BASE) as usize;
             if matches!(ev.msg_type, UiMsg::WidgetSliderTrack)
                 && let Some(Widget::Slider(s)) = self.frame.widget(ev.origin_widget_id)
+                && s.base.enabled
             {
                 let new_val = s.tick_index().min(SLIDER_MAX as u32) as u16;
                 if new_val != slider_value(&self.edit.working, idx) {
@@ -433,7 +459,7 @@ impl SoundsScreen {
         None
     }
 
-    fn finish(self, config: &mut SoundConfig) -> bool {
+    pub(crate) fn finish(self, config: &mut SoundConfig) -> bool {
         // The `dirty` flag is set on every widget event — even a click on
         // the already-selected radio. Any accepted+dirty exit triggers
         // sound-settings re-apply in the caller, regardless of whether the
@@ -484,6 +510,7 @@ mod screen_state_tests {
                     slider_labels: std::array::from_fn(|_| String::new()),
                     title: String::new(),
                     done: true,
+                    exit_requested: false,
                     accepted,
                     input_state: ModalInputState::new(),
                     noisy_tracker: widget_bridge::NoisyTracker::new(),

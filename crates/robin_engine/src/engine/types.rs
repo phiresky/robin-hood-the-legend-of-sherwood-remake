@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::coordinates::{MapPoint, MapSize, MapVec, ScreenPoint};
-use crate::natives::{NativeContext, ScriptEffects, ScriptState};
+use crate::natives::{NativeContext, ScriptState};
 use crate::script_manager::{ScriptInstance, ScriptManager};
 
 use super::{
