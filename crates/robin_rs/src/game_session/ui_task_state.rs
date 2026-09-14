@@ -5,15 +5,13 @@
 //! servicing networking, HTTP control, replay bookkeeping, and simulation
 //! while a local side screen is open.
 
-use crate::gfx_types::{GameEvent, Keycode};
+use crate::gfx_types::GameEvent;
 use crate::ingame_menu::layout::{
-    MenuTransform, dim_screen, draw_screen_background, enter_modal_gpu_phase,
-    poll_events_with_transform, render_text_virt_font, wrap_text_for_box_font,
+    MenuTransform, dim_screen, draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
 };
 use crate::ingame_menu::resources::{
-    IngameMenuResources, MT_BTN_BACK, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_GRAPHICS, MT_BTN_LOAD,
-    MT_BTN_OK, MT_BTN_SAVE, MT_BTN_SHORTCUTS, MT_BTN_SOUNDS, MT_MSG_REALLY_DELETE_SAVEGAME,
-    MT_MSG_REALLY_OVERWRITE_SAVEGAME, MT_TTL_GRAPHICS, MT_TTL_OPTIONS, MT_TTL_SOUNDS,
+    IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_BTN_SAVE,
+    MT_MSG_REALLY_DELETE_SAVEGAME, MT_MSG_REALLY_OVERWRITE_SAVEGAME,
 };
 use crate::ingame_menu::save_load::{
     ListRow, PickerAction, PickerController, PickerModel, PickerTarget, begin_picker_delete,
@@ -22,17 +20,12 @@ use crate::ingame_menu::save_load::{
 use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::ingame_menu::{SaveLoadMode, YesNoModalState};
-use crate::key_config::{KeyConfig, REAL_KEY_COUNT};
-use crate::options_model::{
-    GraphicsSetting, adjust_graphics_setting, available_graphics_settings, graphics_setting_label,
-    toggle_label,
-};
-use crate::options_model::{SoundSetting, sound_eq};
+use crate::key_config::KeyConfig;
 #[cfg(test)]
-use crate::options_model::{graphic_eq, graphics_settings_for_retroarch_availability};
+use crate::options_model::SoundSetting;
+use crate::options_model::sound_eq;
 use crate::renderer::Renderer;
 use crate::savegame::SaveGameManager;
-use crate::scroll_view::ScrollView;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
@@ -42,105 +35,6 @@ use robin_engine::profiles::ProfileManager;
 use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sound_config::SoundConfig;
 use serde::{Deserialize, Serialize};
-
-const BUTTON_X: i32 = 330;
-const BUTTON_Y: i32 = 36;
-const BUTTON_GAP: i32 = 2;
-const MAX_PAGE_BUTTONS: usize = 8;
-const OPTIONS_SETTINGS_PER_PAGE: usize = 12;
-const OPTIONS_SETTING_ROW_START_Y: i32 = 112;
-const OPTIONS_SETTING_ROW_GAP: i32 = 6;
-const SPELLFORGE_CONTENT_BUTTON_Y: i32 = 350;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum OptionRowAction {
-    Enter(OptionsPage),
-    AdjustGraphics(GraphicsSetting),
-    AdjustSound(SoundSetting),
-    AdjustGameplay(crate::ingame_menu::gameplay::GameplaySetting),
-    #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-    AdjustMultiplayerPrivacy,
-    Rebind(u16),
-    ShortcutPreset(u8),
-    PreviousPage,
-    NextPage,
-    ManageSpellforgeContent,
-    AcceptPage,
-    CancelPage,
-    #[cfg(all(
-        feature = "dialogs",
-        any(target_os = "windows", target_os = "linux", target_os = "macos")
-    ))]
-    ChangeDataDir,
-    Finish,
-}
-
-impl OptionRowAction {
-    fn is_adjustment(self) -> bool {
-        match self {
-            Self::AdjustGraphics(_) | Self::AdjustSound(_) | Self::AdjustGameplay(_) => true,
-            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-            Self::AdjustMultiplayerPrivacy => true,
-            _ => false,
-        }
-    }
-
-    fn is_fixed_page_action(self) -> bool {
-        matches!(
-            self,
-            Self::ManageSpellforgeContent | Self::AcceptPage | Self::CancelPage
-        )
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct OptionRow {
-    pub(super) action: OptionRowAction,
-    pub(super) label: String,
-    pub(super) help: Option<String>,
-    pub(super) enabled: bool,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct OptionsPager {
-    page: usize,
-}
-
-impl OptionsPager {
-    pub(super) fn page_count(total_settings: usize) -> usize {
-        total_settings.div_ceil(OPTIONS_SETTINGS_PER_PAGE).max(1)
-    }
-
-    pub(super) fn visible_range(self, total_settings: usize) -> std::ops::Range<usize> {
-        let start = self
-            .page
-            .min(Self::page_count(total_settings) - 1)
-            .saturating_mul(OPTIONS_SETTINGS_PER_PAGE);
-        start..(start + OPTIONS_SETTINGS_PER_PAGE).min(total_settings)
-    }
-
-    pub(super) fn can_move_previous(self) -> bool {
-        self.page > 0
-    }
-
-    pub(super) fn can_move_next(self, total_settings: usize) -> bool {
-        self.page + 1 < Self::page_count(total_settings)
-    }
-
-    pub(super) fn move_by(&mut self, delta: i32, total_settings: usize) -> bool {
-        let last_page = Self::page_count(total_settings) - 1;
-        let next_page = if delta < 0 {
-            self.page.saturating_sub(1)
-        } else if delta > 0 {
-            (self.page + 1).min(last_page)
-        } else {
-            self.page
-        };
-        let changed = next_page != self.page;
-        self.page = next_page;
-        changed
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct OptionsTaskResult {
@@ -395,33 +289,10 @@ impl QuickLoadTaskState {
     }
 }
 
-pub(super) use crate::options_model::OptionsPage;
-
+/// Mission ownership and persistence adapter around the shared Options presenter.
 pub(super) struct OptionsTaskState {
-    profile_id: u32,
-    controller: crate::options_model::OptionsController,
-    original_gameplay: GameplayConfig,
-    original_profile_gameplay: GameplayConfig,
-    original_multiplayer: MultiplayerConfig,
-    original_profile_sound: SoundConfig,
-    original_keys: (KeyConfig, KeyConfig),
-    original_amount_of_speaking: u16,
-    frame: FrameWnd,
-    noise_tracker: widget_bridge::NoisyTracker,
-    rows: Vec<OptionRow>,
-    selected: usize,
-    pager: OptionsPager,
-    input: ModalInputState,
-    transform: MenuTransform,
-    shortcut_scroll: Option<ScrollView>,
-    rebinding: Option<u16>,
-    shortcut_dirty: bool,
-    shortcut_reserved: bool,
-    can_3d_sound: bool,
-    host_gameplay_rules_editable: bool,
-    localized_gameplay: crate::ingame_menu::gameplay::LocalizedGameplayText,
-    spellforge_content:
-        Option<crate::ingame_menu::spellforge_content::SpellforgeContentSettingsState>,
+    screen: crate::ingame_menu::options::OptionsModalState,
+    seed: OptionsSeed,
 }
 
 /// Settings the in-game Options task starts from: the active profile's rows,
@@ -440,7 +311,6 @@ pub(super) struct OptionsSeed {
     pub(super) profile_sound: SoundConfig,
     pub(super) keys: KeyConfig,
     pub(super) custom_keys: KeyConfig,
-    pub(super) can_3d_sound: bool,
     pub(super) host_gameplay_rules_editable: bool,
 }
 
@@ -452,63 +322,23 @@ impl OptionsTaskState {
         resources: &IngameMenuResources,
         seed: OptionsSeed,
     ) -> Self {
-        let OptionsSeed {
-            profile_id,
-            graphic,
-            gameplay,
-            profile_gameplay,
-            multiplayer,
-            sound,
-            profile_sound,
-            keys,
-            custom_keys,
-            can_3d_sound,
-            host_gameplay_rules_editable,
-        } = seed;
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
-        let mut input = ModalInputState::new();
-        input.seed_mouse_from_window(window, transform);
-        let original_keys = (keys.clone(), custom_keys.clone());
-        let mut state = Self {
-            profile_id,
-            original_gameplay: gameplay,
-            original_profile_gameplay: profile_gameplay,
-            original_multiplayer: multiplayer,
-            original_profile_sound: profile_sound,
-            original_keys,
-            original_amount_of_speaking: sound.amount_of_speaking,
-            controller: crate::options_model::OptionsController::new(
-                graphic,
-                sound,
-                gameplay,
-                multiplayer,
-                keys,
-                custom_keys,
+        let controller = options_controller(&seed);
+        Self {
+            screen: crate::ingame_menu::options::OptionsModalState::new(
+                application_context,
+                window,
+                renderer,
+                resources,
+                controller,
+                crate::ingame_menu::options::OptionsScope {
+                    allow_language_switching: false,
+                    sherwood_trading_editable: seed.host_gameplay_rules_editable,
+                    host_gameplay_rules_editable: seed.host_gameplay_rules_editable,
+                    apply_live_preferences: false,
+                },
             ),
-            frame: FrameWnd::default(),
-            noise_tracker: widget_bridge::NoisyTracker::new(),
-            rows: Vec::new(),
-            selected: 0,
-            pager: OptionsPager::default(),
-            input,
-            transform,
-            shortcut_scroll: None,
-            rebinding: None,
-            shortcut_dirty: false,
-            shortcut_reserved: false,
-            can_3d_sound,
-            host_gameplay_rules_editable,
-            localized_gameplay:
-                crate::ingame_menu::gameplay::LocalizedGameplayText::from_application_context(
-                    application_context,
-                ),
-            spellforge_content: None,
-        };
-        state.rebuild_frame(resources);
-        state
+            seed,
+        }
     }
 
     fn tick(
@@ -519,822 +349,76 @@ impl OptionsTaskState {
         audio_backend: Option<&mut dyn AudioBackend>,
         sample_loader: Option<&SampleLoader>,
     ) -> Option<UiTaskOutcome> {
-        let window = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
-        if let Some(content) = self.spellforge_content.as_mut() {
-            let outcome = content.tick(
+        self.screen
+            .tick(
                 application_context,
-                &mut ModalScreenIo {
-                    window,
-                    renderer,
-                    resources,
-                    cursor,
+                io,
+                &mut widget_bridge::ScreenAudio {
+                    sound: sound_manager,
+                    backend: audio_backend.map(|backend| &mut *backend as &mut dyn AudioBackend),
+                    sample_loader,
                 },
-            );
-            match outcome {
-                crate::ingame_menu::spellforge_content::SpellforgeContentSettingsOutcome::Pending => {
-                    return None;
+            )
+            .map(|outcome| {
+                if outcome.exit_requested {
+                    UiTaskOutcome::ExitRequested
+                } else {
+                    UiTaskOutcome::OptionsAccepted(options_result(
+                        &self.seed,
+                        &self.screen.controller,
+                    ))
                 }
-                crate::ingame_menu::spellforge_content::SpellforgeContentSettingsOutcome::Closed => {
-                    self.spellforge_content = None;
-                    self.transform = MenuTransform::centered(
-                        renderer.screen_width() as i32,
-                        renderer.screen_height() as i32,
-                    );
-                    self.input.seed_mouse_from_window(window, self.transform);
-                    self.render(renderer, resources, cursor);
-                    renderer.present();
-                    return None;
-                }
-                crate::ingame_menu::spellforge_content::SpellforgeContentSettingsOutcome::ExitRequested => {
-                    return Some(UiTaskOutcome::ExitRequested);
-                }
-            }
-        }
-
-        let (events, transform) = poll_events_with_transform(window, renderer);
-        self.transform = transform;
-        if events.iter().any(|event| matches!(event, GameEvent::Quit)) {
-            self.render(renderer, resources, cursor);
-            renderer.present();
-            return Some(UiTaskOutcome::ExitRequested);
-        }
-
-        if self.controller.page == OptionsPage::Shortcuts && self.rebinding.is_some() {
-            for event in &events {
-                match event {
-                    GameEvent::KeyDown {
-                        physical_key: Some(key),
-                        ..
-                    } if is_reserved_key(*key) => {
-                        // Match the legacy shortcuts picker: a reserved key
-                        // is rejected without abandoning the active row, so
-                        // the player can immediately try another binding.
-                        self.shortcut_reserved = true;
-                        self.rebuild_frame(resources);
-                    }
-                    GameEvent::KeyDown {
-                        physical_key: Some(key),
-                        ..
-                    } => {
-                        let row = self.rebinding.take().expect("rebind row must exist");
-                        assign_key(&mut self.controller.keys, row, *key);
-                        self.shortcut_dirty = true;
-                        self.shortcut_reserved = false;
-                        self.rebuild_frame(resources);
-                    }
-                    _ => {}
-                }
-            }
-        } else {
-            for event in &events {
-                self.input.update_from_event(event, self.transform);
-                if self.controller.page == OptionsPage::Shortcuts {
-                    let view = self
-                        .shortcut_scroll
-                        .as_mut()
-                        .expect("shortcut scroll view configured");
-                    let consumed = view.handle_event(
-                        event,
-                        self.transform,
-                        (self.input.virt_x as i32, self.input.virt_y as i32),
-                    ) || matches!(event, GameEvent::KeyDown { keycode, .. }
-                            if matches!(keycode, Keycode::PageUp | Keycode::PageDown | Keycode::Home | Keycode::End) && view.navigate(*keycode));
-                    if consumed {
-                        self.rebuild_frame(resources);
-                        continue;
-                    }
-                }
-                match event {
-                    GameEvent::KeyDown {
-                        keycode: Keycode::Escape,
-                        ..
-                    } => {
-                        if let Some(outcome) = self.cancel_or_leave(resources) {
-                            self.render(renderer, resources, cursor);
-                            renderer.present();
-                            return Some(outcome);
-                        }
-                    }
-                    GameEvent::KeyDown {
-                        keycode: Keycode::Up,
-                        ..
-                    } => self.selected = self.selected.saturating_sub(1),
-                    GameEvent::KeyDown {
-                        keycode: Keycode::Down,
-                        ..
-                    } => self.selected = (self.selected + 1).min(self.rows.len().saturating_sub(1)),
-                    GameEvent::KeyDown {
-                        keycode: Keycode::Left,
-                        ..
-                    } => self.adjust_selected(-1, resources),
-                    GameEvent::KeyDown {
-                        keycode: Keycode::Right,
-                        ..
-                    } => self.adjust_selected(1, resources),
-                    GameEvent::KeyDown {
-                        keycode: Keycode::Return | Keycode::KpEnter,
-                        ..
-                    } => {
-                        if let Some(outcome) = self.activate(
-                            self.selected,
-                            application_context,
-                            window,
-                            renderer,
-                            resources,
-                        ) {
-                            self.render(renderer, resources, cursor);
-                            renderer.present();
-                            return Some(outcome);
-                        }
-                    }
-                    GameEvent::MouseWheel(delta)
-                        if !matches!(
-                            self.controller.page,
-                            OptionsPage::Hub | OptionsPage::Shortcuts
-                        ) =>
-                    {
-                        if *delta > 0 {
-                            self.change_options_page(-1, resources);
-                        } else if *delta < 0 {
-                            self.change_options_page(1, resources);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            let widget_input = self.input.as_widget_input();
-            let widget_events = self.frame.process_input(&widget_input);
-            self.input.end_frame();
-            play_button_noise(
-                &widget_events,
-                &self.frame,
-                &mut self.noise_tracker,
-                sound_manager,
-                audio_backend,
-                sample_loader,
-            );
-            if let Some(id) = widget_bridge::find_activated(&widget_events)
-                && let Some(outcome) = self.activate(
-                    id as usize,
-                    application_context,
-                    window,
-                    renderer,
-                    resources,
-                )
-            {
-                self.render(renderer, resources, cursor);
-                renderer.present();
-                return Some(outcome);
-            }
-        }
-
-        self.render(renderer, resources, cursor);
-        renderer.present();
-        None
-    }
-
-    fn activate(
-        &mut self,
-        index: usize,
-        application_context: &crate::host::ApplicationContext,
-        window: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
-    ) -> Option<UiTaskOutcome> {
-        self.selected = index.min(self.rows.len().saturating_sub(1));
-        let row = self.rows.get(self.selected).cloned()?;
-        if !row.enabled {
-            return None;
-        }
-        match row.action {
-            OptionRowAction::Enter(page) => self.enter_page(page, resources),
-            OptionRowAction::AdjustGraphics(_)
-            | OptionRowAction::AdjustSound(_)
-            | OptionRowAction::AdjustGameplay(_) => self.adjust_selected(1, resources),
-            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-            OptionRowAction::AdjustMultiplayerPrivacy => self.adjust_selected(1, resources),
-            OptionRowAction::Rebind(index) => {
-                self.rebinding = Some(index);
-                self.shortcut_reserved = false;
-                self.rebuild_frame(resources);
-            }
-            OptionRowAction::ShortcutPreset(preset) => {
-                use crate::options_model::{ShortcutPreset, select_shortcut_preset};
-                let preset = match preset {
-                    0 => ShortcutPreset::Default,
-                    1 => ShortcutPreset::Alternate,
-                    2 => ShortcutPreset::Custom,
-                    _ => panic!("unknown shortcut preset {preset}"),
-                };
-                select_shortcut_preset(
-                    &mut self.controller.keys,
-                    &mut self.controller.custom_keys,
-                    &mut self.shortcut_dirty,
-                    preset,
-                );
-                self.shortcut_reserved = false;
-                self.rebuild_frame(resources);
-            }
-            OptionRowAction::PreviousPage => self.change_options_page(-1, resources),
-            OptionRowAction::NextPage => self.change_options_page(1, resources),
-            OptionRowAction::ManageSpellforgeContent => {
-                self.spellforge_content = Some(
-                    crate::ingame_menu::spellforge_content::SpellforgeContentSettingsState::new(
-                        application_context,
-                        window,
-                        renderer,
-                        resources,
-                    ),
-                );
-            }
-            OptionRowAction::AcceptPage => self.accept_page(resources),
-            OptionRowAction::CancelPage => self.restore_page(resources),
-            #[cfg(all(
-                feature = "dialogs",
-                any(target_os = "windows", target_os = "linux", target_os = "macos")
-            ))]
-            OptionRowAction::ChangeDataDir => {
-                crate::datadir_locator::change_datadir_interactive();
-            }
-            OptionRowAction::Finish => return Some(self.finish()),
-        }
-        None
-    }
-
-    fn adjust_selected(&mut self, delta: i32, resources: &IngameMenuResources) {
-        let Some(action) = self.rows.get(self.selected).map(|row| row.action) else {
-            return;
-        };
-        match action {
-            OptionRowAction::AdjustGraphics(setting) => {
-                if !adjust_graphics_setting(&mut self.controller.graphic.working, setting, delta) {
-                    return;
-                }
-            }
-            OptionRowAction::AdjustSound(setting) => {
-                if !crate::options_model::adjust_sound_setting(
-                    &mut self.controller.sound.working,
-                    setting,
-                    delta,
-                    self.can_3d_sound,
-                    self.host_gameplay_rules_editable,
-                ) {
-                    return;
-                }
-            }
-            OptionRowAction::AdjustGameplay(setting)
-                if gameplay_setting_editable(setting, self.host_gameplay_rules_editable) =>
-            {
-                crate::ingame_menu::gameplay::apply_setting(&mut self.controller.gameplay, setting)
-            }
-            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-            OptionRowAction::AdjustMultiplayerPrivacy => {
-                self.controller.multiplayer.publish_browser_join_links =
-                    !self.controller.multiplayer.publish_browser_join_links;
-            }
-            _ => return,
-        }
-        self.rebuild_frame(resources);
-    }
-
-    fn setting_count(&self) -> usize {
-        match self.controller.page {
-            OptionsPage::Hub | OptionsPage::Shortcuts => 0,
-            OptionsPage::Graphics => available_graphics_settings().count(),
-            OptionsPage::Sounds => SoundSetting::ALL.len(),
-            OptionsPage::Gameplay => crate::ingame_menu::gameplay::GameplaySetting::ALL.len(),
-            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-            OptionsPage::MultiplayerPrivacy => 1,
-        }
-    }
-
-    fn change_options_page(&mut self, delta: i32, resources: &IngameMenuResources) {
-        let total_settings = self.setting_count();
-        if self.pager.move_by(delta, total_settings) {
-            self.selected = 0;
-            self.rebuild_frame(resources);
-        }
-    }
-
-    fn enter_page(&mut self, page: OptionsPage, resources: &IngameMenuResources) {
-        self.controller.enter_page(page);
-        self.selected = 0;
-        self.pager = OptionsPager::default();
-        self.rebinding = None;
-        self.shortcut_dirty = false;
-        self.shortcut_reserved = false;
-        self.rebuild_frame(resources);
-    }
-
-    fn accept_page(&mut self, resources: &IngameMenuResources) {
-        if self.controller.page == OptionsPage::Shortcuts {
-            promote_shortcut_edits(
-                &self.controller.keys,
-                &mut self.controller.custom_keys,
-                &mut self.shortcut_dirty,
-            );
-        }
-        self.controller.accept_page(false);
-        self.selected = 0;
-        self.pager = OptionsPager::default();
-        self.rebinding = None;
-        self.shortcut_dirty = false;
-        self.shortcut_reserved = false;
-        self.rebuild_frame(resources);
-    }
-
-    fn restore_page(&mut self, resources: &IngameMenuResources) {
-        self.controller.cancel_page();
-        self.selected = 0;
-        self.pager = OptionsPager::default();
-        self.rebinding = None;
-        self.shortcut_dirty = false;
-        self.shortcut_reserved = false;
-        self.rebuild_frame(resources);
-    }
-
-    fn cancel_or_leave(&mut self, resources: &IngameMenuResources) -> Option<UiTaskOutcome> {
-        if self.controller.page == OptionsPage::Hub {
-            Some(self.finish())
-        } else {
-            self.restore_page(resources);
-            None
-        }
-    }
-
-    fn finish(&self) -> UiTaskOutcome {
-        let resolution_changed = self.controller.graphic.resolution_changed();
-        let key_config_changed = self.controller.keys != self.original_keys.0
-            || self.controller.custom_keys != self.original_keys.1;
-        let profile_gameplay = profile_gameplay_after_options(
-            self.controller.gameplay,
-            self.original_profile_gameplay,
-            self.host_gameplay_rules_editable,
-        );
-        let profile_sound = profile_sound_after_options(
-            self.controller.sound.working,
-            self.original_profile_sound,
-            self.host_gameplay_rules_editable,
-        );
-        let changed = self.controller.graphic.changed()
-            || self.controller.gameplay != self.original_gameplay
-            || profile_gameplay != self.original_profile_gameplay
-            || self.controller.multiplayer != self.original_multiplayer
-            || self.controller.sound.changed()
-            || !sound_eq(&profile_sound, &self.original_profile_sound);
-        UiTaskOutcome::OptionsAccepted(OptionsTaskResult {
-            profile_id: self.profile_id,
-            graphic_config: self.controller.graphic.working.clone(),
-            gameplay_config: self.controller.gameplay,
-            profile_gameplay_config: profile_gameplay,
-            multiplayer_config: self.controller.multiplayer,
-            sound_config: self.controller.sound.working,
-            profile_sound_config: profile_sound,
-            key_config: self.controller.keys.clone(),
-            custom_key_config: self.controller.custom_keys.clone(),
-            changed,
-            resolution_changed,
-            key_config_changed,
-            original_amount_of_speaking: self.original_amount_of_speaking,
-            original_gameplay_config: self.original_gameplay,
-        })
-    }
-
-    fn all_rows(&self, resources: &IngameMenuResources) -> Vec<OptionRow> {
-        let row = |action, label: String, enabled| OptionRow {
-            action,
-            label,
-            help: None,
-            enabled,
-        };
-        match self.controller.page {
-            OptionsPage::Hub => {
-                let mut rows = vec![
-                    row(
-                        OptionRowAction::Enter(OptionsPage::Graphics),
-                        resources.menu_text.get(MT_BTN_GRAPHICS),
-                        true,
-                    ),
-                    row(
-                        OptionRowAction::Enter(OptionsPage::Sounds),
-                        resources.menu_text.get(MT_BTN_SOUNDS),
-                        true,
-                    ),
-                    row(
-                        OptionRowAction::Enter(OptionsPage::Shortcuts),
-                        resources.menu_text.get(MT_BTN_SHORTCUTS),
-                        true,
-                    ),
-                    row(
-                        OptionRowAction::Enter(OptionsPage::Gameplay),
-                        "Gameplay".to_string(),
-                        true,
-                    ),
-                ];
-                #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-                rows.push(row(
-                    OptionRowAction::Enter(OptionsPage::MultiplayerPrivacy),
-                    "Multiplayer / Privacy".to_string(),
-                    true,
-                ));
-                #[cfg(all(
-                    feature = "dialogs",
-                    any(target_os = "windows", target_os = "linux", target_os = "macos")
-                ))]
-                rows.push(row(
-                    OptionRowAction::ChangeDataDir,
-                    "Game Data Folder".to_string(),
-                    true,
-                ));
-                rows.push(row(
-                    OptionRowAction::Finish,
-                    resources.menu_text.get(MT_BTN_BACK),
-                    true,
-                ));
-                rows
-            }
-            OptionsPage::Graphics => {
-                let preset = crate::shader_preset::retroarch_presets()
-                    .iter()
-                    .find(|preset| preset.id == self.controller.graphic.working.shader_preset)
-                    .map(|preset| preset.label.as_str())
-                    .unwrap_or("Default");
-                let mut rows = available_graphics_settings()
-                    .map(|setting| {
-                        row(
-                            OptionRowAction::AdjustGraphics(setting),
-                            graphics_setting_label(
-                                &self.controller.graphic.working,
-                                preset,
-                                setting,
-                            ),
-                            true,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                rows.extend(options_footer_rows(resources));
-                rows
-            }
-            OptionsPage::Sounds => {
-                let labels = vec![
-                    toggle_label("3D Sound", self.controller.sound.working.sound_3d),
-                    toggle_label("8-bit Sound", self.controller.sound.working.sound_8bit),
-                    format!("FX Volume: {}", self.controller.sound.working.fx_volume),
-                    format!(
-                        "Dialogue Volume: {}",
-                        self.controller.sound.working.dialogue_volume
-                    ),
-                    format!(
-                        "Music Volume: {}",
-                        self.controller.sound.working.music_volume
-                    ),
-                    format!(
-                        "Comment Volume: {}",
-                        self.controller.sound.working.exclamation_volume
-                    ),
-                    format!(
-                        "Comment Frequency: {}",
-                        self.controller.sound.working.amount_of_speaking
-                    ),
-                ];
-                let mut rows = labels
-                    .into_iter()
-                    .zip(SoundSetting::ALL)
-                    .map(|(label, setting)| {
-                        row(
-                            OptionRowAction::AdjustSound(setting),
-                            label,
-                            (setting != SoundSetting::ThreeDimensional || self.can_3d_sound)
-                                && (!setting.requires_host_authority()
-                                    || self.host_gameplay_rules_editable),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                rows.extend(options_footer_rows(resources));
-                rows
-            }
-            OptionsPage::Gameplay => {
-                let mut rows = crate::ingame_menu::gameplay::GameplaySetting::ALL
-                    .into_iter()
-                    .map(|setting| {
-                        let index = setting.index();
-                        let base_label = self.localized_gameplay.option_label(index);
-                        let label = if setting
-                            == crate::ingame_menu::gameplay::GameplaySetting::CampaignPresentation
-                        {
-                            format!(
-                                "{}: {}",
-                                base_label,
-                                self.localized_gameplay.campaign_presentation(
-                                    self.controller.gameplay.campaign_presentation
-                                )
-                            )
-                        } else {
-                            toggle_label(base_label, setting.is_selected(&self.controller.gameplay))
-                        };
-                        let mut row = row(
-                            OptionRowAction::AdjustGameplay(setting),
-                            label,
-                            gameplay_setting_editable(setting, self.host_gameplay_rules_editable),
-                        );
-                        row.help = Some(self.localized_gameplay.option_tooltip(index).to_string());
-                        row
-                    })
-                    .collect::<Vec<_>>();
-                rows.push(row(
-                    OptionRowAction::ManageSpellforgeContent,
-                    self.localized_gameplay.manage_content().to_string(),
-                    true,
-                ));
-                rows.extend(options_footer_rows(resources));
-                rows
-            }
-            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-            OptionsPage::MultiplayerPrivacy => {
-                let mut rows = vec![row(
-                    OptionRowAction::AdjustMultiplayerPrivacy,
-                    toggle_label(
-                        "Publish Browser Join Links",
-                        self.controller.multiplayer.publish_browser_join_links,
-                    ),
-                    true,
-                )];
-                rows.extend(options_footer_rows(resources));
-                rows
-            }
-            OptionsPage::Shortcuts => {
-                let view = self
-                    .shortcut_scroll
-                    .as_ref()
-                    .expect("shortcut scroll view configured");
-                let mut rows = view
-                    .visible_range()
-                    .map(|index| {
-                        let action = KEY_ACTIONS.get(index).copied().unwrap_or("Unknown");
-                        let key = self.controller.keys.get_key_by_index(index as u16);
-                        let label = if self.rebinding == Some(index as u16) {
-                            if self.shortcut_reserved {
-                                format!("{action}: <Reserved key>")
-                            } else {
-                                format!("{action}: <Press a key>")
-                            }
-                        } else {
-                            format!(
-                                "{action}: {}",
-                                key.map_or_else(|| "None".into(), |key| format!("{key:?}"))
-                            )
-                        };
-                        row(OptionRowAction::Rebind(index as u16), label, true)
-                    })
-                    .collect::<Vec<_>>();
-                rows.extend([
-                    row(
-                        OptionRowAction::ShortcutPreset(0),
-                        "Default 1".to_string(),
-                        true,
-                    ),
-                    row(
-                        OptionRowAction::ShortcutPreset(1),
-                        "Default 2".to_string(),
-                        true,
-                    ),
-                    row(
-                        OptionRowAction::ShortcutPreset(2),
-                        "User Defined".to_string(),
-                        true,
-                    ),
-                    row(
-                        OptionRowAction::AcceptPage,
-                        resources.menu_text.get(MT_BTN_OK),
-                        true,
-                    ),
-                    row(
-                        OptionRowAction::CancelPage,
-                        resources.menu_text.get(MT_BTN_CANCEL),
-                        true,
-                    ),
-                ]);
-                rows
-            }
-        }
-    }
-
-    fn rebuild_frame(&mut self, resources: &IngameMenuResources) {
-        if self.controller.page == OptionsPage::Shortcuts {
-            let visible = shortcut_visible_rows(resources);
-            let row_height = resources.button_dimensions().1 + BUTTON_GAP;
-            let view = self.shortcut_scroll.get_or_insert_with(|| {
-                ScrollView::new(
-                    [
-                        BUTTON_X,
-                        BUTTON_Y,
-                        640 - BUTTON_X - 4,
-                        visible as i32 * row_height,
-                    ],
-                    row_height,
-                    resources,
-                )
-            });
-            view.set_total(REAL_KEY_COUNT as usize);
-            view.set_wheel_step(1);
-        }
-
-        let all_rows = self.all_rows(resources);
-        self.rows = if matches!(
-            self.controller.page,
-            OptionsPage::Hub | OptionsPage::Shortcuts
-        ) {
-            all_rows
-        } else {
-            let (settings, footer): (Vec<_>, Vec<_>) = all_rows
-                .into_iter()
-                .partition(|row| !row.action.is_fixed_page_action());
-            let total_settings = settings.len();
-            self.pager.page = self
-                .pager
-                .page
-                .min(OptionsPager::page_count(total_settings) - 1);
-            let range = self.pager.visible_range(total_settings);
-            let mut visible = settings
-                .into_iter()
-                .skip(range.start)
-                .take(range.len())
-                .collect::<Vec<_>>();
-            visible.push(OptionRow {
-                action: OptionRowAction::PreviousPage,
-                label: "Previous Page".to_string(),
-                help: Some("Show the previous settings page.".to_string()),
-                enabled: self.pager.can_move_previous(),
-            });
-            visible.push(OptionRow {
-                action: OptionRowAction::NextPage,
-                label: "Next Page".to_string(),
-                help: Some("Show the next settings page.".to_string()),
-                enabled: self.pager.can_move_next(total_settings),
-            });
-            visible.extend(footer);
-            visible
-        };
-        self.selected = self.selected.min(self.rows.len().saturating_sub(1));
-        let (button_w, button_h) = resources.button_dimensions();
-        let setting_button_w = 280;
-        let row_h = button_h;
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
-        let mut settings_seen = 0usize;
-        for (index, row) in self.rows.iter().enumerate() {
-            let (x, y, width, height) = match row.action {
-                OptionRowAction::Rebind(_) => (
-                    BUTTON_X,
-                    BUTTON_Y + index as i32 * (row_h + BUTTON_GAP),
-                    button_w.min(
-                        self.shortcut_scroll
-                            .as_ref()
-                            .expect("shortcut scroll view")
-                            .content_width(),
-                    ),
-                    row_h,
-                ),
-
-                action if action.is_adjustment() => {
-                    let setting = settings_seen;
-                    settings_seen += 1;
-                    (
-                        if setting < 6 { 30 } else { 330 },
-                        OPTIONS_SETTING_ROW_START_Y
-                            + i32::try_from(setting % 6).expect("option row fits i32")
-                                * (row_h + OPTIONS_SETTING_ROW_GAP),
-                        setting_button_w,
-                        row_h,
-                    )
-                }
-                OptionRowAction::PreviousPage => (30, 388, button_w, row_h),
-                OptionRowAction::NextPage => {
-                    (30, 388 + row_h + OPTIONS_SETTING_ROW_GAP, button_w, row_h)
-                }
-                OptionRowAction::ManageSpellforgeContent => {
-                    (330, SPELLFORGE_CONTENT_BUTTON_Y, setting_button_w, row_h)
-                }
-                OptionRowAction::AcceptPage if self.controller.page != OptionsPage::Shortcuts => {
-                    (640 - button_w, 388, button_w, row_h)
-                }
-                OptionRowAction::CancelPage if self.controller.page != OptionsPage::Shortcuts => {
-                    (640 - button_w, 388 + row_h + BUTTON_GAP, button_w, row_h)
-                }
-                _ => (
-                    BUTTON_X,
-                    BUTTON_Y + index as i32 * (row_h + BUTTON_GAP),
-                    button_w,
-                    row_h,
-                ),
-            };
-            let display_label = crate::ingame_menu::gameplay::fit_button_label(
-                resources,
-                &row.label,
-                row.enabled,
-                width,
-            );
-            frame.add_widget_absolute(widget_bridge::make_button_enabled(
-                index as u32,
-                &display_label,
-                row.enabled,
-                x,
-                y,
-                width,
-                height,
-            ));
-        }
-        self.frame = frame;
-        self.noise_tracker.clear();
-    }
-
-    fn render(
-        &mut self,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
-    ) {
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
-        if let Some(background) = resources.menu_bg[2] {
-            draw_screen_background(renderer, &background);
-        }
-        let title = match self.controller.page {
-            OptionsPage::Hub => resources.menu_text.get(MT_TTL_OPTIONS),
-            OptionsPage::Graphics => resources.menu_text.get(MT_TTL_GRAPHICS),
-            OptionsPage::Sounds => resources.menu_text.get(MT_TTL_SOUNDS),
-            OptionsPage::Shortcuts => resources.menu_text.get(MT_BTN_SHORTCUTS),
-            OptionsPage::Gameplay => "Gameplay".to_string(),
-            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-            OptionsPage::MultiplayerPrivacy => "Multiplayer / Privacy".to_string(),
-        };
-        if let Some(font) = resources.title_font_any() {
-            render_text_virt_font(renderer, font, self.transform, &title, 20, 20);
-        }
-        if let Some(font) = resources.label_font_any() {
-            let fallback_help = match self.controller.page {
-                OptionsPage::Hub => "Select a settings page.",
-                OptionsPage::Shortcuts => "Click a binding, then press a key. Mouse wheel scrolls.",
-                #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-                OptionsPage::MultiplayerPrivacy => {
-                    "Applies to the next hosted game; traffic remains end-to-end encrypted."
-                }
-                _ => "Click a value or use Left/Right. OK accepts; Cancel restores.",
-            };
-            let help = self
-                .rows
-                .get(self.selected)
-                .and_then(|row| row.help.as_deref())
-                .unwrap_or(fallback_help);
-            let wrapped = wrap_text_for_box_font(font, help, 592, 2);
-            let mut lines = wrapped.lines;
-            if !wrapped.remaining.is_empty()
-                && let Some(last) = lines.last_mut()
-            {
-                let marked = format!("{}…", last.text);
-                last.text =
-                    crate::ingame_menu::gameplay::elide_to_width_by(&marked, 592, |candidate| {
-                        font.text_width(candidate)
-                    });
-            }
-            for (line, y) in lines
-                .iter()
-                .zip((0..).map(|row| 62 + row * (font.height() as i32 + 2)))
-            {
-                render_text_virt_font(renderer, font, self.transform, &line.text, 24, y);
-            }
-        }
-        for (index, widget) in self.frame.widgets().iter().enumerate() {
-            widget_bridge::draw_widget_button(
-                renderer,
-                resources,
-                self.transform,
-                widget,
-                index == self.selected,
-            );
-        }
-        if self.controller.page == OptionsPage::Shortcuts {
-            self.shortcut_scroll
-                .as_ref()
-                .expect("shortcut scroll view")
-                .draw_scrollbar(renderer, self.transform, resources);
-        }
-        if let Some(cursor) = cursor {
-            cursor.draw(renderer, self.transform, &self.input);
-        }
+            })
     }
 }
 
-fn gameplay_setting_editable(
-    setting: crate::ingame_menu::gameplay::GameplaySetting,
-    host_gameplay_rules_editable: bool,
-) -> bool {
-    !setting.requires_host_authority() || host_gameplay_rules_editable
+fn options_controller(seed: &OptionsSeed) -> crate::options_model::OptionsController {
+    crate::options_model::OptionsController::new(
+        seed.graphic.clone(),
+        seed.sound,
+        seed.gameplay,
+        seed.multiplayer,
+        seed.keys.clone(),
+        seed.custom_keys.clone(),
+    )
+}
+
+fn options_result(
+    seed: &OptionsSeed,
+    controller: &crate::options_model::OptionsController,
+) -> OptionsTaskResult {
+    let profile_gameplay = profile_gameplay_after_options(
+        controller.gameplay,
+        seed.profile_gameplay,
+        seed.host_gameplay_rules_editable,
+    );
+    let profile_sound = profile_sound_after_options(
+        controller.sound.working,
+        seed.profile_sound,
+        seed.host_gameplay_rules_editable,
+    );
+    OptionsTaskResult {
+        profile_id: seed.profile_id,
+        graphic_config: controller.graphic.working.clone(),
+        gameplay_config: controller.gameplay,
+        profile_gameplay_config: profile_gameplay,
+        multiplayer_config: controller.multiplayer,
+        sound_config: controller.sound.working,
+        profile_sound_config: profile_sound,
+        key_config: controller.keys.clone(),
+        custom_key_config: controller.custom_keys.clone(),
+        changed: controller.graphic.changed()
+            || controller.gameplay != seed.gameplay
+            || profile_gameplay != seed.profile_gameplay
+            || controller.multiplayer != seed.multiplayer
+            || controller.sound.changed()
+            || !sound_eq(&profile_sound, &seed.profile_sound),
+        resolution_changed: controller.graphic.resolution_changed(),
+        key_config_changed: controller.keys != seed.keys
+            || controller.custom_keys != seed.custom_keys,
+        original_amount_of_speaking: seed.sound.amount_of_speaking,
+        original_gameplay_config: seed.gameplay,
+    }
 }
 
 fn profile_gameplay_after_options(
@@ -1946,35 +1030,6 @@ fn mission_name(mission_id: u32, profiles: Option<&ProfileManager>) -> Option<St
         .filter(|name| !name.trim().is_empty())
 }
 
-fn shortcut_visible_rows(resources: &IngameMenuResources) -> usize {
-    // Reserve five native-height rows for presets and OK/Cancel.
-    let row_count = (480 - BUTTON_Y) / (resources.button_dimensions().1 + BUTTON_GAP);
-    assert!(
-        row_count > 5,
-        "native menu buttons leave no space for shortcut bindings"
-    );
-    ((row_count - 5) as usize)
-        .min(MAX_PAGE_BUTTONS)
-        .min(REAL_KEY_COUNT as usize)
-}
-
-fn options_footer_rows(resources: &IngameMenuResources) -> [OptionRow; 2] {
-    [
-        OptionRow {
-            action: OptionRowAction::AcceptPage,
-            label: resources.menu_text.get(MT_BTN_OK),
-            help: Some("Accept changes on this settings page.".to_string()),
-            enabled: true,
-        },
-        OptionRow {
-            action: OptionRowAction::CancelPage,
-            label: resources.menu_text.get(MT_BTN_CANCEL),
-            help: Some("Discard changes on this settings page.".to_string()),
-            enabled: true,
-        },
-    ]
-}
-
 fn play_button_noise(
     events: &[crate::ui::UiEvent],
     frame: &FrameWnd,
@@ -1997,347 +1052,79 @@ fn play_button_noise(
     );
 }
 
-use crate::options_model::{
-    assign_shortcut as assign_key, is_reserved_shortcut_key as is_reserved_key,
-    promote_shortcut_edits,
-};
-
-const KEY_ACTIONS: &[&str] = &[
-    "Zoom In",
-    "Zoom Out",
-    "Scroll Up",
-    "Scroll Down",
-    "Scroll Left",
-    "Scroll Right",
-    "Minimap",
-    "Character 1",
-    "Character 2",
-    "Character 3",
-    "Character 4",
-    "Character 5",
-    "All Characters",
-    "No Characters",
-    "Crouch",
-    "Stand Up",
-    "Go Behind Buildings",
-    "Toggle Outlines",
-    "Action 1",
-    "Action 2",
-    "Action 3",
-    "Move During Action",
-    "Record Quick Action",
-    "Start Quick Action",
-    "Delete Quick Action",
-    "Show View Cone",
-    "Quick Save",
-    "Quick Load",
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::options_model::shortcut_keys as key_vec;
+    use crate::gfx_types::Keycode;
+    use crate::options_model::OptionsPage;
+    use crate::options_model::{
+        assign_shortcut as assign_key, promote_shortcut_edits, shortcut_keys as key_vec,
+    };
+    use crate::scroll_view::ScrollView;
     use winit::keyboard::KeyCode;
 
-    fn options_fixture() -> OptionsTaskState {
-        let keys = KeyConfig::default_preset();
-        OptionsTaskState {
+    fn options_fixture() -> (OptionsSeed, crate::options_model::OptionsController) {
+        let seed = OptionsSeed {
             profile_id: 1,
-            controller: crate::options_model::OptionsController::new(
-                GraphicConfig::default(),
-                SoundConfig::default(),
-                GameplayConfig::default(),
-                MultiplayerConfig::default(),
-                keys.clone(),
-                keys.clone(),
-            ),
-            original_gameplay: GameplayConfig::default(),
-            original_profile_gameplay: GameplayConfig::default(),
-            original_multiplayer: MultiplayerConfig::default(),
-            original_profile_sound: SoundConfig::default(),
-            original_keys: (keys.clone(), keys),
-            original_amount_of_speaking: SoundConfig::default().amount_of_speaking,
-            frame: FrameWnd::default(),
-            noise_tracker: widget_bridge::NoisyTracker::new(),
-            rows: Vec::new(),
-            selected: 0,
-            pager: OptionsPager::default(),
-            input: ModalInputState::new(),
-            transform: MenuTransform::centered(640, 480),
-            shortcut_scroll: None,
-            rebinding: None,
-            shortcut_dirty: false,
-            shortcut_reserved: false,
-            can_3d_sound: false,
+            graphic: GraphicConfig::default(),
+            sound: SoundConfig::default(),
+            profile_sound: SoundConfig::default(),
+            gameplay: GameplayConfig::default(),
+            profile_gameplay: GameplayConfig::default(),
+            multiplayer: MultiplayerConfig::default(),
+            keys: KeyConfig::default_preset(),
+            custom_keys: KeyConfig::default_preset(),
             host_gameplay_rules_editable: true,
-            localized_gameplay: crate::ingame_menu::gameplay::LocalizedGameplayText::for_locale(
-                "en-GB",
-            ),
-            spellforge_content: None,
-        }
+        };
+        let controller = options_controller(&seed);
+        (seed, controller)
     }
 
     #[test]
     fn options_final_outcome_persists_custom_only_and_type_only_edits() {
         for change in 0..3 {
-            let mut state = options_fixture();
-            state.controller.enter_page(OptionsPage::Shortcuts);
+            let (seed, mut controller) = options_fixture();
+            controller.enter_page(OptionsPage::Shortcuts);
             match change {
-                0 => state
-                    .controller
+                0 => controller
                     .custom_keys
                     .set_binding("ZoomIn", Some(KeyCode::F6), None),
-                1 => state.controller.keys.key_type += 1,
-                2 => state.controller.custom_keys.key_type += 1,
+                1 => controller.keys.key_type += 1,
+                2 => controller.custom_keys.key_type += 1,
                 _ => unreachable!(),
             }
-            state.controller.accept_page(false);
-            let UiTaskOutcome::OptionsAccepted(result) = state.finish() else {
-                panic!("options must produce their final persistence outcome");
-            };
+            controller.accept_page(false);
+            let result = options_result(&seed, &controller);
             assert!(
                 result.key_config_changed,
                 "edit {change} must reach persistence"
             );
-            assert_eq!(result.key_config, state.controller.keys);
-            assert_eq!(result.custom_key_config, state.controller.custom_keys);
+            assert_eq!(result.key_config, controller.keys);
+            assert_eq!(result.custom_key_config, controller.custom_keys);
         }
     }
 
     #[test]
     fn options_final_outcome_does_not_persist_cancelled_or_reverted_edits() {
         for cancel in [false, true] {
-            let mut state = options_fixture();
-            state.controller.enter_page(OptionsPage::Shortcuts);
-            state.controller.custom_keys.key_type += 1;
+            let (seed, mut controller) = options_fixture();
+            controller.enter_page(OptionsPage::Shortcuts);
+            controller.custom_keys.key_type += 1;
             if cancel {
-                state.controller.cancel_page();
+                controller.cancel_page();
             } else {
-                state.controller.accept_page(false);
-                state.controller.enter_page(OptionsPage::Shortcuts);
-                state.controller.custom_keys = state.original_keys.1.clone();
-                state.controller.accept_page(false);
+                controller.accept_page(false);
+                controller.enter_page(OptionsPage::Shortcuts);
+                controller.custom_keys = seed.custom_keys.clone();
+                controller.accept_page(false);
             }
-            let UiTaskOutcome::OptionsAccepted(result) = state.finish() else {
-                panic!("options must produce their final persistence outcome");
-            };
+            let result = options_result(&seed, &controller);
             assert!(!result.key_config_changed);
         }
     }
 
     #[test]
-    fn option_page_counts_include_disabled_settings_but_not_footer_actions() {
-        let mut state = options_fixture();
-        state.can_3d_sound = false;
-        state.host_gameplay_rules_editable = false;
-        for (page, expected) in [
-            (OptionsPage::Hub, 0),
-            (OptionsPage::Shortcuts, 0),
-            (OptionsPage::Sounds, 7),
-            (
-                OptionsPage::Gameplay,
-                crate::ingame_menu::gameplay::GameplaySetting::ALL.len(),
-            ),
-            (OptionsPage::Graphics, available_graphics_settings().count()),
-        ] {
-            state.controller.page = page;
-            assert_eq!(state.setting_count(), expected);
-        }
-        #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-        {
-            state.controller.page = OptionsPage::MultiplayerPrivacy;
-            assert_eq!(state.setting_count(), 1);
-        }
-    }
-
-    #[test]
-    fn options_pager_covers_large_setting_sets_exactly_once() {
-        let total = 45;
-        assert_eq!(OptionsPager::page_count(total), 4);
-        let covered = (0..OptionsPager::page_count(total))
-            .flat_map(|page| OptionsPager { page }.visible_range(total))
-            .collect::<Vec<_>>();
-        assert_eq!(covered, (0..total).collect::<Vec<_>>());
-        assert_eq!(OptionsPager { page: 0 }.visible_range(total), 0..12);
-        assert_eq!(OptionsPager { page: 3 }.visible_range(total), 36..45);
-    }
-
-    #[test]
-    fn options_pager_covers_every_integrated_gameplay_setting() {
-        let total = crate::ingame_menu::gameplay::GameplaySetting::ALL.len();
-        assert_eq!(total, 46, "update this contract when settings are added");
-        assert_eq!(OptionsPager::page_count(total), 4);
-        let covered = (0..OptionsPager::page_count(total))
-            .flat_map(|page| OptionsPager { page }.visible_range(total))
-            .collect::<Vec<_>>();
-        assert_eq!(covered, (0..total).collect::<Vec<_>>());
-        assert_eq!(OptionsPager { page: 3 }.visible_range(total), 36..46);
-        assert!(
-            OptionsPager { page: 3 }
-                .visible_range(total)
-                .contains(&crate::ingame_menu::gameplay::GameplaySetting::FogOfWar.index())
-        );
-    }
-
-    #[test]
-    fn content_manager_is_a_fixed_gameplay_action_not_a_fake_setting() {
-        assert!(OptionRowAction::ManageSpellforgeContent.is_fixed_page_action());
-        assert!(!matches!(
-            OptionRowAction::ManageSpellforgeContent,
-            OptionRowAction::AdjustGameplay(_)
-        ));
-        assert_eq!(
-            crate::ingame_menu::gameplay::GameplaySetting::ALL.len(),
-            46,
-            "Manage Content must not consume a gameplay-setting index"
-        );
-    }
-
-    #[test]
-    fn cooperative_gameplay_layout_has_room_for_long_rows_and_fixed_actions() {
-        let row_height = 34;
-        let maximum_supported_help_font_height = 24;
-        assert_eq!(
-            62 + maximum_supported_help_font_height * 2 + 2,
-            OPTIONS_SETTING_ROW_START_Y
-        );
-        for visible_index in 0..OPTIONS_SETTINGS_PER_PAGE {
-            let column_index = visible_index % 6;
-            let x = if visible_index < 6 { 30 } else { 330 };
-            let y = OPTIONS_SETTING_ROW_START_Y
-                + column_index as i32 * (row_height + OPTIONS_SETTING_ROW_GAP);
-            assert!((0..640).contains(&x));
-            assert!(y >= OPTIONS_SETTING_ROW_START_Y && y + row_height < 350);
-        }
-        let manage = (330, SPELLFORGE_CONTENT_BUTTON_Y, 280, row_height);
-        assert!(manage.0 + manage.2 <= 640);
-        assert!(manage.1 + manage.3 < 388);
-    }
-
-    #[test]
-    fn cooperative_graphics_cursor_pulse_row_is_reachable_and_persistable() {
-        let original = GraphicConfig::default();
-        let settings: Vec<_> = available_graphics_settings().collect();
-        let labels = settings
-            .iter()
-            .map(|setting| graphics_setting_label(&original, "Default", *setting))
-            .collect::<Vec<_>>();
-        let cursor_pulse_index = settings
-            .iter()
-            .position(|setting| *setting == GraphicsSetting::QuickActionCursorPulse)
-            .expect("cursor pulse is exposed");
-        assert_eq!(labels.len(), settings.len());
-        assert_eq!(labels[cursor_pulse_index], "[x] Quick-Action Cursor Pulse");
-        let containing_page = (0..OptionsPager::page_count(labels.len()))
-            .find(|&page| {
-                OptionsPager { page }
-                    .visible_range(labels.len())
-                    .contains(&cursor_pulse_index)
-            })
-            .expect("cursor pulse row is reachable through graphics pagination");
-        assert_eq!(containing_page, 1);
-
-        let mut accepted = original.clone();
-        assert!(adjust_graphics_setting(
-            &mut accepted,
-            GraphicsSetting::QuickActionCursorPulse,
-            1,
-        ));
-        assert!(!accepted.quick_action_cursor_pulse);
-        assert!(
-            !graphic_eq(&accepted, &original),
-            "OK must report this presentation-only change for profile persistence"
-        );
-
-        let cancelled = original.clone();
-        assert!(cancelled.quick_action_cursor_pulse);
-        assert!(graphic_eq(&cancelled, &original));
-    }
-
-    #[test]
-    fn cooperative_graphics_exposes_every_current_visual_control() {
-        let original = GraphicConfig::default();
-        let settings: Vec<_> = graphics_settings_for_retroarch_availability(true).collect();
-        let labels = settings
-            .iter()
-            .map(|setting| graphics_setting_label(&original, "Default", *setting))
-            .collect::<Vec<_>>();
-        assert_eq!(labels.len(), settings.len());
-        assert_eq!(OptionsPager::page_count(labels.len()), 3);
-        let covered = (0..OptionsPager::page_count(labels.len()))
-            .flat_map(|page| OptionsPager { page }.visible_range(labels.len()))
-            .collect::<Vec<_>>();
-        assert_eq!(covered, (0..settings.len()).collect::<Vec<_>>());
-
-        for required in [
-            GraphicsSetting::AdaptiveWidescreen,
-            GraphicsSetting::NativeRefreshPresentation,
-            GraphicsSetting::MissionCountdown,
-            GraphicsSetting::DynamicAmbienceVisuals,
-            GraphicsSetting::DiplomacyVisuals,
-            GraphicsSetting::TextureEffect,
-            GraphicsSetting::UpscaleStrength,
-            GraphicsSetting::EffectTemporalFlicker,
-        ] {
-            let mut changed = original.clone();
-            assert!(adjust_graphics_setting(&mut changed, required, 1));
-            assert!(
-                !graphic_eq(&changed, &original),
-                "{required:?} was not detected for persistence",
-            );
-        }
-    }
-
-    #[test]
-    fn portable_graphics_rows_hide_only_native_shader_presets() {
-        let portable: Vec<_> = graphics_settings_for_retroarch_availability(false).collect();
-        let native: Vec<_> = graphics_settings_for_retroarch_availability(true).collect();
-        let current: Vec<_> = available_graphics_settings().collect();
-
-        assert!(!portable.contains(&GraphicsSetting::ShaderPreset));
-        assert!(native.contains(&GraphicsSetting::ShaderPreset));
-        assert_eq!(native.len(), portable.len() + 1);
-        assert!(GraphicsSetting::ALL.into_iter().all(|setting| {
-            setting == GraphicsSetting::ShaderPreset
-                || (portable.contains(&setting) && native.contains(&setting))
-        }));
-        assert_eq!(
-            current.contains(&GraphicsSetting::ShaderPreset),
-            crate::shader_preset::retroarch_runtime_available(),
-        );
-    }
-
-    #[test]
-    fn scaling_cycle_uses_only_modes_available_to_this_build() {
-        let available = crate::shader_preset::available_texture_scale_modes();
-        let mut config = GraphicConfig::default();
-
-        for _ in 0..available.len() * 2 {
-            assert!(adjust_graphics_setting(
-                &mut config,
-                GraphicsSetting::ScalingMode,
-                1,
-            ));
-            assert!(available.contains(&config.scale_mode));
-        }
-        assert_eq!(
-            available.contains(&robin_engine::graphic_config::TextureScaleMode::RetroArch),
-            crate::shader_preset::retroarch_runtime_available(),
-        );
-    }
-
-    #[test]
     fn multiplayer_client_sees_all_host_rules_read_only_and_retains_own_preferences() {
-        use crate::ingame_menu::gameplay::GameplaySetting;
-        for setting in GameplaySetting::ALL {
-            assert_eq!(
-                gameplay_setting_editable(setting, false),
-                !setting.requires_host_authority(),
-                "client editability drifted for {setting:?}",
-            );
-            assert!(gameplay_setting_editable(setting, true));
-        }
-
         let client_profile = GameplayConfig::default();
         let host_values = GameplayConfig {
             fix_hard_reaction_times: false,
@@ -2383,22 +1170,6 @@ mod tests {
             profile_sound_after_options(host_display, profile, true).amount_of_speaking,
             8,
         );
-    }
-
-    #[test]
-    fn options_pager_stops_at_navigation_boundaries() {
-        let mut pager = OptionsPager::default();
-        assert!(!pager.can_move_previous());
-        assert!(!pager.move_by(-1, 45));
-        assert!(pager.move_by(1, 45));
-        assert_eq!(pager.page, 1);
-        assert!(pager.move_by(99, 45));
-        assert_eq!(pager.page, 2, "one activation advances exactly one page");
-        assert!(pager.move_by(1, 45));
-        assert_eq!(pager.page, 3);
-        assert!(!pager.can_move_next(45));
-        assert!(!pager.move_by(1, 45));
-        assert_eq!(pager.page, 3);
     }
 
     fn pause_picker(manager: &SaveGameManager, mode: SaveLoadMode) -> SaveLoadTaskState {

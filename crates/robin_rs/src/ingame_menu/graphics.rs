@@ -36,7 +36,7 @@ const RESOLUTIONS: [(usize, f32, f32); 3] = [
 const ID_RES_LAST: u32 = ID_RES_BASE + RESOLUTIONS.len() as u32 - 1;
 const ID_ADAPTIVE_WIDESCREEN: u32 = 150;
 const ID_OPT_BASE: u32 = 200;
-const OPTION_COUNT: u32 = 10;
+const OPTION_COUNT: u32 = 12;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
 const ID_SCALE_BASE: u32 = 400;
@@ -59,9 +59,8 @@ fn scale_modes() -> &'static [TextureScaleMode] {
 
 /// Display the graphics sub-screen.  Returns `(options_changed, resolution_changed)`.
 ///
-/// The frame loop stays here instead of `run_modal`: a tick awaits the
-/// RetroArch preset picker, and the closing frame is still presented and
-/// paced before committing.
+/// Preset imports are polled by the page while the host continues presenting
+/// frames. The closing frame is presented and paced before committing.
 pub async fn show_graphics(
     io: &mut ModalScreenIo<'_, '_>,
     config: &mut GraphicConfig,
@@ -69,7 +68,7 @@ pub async fn show_graphics(
     let input_state = ModalInputState::for_screen(io.window, io.renderer);
     let mut screen = GraphicsScreen::new(io.resources, config, input_state);
     while !screen.done {
-        screen.tick(io).await;
+        screen.tick(io);
         // Preserve the original final-frame presentation and sleep on close.
         crate::window::sleep_ui_frame().await;
     }
@@ -82,7 +81,7 @@ pub async fn show_graphics(
 
 /// Live modal owner: keyboard capture and widget interaction state cannot be
 /// restored from serialization. Edited configuration remains ordinary data.
-struct GraphicsScreen {
+pub(crate) struct GraphicsScreen {
     edit: crate::options_model::GraphicsEdit,
     dirty: bool,
     preset_scroll: usize,
@@ -96,15 +95,21 @@ struct GraphicsScreen {
     title: String,
     res_label: String,
     fx_label: String,
-    done: bool,
+    pub(crate) done: bool,
+    pub(crate) exit_requested: bool,
     accepted: bool,
     parameter_page_effect: bool,
     parameter_status: String,
     input_state: ModalInputState,
+    preset_picker: Option<PresetPicker>,
 }
 
+type PresetPicker = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Option<std::path::PathBuf>, String>>>,
+>;
+
 impl GraphicsScreen {
-    fn new(
+    pub(crate) fn new(
         resources: &IngameMenuResources,
         config: &GraphicConfig,
         input_state: ModalInputState,
@@ -135,16 +140,16 @@ impl GraphicsScreen {
             let label = super::gameplay::fit_button_label(resources, label, true, width);
             frame.add_widget_absolute(widget_bridge::make_button(id, &label, x, y, width, height));
         };
-        for (i, label) in ["Display", "Scaling", "Effects & Tuning"]
+        for (i, label) in ["Display", "Scaling", "Effects & Tuning", "Window"]
             .iter()
             .enumerate()
         {
             add(
                 ID_PAGE_BASE + i as u32,
                 label,
-                30 + i as i32 * 196,
+                30 + i as i32 * 147,
                 55,
-                188,
+                139,
                 row_h,
             );
         }
@@ -178,6 +183,8 @@ impl GraphicsScreen {
             "Dynamic Ambience Visuals".into(),
             "Diplomacy Colors (neutral = amber)".into(),
             "Quick-Action Cursor Pulse".into(),
+            "Fullscreen".into(),
+            "Hardware Cursor".into(),
         ];
         assert_eq!(option_labels.len(), OPTION_COUNT as usize);
         for (i, label) in option_labels.iter().enumerate() {
@@ -232,31 +239,34 @@ impl GraphicsScreen {
             res_label,
             fx_label,
             done,
+            exit_requested: false,
             accepted,
             parameter_page_effect,
             parameter_status,
             input_state,
+            preset_picker: None,
         }
     }
 
-    async fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) {
+    pub(crate) fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) {
+        self.poll_preset_picker(io.renderer);
         let retroarch_presets = crate::shader_preset::retroarch_presets();
         let scale_modes = scale_modes();
         let screen = ScreenFrame::begin(io, &mut self.input_state);
         let transform = screen.transform;
         for event in &screen.events {
             match ScreenKey::from_event(event) {
-                Some(ScreenKey::Quit) => self.done = true,
+                Some(ScreenKey::Quit) => {
+                    self.exit_requested = true;
+                    self.done = true;
+                }
                 Some(ScreenKey::Next) => self.parameter_page_effect = !self.parameter_page_effect,
                 Some(ScreenKey::Confirm) => {
                     self.accepted = true;
                     self.done = true;
                 }
                 Some(ScreenKey::Cancel) => self.done = true,
-                None => {
-                    self.handle_event(event, transform, io.renderer, retroarch_presets)
-                        .await
-                }
+                None => self.handle_event(event, transform, retroarch_presets),
             }
         }
 
@@ -295,7 +305,7 @@ impl GraphicsScreen {
             scale_modes,
             retroarch_presets,
         );
-        for i in 0..3 {
+        for i in 0..4 {
             widget_bridge::draw_widget_button(
                 renderer,
                 resources,
@@ -319,11 +329,10 @@ impl GraphicsScreen {
 
     /// Page-specific mouse and keyboard input (the standard modal keys are
     /// handled by [`Self::tick`]).
-    async fn handle_event(
+    fn handle_event(
         &mut self,
         event: &GameEvent,
         transform: MenuTransform,
-        renderer: &mut Renderer,
         retroarch_presets: &[crate::shader_preset::RetroArchPresetInfo],
     ) {
         match *event {
@@ -380,20 +389,8 @@ impl GraphicsScreen {
                 keycode: Keycode::Char(b'i'),
                 ..
             } if self.page == 2 && self.edit.working.scale_mode == TextureScaleMode::RetroArch => {
-                match pick_retroarch_preset().await {
-                    Ok(Some(path)) => {
-                        let selected = path.to_string_lossy().to_string();
-                        match renderer.validate_retroarch_preset(&selected) {
-                            Ok(()) => {
-                                self.edit.working.shader_preset = selected;
-                                self.parameter_status = "Imported preset validated".to_string();
-                                self.dirty = true;
-                            }
-                            Err(error) => self.parameter_status = format!("Import failed: {error}"),
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(error) => self.parameter_status = error,
+                if self.preset_picker.is_none() {
+                    self.preset_picker = Some(Box::pin(pick_retroarch_preset()));
                 }
             }
             GameEvent::KeyDown { keycode, .. }
@@ -439,7 +436,7 @@ impl GraphicsScreen {
         retroarch_presets: &[crate::shader_preset::RetroArchPresetInfo],
     ) {
         match id {
-            id if (ID_PAGE_BASE..ID_PAGE_BASE + 3).contains(&id) => self.page = id - ID_PAGE_BASE,
+            id if (ID_PAGE_BASE..ID_PAGE_BASE + 4).contains(&id) => self.page = id - ID_PAGE_BASE,
             ID_OK => {
                 self.accepted = true;
                 self.done = true;
@@ -591,7 +588,9 @@ impl GraphicsScreen {
                     self.edit.working.adaptive_widescreen,
                 );
             }
-            for i in 0..OPTION_COUNT {
+        }
+        if matches!(self.page, 0 | 3) {
+            for i in (0..OPTION_COUNT).filter(|i| widget_page(ID_OPT_BASE + i) == Some(self.page)) {
                 if let Some(w) = self.frame.widget(ID_OPT_BASE + i) {
                     widget_bridge::draw_widget_radio(
                         renderer,
@@ -656,7 +655,35 @@ impl GraphicsScreen {
         }
     }
 
-    fn finish(self, config: &mut GraphicConfig) -> (bool, bool) {
+    fn poll_preset_picker(&mut self, renderer: &mut Renderer) {
+        let Some(picker) = self.preset_picker.as_mut() else {
+            return;
+        };
+        // Every host ticks this page once per UI frame, so a wake does not need
+        // to schedule a separate frame or retain a borrow of the renderer.
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        let std::task::Poll::Ready(result) = picker.as_mut().poll(&mut context) else {
+            return;
+        };
+        self.preset_picker = None;
+        match result {
+            Ok(Some(path)) => {
+                let selected = path.to_string_lossy().into_owned();
+                match renderer.validate_retroarch_preset(&selected) {
+                    Ok(()) => {
+                        self.edit.working.shader_preset = selected;
+                        self.parameter_status = "Imported preset validated".to_owned();
+                        self.dirty = true;
+                    }
+                    Err(error) => self.parameter_status = format!("Import failed: {error}"),
+                }
+            }
+            Ok(None) => {}
+            Err(error) => self.parameter_status = error,
+        }
+    }
+
+    pub(crate) fn finish(self, config: &mut GraphicConfig) -> (bool, bool) {
         self.edit.commit(self.accepted && self.dirty, config)
     }
 }
@@ -664,6 +691,7 @@ impl GraphicsScreen {
 fn widget_page(id: u32) -> Option<u32> {
     match id {
         ID_ADAPTIVE_WIDESCREEN | ID_RES_BASE..=ID_RES_LAST | ID_OPT_BASE..=209 => Some(0),
+        210..=211 => Some(3),
         ID_SCALE_BASE..=499 => Some(1),
         ID_EFFECT_BASE..=599 => Some(2),
         _ => None,
@@ -690,10 +718,12 @@ mod screen_state_tests {
             res_label: String::new(),
             fx_label: String::new(),
             done: false,
+            exit_requested: false,
             accepted: false,
             parameter_page_effect: false,
             parameter_status: String::new(),
             input_state: ModalInputState::new(),
+            preset_picker: None,
         }
     }
 
@@ -737,7 +767,12 @@ fn option_position(index: usize, row_h: i32) -> (i32, i32) {
         index < OPTION_COUNT as usize,
         "invalid graphics option index"
     );
-    if index < 7 {
+    if index >= 10 {
+        (
+            30,
+            OPTION_START_Y + (index - 10) as i32 * (row_h + OPTION_SPACING),
+        )
+    } else if index < 7 {
         (
             330,
             OPTION_START_Y + index as i32 * (row_h + OPTION_SPACING),
@@ -975,7 +1010,7 @@ fn is_resolution_selected(config: &GraphicConfig, idx: usize) -> bool {
     (config.resolution_x - want_x).abs() < 0.5 && (config.resolution_y - want_y).abs() < 0.5
 }
 
-const ORIGINAL_TOGGLES: [crate::options_model::GraphicsSetting; 10] = {
+const GRAPHICS_TOGGLES: [crate::options_model::GraphicsSetting; OPTION_COUNT as usize] = {
     use crate::options_model::GraphicsSetting::*;
     [
         AlphaVisionField,
@@ -988,11 +1023,13 @@ const ORIGINAL_TOGGLES: [crate::options_model::GraphicsSetting; 10] = {
         DynamicAmbienceVisuals,
         DiplomacyVisuals,
         QuickActionCursorPulse,
+        Fullscreen,
+        HardwareCursor,
     ]
 };
 
 fn apply_option_toggle(config: &mut GraphicConfig, idx: usize) {
-    crate::options_model::adjust_graphics_setting(config, ORIGINAL_TOGGLES[idx], 1);
+    crate::options_model::adjust_graphics_setting(config, GRAPHICS_TOGGLES[idx], 1);
 }
 
 fn is_option_selected(config: &GraphicConfig, idx: usize) -> bool {
@@ -1007,6 +1044,8 @@ fn is_option_selected(config: &GraphicConfig, idx: usize) -> bool {
         7 => config.dynamic_ambience_visuals,
         8 => config.diplomacy_visuals,
         9 => config.quick_action_cursor_pulse,
+        10 => config.fullscreen,
+        11 => config.hardware_cursor,
         _ => false,
     }
 }
@@ -1030,7 +1069,10 @@ mod tests {
             assert_eq!(widget_page(ID_SCALE_BASE + index as u32), Some(1));
         }
         for index in 0..OPTION_COUNT {
-            assert_eq!(widget_page(ID_OPT_BASE + index), Some(0));
+            assert_eq!(
+                widget_page(ID_OPT_BASE + index),
+                Some(if index < 10 { 0 } else { 3 })
+            );
         }
         for index in 0..TextureEffect::ALL.len() {
             assert_eq!(widget_page(ID_EFFECT_BASE + index as u32), Some(2));
@@ -1039,6 +1081,19 @@ mod tests {
             assert_eq!(widget_page(id), None);
         }
         const { assert!(PRESET_LIST_Y + 5 * PARAMETER_ROW_H < 410) };
+    }
+
+    #[test]
+    fn window_controls_change_only_their_selected_setting() {
+        let mut config = GraphicConfig::default();
+        let fullscreen = config.fullscreen;
+        let hardware_cursor = config.hardware_cursor;
+        apply_option_toggle(&mut config, 10);
+        assert_eq!(config.fullscreen, !fullscreen);
+        assert_eq!(config.hardware_cursor, hardware_cursor);
+        apply_option_toggle(&mut config, 11);
+        assert_eq!(config.fullscreen, !fullscreen);
+        assert_eq!(config.hardware_cursor, !hardware_cursor);
     }
 
     #[test]
@@ -1063,7 +1118,7 @@ mod tests {
         assert!(config.quick_action_cursor_pulse);
         apply_option_toggle(&mut config, 9);
         assert!(!config.quick_action_cursor_pulse);
-        assert_eq!(OPTION_COUNT, 10);
+        assert_eq!(OPTION_COUNT, 12);
     }
 
     #[test]
@@ -1073,7 +1128,7 @@ mod tests {
             let (x, y) = option_position(index, row_h);
             assert!(x >= 30 && x + COLUMN_W <= 610);
             assert!(y + row_h <= 426);
-            if x == 30 {
+            if x == 30 && index < 10 {
                 assert!(y >= 296, "toggles must sit below the resolution controls");
             }
         }

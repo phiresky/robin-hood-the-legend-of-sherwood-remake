@@ -1,10 +1,6 @@
-//! Shared graphics/sound option vocabulary and mutation policy. Both the original
-//! layout adapter and the cooperative mission adapter resolve controls here.
-//!
-//! The transaction controller is shared; adapters retain layout/polling and
-//! share one shortcut assignment and preset policy.
+//! Options transactions and control policies used by the shared menu pages.
 
-use robin_engine::graphic_config::{GraphicConfig, TextureEffect};
+use robin_engine::graphic_config::GraphicConfig;
 use robin_engine::sound_config::SoundConfig;
 use serde::{Deserialize, Serialize};
 
@@ -34,32 +30,8 @@ impl SoundEdit {
     }
 }
 
-pub(crate) fn adjust_sound_setting(
-    config: &mut SoundConfig,
-    setting: SoundSetting,
-    delta: i32,
-    can_3d: bool,
-    host_authority: bool,
-) -> bool {
-    if setting.requires_host_authority() && !host_authority {
-        return false;
-    }
-    match setting {
-        SoundSetting::ThreeDimensional if can_3d => config.sound_3d = !config.sound_3d,
-        SoundSetting::ThreeDimensional => return false,
-        SoundSetting::EightBit => config.sound_8bit = !config.sound_8bit,
-        _ => {
-            let value = sound_value_mut(config, setting);
-            *value = i32::from(*value).saturating_add(delta).clamp(0, 9) as u16;
-        }
-    }
-    true
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum SoundSetting {
-    ThreeDimensional,
-    EightBit,
     FxVolume,
     DialogueVolume,
     MusicVolume,
@@ -68,16 +40,6 @@ pub(crate) enum SoundSetting {
 }
 
 impl SoundSetting {
-    pub(crate) const ALL: [Self; 7] = [
-        Self::ThreeDimensional,
-        Self::EightBit,
-        Self::FxVolume,
-        Self::DialogueVolume,
-        Self::MusicVolume,
-        Self::CommentVolume,
-        Self::CommentFrequency,
-    ];
-
     pub(crate) const fn requires_host_authority(self) -> bool {
         matches!(self, Self::CommentFrequency)
     }
@@ -90,9 +52,6 @@ pub(crate) fn sound_value_mut(config: &mut SoundConfig, setting: SoundSetting) -
         SoundSetting::MusicVolume => &mut config.music_volume,
         SoundSetting::CommentVolume => &mut config.exclamation_volume,
         SoundSetting::CommentFrequency => &mut config.amount_of_speaking,
-        SoundSetting::ThreeDimensional | SoundSetting::EightBit => {
-            panic!("boolean sound setting has no numeric value")
-        }
     }
 }
 
@@ -109,8 +68,7 @@ pub(crate) fn sound_eq(left: &SoundConfig, right: &SoundConfig) -> bool {
         && left.fx_muted == right.fx_muted
 }
 
-/// Shared working/original graphics transaction; adapters retain their own
-/// geometry, input scheduling and renderer preview effects.
+/// Graphics page transaction, committed when the user accepts the edits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct GraphicsEdit {
     pub(crate) original: GraphicConfig,
@@ -134,9 +92,8 @@ impl GraphicsEdit {
     }
 
     pub(crate) fn commit(self, accepted: bool, target: &mut GraphicConfig) -> (bool, bool) {
-        // Compatibility dialogs request re-application after any accepted
-        // widget edit, even when a second edit returns to the original value.
-        // Cooperative adapters use changed() for their separate dirty policy.
+        // An accepted widget edit requests reapplication even when a second
+        // edit restores the value present when the page opened.
         if !accepted {
             return (false, false);
         }
@@ -177,7 +134,6 @@ pub(crate) fn graphic_eq(left: &GraphicConfig, right: &GraphicConfig) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum GraphicsSetting {
-    Resolution,
     AlphaVisionField,
     TransparentShadows,
     EffectAnimations,
@@ -191,9 +147,6 @@ pub(crate) enum GraphicsSetting {
     DynamicAmbienceVisuals,
     DiplomacyVisuals,
     QuickActionCursorPulse,
-    ScalingMode,
-    ShaderPreset,
-    TextureEffect,
     UpscaleStrength,
     UpscaleEdgeThreshold,
     UpscaleArtifactRemoval,
@@ -228,8 +181,7 @@ enum PageSnapshot {
     MultiplayerPrivacy(robin_engine::multiplayer_config::MultiplayerConfig),
 }
 
-/// Accepted interactions in the original layout can explicitly reapply a
-/// reverted setting. The cooperative adapter commits final-value differences.
+/// Changes accepted by a page, including explicit reapplication of a setting.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OptionsEffects {
     pub(crate) profile_changed: bool,
@@ -351,7 +303,7 @@ pub(crate) enum ShortcutPreset {
     Custom,
 }
 
-/// Both layouts use the original binding rules: clear every conflicting action,
+/// Clear every conflicting action,
 /// except the intentional shared Shift binding for doors and quick planning.
 pub(crate) fn assign_shortcut(
     config: &mut crate::key_config::KeyConfig,
@@ -426,70 +378,12 @@ pub(crate) fn is_reserved_shortcut_key(key: winit::keyboard::KeyCode) -> bool {
     )
 }
 
-impl GraphicsSetting {
-    pub(crate) const ALL: [Self; 25] = [
-        Self::Resolution,
-        Self::AlphaVisionField,
-        Self::TransparentShadows,
-        Self::EffectAnimations,
-        Self::BackgroundAnimations,
-        Self::FogNightAllSprites,
-        Self::Fullscreen,
-        Self::HardwareCursor,
-        Self::AdaptiveWidescreen,
-        Self::NativeRefreshPresentation,
-        Self::MissionCountdown,
-        Self::DynamicAmbienceVisuals,
-        Self::DiplomacyVisuals,
-        Self::QuickActionCursorPulse,
-        Self::ScalingMode,
-        Self::ShaderPreset,
-        Self::TextureEffect,
-        Self::UpscaleStrength,
-        Self::UpscaleEdgeThreshold,
-        Self::UpscaleArtifactRemoval,
-        Self::EffectScanlines,
-        Self::EffectPhosphorMask,
-        Self::EffectBloom,
-        Self::EffectCurvature,
-        Self::EffectTemporalFlicker,
-    ];
-}
-
-pub(crate) fn available_graphics_settings() -> impl Iterator<Item = GraphicsSetting> {
-    graphics_settings_for_retroarch_availability(crate::shader_preset::retroarch_runtime_available())
-}
-
-pub(crate) fn graphics_settings_for_retroarch_availability(
-    retroarch_available: bool,
-) -> impl Iterator<Item = GraphicsSetting> {
-    GraphicsSetting::ALL
-        .into_iter()
-        .filter(move |setting| *setting != GraphicsSetting::ShaderPreset || retroarch_available)
-}
-
-fn cycle_index(current: usize, len: usize, delta: i32) -> usize {
-    assert!(len > 0, "cannot cycle an empty option list");
-    (current as i128 + i128::from(delta)).rem_euclid(len as i128) as usize
-}
-
 pub(crate) fn adjust_graphics_setting(
     config: &mut GraphicConfig,
     setting: GraphicsSetting,
     delta: i32,
 ) -> bool {
     match setting {
-        GraphicsSetting::Resolution => {
-            const MODES: &[(f32, f32)] = &[(640.0, 480.0), (800.0, 600.0), (1024.0, 768.0)];
-            let current = MODES
-                .iter()
-                .position(|(w, h)| {
-                    (config.resolution_x - w).abs() < 0.5 && (config.resolution_y - h).abs() < 0.5
-                })
-                .unwrap_or(0);
-            let next = cycle_index(current, MODES.len(), delta);
-            config.set_resolution(MODES[next].0, MODES[next].1);
-        }
         GraphicsSetting::AlphaVisionField => config.framed_view_cone = !config.framed_view_cone,
         GraphicsSetting::TransparentShadows => config.display_shadow = !config.display_shadow,
         GraphicsSetting::EffectAnimations => config.display_titbits = !config.display_titbits,
@@ -514,37 +408,6 @@ pub(crate) fn adjust_graphics_setting(
         GraphicsSetting::DiplomacyVisuals => config.diplomacy_visuals = !config.diplomacy_visuals,
         GraphicsSetting::QuickActionCursorPulse => {
             config.quick_action_cursor_pulse = !config.quick_action_cursor_pulse
-        }
-        GraphicsSetting::ScalingMode => {
-            let modes = crate::shader_preset::available_texture_scale_modes();
-            let current = modes
-                .iter()
-                .position(|mode| *mode == config.scale_mode)
-                .unwrap_or(0);
-            config.scale_mode = modes[cycle_index(current, modes.len(), delta)];
-        }
-        GraphicsSetting::ShaderPreset => {
-            if !crate::shader_preset::retroarch_runtime_available() {
-                return false;
-            }
-            let presets = crate::shader_preset::retroarch_presets();
-            if !presets.is_empty() {
-                let current = presets
-                    .iter()
-                    .position(|preset| preset.id == config.shader_preset)
-                    .unwrap_or(0);
-                config.shader_preset = presets[cycle_index(current, presets.len(), delta)]
-                    .id
-                    .clone();
-            }
-        }
-        GraphicsSetting::TextureEffect => {
-            let all = TextureEffect::ALL;
-            let current = all
-                .iter()
-                .position(|effect| *effect == config.texture_effect)
-                .unwrap_or(0);
-            config.texture_effect = all[cycle_index(current, all.len(), delta)];
         }
         GraphicsSetting::UpscaleStrength => {
             adjust_percent(&mut config.upscale_parameters.strength, delta)
@@ -585,96 +448,6 @@ fn adjust_percent(value: &mut u8, delta: i32) {
     };
 }
 
-pub(crate) fn graphics_setting_label(
-    config: &GraphicConfig,
-    preset: &str,
-    setting: GraphicsSetting,
-) -> String {
-    match setting {
-        GraphicsSetting::Resolution => format!(
-            "Resolution: {}x{}",
-            config.resolution_x.round(),
-            config.resolution_y.round()
-        ),
-        GraphicsSetting::AlphaVisionField => {
-            toggle_label("Alpha Vision Field", !config.framed_view_cone)
-        }
-        GraphicsSetting::TransparentShadows => {
-            toggle_label("Transparent Shadows", config.display_shadow)
-        }
-        GraphicsSetting::EffectAnimations => {
-            toggle_label("Effect Animations", config.display_titbits)
-        }
-        GraphicsSetting::BackgroundAnimations => {
-            toggle_label("Background Animations", config.display_anim)
-        }
-        GraphicsSetting::FogNightAllSprites => {
-            toggle_label("Fog/Night All Sprites", config.apply_fog_to_all_sprites)
-        }
-        GraphicsSetting::Fullscreen => toggle_label("Fullscreen", config.fullscreen),
-        GraphicsSetting::HardwareCursor => toggle_label("Hardware Cursor", config.hardware_cursor),
-        GraphicsSetting::AdaptiveWidescreen => {
-            toggle_label("Adaptive Widescreen", config.adaptive_widescreen)
-        }
-        GraphicsSetting::NativeRefreshPresentation => toggle_label(
-            "Native-Refresh Presentation",
-            config.native_refresh_presentation,
-        ),
-        GraphicsSetting::MissionCountdown => {
-            toggle_label("Mission Countdown", config.show_mission_countdown)
-        }
-        GraphicsSetting::DynamicAmbienceVisuals => {
-            toggle_label("Dynamic Ambience Visuals", config.dynamic_ambience_visuals)
-        }
-        GraphicsSetting::DiplomacyVisuals => {
-            toggle_label("Diplomacy Colors", config.diplomacy_visuals)
-        }
-        GraphicsSetting::QuickActionCursorPulse => toggle_label(
-            "Quick-Action Cursor Pulse",
-            config.quick_action_cursor_pulse,
-        ),
-        GraphicsSetting::ScalingMode => format!("Scaling: {}", config.scale_mode.label()),
-        GraphicsSetting::ShaderPreset => format!("Shader Preset: {preset}"),
-        GraphicsSetting::TextureEffect => {
-            format!("Texture Effect: {}", config.texture_effect.label())
-        }
-        GraphicsSetting::UpscaleStrength => {
-            format!("Upscale Strength: {}%", config.upscale_parameters.strength)
-        }
-        GraphicsSetting::UpscaleEdgeThreshold => format!(
-            "Upscale Edge Threshold: {}%",
-            config.upscale_parameters.edge_threshold
-        ),
-        GraphicsSetting::UpscaleArtifactRemoval => format!(
-            "Upscale Artifact Removal: {}%",
-            config.upscale_parameters.artifact_removal
-        ),
-        GraphicsSetting::EffectScanlines => format!(
-            "Effect Scanlines: {}%",
-            config.texture_effect_parameters.scanlines
-        ),
-        GraphicsSetting::EffectPhosphorMask => format!(
-            "Effect Phosphor Mask: {}%",
-            config.texture_effect_parameters.phosphor_mask
-        ),
-        GraphicsSetting::EffectBloom => {
-            format!("Effect Bloom: {}%", config.texture_effect_parameters.bloom)
-        }
-        GraphicsSetting::EffectCurvature => format!(
-            "Effect Curvature: {}%",
-            config.texture_effect_parameters.curvature
-        ),
-        GraphicsSetting::EffectTemporalFlicker => format!(
-            "Effect Temporal Flicker: {}%",
-            config.texture_effect_parameters.temporal_flicker
-        ),
-    }
-}
-
-pub(crate) fn toggle_label(label: &str, selected: bool) -> String {
-    format!("{} {label}", if selected { "[x]" } else { "[ ]" })
-}
-
 #[cfg(test)]
 mod tests {
     fn controller() -> super::OptionsController {
@@ -686,59 +459,6 @@ mod tests {
             crate::key_config::KeyConfig::default_preset(),
             crate::key_config::KeyConfig::alternate_preset(),
         )
-    }
-
-    #[test]
-    fn both_adapters_share_transactions_for_every_graphics_and_sound_setting() {
-        use super::*;
-        for setting in available_graphics_settings() {
-            for accepted in [false, true] {
-                let mut original = controller();
-                let mut cooperative = controller();
-                original.enter_page(OptionsPage::Graphics);
-                cooperative.enter_page(OptionsPage::Graphics);
-                // The legacy screen returns only its committed values; the
-                // cooperative screen edits the page transaction in place.
-                let mut page = GraphicsEdit::new(original.graphic.working.clone());
-                adjust_graphics_setting(&mut page.working, setting, 1);
-                let (changed, _) = page.commit(accepted, &mut original.graphic.working);
-                original.accept_page(changed);
-                adjust_graphics_setting(&mut cooperative.graphic.working, setting, 1);
-                if accepted {
-                    cooperative.accept_page(false);
-                } else {
-                    cooperative.cancel_page();
-                }
-                assert!(
-                    graphic_eq(&original.graphic.working, &cooperative.graphic.working),
-                    "{setting:?}"
-                );
-                assert_eq!(original.page, OptionsPage::Hub);
-                assert_eq!(cooperative.page, OptionsPage::Hub);
-            }
-        }
-        for setting in SoundSetting::ALL {
-            for accepted in [false, true] {
-                let mut original = controller();
-                let mut cooperative = controller();
-                original.enter_page(OptionsPage::Sounds);
-                cooperative.enter_page(OptionsPage::Sounds);
-                let mut page = SoundEdit::new(original.sound.working);
-                adjust_sound_setting(&mut page.working, setting, 1, true, true);
-                let changed = page.commit(accepted, &mut original.sound.working);
-                original.accept_page(changed);
-                adjust_sound_setting(&mut cooperative.sound.working, setting, 1, true, true);
-                if accepted {
-                    cooperative.accept_page(false);
-                } else {
-                    cooperative.cancel_page();
-                }
-                assert!(
-                    sound_eq(&original.sound.working, &cooperative.sound.working),
-                    "{setting:?}"
-                );
-            }
-        }
     }
 
     #[test]
@@ -836,99 +556,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sound_adjustment_enforces_device_and_simulation_authority() {
-        let mut config = SoundConfig::default();
-        let original = config;
-        assert!(!adjust_sound_setting(
-            &mut config,
-            SoundSetting::ThreeDimensional,
-            1,
-            false,
-            true
-        ));
-        assert!(!adjust_sound_setting(
-            &mut config,
-            SoundSetting::CommentFrequency,
-            1,
-            true,
-            false
-        ));
-        assert!(sound_eq(&config, &original));
-        assert!(adjust_sound_setting(
-            &mut config,
-            SoundSetting::FxVolume,
-            100,
-            false,
-            false
-        ));
-        assert_eq!(config.fx_volume, 9);
-        assert_eq!(config.amount_of_speaking, original.amount_of_speaking);
-        assert!(adjust_sound_setting(
-            &mut config,
-            SoundSetting::FxVolume,
-            -100,
-            false,
-            false
-        ));
-        assert_eq!(config.fx_volume, 0);
-    }
-
-    #[test]
-    fn cancelling_every_sound_setting_preserves_original_config() {
-        for setting in SoundSetting::ALL {
-            let mut config = SoundConfig::default();
-            let original = config;
-            let mut edit = SoundEdit::new(config);
-            assert!(adjust_sound_setting(
-                &mut edit.working,
-                setting,
-                1,
-                true,
-                true
-            ));
-            assert!(!edit.commit(false, &mut config));
-            assert!(sound_eq(&config, &original), "{setting:?}");
-        }
-    }
-
-    #[test]
-    fn cancelling_every_available_graphics_setting_preserves_original_config() {
-        for setting in available_graphics_settings() {
-            let mut config = GraphicConfig::default();
-            let original = serde_json::to_value(&config).unwrap();
-            let mut edit = GraphicsEdit::new(config.clone());
-            assert!(adjust_graphics_setting(&mut edit.working, setting, 1));
-            assert_eq!(edit.commit(false, &mut config), (false, false));
-            assert_eq!(
-                serde_json::to_value(&config).unwrap(),
-                original,
-                "{setting:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn accept_classifies_only_resolution_policy_changes_as_resize() {
-        for setting in available_graphics_settings() {
-            let mut config = GraphicConfig::default();
-            let mut edit = GraphicsEdit::new(config.clone());
-            adjust_graphics_setting(&mut edit.working, setting, 1);
-            let expected_resize = matches!(
-                setting,
-                GraphicsSetting::Resolution | GraphicsSetting::AdaptiveWidescreen
-            );
-            let expected = serde_json::to_value(&edit.working).unwrap();
-            let (_, resize) = edit.commit(true, &mut config);
-            assert_eq!(resize, expected_resize, "{setting:?}");
-            assert_eq!(
-                serde_json::to_value(config).unwrap(),
-                expected,
-                "{setting:?}"
-            );
-        }
-    }
-
-    #[test]
     fn reverted_toggle_is_clean_but_explicit_reapply_remains_supported() {
         let mut config = GraphicConfig::default();
         let mut edit = GraphicsEdit::new(config.clone());
@@ -942,55 +569,4 @@ mod tests {
         assert!(!edit.changed());
         assert_eq!(edit.commit(true, &mut config), (true, false));
     }
-}
-
-#[test]
-fn numeric_sound_adjustment_clamps_even_extreme_deltas() {
-    for setting in [
-        SoundSetting::FxVolume,
-        SoundSetting::DialogueVolume,
-        SoundSetting::MusicVolume,
-        SoundSetting::CommentVolume,
-        SoundSetting::CommentFrequency,
-    ] {
-        for initial in [0, 5, 9, u16::MAX] {
-            for delta in [i32::MIN, -1, 0, 1, i32::MAX] {
-                let mut config = SoundConfig::default();
-                *sound_value_mut(&mut config, setting) = initial;
-                assert!(adjust_sound_setting(
-                    &mut config,
-                    setting,
-                    delta,
-                    true,
-                    true
-                ));
-                assert_eq!(
-                    *sound_value_mut(&mut config, setting),
-                    (i64::from(initial) + i64::from(delta)).clamp(0, 9) as u16
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn option_cycles_wrap_without_narrowing_indices_or_overflowing_deltas() {
-    for len in 1..10 {
-        for current in 0..len {
-            for delta in -20..20 {
-                let expected = (current as i32 + delta).rem_euclid(len as i32) as usize;
-                assert_eq!(cycle_index(current, len, delta), expected);
-            }
-        }
-    }
-    assert_eq!(cycle_index(2, 3, i32::MAX), 0);
-    assert_eq!(cycle_index(2, 3, i32::MIN), 0);
-    assert_eq!(cycle_index(usize::MAX - 1, usize::MAX, 1), 0);
-    assert_eq!(cycle_index(0, usize::MAX, -1), usize::MAX - 1);
-}
-
-#[test]
-#[should_panic(expected = "cannot cycle an empty option list")]
-fn empty_option_cycle_is_not_a_valid_zero_index() {
-    cycle_index(0, 0, 1);
 }

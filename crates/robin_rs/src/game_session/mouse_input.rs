@@ -1650,7 +1650,6 @@ pub(super) fn handle_pause_menu_events(
                         profile_sound: profile_sound_config,
                         keys: host.frontend.preferences().key_config().clone(),
                         custom_keys: host.frontend.preferences().custom_key_config().clone(),
-                        can_3d_sound: host.audio.sound.can_3d_sound(),
                         host_gameplay_rules_editable: host.transport.local_seat()
                             == engine_player_command::PlayerId::HOST,
                     },

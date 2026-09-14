@@ -19,21 +19,13 @@ use robin_engine::graphic_config::GraphicConfig;
 use robin_engine::multiplayer_config::MultiplayerConfig;
 use robin_engine::sound_config::SoundConfig;
 
-use super::gameplay::show_gameplay;
-use super::graphics::show_graphics;
-use super::language::show_language;
 use super::layout::{
     MenuTransform, align_bottom_right, draw_screen_background, render_text_virt_font,
 };
-use super::leaderboard_settings::show_leaderboard_settings;
-#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-use super::multiplayer_privacy::show_multiplayer_privacy;
 use super::resources::{
     MT_BTN_BACK, MT_BTN_GRAPHICS, MT_BTN_SHORTCUTS, MT_BTN_SOUNDS, MT_STR_MEGA_BYTES,
     MT_STR_MEGA_HERZS, MT_STR_MEMORY, MT_STR_PROCESSOR, MT_TTL_OPTIONS,
 };
-use super::shortcuts::show_shortcuts;
-use super::sounds::show_sounds;
 use super::widget_bridge::{
     self, ModalInputState, ModalScreenIo, ScreenAudio, ScreenFrame, ScreenKey,
 };
@@ -41,6 +33,7 @@ use super::widget_bridge::{
 /// Outcome of the options hub.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OptionsOutcome {
+    pub exit_requested: bool,
     pub changed: bool,
     pub resolution_changed: bool,
     /// Set when the keyboard-shortcuts sub-screen accepted edits.
@@ -98,8 +91,8 @@ pub struct OptionsTargets<'a> {
 /// Sounds sub-screen returns with changes, `sound.apply_volumes` runs.
 /// Pass `None` services from contexts with no live audio.
 ///
-/// The frame loop stays here instead of `run_modal` because a tick awaits
-/// nested sub-screens.
+/// This adapter owns frame pacing; missions drive the same presenter from
+/// their cooperative UI task.
 pub async fn show_options(
     application_context: &crate::host::ApplicationContext,
     io: &mut ModalScreenIo<'_, '_>,
@@ -117,37 +110,19 @@ pub async fn show_options(
 
     let mut state = OptionsModalState::new(
         application_context,
-        targets.allow_language_switching,
-        io,
+        io.window,
+        io.renderer,
+        io.resources,
         controller,
-        OptionsOutcome::default(),
-        ModalInputState::new(),
+        OptionsScope {
+            allow_language_switching: targets.allow_language_switching,
+            sherwood_trading_editable: targets.sherwood_trading_editable,
+            host_gameplay_rules_editable: true,
+            apply_live_preferences: true,
+        },
     );
-    loop {
-        while !state.done {
-            state
-                .tick(
-                    application_context,
-                    io,
-                    targets.sherwood_trading_editable,
-                    &mut audio,
-                )
-                .await;
-            // Closing frames were always drawn and paced before committing edits.
-            crate::window::sleep_ui_frame().await;
-        }
-        if state.outcome.language_changed || !state.re_display {
-            break;
-        }
-        // Rebuild only after resolution changes, keeping edits and live input.
-        state = OptionsModalState::new(
-            application_context,
-            targets.allow_language_switching,
-            io,
-            state.controller,
-            state.outcome,
-            state.input_state,
-        );
+    while state.tick(application_context, io, &mut audio).is_none() {
+        crate::window::sleep_ui_frame().await;
     }
 
     *targets.graphic = state.controller.graphic.working;
@@ -159,29 +134,57 @@ pub async fn show_options(
     state.outcome
 }
 
-/// Owns one options layout and its staged edits across nested sub-screen awaits.
-struct OptionsModalState {
-    controller: OptionsController,
-    outcome: OptionsOutcome,
+/// The owner decides which rules and locale may be changed; presentation is shared.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct OptionsScope {
+    pub(crate) allow_language_switching: bool,
+    pub(crate) sherwood_trading_editable: bool,
+    pub(crate) host_gameplay_rules_editable: bool,
+    /// Main-menu page acceptance applies presentation immediately. Missions
+    /// commit through their owner so task preemption discards every staged edit.
+    pub(crate) apply_live_preferences: bool,
+}
+
+enum OptionsChild {
+    Graphics(super::graphics::GraphicsScreen),
+    Sounds(super::sounds::SoundsScreen),
+    Shortcuts(super::shortcuts::ShortcutsScreen),
+    Gameplay(super::gameplay::GameplayScreenState),
+    Language(super::language::LanguageModalState),
+    Leaderboards(
+        super::leaderboard_settings::LeaderboardSettingsModalState,
+        crate::leaderboard_preferences::LeaderboardPreferences,
+    ),
+    #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+    Multiplayer(super::multiplayer_privacy::MultiplayerPrivacyModalState),
+}
+
+/// One resumable presenter for the main menu and cooperative mission driver.
+pub(crate) struct OptionsModalState {
+    pub(crate) controller: OptionsController,
+    pub(crate) outcome: OptionsOutcome,
+    scope: OptionsScope,
     input_state: ModalInputState,
     frame: FrameWnd,
     title: String,
     info: String,
     done: bool,
-    re_display: bool,
+    child: Option<OptionsChild>,
+    content: Option<super::spellforge_content::SpellforgeContentSettingsState>,
 }
 
 impl OptionsModalState {
-    fn new(
+    pub(crate) fn new(
         application_context: &crate::host::ApplicationContext,
-        allow_language_switching: bool,
-        io: &ModalScreenIo<'_, '_>,
+        window: &crate::window::GameWindow,
+        renderer: &crate::renderer::Renderer,
+        resources: &super::resources::IngameMenuResources,
         controller: OptionsController,
-        outcome: OptionsOutcome,
-        mut input_state: ModalInputState,
+        scope: OptionsScope,
     ) -> Self {
-        let resources = io.resources;
-        let transform = MenuTransform::for_renderer(io.renderer);
+        let allow_language_switching = scope.allow_language_switching;
+        let mut input_state = ModalInputState::new();
+        let transform = MenuTransform::for_renderer(renderer);
 
         let (btn_w, btn_h) = resources.button_dimensions();
 
@@ -233,34 +236,61 @@ impl OptionsModalState {
         let info = hardware_description(&resources.menu_text);
 
         let done = false;
-        let re_display = false;
-        input_state.seed_mouse_from_window(io.window, transform);
+        input_state.seed_mouse_from_window(window, transform);
 
         Self {
             controller,
-            outcome,
+            outcome: OptionsOutcome::default(),
+            scope,
             input_state,
             frame,
             title,
             info,
             done,
-            re_display,
+            child: None,
+            content: None,
         }
     }
 
-    async fn tick(
+    pub(crate) fn tick(
         &mut self,
         application_context: &crate::host::ApplicationContext,
         io: &mut ModalScreenIo<'_, '_>,
-        sherwood_trading_editable: bool,
         audio: &mut ScreenAudio<'_>,
-    ) {
+    ) -> Option<OptionsOutcome> {
+        if self.done {
+            return Some(self.outcome);
+        }
+        if let Some(content) = self.content.as_mut() {
+            match content.tick(application_context, io) {
+                super::spellforge_content::SpellforgeContentSettingsOutcome::Pending => {}
+                super::spellforge_content::SpellforgeContentSettingsOutcome::Closed => {
+                    self.content = None;
+                    if let Some(OptionsChild::Gameplay(page)) = self.child.as_mut() {
+                        page.resume_after_content(io);
+                    }
+                }
+                super::spellforge_content::SpellforgeContentSettingsOutcome::ExitRequested => {
+                    self.outcome.exit_requested = true;
+                    self.done = true;
+                }
+            }
+            return self.done.then_some(self.outcome);
+        }
+        if let Some(child) = self.child.take() {
+            self.tick_child(child, application_context, io, audio);
+            return self.done.then_some(self.outcome);
+        }
         let screen = ScreenFrame::begin(io, &mut self.input_state);
         for key in screen.keys() {
             match key {
                 // Escape → Back.  No Return/KpEnter accelerator
                 // since there's no input field.
-                ScreenKey::Quit | ScreenKey::Cancel => self.done = true,
+                ScreenKey::Quit => {
+                    self.outcome.exit_requested = true;
+                    self.done = true;
+                }
+                ScreenKey::Cancel => self.done = true,
                 ScreenKey::Confirm | ScreenKey::Next => {}
             }
         }
@@ -268,130 +298,83 @@ impl OptionsModalState {
         let (_, activated) = ScreenFrame::dispatch(&mut self.input_state, &mut self.frame);
 
         if let Some(id) = activated {
-            match id {
-                BUTTON_GRAPHICS => {
-                    self.controller.enter_page(OptionsPage::Graphics);
-                    let (changed, _resolution_changed) =
-                        show_graphics(io, &mut self.controller.graphic.working).await;
-                    let effects = self.controller.accept_page(changed);
-                    self.outcome.changed |= effects.profile_changed;
-                    if effects.resolution_changed {
-                        // Apply the selected 4:3 scale reference and
-                        // aspect policy together. This keeps pointer
-                        // conversion aligned while the Options dialog
-                        // rebuilds itself; the caller still owns engine,
-                        // HUD, and input-cache propagation on return.
-                        self.outcome.resolution_changed = true;
-                        io.window
-                            .set_logical_resolution_policy(&self.controller.graphic.working);
-                        io.renderer.sync_window_size(io.window);
-                        self.re_display = true;
-                        self.done = true;
-                    }
-                }
-                BUTTON_SOUNDS => {
-                    self.controller.enter_page(OptionsPage::Sounds);
-                    let changed =
-                        show_sounds(io, &mut self.controller.sound.working, audio.reborrow()).await;
-                    let effects = self.controller.accept_page(changed);
-                    self.outcome.changed |= effects.profile_changed;
-                    // When the sub-screen accepts edits, push the
-                    // new settings through `apply_sound_settings`
-                    // so slider/toggle changes take effect
-                    // immediately rather than at the next mission
-                    // load. The Rust port lacks a kira device
-                    // close/open round-trip but still updates
-                    // `use_3d_sound`, invalidates the sample cache,
-                    // and re-activates source pendings when the 3D
-                    // toggle changed.
-                    if changed
-                        && let ScreenAudio {
-                            sound: Some(s),
-                            backend,
-                            ..
-                        } = audio.reborrow()
-                    {
-                        if let Some(b) = backend {
-                            s.apply_sound_settings(false, b, &self.controller.sound.working, None);
-                        } else {
-                            s.apply_volumes(&self.controller.sound.working);
-                        }
-                    }
-                }
-                BUTTON_SHORTCUTS => {
-                    self.controller.enter_page(OptionsPage::Shortcuts);
-                    let accepted = show_shortcuts(
+            if id == BUTTON_SHORTCUTS {
+                self.controller.enter_page(OptionsPage::Shortcuts);
+            }
+            self.child = match id {
+                BUTTON_GRAPHICS => Some(OptionsChild::Graphics(
+                    super::graphics::GraphicsScreen::new(
+                        io.resources,
+                        &self.controller.graphic.working,
+                        ModalInputState::for_screen(io.window, io.renderer),
+                    ),
+                )),
+                BUTTON_SOUNDS => Some(OptionsChild::Sounds(
+                    super::sounds::SoundsScreen::new(
                         io,
-                        &mut self.controller.keys,
-                        &mut self.controller.custom_keys,
-                        audio.reborrow(),
+                        &self.controller.sound.working,
+                        audio.sound.as_deref(),
                     )
-                    .await;
-                    // Shortcut edits do not propagate to the outer
-                    // changed flag. Only persist the dedicated
-                    // `KeyConfigStore` path here so editing only
-                    // shortcuts does not spuriously mark the
-                    // graphic/sound profile dirty.
-                    if accepted {
-                        self.outcome.key_config_changed |=
-                            self.controller.accept_page(false).keys_changed;
-                    } else {
-                        self.controller.cancel_page();
-                    }
-                }
-                BUTTON_GAMEPLAY => {
-                    self.controller.enter_page(OptionsPage::Gameplay);
-                    let changed = show_gameplay(
+                    .with_host_authority(self.scope.host_gameplay_rules_editable),
+                )),
+                BUTTON_SHORTCUTS => Some(OptionsChild::Shortcuts(
+                    super::shortcuts::ShortcutsScreen::new(
+                        io.resources,
+                        &self.controller.keys,
+                        ModalInputState::for_screen(io.window, io.renderer),
+                    ),
+                )),
+                BUTTON_GAMEPLAY => Some(OptionsChild::Gameplay(
+                    super::gameplay::GameplayScreenState::new(
                         application_context,
                         io,
-                        &mut self.controller.gameplay,
-                        sherwood_trading_editable,
+                        &self.controller.gameplay,
+                        self.scope.sherwood_trading_editable,
                     )
-                    .await;
-                    self.outcome.changed |= self.controller.accept_page(changed).profile_changed;
-                }
+                    .with_host_authority(
+                        self.scope.host_gameplay_rules_editable,
+                        application_context,
+                        io.resources,
+                    ),
+                )),
                 BUTTON_LEADERBOARDS => match crate::leaderboard_preferences::load() {
-                    Ok(mut preferences) => {
-                        if show_leaderboard_settings(io, &mut preferences).await
-                            && let Err(error) =
-                                crate::leaderboard_preferences::persist(&preferences)
-                        {
-                            tracing::error!("failed to persist leaderboard settings: {error}");
-                        }
-                    }
+                    Ok(preferences) => Some(OptionsChild::Leaderboards(
+                        super::leaderboard_settings::LeaderboardSettingsModalState::new(
+                            io,
+                            &preferences,
+                        ),
+                        preferences,
+                    )),
                     Err(error) => {
                         tracing::error!("failed to load leaderboard settings: {error}");
+                        None
                     }
                 },
-                #[cfg(all(not(target_arch = "wasm32"), feature = "multiplayer"))]
-                BUTTON_MULTIPLAYER_PRIVACY => {
-                    self.controller.enter_page(OptionsPage::MultiplayerPrivacy);
-                    let changed =
-                        show_multiplayer_privacy(io, &mut self.controller.multiplayer).await;
-                    self.outcome.changed |= self.controller.accept_page(changed).profile_changed;
-                }
-                BUTTON_LANGUAGE => {
-                    if show_language(application_context, io).await {
-                        self.outcome.language_changed = true;
-                        self.outcome.changed = true;
-                        self.done = true;
-                    }
+                #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+                BUTTON_MULTIPLAYER_PRIVACY => Some(OptionsChild::Multiplayer(
+                    super::multiplayer_privacy::MultiplayerPrivacyModalState::new(
+                        io,
+                        &self.controller.multiplayer,
+                    ),
+                )),
+                BUTTON_LANGUAGE if self.scope.allow_language_switching => {
+                    super::language::LanguageModalState::new(application_context, io)
+                        .map(OptionsChild::Language)
                 }
                 #[cfg(all(
                     feature = "dialogs",
                     any(target_os = "windows", target_os = "linux", target_os = "macos")
                 ))]
                 BUTTON_GAME_DATA => {
-                    // Opens the native folder picker; the modal loop is
-                    // frozen while the OS dialog is up, which is fine —
-                    // both are modal. The new folder is remembered and
-                    // applies on the next launch (resources from the
-                    // old datadir are already loaded).
                     crate::datadir_locator::change_datadir_interactive();
+                    None
                 }
-                BUTTON_BACK => self.done = true,
-                _ => {}
-            }
+                BUTTON_BACK => {
+                    self.done = true;
+                    None
+                }
+                _ => None,
+            };
         }
 
         let transform = screen.transform;
@@ -417,6 +400,148 @@ impl OptionsModalState {
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
 
         screen.finish(io, &self.input_state);
+        self.done.then_some(self.outcome)
+    }
+
+    fn tick_child(
+        &mut self,
+        child: OptionsChild,
+        application_context: &crate::host::ApplicationContext,
+        io: &mut ModalScreenIo<'_, '_>,
+        audio: &mut ScreenAudio<'_>,
+    ) {
+        match child {
+            OptionsChild::Graphics(mut page) => {
+                page.tick(io);
+                if !page.done {
+                    self.child = Some(OptionsChild::Graphics(page));
+                    return;
+                }
+                self.outcome.exit_requested |= page.exit_requested;
+                self.done |= page.exit_requested;
+                let (changed, resolution_changed) =
+                    page.finish(&mut self.controller.graphic.working);
+                self.outcome.changed |= changed;
+                self.outcome.resolution_changed |= resolution_changed;
+                if changed && self.scope.apply_live_preferences {
+                    io.renderer
+                        .apply_upscale_config(&self.controller.graphic.working);
+                }
+                if resolution_changed && self.scope.apply_live_preferences {
+                    io.window
+                        .set_logical_resolution_policy(&self.controller.graphic.working);
+                    io.renderer.sync_window_size(io.window);
+                }
+            }
+            OptionsChild::Sounds(mut page) => {
+                if page.tick(io, audio).is_none() {
+                    self.child = Some(OptionsChild::Sounds(page));
+                    return;
+                }
+                self.outcome.exit_requested |= page.exit_requested;
+                self.done |= page.exit_requested;
+                let changed = page.finish(&mut self.controller.sound.working);
+                self.outcome.changed |= changed;
+                if changed && self.scope.apply_live_preferences {
+                    let ScreenAudio { sound, backend, .. } = audio.reborrow();
+                    if let Some(sound) = sound {
+                        if let Some(backend) = backend {
+                            sound.apply_sound_settings(
+                                false,
+                                backend,
+                                &self.controller.sound.working,
+                                None,
+                            );
+                        } else {
+                            sound.apply_volumes(&self.controller.sound.working);
+                        }
+                    }
+                }
+            }
+            OptionsChild::Shortcuts(mut page) => {
+                page.tick(io, &mut self.controller.custom_keys, audio);
+                if !page.done {
+                    self.child = Some(OptionsChild::Shortcuts(page));
+                    return;
+                }
+                self.outcome.exit_requested |= page.exit_requested;
+                self.done |= page.exit_requested;
+                let accepted =
+                    page.finish(&mut self.controller.keys, &mut self.controller.custom_keys);
+                if accepted {
+                    self.outcome.key_config_changed |=
+                        self.controller.accept_page(false).keys_changed;
+                } else {
+                    self.controller.cancel_page();
+                }
+            }
+            OptionsChild::Gameplay(mut page) => {
+                let outcome = page.tick(application_context, io);
+                if page.take_content_request() {
+                    self.content = Some(
+                        super::spellforge_content::SpellforgeContentSettingsState::new(
+                            application_context,
+                            io.window,
+                            io.renderer,
+                            io.resources,
+                        ),
+                    );
+                    self.child = Some(OptionsChild::Gameplay(page));
+                    return;
+                }
+                match outcome {
+                    None => {
+                        self.child = Some(OptionsChild::Gameplay(page));
+                        return;
+                    }
+                    Some(super::ModalScreenOutcome::Accepted(config)) => {
+                        self.outcome.changed |= config != self.controller.gameplay;
+                        self.controller.gameplay = config;
+                    }
+                    Some(super::ModalScreenOutcome::ExitRequested) => {
+                        self.outcome.exit_requested = true;
+                        self.done = true;
+                    }
+                    Some(super::ModalScreenOutcome::Cancelled) => {}
+                }
+            }
+            OptionsChild::Language(mut page) => match page.tick(application_context, io) {
+                None => {
+                    self.child = Some(OptionsChild::Language(page));
+                    return;
+                }
+                Some(changed) => {
+                    self.outcome.changed |= changed;
+                    self.outcome.language_changed |= changed;
+                    self.done |= changed;
+                }
+            },
+            OptionsChild::Leaderboards(mut page, mut preferences) => {
+                if page.tick(io).is_none() {
+                    self.child = Some(OptionsChild::Leaderboards(page, preferences));
+                    return;
+                }
+                self.outcome.exit_requested |= page.exit_requested;
+                self.done |= page.exit_requested;
+                if page.commit(&mut preferences)
+                    && let Err(error) = crate::leaderboard_preferences::persist(&preferences)
+                {
+                    tracing::error!("failed to persist leaderboard settings: {error}");
+                }
+            }
+            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+            OptionsChild::Multiplayer(mut page) => {
+                if page.tick(io).is_none() {
+                    self.child = Some(OptionsChild::Multiplayer(page));
+                    return;
+                }
+                self.outcome.exit_requested |= page.exit_requested;
+                self.done |= page.exit_requested;
+                self.outcome.changed |= page.commit(&mut self.controller.multiplayer);
+            }
+        }
+        self.input_state
+            .seed_mouse_from_window(io.window, MenuTransform::for_renderer(io.renderer));
     }
 }
 
