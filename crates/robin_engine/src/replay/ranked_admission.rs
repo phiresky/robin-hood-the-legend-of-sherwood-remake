@@ -2,6 +2,107 @@
 use super::*;
 
 impl ReplayData {
+    /// Stable across uploader builds and compact compression versions.
+    pub fn submission_id(&self) -> robin_run_types::Digest32 {
+        robin_run_types::Digest32::digest_bytes(bitcode::encode(&ReplayFile::from(self)))
+    }
+
+    /// Derive anonymous participation from the recording itself. Uploading a
+    /// multiplayer recording does not require the players to reconnect or sign.
+    pub fn submission_transcript(
+        &self,
+        replay_session_id: robin_run_types::Digest32,
+        session_genesis_sha256: robin_run_types::Digest32,
+    ) -> Result<robin_run_types::ReplaySessionTranscriptV1, String> {
+        use crate::player_command::PlayerCommand;
+        use robin_run_types::{
+            Digest32, ReplaySeatLifecycleEventV1, ReplaySeatLifecycleKindV1,
+            ReplaySessionTranscriptV1, Validate as _,
+        };
+        let instance = |ordinal: u32| {
+            let mut bytes = replay_session_id.as_bytes().to_vec();
+            bytes.extend_from_slice(&ordinal.to_le_bytes());
+            Digest32::digest_bytes(bytes)
+        };
+        let host = instance(0);
+        let mut occupied = BTreeMap::from([(0_u16, host)]);
+        let mut events = vec![ReplaySeatLifecycleEventV1 {
+            event_ordinal: 0,
+            replay_ordinal: 0,
+            seat: 0,
+            participant_instance_id: host,
+            lifecycle: ReplaySeatLifecycleKindV1::Connected {
+                connection_epoch: 0,
+            },
+        }];
+        let mut maximum = 1;
+        let mut instances = 1_u16;
+        for ordinal in 0..self.frame_count() {
+            let frame = self
+                .frame(ordinal)
+                .ok_or_else(|| format!("missing replay frame {ordinal}"))?;
+            for command in frame
+                .input
+                .commands
+                .iter()
+                .chain(&frame.input.post_commands)
+            {
+                let (seat, participant_instance_id, lifecycle) = match &command
+                    .player_input()
+                    .command
+                {
+                    PlayerCommand::ConnectSeat { player_id, .. } => {
+                        let seat = u16::from(player_id.0);
+                        let id = instance(
+                            u32::try_from(events.len()).map_err(|_| "too many seat events")?,
+                        );
+                        if occupied.insert(seat, id).is_some() {
+                            return Err(format!("frame {ordinal}: connects occupied seat {seat}"));
+                        }
+                        instances = instances
+                            .checked_add(1)
+                            .ok_or("too many participant instances")?;
+                        maximum = maximum.max(occupied.len());
+                        (
+                            seat,
+                            id,
+                            ReplaySeatLifecycleKindV1::Connected {
+                                connection_epoch: 0,
+                            },
+                        )
+                    }
+                    PlayerCommand::DisconnectSeat { player_id } => {
+                        let seat = u16::from(player_id.0);
+                        let id = occupied.remove(&seat).ok_or_else(|| {
+                            format!("frame {ordinal}: disconnects vacant seat {seat}")
+                        })?;
+                        (seat, id, ReplaySeatLifecycleKindV1::Disconnected)
+                    }
+                    _ => continue,
+                };
+                events.push(ReplaySeatLifecycleEventV1 {
+                    event_ordinal: u32::try_from(events.len())
+                        .map_err(|_| "too many seat events")?,
+                    replay_ordinal: ordinal,
+                    seat,
+                    participant_instance_id,
+                    lifecycle,
+                });
+            }
+        }
+        let transcript = ReplaySessionTranscriptV1 {
+            schema_version: 1,
+            replay_session_id,
+            session_genesis_sha256,
+            host_participant_instance_id: host,
+            participant_instance_count: instances,
+            max_concurrent_players: u16::try_from(maximum).map_err(|_| "too many players")?,
+            events,
+        };
+        transcript.validate().map_err(|error| error.to_string())?;
+        Ok(transcript)
+    }
+
     pub fn contains_state_loads(&self) -> bool {
         !self.load_backs.is_empty()
     }

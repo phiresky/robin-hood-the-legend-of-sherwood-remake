@@ -899,8 +899,6 @@ pub(super) struct LoadedMissionCore {
     )>,
     pub(super) engine_rng_seed: u64,
     pub(super) engine_sim_config: engine_api::SimConfig,
-    /// Exact immutable-authority/prepared-input admission fixed before frame 0.
-    pub(super) ranked_admission: super::leaderboard_runtime::PreparedRankedAdmission,
 }
 
 pub(super) struct MissionLoadError {
@@ -958,7 +956,6 @@ pub(super) struct MissionInterfaceSetup {
 pub(super) struct MissionLaunchSetup {
     pub(super) rng_seed: u64,
     pub(super) sim_config: engine_api::SimConfig,
-    pub(super) ranked_plan: super::leaderboard_runtime::RankedPreFramePlan,
 }
 
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
@@ -1013,7 +1010,6 @@ pub(super) struct ConstructedMission {
     assets: engine_api::LevelAssets,
     rng_seed: u64,
     sim_config: engine_api::SimConfig,
-    ranked_admission: super::leaderboard_runtime::PreparedRankedAdmission,
     presentation: PreparedMissionPresentation,
 }
 
@@ -1074,7 +1070,6 @@ pub(super) fn prepare_mission(
     let MissionLaunchSetup {
         rng_seed: authoritative_rng_seed,
         sim_config: authoritative_sim_config,
-        ranked_plan,
     } = launch;
     let files = match host.preparation_files() {
         Ok(files) => std::sync::Arc::new(files.snapshot()),
@@ -1327,7 +1322,6 @@ pub(super) fn prepare_mission(
         launch: MissionLaunchSetup {
             rng_seed,
             sim_config,
-            ranked_plan,
         },
         presentation: PreparedMissionPresentation {
             dev,
@@ -1367,7 +1361,6 @@ impl PreparedMission {
         let MissionLaunchSetup {
             rng_seed,
             sim_config,
-            ranked_plan,
         } = launch;
         let (event_pump, loading_screen) = feedback;
         let bg_pixel_dims = presentation.bg_pixel_dims;
@@ -1376,7 +1369,7 @@ impl PreparedMission {
         // the preserving constructor returns the exact allocation on ingestion
         // failure.
         let replay_campaign = campaign.clone();
-        let (engine, ranked_admission) = {
+        let engine = {
             let mut progress = |delta: f32| {
                 tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
             };
@@ -1395,22 +1388,14 @@ impl PreparedMission {
                 original_rng_replay: None,
                 sim_config,
             };
-            let needs_projection = matches!(
-                ranked_plan,
-                super::leaderboard_runtime::RankedPreFramePlan::Authority(_)
-            );
+            #[cfg(not(all(feature = "projection-export", not(target_arch = "wasm32"))))]
+            let needs_projection = false;
             #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-            let needs_projection =
-                needs_projection || args.config.simulation_content_export.is_some();
+            let needs_projection = args.config.simulation_content_export.is_some();
             if !needs_projection {
                 // Ordinary play has no consumer for the verification projection.
                 // Construct the same engine without cloning/serializing its inputs
                 // or hashing the sprite opacity surface.
-                let super::leaderboard_runtime::RankedPreFramePlan::BrowseOnly { reason } =
-                    ranked_plan
-                else {
-                    unreachable!("authority sessions require a prepared projection");
-                };
                 let engine =
                     Engine::new_preserving_campaign(engine_args).map_err(|(error, campaign)| {
                         MissionLoadError::new(
@@ -1418,10 +1403,7 @@ impl PreparedMission {
                             MissionError::asset(format!("Level init failed: {error}")),
                         )
                     })?;
-                (
-                    engine,
-                    super::leaderboard_runtime::PreparedRankedAdmission::BrowseOnly { reason },
-                )
+                engine
             } else {
                 match Engine::prepare_preserving_campaign(engine_args) {
                     Ok(prepared) => {
@@ -1468,7 +1450,7 @@ impl PreparedMission {
                             ));
                         }
                         }
-                        ranked_plan.consume_prepared(prepared)
+                        Engine::from_prepared(prepared)
                     }
                     Err((error, campaign)) => {
                         return Err(MissionLoadError::new(
@@ -1486,7 +1468,6 @@ impl PreparedMission {
             assets,
             rng_seed,
             sim_config,
-            ranked_admission,
             presentation,
         })
     }
@@ -1506,7 +1487,6 @@ impl ConstructedMission {
             assets,
             rng_seed,
             sim_config,
-            ranked_admission,
             presentation,
         } = self;
         let PreparedMissionPresentation {
@@ -1652,7 +1632,6 @@ impl ConstructedMission {
             pre_decoded_ambience_minimaps,
             engine_rng_seed: rng_seed,
             engine_sim_config: sim_config,
-            ranked_admission,
         })
     }
 }
@@ -1958,9 +1937,6 @@ mod tests {
                     golden_eye: true,
                     ..Default::default()
                 },
-                ranked_plan: super::super::leaderboard_runtime::RankedPreFramePlan::browse_only(
-                    "stage fixture",
-                ),
             },
             presentation: PreparedMissionPresentation {
                 dev: Default::default(),
@@ -2015,10 +1991,6 @@ mod tests {
                 constructed.presentation.pending_terrain.is_some(),
                 "construction must not join presentation work"
             );
-            assert!(matches!(
-                constructed.ranked_admission,
-                super::super::leaderboard_runtime::PreparedRankedAdmission::BrowseOnly { .. }
-            ));
             let mut host = Host::scratch(1024.0, 768.0);
             let loaded = constructed
                 .attach_presentation(&mut host, &args, &mut feedback, join)

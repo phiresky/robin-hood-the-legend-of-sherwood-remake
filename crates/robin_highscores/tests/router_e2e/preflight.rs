@@ -144,13 +144,13 @@ async fn fresh_run_preflight_keeps_signed_authority_and_allows_later_ordinary_up
         .session_genesis
         .claim
         .fresh_run_preflight_grant = Some(bad_signature_grant);
-    bad_signature_request.session_genesis.host_signature = sign(
+    bad_signature_request.session_genesis.host_signature = Some(sign(
         &owner,
         &bad_signature_request
             .session_genesis
             .signing_bytes()
             .unwrap(),
-    );
+    ));
     bad_signature_request.validate().unwrap();
     let response = rig
         .app
@@ -177,10 +177,10 @@ async fn fresh_run_preflight_keeps_signed_authority_and_allows_later_ordinary_up
         .session_genesis
         .claim
         .fresh_run_preflight_grant = Some(expired_grant);
-    expired_request.session_genesis.host_signature = sign(
+    expired_request.session_genesis.host_signature = Some(sign(
         &owner,
         &expired_request.session_genesis.signing_bytes().unwrap(),
-    );
+    ));
     expired_request.validate().unwrap();
     let response = rig
         .app
@@ -215,10 +215,10 @@ async fn fresh_run_preflight_keeps_signed_authority_and_allows_later_ordinary_up
         &SigningKey::from_bytes(&[0x46; 32]),
         &grant.signing_bytes().unwrap(),
     );
-    expired_request.session_genesis.host_signature = sign(
+    expired_request.session_genesis.host_signature = Some(sign(
         &owner,
         &expired_request.session_genesis.signing_bytes().unwrap(),
-    );
+    ));
     let future_response = rig
         .app
         .clone()

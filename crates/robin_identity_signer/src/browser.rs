@@ -428,12 +428,14 @@ pub async fn browser_sign_replay_session_genesis(
         return Err(wasm_error(LeaderboardSigningError::WrongIdentity));
     }
     let signed = ReplaySessionGenesisV1 {
-        host_signature: secure_signature(
-            "replay_session_genesis",
-            &canonical(claim.signing_bytes()).map_err(wasm_error)?,
-        )
-        .await
-        .map_err(wasm_error)?,
+        host_signature: Some(
+            secure_signature(
+                "replay_session_genesis",
+                &canonical(claim.signing_bytes()).map_err(wasm_error)?,
+            )
+            .await
+            .map_err(wasm_error)?,
+        ),
         claim,
         algorithm: SignatureAlgorithmV1::Ed25519,
     };

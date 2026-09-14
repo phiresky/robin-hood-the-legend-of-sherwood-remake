@@ -670,7 +670,9 @@ pub fn validate_session_genesis(
     verify_signature(
         genesis.claim.host_public_key,
         &genesis.signing_bytes().map_err(invalid_document)?,
-        genesis.host_signature,
+        genesis
+            .host_signature
+            .ok_or_else(|| invalid_document("session has no pre-game signature"))?,
     )
 }
 
@@ -1269,7 +1271,10 @@ impl RankedSessionHost {
             setup.clone(),
         )?;
         let genesis = ReplaySessionGenesisV1 {
-            host_signature: signature(host_key, &claim.signing_bytes().map_err(invalid_document)?),
+            host_signature: Some(signature(
+                host_key,
+                &claim.signing_bytes().map_err(invalid_document)?,
+            )),
             claim,
             algorithm: SignatureAlgorithmV1::Ed25519,
         };
@@ -1302,7 +1307,10 @@ impl RankedSessionHost {
             competition_run_grant,
         )?;
         let genesis = ReplaySessionGenesisV1 {
-            host_signature: signature(host_key, &claim.signing_bytes().map_err(invalid_document)?),
+            host_signature: Some(signature(
+                host_key,
+                &claim.signing_bytes().map_err(invalid_document)?,
+            )),
             claim,
             algorithm: SignatureAlgorithmV1::Ed25519,
         };
@@ -1794,7 +1802,9 @@ pub fn validate_participant_roster(
     verify_signature(
         genesis.claim.host_public_key,
         &genesis.signing_bytes().map_err(invalid_document)?,
-        genesis.host_signature,
+        genesis
+            .host_signature
+            .ok_or_else(|| invalid_document("session has no pre-game signature"))?,
     )?;
     if participant_claims.is_empty() {
         return Err(RankedSessionError::ParticipantNotAdmitted(
@@ -2320,13 +2330,13 @@ mod tests {
             algorithm: SignatureAlgorithmV1::Ed25519,
             authority_signature: Signature64::from_bytes([35; 64]),
         });
-        genesis.host_signature = signature(
+        genesis.host_signature = Some(signature(
             host_key,
             &genesis
                 .claim
                 .signing_bytes()
                 .expect("test genesis signable"),
-        );
+        ));
         transcript.session_genesis_sha256 = genesis.canonical_digest().unwrap();
         let participant_claims = session.participant_claims();
         let offer_request = SubmissionOfferRequestV1 {
@@ -2853,7 +2863,7 @@ mod tests {
         let host_key = signing_key(0x26);
         let host = RankedSessionHost::new(&host_key, 31, ranked()).unwrap();
         let mut forged = host.genesis().clone();
-        forged.host_signature = Signature64::from_bytes([0x55; 64]);
+        forged.host_signature = Some(Signature64::from_bytes([0x55; 64]));
         assert!(matches!(
             validate_participant_roster(&forged, &host.participant_claims()),
             Err(RankedSessionError::InvalidSignature)
@@ -2868,7 +2878,7 @@ mod tests {
             RankedSessionHost::prepare_official_genesis_claim(public_key(&key), 31, setup.clone())
                 .unwrap();
         let mut genesis = ReplaySessionGenesisV1 {
-            host_signature: signature(&key, &claim.signing_bytes().unwrap()),
+            host_signature: Some(signature(&key, &claim.signing_bytes().unwrap())),
             claim,
             algorithm: SignatureAlgorithmV1::Ed25519,
         };
@@ -2877,7 +2887,7 @@ mod tests {
         let session = RankedSessionHost::from_signed_genesis(genesis.clone()).unwrap();
         assert_eq!(session.genesis(), &genesis);
 
-        genesis.host_signature = Signature64::from_bytes([0x77; 64]);
+        genesis.host_signature = Some(Signature64::from_bytes([0x77; 64]));
         assert!(matches!(
             RankedSessionHost::from_signed_genesis(genesis),
             Err(RankedSessionError::InvalidSignature)

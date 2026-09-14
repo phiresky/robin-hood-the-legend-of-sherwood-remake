@@ -123,12 +123,12 @@ fn evaluation_mark(evaluation: AchievementEvaluation) -> &'static str {
     }
 }
 
-/// Human-readable frozen attempt details for terminal debriefing/history UI.
+/// Human-readable mission badge conditions for the terminal debriefing.
 pub fn format_attempt_summary(results: MissionAchievementResults) -> String {
     use std::fmt::Write;
 
     let metrics = results.metrics();
-    let mut summary = String::from("Achievement conditions");
+    let mut summary = String::from("Mission badges");
     if results.provenance() == AchievementTrackingProvenance::LegacyImportIncomplete {
         summary.push_str("\nEvidence unavailable for imported Original save");
     }
@@ -136,7 +136,6 @@ pub fn format_attempt_summary(results: MissionAchievementResults) -> String {
     for (id, label) in [
         (AchievementId::CleanHands, "Clean Hands"),
         (AchievementId::Ghost, "Ghost"),
-        (AchievementId::PileOBones, "Pile-o-Bones"),
     ] {
         let evaluation = results.evaluation(id);
         write!(summary, "\n{label}: {}", evaluation_mark(evaluation))
@@ -155,15 +154,16 @@ pub fn format_attempt_summary(results: MissionAchievementResults) -> String {
                 " ({} observers, {} heroes)",
                 metrics.unique_hostile_observers, metrics.unique_observed_player_characters,
             ),
-            AchievementId::PileOBones => {
-                write!(summary, " ({}/10)", metrics.max_bodies_in_one_building,)
-            }
-            _ => unreachable!("only the three counter achievements are formatted here"),
+            _ => unreachable!("only the two counter badges are formatted here"),
         }
         .expect("writing to String cannot fail");
     }
 
-    for id in AchievementId::ALL.into_iter().skip(3) {
+    for id in AchievementId::ALL
+        .into_iter()
+        .skip(3)
+        .filter(|id| !id.campaign_only())
+    {
         let evaluation = results.evaluation(id);
         if evaluation == AchievementEvaluation::NotApplicable {
             continue;
@@ -534,7 +534,7 @@ mod tests {
             (
                 MissionAchievementState::from_mission_start(),
                 String::from(
-                    "Achievement conditions\nClean Hands: FAILED (player-caused deaths 0, NPC-caused deaths 0)\nGhost: FAILED (0 observers, 0 heroes)\nPile-o-Bones: FAILED (0/10)",
+                    "Mission badges\nClean Hands: FAILED (player-caused deaths 0, NPC-caused deaths 0)\nGhost: FAILED (0 observers, 0 heroes)",
                 ),
                 "FAILED",
                 "\nEnemies killed: 0/0; rich civilians knocked out: 0/0; beggars exhausted: 0/0; banners purchased: 0/0\nTime: 00:00.00",
@@ -542,13 +542,22 @@ mod tests {
             (
                 MissionAchievementState::from_incomplete_legacy_import(),
                 String::from(
-                    "Achievement conditions\nEvidence unavailable for imported Original save\nClean Hands: N/A\nGhost: N/A\nPile-o-Bones: N/A",
+                    "Mission badges\nEvidence unavailable for imported Original save\nClean Hands: N/A\nGhost: N/A",
                 ),
                 "N/A",
                 "",
             ),
         ] {
-            for id in AchievementId::ALL.into_iter().skip(3) {
+            for id in [
+                AchievementId::Ruthless,
+                AchievementId::ImOffHome,
+                AchievementId::AllBeggarInfo,
+                AchievementId::NoBannersPurchased,
+                AchievementId::AllBannersPurchased,
+                AchievementId::LeaveEveryoneStanding,
+                AchievementId::NotAScratch,
+                AchievementId::PeopleBehindTheLegend,
+            ] {
                 expected.push_str(&format!("\n{}: {mark}\n{}", id.name(), id.description()));
             }
             expected.push_str(suffix);

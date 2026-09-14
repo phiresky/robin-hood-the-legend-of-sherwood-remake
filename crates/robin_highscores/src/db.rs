@@ -3352,6 +3352,7 @@ mod tests {
                 host_participant_instance_id: Digest32::from_bytes([sequence.wrapping_add(2); 32]),
                 host_nonce: ChallengeNonce32::from_bytes([sequence.wrapping_add(3); 32]),
                 ranked_session: RankedSessionConfigV1 {
+                    recorded_replay: None,
                     custom_rules_config: None,
                     custom_canonical_campaign: None,
                     schema_version: SCHEMA_VERSION_V1,
@@ -3363,8 +3364,8 @@ mod tests {
                     simulation_seed: SimulationSeed64::new(42),
                     starting_campaign_sha256: Digest32::from_bytes([4; 32]),
                     starting_campaign_byte_length: 123,
-                    prepared_inputs_projection_sha256: Digest32::from_bytes([5; 32]),
-                    prepared_mission_inputs_seal_sha256: Digest32::from_bytes([6; 32]),
+                    prepared_inputs_projection_sha256: Some(Digest32::from_bytes([5; 32])),
+                    prepared_mission_inputs_seal_sha256: Some(Digest32::from_bytes([6; 32])),
                     build_manifest_sha256: Digest32::from_bytes([7; 32]),
                     content_manifest_sha256: Digest32::from_bytes([8; 32]),
                     campaign_content_manifest_sha256: None,

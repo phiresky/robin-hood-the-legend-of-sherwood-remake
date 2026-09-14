@@ -11,17 +11,16 @@ A list of which additional features we have added, which ones we might still wan
   verifier. Compact replay links use the current browser runtime. Content,
   signatures, resource bounds, and deterministic replay checks remain enforced.
 
-- **Campaign leaderboard and replay submission links.** Campaign Manager and
-  Hall of Deeds open the selected mission's campaign board or the full-campaign
-  board in the browser. Previous Plays shows submission information and offers
-  Submit for current, eligible single-player recordings, or Open online after
-  submission. Later submission reuses the recording's original signed evidence;
-  older/ineligible recordings cannot manufacture new ranked admission.
-  Ordinary recordings can be submitted after their session-admission window;
-  fresh upload offers and competition deadlines still expire. Queued
-  IDs survive restart and link immediately to a public status page, which polls
-  until verification finishes and then links to the verified run. Private
-  rejection details and campaign receipts remain in the authenticated API.
+- **Replay-based leaderboard submissions.** Mission-end screens and Previous
+  Plays prepare uploads from the recording itself. No pre-game server grant,
+  saved admission file, or multiplayer co-signing session is required. Any
+  readable supported recording can be submitted, including interrupted or
+  unsuccessful attempts; the server checks the recorded starting conditions,
+  gameplay and outcome before deciding whether it qualifies for a board.
+  The uploader authenticates the upload, and anonymous player counts come
+  from recorded seat events. Durable submission links use the recording's
+  content identity, which survives uploader rebuilds. Campaign Manager and
+  Hall of Deeds still link to mission and full-campaign boards.
 
 - **Bundled modding tools.** Native release packages include `cpf_to_json`,
   `encode_mod_sprites`, `disasm_scb`, and `dump_res` from the new

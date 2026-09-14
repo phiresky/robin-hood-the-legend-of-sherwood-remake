@@ -95,6 +95,7 @@ fn verification_pair(
         )
     };
     let ranked = RankedSessionConfigV1 {
+        recorded_replay: None,
         custom_rules_config: None,
         custom_canonical_campaign: None,
         schema_version: SCHEMA_VERSION_V1,
@@ -106,8 +107,8 @@ fn verification_pair(
         simulation_seed: SimulationSeed64::new(42),
         starting_campaign_sha256: Digest32::from_bytes([8; 32]),
         starting_campaign_byte_length: 108,
-        prepared_inputs_projection_sha256: Digest32::from_bytes([30; 32]),
-        prepared_mission_inputs_seal_sha256: Digest32::from_bytes([31; 32]),
+        prepared_inputs_projection_sha256: Some(Digest32::from_bytes([30; 32])),
+        prepared_mission_inputs_seal_sha256: Some(Digest32::from_bytes([31; 32])),
         build_manifest_sha256: Digest32::from_bytes([9; 32]),
         content_manifest_sha256: Digest32::from_bytes([3; 32]),
         campaign_content_manifest_sha256: campaign.then_some(Digest32::from_bytes([29; 32])),
@@ -132,7 +133,7 @@ fn verification_pair(
             competition_run_grant: None,
         },
         algorithm: SignatureAlgorithmV1::Ed25519,
-        host_signature: Signature64::from_bytes([16; 64]),
+        host_signature: Some(Signature64::from_bytes([16; 64])),
     };
     let session_genesis_sha256 = session_genesis.canonical_digest().unwrap();
     let mut claims = vec![host_claim()];
@@ -1197,7 +1198,7 @@ fn signed_genesis_binds_single_named_and_anonymous_public_projection_chains() {
         .submission
         .offer
         .session_genesis
-        .host_signature = Signature64::from_bytes([0xfe; 64]);
+        .host_signature = Some(Signature64::from_bytes([0xfe; 64]));
     substituted_request
         .submission
         .submission

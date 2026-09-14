@@ -335,10 +335,10 @@ async fn active_competition_offer_upload_publication_and_board_cross_the_real_ro
     let authorized_request = replacement;
     let mut transplanted = authorized_request.clone();
     transplanted.session_genesis.claim.replay_session_id = Digest32::from_bytes([0xee; 32]);
-    transplanted.session_genesis.host_signature = sign(
+    transplanted.session_genesis.host_signature = Some(sign(
         &owner,
         &transplanted.session_genesis.signing_bytes().unwrap(),
-    );
+    ));
     assert!(transplanted.validate().is_err());
     let mut forged_authority = authorized_request.clone();
     forged_authority
@@ -348,10 +348,10 @@ async fn active_competition_offer_upload_publication_and_board_cross_the_real_ro
         .as_mut()
         .unwrap()
         .authority_signature = Signature64::from_bytes([0xa4; 64]);
-    forged_authority.session_genesis.host_signature = sign(
+    forged_authority.session_genesis.host_signature = Some(sign(
         &owner,
         &forged_authority.session_genesis.signing_bytes().unwrap(),
-    );
+    ));
     let forged_response = rig
         .app
         .clone()

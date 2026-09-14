@@ -186,8 +186,8 @@ pub struct VerifierJobConfigV1 {
     pub schema_version: u32,
     pub template: VerifierJobTemplateV1,
     pub verifier_policy_manifest: ImmutablePolicyManifestV1,
-    pub expected_prepared_inputs_projection_sha256: Digest32,
-    pub expected_prepared_mission_inputs_seal_sha256: Digest32,
+    pub expected_prepared_inputs_projection_sha256: Option<Digest32>,
+    pub expected_prepared_mission_inputs_seal_sha256: Option<Digest32>,
     pub campaign_session: Option<CampaignSessionBindingV1>,
 }
 
@@ -196,8 +196,12 @@ impl Validate for VerifierJobConfigV1 {
         crate::validation::schema("VerifierJobConfigV1", self.schema_version)?;
         self.template.validate()?;
         self.verifier_policy_manifest.validate()?;
-        if self.expected_prepared_inputs_projection_sha256.is_zero()
-            || self.expected_prepared_mission_inputs_seal_sha256.is_zero()
+        if self
+            .expected_prepared_inputs_projection_sha256
+            .is_some_and(|digest| digest.is_zero())
+            || self
+                .expected_prepared_mission_inputs_seal_sha256
+                .is_some_and(|digest| digest.is_zero())
         {
             return Err(ValidationError::Zero {
                 field: "verifier_job_config.prepared_inputs",

@@ -87,6 +87,33 @@ fn verifier_command() -> Command {
     command
 }
 
+#[test]
+fn recorded_replay_authenticates_only_the_upload_not_a_pre_game_admission() {
+    use robin_replay_verifier::request_auth::authenticate_verification_request;
+    let mut request: VerificationRequestV1 =
+        serde_json::from_slice(&authenticated_request(REPLAY_BYTES, 1024)).unwrap();
+    let envelope = &mut request.submission.submission;
+    let genesis = &mut envelope.offer.session_genesis;
+    genesis.host_signature = None;
+    genesis.claim.fresh_run_preflight_grant = None;
+    genesis.claim.ranked_session.recorded_replay = Some(envelope.artifacts.replay.clone());
+    genesis
+        .claim
+        .ranked_session
+        .prepared_inputs_projection_sha256 = None;
+    genesis
+        .claim
+        .ranked_session
+        .prepared_mission_inputs_seal_sha256 = None;
+    envelope.replay_session_transcript.session_genesis_sha256 = genesis.canonical_digest().unwrap();
+    let key = SigningKey::from_bytes(&[7; 32]);
+    request.submission.participant_signatures[0].signature =
+        Signature64::from_bytes(key.sign(&envelope.signing_bytes().unwrap()).to_bytes());
+    authenticate_verification_request(request.clone()).unwrap();
+    request.submission.participant_signatures[0].signature = Signature64::from_bytes([1; 64]);
+    assert!(authenticate_verification_request(request).is_err());
+}
+
 fn authenticated_request(replay: &[u8], max_input_bytes: u64) -> Vec<u8> {
     let signing_key = SigningKey::from_bytes(&[7; 32]);
     let public_key = PublicKey32::from_bytes(signing_key.verifying_key().to_bytes());
@@ -99,6 +126,7 @@ fn authenticated_request(replay: &[u8], max_input_bytes: u64) -> Vec<u8> {
     let replay_session_id = Digest32::from_bytes([11; 32]);
     let host_nonce = ChallengeNonce32::from_bytes([13; 32]);
     let ranked_session = RankedSessionConfigV1 {
+        recorded_replay: None,
         custom_rules_config: None,
         custom_canonical_campaign: None,
         schema_version: 1,
@@ -110,8 +138,8 @@ fn authenticated_request(replay: &[u8], max_input_bytes: u64) -> Vec<u8> {
         simulation_seed: SimulationSeed64::new(42),
         starting_campaign_sha256,
         starting_campaign_byte_length: STARTING_CAMPAIGN_BYTES.len() as u64,
-        prepared_inputs_projection_sha256: Digest32::from_bytes([18; 32]),
-        prepared_mission_inputs_seal_sha256: Digest32::from_bytes([19; 32]),
+        prepared_inputs_projection_sha256: Some(Digest32::from_bytes([18; 32])),
+        prepared_mission_inputs_seal_sha256: Some(Digest32::from_bytes([19; 32])),
         build_manifest_sha256,
         content_manifest_sha256,
         campaign_content_manifest_sha256: None,
@@ -195,7 +223,7 @@ fn authenticated_request(replay: &[u8], max_input_bytes: u64) -> Vec<u8> {
     let genesis = ReplaySessionGenesisV1 {
         claim: genesis_claim,
         algorithm: SignatureAlgorithmV1::Ed25519,
-        host_signature: Signature64::from_bytes(genesis_signature.to_bytes()),
+        host_signature: Some(Signature64::from_bytes(genesis_signature.to_bytes())),
     };
     let replay_session_transcript = ReplaySessionTranscriptV1 {
         schema_version: 1,
