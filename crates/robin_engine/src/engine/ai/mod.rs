@@ -838,6 +838,10 @@ mod panic_boundary_tests {
             .hth_weapons
             .push(crate::profiles::HtHWeaponProfile::default());
 
+        profiles
+            .soldiers
+            .push(crate::profiles::SoldierProfile::default());
+
         engine.tick_npc_stuck_on_ladder_for_npc(&sim, pc_id, &assets);
 
         assert_eq!(

@@ -594,16 +594,10 @@ impl NativeContext<'_, '_> {
                     })
             }
             NativeFn::InflictPain => args.first().is_some_and(|actor| self.actor_exists(*actor)),
-            NativeFn::SetAlwaysAttentive => {
-                let Some((&actor, &value)) = args.first().zip(args.get(1)) else {
-                    return false;
-                };
-                value != 0
-                    && self
-                        .get_entity(actor)
-                        .and_then(|entity| entity.enemy_ai())
-                        .is_some_and(|enemy| !enemy.will_be_attentive)
-            }
+            NativeFn::SetAlwaysAttentive => args.first().is_some_and(|actor| {
+                self.get_entity(*actor)
+                    .is_some_and(|entity| entity.is_soldier())
+            }),
             NativeFn::EnableViewCone => {
                 self.ai_global().ezekiel_2517
                     && args.first().is_some_and(|actor| {

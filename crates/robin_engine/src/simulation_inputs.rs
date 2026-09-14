@@ -2167,17 +2167,17 @@ mod tests {
             .unwrap()
             .to_string()
         });
-        // Release pins cover replay schema 42 and the exhaustive current
+        // Release pins cover replay schema 43 and the exhaustive current
         // SimConfig, including the default-off background-patch reversal rule.
         assert_eq!(
             observed,
             [
-                "caa3821a7f4129e1bde39c0f94db066c86b4cc3d668cd5e4fa907a1ebe2946ab",
-                "79387e26a190cbbe768b0d992b655e65798ecc80dbebe30b7a7471894148a5de",
-                "6e82da05f0d410adfa8261e7a6607a59a554ea911bcbc078b5ae7206397ed29b",
-                "eb821d0eb0fd7eeb1c20ae5a701783474ba086ef0b68477cd2c54532d19145d8",
-                "072683812dea54d2cd22a58da9075fd08671ef1b92982d2dd1a2eecd6b638e50",
-                "28f42a356bac5b4d381b0fa8574a6177b37961df76c8c55a7e2709ffee80e494",
+                "d1cfcbdecbdd3d300e8830b81ece5e62498c17307f5bd6eff14a56ee4656715a",
+                "4552e42806fbfc9926e1af7ba314e3ade43e746efdee47ea73916e07dd793a14",
+                "127aacc6c4f2ad4a70d6d798247567a1909e3ff2969847c90548c241635b613b",
+                "08d25426944dc793b410debd88889593a9427191fb8ce42e360c06bb4a508e49",
+                "c3e13b6c1293a2903b302ed1618e3476b7f8466fc7459d3756be374f882cbece",
+                "9506ba32ddb61911cf92c7bcca1eab50f3dd796b190853c2145bbe01608be58b",
             ]
         );
     }

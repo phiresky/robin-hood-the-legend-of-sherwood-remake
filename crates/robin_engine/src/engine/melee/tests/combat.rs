@@ -468,6 +468,7 @@ fn charging_rider_falling_hit_normalizes_non_cardinal_sector_vector() {
         sequence,
         0,
     );
+    engine.publish_selected_order_as_installed(attacker);
     assert_eq!(
         engine.live_actor_animation(attacker),
         Some(OrderType::RiderCharging)

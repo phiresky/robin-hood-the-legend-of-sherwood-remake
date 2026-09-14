@@ -272,6 +272,7 @@ fn lua_yield_preflight_is_complete_and_property_sensitive() {
         format!("SetPersistentProperty({actor}, 3, 40)"),
         format!("InflictPain({actor}, 10, false)"),
         format!("SetAlwaysAttentive({actor}, true)"),
+        format!("SetAlwaysAttentive({actor}, false)"),
         format!("EnableViewCone({actor})"),
     ];
 
@@ -309,6 +310,8 @@ fn lua_yield_preflight_is_complete_and_property_sensitive() {
                         ))
                         .exec()?;
                     }
+                    lua.load(format!("SetAlwaysAttentive({target}, false)"))
+                        .exec()?;
                 }
                 Ok(())
             },
@@ -336,12 +339,7 @@ fn lua_yield_preflight_is_complete_and_property_sensitive() {
             &mut script_state,
             &mut script_domains,
             &mut capabilities,
-            |lua: &Lua| {
-                lua.load(format!(
-                    "SetAlwaysAttentive({actor}, false); EnableViewCone({actor})"
-                ))
-                .exec()
-            },
+            |lua: &Lua| lua.load(format!("EnableViewCone({actor})")).exec(),
         )
         .expect("non-yielding conditional arms remain callable from Lua");
     assert!(

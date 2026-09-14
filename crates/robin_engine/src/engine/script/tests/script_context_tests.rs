@@ -95,6 +95,28 @@ fn scripted_noise_finishes_live_listeners_before_resuming_the_same_actor_vm() {
     });
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.world.fast_grid_mut().size_map(128, 128);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    let sector_index = engine.world.fast_grid_mut().add_sector(
+        crate::engine::test_support::square_sector(
+            1,
+            0,
+            crate::coordinates::MapPoint::new(-100.0, -100.0),
+            crate::coordinates::MapPoint::new(100.0, 100.0),
+        ),
+        0,
+    );
+    let sector_index = crate::fast_find_grid::SectorIndex::new(sector_index).unwrap();
+    let sector = crate::position_interface::SectorHandle::new(1)
+        .unwrap()
+        .with_arena_index(sector_index);
+    for owner in listeners {
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .element_data_mut()
+            .set_sector_topology(Some(sector), Some(sector_index));
+    }
     engine
         .scripts
         .install_mission(MissionScript::from_scb(scb).unwrap());
@@ -105,9 +127,8 @@ fn scripted_noise_finishes_live_listeners_before_resuming_the_same_actor_vm() {
     script.bindings.script_point_count = 1;
     script.bindings.location_positions = std::sync::Arc::new(vec![(10.0, 0.0)]);
     script.bindings.location_layers = std::sync::Arc::new(vec![0]);
-    script.bindings.location_sectors = std::sync::Arc::new(vec![0]);
-    script.bindings.location_sector_handles =
-        std::sync::Arc::new(vec![crate::position_interface::SectorHandle::new(0)]);
+    script.bindings.location_sectors = std::sync::Arc::new(vec![1]);
+    script.bindings.location_sector_handles = std::sync::Arc::new(vec![Some(sector)]);
     for owner in listeners {
         script.bind_actor(ScriptHandleCodec::actor_handle(owner), "NoiseListener");
     }

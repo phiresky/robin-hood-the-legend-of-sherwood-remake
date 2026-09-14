@@ -4022,14 +4022,15 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 target_slot: 1,
                 target_before_movement: MapPoint::new(10.0, 0.0),
                 target_after_movement: MapPoint::new(30.0, 0.0),
-                // This seeker observes the target's pre-movement position,
-                // which is already within 15 units, and terminates without
-                // committing a step.
-                seeker_after_crossing_tolerance: MapPoint::new(0.0, 0.0),
-                seeker_direction_after_crossing_tolerance: 0,
-                seeker_state_after_crossing_tolerance: SequenceState::Terminated,
-                seeker_after_next_tolerance_sample: MapPoint::new(0.0, 0.0),
-                seeker_state_after_next_tolerance_sample: SequenceState::Terminated,
+                // The first prime tick sees the target within range and
+                // waits: no post-seek continuation exists to terminate it.
+                // Once the target moves away, this seeker starts following
+                // one update later than the opposite creation order.
+                seeker_after_crossing_tolerance: MapPoint::new(12.0, 0.0),
+                seeker_direction_after_crossing_tolerance: 2,
+                seeker_state_after_crossing_tolerance: SequenceState::InProgress,
+                seeker_after_next_tolerance_sample: MapPoint::new(24.0, 0.0),
+                seeker_state_after_next_tolerance_sample: SequenceState::InProgress,
             },
             Observation {
                 seeker_slot: 1,
@@ -4038,13 +4039,13 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 target_after_movement: MapPoint::new(30.0, 0.0),
                 // This seeker observes the target after its movement. Two
                 // 12-unit turning-slowed frames cross into tolerance, but
-                // the second frame remains in progress until the next
-                // pre-motion sample.
+                // the next pre-motion sample freezes the actor in range.
+                // Without a post-seek continuation it stays in progress.
                 seeker_after_crossing_tolerance: MapPoint::new(24.0, 0.0),
                 seeker_direction_after_crossing_tolerance: 1,
                 seeker_state_after_crossing_tolerance: SequenceState::InProgress,
                 seeker_after_next_tolerance_sample: MapPoint::new(24.0, 0.0),
-                seeker_state_after_next_tolerance_sample: SequenceState::Terminated,
+                seeker_state_after_next_tolerance_sample: SequenceState::InProgress,
             },
         ],
         "seek tolerance uses the target position visible at the actor boundary and is not re-sampled after a committed step"

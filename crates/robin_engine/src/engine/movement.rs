@@ -6104,6 +6104,8 @@ impl EngineInner {
             .map(|(id, _)| id.into())
             .collect();
         for owner in owners {
+            // Actor update publishes its current order before Execute.
+            self.publish_selected_order_as_installed(owner);
             let selected = self
                 .orders
                 .sequence_manager
