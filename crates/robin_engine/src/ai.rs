@@ -59,7 +59,6 @@ mod duty;
 mod effects;
 pub(crate) use duty::{
     AiFlow, BodyReaction, DutyCall, DutyTail, MoneyFightOperation, OfficerAlertCaller,
-    RiderAttackFallback,
 };
 pub(crate) use effects::{AiActorCoreEffects, AiActorPreemptionEffects};
 pub use effects::{

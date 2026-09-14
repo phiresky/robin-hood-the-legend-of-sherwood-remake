@@ -96,23 +96,9 @@ impl EngineInner {
             crate::ai::DutyTail::AttackEnemy { target } => {
                 self.execute_ai_attack_enemy(sim, assets, owner, target);
             }
-            crate::ai::DutyTail::RiderAttack { fallback } => {
+            crate::ai::DutyTail::RiderAttack => {
                 if !self.execute_ai_maybe_make_rider_attack(sim, assets, owner) {
-                    match fallback {
-                        crate::ai::RiderAttackFallback::Approach => {
-                            self.duty_set_state(
-                                sim,
-                                assets,
-                                owner,
-                                crate::ai::AiState::Attacking,
-                                crate::ai::Substate::AttackingRunningToEnemy,
-                            );
-                            self.execute_ai_reconsider_enemy_approach(sim, assets, owner, true);
-                        }
-                        crate::ai::RiderAttackFallback::BattleDecisions => {
-                            self.execute_battle_decisions(sim, assets, owner);
-                        }
-                    }
+                    self.execute_battle_decisions(sim, assets, owner);
                 }
             }
             crate::ai::DutyTail::OfficerLookForSoldier { reason } => {
@@ -187,8 +173,6 @@ impl EngineInner {
                 self.execute_ai_callback(sim, assets, owner, &stimulus);
             }
             crate::ai::DutyTail::SearchCharlyTimer
-            | crate::ai::DutyTail::TooProudOverviewRemark
-            | crate::ai::DutyTail::SwordfightInsult
             | crate::ai::DutyTail::GotHitViewStatus
             | crate::ai::DutyTail::AfterCombatInjury => {
                 panic!("caller tail used as a duty operation");
@@ -215,20 +199,6 @@ impl EngineInner {
                             crate::parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32,
                             self.control.frame_counter,
                         );
-                }
-                crate::ai::DutyTail::TooProudOverviewRemark => {
-                    self.world
-                        .entities
-                        .expect_entity_mut(owner, format_args!("combat remark tail"))
-                        .enemy_ai_mut()
-                        .expect("combat remark owner has no enemy brain")
-                        .too_proud_overview_finally_fight_remark();
-                }
-                crate::ai::DutyTail::SwordfightInsult => {
-                    self.world
-                        .entities
-                        .expect_enemy_ai_mut(owner, format_args!("swordfight remark tail"))
-                        .swordfight_insult_after_reconsider();
                 }
                 crate::ai::DutyTail::AfterCombatInjury => {
                     self.world
@@ -459,7 +429,13 @@ impl EngineInner {
         {
             Ok(false)
         } else if enemy_owner
-            && self.execute_ai_combat_expected_event(sim, assets, owner, stimulus.stimulus_type)
+            && (self.execute_ai_combat_unexpected_event(sim, assets, owner, stimulus)
+                || self.execute_ai_combat_expected_event(
+                    sim,
+                    assets,
+                    owner,
+                    stimulus.stimulus_type,
+                ))
         {
             Ok(false)
         } else if enemy_owner
@@ -583,19 +559,15 @@ impl EngineInner {
             return false;
         }
         let admission = self.ai_admission(owner);
-        let admitted = {
-            let entity = self
-                .world
-                .entities
-                .expect_entity_mut(owner, format_args!("Think admission"));
-            if let Some(enemy) = entity.enemy_ai_mut() {
-                enemy.begin_think(&admission, stimulus, &mut self.ai.global)
-            } else {
-                entity
-                    .friendly_ai_mut()
-                    .expect("Think owner has no brain")
-                    .begin_think(sim, stimulus, &mut self.ai.global, &admission)
-            }
+        let admitted = if let Some(enemy) = self
+            .world
+            .entities
+            .expect_entity_mut(owner, format_args!("Think admission"))
+            .enemy_ai_mut()
+        {
+            enemy.begin_think(&admission, stimulus, &mut self.ai.global)
+        } else {
+            self.begin_friendly_think(sim, assets, owner, stimulus, &admission)
         };
         if !admitted {
             self.execute_ai_end_think(sim, assets, owner);

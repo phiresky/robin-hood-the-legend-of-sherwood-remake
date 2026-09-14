@@ -6,6 +6,75 @@ use crate::ai::{
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
+    pub(in crate::engine) fn begin_friendly_think(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        stimulus: &Stimulus,
+        admission: &crate::ai::AiAdmission,
+    ) -> bool {
+        let frozen = self.ai.global.freeze;
+        let ai = self.reporting_civilian_mut(owner);
+        ai.base.cached_frame = admission.frame;
+        ai.base.cached_in_building = admission.in_building;
+        if !ai.base.admit_think_before_role_gates(stimulus, frozen)
+            || !ai.base.admit_think_after_role_gates(stimulus, admission)
+        {
+            if stimulus.stimulus_type == StimulusType::EventAfterScriptGoOn {
+                ai.base.outbox.reentrant.engine_drains_after_script_go_on = false;
+            }
+            return false;
+        }
+        let (state, substate, eye_status, refused) = match stimulus.stimulus_type {
+            StimulusType::EventLoseConsciousness => {
+                ai.base.break_macro();
+                ai.base.clear_emoticon();
+                (
+                    AiState::Sleeping,
+                    Substate::SleepingUnconscious,
+                    crate::element::EyeStatus::DieOrGetUnconscious,
+                    13,
+                )
+            }
+            StimulusType::EventWasp => {
+                ai.base.break_macro();
+                ai.base.set_emoticon(crate::ai::EmoticonType::Thunderstorm);
+                (
+                    AiState::Wondering,
+                    Substate::WonderingWaspInArmour,
+                    crate::element::EyeStatus::Closed,
+                    14,
+                )
+            }
+            StimulusType::EventNet => {
+                ai.base.break_macro();
+                (
+                    AiState::Wondering,
+                    Substate::WonderingUnderNet,
+                    crate::element::EyeStatus::Closed,
+                    15,
+                )
+            }
+            _ => return true,
+        };
+        self.duty_set_state(sim, assets, owner, state, substate);
+        self.reporting_civilian_mut(owner)
+            .base
+            .outbox
+            .recovery
+            .set_eye_status = Some(eye_status);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let ai = self.reporting_civilian_mut(owner);
+        if stimulus.stimulus_type == StimulusType::EventLoseConsciousness {
+            ai.base.set_alert_status(crate::ai::AlertLevel::Green);
+        }
+        ai.base.sorrow_level = 0;
+        ai.base
+            .register_log_line(crate::ai::LogLineType::EventRefused, refused);
+        false
+    }
+
     pub(super) fn execute_friendly_behavior(
         &mut self,
         sim: &SimulationContext,
@@ -610,6 +679,175 @@ impl EngineInner {
 mod tests {
     use super::*;
 
+    #[test]
+    fn live_civilian_admission_distinguishes_global_freeze_from_actor_lock() {
+        for global_freeze in [false, true] {
+            let (mut engine, assets, owner, _) = fixture();
+            engine.ai.global.freeze = global_freeze;
+            if !global_freeze {
+                engine.reporting_civilian_mut(owner).base.locks_flag_field =
+                    crate::ai::AiLockFlags::FREEZE;
+            }
+            let admission = engine.ai_admission(owner);
+            assert!(!engine.begin_friendly_think(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                &Stimulus::new(StimulusType::EventTimer),
+                &admission
+            ));
+            let queue = &engine.friendly_brain(owner).base.stimulus_queue;
+            assert_eq!(queue.len(), usize::from(!global_freeze));
+            if !global_freeze {
+                assert_eq!(queue[0].stimulus_type, StimulusType::EventTimer);
+            }
+        }
+    }
+
+    #[test]
+    fn civilian_admission_special_events_complete_state_and_eye_effects_inline() {
+        use crate::element::EyeStatus;
+        for (event, substate, eye, refused) in [
+            (
+                StimulusType::EventLoseConsciousness,
+                Substate::SleepingUnconscious,
+                EyeStatus::DieOrGetUnconscious,
+                13,
+            ),
+            (
+                StimulusType::EventWasp,
+                Substate::WonderingWaspInArmour,
+                EyeStatus::Closed,
+                14,
+            ),
+            (
+                StimulusType::EventNet,
+                Substate::WonderingUnderNet,
+                EyeStatus::Closed,
+                15,
+            ),
+        ] {
+            let (mut engine, assets, owner, _) = fixture();
+            let ai = engine.reporting_civilian_mut(owner);
+            ai.base.macro_in_progress = true;
+            ai.base.sorrow_level = 7;
+            let admission = engine.ai_admission(owner);
+            assert!(!engine.begin_friendly_think(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                &Stimulus::new(event),
+                &admission
+            ));
+            let ai = engine.friendly_brain(owner);
+            assert_eq!(ai.base.current_substate, substate);
+            assert!(!ai.base.macro_in_progress);
+            assert_eq!(ai.base.sorrow_level, 0);
+            assert!(ai.base.ai_log.iter().any(|line| line.line_type
+                == crate::ai::LogLineType::EventRefused
+                && line.info == refused));
+            assert_eq!(
+                engine
+                    .get_entity(owner)
+                    .unwrap()
+                    .npc_data()
+                    .unwrap()
+                    .eye_status,
+                eye
+            );
+        }
+    }
+
+    #[test]
+    fn live_civilian_state_changes_assign_the_role_alert_levels() {
+        let (mut engine, assets, owner, _) = fixture();
+        for (state, substate, alert) in [
+            (
+                AiState::Default,
+                Substate::DefaultOnPost,
+                crate::ai::AlertLevel::Green,
+            ),
+            (
+                AiState::Wondering,
+                Substate::WonderingCivilianAdmiringHero,
+                crate::ai::AlertLevel::Green,
+            ),
+            (
+                AiState::Seeking,
+                Substate::SeekingCivilianRunningToSoldier,
+                crate::ai::AlertLevel::Yellow,
+            ),
+            (
+                AiState::Fleeing,
+                Substate::FleeingPanic,
+                crate::ai::AlertLevel::Yellow,
+            ),
+        ] {
+            engine.duty_set_state(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                state,
+                substate,
+            );
+            let ai = engine.friendly_brain(owner);
+            assert_eq!(ai.base.current_state, state);
+            assert_eq!(ai.base.current_substate, substate);
+            assert_eq!(ai.base.current_music_alert_status, alert);
+        }
+    }
+
+    #[test]
+    fn detectable_mutations_settle_before_live_state_change_and_roundtrip() {
+        use crate::element::DetectableType::Friend;
+        let (mut engine, assets, owner, target) = fixture();
+        let ai = engine.reporting_civilian_mut(owner);
+        ai.base.outbox.actor.append_detectable((target, Friend));
+        ai.base.outbox.actor.delete_detectable_type(Friend);
+        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+        let sim = crate::sim_rng::test_context();
+        engine.duty_set_state(
+            &sim,
+            &assets,
+            owner,
+            AiState::Default,
+            Substate::DefaultOnPost,
+        );
+        assert!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .npc_data()
+                .unwrap()
+                .detectable_lists[Friend as usize]
+                .is_empty()
+        );
+        engine
+            .reporting_civilian_mut(owner)
+            .base
+            .outbox
+            .actor
+            .append_detectable((target, Friend));
+        engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
+        assert!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .npc_data()
+                .unwrap()
+                .detectable_lists[Friend as usize]
+                .iter()
+                .any(|entry| entry.element == Some(target))
+        );
+        let ai = engine.friendly_brain(owner);
+        let restored: crate::ai_friendly::FriendlyAi =
+            serde_json::from_str(&serde_json::to_string(ai).unwrap()).unwrap();
+        assert_eq!(
+            robin_util::state_hash::compute(&restored),
+            robin_util::state_hash::compute(ai)
+        );
+    }
+
     fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId) {
         let (mut engine, mut assets, soldier, _) =
             super::super::battle_decision_observation_tests::fixture(false);
@@ -625,8 +863,17 @@ mod tests {
         civilian.npc_data_mut().unwrap().life_points = 50;
         civilian.npc_data_mut().unwrap().ai_brain =
             crate::element::AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(0)));
+        civilian
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_corners(
+                crate::coordinates::MapVec::new(-10.0, -5.0),
+                crate::coordinates::MapVec::new(10.0, 5.0),
+            ));
         let owner = engine.add_test_entity(civilian);
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .civilians
+            .push(crate::profiles::CivilianProfile::default());
         let position = engine.live_ai_position(owner);
         let ai = engine.reporting_civilian_mut(owner);
         ai.base.initial_position = position;
@@ -789,7 +1036,7 @@ mod tests {
     }
 
     #[test]
-    fn civilian_panic_and_net_release_keep_directed_centers() {
+    fn civilian_panic_and_net_release_retain_threat_center_without_a_door() {
         for event in [StimulusType::EventPanic, StimulusType::EventNetAway] {
             let (mut engine, assets, owner, target) = fixture();
             let position = engine.live_ai_position(target);
@@ -805,14 +1052,14 @@ mod tests {
                 Some(false)
             );
             let ai = engine.friendly_brain(owner);
-            assert!(ai.base.directed_panic);
+            assert!(!ai.base.directed_panic);
             assert_eq!(ai.base.panic_center_x, position.x);
             assert_eq!(ai.base.panic_center_y, position.y);
         }
     }
 
     #[test]
-    fn fleeing_view_refreshes_directed_panic_and_limits_repeated_sightings() {
+    fn fleeing_view_refreshes_panic_and_limits_repeated_sightings() {
         for (substate, count, next_count) in [
             (Substate::FleeingHiding, 7, 8),
             (Substate::FleeingRunToDoor, 0, 1),
@@ -837,7 +1084,11 @@ mod tests {
                 next_count
             );
             if next_count != count {
-                assert!(engine.friendly_brain(owner).base.directed_panic);
+                let position = engine.live_ai_position(target);
+                let ai = engine.friendly_brain(owner);
+                assert_eq!(ai.base.panic_center_x, position.x);
+                assert_eq!(ai.base.panic_center_y, position.y);
+                assert!(!ai.base.directed_panic);
             }
         }
     }
@@ -849,6 +1100,7 @@ mod tests {
         ai.base.current_state = AiState::Fleeing;
         ai.base.current_substate = Substate::FleeingHiding;
         ai.fleeing_seen_enemy_counter = 7;
+        ai.base.launch_timer(0, 100);
         let sim = crate::sim_rng::test_context();
         engine.execute_ai_callback(
             &sim,
@@ -874,6 +1126,9 @@ mod tests {
             Some(false)
         );
         assert_eq!(engine.friendly_brain(owner).fleeing_seen_enemy_counter, 1);
-        assert!(engine.friendly_brain(owner).base.directed_panic);
+        let position = engine.live_ai_position(target);
+        assert_eq!(engine.friendly_brain(owner).base.panic_center_x, position.x);
+        assert_eq!(engine.friendly_brain(owner).base.panic_center_y, position.y);
+        assert!(!engine.friendly_brain(owner).base.directed_panic);
     }
 }

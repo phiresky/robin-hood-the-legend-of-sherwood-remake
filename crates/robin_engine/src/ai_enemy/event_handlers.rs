@@ -467,35 +467,7 @@ impl EnemyAi {
                 return Ok(self.on_unexpected_sees_beggar(stimulus, env));
             }
 
-            StimulusType::EventEnemyNear => {
-                tracing::trace!(
-                    me = self.base.me,
-                    frame = ctx.frame,
-                    substate = ?self.base.current_substate,
-                    "EventEnemyNear received"
-                );
-                // Original-game unexpected-event handling,
-                // EVENT_ENEMY_NEAR. The sender owns trainer/time gates; this
-                // arm assigns the stimulus human and enters swordfight.
-                let StimulusInfo::Human(enemy) = stimulus.info else {
-                    tracing::warn!(
-                        me = self.base.me,
-                        info = ?stimulus.info,
-                        "EventEnemyNear received without a human target"
-                    );
-                    return Ok(false);
-                };
-                match self.base.current_substate {
-                    Substate::AttackingReactiontimeTurning
-                    | Substate::AttackingReactiontime
-                    | Substate::AttackingApproachToObserve
-                    | Substate::AttackingObserve => {
-                        self.base.primary_target = Some(enemy);
-                        self.begin_swordfight(ctx);
-                    }
-                    _ => {}
-                }
-            }
+            StimulusType::EventEnemyNear => return Ok(false),
 
             // EVENT_AFTER_SCRIPT_GO_ON. Drain the buffered stimulus queue
             // (stimuli enqueued by `start_think` while `script_locked` was
@@ -2627,9 +2599,7 @@ impl EnemyAi {
                             // battle planning.
                             self.reinitialize_them_list(ctx);
                             return Err(crate::ai::DutyCall {
-                                tail: crate::ai::DutyTail::RiderAttack {
-                                    fallback: crate::ai::RiderAttackFallback::BattleDecisions,
-                                },
+                                tail: crate::ai::DutyTail::RiderAttack,
                                 ..crate::ai::DutyCall::new(DutyFlags::empty(), false)
                             });
                         }

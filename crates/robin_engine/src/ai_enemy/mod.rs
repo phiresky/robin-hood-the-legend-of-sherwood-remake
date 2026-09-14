@@ -449,11 +449,6 @@ impl AiRole for EnemyAi {
         &mut self.base
     }
 
-    #[track_caller]
-    fn role_set_state(&mut self, state: AiState, substate: Substate) {
-        EnemyAi::set_state(self, state, substate);
-    }
-
     /// Soldier alert setter: threads the forced-attentive view override.
     fn role_set_alert_status(&mut self, level: AlertLevel) {
         EnemyAi::set_alert_status(self, level);
@@ -461,6 +456,48 @@ impl AiRole for EnemyAi {
 }
 
 impl EnemyAi {
+    // Remaining borrowed enemy handlers use these movement adapters.
+    #[track_caller]
+    pub(crate) fn go_to(
+        &mut self,
+        state: AiState,
+        substate: Substate,
+        destination: Position,
+        flags: GotoFlags,
+        ctx: &AiContext,
+    ) {
+        self.set_state(state, substate);
+        self.base.go_to(destination, flags, ctx);
+    }
+
+    #[track_caller]
+    pub(crate) fn go_to_speed(
+        &mut self,
+        state: AiState,
+        substate: Substate,
+        destination: Position,
+        flags: GotoFlags,
+        speed: f32,
+        ctx: &AiContext,
+    ) {
+        self.set_state(state, substate);
+        self.base.go_to_speed(destination, flags, speed, ctx);
+    }
+
+    #[track_caller]
+    pub(crate) fn go_near(
+        &mut self,
+        state: AiState,
+        substate: Substate,
+        destination: Position,
+        distance: i32,
+        flags: GotoFlags,
+        ctx: &AiContext,
+    ) {
+        self.set_state(state, substate);
+        self.base.go_near(destination, distance, flags, ctx);
+    }
+
     /// Unwrap a field the current substate requires to be set, panicking with
     /// the owner, the field (`what`, e.g. "an antagonist") and the substate
     /// `context` otherwise.

@@ -48,6 +48,9 @@ mod tests {
         }
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .civilians
+            .push(crate::profiles::CivilianProfile::default());
         engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
             "beggar_test.scs",
         ));

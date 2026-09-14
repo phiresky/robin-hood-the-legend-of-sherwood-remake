@@ -480,7 +480,9 @@ fn run_synchronous_civilian_alert(
             level: 0,
         },
     );
-    friendly.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
+    friendly.begin_state_change(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
+    friendly.base.set_ai_state(AiState::Seeking);
+    friendly.base.current_substate = Substate::SeekingCivilianRunningToSoldier;
     civilian.npc.detectable_lists[crate::element::DetectableType::Friend as usize].push(
         crate::element::Detectable {
             element: Some(soldier_id),

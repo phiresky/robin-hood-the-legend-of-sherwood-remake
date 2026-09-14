@@ -11,15 +11,4 @@ impl EnemyAi {
             }
         }
     }
-
-    pub(crate) fn too_proud_overview_finally_fight_remark(&mut self) {
-        if self.base.current_substate.is_any_swordfight() {
-            let remark = if self.is_vip {
-                Remark::VipProudFinallyFight
-            } else {
-                Remark::ProudFinallyFight
-            };
-            self.base.say(remark);
-        }
-    }
 }

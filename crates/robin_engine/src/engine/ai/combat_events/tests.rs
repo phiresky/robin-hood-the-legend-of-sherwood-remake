@@ -3,11 +3,118 @@ use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::element::Command;
 use crate::order::OrderType;
 
+#[test]
+fn enemy_near_retargets_only_the_four_observing_substates() {
+    for (substate, enters) in [
+        (Substate::AttackingReactiontimeTurning, true),
+        (Substate::AttackingReactiontime, true),
+        (Substate::AttackingApproachToObserve, true),
+        (Substate::AttackingObserve, true),
+        (Substate::AttackingRunningToEnemy, false),
+    ] {
+        let (mut engine, assets, owner, target) = fixture(substate);
+        place(&mut engine, target, 120.0, 100.0, 0.0);
+        let ai = engine.combat_event_ai_mut(owner);
+        ai.base.primary_target = None;
+        ai.combat_trainer = true;
+        assert!(engine.execute_ai_combat_unexpected_event(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            &crate::ai::Stimulus::with_human(StimulusType::EventEnemyNear, target.index())
+        ));
+        let ai = engine.combat_event_ai(owner);
+        assert_eq!(
+            ai.base.primary_target,
+            enters.then_some(crate::ai::AiEntityHandle::new(target.index()))
+        );
+        assert_eq!(
+            ai.base.current_substate,
+            if enters {
+                Substate::AttackingSwordfight
+            } else {
+                substate
+            }
+        );
+        if enters {
+            assert_eq!(ai.base.when_does_timer_ring, 120);
+            assert!(
+                engine
+                    .expect_entity(owner, "swordfight owner")
+                    .human_data()
+                    .unwrap()
+                    .opponents
+                    .contains(&target)
+            );
+        }
+    }
+}
+
+#[test]
+fn live_swordfight_entry_clears_reciprocal_neighbours() {
+    let (mut engine, assets, owner, target) = fixture(Substate::AttackingObserve);
+    place(&mut engine, target, 120.0, 100.0, 0.0);
+    let left = engine.add_test_entity(crate::engine::test_support::actors::make_test_ai_soldier(
+        Camp::Lacklandists,
+    ));
+    let right = engine.add_test_entity(crate::engine::test_support::actors::make_test_ai_soldier(
+        Camp::Lacklandists,
+    ));
+    engine.combat_event_ai_mut(owner).left_combat_neighbour =
+        Some(crate::ai::AiEntityHandle::new(left.index()));
+    engine.combat_event_ai_mut(owner).right_combat_neighbour =
+        Some(crate::ai::AiEntityHandle::new(right.index()));
+    engine.combat_event_ai_mut(left).right_combat_neighbour =
+        Some(crate::ai::AiEntityHandle::new(owner.index()));
+    engine.combat_event_ai_mut(right).left_combat_neighbour =
+        Some(crate::ai::AiEntityHandle::new(owner.index()));
+    engine.execute_ai_begin_swordfight(&crate::sim_rng::test_context(), &assets, owner);
+    assert_eq!(engine.combat_event_ai(owner).left_combat_neighbour, None);
+    assert_eq!(engine.combat_event_ai(owner).right_combat_neighbour, None);
+    assert_eq!(engine.combat_event_ai(left).right_combat_neighbour, None);
+    assert_eq!(engine.combat_event_ai(right).left_combat_neighbour, None);
+}
+
+#[test]
+fn live_swordfight_entry_retains_selected_jump_line() {
+    let (mut engine, assets, owner, target) = fixture(Substate::AttackingObserve);
+    place(&mut engine, target, 120.0, 100.0, 0.0);
+    for index in 0..3 {
+        let mut line = crate::jump_line::JumpLine::new(
+            MapPoint::new(90.0, 100.0),
+            MapPoint::new(130.0, 100.0),
+            0.0,
+            0.0,
+        );
+        line.sector_index = crate::fast_find_grid::SectorIndex::new(0);
+        line.associated_line_index = Some(if index == 1 { 2 } else { 1 });
+        engine
+            .world
+            .fast_grid_mut()
+            .level_mut()
+            .jump_lines
+            .push(line);
+    }
+    engine.combat_event_ai_mut(owner).my_line_jump = Some(1);
+    engine.execute_ai_begin_swordfight(&crate::sim_rng::test_context(), &assets, owner);
+    assert_eq!(engine.combat_event_ai(owner).my_line_jump, Some(1));
+    assert!(engine.orders.sequence_manager.sequences_iter().flat_map(|s| s.elements.iter()).any(|element| {
+        element.owner == Some(owner) && element.command == Command::EnterSwordfight
+            && matches!(element.get_property(crate::sequence::Field::JumplineDestination), Some(crate::sequence::FieldValue::LineId(line)) if line.get() == 1)
+    }));
+}
+
 fn fixture(substate: Substate) -> (EngineInner, LevelAssets, EntityId, EntityId) {
     let (mut engine, assets, owner, target) =
         crate::engine::ai::battle_decision_observation_tests::fixture(false);
     engine.combat_event_ai_mut(owner).base.current_substate = substate;
     for id in [owner, target] {
+        let element = engine.get_entity_mut(id).unwrap().element_data_mut();
+        let sector = element
+            .sector()
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap());
+        element.set_sector(Some(sector));
         engine
             .get_entity_mut(id)
             .unwrap()

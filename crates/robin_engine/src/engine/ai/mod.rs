@@ -4270,10 +4270,6 @@ impl EngineInner {
             enemy.set_state(state, substate);
             return;
         }
-        if let Some(friendly) = entity.friendly_ai_mut() {
-            friendly.set_state(state, substate);
-            return;
-        }
         panic!(
             "{context} owner {} has entity kind {:?} but no typed AI brain",
             npc_id.index(),

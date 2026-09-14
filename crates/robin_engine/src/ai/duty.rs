@@ -44,9 +44,7 @@ pub(crate) enum DutyTail {
     AttackEnemy {
         target: super::HumanHandle,
     },
-    RiderAttack {
-        fallback: RiderAttackFallback,
-    },
+    RiderAttack,
     ReconsiderSwordfight {
         enemy_weak: bool,
     },
@@ -77,7 +75,6 @@ pub(crate) enum DutyTail {
         targets: Vec<super::HumanHandle>,
     },
     SearchCharlyTimer,
-    TooProudOverviewRemark,
     AfterCombatInjury,
     GotHitViewStatus,
     DispatchPatrol {
@@ -86,7 +83,6 @@ pub(crate) enum DutyTail {
     Think {
         stimulus: crate::ai::Stimulus,
     },
-    SwordfightInsult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,12 +97,6 @@ pub(crate) enum BodyReaction {
     Unreachable,
     Examine { body: super::HumanHandle },
     DeadBodyAlert { center: super::Position },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum RiderAttackFallback {
-    Approach,
-    BattleDecisions,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -241,19 +241,15 @@ impl EngineInner {
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
         let admission = self.ai_admission(owner);
-        let admitted = {
-            let entity = self
-                .world
-                .entities
-                .expect_entity_mut(owner, format_args!("patrol arrival"));
-            if let Some(enemy) = entity.enemy_ai_mut() {
-                enemy.begin_think(&admission, stimulus, &mut self.ai.global)
-            } else {
-                entity
-                    .friendly_ai_mut()
-                    .expect("patrol arrival requires an AI role")
-                    .begin_think(sim, stimulus, &mut self.ai.global, &admission)
-            }
+        let admitted = if let Some(enemy) = self
+            .world
+            .entities
+            .expect_entity_mut(owner, format_args!("patrol arrival"))
+            .enemy_ai_mut()
+        {
+            enemy.begin_think(&admission, stimulus, &mut self.ai.global)
+        } else {
+            self.begin_friendly_think(sim, assets, owner, stimulus, &admission)
         };
         if !admitted {
             self.execute_ai_end_think(sim, assets, owner);

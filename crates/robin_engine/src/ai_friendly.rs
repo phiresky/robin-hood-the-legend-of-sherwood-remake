@@ -7,8 +7,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ai::*;
-use crate::coordinates::MapPoint;
-use crate::parameters_ai::{AI_FIRST_LOOK_TIME, AI_STANDARD_PANIC_RUNS};
 
 // ---------------------------------------------------------------------------
 // Civilian-specific constants
@@ -71,11 +69,6 @@ impl AiRole for FriendlyAi {
         &mut self.base
     }
 
-    #[track_caller]
-    fn role_set_state(&mut self, state: AiState, substate: Substate) {
-        FriendlyAi::set_state(self, state, substate);
-    }
-
     /// Civilians have no view override; use the base alert setter.
     fn role_set_alert_status(&mut self, level: AlertLevel) {
         self.base.set_alert_status(level);
@@ -98,16 +91,12 @@ impl FriendlyAi {
 
     // -- State management --
 
-    /// Set state and substate, update alert status for civilians.
-    ///
-    /// Unlike the base-class version, this also sets alert status
-    /// (green for default/wondering, yellow for seeking/fleeing) and
-    /// notifies the script system.
+    /// Prepare the civilian state-change log and alert status before the script callback.
     pub(crate) fn begin_state_change(&mut self, state: AiState, substate: Substate) {
         debug_assert_eq!(
             substate.ai_state_family(),
             Some(state),
-            "FriendlyAi::set_state received mismatched state/substate: {state:?}/{substate:?}"
+            "civilian state change received mismatched state/substate: {state:?}/{substate:?}"
         );
 
         self.base
@@ -127,40 +116,6 @@ impl FriendlyAi {
             }
         }
     }
-
-    pub fn set_state(&mut self, state: AiState, substate: Substate) {
-        self.begin_state_change(state, substate);
-
-        // Fire an `AI_STATE_CHANGE_TO_*` filter event on every
-        // `set_state`.  The civilian gate is just "actor is scripted
-        // and scripting is enabled" — no substate check — so every
-        // call queues a notification and the engine's dispatcher
-        // gates on the actor being scripted at drain time.  Source =
-        // primary target for Fleeing, otherwise self; civilians
-        // never reach Attacking/Menacing.
-        let source = match state {
-            AiState::Fleeing => AiStateChangeSource::from_optional_human(self.base.primary_target),
-            _ => AiStateChangeSource::SelfActor,
-        };
-        // Work done before changing state belongs inside its synchronous
-        // callback boundary. In particular, common patrol coordination falls
-        // through from stop-all, so its halt must be applied before the
-        // civilian FilterAIEvent while the following movement remains outside.
-        let actor_effects_before_callback = self
-            .base
-            .outbox
-            .actor
-            .has_boundary_work()
-            .then(|| std::mem::take(&mut self.base.outbox.actor));
-        self.base
-            .queue_state_change(state, substate, source, actor_effects_before_callback);
-
-        self.base.set_ai_state(state);
-        self.base.current_substate = substate;
-    }
-
-    // Movement helpers (`go_to`, `go_to_speed`, `go_near`) and
-    // `coordinate_patrol` are shared with the enemy role via [`AiRole`].
 
     // Panic requests resume against live engine state after releasing this borrow.
 
@@ -205,35 +160,6 @@ impl FriendlyAi {
     // -----------------------------------------------------------------------
     // Think — main stimulus dispatcher
     // -----------------------------------------------------------------------
-
-    /// Admit a civilian Think without retaining its borrow across callbacks.
-    /// The engine completes both admitted and rejected calls after releasing this borrow.
-    pub(crate) fn begin_think(
-        &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
-        stimulus: &Stimulus,
-        global: &mut AiGlobalState,
-        ctx: &AiAdmission,
-    ) -> bool {
-        self.base.cached_frame = ctx.frame;
-        self.base.cached_in_building = ctx.in_building;
-
-        let stimulus_type = stimulus.stimulus_type;
-
-        // Pre-think checks
-        if !self.start_think(stimulus, ctx, global.freeze) {
-            if stimulus_type == StimulusType::EventAfterScriptGoOn {
-                self.base.outbox.reentrant.engine_drains_after_script_go_on = false;
-            }
-            return false;
-        }
-
-        // Script filter gate applied by the engine before this call —
-        // see `Engine::filter_stimulus` and the matching note in
-        // the engine-owned decision dispatcher.
-
-        true
-    }
 
     /// Run only the admitted handler; the engine owns the surrounding call.
     pub(crate) fn think_body(
@@ -325,82 +251,6 @@ impl FriendlyAi {
     // -----------------------------------------------------------------------
     // Think sub-methods
     // -----------------------------------------------------------------------
-
-    fn start_think(
-        &mut self,
-        stimulus: &Stimulus,
-        ctx: &AiAdmission,
-        static_ai_frozen: bool,
-    ) -> bool {
-        self.start_think_post_filter(stimulus, ctx, static_ai_frozen)
-    }
-
-    // `start_think_pre_filter` (decision-tick admission before the script
-    // `FilterAIEvent` call) is shared with the enemy role via [`AiRole`].
-
-    /// Decision-tick admission work after `FilterAIEvent`. SetAIState observes these
-    /// gates but deliberately ignores the returned admission decision.
-    /// Civilians normally never hit `EventWasp` / `EventNet`, but the gates
-    /// live on the shared behavior so any scripted substate change could
-    /// reach them; mirror the enemy path's defensive refusals.
-    pub(crate) fn start_think_post_filter(
-        &mut self,
-        stimulus: &Stimulus,
-        ctx: &AiAdmission,
-        static_ai_frozen: bool,
-    ) -> bool {
-        let stimulus_type = stimulus.stimulus_type;
-
-        if !self
-            .base
-            .admit_think_before_role_gates(stimulus, static_ai_frozen)
-        {
-            return false;
-        }
-
-        if !self.base.admit_think_after_role_gates(stimulus, ctx) {
-            return false;
-        }
-
-        // These three stimuli are consumed by the common
-        // AI think-start behavior before the
-        // civilian-specific Think dispatcher runs.  They therefore mutate
-        // the base AI even though FriendlyAi's alerting-event switch has no
-        // derived handling for them.
-        match stimulus_type {
-            StimulusType::EventLoseConsciousness => {
-                self.base.break_macro();
-                self.base.clear_emoticon();
-                self.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
-                self.base.outbox.recovery.set_eye_status =
-                    Some(crate::element::EyeStatus::DieOrGetUnconscious);
-                self.base.set_alert_status(AlertLevel::Green);
-                self.base.sorrow_level = 0;
-                self.base.register_log_line(LogLineType::EventRefused, 13);
-                return false;
-            }
-            StimulusType::EventWasp => {
-                self.base.break_macro();
-                self.base.set_emoticon(EmoticonType::Thunderstorm);
-                self.set_state(AiState::Wondering, Substate::WonderingWaspInArmour);
-                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
-                self.base.sorrow_level = 0;
-                self.base.register_log_line(LogLineType::EventRefused, 14);
-                return false;
-            }
-            StimulusType::EventNet => {
-                self.base.break_macro();
-                self.set_state(AiState::Wondering, Substate::WonderingUnderNet);
-                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
-                self.base.sorrow_level = 0;
-                self.base.register_log_line(LogLineType::EventRefused, 15);
-                return false;
-            }
-            _ => {}
-        }
-
-        true
-    }
 
     // -----------------------------------------------------------------------
     // Expected-event civilian dispatcher

@@ -141,15 +141,6 @@ pub enum AiOwnerWork {
     ConsiderToBeginParade {
         attacker: HumanHandle,
     },
-    /// Evaluate the `SUBSTATE_ATTACKING_TOO_PROUD_TO_ATTACK_OVERVIEW`
-    /// `EVENT_TIMER` remark test that follows battle planning
-    /// during the affected-character loop. The game reads
-    /// `mCurrentSubstate` only after the whole synchronous decision has
-    /// returned, including the reconsidered enemy approach's movement result and
-    /// its avenger-on-the-roof fallback, which both leave the
-    /// any-swordfight set. Rust runs those on this same owner FIFO, so the
-    /// test has to be taken from this position rather than inline.
-    TooProudOverviewFinallyFightRemark,
     /// Continue PC-sighting processing after its inline
     /// `Say(FOUND_CHARLY, MYTALK_1)` has returned. A rejected line invokes
     /// MYTALK synchronously before the following friend-in-trouble reference

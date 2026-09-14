@@ -7,6 +7,33 @@ use crate::ai_enemy::{AiMapVec, EnemyAi, SeekFlags, UNDEFINED_DIRECTION};
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
+    pub(in crate::engine) fn execute_ai_combat_unexpected_event(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        stimulus: &crate::ai::Stimulus,
+    ) -> bool {
+        if stimulus.stimulus_type != StimulusType::EventEnemyNear {
+            return false;
+        }
+        let crate::ai::StimulusInfo::Human(target) = stimulus.info else {
+            tracing::warn!(?owner, info = ?stimulus.info, "Enemy-near event requires a human target");
+            return true;
+        };
+        if matches!(
+            self.combat_event_ai(owner).base.current_substate,
+            Substate::AttackingReactiontimeTurning
+                | Substate::AttackingReactiontime
+                | Substate::AttackingApproachToObserve
+                | Substate::AttackingObserve
+        ) {
+            self.combat_event_ai_mut(owner).base.primary_target = Some(target);
+            self.execute_ai_begin_swordfight(sim, assets, owner);
+        }
+        true
+    }
+
     fn combat_event_ai(&self, owner: EntityId) -> &EnemyAi {
         self.world
             .entities

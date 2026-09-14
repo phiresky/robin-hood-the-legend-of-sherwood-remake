@@ -1,4 +1,5 @@
 use super::*;
+use crate::coordinates::MapPoint;
 
 fn duty_fixture(
     mut ai: FriendlyAi,
@@ -51,61 +52,6 @@ fn friendly_ai_defaults() {
     assert_eq!(ai.base.me, 99);
     assert_eq!(ai.base.current_state, AiState::Default);
     assert_eq!(ai.beggar_dont_talk_counter, 0);
-}
-
-#[test]
-fn civilian_start_think_distinguishes_static_and_ailock_freeze() {
-    let ctx = AiAdmission {
-        frame: 0,
-        original_creation_order: Some(0),
-        think_depth: 0,
-        in_building: false,
-        self_is_rider: false,
-        self_is_dead: false,
-        self_is_unconscious: false,
-        posture: crate::element::Posture::Upright,
-        position: Position::default(),
-    };
-    let stimulus = Stimulus::new(StimulusType::EventTimer);
-
-    let mut static_frozen = FriendlyAi::new(1);
-    assert!(!static_frozen.start_think(&stimulus, &ctx, true));
-    assert!(static_frozen.base.stimulus_queue.is_empty());
-
-    let mut ai_locked = FriendlyAi::new(2);
-    ai_locked.base.locks_flag_field = AiLockFlags::FREEZE;
-    assert!(!ai_locked.start_think(&stimulus, &ctx, false));
-    assert_eq!(ai_locked.base.stimulus_queue.len(), 1);
-    assert_eq!(
-        ai_locked.base.stimulus_queue[0].stimulus_type,
-        StimulusType::EventTimer
-    );
-}
-
-#[test]
-fn civilian_set_state() {
-    let mut ai = FriendlyAi::new(1);
-    ai.set_state(AiState::Fleeing, Substate::FleeingPanic);
-    assert_eq!(ai.base.current_state, AiState::Fleeing);
-    assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
-    assert_eq!(ai.base.current_music_alert_status, AlertLevel::Yellow);
-}
-
-#[test]
-fn civilian_set_state_alert_levels() {
-    let mut ai = FriendlyAi::new(1);
-
-    ai.set_state(AiState::Default, Substate::DefaultOnPost);
-    assert_eq!(ai.base.current_music_alert_status, AlertLevel::Green);
-
-    ai.set_state(AiState::Wondering, Substate::WonderingCivilianAdmiringHero);
-    assert_eq!(ai.base.current_music_alert_status, AlertLevel::Green);
-
-    ai.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
-    assert_eq!(ai.base.current_music_alert_status, AlertLevel::Yellow);
-
-    ai.set_state(AiState::Fleeing, Substate::FleeingPanic);
-    assert_eq!(ai.base.current_music_alert_status, AlertLevel::Yellow);
 }
 
 #[test]
@@ -262,7 +208,8 @@ fn fit_again_returns_duty_after_ordered_resurrection_and_eye_prefix() {
     // original game's operation order.
     let mut ai = FriendlyAi::new(1);
     let mut global = AiGlobalState::default();
-    ai.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
+    ai.base.current_state = AiState::Sleeping;
+    ai.base.current_substate = Substate::SleepingUnconscious;
     ai.base.outbox.reentrant.owner_work.clear();
 
     let stimulus = Stimulus::new(StimulusType::EventFitAgain);
@@ -380,43 +327,6 @@ fn make_soldier_view(
 // ──────────────────────────────────────────────────────────
 // Soldier-alert synchronous route-result continuation
 // ──────────────────────────────────────────────────────────
-
-#[test]
-fn detectable_fifo_stays_inside_existing_state_change_boundaries() {
-    use crate::ai::DetectableMutation::{Append, DeleteType};
-    use crate::element::DetectableType::Friend;
-    let target = crate::element::EntityId::Soldier(crate::entity_id::SoldierId(20));
-    let mut ai = FriendlyAi::new(1);
-    ai.base.outbox.actor.append_detectable((target, Friend));
-    ai.base.outbox.actor.delete_detectable_type(Friend);
-    assert!(
-        ai.base.outbox.reentrant.owner_work.is_empty(),
-        "mutation queueing must not introduce owner fixed points"
-    );
-    ai.set_state(AiState::Default, Substate::DefaultOnPost);
-    ai.base.outbox.actor.append_detectable((target, Friend));
-    let [AiOwnerWork::StateChange(change)] = ai.base.outbox.reentrant.owner_work.as_slice() else {
-        panic!("expected only the preexisting state-change boundary");
-    };
-    assert_eq!(
-        change
-            .actor_effects_before_callback
-            .as_ref()
-            .unwrap()
-            .detectable_mutations,
-        vec![Append(target, Friend), DeleteType(Friend)]
-    );
-    assert_eq!(
-        ai.base.outbox.actor.detectable_mutations,
-        vec![Append(target, Friend)],
-        "callback tail must not leak into the prefix"
-    );
-    let restored: FriendlyAi = serde_json::from_str(&serde_json::to_string(&ai).unwrap()).unwrap();
-    assert_eq!(
-        robin_util::state_hash::compute(&restored),
-        robin_util::state_hash::compute(&ai)
-    );
-}
 
 // ──────────────────────────────────────────────────────────
 // Apple-chase flee: full scan, not a single-guess stub

@@ -672,6 +672,9 @@ mod tests {
         }
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .civilians
+            .push(crate::profiles::CivilianProfile::default());
         (engine, assets, owner, [first, second])
     }
 
@@ -1083,22 +1086,35 @@ mod tests {
     }
 
     #[test]
-    fn reporting_family_leaves_interrupts_to_the_general_dispatcher() {
-        let (mut engine, owner, _) = reporting_pair(Substate::SeekingCivilianRunningToSoldierSeen);
+    fn reporting_family_preserves_general_event_routing() {
+        let (mut engine, owner, target) =
+            reporting_pair(Substate::SeekingCivilianRunningToSoldierSeen);
         for event in [
             StimulusType::EventReturnToDuty,
             StimulusType::EventLoseConsciousness,
             StimulusType::EventView,
             StimulusType::EventCouldntReachPoint,
         ] {
+            let stimulus = if event == StimulusType::EventView {
+                Stimulus::with_human(event, target.index())
+            } else {
+                Stimulus::new(event)
+            };
             assert_eq!(
                 engine.execute_friendly_callback(
                     &crate::sim_rng::test_context(),
                     &LevelAssets::default(),
                     owner,
-                    &Stimulus::new(event),
+                    &stimulus,
                 ),
-                None
+                if matches!(
+                    event,
+                    StimulusType::EventView | StimulusType::EventLoseConsciousness
+                ) {
+                    Some(false)
+                } else {
+                    None
+                }
             );
         }
     }
