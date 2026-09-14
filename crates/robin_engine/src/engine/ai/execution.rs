@@ -81,6 +81,9 @@ impl EngineInner {
         call: crate::ai::DutyCall,
     ) -> bool {
         match call.tail {
+            crate::ai::DutyTail::EnemyObservation { operation } => {
+                self.execute_ai_enemy_observation(sim, assets, owner, operation)
+            }
             crate::ai::DutyTail::PanicSegment { stimulus } => {
                 self.execute_ai_panic_segment(sim, assets, owner, stimulus);
             }
@@ -445,6 +448,10 @@ impl EngineInner {
             Ok(handled)
         } else if enemy_owner
             && let Some(handled) = self.execute_ai_wondering_event(sim, assets, owner, stimulus)
+        {
+            Ok(handled)
+        } else if enemy_owner
+            && let Some(handled) = self.execute_ai_seeking_event(sim, assets, owner, stimulus)
         {
             Ok(handled)
         } else if enemy_owner && stimulus.stimulus_type == StimulusType::CallPatrolCoordinate {

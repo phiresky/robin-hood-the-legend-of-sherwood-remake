@@ -1,15 +1,14 @@
 //! `EnemyAi` event handlers: `think_unexpected_event`,
 //! `think_alerting_event`, the per-event standard procedures, and
 //! the post-event helpers (`get_angry_about_apple`,
-//! `couldnt_reachpoint_emergency_routine`,
-//! `event_sees_charly_standard_procedure`).
+//! `couldnt_reachpoint_emergency_routine`).
 //!
 //! Lifted out of `ai_enemy/mod.rs` to keep the file manageable.
 
 use crate::ai::*;
 use crate::parameters_ai;
 
-use super::util::{ai_max_norm_distance, ai_square_distance, enemy_is_below_me};
+use super::util::{ai_max_norm_distance, ai_square_distance};
 use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, combat, task_priority};
 
 fn good_strike_lifecycle_debug_matches(ctx: &AiContext) -> bool {
@@ -36,239 +35,6 @@ impl EnemyAi {
                 self.base.say(Remark::CombatInsult);
             }
         }
-    }
-
-    /// Standard "I see the friend I was looking for" reaction.
-    ///
-    /// Three rank branches (officer / soldier / knight) inside
-    /// `STATE_SEEKING`, followed by a common "reunion" tail that either
-    /// kicks off a `DetectedCharly` wait, resumes a synchronised macro,
-    /// or registers as a synchronising actor on the friend.  The rank
-    /// branches can short-circuit the function before the tail ever runs.
-    fn event_sees_charly_standard_procedure(
-        &mut self,
-        env: ThinkEnv<'_>,
-        charly: AiEntityHandle,
-    ) -> AiFlow<()> {
-        let ThinkEnv { sim, ctx, .. } = env;
-        // the encountered soldier's metadata (rank, reported-to-officer, substate) comes
-        // from the per-tick entity view.  If the view is missing we skip
-        // the rank-specific branches and fall through to the reunion
-        // tail — losing the view snapshot means we can't trust the rank
-        // checks, but the reunion tail is a safe default.
-        let charly_view = ctx
-            .entity_view_logged(charly, "encountered charly")
-            .cloned();
-
-        if self.base.current_state == AiState::Seeking {
-            match self.get_rank() {
-                // Officer branch.
-                ProfileRank::Officer => {
-                    // Ignore while already waiting / lecturing the charly
-                    // we sent out.
-                    if matches!(
-                        self.base.current_substate,
-                        Substate::SeekingOfficerWaitForCharly
-                            | Substate::SeekingOfficerLectureCharly
-                    ) {
-                        return Ok(());
-                    }
-                    // Ignore if charly already reported.
-                    let already_reported =
-                        charly_view.as_ref().is_some_and(|v| v.reported_to_officer);
-                    if already_reported {
-                        return Ok(());
-                    }
-                    self.base.outbox.actor.queue_unalert_near_charly_seekers(
-                        CharlySeekerTarget::Npc(charly),
-                        self.base.antagonist,
-                    );
-
-                    // If the encountered actor has soldier rank, acquire him and wait.
-                    let charly_is_soldier = charly_view
-                        .as_ref()
-                        .is_some_and(|v| v.is_soldier() && v.rank == ProfileRank::Soldier);
-                    if charly_is_soldier {
-                        self.base.say(Remark::FoundCharly);
-                        self.base.outbox.reentrant.cross_npc_actions.push(
-                            CrossNpcAction::SendStimulus {
-                                target: charly.get(),
-                                stimulus_type: StimulusType::CallGoToOfficer,
-                                info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            },
-                        );
-                        self.base.antagonist = Some(charly);
-                        self.base.face_entity(charly, ctx);
-                        self.set_state_with_timer(
-                            AiState::Seeking,
-                            Substate::SeekingOfficerWaitForCharly,
-                            10,
-                            ctx,
-                        );
-                        return Ok(());
-                    }
-                    // Fall through to reunion tail.
-                }
-
-                // Soldier branch.
-                ProfileRank::Soldier => {
-                    // Only if we have an antagonist (the officer who sent
-                    // us out) and the encountered actor is an unreported soldier.
-                    let has_antagonist = self.base.antagonist.is_some();
-                    let charly_ok = charly_view.as_ref().is_some_and(|v| {
-                        v.is_soldier() && v.rank == ProfileRank::Soldier && !v.reported_to_officer
-                    });
-                    if has_antagonist && charly_ok {
-                        self.seek_flags &= !SeekFlags::REPORT_OFFICER_AFTER;
-
-                        // Branch on the encountered actor's substate.
-                        let charly_substate = charly_view
-                            .as_ref()
-                            .map(|v| v.ai_substate)
-                            .unwrap_or(Substate::None);
-                        match charly_substate {
-                            Substate::SeekingCharlySentToOfficer
-                            | Substate::SeekingCharlyGoToOfficer
-                            | Substate::SeekingCharlyGoToOfficerSeen
-                            | Substate::SeekingCharlyGetLectureByOfficer
-                            | Substate::SeekingCharlyGetLectureByOfficer2 => {
-                                // Already sent to officer.
-                                return Err(DutyCall::new(DutyFlags::empty(), false));
-                            }
-                            _ => {
-                                // Send charly to officer ourselves.
-                                self.set_state(
-                                    AiState::Seeking,
-                                    Substate::SeekingSendCharlyToOfficer,
-                                );
-                                self.base.outbox.actor.queue_unalert_near_charly_seekers(
-                                    CharlySeekerTarget::Npc(charly),
-                                    self.base.antagonist,
-                                );
-                                // The original game clears alerts from nearby target seekers
-                                // synchronously before Say(FOUND_CHARLY).
-                                // Preserve that statement boundary: a
-                                // rejected speech can immediately dispatch
-                                // EVENT_MYTALK_1 and returning to duty, whose
-                                // patrol-chief visibility query must not
-                                // overtake the earlier Charly-seeker sweep.
-                                self.base.outbox.reentrant.owner_work.push(
-                                    AiOwnerWork::ActorEffects(std::mem::take(
-                                        &mut self.base.outbox.actor,
-                                    )),
-                                );
-                                self.base
-                                    .say_with_flags(Remark::FoundCharly, SpeechFlags::MYTALK_1);
-                                self.base.outbox.reentrant.owner_work.push(
-                                    AiOwnerWork::ResumeSendCharlyAfterSpeech {
-                                        charly: charly.get(),
-                                    },
-                                );
-                                return Ok(());
-                            }
-                        }
-                    }
-                    // Fall through to reunion tail.
-                }
-
-                // Knight branch — no-op, falls through.
-                ProfileRank::Knight => {}
-
-                ProfileRank::None => {}
-            }
-
-            // Say(REMARK_FOUND_CHARLY) inside the seeking block.
-            self.base.say(Remark::FoundCharly);
-        }
-
-        // ── Reunion tail. ──────────────────────────────────────────────
-        // Zero sorrow and clear the checkpoint charly.
-        self.base.sorrow_level = 0;
-        self.base.set_checkpoint_charly(None);
-
-        // Branch on synchronize-index / sync-charly / macro state.
-        let no_sync = self.base.synchronize_index == u16::MAX
-            || self.base.synchronize_charly.is_none()
-            || !self.base.macro_in_progress;
-        if no_sync {
-            // Plain reunion — halt, go green, face charly.
-            self.base.outbox.actor.halt = true;
-            self.set_alert_status(AlertLevel::Green);
-            self.base.face_entity(charly, ctx);
-            if self.base.current_state == AiState::Default {
-                self.set_state_with_timer(
-                    AiState::Default,
-                    Substate::DefaultDetectedCharly,
-                    parameters_ai::AI_CHARLY_LOOK_TIME as u32,
-                    ctx,
-                );
-            } else {
-                // Stash previous state, unalert seekers, transition to
-                // SEEKING_DETECTED_CHARLY.
-                self.previous_state = crate::ai::StoredEnumWord::new(self.base.current_state);
-                self.previous_substate = crate::ai::StoredEnumWord::new(self.base.current_substate);
-                self.base.outbox.actor.queue_unalert_near_charly_seekers(
-                    CharlySeekerTarget::Npc(charly),
-                    self.base.antagonist,
-                );
-                self.set_state_with_timer(
-                    AiState::Seeking,
-                    Substate::SeekingDetectedCharly,
-                    parameters_ai::AI_CHARLY_LOOK_TIME as u32,
-                    ctx,
-                );
-            }
-            return Ok(());
-        }
-
-        // synchronize_charly is in STATE_DEFAULT?
-        let sync_view = ctx
-            .entity_view_logged(self.base.synchronize_charly, "synchronize charly")
-            .cloned();
-        let sync_in_default = sync_view
-            .as_ref()
-            .is_some_and(|v| v.ai_state == AiState::Default);
-        if !sync_in_default {
-            // "Forget it" — drop back into macro flow.
-            self.set_state(AiState::Default, Substate::DefaultInMacro);
-            self.base.execute_next_macro_command(sim, ctx);
-            return Ok(());
-        }
-
-        // Check whether the sync friend is already at the sync waypoint.
-        let friend_is_already_there = if let Some(v) = sync_view.as_ref() {
-            if v.macro_in_progress {
-                v.path_current_waypoint_index as u16 == self.base.synchronize_index
-            } else if v.ai_substate == Substate::DefaultEnroute {
-                v.path_last_waypoint_index as u16 == self.base.synchronize_index
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        if friend_is_already_there {
-            // Already at the sync waypoint — resume macro.
-            self.set_state(AiState::Default, Substate::DefaultInMacro);
-            self.base.execute_next_macro_command(sim, ctx);
-        } else {
-            // Wait — register ourselves and stall.
-            self.base.outbox.reentrant.cross_npc_actions.push(
-                CrossNpcAction::RegisterSynchronizingActor {
-                    target: self
-                        .base
-                        .synchronize_charly
-                        .expect("synchronization registration requires a friend")
-                        .get(),
-                    actor: self.base.me,
-                },
-            );
-            self.set_state_with_timer(AiState::Default, Substate::DefaultSynchronizing, 20, ctx);
-        }
-        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -521,7 +287,14 @@ impl EnemyAi {
                         || self.base.current_substate == Substate::DefaultLookingForCharly
                         || self.base.current_substate == Substate::DefaultLookingSidewardsForCharly;
                     if eligible {
-                        self.event_sees_charly_standard_procedure(env, charly)?;
+                        return Err(DutyCall {
+                            tail: DutyTail::EnemyObservation {
+                                operation: EnemyObservation::Charly {
+                                    target: charly.get(),
+                                },
+                            },
+                            ..DutyCall::new(DutyFlags::empty(), false)
+                        });
                     }
                 }
             }
@@ -638,7 +411,12 @@ impl EnemyAi {
                     && self.base.current_state == AiState::Default
                     && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)?
                 {
-                    self.event_sees_shadow_standard_procedure(pos, ctx);
+                    return Err(DutyCall {
+                        tail: DutyTail::EnemyObservation {
+                            operation: EnemyObservation::Shadow { position: *pos },
+                        },
+                        ..DutyCall::new(DutyFlags::empty(), false)
+                    });
                 }
             }
 
@@ -671,7 +449,12 @@ impl EnemyAi {
                         if let StimulusInfo::Position(ref pos) = stimulus.info
                             && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)?
                         {
-                            self.event_get_arrow_standard_procedure(env, pos, global);
+                            return Err(DutyCall {
+                                tail: DutyTail::EnemyObservation {
+                                    operation: EnemyObservation::Arrow { origin: *pos },
+                                },
+                                ..DutyCall::new(DutyFlags::empty(), false)
+                            });
                         }
                     }
                     _ => {} // ignore
@@ -712,7 +495,12 @@ impl EnemyAi {
                         if let StimulusInfo::Object(obj) = stimulus.info
                             && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)?
                         {
-                            self.event_sees_object_standard_procedure(obj.get(), ctx, tick);
+                            return Err(DutyCall {
+                                tail: DutyTail::EnemyObservation {
+                                    operation: EnemyObservation::Object { target: obj.get() },
+                                },
+                                ..DutyCall::new(DutyFlags::empty(), false)
+                            });
                         }
                     }
                     _ => {} // ignore
@@ -829,7 +617,14 @@ impl EnemyAi {
 
             StimulusType::EventPcShotAtMe => {
                 if let StimulusInfo::Human(enemy) = stimulus.info {
-                    self.event_view_standard_procedure(env, enemy.get(), global)?;
+                    return Err(DutyCall {
+                        tail: DutyTail::EnemyObservation {
+                            operation: EnemyObservation::Enemy {
+                                target: enemy.get(),
+                            },
+                        },
+                        ..DutyCall::new(DutyFlags::empty(), false)
+                    });
                 }
             }
 
@@ -849,250 +644,6 @@ impl EnemyAi {
     // -----------------------------------------------------------------------
 
     /// React to seeing an enemy.
-    fn event_view_standard_procedure(
-        &mut self,
-        env: ThinkEnv<'_>,
-        enemy: HumanHandle,
-        global: &mut AiGlobalState,
-    ) -> AiFlow<()> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        tracing::trace!(
-            me = self.base.me,
-            enemy,
-            state = ?self.base.current_state,
-            substate = ?self.base.current_substate,
-            primary_target = ?self.base.primary_target,
-            frame = ctx.frame,
-            "event_view_standard_procedure: ENTRY"
-        );
-        if !self.answer_question(Question::HasTheNewTaskPriority, ctx) {
-            return Ok(());
-        }
-        self.current_task_priority = self.new_task_priority;
-        // Seeing a real enemy supersedes an in-flight curiosity route.
-        self.investigating_distraction = false;
-
-        // Royalist-camp early returns. These guards are NOT hoisted into
-        // the engine-side dispatcher (which only filters on state), so
-        // they must live here to avoid green soldiers chasing
-        // already-tied / already-guarded targets and archers on
-        // unreachable wall-tops.
-        let enemy_view = ctx.entity_view(enemy);
-        if ctx.is_player_aligned()
-            && let Some(v) = enemy_view
-            && (v.is_unconscious || v.posture == crate::element::Posture::Tied || v.is_carried)
-        {
-            return Ok(());
-        }
-        if let Some(v) = enemy_view
-            && v.is_pc
-            && v.guard.is_some()
-        {
-            return Ok(());
-        }
-        if ctx.is_player_aligned()
-            && let Some(v) = enemy_view
-            && v.elevation > ctx.elevation + 100.0
-            && v.is_soldier()
-            && !v.is_archer
-        {
-            return Ok(());
-        }
-
-        self.base.outbox.detection.mark_alerted = true;
-        self.base.frame_when_enemy_detected = ctx.frame;
-        // Only meaningful for archers, who use the flag to switch to
-        // bow-down posture.
-        self.enemy_seen_below = enemy_is_below_me(
-            ctx,
-            tick.owner_live_position.or(Some(ctx.position)),
-            tick.enemy_detectable_live_world_position(enemy)
-                .or_else(|| enemy_view.map(|view| view.detection_position_world)),
-        );
-
-        // Forget old object of desire
-        if let Some(object) = self.base.object_of_desire.take() {
-            self.base.forgotten_objects.push(object.get());
-        }
-
-        // Resolve a *fresh* enemy position once and use it for the
-        // recon report, the friend-alert broadcast, and the run-near
-        // destination—the original game re-reads the enemy planning position
-        // literally at each call site rather than using the stale
-        // the seek position.
-        let enemy_pos = tick
-            .enemy_detectable_position(enemy)
-            .or_else(|| enemy_view.map(|v| v.position))
-            .unwrap_or(self.base.seek_position);
-
-        // Update recon report.
-        self.base
-            .my_reconnaissance_report
-            .update(ReportType::Enemy, enemy_pos);
-
-        // Soldier inside a building must escalate to a building-wide alarm
-        // before doing anything else.
-        if ctx.in_building {
-            self.request_enemy_in_house_alert(ctx);
-            return Ok(());
-        }
-
-        self.reinitialize_them_list(ctx);
-
-        // Recognize lost enemy
-        if self.pc_missed && self.missed_pc == Some(AiEntityHandle::new(enemy)) {
-            self.pc_missed = false;
-        }
-
-        // Alert nearby allies at enemy_pos within VIEW_LOOK_THERE_RADIUS, before
-        // the state transition below, and the called friends think inside it,
-        // so the tail has to wait for them.
-        if self.hey_folks_look_there(
-            &enemy_pos,
-            100,
-            LookThereContinuation::EventView { enemy, enemy_pos },
-            ctx,
-        ) {
-            return Ok(());
-        }
-        self.event_view_after_look_there(env, enemy, enemy_pos, global)?;
-        Ok(())
-    }
-
-    pub(super) fn event_view_after_look_there(
-        &mut self,
-        env: ThinkEnv<'_>,
-        enemy: HumanHandle,
-        enemy_pos: Position,
-        global: &mut AiGlobalState,
-    ) -> AiFlow<()> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Already sprinting? Stay in MovingFast, just commit the target
-        // and re-issue the run-to. Skips the stop-all/speech path entirely so
-        // the sprint animation chains straight into the engage.
-        if ctx.self_action_state == crate::element::ActionState::MovingFast {
-            self.set_state(AiState::Attacking, Substate::AttackingReactiontimeRunning);
-            self.base.primary_target = Some(AiEntityHandle::new(enemy));
-            self.base.outbox.actor.set_focus(enemy);
-            self.reinitialize_them_list(ctx);
-            // Run near the enemy position, stopping at one-third distance.
-            let owner_live_position = tick.owner_live_position.unwrap_or_else(|| {
-                panic!(
-                    "moving-fast EVENT_VIEW for {} requires the owner's literal live position",
-                    self.base.me
-                )
-            });
-            let enemy_view = ctx
-                .entity_view(enemy)
-                .unwrap_or_else(|| panic!("EVENT_VIEW target {enemy} requires a live entity view"));
-            let enemy_live_position = Position {
-                x: enemy_view.detection_position.x,
-                y: enemy_view.detection_position.y,
-                sector: enemy_view.position.sector,
-                level: enemy_view.position.level,
-            };
-            // Enemy distance subtracts the actors' literal 3D
-            // world positions, stretches world Y by
-            // INVERSE_ASPECT_RATIO, then takes the Euclidean norm. The
-            // positions carried here are map-space, so recover world Y with
-            // each actor's elevation before dividing by three.
-            let distance = ai_square_distance(
-                &enemy_live_position,
-                enemy_view.detection_position_world.z,
-                &owner_live_position,
-                ctx.elevation,
-            )
-            .sqrt();
-            let radius = (distance / 3.0).max(0.0) as i32;
-            self.base
-                .go_near(enemy_pos, radius, crate::ai::GotoFlags::RUN, ctx);
-            self.base.launch_timer(10, ctx.frame);
-            tracing::trace!(
-                me = self.base.me,
-                state = ?self.base.current_state,
-                substate = ?self.base.current_substate,
-                primary_target = ?self.base.primary_target,
-                "event_view_standard_procedure: EXIT (moving-fast)"
-            );
-            return Ok(());
-        }
-
-        // Stop and engage
-        self.base.stop_all();
-        self.base.say(Remark::SeesEnemy);
-
-        self.base.primary_target = Some(AiEntityHandle::new(enemy));
-        self.base.outbox.actor.set_focus(enemy);
-        self.reinitialize_them_list(ctx);
-        // Standard enemy-sighting response
-        // does NOT set `EMOTICON_X_MARK` here — the red `!` only
-        // appears when the enemy attack begins after the
-        // reaction-time window closes.
-
-        // Three-branch dispatch based on distance and below-flag.
-        // Maximum-norm enemy distance deliberately bypasses the AI planning position and
-        // subtracts the actors' literal world positions. During a door
-        // pass, `enemy_pos` and `ctx.position` are instead forecast onto the
-        // destination gate side. Keep those forecast positions for the report,
-        // alert, focus, and Face calls above/below, but use the raw element
-        // positions for this gate exactly as the Original does.
-        let enemy_view = ctx
-            .entity_view(enemy)
-            .unwrap_or_else(|| panic!("EVENT_VIEW target {enemy} requires a live entity view"));
-        let enemy_live_position = Position {
-            x: enemy_view.detection_position.x,
-            y: enemy_view.detection_position.y,
-            sector: enemy_view.position.sector,
-            level: enemy_view.position.level,
-        };
-        let owner_live_position = tick.owner_live_position.unwrap_or_else(|| {
-            panic!(
-                "EVENT_VIEW for {} requires the owner's literal live position",
-                self.base.me
-            )
-        });
-        let max_norm_dist = ai_max_norm_distance(
-            &enemy_live_position,
-            enemy_view.detection_position_world.z,
-            &owner_live_position,
-            ctx.elevation,
-        );
-        if max_norm_dist < 50.0 {
-            // Enemy very near — skip the turn and dispatch battle planning
-            // immediately. `IAmInTrouble` is called only on this branch
-            // (the broader sightings stay quiet).
-            self.set_state(AiState::Attacking, Substate::AttackingReactiontime);
-            self.i_am_in_trouble(enemy);
-            self.battle_decisions(env, global)?;
-        } else if self.enemy_seen_below {
-            // Archer saw enemy from a wall — no turn, just a short 5-tick
-            // reaction to aim the bow.
-            self.set_state_with_timer(AiState::Attacking, Substate::AttackingReactiontime, 5, ctx);
-        } else {
-            // Standard case — turn towards enemy with a 20-tick
-            // the timer as the upper bound for the turn animation.
-            // `process_turn_orders` handles the snap + anim booking and
-            // the live actor coordinator's `tick_actor_animation_for` fires
-            // `EventDone` when the animation completes; whichever fires first
-            // wins.
-            self.set_state(AiState::Attacking, Substate::AttackingReactiontimeTurning);
-            // The original game explicitly faces the enemy here: the alert
-            // reaction uses fast turning, including when the sequence is deferred
-            // behind an attentive-mode transition.
-            self.base.face_entity_fast(enemy, ctx);
-            self.base.launch_timer(20, ctx.frame);
-        }
-        tracing::trace!(
-            me = self.base.me,
-            state = ?self.base.current_state,
-            substate = ?self.base.current_substate,
-            primary_target = ?self.base.primary_target,
-            timer = self.base.when_does_timer_ring,
-            "event_view_standard_procedure: EXIT"
-        );
-        Ok(())
-    }
-
     /// React to hearing a noise.
     fn event_hear_standard_procedure(&mut self, env: ThinkEnv<'_>, noise: &Noise) {
         let ThinkEnv { sim, ctx, tick, .. } = env;
@@ -1290,202 +841,6 @@ impl EnemyAi {
     }
 
     /// React to seeing an arrow impact.
-    fn event_get_arrow_standard_procedure(
-        &mut self,
-        env: ThinkEnv<'_>,
-        pos: &Position,
-        global: &AiGlobalState,
-    ) {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
-        self.current_task_priority = task_priority::ENEMY;
-
-        if let Some(object) = self.base.object_of_desire.take() {
-            self.base.forgotten_objects.push(object.get());
-        }
-
-        self.base.stop_all();
-        self.base
-            .my_reconnaissance_report
-            .update(ReportType::Enemy, *pos);
-
-        if self.base.current_state == AiState::Seeking && self.get_rank() != ProfileRank::Officer {
-            self.set_state(AiState::Seeking, Substate::SeekingArrowReactiontime);
-            self.base.seek_position = *pos;
-            // Snap onto a nearby seek point (0.3 of me→origin, no
-            // absolute).
-            global.set_pos_on_near_seek_point(
-                sim,
-                ctx.position,
-                &mut self.base.seek_position,
-                0.3,
-                0,
-            );
-            let seek = self.base.seek_position;
-            self.base.face_position_3d_with_ctx(seek, ctx);
-            self.base.launch_timer(1, ctx.frame);
-        } else {
-            // Switch on rank between soldier/knight (go investigate) and
-            // officer (just watch from current position).
-            self.base.set_emoticon(EmoticonType::QuestionMark);
-            let substate = if self.get_rank() == ProfileRank::Officer {
-                Substate::SeekingArrowJustWatching
-            } else {
-                Substate::SeekingArrowReactiontime
-            };
-            self.set_state(AiState::Seeking, substate);
-            self.base.seek_position = *pos;
-            // Both arms snap the seek target onto a nearby seek point.
-            global.set_pos_on_near_seek_point(
-                sim,
-                ctx.position,
-                &mut self.base.seek_position,
-                0.3,
-                0,
-            );
-            let seek = self.base.seek_position;
-            self.base.face_position_3d_with_ctx(seek, ctx);
-            // Focus on the interesting object — locks the eye-tracking
-            // cone onto the arrow's interesting object so the detection
-            // cone narrows along the threat axis.
-            // Focusing the interesting object is unconditional in the original game.
-            // A missing interesting object is meaningful: clearing focus calls
-            // `Unfocus()` and clears a stale point-focus left by an earlier
-            // CALL_LOOKTHERE in the patrol's synchronous arrow broadcast.
-            self.base
-                .outbox
-                .actor
-                .set_focus(self.base.interesting_object);
-            if !self.hey_folks_look_there(pos, 200, LookThereContinuation::EventGetArrow, ctx) {
-                self.event_get_arrow_after_look_there(ctx, tick);
-            }
-        }
-    }
-
-    pub(super) fn event_get_arrow_after_look_there(
-        &mut self,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
-        if self.get_rank() == ProfileRank::Officer {
-            // Officer just watches with a fixed timer.
-            self.base
-                .launch_timer(parameters_ai::AI_FIRST_LOOK_TIME as u32, ctx.frame);
-        } else {
-            self.react(
-                parameters_ai::AI_MAX_STANDARD_REACTIONTIME as u16 + 50,
-                ctx,
-                tick,
-            );
-        }
-    }
-
-    fn event_sees_shadow_standard_procedure(&mut self, pos: &Position, ctx: &AiContext) {
-        // Ignore shadow when in building or leaning out.
-        if ctx.in_building || ctx.posture == crate::element::Posture::LeaningOut {
-            return;
-        }
-
-        self.base.stop_all();
-        self.set_state(AiState::Default, Substate::DefaultLookingShadow);
-        // A shadow raises only the music-side alert. The view remains green,
-        // so ordinary PC detection keeps its two-frame refresh cadence.
-        // The original game sets a yellow, music-only alert.
-        self.set_alert_status_with_flags(AlertLevel::Yellow, crate::ai::AlertFlags::ONLY_MUSIC);
-        self.base.face_position_3d_with_ctx(*pos, ctx);
-        self.base.launch_timer(10, ctx.frame);
-    }
-
-    fn event_sees_object_standard_procedure(
-        &mut self,
-        obj: ObjectHandle,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
-        // Outer switch on object type. Ale and money (purse/coin) take
-        // very different paths; everything else is a no-op for the AI.
-        use crate::element_kinds::ObjectType;
-        let obj_type = ctx
-            .entity_view(obj)
-            .map(|v| v.object_type)
-            .unwrap_or(ObjectType::None);
-
-        match obj_type {
-            ObjectType::Purse | ObjectType::Coin => {
-                // Already committed to a money/brawl
-                // substate?  Just queue the sighting onto
-                // `other_seen_money` and skip the reactiontime reset.
-                if self.base.current_substate.is_take_money()
-                    || self.base.current_substate.is_fight_for_money()
-                    || matches!(
-                        self.base.current_substate,
-                        Substate::WonderingSoldierLookingOfficerWhoFinishedBrawl
-                            | Substate::WonderingApproachingBrawlVictim
-                            | Substate::WonderingAwakenBrawlVictim
-                    )
-                {
-                    self.other_seen_money.push(obj);
-                    return;
-                }
-
-                // Default arm.
-                self.base.stop_all();
-                self.base.say(Remark::SeesObject);
-                self.base.interesting_object = Some(AiEntityHandle::new(obj));
-                if let Some(view) = ctx.entity_view(obj) {
-                    self.base.face_position_at_elevation_with_ctx(
-                        view.position,
-                        f32::from(view.elevation as u16),
-                        ctx,
-                    );
-                }
-                self.base.set_emoticon(EmoticonType::QuestionMark);
-                self.set_state(AiState::Wondering, Substate::WonderingMoneyReactiontime);
-                self.base.outbox.actor.set_focus(obj);
-                if self.get_rank() == ProfileRank::Officer {
-                    self.base.launch_timer(60, ctx.frame);
-                } else {
-                    self.base.launch_timer(30, ctx.frame);
-                }
-            }
-
-            ObjectType::Ale => {
-                // Already committed to an ale-taking substate? Queue and
-                // skip.
-                if self.base.current_substate.is_take_ale() {
-                    self.other_seen_ale.push(obj);
-                    return;
-                }
-
-                // Default arm — note macro interruption (preserves a running
-                // sequence for resume) instead of the harder stop-all operation,
-                // and `React(AI_FIRST_LOOK_TIME)` instead of the
-                // rank-dependent fixed-tick timer.
-                self.base.break_macro();
-                self.base.say(Remark::SeesObject);
-                if let Some(view) = ctx.entity_view(obj) {
-                    // Keep the position carried by the live object pointer.
-                    // The bottle may become inactive while React's timer is
-                    // pending, but the original game can still read the referenced position
-                    // when that timer fires.
-                    self.base.seek_position = view.position;
-                    self.base.face_position_at_elevation_with_ctx(
-                        view.position,
-                        f32::from(view.elevation as u16),
-                        ctx,
-                    );
-                }
-                self.base.set_emoticon(EmoticonType::QuestionMark);
-                self.base.interesting_object = Some(AiEntityHandle::new(obj));
-                self.base.outbox.actor.set_focus(obj);
-                self.set_state(AiState::Wondering, Substate::WonderingAleReactiontime);
-                self.react(parameters_ai::AI_FIRST_LOOK_TIME as u16, ctx, tick);
-            }
-
-            // Everything else falls through silently.
-            _ => {}
-        }
-    }
-
     fn call_look_there_standard_procedure(&mut self, pos: &Position, ctx: &AiContext) {
         if !self.is_merry_man_forest(ctx) {
             self.base
@@ -2491,12 +1846,26 @@ impl EnemyAi {
                 AiState::Sleeping => {} // ignore (should not happen)
                 AiState::Wondering | AiState::Default | AiState::Seeking => {
                     if !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)? {
-                        self.event_view_standard_procedure(env, enemy.get(), global)?;
+                        return Err(DutyCall {
+                            tail: DutyTail::EnemyObservation {
+                                operation: EnemyObservation::Enemy {
+                                    target: enemy.get(),
+                                },
+                            },
+                            ..DutyCall::new(DutyFlags::empty(), false)
+                        });
                     }
                 }
                 AiState::Menacing => {
                     if Some(crate::entity_id::PcId(enemy.get())) != self.guarded_pc {
-                        self.event_view_standard_procedure(env, enemy.get(), global)?;
+                        return Err(DutyCall {
+                            tail: DutyTail::EnemyObservation {
+                                operation: EnemyObservation::Enemy {
+                                    target: enemy.get(),
+                                },
+                            },
+                            ..DutyCall::new(DutyFlags::empty(), false)
+                        });
                     }
                 }
                 AiState::Fleeing => {
@@ -2554,17 +1923,14 @@ impl EnemyAi {
                             // Archer waiting on firing point —
                             // rebuild list, re-eval elevation,
                             // re-run battle planning.
-                            self.reinitialize_them_list(ctx);
-                            self.enemy_seen_below = enemy_is_below_me(
-                                ctx,
-                                tick.owner_live_position.or(Some(ctx.position)),
-                                tick.enemy_detectable_live_world_position(enemy.get())
-                                    .or_else(|| {
-                                        ctx.entity_view(enemy)
-                                            .map(|view| view.detection_position_world)
-                                    }),
-                            );
-                            self.battle_decisions(env, global)?;
+                            return Err(DutyCall {
+                                tail: DutyTail::EnemyObservation {
+                                    operation: EnemyObservation::ArcherEnemy {
+                                        target: enemy.get(),
+                                    },
+                                },
+                                ..DutyCall::new(DutyFlags::empty(), false)
+                            });
                         }
 
                         Substate::AttackingApproachingSleepingEnemy
@@ -2578,7 +1944,14 @@ impl EnemyAi {
                                 .entity_view_logged(enemy, "newly seen enemy")
                                 .is_some_and(|v| v.is_unconscious);
                             if !target_unconscious {
-                                self.event_view_standard_procedure(env, enemy.get(), global)?;
+                                return Err(DutyCall {
+                                    tail: DutyTail::EnemyObservation {
+                                        operation: EnemyObservation::Enemy {
+                                            target: enemy.get(),
+                                        },
+                                    },
+                                    ..DutyCall::new(DutyFlags::empty(), false)
+                                });
                             }
                         }
 

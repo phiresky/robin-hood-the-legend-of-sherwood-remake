@@ -184,10 +184,7 @@ fn look_there_precheck_uses_raw_owner_geometry_during_door_transit() {
     assert!(ai.hey_folks_look_there(
         &test_position(1154.0, 1860.0),
         100,
-        LookThereContinuation::EventView {
-            enemy: 342,
-            enemy_pos: test_position(1154.0, 1860.0),
-        },
+        LookThereContinuation::SeekingArrowReactiontime,
         &ctx,
     ));
     assert!(matches!(
@@ -397,57 +394,6 @@ fn detection_180_uses_raw_actor_xy_instead_of_ai_position() {
     };
 
     assert!(ai.is_detecting_180_degrees(2, &ctx));
-}
-
-#[test]
-fn beer_competition_uses_original_npc_registry_order() {
-    let ale = AiEntityHandle::new(99);
-    let mut ai = EnemyAi::new(1);
-    ai.base.interesting_object = Some(ale);
-
-    let owner_position = test_position(0.0, 0.0);
-    let first_position = test_position(100.0, 0.0);
-    let second_position = test_position(200.0, 0.0);
-
-    let mut owner = soldier_view(owner_position);
-    owner.original_creation_order = 1;
-    owner.direction = 4;
-    let mut first = soldier_view(first_position);
-    first.original_creation_order = 10;
-    first.ai_substate = Substate::WonderingAleReactiontime;
-    first.interesting_object = Some(ale);
-    let mut second = soldier_view(second_position);
-    second.original_creation_order = 20;
-    second.ai_substate = Substate::WonderingAleReactiontime;
-    second.interesting_object = Some(ale);
-    let mut ale_view = soldier_view(test_position(300.0, 0.0));
-    ale_view.kind = EntityKind::Bonus;
-
-    let mut views = AiEntityViewMap::new();
-    views.insert(1, owner);
-    // Runtime handles deliberately disagree with Original registration
-    // order: the earlier NPC has the larger handle.
-    views.insert(3, first);
-    views.insert(2, second);
-    views.insert(99, ale_view);
-    let ctx = AiContext {
-        position: owner_position,
-        direction: 4,
-        self_eye_position: MapPoint::ZERO,
-        self_eye_z: 45.0,
-        self_view_radius: 400,
-        sq_self_view_radius: 400.0 * 400.0,
-        self_view_direction: [1.0, 0.0],
-        self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    crate::sight_obstacle::begin_parity_visibility_capture();
-    assert_eq!(ai.is_beer_still_available(&ctx), Some(first_position));
-    let queries = crate::sight_obstacle::take_parity_visibility_capture();
-    assert_eq!(queries.len(), 1);
-    assert_eq!(queries[0].destination[0], first_position.x);
 }
 
 #[test]

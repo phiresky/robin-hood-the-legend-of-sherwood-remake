@@ -59,12 +59,11 @@ impl EngineInner {
             _ => return true,
         };
         self.duty_set_state(sim, assets, owner, state, substate);
-        self.reporting_civilian_mut(owner)
-            .base
-            .outbox
-            .recovery
-            .set_eye_status = Some(eye_status);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let actor = self
+            .world
+            .entities
+            .expect_ai_actor_data_mut(owner, format_args!("civilian admission eye status"));
+        crate::ai_vision::set_view_status(actor, eye_status);
         let ai = self.reporting_civilian_mut(owner);
         if stimulus.stimulus_type == StimulusType::EventLoseConsciousness {
             ai.base.set_alert_status(crate::ai::AlertLevel::Green);

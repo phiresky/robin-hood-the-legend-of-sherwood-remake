@@ -83,7 +83,7 @@ impl EngineInner {
             .set_focus(target);
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
-    fn combat_event_face_position(
+    pub(super) fn duty_face_position_ground(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
@@ -118,9 +118,9 @@ impl EngineInner {
             .element_data()
             .position()
             .z as i16;
-        self.combat_event_face_elevation(sim, assets, owner, position, elevation, false);
+        self.duty_face_position_signed_elevation(sim, assets, owner, position, elevation, false);
     }
-    fn combat_event_face_elevation(
+    pub(super) fn duty_face_position_signed_elevation(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
@@ -495,13 +495,13 @@ impl EngineInner {
             }
             (AttackingRunToAvengerOnRoof, EventReachPoint) => {
                 let position = self.combat_event_ai(owner).base.seek_position;
-                self.combat_event_face_position(sim, assets, owner, position);
+                self.duty_face_position_ground(sim, assets, owner, position);
                 self.combat_event_state(sim, assets, owner, AttackingWaitForAvengerOnRoof, 100);
             }
             (AttackingWaitForAvengerOnRoof, EventTimer) => {
                 if self.combat_event_visible_primary(assets, owner) {
                     let position = self.live_ai_position(self.combat_event_primary(owner));
-                    self.combat_event_face_position(sim, assets, owner, position);
+                    self.duty_face_position_ground(sim, assets, owner, position);
                     self.combat_event_timer(owner, 30);
                 } else {
                     let center = self.live_ai_position(owner);
@@ -611,7 +611,7 @@ impl EngineInner {
                     AttackingTooProudToAttackRetireTurn,
                 );
                 let position = self.combat_event_ai(owner).base.seek_position;
-                self.combat_event_face_position(sim, assets, owner, position);
+                self.duty_face_position_ground(sim, assets, owner, position);
             }
             (AttackingTooProudToAttackRetireTurn, EventDone)
             | (AttackingTooProudToAttackApproach, EventReachPoint) => {
@@ -637,10 +637,14 @@ impl EngineInner {
                         .element_data()
                         .position()
                         .z as i16;
-                    self.combat_event_face_elevation(sim, assets, owner, position, elevation, true);
+                    self.duty_face_position_signed_elevation(
+                        sim, assets, owner, position, elevation, true,
+                    );
                 } else {
                     let position = self.combat_event_ai(owner).base.seek_position;
-                    self.combat_event_face_elevation(sim, assets, owner, position, 1, false);
+                    self.duty_face_position_signed_elevation(
+                        sim, assets, owner, position, 1, false,
+                    );
                 }
             }
             (AttackingArcherRetireFromCombatTurn, EventDone) => {
@@ -706,7 +710,7 @@ impl EngineInner {
             }
             (AttackingRiderChargingGettingDistance, EventReachPoint) => {
                 let position = self.combat_event_ai(owner).base.seek_position;
-                self.combat_event_face_position(sim, assets, owner, position);
+                self.duty_face_position_ground(sim, assets, owner, position);
                 self.duty_set_state(
                     sim,
                     assets,

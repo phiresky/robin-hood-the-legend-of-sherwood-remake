@@ -857,12 +857,6 @@ pub struct AiPerTickData {
     /// rather than manufacturing an empty profile table. The requested
     /// hand-to-hand profile must exist; a sword requires a real profile.
     pub profile_manager: Option<std::sync::Arc<crate::profiles::ProfileManager>>,
-    /// Owner's raw element position for call sites that bypass AI position.
-    /// During a door pass this
-    /// remains the interpolated body position rather than the committed
-    /// destination-side forecast carried by [`AiContext::position`].
-    pub owner_live_position: Option<Position>,
-    pub patrol_chief_state: AiState,
     /// Complete fighter-registry snapshot for direct pointer dereferences.
     ///
     /// Original-game AI lists (allies, enemies, primary targets, etc.) hold
@@ -885,15 +879,6 @@ pub struct AiPerTickData {
     /// pointer order. `EVENT_OUTOFVIEW` is delivered for the detectable
     /// whose visibility edge fell, which need not be `primary_target`.
     pub enemy_detectable_forecasts: Vec<(HumanHandle, PreparedForecastDestination)>,
-    /// Owner-boundary `Position(enemy)` values for detection stimuli. Rust
-    /// batches movement globally, so the live entity map can still trail the
-    /// position the Original has committed when this NPC handles EVENT_VIEW.
-    pub enemy_detectable_positions: Vec<(HumanHandle, Position)>,
-    /// Literal live world positions for enemy detectables. Unlike
-    /// `enemy_detectable_positions`, these bypass AI-position door forecasts
-    /// and creation-slot boundary rewinding. Direct geometry helpers such as
-    /// enemy-elevation checks read the element itself.
-    pub enemy_detectable_live_world_positions: Vec<(HumanHandle, crate::coordinates::WorldPoint3D)>,
     /// Handle for which the primary-target metadata in this snapshot was
     /// built. A synchronous AI callback can replace `base.primary_target`
     /// before a later handler consumes the same tick data; consumers must
@@ -923,23 +908,6 @@ impl AiPerTickData {
             .map(|&(_, pos)| pos)
     }
 
-    pub fn enemy_detectable_position(&self, target: HumanHandle) -> Option<Position> {
-        self.enemy_detectable_positions
-            .iter()
-            .find(|(handle, _)| *handle == target)
-            .map(|&(_, position)| position)
-    }
-
-    pub fn enemy_detectable_live_world_position(
-        &self,
-        target: HumanHandle,
-    ) -> Option<crate::coordinates::WorldPoint3D> {
-        self.enemy_detectable_live_world_positions
-            .iter()
-            .find(|(handle, _)| *handle == target)
-            .map(|&(_, position)| position)
-    }
-
     /// Return the profile table required by swordfight evaluation.
     pub fn required_profile_manager(&self) -> &crate::profiles::ProfileManager {
         self.profile_manager.as_deref().expect(
@@ -953,15 +921,11 @@ impl AiPerTickData {
         Self {
             fix_hard_reaction_times: false,
             profile_manager: None,
-            owner_live_position: None,
-            patrol_chief_state: AiState::Default,
             fighter_registry: Vec::new(),
             nearby_fighters: Vec::new(),
             camp_soldiers: Vec::new(),
             primary_target_forecast: None,
             enemy_detectable_forecasts: Vec::new(),
-            enemy_detectable_positions: Vec::new(),
-            enemy_detectable_live_world_positions: Vec::new(),
             primary_target_snapshot_handle: None,
             avenger_on_roof_wait_positions: Vec::new(),
         }

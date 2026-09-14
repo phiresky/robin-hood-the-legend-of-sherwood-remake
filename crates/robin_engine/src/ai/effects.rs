@@ -141,13 +141,6 @@ pub enum AiOwnerWork {
     ConsiderToBeginParade {
         attacker: HumanHandle,
     },
-    /// Continue PC-sighting processing after its inline
-    /// `Say(FOUND_CHARLY, MYTALK_1)` has returned. A rejected line invokes
-    /// MYTALK synchronously before the following friend-in-trouble reference
-    /// assignment and facing operation in the original game.
-    ResumeSendCharlyAfterSpeech {
-        charly: NpcHandle,
-    },
     /// The money-brawl hit completion has a separate, inline civilian sweep
     /// which uses forward-half-plane detection, unlike the shared
     /// nearby-civilian panic callback's 360-degree detector.

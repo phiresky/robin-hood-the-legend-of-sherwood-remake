@@ -18,6 +18,9 @@ pub(crate) struct DutyCall {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum DutyTail {
+    EnemyObservation {
+        operation: EnemyObservation,
+    },
     None,
     PanicSegment {
         stimulus: super::StimulusType,
@@ -83,6 +86,18 @@ pub(crate) enum DutyTail {
     Think {
         stimulus: crate::ai::Stimulus,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum EnemyObservation {
+    ArcherEnemy { target: super::HumanHandle },
+    Enemy { target: super::HumanHandle },
+    Charly { target: super::HumanHandle },
+    Shadow { position: super::Position },
+    Object { target: super::ObjectHandle },
+    Arrow { origin: super::Position },
+    AleReaction,
+    AleApproach { arrived: bool },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

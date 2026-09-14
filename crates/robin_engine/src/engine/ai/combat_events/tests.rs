@@ -38,14 +38,10 @@ fn enemy_near_retargets_only_the_four_observing_substates() {
         );
         if enters {
             assert_eq!(ai.base.when_does_timer_ring, 120);
-            assert!(
-                engine
-                    .expect_entity(owner, "swordfight owner")
-                    .human_data()
-                    .unwrap()
-                    .opponents
-                    .contains(&target)
-            );
+            assert!(engine.orders.sequence_manager.sequences_iter().flat_map(|sequence| sequence.elements.iter()).any(|element| {
+                element.owner == Some(owner) && element.command == Command::EnterSwordfight
+                    && matches!(element.get_property(crate::sequence::Field::Opponent), Some(crate::sequence::FieldValue::Element(opponent)) if *opponent == target)
+            }));
         }
     }
 }
@@ -114,7 +110,7 @@ fn fixture(substate: Substate) -> (EngineInner, LevelAssets, EntityId, EntityId)
             .sector()
             .unwrap()
             .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap());
-        element.set_sector(Some(sector));
+        element.set_sector_topology(Some(sector), crate::fast_find_grid::SectorIndex::new(0));
         engine
             .get_entity_mut(id)
             .unwrap()

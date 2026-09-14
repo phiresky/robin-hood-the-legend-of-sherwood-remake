@@ -724,47 +724,6 @@ fn step_back_direction_sector(direction: u16, relative_direction: i16) -> u16 {
 #[cfg(test)]
 mod step_back_direction_tests;
 
-/// Returns `true` iff the enemy is sufficiently below the viewer
-/// that an archer should bend down to bow-down posture.  The inputs
-/// are the viewer's [`AiContext`], its literal live map position, and the
-/// target's literal live world position. The Original bypasses
-/// AI position here and calls ground-position lookup
-/// plus elevation directly.
-pub(super) fn enemy_is_below_me(
-    ctx: &AiContext,
-    owner_live_position: Option<crate::ai::Position>,
-    target: Option<crate::coordinates::WorldPoint3D>,
-) -> bool {
-    // Leaning out = enemy is downstairs.
-    if ctx.posture == crate::element::Posture::LeaningOut {
-        return true;
-    }
-
-    let target = target.expect("enemy-elevation check requires the target's literal live position");
-    let owner = owner_live_position
-        .expect("enemy-elevation check requires the owner's literal live position");
-
-    let height_diff = target.z - ctx.elevation;
-    if height_diff >= 0.0 {
-        // Same height or above — not below.
-        return false;
-    }
-    if height_diff < -50.0 {
-        // Sufficiently below.
-        return true;
-    }
-
-    // Horizontal vs vertical distance comparison (stretched Y to
-    // cancel the isometric aspect ratio).
-    let owner_ground_y = owner.y + ctx.elevation;
-    let dx = target.x - owner.x;
-    let dy = (target.y - owner_ground_y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-    (dx * dx + dy * dy) <= height_diff * height_diff
-}
-
-#[cfg(test)]
-mod enemy_below_tests;
-
 /// Compute a retreat position away from `pos_enemy`.
 ///
 /// Tries distances from `good_distance - actual` down to `min_distance`,

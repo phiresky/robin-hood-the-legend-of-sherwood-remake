@@ -11,8 +11,7 @@ use crate::parameters_ai;
 use crate::sim_rng::SimulationContext;
 
 use super::util::{
-    ai_max_norm_distance, ai_max_norm_distance_world, ai_square_distance, resolve_seek_point_id,
-    vec_to_sector,
+    ai_max_norm_distance, ai_max_norm_distance_world, ai_square_distance, vec_to_sector,
 };
 use super::{
     AlertSoldiersFailureContinuation, EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags,
@@ -78,7 +77,7 @@ impl EnemyAi {
         global: &mut AiGlobalState,
         env: ThinkEnv<'_>,
     ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { sim, ctx, .. } = env;
         let stimulus_type = stimulus.stimulus_type;
         match self.base.current_substate {
             Substate::DefaultGotoPost => {
@@ -169,70 +168,6 @@ impl EnemyAi {
                     } else {
                         self.return_to_duty_default(env)?;
                     }
-                }
-            }
-
-            // ============ PATROL ENROUTE ============
-            Substate::DefaultPatrolEnroute | Substate::DefaultPatrolEnrouteRunning => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    // Reached our position in the formation — face
-                    // patrol direction.  Only issue the `face_to` when
-                    // the current facing differs, otherwise the no-op
-                    // turn re-triggers a bogus `EventDone` through the
-                    // sequence manager.
-                    if self.base.patrol_direction != ctx.direction {
-                        self.base.face_direction(self.base.patrol_direction, ctx);
-                    }
-                    self.set_state_with_timer(
-                        AiState::Default,
-                        Substate::DefaultPatrolEnrouteWaiting,
-                        200,
-                        ctx,
-                    );
-                }
-            }
-
-            Substate::DefaultPatrolEnrouteWaiting => {
-                if stimulus_type == StimulusType::EventTimer {
-                    // Check patrol chief's AI state (cached by engine each patrol tick).
-                    // If chief is in Default or Wondering, keep waiting for next
-                    // coordinate call. Otherwise the chief is in trouble — abandon.
-                    match tick.patrol_chief_state {
-                        AiState::Default | AiState::Wondering => {
-                            self.base.launch_timer(200, ctx.frame);
-                        }
-                        _ => {
-                            // Chief is in combat or otherwise unavailable
-                            self.return_to_duty_default(env)?;
-                        }
-                    }
-                }
-            }
-
-            Substate::DefaultGotoChief => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    if let Some(patrol_chief) = self.base.patrol_chief {
-                        // The original game uses the element-facing variant
-                        // facing the patrol chief, which includes the chief's
-                        // truncated elevation in the projection.
-                        self.base.face_entity(patrol_chief.index(), ctx);
-                        self.set_state_with_timer(
-                            AiState::Default,
-                            Substate::DefaultPatrolEnrouteWaiting,
-                            200,
-                            ctx,
-                        );
-                    } else {
-                        // Lost patrol chief — retry
-                        self.return_to_duty_default(env)?;
-                    }
-                }
-            }
-
-            // ============ PATROL CHIEF RETURN ============
-            Substate::DefaultPatrolChiefReturnToPatrol => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    self.return_to_duty_default(env)?;
                 }
             }
 
@@ -376,10 +311,33 @@ impl EnemyAi {
             }
 
             Substate::WonderingAleReactiontime => {
-                self.wondering_ale_reactiontime(env, stimulus_type)?
+                if stimulus_type == StimulusType::EventTimer {
+                    return Err(DutyCall {
+                        tail: DutyTail::EnemyObservation {
+                            operation: EnemyObservation::AleReaction,
+                        },
+                        ..DutyCall::new(DutyFlags::empty(), false)
+                    });
+                }
+                false
             }
 
-            Substate::WonderingApproachingAle => self.wondering_approaching_ale(stimulus_type, ctx),
+            Substate::WonderingApproachingAle => {
+                if matches!(
+                    stimulus_type,
+                    StimulusType::EventTimer | StimulusType::EventReachPoint
+                ) {
+                    return Err(DutyCall {
+                        tail: DutyTail::EnemyObservation {
+                            operation: EnemyObservation::AleApproach {
+                                arrived: stimulus_type == StimulusType::EventReachPoint,
+                            },
+                        },
+                        ..DutyCall::new(DutyFlags::empty(), false)
+                    });
+                }
+                false
+            }
 
             Substate::WonderingDrinkingAle => self.wondering_drinking_ale(env, stimulus_type)?,
 
@@ -659,124 +617,6 @@ impl EnemyAi {
             });
         }
         Ok(false)
-    }
-
-    // Ale reactiontime: if shall-take-ale:
-    // stash beer as object_of_desire, transition to
-    // ApproachingAle, set SUN emoticon (20-tick), Say(AleYes),
-    // Approach, save return point, 20-tick timer. Otherwise
-    // CLOUD emoticon (50-tick) + Say(AleNo / VipAleNo) +
-    // Return to duty with KEEP_EMOTICON.
-
-    fn wondering_ale_reactiontime(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, .. } = env;
-        if stimulus_type == StimulusType::EventTimer {
-            if self.answer_question(Question::ShallITakeAle, ctx) {
-                assert!(
-                    self.base.interesting_object.is_some(),
-                    "ale reaction timer requires the retained bottle pointer"
-                );
-                // The original game reads the interesting object's position even when a
-                // different soldier has just consumed and deactivated the
-                // bottle. Inactive objects are absent from AiContext, so use
-                // the position latched by EventSeesObject in that case.
-                let obj_pos = ctx
-                    .entity_position(self.base.interesting_object)
-                    .unwrap_or(self.base.seek_position);
-                self.base.object_of_desire = self.base.interesting_object;
-                self.set_state(AiState::Wondering, Substate::WonderingApproachingAle);
-                self.base
-                    .set_transient_emoticon(EmoticonType::Sun, 20, ctx.frame);
-                self.base.say(Remark::AleYes);
-                self.go_near(
-                    AiState::Wondering,
-                    Substate::WonderingApproachingAle,
-                    obj_pos,
-                    parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
-                    GotoFlags::FIND_ACCESSIBLE,
-                    ctx,
-                );
-                self.return_to_patrol_point = ctx.position;
-                self.base.launch_timer(20, ctx.frame);
-            } else {
-                self.base
-                    .set_transient_emoticon(EmoticonType::Cloud, 50, ctx.frame);
-                if self.is_vip {
-                    self.base.say(Remark::VipAleNo);
-                } else {
-                    self.base.say(Remark::AleNo);
-                }
-                return Err(crate::ai::DutyCall::new(DutyFlags::KEEP_EMOTICON, false));
-            }
-        }
-        Ok(false)
-    }
-
-    fn wondering_approaching_ale(&mut self, stimulus_type: StimulusType, ctx: &AiContext) -> bool {
-        // The TIMER and REACHPOINT arms both gate on
-        // `is_beer_still_available`.  On failure (bottle gone
-        // or stolen) both paths face the lost position, flip
-        // to THUNDERSTORM, switch to `WonderingAleAway`, and
-        // arm a 30-tick recovery timer.  On success the
-        // TIMER arm re-arms a 20-tick poll, and the
-        // REACHPOINT arm launches the drink-ale sequence and
-        // transitions to `WonderingDrinkingAle`.
-        match stimulus_type {
-            StimulusType::EventTimer => {
-                if let Some(lost_pos) = self.is_beer_still_available(ctx) {
-                    self.base.face_position_3d_with_ctx(lost_pos, ctx);
-                    self.base.set_emoticon(EmoticonType::Thunderstorm);
-                    self.set_state_with_timer(
-                        AiState::Wondering,
-                        Substate::WonderingAleAway,
-                        30,
-                        ctx,
-                    );
-                } else {
-                    self.base.launch_timer(20, ctx.frame);
-                }
-            }
-            StimulusType::EventReachPoint => {
-                if let Some(lost_pos) = self.is_beer_still_available(ctx) {
-                    self.base.face_position_3d_with_ctx(lost_pos, ctx);
-                    self.base.set_emoticon(EmoticonType::Thunderstorm);
-                    self.set_state_with_timer(
-                        AiState::Wondering,
-                        Substate::WonderingAleAway,
-                        30,
-                        ctx,
-                    );
-                } else {
-                    self.set_state(AiState::Wondering, Substate::WonderingDrinkingAle);
-                    // Launch a DrinkAle interaction to trigger
-                    // the drinking animation on the ale bottle.
-                    if let Some(obj) = self.base.interesting_object {
-                        use crate::element::Command;
-                        use crate::sequence::{Sequence, SequenceElement};
-                        let owner = self.base.owner_entity_id;
-                        let antagonist = Some(ctx.entity_id(obj).unwrap_or_else(|| {
-                            panic!(
-                                "ale interaction object handle {obj} has no live typed entity view"
-                            )
-                        }));
-                        let mut seq = Sequence::new();
-                        seq.append_element(SequenceElement::new_interaction(
-                            1,
-                            Command::DrinkAle,
-                            owner,
-                            antagonist,
-                        ));
-                        self.base.outbox.actor.launch_sequences.push(seq);
-                    }
-                }
-            }
-            _ => {}
-        }
-        false
     }
 
     fn wondering_drinking_ale(
@@ -1557,31 +1397,9 @@ impl EnemyAi {
         global: &mut AiGlobalState,
         env: ThinkEnv<'_>,
     ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
+        let ThinkEnv { sim, ctx, .. } = env;
         let stimulus_type = stimulus.stimulus_type;
         Ok(match self.base.current_substate {
-            Substate::SeekingSeekpoint => self.seeking_seekpoint(env, stimulus_type, global)?,
-
-            Substate::SeekingSeekpointWatching => {
-                self.seeking_seekpoint_watching(sim, stimulus_type)
-            }
-
-            Substate::SeekingSeekpointWatchingSidewards => {
-                self.seeking_seekpoint_watching_sidewards(env, stimulus_type, global)?
-            }
-
-            Substate::SeekingSeekpointPassedAmbushPointLeft => {
-                self.seeking_seekpoint_passed_ambush_point_left(env, stimulus_type, global)?
-            }
-
-            Substate::SeekingSeekpointPassedAmbushPointRight => {
-                self.seeking_seekpoint_passed_ambush_point_right(env, stimulus_type, global)?
-            }
-
-            Substate::SeekingSeekpointCheckingAmbushPoint => {
-                self.seeking_seekpoint_checking_ambush_point(stimulus_type, global, ctx)
-            }
-
             Substate::SeekingSeekpointApproachingBeggar => false,
 
             Substate::SeekingSeekpointIdentifyingBeggar1 => false,
@@ -1607,8 +1425,6 @@ impl EnemyAi {
             Substate::SeekingCombatAlert => {
                 self.seeking_combat_alert(env, stimulus_type, global)?
             }
-
-            Substate::SeekingGotStopEvent => self.seeking_got_stop_event(stimulus_type, ctx),
 
             Substate::SeekingWaitForAlertingCivilian => {
                 unreachable!("officer rendezvous must execute through the engine")
@@ -1738,8 +1554,6 @@ impl EnemyAi {
                 self.seeking_knight_watching_tower_guard(env, stimulus_type, global)?
             }
 
-            Substate::SeekingNet => self.seeking_net(env, stimulus_type, global)?,
-
             Substate::SeekingOfficerLookingForSoldiers1
             | Substate::SeekingOfficerLookingForSoldiers2
             | Substate::SeekingOfficerLookingForSoldiers3 => {
@@ -1807,167 +1621,6 @@ impl EnemyAi {
             _ => false,
         })
     }
-
-    fn seeking_seekpoint(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<bool> {
-        if stimulus_type == StimulusType::EventReachPoint && self.actual_seek_point.is_some() {
-            self.reached_seek_point(env, global)?;
-        }
-        Ok(false)
-    }
-
-    fn seeking_seekpoint_watching(
-        &mut self,
-        sim: &SimulationContext,
-        stimulus_type: StimulusType,
-    ) -> bool {
-        if stimulus_type == StimulusType::EventTimer {
-            // Random LR/RL.
-            self.set_state(
-                AiState::Seeking,
-                Substate::SeekingSeekpointWatchingSidewards,
-            );
-            self.base.outbox.actor.look_sidewards = Some(
-                if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::EnemySeekLook, 0..2) != 0 {
-                    LookDirection::LeftRight
-                } else {
-                    LookDirection::RightLeft
-                },
-            );
-        }
-        false
-    }
-
-    fn seeking_seekpoint_watching_sidewards(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, .. } = env;
-        if stimulus_type == StimulusType::EventDone || stimulus_type == StimulusType::EventTimer {
-            // Check if more directions to look
-            if let Some(&dir) = self.seek_point_view_directions.first() {
-                self.seek_point_view_directions.remove(0);
-                self.base.face_direction(dir, ctx);
-                self.base.number_of_looks = 0;
-                self.set_state_with_timer(
-                    AiState::Seeking,
-                    Substate::SeekingSeekpointWatching,
-                    parameters_ai::AI_SEEKPOINT_LOOK_TIME as u32,
-                    ctx,
-                );
-            } else {
-                // No directions left — move to next seek point
-                self.seek_next_point(env, global)?;
-            }
-        }
-        Ok(false)
-    }
-
-    fn seeking_seekpoint_passed_ambush_point_left(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<bool> {
-        match stimulus_type {
-            StimulusType::EventReachPoint => {
-                self.set_state(AiState::Seeking, Substate::SeekingSeekpoint);
-                // The original game dispatches the reach-point event re-entrantly
-                // here; do the same work inline instead of synthesizing
-                // a one-frame timer.
-                if self.actual_seek_point.is_some() {
-                    self.reached_seek_point(env, global)?;
-                }
-            }
-            StimulusType::EventTimer => {
-                self.base.stop_all();
-                self.set_state(
-                    AiState::Seeking,
-                    Substate::SeekingSeekpointCheckingAmbushPoint,
-                );
-                // Look LEFT.
-                self.base.outbox.actor.look_sidewards = Some(LookDirection::Left);
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    fn seeking_seekpoint_passed_ambush_point_right(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<bool> {
-        match stimulus_type {
-            StimulusType::EventReachPoint => {
-                self.set_state(AiState::Seeking, Substate::SeekingSeekpoint);
-                if self.actual_seek_point.is_some() {
-                    self.reached_seek_point(env, global)?;
-                }
-            }
-            StimulusType::EventTimer => {
-                self.base.stop_all();
-                self.set_state(
-                    AiState::Seeking,
-                    Substate::SeekingSeekpointCheckingAmbushPoint,
-                );
-                // Look RIGHT.
-                self.base.outbox.actor.look_sidewards = Some(LookDirection::Right);
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    fn seeking_seekpoint_checking_ambush_point(
-        &mut self,
-        stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
-        ctx: &AiContext,
-    ) -> bool {
-        if stimulus_type == StimulusType::EventDone {
-            // Resume walking to seek point
-            let goto_flags = if self.seek_flags.contains(SeekFlags::WALKING) {
-                GotoFlags::empty()
-            } else {
-                GotoFlags::RUN
-            };
-            let seek_point_id = self
-                .actual_seek_point
-                .expect("ambush-point check lost its actual seek point");
-            let seek_position = resolve_seek_point_id(
-                seek_point_id,
-                &self.personal_seek_point_1,
-                &self.personal_seek_point_2,
-                global,
-            )
-            .unwrap_or_else(|| panic!("actual seek point {seek_point_id:?} no longer resolves"))
-            .position;
-            self.go_to(
-                AiState::Seeking,
-                Substate::SeekingSeekpoint,
-                seek_position,
-                goto_flags,
-                ctx,
-            );
-        }
-        false
-    }
-
-    // Pre-reactiontime gates whether to investigate himself
-    // or just watch:
-    //   - SOLDIER/KNIGHT: decide whether to follow footsteps
-    //   - OFFICER: only if no patrol *and* close enough to noise.
-    // If "do not investigate yourself" → JustWatching, else
-    // HeardstepsReactiontime.  Both arms set Q-mark + face + 60-tick
-    // timer.
 
     // Arrow reactiontime: Say(Arrow), transition to
     // SeekingArrow, run to noise, broadcast a look-there alert,
@@ -2101,26 +1754,6 @@ impl EnemyAi {
         Ok(false)
     }
 
-    fn seeking_got_stop_event(&mut self, stimulus_type: StimulusType, ctx: &AiContext) -> bool {
-        if stimulus_type == StimulusType::EventTimer {
-            // Original adopts the authored alert path before leaving the
-            // stopped-seeking state. This explicit gate is required because
-            // the generic state-change alert-path switch only covers departures
-            // from STATE_DEFAULT, while this transition starts in SEEKING.
-            if let Some(alert_path_id) = self.base.alert_path_id
-                && !self.changed_to_alert_path
-            {
-                self.changed_to_alert_path = true;
-                self.base.patrol_path =
-                    crate::ai::PatrolPath::new(alert_path_id, &ctx.hiking_paths);
-                self.base.has_patrol_path = self.base.patrol_path.is_some();
-            }
-            self.base.set_emoticon(EmoticonType::QuestionMark);
-            self.set_state_with_timer(AiState::Wondering, Substate::WonderingLooking1, 30, ctx);
-        }
-        false
-    }
-
     // ============ ATTACKING ============
 
     fn seeking_knight_watching_tower_guard(
@@ -2143,115 +1776,6 @@ impl EnemyAi {
         }
         Ok(false)
     }
-
-    // Freeing someone from the net: wait out, or reach point
-    // and take the net.
-
-    fn seeking_net(
-        &mut self,
-        env: ThinkEnv<'_>,
-        stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, .. } = env;
-        match stimulus_type {
-            StimulusType::EventTimer => {
-                // If detected body is no longer stuck under net
-                // AND I'm detecting them → resurrected,
-                // return to duty; else re-arm timer. This is
-                // cone-and-LOS detection, not the 360° feel
-                // bubble, and it is short-circuited behind the net
-                // check so a still-trapped body costs no LOS query.
-                let body_stuck = ctx
-                    .expect_entity_view(self.base.detected_body, "seeking-net body")
-                    .stuck_under_net;
-                if !body_stuck && self.is_detecting(self.base.detected_body, ctx) {
-                    // Resurrected.
-                    self.return_to_duty_default(env)?;
-                } else {
-                    self.base.launch_timer(10, ctx.frame);
-                }
-            }
-            StimulusType::EventReachPoint => {
-                // If detected body is still under net, riders just
-                // search the area around themselves; foot units launch
-                // the SEARCH×4+TAKE sequence + transition to
-                // SeekingTakingNet. Otherwise return to duty.
-                let body_stuck = ctx
-                    .expect_entity_view(self.base.detected_body, "seeking-net body")
-                    .stuck_under_net;
-                if body_stuck {
-                    if ctx.self_is_rider {
-                        // Rider can't dismount to take the net;
-                        // expand the seek radius and look.
-                        let here = ctx.position;
-                        self.seek_area(
-                            env,
-                            here,
-                            parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
-                            SeekFlags::BODY_SEEK,
-                            UNDEFINED_DIRECTION,
-                            global,
-                        )?;
-                    } else {
-                        // SEARCH×4 + TAKE on interesting_object
-                        // (the net).  Only fire the sequence if
-                        // the object is still active.
-                        if let Some(net_obj) = self.base.interesting_object
-                            && ctx.entity_position(net_obj).is_some()
-                        {
-                            self.set_state(AiState::Seeking, Substate::SeekingTakingNet);
-                            self.base.stop_all();
-                            let owner = self.base.owner_entity_id;
-                            let antagonist = Some(crate::element::EntityId::Net(
-                                crate::entity_id::NetId(net_obj.get()),
-                            ));
-                            let mut seq = crate::sequence::Sequence::new();
-                            seq.append_element(crate::sequence::SequenceElement::new_interaction(
-                                1,
-                                crate::element::Command::SearchCmd,
-                                owner,
-                                None,
-                            ));
-                            seq.append_element(crate::sequence::SequenceElement::new_interaction(
-                                2,
-                                crate::element::Command::SearchCmd,
-                                owner,
-                                None,
-                            ));
-                            seq.append_element(crate::sequence::SequenceElement::new_interaction(
-                                3,
-                                crate::element::Command::SearchCmd,
-                                owner,
-                                None,
-                            ));
-                            seq.append_element(crate::sequence::SequenceElement::new_interaction(
-                                4,
-                                crate::element::Command::SearchCmd,
-                                owner,
-                                None,
-                            ));
-                            seq.append_element(crate::sequence::SequenceElement::new_interaction(
-                                5,
-                                crate::element::Command::Take,
-                                owner,
-                                antagonist,
-                            ));
-                            self.base.outbox.actor.launch_sequences.push(seq);
-                            self.base.set_emoticon(EmoticonType::None);
-                        }
-                    }
-                } else {
-                    self.return_to_duty_default(env)?;
-                }
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    // Finished removing a net: free another, examine body,
-    // or return to duty.
 
     // Officer scanning for free soldiers (three stages).
 
@@ -2771,60 +2295,6 @@ impl EnemyAi {
             self.return_to_duty_default(env)?;
         }
         Ok(false)
-    }
-
-    /// Handle the original game's reach-point event while seeking an
-    /// authored seek point. This is also called re-entrantly by the two
-    /// passed-ambush substates, matching their direct `Think` call.
-    fn reached_seek_point(
-        &mut self,
-        env: ThinkEnv<'_>,
-        global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<()> {
-        let ThinkEnv { sim, ctx, .. } = env;
-        let seek_point_id = self
-            .actual_seek_point
-            .expect("seek-point arrival without an actual seek point");
-        let directions = resolve_seek_point_id(
-            seek_point_id,
-            &self.personal_seek_point_1,
-            &self.personal_seek_point_2,
-            global,
-        )
-        .unwrap_or_else(|| panic!("actual seek point {seek_point_id:?} no longer resolves"))
-        .directions
-        .clone();
-
-        self.seek_point_view_directions.clear();
-        for direction in directions {
-            // `(direction + 16 - current_direction) ^ 8` is the exact
-            // precedence of the Original expression. Directions within one
-            // sector of the direction the soldier arrived from are skipped.
-            let relative = ((i32::from(direction) + 16 - i32::from(ctx.direction)) ^ 8) & 15;
-            if matches!(relative, 15 | 0 | 1) {
-                continue;
-            }
-
-            // The original game increments the count before random selection, so even
-            // insertion into an empty list consumes one global RNG draw.
-            let insertion = crate::sim_rng::usize(
-                sim,
-                crate::sim_rng::RngSite::EnemySeekDirectionShuffle,
-                0..=self.seek_point_view_directions.len(),
-            );
-            self.seek_point_view_directions.insert(insertion, direction);
-        }
-
-        if let Some(&direction) = self.seek_point_view_directions.first() {
-            self.seek_point_view_directions.remove(0);
-            self.set_state(AiState::Seeking, Substate::SeekingSeekpointWatching);
-            self.base.face_direction(direction, ctx);
-            self.base
-                .launch_timer(parameters_ai::AI_SEEKPOINT_LOOK_TIME as u32, ctx.frame);
-        } else {
-            self.seek_next_point(env, global)?;
-        }
-        Ok(())
     }
 
     fn think_expected_menacing_event(

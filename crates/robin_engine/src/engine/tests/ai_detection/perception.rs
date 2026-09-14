@@ -1003,47 +1003,6 @@ fn subordinate_handles_shadow_locally_when_detected_chief_has_empty_patrol() {
 }
 
 #[test]
-fn enemy_tick_data_populates_live_patrol_chief_without_a_primary_target() {
-    use crate::ai::AiState;
-    use crate::coordinates::MapPoint;
-    use crate::element::Camp;
-    use crate::position_interface::SectorHandle;
-
-    let mut engine = EngineInner::new();
-    let chief_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let minion_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    {
-        let chief = engine.get_entity_mut(chief_id).unwrap();
-        chief
-            .element_data_mut()
-            .set_position_map(MapPoint::new(1042.0, 1783.0));
-        chief.element_data_mut().set_layer(2);
-        chief.element_data_mut().set_sector(SectorHandle::new(61));
-        chief.ai_controller_mut().unwrap().current_state = AiState::Wondering;
-    }
-    {
-        let minion = engine.get_entity_mut(minion_id).unwrap();
-        let ai = minion.ai_controller_mut().unwrap();
-        ai.patrol_chief = Some(chief_id);
-        ai.primary_target = None;
-    }
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
-
-    crate::sim_rng::with_seed(0xA013_0469, |sim| {
-        let tick = engine.build_npc_tick_data(sim, minion_id, &assets);
-        assert_eq!(engine.live_ai_position(chief_id).x, 1042.0);
-        assert_eq!(engine.live_ai_position(chief_id).y, 1783.0);
-        assert_eq!(engine.live_ai_position(chief_id).level, 2);
-        assert_eq!(
-            engine.live_ai_position(chief_id).sector,
-            SectorHandle::new(61)
-        );
-        assert_eq!(tick.patrol_chief_state, AiState::Wondering);
-    });
-}
-
-#[test]
 fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::coordinates::MapPoint;

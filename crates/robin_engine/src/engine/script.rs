@@ -3978,10 +3978,6 @@ impl EngineInner {
                     crate::ai_vision::set_view_status(ai_actor, status);
                     continue;
                 }
-                crate::ai::AiOwnerWork::ResumeSendCharlyAfterSpeech { charly } => {
-                    self.owner_work_resume_send_charly_after_speech(assets, owner, charly);
-                    continue;
-                }
             };
 
             self.settle_ai_owner_state_change(sim, assets, owner, work_index, notification);
@@ -4195,59 +4191,6 @@ impl EngineInner {
             .reentrant
             .owner_work
             .extend(later_work);
-    }
-
-    fn owner_work_resume_send_charly_after_speech(
-        &mut self,
-        assets: &LevelAssets,
-        owner: EntityId,
-        charly: crate::ai::NpcHandle,
-    ) {
-        let frame = self.control.frame_counter;
-        let scratch = self.build_sim_scratch(assets);
-        let in_uninterruptible_command = self.is_very_very_busy(owner);
-        let mut ctx = {
-            let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                panic!(
-                    "send-charly continuation owner {} disappeared",
-                    owner.index()
-                )
-            });
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                entity,
-                frame,
-                building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-                u8::try_from(self.ai.think_call_stack.len())
-                    .expect("think recursion depth overflow"),
-            );
-            ctx.in_uninterruptible_command = in_uninterruptible_command;
-            ctx
-        };
-        self.refresh_selected_default_wait_identity(owner, &mut ctx);
-        let enemy = self
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "send-charly continuation owner {} lost Enemy AI",
-                    owner.index()
-                )
-            });
-        enemy.base.friend_in_trouble = Some(crate::ai::AiEntityHandle::new(charly));
-        enemy.base.face_entity(charly, &ctx);
     }
 
     /// Settle one synchronous state callback before reattaching its caller tail.

@@ -568,9 +568,7 @@ fn speech_fifo_preserves_rejected_accepted_busy_and_emergency_attempts() {
 
 #[test]
 fn send_charly_tail_runs_after_both_rejected_and_accepted_speech() {
-    use crate::ai::{
-        AiOwnerWork, AiState, ForbiddenRemark, Remark, RemarkTargetFlags, SpeechFlags, Substate,
-    };
+    use crate::ai::{AiState, ForbiddenRemark, Remark, RemarkTargetFlags, Substate};
 
     for rejected in [true, false] {
         let mut engine = EngineInner::new();
@@ -606,22 +604,22 @@ fn send_charly_tail_runs_after_both_rejected_and_accepted_speech() {
                 .and_then(Entity::enemy_ai_mut)
                 .expect("speech test owner has Enemy AI");
             enemy.base.current_state = AiState::Seeking;
-            enemy.base.current_substate = Substate::SeekingSendCharlyToOfficer;
+            enemy.base.current_substate = Substate::SeekingGroupCalledByOfficer;
+            enemy.soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
+            enemy.base.antagonist = Some(crate::ai::AiEntityHandle::new(charly_handle));
             enemy.base.friend_in_trouble = None;
-            enemy
-                .base
-                .say_with_flags(Remark::FoundCharly, SpeechFlags::MYTALK_1);
-            enemy
-                .base
-                .outbox
-                .reentrant
-                .owner_work
-                .push(AiOwnerWork::ResumeSendCharlyAfterSpeech {
-                    charly: charly_handle,
-                });
         }
-
-        engine.drain_ai_owner_work_for(&crate::sim_rng::test_context(), &assets, owner);
+        engine
+            .get_entity_mut(charly)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap()
+            .soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
+        engine.execute_ai_seen_charly(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            charly_handle,
+        );
 
         let enemy = engine
             .get_entity(owner)

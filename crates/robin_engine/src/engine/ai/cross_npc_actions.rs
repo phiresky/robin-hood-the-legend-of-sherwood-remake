@@ -921,7 +921,7 @@ impl EngineInner {
     fn process_synchronous_look_there_resume(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        source_id: crate::element::EntityId,
+        source_id: EntityId,
         caller: u32,
         continuation: crate::ai::LookThereContinuation,
         assets: &LevelAssets,
@@ -931,55 +931,13 @@ impl EngineInner {
             caller,
             "look-there resume caller must be its owner"
         );
-        let scratch = self.build_sim_scratch(assets);
-        let building_sector = self
-            .world
-            .entities
-            .get(source_id)
-            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-            .unwrap_or_else(|| panic!("look-there caller {caller} disappeared"));
-        let mut ctx = {
-            let entity = self.expect_entity(source_id, "look-there caller");
-            self.ai_context_from_entity(
-                entity,
-                self.control.frame_counter,
-                building_sector,
-                &scratch,
-                assets,
-            )
-        };
-        self.refresh_selected_default_wait_identity(source_id, &mut ctx);
-        // The tail of `EVENT_VIEW` is what adopts the sighted enemy as the
-        // primary target, so at this point the AI still carries whatever
-        // target it had before the sighting. Reconstructing the per-tick
-        // combat data off that stale handle leaves the enemy distances
-        // unseeded, and battle planning then reads an infinite
-        // nearest-enemy distance and holds the soldier back in reserve
-        // instead of engaging a target standing right next to it. Resolve
-        // the tick data against the enemy the tail is about to adopt.
-        let target_override = match continuation {
-            crate::ai::LookThereContinuation::EventView { enemy, .. } => {
-                self.entity_id_for_index(enemy)
+        match continuation {
+            crate::ai::LookThereContinuation::SeekingArrowReactiontime => {
+                self.world
+                    .entities
+                    .expect_ai_controller_mut(source_id, format_args!("look-there timer owner"))
+                    .launch_timer(200, self.control.frame_counter);
             }
-            _ => None,
-        };
-        let tick = self.build_npc_tick_data_for_target(sim, source_id, assets, target_override);
-        let global = &mut self.ai.global;
-        let grid = &self.world.fast_grid;
-        let flow = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(
-                source_id,
-                format_args!("look-there caller {caller} lost its EnemyAi"),
-            )
-            .resume_after_look_there(
-                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, Some(grid)),
-                continuation,
-                global,
-            );
-        if let Err(call) = flow {
-            self.execute_ai_duty_call(sim, assets, source_id, call);
         }
         self.drain_direct_ai_owner_boundary(sim, source_id, assets);
     }

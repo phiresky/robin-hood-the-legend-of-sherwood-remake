@@ -369,8 +369,6 @@ impl EngineInner {
             primary_target_handle.and_then(|handle| self.entity_id_for_index(handle.get()))
         });
         let my_camp = entity.camp();
-        let me_pos = entity.element_data().position_map();
-        let me_layer = entity.element_data().layer();
         let couldnt_reachpoint = enemy_ai.base.couldnt_reachpoint;
         // A failed lift-entry approach is surfaced only after the tick snapshot
         // for its EventCouldntReachPoint has started construction. Original
@@ -389,12 +387,6 @@ impl EngineInner {
 
         let mut tick = AiPerTickData::stub();
         tick.fix_hard_reaction_times = sim.config().fix_hard_reaction_times;
-        tick.owner_live_position = Some(crate::ai::Position {
-            x: me_pos.x,
-            y: me_pos.y,
-            sector: entity.element_data().sector(),
-            level: me_layer,
-        });
         tick.primary_target_snapshot_handle = primary_target_handle;
         let enemy_idx = DetectableType::Enemy as usize;
         tick.profile_manager = Some(assets.profile_manager.clone());
@@ -456,14 +448,6 @@ impl EngineInner {
         // observe an empty list outside swordfight substates.
         tick.nearby_fighters = self.build_nearby_fighters_for(npc_id, assets);
         tick.fighter_registry = self.build_fighter_snapshots_for(npc_id, assets, None);
-
-        if let Some(chief_id) = ai.patrol_chief {
-            let chief_ai = self.world.entities.expect_ai_controller(
-                chief_id,
-                format_args!("enemy tick context owner {} patrol chief", npc_id.index()),
-            );
-            tick.patrol_chief_state = chief_ai.current_state;
-        }
 
         // Avenger-on-roof wait positions — computed for a live failure latch
         // or the exact pending lift completion described above. Decision arms

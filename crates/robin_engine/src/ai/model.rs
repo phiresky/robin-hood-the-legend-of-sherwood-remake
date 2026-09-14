@@ -1599,11 +1599,6 @@ pub enum AlertSoldiersFailureContinuation {
     bitcode::Decode,
 )]
 pub enum LookThereContinuation {
-    EventView {
-        enemy: HumanHandle,
-        enemy_pos: Position,
-    },
-    EventGetArrow,
     SeekingArrowReactiontime,
 }
 

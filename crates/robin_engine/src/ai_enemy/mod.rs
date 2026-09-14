@@ -1201,37 +1201,6 @@ impl EnemyAi {
         true
     }
 
-    pub(crate) fn resume_after_look_there(
-        &mut self,
-        env: ThinkEnv<'_>,
-        continuation: LookThereContinuation,
-        global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<()> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        tracing::trace!(
-            target: "look_there",
-            me = self.base.me,
-            state = ?self.base.current_state,
-            substate = ?self.base.current_substate,
-            ?continuation,
-            "hey_folks_look_there: resuming caller tail"
-        );
-        match continuation {
-            LookThereContinuation::EventView { enemy, enemy_pos } => {
-                self.event_view_after_look_there(env, enemy, enemy_pos, global)?;
-            }
-            LookThereContinuation::EventGetArrow => {
-                self.event_get_arrow_after_look_there(ctx, tick);
-            }
-            LookThereContinuation::SeekingArrowReactiontime => {
-                self.base.launch_timer(200, ctx.frame);
-            }
-        }
-
-        // The engine completes the enclosing Think after this synchronous tail.
-        Ok(())
-    }
-
     /// Default bored behavior — look sidewards randomly on post.
     /// Called from `think_expected_event` for `EventTimer` on
     /// `DefaultOnPost` before delegating to the base-class common

@@ -58,7 +58,8 @@ pub use contexts::{
 mod duty;
 mod effects;
 pub(crate) use duty::{
-    AiFlow, BodyReaction, DutyCall, DutyTail, MoneyFightOperation, OfficerAlertCaller,
+    AiFlow, BodyReaction, DutyCall, DutyTail, EnemyObservation, MoneyFightOperation,
+    OfficerAlertCaller,
 };
 pub(crate) use effects::{AiActorCoreEffects, AiActorPreemptionEffects};
 pub use effects::{
