@@ -509,6 +509,7 @@ fn build_bundle(
             }
         }
         RankedMissionAdmission::BrowseOnly { reason } => {
+            tracing::warn!(reason = %reason, "mission-end ranked submission unavailable");
             let metadata = metadata.ok_or_else(|| {
                 RankedError::unavailable(
                     "leaderboard metadata is required to browse a run without ranked admission",
@@ -517,7 +518,7 @@ fn build_bundle(
             (
                 browse_boards(mission_id, multiplayer, preferences, metadata)?,
                 None,
-                Some(reason.clone()),
+                Some(submission_unavailable_message(reason)),
             )
         }
         RankedMissionAdmission::Signed(signed) => {
@@ -546,6 +547,26 @@ fn build_bundle(
         return Err(RankedError::evidence("captured starting campaign is empty"));
     }
     Ok(bundle)
+}
+
+/// Keep diagnostics readable within the mission-end bundle's display limits.
+fn submission_unavailable_message(reason: &str) -> String {
+    let single_line: String = reason
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect();
+    let message = single_line.trim();
+    if message.is_empty() {
+        return "Ranked submission is unavailable; see the logs for details.".to_owned();
+    }
+    if message.len() <= 500 {
+        return message.to_owned();
+    }
+    let mut end = 497;
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &message[..end])
 }
 
 fn signed_admission_boards(
@@ -1463,6 +1484,42 @@ mod tests {
                 .boards
                 .iter()
                 .all(|board| board.query.content_identity_sha256 == digest(1))
+        );
+    }
+
+    #[test]
+    fn browse_only_diagnostics_cannot_suppress_leaderboards() {
+        for reason in [
+            String::new(),
+            "\n\r\t\0".to_owned(),
+            "ranked setup failed:\n\tconnection closed\r\n".to_owned(),
+            "x".repeat(501),
+            "界".repeat(200),
+        ] {
+            let bundle = build_bundle(
+                "H01",
+                false,
+                Arc::from([1_u8, 2, 3]),
+                MissionEndOutcome::Won,
+                &RankedMissionAdmission::BrowseOnly { reason },
+                &LeaderboardPreferences::default(),
+                Some(&metadata()),
+            )
+            .unwrap();
+            assert_eq!(bundle.boards.len(), 2);
+            assert!(bundle.eligible_submission.is_none());
+            let message = bundle.submission_unavailable_reason.unwrap();
+            assert!(!message.is_empty());
+            assert!(message.len() <= 500);
+            assert!(!message.chars().any(char::is_control));
+        }
+        assert_eq!(
+            submission_unavailable_message("error:\nconnection closed"),
+            "error: connection closed"
+        );
+        assert_eq!(
+            submission_unavailable_message(&"界".repeat(200)),
+            format!("{}...", "界".repeat(165))
         );
     }
 
