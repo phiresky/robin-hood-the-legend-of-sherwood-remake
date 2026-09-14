@@ -341,11 +341,15 @@ pub(super) fn transcode_pixels_to_jxl(
         color,
         quality,
         effort,
+        0,
     )
 }
 
 /// Dimension-explicit form of [`transcode_pixels_to_jxl`]; the RLE sprite
 /// atlas path has no `Picture` to borrow dims from.
+///
+/// `faster_decoding` is cjxl's `--faster_decoding` level (0 = cjxl default,
+/// flag omitted so output stays byte-identical to earlier recipes).
 pub(super) fn encode_pixels_to_jxl(
     width: u32,
     height: u32,
@@ -353,6 +357,7 @@ pub(super) fn encode_pixels_to_jxl(
     color: png::ColorType,
     quality: Option<u8>,
     effort: u8,
+    faster_decoding: u8,
 ) -> Result<Vec<u8>> {
     use std::io::Write as _;
     use std::process::Stdio;
@@ -375,18 +380,15 @@ pub(super) fn encode_pixels_to_jxl(
         // it to 0 already; passing it explicitly means a future default
         // change cannot silently corrupt the sprite class channel (which
         // `member_quality` would then catch as a hard error anyway).
-        cmd.args([
-            "-q",
-            &q.to_string(),
-            "--alpha_distance=0",
-            "-e",
-            &effort,
-            "-",
-            "-",
-        ]);
+        cmd.args(["-q", &q.to_string(), "--alpha_distance=0", "-e", &effort]);
     } else {
-        cmd.args(["-d", "0", "--modular=1", "-e", &effort, "-", "-"]);
+        cmd.args(["-d", "0", "--modular=1", "-e", &effort]);
     }
+    if faster_decoding > 0 {
+        cmd.arg(format!("--faster_decoding={faster_decoding}"));
+    }
+    // Input and output last: PNG on stdin, JXL on stdout.
+    cmd.args(["-", "-"]);
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

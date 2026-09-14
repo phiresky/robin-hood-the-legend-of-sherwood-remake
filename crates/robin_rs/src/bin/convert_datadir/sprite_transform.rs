@@ -84,6 +84,13 @@ const RLE_JXL_MAX_ATLAS_PIXELS: usize = 4 << 20;
 /// this floor also guarantees the per-chunk aggregate floor that
 /// `sprite_compression_probe --verify-shipping` enforces.
 const RLE_JXL_MIN_SPRITE_PSNR_DB: f64 = 24.0;
+/// cjxl `--faster_decoding` level for RLE sprite JXL. Measured on the Demo
+/// Dem_Lei_MP atlases (75 images, cjxl 0.12 q80 e7): level 2 cut jxl-rs
+/// decode by roughly a third natively and nearly half on serial wasm for
+/// +2.7% bytes at unchanged opaque-pixel PSNR; level 3 is faster still but
+/// +4.3% bytes. Only the lossy colour channels are affected — alpha stays
+/// `--alpha_distance=0` exact, and `member_quality` still gates every sprite.
+const RLE_JXL_FASTER_DECODING: u8 = 2;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(super) struct RleJxlChunkStats {
@@ -448,6 +455,7 @@ pub(super) fn build_rle_jxl_chunk(
                     png::ColorType::Rgba,
                     Some(quality),
                     7,
+                    RLE_JXL_FASTER_DECODING,
                 )
                 .with_context(|| format!("cjxl atlas for {rel}"))?;
                 let (dec_w, _dec_h, decoded) = rle_jxl::decode_jxl_rgba8(&jxl)
@@ -517,6 +525,7 @@ pub(super) fn build_rle_jxl_chunk(
             png::ColorType::Rgba,
             Some(quality),
             7,
+            RLE_JXL_FASTER_DECODING,
         )
         .with_context(|| format!("cjxl sprite {id} of {rel}"))?;
         let (dec_w, _dec_h, decoded) = rle_jxl::decode_jxl_rgba8(&jxl)
