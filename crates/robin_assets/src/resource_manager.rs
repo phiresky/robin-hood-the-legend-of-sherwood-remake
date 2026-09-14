@@ -765,6 +765,15 @@ impl ResourceManager {
         count
     }
 
+    /// Every shipped encoded picture slot of this manager (any codec), for
+    /// size accounting tools. Decoded state does not matter here.
+    pub fn encoded_picture_slots(&self) -> impl Iterator<Item = &EncodedPicture> {
+        self.data
+            .encoded_pictures
+            .values()
+            .flat_map(|slots| slots.iter().flatten())
+    }
+
     /// Encoded bytes of every still-encoded picture that the browser must
     /// decode (AVIF slots) before [`Self::ensure_pictures_loaded`] can run —
     /// input to the web runtime's async predecode step.

@@ -608,12 +608,10 @@ pub fn rgba_to_rgb565_opaque(decoded: &DecodedRgba) -> Result<Picture> {
 }
 
 /// Decode a keyed AVIF (interface picture or minimap) from its predecoded
-/// pixels.
+/// pixels. libavif omits the alpha item when every pixel is opaque; the
+/// browser and the native decoder both report alpha 255 for such an image,
+/// which is exactly the opaque class, so no alpha item means "all opaque".
 pub fn load_avif_rgb565_keyed(bytes: &[u8]) -> Result<Picture> {
-    let info = avif_info(bytes)?;
-    if !info.has_alpha {
-        bail!("keyed AVIF picture has no alpha item to carry pixel classes");
-    }
     let decoded = decoded_rgba(bytes)?;
     rgba_to_rgb565_keyed(&decoded)
 }

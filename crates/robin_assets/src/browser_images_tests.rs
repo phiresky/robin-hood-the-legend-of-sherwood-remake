@@ -277,10 +277,16 @@ fn keyed_and_opaque_loaders_reconstruct_classes_from_injected_pixels() {
         }
     }
     assert_eq!(Picture::terrain_dimensions(KEYED_8X4).unwrap(), (8, 4));
-    // Keyed images never go through the opaque terrain decoder, and opaque
-    // terrain has no class channel for the keyed decoder.
+    // Keyed images never go through the opaque terrain decoder. An AVIF
+    // without an alpha item (libavif omits it when every pixel is opaque)
+    // decodes through the keyed loader as all-opaque, never as a key.
     assert!(Picture::load_terrain_from_bytes(KEYED_8X4).is_err());
-    assert!(Picture::load_minimap_from_bytes(RGB_2X3).is_err());
+    let all_opaque = Picture::load_minimap_from_bytes(RGB_2X3).unwrap();
+    assert!(
+        words(&all_opaque)
+            .iter()
+            .all(|&pixel| pixel != TRANSPARENT_COLOR_16 && pixel != SHADOW_KEY)
+    );
 
     let terrain = Picture::load_terrain_from_bytes(RGB_2X3).unwrap();
     assert_eq!((terrain.width, terrain.height), (2, 3));
