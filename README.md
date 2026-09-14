@@ -150,7 +150,8 @@ target wasm.
 
 Production runtimes are the threaded build (`node wasm-www/scripts/build-runtime.mjs
 --threads`, which `stage-runtime-addition.mjs` always uses): shared wasm memory
-plus a wasm-bindgen-rayon pool of up to four sprite-decode workers. The pool
+plus a wasm-bindgen-rayon pool of min(`hardwareConcurrency`, 8) sprite-decode
+workers (`?wasm-threads=N` overrides). The pool
 starts only when the page is `crossOriginIsolated`, which the game document
 gets from `Cross-Origin-Opener-Policy: same-origin` and
 `Cross-Origin-Embedder-Policy: require-corp` in `wasm-www/deploy/public-headers.txt`.
