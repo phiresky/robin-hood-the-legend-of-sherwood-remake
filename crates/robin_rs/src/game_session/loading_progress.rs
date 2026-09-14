@@ -50,11 +50,19 @@ pub(super) enum LoadingPhase {
     Finalizing,
 }
 
+/// Sprite decode dominates only on the serial build. With the rayon pool
+/// (8 workers, cross-origin isolated) mission install measured 2.35 s from
+/// streaming start in the local startup harness, overlapping the download.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+const SPRITE_DECODE_WEIGHT_MS: u32 = 2400;
+#[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
+const SPRITE_DECODE_WEIGHT_MS: u32 = 6000;
+
 /// Measured wall-clock weight of each phase, in execution order.
 pub(super) const LOADING_PHASE_WEIGHTS_MS: [(LoadingPhase, u32); 15] = [
     (LoadingPhase::PrepareMissionData, 20),
     (LoadingPhase::MissionData, 1630),
-    (LoadingPhase::SpriteDecode, 6000),
+    (LoadingPhase::SpriteDecode, SPRITE_DECODE_WEIGHT_MS),
     (LoadingPhase::MissionDataAudio, 20),
     (LoadingPhase::ProcessResources, 60),
     (LoadingPhase::RankedAuthority, 370),
@@ -72,7 +80,8 @@ pub(super) const LOADING_PHASE_WEIGHTS_MS: [(LoadingPhase, u32); 15] = [
 /// Worker-pool streaming builds decode activation-critical sprite chunks
 /// while parts download, so their `Data` progress also covers this share of
 /// [`LoadingPhase::SpriteDecode`]; the install-time remainder covers the rest.
-// TODO: measure on a cross-origin-isolated threaded deploy and retune.
+// TODO: the share and SPRITE_DECODE_WEIGHT_MS come from a local unthrottled
+// harness run; re-measure on the live isolated deploy and on slow networks.
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
 const STREAMING_DATA_SPRITE_DECODE_SHARE: f32 = 0.75;
 
@@ -188,6 +197,7 @@ mod tests {
         LoadingPhase::MissionData.at(f32::NAN);
     }
 
+    /// Native tests compile the serial weights, where decode dominates.
     #[test]
     fn sprite_decode_dominates_as_measured() {
         let span = LoadingPhase::SpriteDecode.end() - LoadingPhase::SpriteDecode.start();
