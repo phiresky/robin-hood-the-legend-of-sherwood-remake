@@ -18,10 +18,28 @@ const IMPORT_META = 3;
 // bytes of the pinned crate (robin_assets pins `wasm-bindgen-rayon = "=1.3.0"`);
 // any other dynamic import, or a reshaped helper, is still rejected.
 // TODO: re-pin when wasm-bindgen-rayon is deliberately upgraded.
-const WORKER_POOL_HELPER = Object.freeze({
+export const WORKER_POOL_HELPER = Object.freeze({
     path: /^snippets\/wasm-bindgen-rayon-[0-9a-f]{16}\/src\/workerHelpers\.no-bundler\.js$/u,
     sha256: '9801503f464f848c6c7405462fca9a5c721556904c5fee5ee0afcb0887ea1b7f',
 });
+
+/**
+ * Classify a module by its build-relative `/`-separated path: `false` when it
+ * is not at the helper location, `true` for the exact pinned helper bytes, and
+ * an error for anything else at that location.
+ */
+export function pinnedWorkerPoolHelper(path, bytes) {
+    if (!WORKER_POOL_HELPER.path.test(path)) return false;
+    if (sha256(bytes) !== WORKER_POOL_HELPER.sha256) {
+        throw new Error(`runtime worker-pool helper is not the pinned wasm-bindgen-rayon helper: ${path}`);
+    }
+    return true;
+}
+
+/** The helper's only admitted import: its one `import(data.mainJS)`. */
+export function isWorkerPoolEngineReimport(imported) {
+    return imported.t === DYNAMIC_IMPORT && imported.n === undefined && imported.a === -1;
+}
 const DIGEST = /^[0-9a-f]{64}$/u;
 const MODULE_PATH = /^(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.js$/u;
 
@@ -132,19 +150,13 @@ async function deriveRuntimeJavascriptModules(directory, { replayAdmission = fal
         } catch (error) {
             throw new Error(`runtime JavaScript module is invalid: ${path}`, { cause: error });
         }
-        const workerPoolHelper = WORKER_POOL_HELPER.path.test(path);
-        if (workerPoolHelper) {
-            if (sha256(bytes) !== WORKER_POOL_HELPER.sha256) {
-                throw new Error(`runtime worker-pool helper is not the pinned wasm-bindgen-rayon helper: ${path}`);
-            }
-            workerPoolHelpers.push(path);
-        }
+        const workerPoolHelper = pinnedWorkerPoolHelper(path, bytes);
+        if (workerPoolHelper) workerPoolHelpers.push(path);
         let dynamicImports = 0;
         const targets = [];
         for (const imported of imports) {
             if (imported.t === IMPORT_META) continue;
-            if (workerPoolHelper && imported.t === DYNAMIC_IMPORT && imported.n === undefined
-                && imported.a === -1 && dynamicImports === 0) {
+            if (workerPoolHelper && isWorkerPoolEngineReimport(imported) && dynamicImports === 0) {
                 dynamicImports += 1;
                 continue;
             }
