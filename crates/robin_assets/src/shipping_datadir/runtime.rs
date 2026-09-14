@@ -1,5 +1,53 @@
 //! Shipping runtime boundary; payload wire shapes remain in the parent.
 use super::*;
+pub use robin_util::asset_fs::LocaleLayer;
+
+/// The locale packs taking part in one lookup: the selected pack and its
+/// distinct English fallback pack.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct LocaleView<'a> {
+    pub(super) selected: Option<&'a ShippingLocale>,
+    pub(super) fallback: Option<&'a ShippingLocale>,
+}
+
+/// Outcome of one layered shipping lookup.
+#[derive(Debug)]
+pub enum ShippingLookup<'a, T: ?Sized> {
+    Found {
+        layer: LocaleLayer,
+        value: &'a T,
+    },
+    /// No permitted layer contains the asset; callers may try loose files.
+    NotFound,
+    /// A locale-required asset is absent from the selected pack. No lower
+    /// layer (shared maps or loose files) may substitute for it.
+    RequiredLocaleMissing,
+}
+
+impl<'a, T: ?Sized> ShippingLookup<'a, T> {
+    pub fn found(self) -> Option<&'a T> {
+        match self {
+            Self::Found { value, .. } => Some(value),
+            Self::NotFound | Self::RequiredLocaleMissing => None,
+        }
+    }
+}
+
+/// Look up canonical `key` in a shared (top-level) map whose producers may
+/// have kept original file spelling. Two case aliases are a corrupt manifest.
+fn shared_case_insensitive<'a, V>(
+    map: &'a BTreeMap<String, V>,
+    key: &str,
+    kind: &str,
+) -> Option<&'a V> {
+    // Always scan: an exact hit must not hide a second case alias.
+    let mut matches = map
+        .iter()
+        .filter(|(candidate, _)| canonical_shipping_asset_key(candidate) == key);
+    let (_, value) = matches.next()?;
+    assert!(matches.next().is_none(), "ambiguous shared {kind} {key}");
+    Some(value)
+}
 
 impl ShippingDatadir {
     /// Iterate installed language packs in stable canonical-locale order.
@@ -31,6 +79,11 @@ impl ShippingDatadir {
         self.locales.is_empty()
     }
 
+    // The `locale_*` accessors below probe exactly one pack's layer and apply
+    // no fallback. They serve callers that address a specific language pack
+    // (e.g. building one voice pack's timing table). Presentation lookups use
+    // `resource`/`localized_pak`/`localized_level_descriptors`, which resolve
+    // through the shared locale policy.
     pub fn locale_resource(&self, locale: &str, path: &str) -> Result<Option<&ResourceManager>> {
         let key = canonical_shipping_asset_key(path);
         Ok(self
@@ -93,19 +146,22 @@ impl ShippingDatadir {
             return Ok(Some(cached));
         }
 
-        // A locale is a complete text/UI overlay. English is only a fallback
-        // for the two explicitly optional presentation families; allowing it
-        // to fill arbitrary missing files would create a partly translated UI
-        // and conceal an incomplete pack.
-        let mut raw = self
-            .locales
-            .get("en-US")
-            .filter(|_| canonical != "en-US")
+        // The VFS consults this bundle as the selected layer, so it merges
+        // exactly the locale layers the shared policy permits for each key:
+        // the selected pack's overlay keys, and English only where the policy
+        // lists an English fallback (optional recorded media).
+        let view = self.locale_view(Some(assets));
+        let policy_allows = |key: &str, layer: LocaleLayer| {
+            robin_util::asset_fs::locale_resolution_order(key, true, view.fallback.is_some())
+                .contains(&layer)
+        };
+        let mut raw = view
+            .fallback
             .map(|english| {
                 english
                     .raw
                     .iter()
-                    .filter(|(key, _)| is_optional_english_fallback_key(key))
+                    .filter(|(key, _)| policy_allows(key, LocaleLayer::EnglishFallback))
                     .map(|(key, bytes)| (key.clone(), bytes.clone().into()))
                     .collect::<robin_util::asset_fs::Bundle>()
             })
@@ -114,6 +170,7 @@ impl ShippingDatadir {
             assets
                 .raw
                 .iter()
+                .filter(|(key, _)| policy_allows(key, LocaleLayer::Selected))
                 .map(|(key, bytes)| (key.clone(), bytes.clone().into())),
         );
         let bundle = Arc::new(raw);
@@ -170,100 +227,145 @@ impl ShippingDatadir {
         )
     }
 
-    pub fn active_resource(&self, path: &str) -> Option<&ResourceManager> {
-        if !is_locale_overlay_key(path) {
-            return None;
-        }
-        let locale = self.active_locale()?;
-        locale.res_files.get(&canonical_shipping_asset_key(path))
+    /// The active selection as lookup layers, captured once per lookup.
+    pub(super) fn active_locale_view(&self) -> LocaleView<'_> {
+        self.locale_view(self.active_locale())
     }
 
-    pub fn active_pak(&self, path: &str) -> Option<&[EncodedPicture]> {
-        let locale = self.active_locale()?;
-        locale
-            .pak_files
-            .get(&canonical_shipping_asset_key(path))
-            .map(Vec::as_slice)
-    }
-
-    pub fn localized_pak(&self, path: &str) -> Option<&[EncodedPicture]> {
-        self.localized_pak_for_locale(path, self.active_locale())
-    }
-
-    pub(super) fn localized_pak_for_locale<'a>(
+    /// Layers for an explicitly chosen pack. The English pack is the fallback
+    /// only when a different pack is selected, mirroring the loose-file
+    /// installation in `localization::install_file_lookup`.
+    pub(super) fn locale_view<'a>(
         &'a self,
-        path: &str,
-        locale: Option<&'a ShippingLocale>,
-    ) -> Option<&'a [EncodedPicture]> {
-        let key = canonical_shipping_asset_key(path);
-        if let Some(locale) = locale {
-            // PAKs under locale roots commonly bake translated titles into
-            // their pixels. A v5 manifest must not substitute the top-level
-            // compatibility pack when the selected locale omitted one.
-            locale.pak_files.get(&key).map(Vec::as_slice)
+        selected: Option<&'a ShippingLocale>,
+    ) -> LocaleView<'a> {
+        let fallback = selected.and_then(|selected| {
+            self.locales
+                .get("en-US")
+                .filter(|english| !std::ptr::eq(*english, selected))
+        });
+        LocaleView { selected, fallback }
+    }
+
+    /// Resolve one canonical asset through the shared locale policy
+    /// ([`robin_util::asset_fs::locale_resolution_order`]). Every typed
+    /// shipping getter goes through this, so parsed maps layer exactly like
+    /// loose files and the raw VFS: the top-level maps are the shared layer.
+    pub(super) fn resolve_layered<'a, T: ?Sized>(
+        &'a self,
+        key: &str,
+        view: LocaleView<'a>,
+        locale_entry: impl Fn(&'a ShippingLocale) -> Option<&'a T>,
+        shared_entry: impl FnOnce(&'a ShippingDatadirPayload) -> Option<&'a T>,
+    ) -> ShippingLookup<'a, T> {
+        let order = robin_util::asset_fs::locale_resolution_order(
+            key,
+            view.selected.is_some(),
+            view.fallback.is_some(),
+        );
+        let mut shared_entry = Some(shared_entry);
+        for &layer in order {
+            let value = match layer {
+                LocaleLayer::Selected => view.selected.and_then(&locale_entry),
+                LocaleLayer::EnglishFallback => view.fallback.and_then(&locale_entry),
+                LocaleLayer::Shared => (shared_entry
+                    .take()
+                    .expect("shared layer appears once in a resolution order"))(
+                    &self.payload
+                ),
+            };
+            if let Some(value) = value {
+                return ShippingLookup::Found { layer, value };
+            }
+        }
+        if order.contains(&LocaleLayer::Shared) {
+            ShippingLookup::NotFound
         } else {
-            self.pak_files.get(&key).map(Vec::as_slice)
+            ShippingLookup::RequiredLocaleMissing
         }
     }
 
-    pub fn active_level_descriptors(&self, path: &str) -> Option<&LevelDescriptors> {
-        let locale = self.active_locale()?;
-        let key = canonical_shipping_asset_key(path);
-        let filename = key.rsplit('/').next().unwrap_or(&key);
-        locale.red_files.get(filename)
+    /// Parsed resource archive for the active selection.
+    pub fn resource(&self, path: &str) -> ShippingLookup<'_, ResourceManager> {
+        self.resource_for(path, self.active_locale_view())
     }
 
-    /// Resolve locale-specific metadata first, then the shared descriptor.
-    /// Stock Demo installs put the RED table indices in shared Data/Text while
-    /// Level.res strings live in the locale overlay. Reusing those indices is
-    /// not permission to fall back to another locale's strings or resources.
-    pub fn localized_level_descriptors(&self, path: &str) -> Option<&LevelDescriptors> {
-        self.localized_level_descriptors_for_locale(path, self.active_locale())
-    }
-
-    pub(super) fn localized_level_descriptors_for_locale<'a>(
+    pub(super) fn resource_for<'a>(
         &'a self,
         path: &str,
-        locale: Option<&'a ShippingLocale>,
+        view: LocaleView<'a>,
+    ) -> ShippingLookup<'a, ResourceManager> {
+        let key = canonical_shipping_asset_key(path);
+        self.resolve_layered(
+            &key,
+            view,
+            |locale| locale.res_files.get(&key),
+            // Producers before the structural locale split keyed the shared
+            // map by original spelling (`Interface/DEFAULT.RES`).
+            |shared| shared_case_insensitive(&shared.res_files, &key, "resource archive"),
+        )
+    }
+
+    /// Encoded interface pictures for the active selection.
+    pub fn localized_pak(&self, path: &str) -> Option<&[EncodedPicture]> {
+        self.pak_for(path, self.active_locale_view()).found()
+    }
+
+    pub(super) fn pak_for<'a>(
+        &'a self,
+        path: &str,
+        view: LocaleView<'a>,
+    ) -> ShippingLookup<'a, [EncodedPicture]> {
+        let key = canonical_shipping_asset_key(path);
+        self.resolve_layered(
+            &key,
+            view,
+            |locale| locale.pak_files.get(&key).map(Vec::as_slice),
+            |shared| {
+                shared_case_insensitive(&shared.pak_files, &key, "interface pak").map(Vec::as_slice)
+            },
+        )
+    }
+
+    /// Mission descriptor for the active selection. Descriptor maps are keyed
+    /// by filename; the policy key is the descriptor's `Data/Text` location.
+    pub fn localized_level_descriptors(&self, path: &str) -> Option<&LevelDescriptors> {
+        self.level_descriptors_for(path, self.active_locale_view())
+    }
+
+    pub(super) fn level_descriptors_for<'a>(
+        &'a self,
+        path: &str,
+        view: LocaleView<'a>,
     ) -> Option<&'a LevelDescriptors> {
         let key = canonical_shipping_asset_key(path);
-        let filename = key.rsplit('/').next().unwrap_or(&key);
-        if let Some(descriptor) = locale.and_then(|assets| assets.red_files.get(filename)) {
-            return Some(descriptor);
-        }
-        // Existing shipping producers retain the original mixed-case RED
-        // filename in the shared map; locale maps use canonical keys. Accept
-        // both without changing the payload format or regenerating stock data.
-        let mut matches = self
-            .red_files
-            .iter()
-            .filter(|(key, _)| key.eq_ignore_ascii_case(filename));
-        let (_, descriptor) = matches.next()?;
-        assert!(
-            matches.next().is_none(),
-            "ambiguous shared level descriptor {filename}"
+        let filename = key.rsplit('/').next().unwrap_or(&key).to_owned();
+        let lookup = self.resolve_layered(
+            &format!("text/{filename}"),
+            view,
+            |locale| locale.red_files.get(&filename),
+            |shared| shared_case_insensitive(&shared.red_files, &filename, "level descriptor"),
         );
-        if locale.is_some()
-            && (descriptor.custom_popup_texts.iter().any(Option::is_some)
-                || descriptor
-                    .custom_short_briefings
-                    .iter()
-                    .any(Option::is_some)
-                || descriptor.custom_dialogue_texts.iter().any(Option::is_some))
+        let ShippingLookup::Found { layer, value } = lookup else {
+            return None;
+        };
+        // Content guard, not path policy: shared RED indices are language
+        // neutral, but authored strings embedded in a shared descriptor are
+        // in some other language than the selected pack.
+        // TODO: loose `res_descr::resolve` cannot tell which layer served a
+        // descriptor and does not apply this guard yet.
+        if layer != LocaleLayer::Selected
+            && view.selected.is_some()
+            && (value.custom_popup_texts.iter().any(Option::is_some)
+                || value.custom_short_briefings.iter().any(Option::is_some)
+                || value.custom_dialogue_texts.iter().any(Option::is_some))
         {
             tracing::warn!(
-                "shared descriptor {filename} contains authored text; refusing cross-locale fallback"
+                "fallback descriptor {filename} contains authored text; refusing cross-locale fallback"
             );
             return None;
         }
-        Some(descriptor)
-    }
-
-    /// Localized profile metadata for presentation lookups such as mission
-    /// titles. Engine construction must use the language-independent top-level
-    /// `profiles` index so a client locale cannot alter simulation data.
-    pub fn active_profiles(&self) -> Option<&ProfileManager> {
-        self.active_locale()?.profiles.as_ref()
+        Some(value)
     }
 
     /// Parse a shipping datadir blob: zstd decompress + native bitcode decode.

@@ -476,18 +476,22 @@ impl AssetVfs {
         let relative = normalize_virtual_path(requested)?;
         let key = bundle_key_from_normalized(&relative);
         let selection = self.selection_snapshot();
-        if let Some(locale) = selection.locale_bundle.as_ref()
-            && is_locale_overlay_key(&key)
+        // The locale bundle is the selected pack with its permitted English
+        // fallback already merged in, so it occupies both locale layers.
+        let order = locale_resolution_order(&key, selection.locale_bundle.is_some(), false);
+        if order.contains(&LocaleLayer::Selected)
+            && let Some(bytes) = selection
+                .locale_bundle
+                .as_ref()
+                .and_then(|locale| locale.get(&key))
         {
-            if let Some(bytes) = locale.get(&key) {
-                return Ok(Some(AssetLocation::Memory(
-                    bytes.clone(),
-                    AssetSource::Locale,
-                )));
-            }
-            if is_required_locale_key(&key) {
-                return Ok(None);
-            }
+            return Ok(Some(AssetLocation::Memory(
+                bytes.clone(),
+                AssetSource::Locale,
+            )));
+        }
+        if !order.contains(&LocaleLayer::Shared) {
+            return Ok(None);
         }
         let overlays = self
             .overlay_bundles
@@ -685,8 +689,21 @@ pub fn global() -> &'static Arc<AssetVfs> {
     GLOBAL.get_or_init(|| Arc::new(AssetVfs::new()))
 }
 
+/// Keys that must come from the selected locale when one is selected: lower
+/// layers never substitute for them.
+///
+/// Level descriptors (`text/*.red`) live in `Text/` but are language-neutral
+/// table indices: stock Demo installs ship them only in the shared `Data/Text`
+/// while the strings they index live in the locale's `Level.res`. They are
+/// therefore ordinary overlay keys that may fall back to the shared layer.
+// TODO: PAKs under locale roots can bake translated titles into their pixels
+// (e.g. a localized Interface/*.pak). No stock data proves one must be
+// locale-required, so they currently fall back to the shared copy. If a pack
+// is found where that is wrong, add the exact key here rather than special
+// casing a lookup site.
 pub fn is_required_locale_key(key: &str) -> bool {
-    key == "text" || key.starts_with("text/") || key.eq_ignore_ascii_case("interface/start.sxt")
+    let text = key == "text" || key.starts_with("text/");
+    (text && !key.ends_with(".red")) || key.eq_ignore_ascii_case("interface/start.sxt")
 }
 
 pub fn is_optional_english_fallback_key(key: &str) -> bool {
@@ -703,6 +720,54 @@ pub fn is_locale_overlay_key(key: &str) -> bool {
         || key == "interface"
         || key.starts_with("interface/")
         || is_optional_english_fallback_key(key)
+}
+
+/// One presentation-language layer of a game-data lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LocaleLayer {
+    /// The selected language pack.
+    Selected,
+    /// The installed English pack, used only for optional recorded media.
+    EnglishFallback,
+    /// The language-independent shared data (the primary datadir, or the
+    /// top-level maps of a shipping manifest).
+    Shared,
+}
+
+/// The single locale layering policy, shared by loose files, the in-memory
+/// asset VFS, and shipping manifests.
+///
+/// Returns the layers to search for canonical `key`, highest priority first.
+/// `has_selected`/`has_fallback` say whether a selected pack and a *distinct*
+/// English fallback pack exist; callers suppress a fallback equal to the
+/// selection. Rules:
+/// - Locale packs never replace non-overlay keys (levels, scripts, profiles):
+///   those resolve from [`LocaleLayer::Shared`] only.
+/// - Overlay keys search the selected pack, then (optional recorded media only)
+///   English, then shared.
+/// - Required keys stop after the selected pack. The result then lacks
+///   [`LocaleLayer::Shared`]; a lookup that exhausts it must report the
+///   localized asset as missing rather than consulting any lower layer.
+///
+/// Mounted overlays, mission payloads, and alternate paths are not locale
+/// layers; each lookup places those around this order itself.
+pub fn locale_resolution_order(
+    key: &str,
+    has_selected: bool,
+    has_fallback: bool,
+) -> &'static [LocaleLayer] {
+    use LocaleLayer::{EnglishFallback, Selected, Shared};
+    if !is_locale_overlay_key(key) {
+        return &[Shared];
+    }
+    let english = has_fallback && is_optional_english_fallback_key(key);
+    match (has_selected, english) {
+        (true, _) if is_required_locale_key(key) => &[Selected],
+        (true, true) => &[Selected, EnglishFallback, Shared],
+        (true, false) => &[Selected, Shared],
+        (false, true) => &[EnglishFallback, Shared],
+        (false, false) => &[Shared],
+    }
 }
 
 /// Install or replace one host-preloaded asset.
@@ -838,7 +903,9 @@ mod tests {
         for (key, overlay, required, english) in [
             ("text", true, true, false),
             ("interface/start.sxt", true, true, false),
+            ("text/rhlevelsb.red", true, false, false),
             ("interface/panel", true, false, false),
+            ("interface/loading.pak", true, false, false),
             ("cinematics/intro", true, false, true),
             ("sounds/exclamations/voice", true, false, true),
             ("configuration/profiles.cpf", false, false, false),
@@ -846,6 +913,32 @@ mod tests {
             assert_eq!(is_locale_overlay_key(key), overlay);
             assert_eq!(is_required_locale_key(key), required);
             assert_eq!(is_optional_english_fallback_key(key), english);
+        }
+    }
+
+    #[test]
+    fn locale_resolution_order_is_the_single_layering_policy() {
+        use LocaleLayer::{EnglishFallback as E, Selected as S, Shared as B};
+        for (key, selected, fallback, expected) in [
+            ("text/level.res", true, true, &[S][..]),
+            ("text/level.res", false, true, &[B][..]),
+            ("text/rhlevelsb.red", true, true, &[S, B][..]),
+            ("interface/start.sxt", true, false, &[S][..]),
+            ("interface/loading.pak", true, true, &[S, B][..]),
+            ("interface/x.res", false, false, &[B][..]),
+            ("sounds/exclamations/a.wav", true, true, &[S, E, B][..]),
+            ("sounds/exclamations/a.wav", true, false, &[S, B][..]),
+            ("sounds/exclamations/a.wav", false, true, &[E, B][..]),
+            ("cinematics/intro.avi", true, true, &[S, E, B][..]),
+            ("levels/dem_lei_mp.rhm", true, true, &[B][..]),
+            ("levels/dem_lei_mp.scb", true, true, &[B][..]),
+            ("configuration/profile.cpf", true, true, &[B][..]),
+        ] {
+            assert_eq!(
+                locale_resolution_order(key, selected, fallback),
+                expected,
+                "{key} selected={selected} fallback={fallback}"
+            );
         }
     }
 

@@ -39,7 +39,8 @@ pub use codec::{
 };
 use codec::{decode_native, zstd_decompress};
 pub use runtime::{
-    is_locale_overlay_key, is_optional_english_fallback_key, is_required_locale_key,
+    LocaleLayer, ShippingLookup, is_locale_overlay_key, is_optional_english_fallback_key,
+    is_required_locale_key,
 };
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
 pub use scheduler::VqDecodeScheduler;
@@ -201,6 +202,46 @@ impl ShippingDatadir {
         Self {
             payload,
             runtime: ShippingRuntime::default(),
+        }
+    }
+}
+
+impl ShippingDatadirPayload {
+    /// Parsed shipping archives are resident; their source `.res` is never
+    /// shipped. Older converters serialized locale managers with the
+    /// converter host's absolute archive paths and recovery enabled, so a
+    /// browser could attempt to read `/home/...` paths. Decoding enforces the
+    /// shipping invariant on every serialized manager (shared and per-locale)
+    /// so already-published manifests are safe without regeneration.
+    pub fn disable_persisted_resource_recovery(&mut self) {
+        let mut leaked = Vec::new();
+        let shared = self
+            .res_files
+            .iter_mut()
+            .map(|(key, manager)| (String::new(), key, manager));
+        let localized = self.locales.iter_mut().flat_map(|(locale, pack)| {
+            pack.res_files
+                .iter_mut()
+                .map(move |(key, manager)| (locale.clone(), key, manager))
+        });
+        for (locale, key, manager) in shared.chain(localized) {
+            if manager.has_recovery_file_entries() {
+                leaked.push(if locale.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{locale}:{key}")
+                });
+            }
+            manager.disable_recovery_for_shipping();
+        }
+        if !leaked.is_empty() {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| {
+                tracing::warn!(
+                    archives = ?leaked,
+                    "shipping manifest persisted legacy resource recovery paths; ignoring them (regenerate the datadir to drop them)"
+                );
+            });
         }
     }
 }

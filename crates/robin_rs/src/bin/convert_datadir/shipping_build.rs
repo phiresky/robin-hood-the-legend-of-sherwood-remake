@@ -11,8 +11,12 @@ pub(super) fn load_boot_roots(
     in_path: &impl Fn(&str) -> Option<PathBuf>,
 ) -> Result<()> {
     // ── Fixed boot roots ───────────────────────────────────────────────
-    // Boot-time resource roots plus the expression/actor text
-    // table and loading-screen bundle.
+    // Shared layer only. Locale trees are converted structurally, file by
+    // file, into their own layer under the same canonical keys by
+    // `walk_and_bundle_locale`; runtime lookups layer the two through
+    // `robin_util::asset_fs::locale_resolution_order`, exactly like loose
+    // files. Interface paks (e.g. Interface/Loading.pak) need no entry here:
+    // `walk_and_bundle_small` encodes every shared interface pak.
     for rel in [
         "Interface/DEFAULT.RES",
         "Interface/Start.sxt",
@@ -20,87 +24,29 @@ pub(super) fn load_boot_roots(
         "Text/Level.res",
         "Sounds/Exclamations/actors.res",
     ] {
-        if let Some(p) = in_path(rel) {
-            // `.sxt` is an extension used by more than one legacy wire
-            // format. Some releases store Start.sxt as an SRES text table,
-            // while the authentic demo stores a standalone 1024x768
-            // packed 16-bit loading image. Only attach actual SRES
-            // containers; the standalone picture is validated/transcoded by
-            // walk_and_bundle_small below and retained in `raw`.
-            if rel.to_ascii_lowercase().ends_with(".sxt") && !sxt_is_sres(&p)? {
-                continue;
-            }
-            let mut mgr = ResourceManager::legacy_tool();
-            mgr.attach_resource_file(&p.to_string_lossy())?;
-            if is_interface_path(rel)
-                && let Some(q) = opts.interface_image_format.jxl_quality()
-            {
-                let encoded = mgr.encode_pictures_for_shipping(|pic| {
-                    Ok(EncodedPicture::jxl_rgba565_keyed(
-                        transcode_picture_to_jxl_rgba_keyed(pic, q)?,
-                    ))
-                })?;
-                tracing::info!(
-                    "interface res {rel}: encoded {encoded} pictures as JXL {}",
-                    jxl_quality_label(q)
-                );
-            }
-            mgr.disable_recovery_for_shipping();
-            dd.res_files.insert(rel.into(), mgr);
+        let Some(p) = resolve_data_file(data_in, rel) else {
+            continue;
+        };
+        // `.sxt` is an extension used by more than one legacy wire format.
+        // Some releases store Start.sxt as an SRES text table, while the
+        // authentic demo stores a standalone 1024x768 packed 16-bit loading
+        // image. Only attach actual SRES containers; the standalone picture
+        // is validated/transcoded by walk_and_bundle_small and kept in `raw`.
+        if rel.to_ascii_lowercase().ends_with(".sxt") && !sxt_is_sres(&p)? {
+            continue;
         }
-    }
-    for source in locale_dirs {
-        let locale = dd
-            .locales
-            .get_mut(source.iso)
-            .expect("detected shipping locale was initialized");
-        for rel in [
-            "Interface/DEFAULT.RES",
-            "Interface/Start.sxt",
-            "Text/actors.res",
-            "Text/Level.res",
-            "Sounds/Exclamations/actors.res",
-        ] {
-            let Some(path) = resolve_data_file(&source.data_dir, rel) else {
-                continue;
-            };
-            // See the matching default-locale loop above: a localized SXT
-            // may be either an SRES archive or a standalone Sixteen image.
-            if rel.to_ascii_lowercase().ends_with(".sxt") && !sxt_is_sres(&path)? {
-                continue;
-            }
-            let mut mgr = ResourceManager::legacy_tool();
-            mgr.attach_resource_file(&path.to_string_lossy())?;
-            if is_interface_path(rel)
-                && let Some(quality) = opts.interface_image_format.jxl_quality()
-            {
-                let encoded = mgr.encode_pictures_for_shipping(|picture| {
-                    Ok(EncodedPicture::jxl_rgba565_keyed(
-                        transcode_picture_to_jxl_rgba_keyed(picture, quality)?,
-                    ))
-                })?;
-                tracing::info!(
-                    locale = source.iso,
-                    "interface res {rel}: encoded {encoded} pictures as JXL {}",
-                    jxl_quality_label(quality)
-                );
-            }
-            locale
-                .res_files
-                .insert(canonical_shipping_asset_key(rel), mgr);
-        }
-    }
-    if let Some(p) = in_path("Interface/Loading.pak")
-        && opts.interface_image_format != InterfaceImageFormat::Raw
-    {
-        let pictures = read_pak_pictures(&p)?;
-        let encoded = encode_interface_pak_pictures(&pictures, opts.interface_image_format)?;
-        dd.pak_files.insert("interface/loading.pak".into(), encoded);
+        let key = canonical_shipping_asset_key(rel);
+        let mgr = shipping_resource_manager(&p, &key, opts.interface_image_format)?;
+        dd.res_files.insert(key, mgr);
     }
     // Menu sounds are part of the data artifact, not the wasm executable.
     // Keep them in the boot manifest because they are needed before any
     // mission dependency is selected.
     let mut boot_audio = ShippingMission::default();
+    // TODO: Sounds/Menu and Musics/Menu are not locale overlay keys, yet this
+    // (and `in_path`, which searches the shared tree then every locale tree)
+    // still merges locale trees into the shared layer. Loose installs reach
+    // such files only through their legacy alternate paths.
     let mut menu_roots = vec![data_in.join("Sounds/Menu")];
     menu_roots.extend(
         locale_dirs
@@ -151,21 +97,6 @@ pub(super) fn load_boot_roots(
     dd.raw.extend(boot_audio.payload.raw);
     dd.audio_durations_ms
         .extend(boot_audio.payload.audio_durations_ms);
-
-    if opts.interface_image_format != InterfaceImageFormat::Raw {
-        for source in locale_dirs {
-            let Some(path) = resolve_data_file(&source.data_dir, "Interface/Loading.pak") else {
-                continue;
-            };
-            let pictures = read_pak_pictures(&path)?;
-            let encoded = encode_interface_pak_pictures(&pictures, opts.interface_image_format)?;
-            dd.locales
-                .get_mut(source.iso)
-                .expect("detected shipping locale was initialized")
-                .pak_files
-                .insert("interface/loading.pak".into(), encoded);
-        }
-    }
     Ok(())
 }
 
@@ -527,28 +458,10 @@ pub(super) fn finish_profiles_and_boot_files(
             "convert_shipping: no Levels/ directory found; shipping profile will lack beam-me data"
         );
     }
+    // Profiles are simulation input, never a locale overlay key: a locale pack
+    // cannot replace them, so `ShippingLocale::profiles` is no longer produced
+    // (the field remains for manifest-format compatibility).
     dd.profiles = Some(cpf);
-    for source in locale_dirs {
-        let Some(path) = resolve_data_file(&source.data_dir, "Configuration/profile.cpf") else {
-            continue;
-        };
-        let mut file = SbFile::open(&path.to_string_lossy())
-            .map_err(|error| anyhow!("open locale {} cpf: {error}", source.iso))?;
-        let mut profiles = ProfileManager::new();
-        profiles
-            .load_all_legacy_cpf(&mut file)
-            .map_err(|error| anyhow!("parse locale {} cpf: {error}", source.iso))?;
-        if let Some(level_dir) = resolve_case_insensitive(&data_in.join("Levels"))
-            .filter(|path| path.is_dir())
-            .map(|path| path.to_string_lossy().into_owned())
-        {
-            profiles.import_beam_mes(&level_dir);
-        }
-        dd.locales
-            .get_mut(source.iso)
-            .expect("detected shipping locale was initialized")
-            .profiles = Some(profiles);
-    }
 
     // Bundle the small-file types the engine opens by exact path — these
     // are the items that would otherwise fan out to hundreds of tiny HTTP
@@ -565,6 +478,9 @@ pub(super) fn finish_profiles_and_boot_files(
         "res", "sxt", "pak", "red", // Small shared resource bundles
         "cpf",
     ];
+    // The top-level maps are exactly the shared layer: only the shared tree
+    // is bundled into them. Locale trees used to be merged in behind it as a
+    // "compatibility view"; runtime layering now supplies the same fallback.
     walk_and_bundle_small(
         dd,
         &data_in,
@@ -572,20 +488,10 @@ pub(super) fn finish_profiles_and_boot_files(
         BOOT_FILE_EXTS,
         opts.interface_image_format,
     )?;
-    for alt in locale_dirs {
-        walk_and_bundle_small(
-            dd,
-            &alt.data_dir,
-            &alt.data_dir,
-            BOOT_FILE_EXTS,
-            opts.interface_image_format,
-        )?;
-    }
     // The v5 locale dimension is complete rather than boot-file-only: voice,
     // dialogue, and cinematics are language assets too. Keeping each overlay
     // self-contained lets the same in-memory VFS bundle work on desktop,
-    // browser, and Android. The top-level compatibility maps above retain the
-    // historical compact/default-language view for old consumers.
+    // browser, and Android.
     for source in locale_dirs {
         let locale = dd
             .locales

@@ -42,7 +42,9 @@ pub fn menu_text_string(
     index: usize,
 ) -> Result<Option<(String, ResourceId, usize)>> {
     for table_id in MENU_TEXT_TABLE_IDS {
-        if !resources.has_resource(table_id) {
+        // Menu table IDs are edition-specific: the demo Level.res reuses
+        // 1000034 for a picture. Only a string table is a candidate.
+        if !resources.has_string_resource(table_id) {
             continue;
         }
         let strings = resources
@@ -61,7 +63,7 @@ pub fn menu_text_string(
 pub fn load_menu_strings(resources: &mut ResourceManager) -> Result<Vec<String>> {
     let mut count = 0;
     for table_id in MENU_TEXT_TABLE_IDS {
-        if resources.has_resource(table_id) {
+        if resources.has_string_resource(table_id) {
             count = count.max(
                 resources
                     .get_strings(table_id)
@@ -200,7 +202,11 @@ mod tests {
     }
 
     #[test]
-    fn present_resource_with_wrong_type_is_an_error_not_a_fallback() {
+    fn menu_table_ids_of_another_type_are_not_text_tables() {
+        // Menu table IDs are edition-specific: the stock demo Level.res uses
+        // 1000034 (a retail-demo menu ID) for a `PIC `. A resource of another
+        // type at a menu ID is not a text table and must not be decoded as one
+        // (which previously failed MenuText and triggered recovery I/O).
         let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
         let mut bytes = b"SRES".to_vec();
         bytes.extend_from_slice(&0x100u32.to_le_bytes());
@@ -214,14 +220,30 @@ mod tests {
         let mut resources = ResourceManager::with_files(files);
         resources.attach_resource_file("wrong.res").unwrap();
         assert!(resources.has_resource(MENU_TEXT_TABLE_ID));
-        assert!(
-            menu_text_string(&mut resources, 100)
-                .unwrap_err()
-                .to_string()
-                .contains("decode Original menu text table")
+        assert!(!resources.has_string_resource(MENU_TEXT_TABLE_ID));
+        assert_eq!(menu_text_string(&mut resources, 100).unwrap(), None);
+        assert_eq!(
+            load_peasant_name_pool(&mut resources).unwrap(),
+            (Vec::new(), Vec::new())
         );
-        assert!(load_peasant_name_pool(&mut resources).is_err());
-        assert!(load_menu_strings(&mut resources).is_err());
+        assert!(load_menu_strings(&mut resources).unwrap().is_empty());
+    }
+
+    #[test]
+    fn truncated_text_table_is_an_error_not_a_fallback() {
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let mut bytes = b"SRES".to_vec();
+        bytes.extend_from_slice(&0x100u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(b"TEXT");
+        bytes.extend_from_slice(&MENU_TEXT_TABLE_ID.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&3u16.to_le_bytes()); // claims 3 strings, has none
+        vfs.install_preloaded_asset("truncated.res", bytes).unwrap();
+        let files = std::sync::Arc::new(robin_engine::sbfile::SbFileSystem::new(vfs).snapshot());
+        let mut resources = ResourceManager::with_files(files);
+        assert!(resources.attach_resource_file("truncated.res").is_err());
+        assert!(!resources.has_string_resource(MENU_TEXT_TABLE_ID));
     }
 
     #[test]
