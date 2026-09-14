@@ -72,7 +72,7 @@ impl EngineInner {
                     .world
                     .entities
                     .expect_enemy_ai(owner, format_args!("arrow search rank"))
-                    .get_rank()
+                    .get_rank(&assets.profile_manager)
                     == ProfileRank::Soldier
                 {
                     flags |= SeekFlags::LOOK_FOR_HELP_AFTER;

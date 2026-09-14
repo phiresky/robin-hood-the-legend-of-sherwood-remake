@@ -47,6 +47,33 @@ pub struct Entities {
     generations: Vec<u64>,
 }
 
+/// Read-only access to the entity slots around a separately borrowed owner.
+/// Iteration retains slot order and never copies entity state.
+#[derive(Clone, Copy)]
+pub(crate) struct EntityNeighbours<'a> {
+    before: &'a [Option<Entity>],
+    after: &'a [Option<Entity>],
+    after_offset: usize,
+}
+
+impl EntityNeighbours<'_> {
+    pub(crate) fn occupied(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
+        self.before
+            .iter()
+            .enumerate()
+            .chain(
+                self.after
+                    .iter()
+                    .enumerate()
+                    .map(|(index, entity)| (index + self.after_offset, entity)),
+            )
+            .filter_map(|(index, entity)| {
+                let entity = entity.as_ref()?;
+                Some((EntityId::new(index as u32, entity.entity_id_kind()), entity))
+            })
+    }
+}
+
 impl Entities {
     pub fn new() -> Self {
         Self::default()
@@ -63,7 +90,7 @@ impl Entities {
     }
 
     /// In-memory equivalent of a save/load round trip, used by
-    /// `PersistedWorldState::capture` (which also runs without serialization
+    /// `WorldState::persisted_clone` (which also runs without serialization
     /// for replay/rollback save markers). Sprites drop their runtime-only state;
     /// generations restart empty.
     pub(crate) fn persisted_projection(&self) -> Self {
@@ -210,6 +237,27 @@ impl Entities {
     pub fn get_mut<I: Into<EntityId>>(&mut self, id: I) -> Option<&mut Entity> {
         let id = id.into();
         self.checked_slot_mut(id)?.as_mut()
+    }
+
+    /// Borrow one owner mutably while reading all other entities in slot order.
+    pub(crate) fn split_owner<I: Into<EntityId>>(
+        &mut self,
+        id: I,
+    ) -> Option<(&mut Entity, EntityNeighbours<'_>)> {
+        let id = id.into();
+        self.get(id)?;
+        let index = id.index() as usize;
+        self.bump_generation(index);
+        let (before, rest) = self.slots.split_at_mut(index);
+        let (owner, after) = rest.split_first_mut()?;
+        Some((
+            owner.as_mut()?,
+            EntityNeighbours {
+                before,
+                after,
+                after_offset: index + 1,
+            },
+        ))
     }
 
     pub fn remove<I: Into<EntityId>>(&mut self, id: I) -> Option<Entity> {

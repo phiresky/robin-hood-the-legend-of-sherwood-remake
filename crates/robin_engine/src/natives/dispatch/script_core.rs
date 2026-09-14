@@ -260,20 +260,16 @@ impl NativeContext<'_, '_> {
                 let code = stack.pop_i32();
                 match code {
                     31 => {
-                        self.apply_script_selection(0, true);
-                        self.script_effects_mut()
-                            .emit_barrier(DeferredCommand::SelectPC {
-                                actor: 0,
-                                select: true,
-                            });
+                        self.yield_world_command(WorldNativeCommand::SelectPC {
+                            actor: 0,
+                            select: true,
+                        });
                     }
                     0 => {
-                        self.apply_script_selection(0, false);
-                        self.script_effects_mut()
-                            .emit_barrier(DeferredCommand::SelectPC {
-                                actor: 0,
-                                select: false,
-                            });
+                        self.yield_world_command(WorldNativeCommand::SelectPC {
+                            actor: 0,
+                            select: false,
+                        });
                     }
                     _ => script_error!(
                         native,
@@ -342,8 +338,7 @@ impl NativeContext<'_, '_> {
             // avoid needing engine access.
             FreezeAll => {
                 let freeze = stack.pop_i32() != 0;
-                self.script_effects_mut()
-                    .emit_barrier(DeferredCommand::FreezeAll { freeze });
+                self.yield_world_command(WorldNativeCommand::FreezeAll { freeze });
                 0
             }
 

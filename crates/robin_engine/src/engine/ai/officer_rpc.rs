@@ -214,7 +214,7 @@ impl OfficerRpc<'_> {
             .world
             .entities
             .expect_enemy_ai(target, format_args!("officer call rank"))
-            .get_rank()
+            .get_rank(&self.assets.profile_manager)
     }
     fn accept(&mut self, state: Substate) {
         self.state(state);
@@ -241,7 +241,7 @@ impl OfficerRpc<'_> {
                 {
                     return false;
                 }
-                match self.ai().get_rank() {
+                match self.ai().get_rank(&self.assets.profile_manager) {
                     ProfileRank::Soldier => {
                         self.ai_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
                         if self.engine.execute_ai_callback(
@@ -335,7 +335,10 @@ impl OfficerRpc<'_> {
                             | SeekingHeardstepsReactiontime
                             | SeekingBodyReactiontime
                     );
-                if !react || self.ai().get_rank() != ProfileRank::Soldier || !self.priority() {
+                if !react
+                    || self.ai().get_rank(&self.assets.profile_manager) != ProfileRank::Soldier
+                    || !self.priority()
+                {
                     return false;
                 }
                 self.ai_mut().current_task_priority = self.ai().new_task_priority;
@@ -360,7 +363,7 @@ impl OfficerRpc<'_> {
                     self.accept(SeekingWaitForAlertingCivilian);
                     return true;
                 }
-                match self.ai().get_rank() {
+                match self.ai().get_rank(&self.assets.profile_manager) {
                     ProfileRank::Soldier => {
                         let react = matches!(
                             self.ai().base.current_state,
@@ -582,7 +585,8 @@ impl OfficerRpc<'_> {
             }
             (SeekingDetectedCharly, EventTimer) => {
                 self.ai_mut().base.my_reconnaissance_report.charly_seen = true;
-                if self.ai().get_rank() == ProfileRank::Officer && !self.ai().alerted_us.is_empty()
+                if self.ai().get_rank(&self.assets.profile_manager) == ProfileRank::Officer
+                    && !self.ai().alerted_us.is_empty()
                 {
                     let state = self.ai().previous_state.get("previous state");
                     let substate = self.ai().previous_substate.get("previous substate");

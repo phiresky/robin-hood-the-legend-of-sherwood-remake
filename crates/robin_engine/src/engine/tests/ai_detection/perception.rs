@@ -1264,11 +1264,6 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
                 .enemy_mut()
                 .expect("creation-order detection soldier has enemy AI");
             ai.base.me = id.index();
-            ai.soldier_profile_rank = if id == officer_id {
-                ProfileRank::Officer
-            } else {
-                ProfileRank::Soldier
-            };
         }
 
         let Entity::Pc(pc) = engine
@@ -1287,6 +1282,16 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
         pc.pc.life_points = 100;
 
         let mut assets = engine.test_runtime_assets();
+        for (id, rank) in [
+            (officer_id, ProfileRank::Officer),
+            (attacker_id, ProfileRank::Soldier),
+        ] {
+            crate::engine::test_support::actors::edit_enemy_profile(
+                &mut assets,
+                engine.get_entity_mut(id).unwrap().enemy_ai_mut().unwrap(),
+                |profile| profile.rank = rank,
+            );
+        }
         let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
             .characters
             .get_mut(0)

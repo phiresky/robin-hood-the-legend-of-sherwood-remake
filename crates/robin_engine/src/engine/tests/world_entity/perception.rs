@@ -529,15 +529,22 @@ fn send_charly_tail_runs_after_both_rejected_and_accepted_speech() {
                 .expect("speech test owner has Enemy AI");
             enemy.base.current_state = AiState::Seeking;
             enemy.base.current_substate = Substate::SeekingGroupCalledByOfficer;
-            enemy.soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
+            crate::engine::test_support::actors::edit_enemy_profile(
+                &mut assets,
+                enemy,
+                |profile| profile.rank = crate::profiles::ProfileRank::Soldier,
+            );
             enemy.base.antagonist = Some(crate::ai::AiEntityHandle::new(charly_handle));
             enemy.base.friend_in_trouble = None;
         }
-        engine
-            .get_entity_mut(charly)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap()
-            .soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
+        crate::engine::test_support::actors::edit_enemy_profile(
+            &mut assets,
+            engine
+                .get_entity_mut(charly)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap(),
+            |profile| profile.rank = crate::profiles::ProfileRank::Soldier,
+        );
         engine.execute_ai_seen_charly(
             &crate::sim_rng::test_context(),
             &assets,
@@ -877,14 +884,17 @@ fn corpse_officer_alert_success_keeps_search_fallback_unstarted() {
 #[test]
 fn corpse_officer_alert_missing_or_unreachable_officer_starts_body_search() {
     for disconnected in [false, true] {
-        let (mut engine, assets, owner, officer, center) = corpse_officer_fixture(disconnected);
+        let (mut engine, mut assets, owner, officer, center) = corpse_officer_fixture(disconnected);
         if !disconnected {
-            engine
-                .get_entity_mut(officer)
-                .unwrap()
-                .enemy_ai_mut()
-                .unwrap()
-                .soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
+            crate::engine::test_support::actors::edit_enemy_profile(
+                &mut assets,
+                engine
+                    .get_entity_mut(officer)
+                    .unwrap()
+                    .enemy_ai_mut()
+                    .unwrap(),
+                |profile| profile.rank = crate::profiles::ProfileRank::Soldier,
+            );
         }
         engine.execute_ai_alert_officer_for_caller(
             &crate::sim_rng::test_context(),
@@ -1281,7 +1291,9 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
             .and_then(Entity::enemy_ai_mut)
             .expect("test soldier has EnemyAi");
         enemy.base.me = id.index();
-        enemy.soldier_profile_rank = rank;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, enemy, |profile| {
+            profile.rank = rank
+        });
         {
             let ai = &mut enemy.base;
             ai.set_ai_state(state);
@@ -1333,7 +1345,9 @@ fn review_officer_sees_soldier_accepts_officer_rank_target() {
             .and_then(Entity::enemy_ai_mut)
             .expect("officer test entity has EnemyAi");
         enemy.base.me = id.index();
-        enemy.soldier_profile_rank = ProfileRank::Officer;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, enemy, |profile| {
+            profile.rank = ProfileRank::Officer
+        });
         {
             let ai = &mut enemy.base;
             ai.set_ai_state(AiState::Default);
@@ -1426,7 +1440,7 @@ fn review_soldier_alert_records_sender_even_when_later_call_is_refused() {
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let callback_officer_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let assets = engine.test_runtime_assets();
+    let mut assets = engine.test_runtime_assets();
 
     for (id, x, rank) in [
         (reporter_id, 100.0, ProfileRank::Soldier),
@@ -1451,7 +1465,9 @@ fn review_soldier_alert_records_sender_even_when_later_call_is_refused() {
             .enemy_mut()
             .expect("alert soldier has EnemyAi");
         ai.base.me = id.index();
-        ai.soldier_profile_rank = rank;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = rank
+        });
         {
             let ai = &mut ai.base;
             ai.set_ai_state(AiState::Default);
@@ -1855,7 +1871,6 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
             .get_entity_mut(owner)
             .and_then(Entity::enemy_ai_mut)
             .expect("Unalert owner has EnemyAi");
-        owner_ai.soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
         owner_ai.base.antagonist =
             Some(crate::ai::AiEntityHandle::new(excluded_antagonist.index()));
     }
@@ -1898,6 +1913,15 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
     assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
     engine.world.static_sight_obstacle_active = vec![true];
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    crate::engine::test_support::actors::edit_enemy_profile(
+        &mut assets,
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap(),
+        |profile| profile.rank = crate::profiles::ProfileRank::Soldier,
+    );
 
     crate::sight_obstacle::begin_parity_visibility_capture();
     engine.unalert_live_charly_seekers(&sim, &assets, owner, charly);
@@ -2082,7 +2106,9 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
         .enemy_mut()
         .expect("partial alert acceptor has EnemyAi");
     accepted_ai.base.me = accepted_id.index();
-    accepted_ai.soldier_profile_rank = ProfileRank::Soldier;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, accepted_ai, |profile| {
+        profile.rank = ProfileRank::Soldier
+    });
     {
         let ai = &mut accepted_ai.base;
         ai.set_ai_state(AiState::Default);
@@ -2350,7 +2376,9 @@ fn review2_alerted_soldier_accepts_a_later_live_reconnaissance_report() {
         .enemy_mut()
         .expect("review2 second alerted soldier has EnemyAi");
     second_ai.base.me = second_id.index();
-    second_ai.soldier_profile_rank = ProfileRank::Soldier;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, second_ai, |profile| {
+        profile.rank = ProfileRank::Soldier
+    });
     complete_test_runtime_fixture(&mut engine, &mut assets);
     let first_position = Position {
         x: 10.0,

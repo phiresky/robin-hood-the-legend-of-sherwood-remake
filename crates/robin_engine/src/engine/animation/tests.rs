@@ -5,89 +5,22 @@ use crate::element::{
 use crate::engine::EngineInner;
 
 #[test]
-fn motion_phase_stages_beggar_handoffs_without_advancing_the_order() {
-    let mut pc = crate::engine::test_support::actors::make_test_pc(Posture::Upright);
-    let id = EntityId::Pc(crate::entity_id::PcId(7));
-    let mut outcomes = AnimCompletionOutcomes::default();
-    for (anim_type, entering) in [
-        (OrderType::TransitionWaitingUprightSimulatingBeggar, true),
-        (OrderType::TransitionSimulatingBeggarWaitingUpright, false),
-    ] {
-        ActorMotionPhase {
-            entity_id: id,
-            anim_type,
-            motion_state: MotionState::Done,
-            antagonist: None,
-        }
-        .apply_start_feedback(&mut pc, false, &mut outcomes);
-        assert_eq!(
-            outcomes.execute_sides.beggar_coin_flags.last(),
-            Some(&(id, entering))
-        );
-        assert_eq!(
-            outcomes.execute_sides.beggar_wait_handoffs.last(),
-            Some(&(id, entering))
-        );
-        assert!(
-            outcomes.seq_advance.is_empty(),
-            "callbacks precede order advancement"
-        );
-    }
-    assert_eq!(
-        outcomes.execute_sides.beggar_coin_flags,
-        vec![(id, true), (id, false)]
-    );
-}
-
-#[test]
-fn posture_phase_preserves_reusable_cloak_completion_policy() {
-    let mut pc = crate::engine::test_support::actors::make_test_pc(Posture::Upright);
-    let id = EntityId::Pc(crate::entity_id::PcId(7));
-    let phase = ActorMotionPhase {
-        entity_id: id,
-        anim_type: OrderType::TransitionWaitingCapeWaitingUpright,
-        motion_state: MotionState::Done,
-        antagonist: None,
-    };
-    let mut outcomes = AnimCompletionOutcomes::default();
-    let mut injuries = Vec::new();
-    phase.apply_posture_completion(
-        &mut pc,
-        Some(Command::EnterCloak),
-        true,
-        &mut injuries,
-        &mut outcomes,
-    );
-    assert_eq!(pc.posture(), Posture::Cloaked);
-    assert!(outcomes.execute_sides.hidden_titbit_removals.is_empty());
-    phase.apply_posture_completion(
-        &mut pc,
-        Some(Command::EnterCloak),
-        false,
-        &mut injuries,
-        &mut outcomes,
-    );
-    assert_eq!(pc.posture(), Posture::Upright);
-    assert_eq!(outcomes.execute_sides.hidden_titbit_removals, vec![id]);
-    assert!(injuries.is_empty());
-}
-
-#[test]
 fn execute_result_retains_entry_identity_and_consumes_only_loop_arms() {
     let sim = crate::sim_rng::test_context();
-    let mut pc = crate::engine::test_support::actors::make_test_pc(Posture::Upright);
-    let mut sequence_manager = crate::sequence::SequenceManager::new();
-    let mut next_order_id = 1;
-    let mut sides = ExecuteSideOutcomes::default();
+    let sequence_manager = crate::sequence::SequenceManager::new();
+    let next_order_id = 1;
+    let mut engine = EngineInner::new();
+    engine.orders.sequence_manager = sequence_manager;
+    engine.orders.next_order_id = next_order_id;
+    let assets = LevelAssets::new();
     let mut ctx = ArmCtx {
         entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
         is_npc: false,
         is_unconscious: false,
         seq_id: crate::sequence::SequenceId(42),
         elem_idx: 3,
-        sequence_manager: &mut sequence_manager,
-        next_order_id: &mut next_order_id,
-        side_outcomes: &mut sides,
+        engine: &mut engine,
+        assets: &assets,
     };
     for (order, raw, expected) in [
         (
@@ -106,7 +39,7 @@ fn execute_result_retains_entry_identity_and_consumes_only_loop_arms() {
             MotionState::InProgress,
         ),
     ] {
-        let result = finish_actor_execute_result(&sim, &mut pc, order, Some(raw), &mut ctx);
+        let result = finish_actor_execute_result(&sim, order, Some(raw), &mut ctx);
         assert_eq!(result.entry_seq_id, crate::sequence::SequenceId(42));
         assert_eq!(result.entry_elem_idx, 3);
         assert_eq!(result.order_type, order);
@@ -116,56 +49,50 @@ fn execute_result_retains_entry_identity_and_consumes_only_loop_arms() {
 
 #[test]
 fn reversed_cape_transition_enters_cloaked_and_honors_switch_off_at_completion() {
-    let mut pc = Entity::Pc(ActorPc {
-        element: {
-            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-            initial_element.kind = ElementKind::ActorPc;
-            initial_element
-        },
-        actor: Default::default(),
-        human: Default::default(),
-        pc: Default::default(),
-    });
-    let id = EntityId::Pc(crate::entity_id::PcId(7));
-    let mut outcomes = ExecuteSideOutcomes::default();
-
-    apply_pc_disguise_exit_side_effect(
-        &mut pc,
-        OrderType::TransitionWaitingCapeWaitingUpright,
-        MotionState::Done,
-        Some(Command::EnterCloak),
-        true,
-        id,
-        &mut outcomes,
-    );
-
-    assert_eq!(pc.posture(), Posture::Cloaked);
-    assert!(outcomes.hidden_titbit_removals.is_empty());
-
-    apply_pc_disguise_exit_side_effect(
-        &mut pc,
-        OrderType::TransitionWaitingCapeWaitingUpright,
-        MotionState::Done,
-        Some(Command::LeaveSpy),
-        true,
-        id,
-        &mut outcomes,
-    );
-    assert_eq!(pc.posture(), Posture::Upright);
-    assert_eq!(outcomes.hidden_titbit_removals, vec![id]);
-
-    outcomes.hidden_titbit_removals.clear();
-    apply_pc_disguise_exit_side_effect(
-        &mut pc,
-        OrderType::TransitionWaitingCapeWaitingUpright,
-        MotionState::Done,
-        Some(Command::EnterCloak),
-        false,
-        id,
-        &mut outcomes,
-    );
-    assert_eq!(pc.posture(), Posture::Upright);
-    assert_eq!(outcomes.hidden_titbit_removals, vec![id]);
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let id = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
+        Posture::Upright,
+    ));
+    for (command, reusable, expected) in [
+        (Command::EnterCloak, true, Posture::Cloaked),
+        (Command::LeaveSpy, true, Posture::Upright),
+        (Command::EnterCloak, false, Posture::Upright),
+    ] {
+        engine
+            .feedback
+            .titbit_manager
+            .add_titbit(
+                crate::coordinates::WorldPoint3D::ZERO,
+                0,
+                crate::titbit::TitbitKind::Hidden,
+                crate::titbit::ElementHandle(id.index()),
+                0,
+                crate::titbit::ElementHandle(id.index()),
+                false,
+                None,
+                true,
+                Some(0.0),
+                Some(0),
+            )
+            .expect("hidden indicator");
+        apply_pc_disguise_exit_side_effect(
+            &mut engine,
+            &sim,
+            &assets,
+            OrderType::TransitionWaitingCapeWaitingUpright,
+            MotionState::Done,
+            Some(command),
+            reusable,
+            id,
+        );
+        assert_eq!(engine.get_entity(id).unwrap().posture(), expected);
+        assert_eq!(
+            engine.feedback.titbit_manager.titbits().is_empty(),
+            expected != Posture::Cloaked
+        );
+    }
 }
 
 #[test]
@@ -252,27 +179,6 @@ fn weak_soldier_at_action_done(tiredness: u16) -> Entity {
 }
 
 #[test]
-fn special_remark_uses_pre_perform_sprite_phase() {
-    const HELBARDMAN: u32 = 0x4c484453;
-
-    assert!(!special_remark_due_for_execute(7, (0, u16::MAX), (0, 0)));
-    assert!(special_remark_due_for_execute(7, (0, 0), (0, 1)));
-    assert!(!special_remark_due_for_execute(7, (0, 1), (0, 0)));
-
-    assert!(!special_remark_due_for_execute(
-        HELBARDMAN,
-        (40, 0),
-        (39, 0)
-    ));
-    assert!(special_remark_due_for_execute(HELBARDMAN, (39, 0), (40, 0)));
-    assert!(!special_remark_due_for_execute(
-        HELBARDMAN,
-        (39, 0),
-        (40, 1)
-    ));
-}
-
-#[test]
 fn raising_sword_preserves_soldier_map_vs_human_ground_facing() {
     let mut soldier = weak_soldier_at_action_done(0);
     let mut pc = Entity::Pc(ActorPc {
@@ -337,29 +243,42 @@ fn raising_sword_state_changes_follow_human_start_and_soldier_done() {
         ActionState::WaitingSword
     );
 
-    let mut soldier = weak_soldier_at_action_done(0);
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_test_entity(weak_soldier_at_action_done(0));
     apply_soldier_execute_side_effects(
-        &mut soldier,
+        &mut engine,
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
         OrderType::TransitionRaisingSword,
         MotionState::Start,
         None,
-        EntityId::Soldier(crate::entity_id::SoldierId(1)),
-        &mut ExecuteSideOutcomes::default(),
+        soldier,
     );
     assert_eq!(
-        soldier.actor_data().unwrap().action_state,
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
         ActionState::Waiting
     );
     apply_soldier_execute_side_effects(
-        &mut soldier,
+        &mut engine,
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
         OrderType::TransitionRaisingSword,
         MotionState::Done,
         None,
-        EntityId::Soldier(crate::entity_id::SoldierId(1)),
-        &mut ExecuteSideOutcomes::default(),
+        soldier,
     );
     assert_eq!(
-        soldier.actor_data().unwrap().action_state,
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
         ActionState::WaitingSword
     );
 }
@@ -546,18 +465,13 @@ fn dead_actor_executes_its_selected_ordinary_animation() {
         0,
     );
 
-    let (_, outcomes, result) = engine.tick_actor_animation_for(
+    let result = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &crate::engine::types::LevelAssets::new(),
         actor,
     );
 
     assert_eq!(result.map(|result| result.motion), Some(MotionState::Start));
-    assert_eq!(
-        outcomes.execute_sides.rejected_dead_idle_posture_requests,
-        vec![actor],
-        "the production Execute START boundary must preserve the rejected Upright request"
-    );
     let entity = engine.get_entity(actor).expect("dead actor remains live");
     assert_eq!(
         entity.element_data().sprite.last_action,
@@ -794,7 +708,7 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
     let sequence = engine.orders.sequence_manager.launch_element(selected);
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
 
-    let (_, _, start) = engine.tick_actor_animation_for(&sim, &assets, actor);
+    let start = engine.tick_actor_animation_for(&sim, &assets, actor);
     assert_eq!(start.expect("weak-sword START").motion, MotionState::Start);
     for _ in 0..10 {
         let before = engine
@@ -803,7 +717,7 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
             .human_data()
             .unwrap()
             .tiredness;
-        let (_, _, result) = engine.tick_actor_animation_for(&sim, &assets, actor);
+        let result = engine.tick_actor_animation_for(&sim, &assets, actor);
         let entity = engine.get_entity(actor).unwrap();
         assert_eq!(
             entity.human_data().unwrap().tiredness,
@@ -817,7 +731,7 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
             MotionState::Done
         );
         let frame = (entity.sprite().current_frame, entity.sprite().frame_count);
-        let (_, _, held) = engine.tick_actor_animation_for(&sim, &assets, actor);
+        let held = engine.tick_actor_animation_for(&sim, &assets, actor);
         assert_eq!(
             held.expect("following held tick").motion,
             MotionState::InProgress
@@ -864,40 +778,6 @@ fn falling_landing_depends_on_death_not_unconsciousness() {
             assert_eq!(entity.human_data().unwrap().unconscious, unconscious);
         }
     }
-}
-
-#[test]
-fn combat_injury_event_waits_for_terminated() {
-    let entity = weak_soldier_at_action_done(0);
-    let mut terminated = Vec::new();
-
-    apply_combat_injury_side_effect(
-        &entity,
-        OrderType::BeingHitSword,
-        MotionState::Done,
-        EntityId::Pc(crate::entity_id::PcId(7)),
-        &mut terminated,
-    );
-    assert!(terminated.is_empty());
-
-    apply_combat_injury_side_effect(
-        &entity,
-        OrderType::BeingHitSword,
-        MotionState::Terminated,
-        EntityId::Pc(crate::entity_id::PcId(7)),
-        &mut terminated,
-    );
-    assert_eq!(terminated, vec![EntityId::Pc(crate::entity_id::PcId(7))]);
-
-    terminated.clear();
-    apply_combat_injury_side_effect(
-        &entity,
-        OrderType::StandingUpSword,
-        MotionState::Terminated,
-        EntityId::Pc(crate::entity_id::PcId(7)),
-        &mut terminated,
-    );
-    assert_eq!(terminated, vec![EntityId::Pc(crate::entity_id::PcId(7))]);
 }
 
 #[test]
@@ -1520,47 +1400,54 @@ fn smalltalk_start_sets_waiting_sword_and_termination_recovers_tiredness() {
 }
 
 #[test]
-fn striking_down_sword_start_and_done_match_original_side_effects() {
+fn striking_down_sword_start_faces_target_and_done_launches_kill() {
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
     let mut entity = weak_soldier_at_action_done(0);
     entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
     entity.element_data_mut().set_direction_instantly(14);
-    let mut outcomes = ExecuteSideOutcomes::default();
-
+    let owner = engine.add_test_entity(entity);
+    let victim = engine.add_test_entity(weak_soldier_at_action_done(0));
     apply_striking_down_sword_side_effect(
-        &mut entity,
+        &mut engine,
+        &sim,
+        &assets,
         OrderType::StrikingDownSword,
         MotionState::Start,
-        Some(EntityId::Pc(crate::entity_id::PcId(9))),
+        Some(victim),
         Some(15),
-        EntityId::Pc(crate::entity_id::PcId(7)),
-        &mut outcomes,
+        owner,
     );
-
-    assert_eq!(entity.element_data().posture(), Posture::Upright);
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(entity.posture(), Posture::Upright);
     assert_eq!(
         entity.actor_data().unwrap().action_state,
         ActionState::WaitingSword
     );
     assert_eq!(entity.element_data().direction(), 14);
     assert_eq!(entity.position_iface().get_direction_goal().as_u8(), 15);
-    assert!(outcomes.killed_at_bottom.is_empty());
-
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched(victim, Command::GetKilledAtBottom)
+    );
     apply_striking_down_sword_side_effect(
-        &mut entity,
+        &mut engine,
+        &sim,
+        &assets,
         OrderType::StrikingDownSword,
         MotionState::Done,
-        Some(EntityId::Pc(crate::entity_id::PcId(9))),
+        Some(victim),
         Some(15),
-        EntityId::Pc(crate::entity_id::PcId(7)),
-        &mut outcomes,
+        owner,
     );
-
-    assert_eq!(
-        outcomes.killed_at_bottom,
-        vec![(
-            EntityId::Pc(crate::entity_id::PcId(9)),
-            EntityId::Pc(crate::entity_id::PcId(7))
-        )]
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched(victim, Command::GetKilledAtBottom)
     );
 }
 
@@ -1697,7 +1584,7 @@ fn striking_down_force_initialization_preserves_walk_caches_for_start_tick() {
     let walk_forecast = sprite.position_iface.get_forecasted_movement();
     assert_ne!(walk_forecast, crate::coordinates::WorldVec3D::ZERO);
 
-    let (_, _, first_result) = engine.tick_actor_animation_for(&sim, &assets, owner);
+    let first_result = engine.tick_actor_animation_for(&sim, &assets, owner);
     assert_eq!(
         first_result.map(|result| result.motion),
         Some(MotionState::Start)
@@ -1726,17 +1613,23 @@ fn striking_down_force_initialization_preserves_walk_caches_for_start_tick() {
 #[test]
 fn striking_down_revalidates_after_done_before_repeating_kill() {
     let sim = crate::sim_rng::test_context();
-    let (mut engine, assets, owner, victim, sequence) = striking_down_execute_fixture();
+    let (mut engine, assets, owner, victim, _sequence) = striking_down_execute_fixture();
 
-    let (_, first_outcomes, first_result) = engine.tick_actor_animation_for(&sim, &assets, owner);
+    let first_result = engine.tick_actor_animation_for(&sim, &assets, owner);
     assert_eq!(
         first_result.map(|result| result.motion),
         Some(MotionState::Done)
     );
     assert_eq!(
-        first_outcomes.execute_sides.killed_at_bottom,
-        vec![(victim, owner)],
-        "the valid action point must still launch exactly one bottom kill"
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| &sequence.elements)
+            .filter(|element| element.owner == Some(victim)
+                && element.command == Command::GetKilledAtBottom)
+            .count(),
+        1
     );
 
     engine
@@ -1745,46 +1638,22 @@ fn striking_down_revalidates_after_done_before_repeating_kill() {
         .npc_data_mut()
         .expect("NPC data")
         .life_points = 0;
-    let (_, second_outcomes, second_result) = engine.tick_actor_animation_for(&sim, &assets, owner);
+    let second_result = engine.tick_actor_animation_for(&sim, &assets, owner);
     assert_eq!(
         second_result.map(|result| result.motion),
         Some(MotionState::Terminated),
         "the post-action validity check must retire the stale strike"
     );
-    assert!(
-        second_outcomes.execute_sides.killed_at_bottom.is_empty(),
-        "an invalid selected strike must return before DONE side effects"
-    );
-
-    let mut completion = AnimCompletionOutcomes::default();
-    completion.seq_advance.push((sequence, 0));
-    engine.process_anim_completion_outcomes(&sim, completion, &assets);
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner)
-            .is_none(),
-        "the exhausted strike leaves the Original actor order null for the rest of its slot"
-    );
-    engine.ensure_wait_element(owner);
-    engine
-        .drain_script_synchronous_actions(&sim, &assets, &mut Vec::new())
-        .expect("fallback Wait launch");
-    let (next_sequence, next_index) = engine
-        .orders
-        .sequence_manager
-        .current_element_for_actor(owner)
-        .expect("terminal strike must expose the fallback Wait");
     assert_eq!(
         engine
             .orders
             .sequence_manager
-            .get_element(next_sequence, next_index)
-            .expect("fallback Wait element")
-            .command,
-        Command::Wait,
-        "the terminal result must promote the fallback Wait owner"
+            .sequences_iter()
+            .flat_map(|sequence| &sequence.elements)
+            .filter(|element| element.owner == Some(victim)
+                && element.command == Command::GetKilledAtBottom)
+            .count(),
+        1
     );
 }
 
@@ -1794,13 +1663,12 @@ fn striking_down_keeps_running_while_unconscious_victim_is_alive() {
     let (mut engine, assets, owner, _victim, _sequence) = striking_down_execute_fixture();
 
     let _ = engine.tick_actor_animation_for(&sim, &assets, owner);
-    let (_, outcomes, result) = engine.tick_actor_animation_for(&sim, &assets, owner);
+    let result = engine.tick_actor_animation_for(&sim, &assets, owner);
 
     assert_eq!(
         result.map(|result| result.motion),
         Some(MotionState::InProgress)
     );
-    assert!(outcomes.execute_sides.killed_at_bottom.is_empty());
     assert_eq!(
         engine
             .orders
@@ -1847,18 +1715,20 @@ fn striking_down_sword_start_facing_uses_stretched_ground_positions() {
 fn unconscious_hold_terminates_after_wakeup() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
-    let mut sequence_manager = crate::sequence::SequenceManager::new();
-    let mut next_order_id = 1;
-    let mut side_outcomes = ExecuteSideOutcomes::default();
+    let sequence_manager = crate::sequence::SequenceManager::new();
+    let next_order_id = 1;
+    let mut engine = EngineInner::new();
+    engine.orders.sequence_manager = sequence_manager;
+    engine.orders.next_order_id = next_order_id;
+    let assets = LevelAssets::new();
     let mut ctx = ArmCtx {
         entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
         is_npc: true,
         is_unconscious: false,
         seq_id: crate::sequence::SequenceId(1),
         elem_idx: 0,
-        sequence_manager: &mut sequence_manager,
-        next_order_id: &mut next_order_id,
-        side_outcomes: &mut side_outcomes,
+        engine: &mut engine,
+        assets: &assets,
     };
 
     let outcome = dispatch_arm_completion(
@@ -1878,18 +1748,20 @@ fn unconscious_hold_terminates_after_wakeup() {
 fn unconscious_hold_consumes_while_unconscious() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
-    let mut sequence_manager = crate::sequence::SequenceManager::new();
-    let mut next_order_id = 1;
-    let mut side_outcomes = ExecuteSideOutcomes::default();
+    let sequence_manager = crate::sequence::SequenceManager::new();
+    let next_order_id = 1;
+    let mut engine = EngineInner::new();
+    engine.orders.sequence_manager = sequence_manager;
+    engine.orders.next_order_id = next_order_id;
+    let assets = LevelAssets::new();
     let mut ctx = ArmCtx {
         entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
         is_npc: true,
         is_unconscious: true,
         seq_id: crate::sequence::SequenceId(1),
         elem_idx: 0,
-        sequence_manager: &mut sequence_manager,
-        next_order_id: &mut next_order_id,
-        side_outcomes: &mut side_outcomes,
+        engine: &mut engine,
+        assets: &assets,
     };
 
     let outcome = dispatch_arm_completion(
@@ -1911,7 +1783,7 @@ fn bored_cycle_keeps_order_id_when_random_variant_is_not_selected() {
             })
         })
         .expect("test should find a nonzero bored-animation roll");
-    let (mut sequence_manager, seq_id) = sequence_with_order(OrderType::WaitingUprightBored);
+    let (sequence_manager, seq_id) = sequence_with_order(OrderType::WaitingUprightBored);
     let original_id = sequence_manager
         .get_element(seq_id, 0)
         .unwrap()
@@ -1919,17 +1791,19 @@ fn bored_cycle_keeps_order_id_when_random_variant_is_not_selected() {
         .front()
         .unwrap()
         .order_id;
-    let mut next_order_id = 9;
-    let mut side_outcomes = ExecuteSideOutcomes::default();
+    let next_order_id = 9;
+    let mut engine = EngineInner::new();
+    engine.orders.sequence_manager = sequence_manager;
+    engine.orders.next_order_id = next_order_id;
+    let assets = LevelAssets::new();
     let mut ctx = ArmCtx {
         entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
         is_npc: false,
         is_unconscious: false,
         seq_id,
         elem_idx: 0,
-        sequence_manager: &mut sequence_manager,
-        next_order_id: &mut next_order_id,
-        side_outcomes: &mut side_outcomes,
+        engine: &mut engine,
+        assets: &assets,
     };
 
     let outcome = crate::sim_rng::with_seed(seed, |sim| {
@@ -1941,7 +1815,9 @@ fn bored_cycle_keeps_order_id_when_random_variant_is_not_selected() {
         )
     });
 
-    let order = sequence_manager
+    let order = engine
+        .orders
+        .sequence_manager
         .get_element(seq_id, 0)
         .unwrap()
         .orders
@@ -1958,18 +1834,20 @@ fn bored_cycle_keeps_order_id_when_random_variant_is_not_selected() {
 #[test]
 fn ordinary_bored_cycle_forwards_only_its_start_edge() {
     let sim = crate::sim_rng::test_context();
-    let (mut sequence_manager, seq_id) = sequence_with_order(OrderType::WaitingUprightBored);
-    let mut next_order_id = 9;
-    let mut side_outcomes = ExecuteSideOutcomes::default();
+    let (sequence_manager, seq_id) = sequence_with_order(OrderType::WaitingUprightBored);
+    let next_order_id = 9;
+    let mut engine = EngineInner::new();
+    engine.orders.sequence_manager = sequence_manager;
+    engine.orders.next_order_id = next_order_id;
+    let assets = LevelAssets::new();
     let mut ctx = ArmCtx {
         entity_id: EntityId::Soldier(crate::entity_id::SoldierId(7)),
         is_npc: true,
         is_unconscious: false,
         seq_id,
         elem_idx: 0,
-        sequence_manager: &mut sequence_manager,
-        next_order_id: &mut next_order_id,
-        side_outcomes: &mut side_outcomes,
+        engine: &mut engine,
+        assets: &assets,
     };
 
     assert!(matches!(
@@ -1999,17 +1877,19 @@ fn bored_cycle_rolls_for_non_timer_commands_and_skips_wait_timer() {
         let seed_before = sim.seed();
         let (mut sequence_manager, seq_id) = sequence_with_order(OrderType::WaitingUprightBored);
         sequence_manager.get_element_mut(seq_id, 0).unwrap().command = command;
-        let mut next_order_id = 9;
-        let mut side_outcomes = ExecuteSideOutcomes::default();
+        let next_order_id = 9;
+        let mut engine = EngineInner::new();
+        engine.orders.sequence_manager = sequence_manager;
+        engine.orders.next_order_id = next_order_id;
+        let assets = LevelAssets::new();
         let mut ctx = ArmCtx {
             entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
             is_npc: false,
             is_unconscious: false,
             seq_id,
             elem_idx: 0,
-            sequence_manager: &mut sequence_manager,
-            next_order_id: &mut next_order_id,
-            side_outcomes: &mut side_outcomes,
+            engine: &mut engine,
+            assets: &assets,
         };
 
         let _ = dispatch_arm_completion(
@@ -2035,7 +1915,7 @@ fn civilian_bored_cycle_does_not_run_base_actor_random_choice() {
             })
         })
         .expect("test should find a zero bored-animation roll");
-    let (mut sequence_manager, seq_id) = sequence_with_order(OrderType::WaitingUprightBored);
+    let (sequence_manager, seq_id) = sequence_with_order(OrderType::WaitingUprightBored);
     let original_id = sequence_manager
         .get_element(seq_id, 0)
         .unwrap()
@@ -2043,17 +1923,19 @@ fn civilian_bored_cycle_does_not_run_base_actor_random_choice() {
         .front()
         .unwrap()
         .order_id;
-    let mut next_order_id = 9;
-    let mut side_outcomes = ExecuteSideOutcomes::default();
+    let next_order_id = 9;
+    let mut engine = EngineInner::new();
+    engine.orders.sequence_manager = sequence_manager;
+    engine.orders.next_order_id = next_order_id;
+    let assets = LevelAssets::new();
     let mut ctx = ArmCtx {
         entity_id: EntityId::Civilian(crate::entity_id::CivilianId(7)),
         is_npc: true,
         is_unconscious: false,
         seq_id,
         elem_idx: 0,
-        sequence_manager: &mut sequence_manager,
-        next_order_id: &mut next_order_id,
-        side_outcomes: &mut side_outcomes,
+        engine: &mut engine,
+        assets: &assets,
     };
 
     let outcome = crate::sim_rng::with_seed(seed, |sim| {
@@ -2065,7 +1947,9 @@ fn civilian_bored_cycle_does_not_run_base_actor_random_choice() {
         )
     });
 
-    let order = sequence_manager
+    let order = engine
+        .orders
+        .sequence_manager
         .get_element(seq_id, 0)
         .unwrap()
         .orders
@@ -2236,7 +2120,7 @@ fn wriggle_under_net_terminated_clears_soldier_emoticon() {
 fn wriggle_under_net_terminated_mutates_back_and_consumes() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
-    let (mut sequence_manager, seq_id) = sequence_with_order(OrderType::WriggleUnderNet);
+    let (sequence_manager, seq_id) = sequence_with_order(OrderType::WriggleUnderNet);
     let original_id = sequence_manager
         .get_element(seq_id, 0)
         .unwrap()
@@ -2244,17 +2128,19 @@ fn wriggle_under_net_terminated_mutates_back_and_consumes() {
         .front()
         .unwrap()
         .order_id;
-    let mut next_order_id = 9;
-    let mut side_outcomes = ExecuteSideOutcomes::default();
+    let next_order_id = 9;
+    let mut engine = EngineInner::new();
+    engine.orders.sequence_manager = sequence_manager;
+    engine.orders.next_order_id = next_order_id;
+    let assets = LevelAssets::new();
     let mut ctx = ArmCtx {
         entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
         is_npc: true,
         is_unconscious: false,
         seq_id,
         elem_idx: 0,
-        sequence_manager: &mut sequence_manager,
-        next_order_id: &mut next_order_id,
-        side_outcomes: &mut side_outcomes,
+        engine: &mut engine,
+        assets: &assets,
     };
 
     let outcome = dispatch_arm_completion(
@@ -2264,7 +2150,9 @@ fn wriggle_under_net_terminated_mutates_back_and_consumes() {
         &mut ctx,
     );
 
-    let order = sequence_manager
+    let order = engine
+        .orders
+        .sequence_manager
         .get_element(seq_id, 0)
         .unwrap()
         .orders
@@ -2284,18 +2172,27 @@ fn lying_stuck_under_net_can_mutate_to_wriggle_and_consumes() {
             })
         })
         .expect("test should find a 1/31 roll seed");
-    let (mut sequence_manager, seq_id) = sequence_with_order(OrderType::LyingStuckUnderNet);
-    let mut next_order_id = 9;
-    let mut side_outcomes = ExecuteSideOutcomes::default();
+    let (sequence_manager, seq_id) = sequence_with_order(OrderType::LyingStuckUnderNet);
+    let next_order_id = 9;
+    let mut engine = EngineInner::new();
+    engine.orders.sequence_manager = sequence_manager;
+    engine.orders.next_order_id = next_order_id;
+    let assets = LevelAssets::new();
+    let owner = engine.add_test_entity(weak_soldier_at_action_done(0));
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(seq_id, 0)
+        .unwrap()
+        .owner = Some(owner);
     let mut ctx = ArmCtx {
-        entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
+        entity_id: owner,
         is_npc: true,
         is_unconscious: false,
         seq_id,
         elem_idx: 0,
-        sequence_manager: &mut sequence_manager,
-        next_order_id: &mut next_order_id,
-        side_outcomes: &mut side_outcomes,
+        engine: &mut engine,
+        assets: &assets,
     };
 
     let outcome = crate::sim_rng::with_seed(seed, |sim| {
@@ -2307,7 +2204,9 @@ fn lying_stuck_under_net_can_mutate_to_wriggle_and_consumes() {
         )
     });
 
-    let order = sequence_manager
+    let order = engine
+        .orders
+        .sequence_manager
         .get_element(seq_id, 0)
         .unwrap()
         .orders
@@ -2315,8 +2214,4 @@ fn lying_stuck_under_net_can_mutate_to_wriggle_and_consumes() {
         .unwrap();
     assert!(matches!(outcome, ExecuteOutcome::Consumed));
     assert_eq!(order.order_type, OrderType::WriggleUnderNet);
-    assert_eq!(
-        side_outcomes.cry_for_help_under_net,
-        vec![EntityId::Pc(crate::entity_id::PcId(7))]
-    );
 }

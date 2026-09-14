@@ -6,6 +6,214 @@ mod tests {
     use crate::ai::{AiState, AlertLevel, Position, StimulusInfo, Substate};
     use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
 
+    fn assembly_fixture(points: &[(f32, f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
+        let mut engine = EngineInner::new();
+        let sector = crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
+        let ids: Vec<_> = points
+            .iter()
+            .map(|&(x, y, z)| {
+                let mut entity = make_test_ai_soldier(crate::element::Camp::Lacklandists);
+                entity
+                    .element_data_mut()
+                    .set_position(crate::coordinates::WorldPoint3D::new(x, y, z));
+                entity.element_data_mut().set_sector(Some(sector));
+                entity.ai_actor_data_mut().unwrap().view_radius = 1000;
+                entity.enemy_ai_mut().unwrap().base.current_state = AiState::Default;
+                engine.add_test_entity(entity)
+            })
+            .collect();
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine
+            .world
+            .entities
+            .expect_ai_controller_mut(ids[0], format_args!("patrol chief"))
+            .theoretical_patrol = ids[1..].to_vec();
+        (engine, assets, ids)
+    }
+
+    #[test]
+    fn patrol_initialization_inserts_ties_first_and_leaves_odd_tail_unpaired() {
+        let (mut engine, assets, ids) = assembly_fixture(&[
+            (100.0, 100.0, 0.0),
+            (101.0, 100.0, 0.0),
+            (101.0, 100.0, 0.0),
+            (105.0, 100.0, 0.0),
+        ]);
+        engine.initialize_patrol_for_npc(&assets, ids[0]);
+        let chief = engine
+            .expect_entity(ids[0], "chief")
+            .ai_controller()
+            .unwrap();
+        assert_eq!(chief.patrol, [ids[2], ids[1], ids[3]]);
+        assert!(chief.missed_patrol_members.is_empty());
+        for &member in &ids[1..] {
+            assert_eq!(
+                engine
+                    .expect_entity(member, "member")
+                    .ai_controller()
+                    .unwrap()
+                    .patrol_chief,
+                Some(ids[0])
+            );
+        }
+    }
+
+    #[test]
+    fn patrol_initialization_keeps_unordered_distance_at_insertion_front() {
+        let (mut engine, assets, ids) = assembly_fixture(&[
+            (100.0, 100.0, 0.0),
+            (101.0, 100.0, 0.0),
+            (102.0, 100.0, 0.0),
+            (103.0, 100.0, 0.0),
+        ]);
+        engine
+            .get_entity_mut(ids[3])
+            .unwrap()
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(f32::NAN, 100.0, 0.0));
+        engine.initialize_patrol_for_npc(&assets, ids[0]);
+        assert_eq!(
+            engine
+                .expect_entity(ids[0], "chief")
+                .ai_controller()
+                .unwrap()
+                .patrol,
+            [ids[3], ids[1], ids[2]]
+        );
+        assert!(
+            engine
+                .expect_entity(ids[3], "unordered member")
+                .human_data()
+                .unwrap()
+                .sorting_distance
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn patrol_initialization_uses_raw_world_distance_and_live_door_position_for_pairs() {
+        let (mut engine, assets, ids) = assembly_fixture(&[
+            (100.0, 100.0, 0.0),
+            (101.0, 100.0, 0.0),
+            (102.0, 100.0, 0.0),
+            (100.0, 100.0, 10.0),
+        ]);
+        engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+            "patrol.scs",
+        ));
+        let sector = engine.live_ai_position(ids[0]).sector.unwrap();
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                point_in: MapPoint::new(100.0, 99.0),
+                point_out: MapPoint::new(100.0, 99.0),
+                sector_in: crate::sector::SectorNumber::new(1),
+                sector_out: crate::sector::SectorNumber::new(1),
+                sector_in_index: sector.arena_index(),
+                sector_out_index: sector.arena_index(),
+                ..Default::default()
+            });
+        let mut pass = crate::sequence::SequenceElement::new_movement(
+            1,
+            crate::element::Command::PassDoor,
+            Some(ids[2]),
+            crate::order::OrderType::WalkingUpright,
+        );
+        let crate::sequence::SequenceElementData::Movement {
+            gate_id, direction, ..
+        } = &mut pass.data
+        else {
+            unreachable!()
+        };
+        *gate_id = Some(crate::gate::DoorIndex::new(0).unwrap());
+        *direction = 1;
+        let sequence = engine.orders.sequence_manager.launch_element(pass);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
+        assert_eq!(
+            engine.live_ai_position(ids[2]).map_point(),
+            MapPoint::new(100.0, 99.0)
+        );
+        engine.initialize_patrol_for_npc(&assets, ids[0]);
+        assert_eq!(
+            engine
+                .expect_entity(ids[0], "chief")
+                .ai_controller()
+                .unwrap()
+                .patrol,
+            [ids[2], ids[1], ids[3]]
+        );
+        let distances: Vec<_> = ids[1..]
+            .iter()
+            .map(|&id| {
+                engine
+                    .expect_entity(id, "member")
+                    .human_data()
+                    .unwrap()
+                    .sorting_distance
+            })
+            .collect();
+        assert_eq!(distances, [1.0, 4.0, 100.0]);
+    }
+
+    #[test]
+    fn patrol_initialization_preserves_authored_los_and_missed_member_order() {
+        let (mut engine, assets, ids) = assembly_fixture(&[
+            (100.0, 100.0, 0.0),
+            (110.0, 100.0, 0.0),
+            (120.0, 100.0, 0.0),
+            (130.0, 100.0, 0.0),
+            (140.0, 100.0, 0.0),
+        ]);
+        engine
+            .get_entity_mut(ids[1])
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .base
+            .current_state = AiState::Attacking;
+        engine
+            .get_entity_mut(ids[2])
+            .unwrap()
+            .element_data_mut()
+            .active = false;
+        let dead = engine.get_entity_mut(ids[4]).unwrap();
+        dead.element_data_mut().active = false;
+        dead.npc_data_mut().unwrap().life_points = 0;
+        crate::sight_obstacle::begin_parity_visibility_capture();
+        engine.initialize_patrol_for_npc(&assets, ids[0]);
+        let queries = crate::sight_obstacle::take_parity_visibility_capture();
+        assert_eq!(
+            queries
+                .iter()
+                .map(|query| query.destination[0])
+                .collect::<Vec<_>>(),
+            [110.0, 130.0]
+        );
+        let chief = engine
+            .expect_entity(ids[0], "chief")
+            .ai_controller()
+            .unwrap();
+        assert_eq!(chief.patrol, [ids[3]]);
+        assert_eq!(chief.missed_patrol_members, [ids[1], ids[2]]);
+        assert_eq!(
+            engine
+                .expect_entity(ids[4], "dead member")
+                .human_data()
+                .unwrap()
+                .sorting_distance,
+            1600.0
+        );
+    }
+
     #[test]
     fn patrol_coordinate_commits_role_state_before_walk_and_run() {
         for (distance, attentive, expected_substate, expected_action) in [

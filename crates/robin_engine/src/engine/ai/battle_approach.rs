@@ -284,7 +284,7 @@ impl EngineInner {
             .world
             .entities
             .expect_enemy_ai(owner, format_args!("approach courage"))
-            .get_courage();
+            .get_courage(&assets.profile_manager);
         let mut run_distance = (2 * (100 - courage)).max(sword_range);
         let my_position = self.live_ai_position(owner);
         let mut target_position = self.live_ai_position(target);
@@ -411,7 +411,8 @@ impl EngineInner {
             }
             Substate::AttackingReactiontime | Substate::AttackingReactiontimeRunning => (
                 ai.sword_is_charge_weapon
-                    && ai.get_courage() >= crate::ai_enemy::combat::CHARGE_MIN_COURAGE
+                    && ai.get_courage(&assets.profile_manager)
+                        >= crate::ai_enemy::combat::CHARGE_MIN_COURAGE
                     && i32::from(distance) >= crate::ai_enemy::combat::CHARGE_MIN_DISTANCE
                     && ai.my_line_jump.is_none()
                     && !self
@@ -1127,6 +1128,50 @@ mod tests {
             }
             assert_eq!(engine.ai_think_depth(), 1);
         }
+    }
+
+    #[test]
+    fn reconsider_approach_uses_raw_truncated_map_distance_at_sword_range() {
+        let (mut engine, assets, owner, friend, target) = prepare_approach(62);
+        move_actor(&mut engine, owner, 655.007_8, 1744.445);
+        move_actor(&mut engine, target, 585.0, 1726.0);
+        engine
+            .get_entity_mut(friend)
+            .unwrap()
+            .element_data_mut()
+            .active = false;
+        engine.execute_ai_reconsider_enemy_approach(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            false,
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .enemy_ai()
+                .unwrap()
+                .base
+                .current_substate,
+            Substate::AttackingSwordfight
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .pending_elements_for_owner(owner)
+                .iter()
+                .any(|&(sequence, index)| {
+                    engine
+                        .orders
+                        .sequence_manager
+                        .get_element(sequence, index)
+                        .unwrap()
+                        .command
+                        == crate::element::Command::EnterSwordfight
+                })
+        );
     }
 
     fn prepare_approach(range: u16) -> (EngineInner, LevelAssets, EntityId, EntityId, EntityId) {

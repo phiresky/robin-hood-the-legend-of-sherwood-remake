@@ -3460,9 +3460,11 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
                 .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         }
         let profile_idx = usize::from(pc.pc.profile_index);
-        profiles
-            .characters
-            .resize_with(profile_idx + 1, crate::profiles::CharacterProfile::default);
+        if profiles.characters.len() <= profile_idx {
+            profiles
+                .characters
+                .resize_with(profile_idx + 1, crate::profiles::CharacterProfile::default);
+        }
 
         // Every PC needs its campaign-description identity: the runtime
         // resolves coma/ammo/portrait state through the campaign character
@@ -3525,9 +3527,19 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
         // snapshots (e.g. as bodies), and those snapshots resolve the HtH
         // weapon profile for every entry with an enemy AI.
         let profile_idx = usize::from(soldier.soldier.soldier_profile_index);
-        profiles
-            .soldiers
-            .resize_with(profile_idx + 1, crate::profiles::SoldierProfile::default);
+        let behavior_idx = usize::from(enemy_ai.behavior_profile);
+        if profiles.soldiers.len() <= profile_idx.max(behavior_idx) {
+            profiles
+                .soldiers
+                .resize_with(profile_idx.max(behavior_idx) + 1, || {
+                    crate::profiles::SoldierProfile {
+                        intelligence: 50,
+                        courage: 50,
+                        initiative: 50,
+                        ..Default::default()
+                    }
+                });
+        }
         if profiles.soldiers[profile_idx].hth_weapon_id == 0 {
             profiles.soldiers[profile_idx].hth_weapon_id = 1;
         }
@@ -3568,6 +3580,21 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
         );
     }
 
+    for (_, entity) in engine.world.entities.occupied() {
+        if let Some(ai) = entity.enemy_ai() {
+            let index = usize::from(ai.behavior_profile);
+            if profiles.soldiers.len() <= index {
+                profiles
+                    .soldiers
+                    .resize_with(index + 1, || crate::profiles::SoldierProfile {
+                        intelligence: 50,
+                        courage: 50,
+                        initiative: 50,
+                        ..Default::default()
+                    });
+            }
+        }
+    }
     if needs_hth_weapon && profiles.hth_weapons.is_empty() {
         profiles
             .hth_weapons

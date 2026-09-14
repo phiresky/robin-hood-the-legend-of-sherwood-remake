@@ -3,6 +3,164 @@ use crate::engine::test_support::asm::{STARTUP_CLASS, empty_mission_script};
 use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
 
 #[test]
+fn scripted_noise_finishes_live_listeners_before_resuming_the_same_actor_vm() {
+    use crate::engine::test_support::actors::TestActor;
+    use crate::engine::test_support::asm::*;
+    use crate::natives::{NativeFn, ScriptHandleCodec};
+    const A: u16 = 0xc000;
+    const B: u16 = 0xc004;
+    const C: u16 = 0xc008;
+    let location = ScriptHandleCodec::location_handle_from_index(0);
+    let mut quads = vec![
+        q_begin_function(0, 3),
+        q_aff0_iconstant(A, 0),
+        q_aff0_iconstant(B, 1),
+        q_native_param(A),
+        q_native_param(B),
+        q_native_call(NativeFn::SetGlobal as u32),
+        q_aff0_iconstant(A, location),
+        q_aff0_iconstant(B, 0),
+        q_native_param(A),
+        q_native_param(B),
+        q_native_call(NativeFn::MakeNoise as u32),
+        q_native_call(NativeFn::ThisActor as u32),
+        q_aff1_native_get_return(B),
+        q_aff0_iconstant(A, 2),
+        q_native_param(A),
+        q_native_param(B),
+        q_native_call(NativeFn::SetGlobal as u32),
+        q_aff0_iconstant(A, 0),
+        q_native_param(A),
+        q_native_call(NativeFn::GetGlobal as u32),
+        q_aff1_native_get_return(A),
+        q_return_val(A),
+        q_end_function(),
+    ];
+    let filter_address = quads.len() as i32;
+    quads.extend([
+        q_begin_function(0, 3),
+        q_native_call(NativeFn::ThisActor as u32),
+        q_aff1_native_get_return(A),
+        q_aff0_iconstant(B, 0),
+        q_native_param(B),
+        q_native_call(NativeFn::GetGlobal as u32),
+        q_aff1_native_get_return(C),
+        q_native_param(A),
+        q_native_param(B),
+        q_native_param(C),
+        q_native_call(NativeFn::SetCustomNPCValue as u32),
+        q_aff0_iconstant(C, 9),
+        q_native_param(B),
+        q_native_param(C),
+        q_native_call(NativeFn::SetGlobal as u32),
+        q_return_val(B),
+        q_end_function(),
+    ]);
+    let function = |name: &str, address, parameters| crate::scb::Function {
+        name: name.into(),
+        address,
+        num_parameters: parameters,
+        size_of_return_value: 4,
+        size_of_parameters: parameters * 4,
+        size_of_volatile: 0,
+        size_of_temporary: 12,
+    };
+    let scb = ScbFile {
+        version: SCB_VERSION,
+        classes: vec![
+            empty_startup_class("noise_boundary.scs".into()),
+            ClassEntry {
+                source_file: "noise_boundary.scs".into(),
+                class_name: "NoiseListener".into(),
+                size_of_member_variables: 0,
+                member_variables: vec![],
+                functions: vec![
+                    function("Probe", 0, 0),
+                    function("FilterAIEvent", filter_address, 2),
+                ],
+                quads,
+            },
+        ],
+    };
+    let mut engine = EngineInner::new();
+    let listeners = std::array::from_fn::<_, 2, _>(|_| {
+        let mut entity = TestActor::soldier(crate::element::Posture::Upright)
+            .enemy_ai(Default::default())
+            .life_points(50)
+            .script_class("NoiseListener")
+            .build();
+        entity.element_data_mut().active = true;
+        entity.element_data_mut().blipped = true;
+        engine.add_test_entity(entity)
+    });
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .scripts
+        .install_mission(MissionScript::from_scb(scb).unwrap());
+    engine.attach_script_bindings(&assets);
+    engine.scripts.globals = vec![0; 3];
+    let script = engine.scripts.mission.as_mut().unwrap();
+    script.bindings.script_location_count = 1;
+    script.bindings.script_point_count = 1;
+    script.bindings.location_positions = std::sync::Arc::new(vec![(10.0, 0.0)]);
+    script.bindings.location_layers = std::sync::Arc::new(vec![0]);
+    script.bindings.location_sectors = std::sync::Arc::new(vec![0]);
+    script.bindings.location_sector_handles =
+        std::sync::Arc::new(vec![crate::position_interface::SectorHandle::new(0)]);
+    for owner in listeners {
+        script.bind_actor(ScriptHandleCodec::actor_handle(owner), "NoiseListener");
+    }
+    let owner = ScriptHandleCodec::actor_handle(listeners[0]);
+    let result = engine
+        .call_script_vm(
+            &crate::sim_rng::test_context(),
+            &assets,
+            ScriptVmKey::Actor(owner),
+            "Probe",
+            &[],
+            crate::natives::ScriptCallFrame::actor(owner),
+        )
+        .unwrap();
+    assert_eq!(
+        result, 9,
+        "the caller must observe its synchronous hearing callbacks"
+    );
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(listeners[0])
+            .unwrap()
+            .npc_data()
+            .unwrap()
+            .custom_values[0],
+        1
+    );
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(listeners[1])
+            .unwrap()
+            .npc_data()
+            .unwrap()
+            .custom_values[0],
+        9
+    );
+    assert_eq!(
+        engine.scripts.globals[2], owner,
+        "nested listener calls must restore ThisActor"
+    );
+    engine
+        .scripts
+        .mission
+        .as_ref()
+        .unwrap()
+        .assert_no_active_call_frames();
+}
+
+#[test]
 fn fresh_callback_driver_obeys_live_vm_depth_and_ignores_receiver_guards() {
     use crate::engine::test_support::asm::{
         empty_startup_class, q_aff0_iconstant, q_begin_function, q_end_function, q_return_val,
@@ -560,13 +718,6 @@ fn mission_script_snapshot_round_trips_state_and_reattaches_program() {
     let json = serde_json::to_string(&script).expect("serialize MissionScript");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse snapshot JSON");
     assert!(value.get("snapshot_version").is_none());
-    let effect_keys = value["script_effects"]
-        .as_object()
-        .expect("ScriptEffects snapshot object")
-        .keys()
-        .map(String::as_str)
-        .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(effect_keys, ["ordered"].into_iter().collect());
     assert!(value.get("bindings").is_none());
 
     let mut decoded: MissionScript =
@@ -1235,7 +1386,6 @@ fn native_mutation_writes_the_canonical_script_domains_in_place() {
             stack.push_i32(door);
             stack.push_i32(0);
             let mut context = crate::natives::NativeContext::with_bindings(
-                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -1277,7 +1427,6 @@ fn native_ai_mutation_writes_engine_inner_directly() {
 
     let result = engine.with_script_session(sim, &assets, |script, script_domains, queries| {
         let mut context = crate::natives::NativeContext::with_bindings(
-            &mut script.script_effects,
             &mut script.state,
             script_domains,
             &script.bindings,
@@ -1402,7 +1551,6 @@ fn script_callback_unwind_keeps_canonical_owners_in_place() {
         script_domains.mission_ui.outline_display = true;
         {
             let mut context = crate::natives::NativeContext::with_bindings(
-                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,

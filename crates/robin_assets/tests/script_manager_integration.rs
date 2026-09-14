@@ -7,7 +7,7 @@ mod support;
 
 use robin_assets::scb;
 use robin_engine::interp::{HostFunctions, NativeCallOutcome, NativeStack, StopReason};
-use robin_engine::natives::{NativeContext, NativeSessionCapabilities, ScriptEffects, ScriptState};
+use robin_engine::natives::{NativeContext, NativeSessionCapabilities, ScriptState};
 use robin_engine::script_manager::{ScriptError, ScriptInstance, ScriptManager};
 use support::{data_directory, data_file};
 
@@ -199,7 +199,7 @@ fn function_not_found_error() {
 fn static_area_shared_between_instances() {
     // Two instances of the same class. One writes a global via
     // InitGlobal, the other reads it via GetGlobal. The globals
-    // are stored in ScriptEffects (not the static area), so this test
+    // are stored in the mission global array, so this test
     // verifies the ScriptManager + instance API works correctly.
     let quads = vec![
         // fn SetGlobal42: InitGlobal(0, 42)
@@ -214,7 +214,6 @@ fn static_area_shared_between_instances() {
     let bytes = make_scb_bytes("Test", "SetGlobal42", 0, &quads);
     let mut mgr = load_manager(&bytes);
 
-    let mut host = ScriptEffects::new();
     let mut script_state = ScriptState::default();
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut entities = robin_engine::entities::Entities::new();
@@ -222,7 +221,7 @@ fn static_area_shared_between_instances() {
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
     let mut native_globals = Vec::new();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut entities,
         &mut ai_global,
@@ -232,12 +231,8 @@ fn static_area_shared_between_instances() {
     let mut inst = mgr.create_instance("Test").unwrap();
 
     {
-        let mut context = NativeContext::new(
-            &mut host,
-            &mut script_state,
-            &mut script_domains,
-            &capabilities,
-        );
+        let mut context =
+            NativeContext::new(&mut script_state, &mut script_domains, &mut capabilities);
         let _ = poll_call(&mut inst, &mut mgr, "SetGlobal42", &[], &mut context).unwrap();
     }
     assert_eq!(native_globals.get(0), Some(&42));
@@ -259,7 +254,6 @@ fn native_calls_through_instance() {
     let bytes = make_scb_bytes("Test", "Go", 0, &quads);
     let mut mgr = load_manager(&bytes);
     let mut inst = mgr.create_instance("Test").unwrap();
-    let mut host = ScriptEffects::new();
     let mut script_state = ScriptState::default();
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut entities = robin_engine::entities::Entities::new();
@@ -267,19 +261,14 @@ fn native_calls_through_instance() {
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
     let mut native_globals = Vec::new();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut entities,
         &mut ai_global,
         &mut fast_grid,
         &mut native_globals,
     );
-    let mut context = NativeContext::new(
-        &mut host,
-        &mut script_state,
-        &mut script_domains,
-        &capabilities,
-    );
+    let mut context = NativeContext::new(&mut script_state, &mut script_domains, &mut capabilities);
 
     let result = poll_call(&mut inst, &mut mgr, "Go", &[], &mut context).unwrap();
     assert_eq!(result, 0x0F);
@@ -351,7 +340,6 @@ fn demo_script_via_manager() {
     let mut inst = mgr.create_instance("StartUp").unwrap();
     assert!(inst.has_function(&mgr, "Initialize"));
 
-    let mut host = ScriptEffects::new();
     let mut script_state = ScriptState::default();
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut entities = robin_engine::entities::Entities::new();
@@ -359,7 +347,7 @@ fn demo_script_via_manager() {
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
     let mut native_globals = Vec::new();
-    let capabilities = NativeSessionCapabilities::new(
+    let mut capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut entities,
         &mut ai_global,
@@ -378,12 +366,7 @@ fn demo_script_via_manager() {
 
     // Just verify we can call without panicking.
     // Most functions need real engine state, so errors are expected.
-    let mut context = NativeContext::new(
-        &mut host,
-        &mut script_state,
-        &mut script_domains,
-        &capabilities,
-    );
+    let mut context = NativeContext::new(&mut script_state, &mut script_domains, &mut capabilities);
     let _ = poll_call(&mut inst, &mut mgr, &first_fn, &[], &mut context);
 }
 

@@ -202,6 +202,7 @@ pub enum NativeOperation {
     ScriptCall(ScriptCallRequest),
     SequenceAction(SynchronousSequenceOperation),
     EngineAction(SynchronousScriptRequest),
+    Command(crate::natives::NativeCommand),
 }
 
 /// One immediately executed sequence action plus the remainder of the

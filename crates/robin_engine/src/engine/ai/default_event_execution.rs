@@ -133,7 +133,7 @@ impl EngineInner {
                         AiState::Default,
                         Substate::DefaultOnPost,
                     );
-                    let frames = self.ai_bored_time(sim, owner);
+                    let frames = self.ai_bored_time(sim, assets, owner);
                     self.default_timer(owner, u32::from(frames));
                 }
             }
@@ -208,14 +208,14 @@ impl EngineInner {
                         AiState::Default,
                         Substate::DefaultOnPost,
                     );
-                    let frames = self.ai_bored_time(sim, owner);
+                    let frames = self.ai_bored_time(sim, assets, owner);
                     self.default_timer(owner, u32::from(frames));
                 }
             }
             Substate::DefaultOnPost => {
                 if kind == StimulusType::EventTimer && !self.default_bored_live(sim, assets, owner)
                 {
-                    let frames = self.ai_bored_time(sim, owner);
+                    let frames = self.ai_bored_time(sim, assets, owner);
                     self.default_timer(owner, u32::from(frames));
                 }
             }
@@ -677,15 +677,19 @@ mod movement_tests {
     #[test]
     fn live_reaction_uses_hard_difficulty_modifier_without_drawing_randomness() {
         for (fixed, deadline) in [(false, 111), (true, 36)] {
-            let (mut engine, _, owner) = fixture(OrderType::WaitingUpright);
+            let (mut engine, mut assets, owner) = fixture(OrderType::WaitingUpright);
             engine.control.frame_counter = 10;
             engine.control.sim_config.difficulty = crate::player_profile::DifficultyLevel::Hard;
-            engine.seek_enemy_mut(owner).soldier_profile_iq = 50;
+            crate::engine::test_support::actors::edit_enemy_profile(
+                &mut assets,
+                engine.seek_enemy_mut(owner),
+                |profile| profile.intelligence = 50,
+            );
             let mut config = engine.control.sim_config;
             config.fix_hard_reaction_times = fixed;
             let sim = SimulationContext::with_seed_and_config(123, config);
             let before = sim.seed();
-            engine.execute_ai_react_live(&sim, owner, 100);
+            engine.execute_ai_react_live(&sim, &assets, owner, 100);
             assert_eq!(engine.default_ai(owner).when_does_timer_ring, deadline);
             assert_eq!(
                 sim.seed(),
@@ -720,8 +724,12 @@ mod movement_tests {
             let ai = engine.seek_enemy_mut(owner);
             ai.base.current_state = AiState::Seeking;
             ai.base.current_substate = Substate::SeekingBodyReactiontime;
-            ai.soldier_profile_rank = crate::profiles::ProfileRank::Officer;
-            ai.soldier_profile_initiative = 60;
+            crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+                profile.rank = crate::profiles::ProfileRank::Officer
+            });
+            crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+                profile.initiative = 60
+            });
             ai.base.detected_body = Some(AiEntityHandle::new(body.index()));
             ai.base
                 .my_reconnaissance_report

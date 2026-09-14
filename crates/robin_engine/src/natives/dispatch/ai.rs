@@ -405,22 +405,19 @@ impl NativeContext<'_, '_> {
                     script_error!(native, "without a location (handle {loc})");
                     return 0;
                 };
-                // Emit a deferred command so the engine runs the
-                // full `broadcast_noise` path (deafness, state
-                // filter, noise-display update), identical to the
-                // gameplay callsites.
+                // Yield before the next script statement: hearing callbacks
+                // and their mutations complete inside this native invocation.
                 let Some((layer, sector)) = self.resolve_location_layer_sector_handle(loc) else {
                     script_error!(native, "location {loc} has no exact layer/sector metadata");
                     return 0;
                 };
-                self.script_effects_mut()
-                    .emit_engine(EngineCommand::MakeNoise {
-                        noise_type,
-                        x: origin_x,
-                        y: origin_y,
-                        layer,
-                        sector,
-                    });
+                self.yield_engine_command(EngineCommand::MakeNoise {
+                    noise_type,
+                    x: origin_x,
+                    y: origin_y,
+                    layer,
+                    sector,
+                });
                 tracing::debug!(
                     target: "script",
                     "MakeNoise: scripted {noise_type:?} at ({origin_x},{origin_y}) \
@@ -712,17 +709,12 @@ impl NativeContext<'_, '_> {
                 // member was actually new, and it does so before returning to
                 // the mission script. Yield through the typed engine barrier
                 // so subsequent natives (notably UnlockAI) observe the
-                // subordinate's freshly assigned patrol chief. The roster
-                // length is captured here because the barrier drains after the
-                // whole script chunk, by which point later appends would
-                // otherwise widen this pass beyond what it saw.
+                // subordinate's freshly assigned patrol chief.
                 if let Some(member_count) = appended_len {
-                    self.script_effects_mut().emit_barrier(
-                        DeferredCommand::AddAsSubordinateInitialize {
-                            chief: actor,
-                            member_count,
-                        },
-                    );
+                    self.yield_world_command(WorldNativeCommand::AddAsSubordinateInitialize {
+                        chief: actor,
+                        member_count,
+                    });
                 }
                 0
             }

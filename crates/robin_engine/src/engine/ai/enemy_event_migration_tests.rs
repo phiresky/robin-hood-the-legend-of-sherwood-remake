@@ -5,7 +5,7 @@ use crate::element::{ActionState, Command, Posture};
 use crate::profiles::ProfileRank;
 
 fn fixture(substate: Substate) -> (EngineInner, LevelAssets, EntityId, EntityId) {
-    let (mut engine, assets, owner, target) =
+    let (mut engine, mut assets, owner, target) =
         super::battle_decision_observation_tests::fixture(false);
     let ai = engine
         .get_entity_mut(owner)
@@ -16,7 +16,9 @@ fn fixture(substate: Substate) -> (EngineInner, LevelAssets, EntityId, EntityId)
     ai.base.current_substate = substate;
     ai.base.primary_target = None;
     ai.list_them.clear();
-    ai.soldier_profile_rank = ProfileRank::Soldier;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+        profile.rank = ProfileRank::Soldier
+    });
     ai.current_task_priority = crate::ai_enemy::task_priority::NONE;
     ai.new_task_priority = crate::ai_enemy::task_priority::ALERT;
     (engine, assets, owner, target)
@@ -44,7 +46,9 @@ fn soldier(engine: &mut EngineInner, assets: &mut LevelAssets, substate: Substat
     let ai = engine.get_entity_mut(id).unwrap().enemy_ai_mut().unwrap();
     ai.base.current_state = substate.ai_state_family().unwrap();
     ai.base.current_substate = substate;
-    ai.soldier_profile_rank = ProfileRank::Soldier;
+    crate::engine::test_support::actors::edit_enemy_profile(assets, ai, |profile| {
+        profile.rank = ProfileRank::Soldier
+    });
     id
 }
 
@@ -355,12 +359,15 @@ fn call_alert_keeps_running_macro_for_each_caller_role() {
             soldier(&mut engine, &mut assets, Substate::DefaultOnPost)
         };
         if role == 0 {
-            engine
-                .get_entity_mut(caller)
-                .unwrap()
-                .enemy_ai_mut()
-                .unwrap()
-                .soldier_profile_rank = ProfileRank::Officer;
+            crate::engine::test_support::actors::edit_enemy_profile(
+                &mut assets,
+                engine
+                    .get_entity_mut(caller)
+                    .unwrap()
+                    .enemy_ai_mut()
+                    .unwrap(),
+                |profile| profile.rank = ProfileRank::Officer,
+            );
         }
         let ai = engine
             .get_entity_mut(owner)
@@ -368,7 +375,9 @@ fn call_alert_keeps_running_macro_for_each_caller_role() {
             .enemy_ai_mut()
             .unwrap();
         if role == 2 {
-            ai.soldier_profile_rank = ProfileRank::Officer;
+            crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+                profile.rank = ProfileRank::Officer
+            });
         }
         ai.base.macro_in_progress = true;
         ai.base.macro_timer_is_running = true;
@@ -783,7 +792,7 @@ fn ale_eligibility_requires_outdoor_beer_preference_or_enabled_reliable_rule() {
         (0, true, true, false),
         (35, false, false, true),
     ] {
-        let (mut engine, assets, owner, _) = fixture(Substate::WonderingAleReactiontime);
+        let (mut engine, mut assets, owner, _) = fixture(Substate::WonderingAleReactiontime);
         if indoors {
             engine.world.fast_grid_mut().level_mut().sectors[0].sector_type |=
                 crate::sector::SectorType::BUILDING;
@@ -809,11 +818,19 @@ fn ale_eligibility_requires_outdoor_beer_preference_or_enabled_reliable_rule() {
             .unwrap()
             .enemy_ai_mut()
             .unwrap();
-        ai.soldier_profile_beer = beer;
-        ai.ale_reliable_distraction = reliable;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.beer = beer
+        });
         ai.base.interesting_object = Some(AiEntityHandle::new(bottle.index()));
+        engine
+            .control
+            .sim_config
+            .item_gameplay
+            .ale_reliable_distraction = reliable;
+        let sim =
+            crate::sim_rng::SimulationContext::with_seed_and_config(1, engine.control.sim_config);
         engine.execute_ai_enemy_observation(
-            &crate::sim_rng::test_context(),
+            &sim,
             &assets,
             owner,
             crate::ai::EnemyObservation::AleReaction,

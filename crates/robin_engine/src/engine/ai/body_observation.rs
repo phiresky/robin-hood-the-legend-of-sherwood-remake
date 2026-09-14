@@ -128,7 +128,7 @@ impl EngineInner {
         if is_charly {
             self.unalert_body_charly_seekers(sim, assets, owner, body);
         }
-        self.react_to_seen_body(sim, owner);
+        self.react_to_seen_body(sim, assets, owner);
     }
 
     fn unalert_body_charly_seekers(
@@ -142,7 +142,12 @@ impl EngineInner {
         self.unalert_live_charly_seekers(sim, assets, owner, body);
     }
 
-    fn react_to_seen_body(&mut self, sim: &SimulationContext, owner: EntityId) {
+    fn react_to_seen_body(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
         let entity = self.expect_entity(owner, "body reaction owner");
         let frames = if self.is_player_aligned_camp(entity.camp())
             && self.world.weather.is_forest_level
@@ -164,7 +169,11 @@ impl EngineInner {
             } else {
                 1.0
             };
-            ((100.0 - self.seek_enemy(owner).soldier_profile_iq as f32)
+            ((100.0
+                - self
+                    .seek_enemy(owner)
+                    .profile(&assets.profile_manager)
+                    .intelligence as f32)
                 * 0.01
                 * crate::parameters_ai::AI_MAX_DEADBODY_REACTIONTIME as f32
                 * modifier
@@ -195,7 +204,9 @@ impl EngineInner {
                 .ai_brain
                 .enemy()
                 .expect("body advice soldier requires enemy AI");
-            if ai.soldier_profile_rank != ProfileRank::Officer || !soldier.is_able_to_fight() {
+            if ai.profile(&assets.profile_manager).rank != ProfileRank::Officer
+                || !soldier.is_able_to_fight()
+            {
                 continue;
             }
             // The visibility ray precedes the lock and detectable-list gates.
@@ -245,7 +256,7 @@ impl EngineInner {
             .detected_body
             .expect("body reaction requires detected body");
         let body_id = self.expect_human_id_for_ai_handle(body.get(), "body reaction target");
-        let rank = self.seek_enemy(owner).soldier_profile_rank;
+        let rank = self.seek_enemy(owner).profile(&assets.profile_manager).rank;
         let mut officer = None;
         let mut delegate = false;
         match rank {
@@ -276,7 +287,8 @@ impl EngineInner {
                         <= crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
                         && entity.element_data().active
                         && !self.entity_data_in_building_sector(entity.element_data())
-                        && (ai.soldier_profile_initiative < 50 || !ai.base.patrol.is_empty());
+                        && (ai.profile(&assets.profile_manager).initiative < 50
+                            || !ai.base.patrol.is_empty());
                 }
             }
             ProfileRank::Knight | ProfileRank::None => {}

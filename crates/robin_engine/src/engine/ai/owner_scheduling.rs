@@ -376,13 +376,14 @@ impl EngineInner {
                 .world
                 .entities
                 .expect_enemy_ai(npc_id, format_args!("periodic remark owner"));
-            let remark = if ai.get_rank() == crate::profiles::ProfileRank::Officer {
-                Some(crate::ai::Remark::OfficerComplains)
-            } else if ai.is_vip {
-                Some(crate::ai::Remark::VipSpeaksToHimself)
-            } else {
-                None
-            };
+            let remark =
+                if ai.get_rank(&assets.profile_manager) == crate::profiles::ProfileRank::Officer {
+                    Some(crate::ai::Remark::OfficerComplains)
+                } else if ai.is_vip {
+                    Some(crate::ai::Remark::VipSpeaksToHimself)
+                } else {
+                    None
+                };
             if let Some(remark) = remark {
                 self.execute_ai_speech(
                     sim,
@@ -820,6 +821,7 @@ impl EngineInner {
         }
         let ai = owner.enemy_ai().expect("ambush refresh requires enemy AI");
         let iq = ai.iq_for_difficulty(
+            &assets.profile_manager,
             self.control.sim_config.difficulty,
             self.mission_domain
                 .diplomacy

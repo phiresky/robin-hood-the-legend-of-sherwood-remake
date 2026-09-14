@@ -1324,7 +1324,7 @@ impl EngineInner {
                 AiState::Default,
                 Substate::DefaultOnPost,
             );
-            let bored = self.ai_bored_time(sim, owner);
+            let bored = self.ai_bored_time(sim, assets, owner);
             let frame = self.control.frame_counter;
             let ai = self
                 .world

@@ -167,7 +167,7 @@ fn arrow_reaction_keeps_rank_and_existing_search_branches_distinct() {
         ),
         (AiState::Default, ProfileRank::None, None, 0),
     ] {
-        let (mut engine, assets, owner, _) = fixture();
+        let (mut engine, mut assets, owner, _) = fixture();
         let origin = Position {
             x: 600.0,
             y: 600.0,
@@ -180,7 +180,9 @@ fn arrow_reaction_keeps_rank_and_existing_search_branches_distinct() {
         } else {
             Substate::DefaultOnPost
         };
-        ai.soldier_profile_rank = rank;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = rank
+        });
         ai.base.timer_is_running = false;
         let entry_substate = ai.base.current_substate;
         engine.execute_ai_enemy_observation(
@@ -202,7 +204,7 @@ fn arrow_reaction_keeps_rank_and_existing_search_branches_distinct() {
 
 #[test]
 fn ale_timer_reads_retained_inactive_bottle_instead_of_cached_seek_position() {
-    let (mut engine, assets, owner, _) = fixture();
+    let (mut engine, mut assets, owner, _) = fixture();
     let mut element = ElementData::default();
     element.kind = ElementKind::ObjectOther;
     element.active = false;
@@ -227,7 +229,9 @@ fn ale_timer_reads_retained_inactive_bottle_instead_of_cached_seek_position() {
         y: 200.0,
         ..ai.base.seek_position
     };
-    ai.soldier_profile_beer = 1;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+        profile.beer = 1
+    });
     engine.execute_ai_enemy_observation(
         &crate::sim_rng::test_context(),
         &assets,

@@ -2848,7 +2848,15 @@ struct StopNoopSummary {
     tail: SequenceElementRef,
 }
 
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SequenceManager {
     /// All active sequences, keyed by `SequenceId` in original-game manager
     /// insertion order. `IndexMap` preserves that scan order while retaining
@@ -2871,6 +2879,7 @@ pub struct SequenceManager {
     /// `sequences` and serialized with the manager so snapshots remain
     /// self-contained.
     // EntityId is a tagged enum; populated indexes need reversible JSON keys.
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     actor_live: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
 
     /// Weakest priority among each actor's live elements.
@@ -2886,6 +2895,7 @@ pub struct SequenceManager {
     /// Snapshots omit the index; it is rebuilt lazily from `actor_live`.
     #[bitcode(skip)]
     #[state_hash(skip)]
+    #[serde(skip)]
     actor_stop_summaries: BTreeMap<EntityId, ActorStopSummary>,
 
     /// Per-owner tails of cross-sequence postponed chains for a prospective
@@ -2896,6 +2906,7 @@ pub struct SequenceManager {
     /// owner before installing a replacement entry.
     #[bitcode(skip)]
     #[state_hash(skip)]
+    #[serde(skip)]
     postpone_tail_cache:
         BTreeMap<EntityId, BTreeMap<(SequenceElementRef, SequencePriority), PostponeTailSummary>>,
 
@@ -2905,6 +2916,7 @@ pub struct SequenceManager {
     /// to repeat that traversal.
     #[bitcode(skip)]
     #[state_hash(skip)]
+    #[serde(skip)]
     stop_noop_cache:
         BTreeMap<EntityId, BTreeMap<(SequenceElementRef, SequencePriority), StopNoopSummary>>,
 
@@ -2923,6 +2935,7 @@ pub struct SequenceManager {
     /// Replaces an O(N_seq × N_elem) nested scan that was the single
     /// hottest per-tick function in a rollback-enabled debug profile
     /// (~5–15% depending on checker mode).
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     actor_in_progress: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
 
     /// Temporary actor selection installed by instruction handling while priority
@@ -2934,6 +2947,7 @@ pub struct SequenceManager {
     /// arbitrate against the incoming element even though it has not reached
     /// `InProgress` yet. Entries only exist inside that callback boundary and
     /// are empty at stable frame/save boundaries.
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     actor_instructing: BTreeMap<EntityId, Vec<(SequenceElementRef, bool)>>,
 
     /// Actor selection held across the accepted element's command
@@ -2948,6 +2962,7 @@ pub struct SequenceManager {
     /// removal notification while still selected, which is what performs
     /// the actor-base movement-goal cleanup. Set for the duration of one
     /// command dispatch; empty at stable frame/save boundaries.
+    #[serde(deserialize_with = "Option::deserialize")]
     actor_translating: Option<(EntityId, SequenceElementRef)>,
 
     /// Deferred queue of elements to start. Processed in `hourglass()`.
@@ -3006,44 +3021,10 @@ pub struct SequenceManager {
     halt_pending: bool,
 }
 
-impl serde::Serialize for SequenceManager {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedSequenceManager::capture(self).serialize(serializer)
-    }
-}
-impl<'de> serde::Deserialize<'de> for SequenceManager {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(PersistedSequenceManager::deserialize(deserializer)?.into_runtime())
-    }
-}
-
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedSequenceManager {
-    sequences: OrderedSequences,
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    actor_live: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    actor_in_progress: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    actor_instructing: BTreeMap<EntityId, Vec<(SequenceElementRef, bool)>>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    actor_translating: Option<(EntityId, SequenceElementRef)>,
-
-    elements_to_go: VecDeque<(SequenceId, usize)>,
-
-    pending_synchronous_actions: VecDeque<PendingSyncEntry>,
-
-    next_sequence_id: u32,
-
-    next_element_id: u32,
-
-    halt_pending: bool,
-}
-
-impl PersistedSequenceManager {
-    pub(crate) fn capture(value: &SequenceManager) -> Self {
+impl SequenceManager {
+    /// Capture owned simulation state without cloning derived search caches.
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let value = self;
         let SequenceManager {
             sequences: _,
             actor_live: _,
@@ -3061,6 +3042,9 @@ impl PersistedSequenceManager {
         } = value;
         Self {
             sequences: value.sequences.clone(),
+            actor_stop_summaries: BTreeMap::new(),
+            postpone_tail_cache: BTreeMap::new(),
+            stop_noop_cache: BTreeMap::new(),
             actor_live: value.actor_live.clone(),
             actor_in_progress: value.actor_in_progress.clone(),
             actor_instructing: value.actor_instructing.clone(),
@@ -3070,24 +3054,6 @@ impl PersistedSequenceManager {
             next_sequence_id: value.next_sequence_id,
             next_element_id: value.next_element_id,
             halt_pending: value.halt_pending,
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> SequenceManager {
-        SequenceManager {
-            sequences: self.sequences,
-            actor_live: self.actor_live,
-            actor_stop_summaries: BTreeMap::new(),
-            postpone_tail_cache: BTreeMap::new(),
-            stop_noop_cache: BTreeMap::new(),
-            actor_in_progress: self.actor_in_progress,
-            actor_instructing: self.actor_instructing,
-            actor_translating: self.actor_translating,
-            elements_to_go: self.elements_to_go,
-            pending_synchronous_actions: self.pending_synchronous_actions,
-            next_sequence_id: self.next_sequence_id,
-            next_element_id: self.next_element_id,
-            halt_pending: self.halt_pending,
         }
     }
 }

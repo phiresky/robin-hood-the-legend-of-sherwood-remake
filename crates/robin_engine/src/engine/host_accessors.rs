@@ -979,23 +979,6 @@ impl EngineInner {
         self.scripts.mission.as_ref()
     }
 
-    /// Mutable access to ordered script effects for Lua/tool adapters.
-    ///
-    /// Exposed `pub` so the host crate's Lua scripting layer
-    /// (`robin_rs::lua_session`) can drive custom-mission Lua events
-    /// against the same effect buffer the `.scb` VM uses. The
-    /// `RollbackSafeEngine` invariant still holds — Lua sessions are
-    /// single-player only (see `docs/lua.md`) and never run during
-    /// rollback resimulation.
-    pub(crate) fn mission_script_effects_mut(
-        &mut self,
-    ) -> Option<&mut crate::natives::ScriptEffects> {
-        self.scripts
-            .mission
-            .as_mut()
-            .map(MissionScript::script_effects_mut)
-    }
-
     /// True iff men-to-blazon conversion mode is active. Read by titbit
     /// rendering to suppress the per-PC
     /// WorkIcon while the conversion screen is up.
@@ -1008,15 +991,6 @@ impl EngineInner {
         self.script_domains
             .mission_ui
             .active_blinking_blazons(self.control.frame_counter)
-    }
-
-    /// Queue the `UpdateInformationBars` engine command on the script
-    /// host.  Called from the host after a save-load so the script
-    /// refreshes its side of the information-bar UI.
-    pub(crate) fn queue_update_information_bars(&mut self) {
-        if let Some(effects) = self.mission_script_effects_mut() {
-            effects.emit_engine(crate::natives::EngineCommand::UpdateInformationBars);
-        }
     }
 
     /// Toggle the engine-owned men-to-blazon conversion mode. Read by the

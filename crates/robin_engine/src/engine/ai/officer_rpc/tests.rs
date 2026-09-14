@@ -101,7 +101,7 @@ fn rebuilt_empty_live_enemies_do_not_preserve_unseen_primary_target_in_list() {
 
 #[test]
 fn tower_alert_finishes_recipient_callback_and_battle_decision_inline() {
-    let (mut engine, assets, owner, recipient) = fixture();
+    let (mut engine, mut assets, owner, recipient) = fixture();
     let center = Position {
         x: 120.0,
         y: 80.0,
@@ -113,7 +113,11 @@ fn tower_alert_finishes_recipient_callback_and_battle_decision_inline() {
     ai.base.current_substate = Substate::AttackingTowerGuardAlert;
     ai.base.seek_position = center;
     ai.list_them.clear();
-    engine.observation_ai_mut(recipient).soldier_profile_rank = ProfileRank::Knight;
+    crate::engine::test_support::actors::edit_enemy_profile(
+        &mut assets,
+        engine.observation_ai_mut(recipient),
+        |profile| profile.rank = ProfileRank::Knight,
+    );
     engine.execute_ai_callback(
         &crate::sim_rng::test_context(),
         &assets,
@@ -136,7 +140,6 @@ fn tower_alert_finishes_recipient_callback_and_battle_decision_inline() {
 #[test]
 fn officer_half_plane_detection_reads_officers_live_facing() {
     let (mut engine, _, officer, target) = fixture();
-    engine.observation_ai_mut(officer).soldier_profile_rank = ProfileRank::Officer;
     let origin = engine.live_ai_position(officer);
     let target = engine.live_ai_position(target);
     for (direction, seen) in [(4, true), (12, false)] {
@@ -199,7 +202,9 @@ fn checkpoint_search_preserves_exact_sector_and_cursor_before_pivot_skip() {
             ai.base.detached_patrol_path_status.current_waypoint_index = 2;
         }
         let ai = engine.observation_ai_mut(owner);
-        ai.soldier_profile_rank = ProfileRank::Soldier;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = ProfileRank::Soldier
+        });
         ai.base.checkpoint_charly = Some(AiEntityHandle::new(charly.index()));
         ai.base.macro_in_progress = true;
         engine.execute_ai_search_charly(&crate::sim_rng::test_context(), &assets, owner);
@@ -231,9 +236,11 @@ fn checkpoint_search_preserves_exact_sector_and_cursor_before_pivot_skip() {
 
 #[test]
 fn officer_missing_checkpoint_reports_and_alerts_without_building_search_route() {
-    let (mut engine, assets, owner, charly) = fixture();
+    let (mut engine, mut assets, owner, charly) = fixture();
     let ai = engine.observation_ai_mut(owner);
-    ai.soldier_profile_rank = ProfileRank::Officer;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+        profile.rank = ProfileRank::Officer
+    });
     ai.base.checkpoint_charly = Some(AiEntityHandle::new(charly.index()));
     ai.base.macro_in_progress = true;
     ai.base.macro_command_offset = 23;
@@ -308,7 +315,7 @@ fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId) {
 #[test]
 fn officer_report_uses_live_cone_and_synchronous_acceptance_or_refusal() {
     for (visible, accept) in [(true, true), (true, false), (false, true)] {
-        let (mut engine, assets, owner, officer) = fixture();
+        let (mut engine, mut assets, owner, officer) = fixture();
         if !visible {
             engine
                 .world
@@ -319,7 +326,9 @@ fn officer_report_uses_live_cone_and_synchronous_acceptance_or_refusal() {
                 .set_position(crate::coordinates::WorldPoint3D::new(300.0, 500.0, 0.0));
         }
         let ai = engine.observation_ai_mut(officer);
-        ai.soldier_profile_rank = ProfileRank::Officer;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = ProfileRank::Officer
+        });
         if !accept {
             ai.base.current_state = AiState::Attacking;
             ai.base.current_substate = Substate::AttackingSwordfight;
@@ -392,7 +401,11 @@ fn report_cannot_cross_an_opaque_wall() {
     wall.rebuild_geometry();
     assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
     engine.world.static_sight_obstacle_active = vec![true];
-    engine.observation_ai_mut(officer).soldier_profile_rank = ProfileRank::Officer;
+    crate::engine::test_support::actors::edit_enemy_profile(
+        &mut assets,
+        engine.observation_ai_mut(officer),
+        |profile| profile.rank = ProfileRank::Officer,
+    );
     let ai = engine.observation_ai_mut(owner);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingCharlyGoToOfficer;

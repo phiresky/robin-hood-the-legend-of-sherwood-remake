@@ -279,19 +279,12 @@ pub struct Patch {
     pub apply_sector_index: Option<u32>,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
-pub(crate) struct PersistedPatch(Patch);
-
-impl PersistedPatch {
-    pub(crate) fn capture(value: &Patch) -> Self {
+impl Patch {
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let value = self;
         let mut snapshot = value.clone();
         snapshot.display_doors = false;
-        Self(snapshot)
-    }
-
-    pub(crate) fn into_runtime(self) -> Patch {
-        self.0
+        snapshot
     }
 }
 

@@ -24,19 +24,9 @@ pub(crate) struct AiRuntime {
     pub(crate) view_radius_cache: crate::ai_vision::ViewRadiusCache,
 }
 
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedAiRuntime {
-    global: AiGlobalState,
-
-    standard_view_polygon_radius: u16,
-
-    view_radius_cache: crate::ai_vision::ViewRadiusCache,
-}
-
-impl PersistedAiRuntime {
-    pub(crate) fn capture(value: &AiRuntime) -> Self {
+impl AiRuntime {
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let value = self;
         use crate::ai::persisted::PersistedProjection;
         let AiRuntime {
             think_call_stack: _,
@@ -45,18 +35,10 @@ impl PersistedAiRuntime {
             view_radius_cache: _,
         } = value;
         Self {
+            think_call_stack: Vec::new(),
             global: value.global.persisted_clone(),
             standard_view_polygon_radius: value.standard_view_polygon_radius,
             view_radius_cache: value.view_radius_cache.clone(),
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> AiRuntime {
-        AiRuntime {
-            think_call_stack: Vec::new(),
-            global: self.global,
-            standard_view_polygon_radius: self.standard_view_polygon_radius,
-            view_radius_cache: self.view_radius_cache,
         }
     }
 }

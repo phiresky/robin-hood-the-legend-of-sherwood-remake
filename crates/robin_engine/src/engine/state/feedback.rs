@@ -28,23 +28,9 @@ pub(crate) struct FeedbackRuntime {
     pub(crate) pending_side_effects: SideEffects,
 }
 
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedFeedbackRuntime {
-    sound_sim: SoundSimState,
-
-    ground_mark: GroundMark,
-
-    titbit_manager: TitbitManager,
-
-    cutscene_camera: CameraState,
-
-    pending_side_effects: SideEffects,
-}
-
-impl PersistedFeedbackRuntime {
-    pub(crate) fn capture(value: &FeedbackRuntime) -> Self {
+impl FeedbackRuntime {
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let value = self;
         let FeedbackRuntime {
             sound_sim: _,
             ground_mark: _,
@@ -58,16 +44,6 @@ impl PersistedFeedbackRuntime {
             titbit_manager: value.titbit_manager.clone(),
             cutscene_camera: value.cutscene_camera.clone(),
             pending_side_effects: value.pending_side_effects.persisted_clone(),
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> FeedbackRuntime {
-        FeedbackRuntime {
-            sound_sim: self.sound_sim,
-            ground_mark: self.ground_mark,
-            titbit_manager: self.titbit_manager,
-            cutscene_camera: self.cutscene_camera,
-            pending_side_effects: self.pending_side_effects,
         }
     }
 }

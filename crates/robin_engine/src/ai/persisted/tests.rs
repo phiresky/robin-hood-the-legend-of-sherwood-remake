@@ -1,7 +1,6 @@
 use super::*;
 use robin_util::state_hash::compute;
-mod field_guards;
-mod goldens;
+mod round_trips;
 // Persistence must preserve current gameplay state while reconstructing transient
 // execution state. Check JSON, native encoding, and state hashes together.
 macro_rules! assert_projection_matches_wire {
@@ -242,26 +241,11 @@ fn enemy_ai_scalar_projection_matrix() {
             enemy_seen_below: seed & (1 << 3) != 0,
             enemy_had_this_elevation: (65u32 + seed) as u16,
             fleeing_seen_enemy_counter: (70u32 + seed) as u16,
-            character_id: (72u32 + seed),
             old_life_points: (73u32 + seed) as u8,
             initial_life_points: (74u32 + seed) as u8,
             ambush_point_array_reset: seed & (1 << 3) != 0,
             reset_battle_decision: seed & (1 << 2) != 0,
-            soldier_profile_iq: (80u32 + seed) as u16,
-            soldier_profile_courage: (81u32 + seed) as u16,
-            soldier_profile_shooting: (82u32 + seed) as u16,
-            soldier_profile_vip: seed & (1 << 2) != 0,
-            soldier_profile_bee_time: (84u32 + seed) as u16,
-            soldier_profile_pride: (85u32 + seed) as u16,
-            soldier_profile_hearing_factor: (86u32 + seed) as f32 / 7.0,
-            soldier_profile_initiative: (88u32 + seed) as u16,
-            soldier_profile_beer: (89u32 + seed) as u16,
-            ale_reliable_distraction: seed & (1 << 1) != 0,
-            soldier_profile_money: (91u32 + seed) as u16,
-            soldier_profile_apple: (92u32 + seed) as u16,
-            soldier_profile_whistle: (93u32 + seed) as u16,
-            soldier_profile_duty: seed & (1 << 1) != 0,
-            soldier_profile_endurance: (95u32 + seed) as u16,
+            behavior_profile: crate::profiles::SoldierProfileIdx(80 + seed),
             is_vip: seed & (1 << 3) != 0,
             sword_range: (97u32 + seed) as u16,
             hth_weapon_id: (98u32 + seed),

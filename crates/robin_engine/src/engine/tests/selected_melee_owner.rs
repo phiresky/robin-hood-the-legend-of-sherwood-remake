@@ -267,7 +267,7 @@ fn frozen_all_bound_melee_animation_leaves_sprite_strike_and_order_untouched() {
         rng_trace.is_empty(),
         "FrozenAll must not run strike-start warning RNG: {rng_trace:?}"
     );
-    assert!(entity.actor_data().unwrap().sweep_state.is_none());
+    assert!(entity.human_data().unwrap().sword_sweep.victims.is_empty());
     assert_eq!(
         entity.element_data().sprite.current_frame,
         before_sprite.current_frame

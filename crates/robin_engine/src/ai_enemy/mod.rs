@@ -243,10 +243,6 @@ pub struct EnemyAi {
 
     pub last_stimulus_dispatched_to_patrol: Option<Stimulus>,
 
-    // -- Protected fields --
-    /// Character ID cached from the soldier profile at level load.
-    pub character_id: u32,
-
     pub old_life_points: u8,
     pub initial_life_points: u8,
 
@@ -259,50 +255,8 @@ pub struct EnemyAi {
     pub forced_next_battle_decision: Decision,
     pub reset_battle_decision: bool,
 
-    // Cached scalars from `SoldierProfile` — denormalised at level
-    // load so AI ticks never touch the profile table during mutable
-    // entity iteration.  If you add a new field here, populate it
-    // from `engine::level_loading::init_enemy_ai_from_profile`.
-    pub soldier_profile_iq: u16,
-    pub soldier_profile_courage: u16,
-    /// Cached shooting skill — used by
-    /// [`Self::get_shooting_ability`] (the `AIMING_TIME_FORMULA`
-    /// driver).  Pulled from the soldier profile at level load.
-    pub soldier_profile_shooting: u16,
-    /// Cached VIP flag from soldier profile — VIP soldiers can only attack Robin.
-    pub soldier_profile_vip: bool,
-    pub soldier_profile_bee_time: u16,
-    /// Cached pride value from soldier profile — determines whether
-    /// this NPC considers themselves "too proud to attack" when
-    /// soldiers with lower pride are nearby.
-    pub soldier_profile_pride: u16,
-    /// Cached hearing factor from soldier profile — multiplier for
-    /// noise volume when checking acoustic detection.
-    pub soldier_profile_hearing_factor: f32,
-    pub soldier_profile_rank: ProfileRank,
-    /// Cached initiative — used by
-    /// `Q_SHALL_I_SEEK_BEFORE_ALERTING_*` and `Q_SHALL_I_SEND_OUT_SOLDIER`.
-    pub soldier_profile_initiative: u16,
-    /// Cached beer count — used by `Q_SHALL_I_TAKE_ALE`.
-    pub soldier_profile_beer: u16,
-    /// Cached eligibility for the optional zero-beer reliability rule. This
-    /// is true only for a non-VIP soldier while the authoritative setting is
-    /// enabled, so live menu commands affect spawned AI on the same frame.
-    #[serde(default)]
-    pub ale_reliable_distraction: bool,
-    /// Cached money count — used by `Q_SHALL_I_TAKE_MONEY`
-    /// and `Q_SHALL_I_FIGHT_FOR_MONEY`.
-    pub soldier_profile_money: u16,
-    /// Cached apple count — used by `Q_SHALL_I_REACT_ON_APPLE`.
-    pub soldier_profile_apple: u16,
-    /// Cached whistle count — used by `Q_SHALL_I_LOOK_WHISTLE`
-    /// and `Q_SHALL_I_FOLLOW_WHISTLE`.
-    pub soldier_profile_whistle: u16,
-    /// Cached duty flag — used by several questions to prevent on-duty
-    /// soldiers from wandering after stimuli.
-    pub soldier_profile_duty: bool,
-    /// Cached endurance — used by `Q_SHALL_I_RUN`.
-    pub soldier_profile_endurance: u16,
+    /// Immutable decision personality, independent of the physical actor profile.
+    pub behavior_profile: crate::profiles::SoldierProfileIdx,
     /// Whether this soldier is a VIP (mission-critical NPC). Cached
     /// from the soldier profile at level load.
     pub is_vip: bool,
@@ -377,12 +331,7 @@ impl EnemyAi {
             thirsty: true,
             previous_state: crate::ai::StoredEnumWord::new(AiState::Default),
             previous_substate: crate::ai::StoredEnumWord::new(Substate::DefaultOnPost),
-            soldier_profile_iq: 50,
-            soldier_profile_courage: 50,
-            soldier_profile_shooting: 50,
             sword_range: 40, // default before profile lookup
-            soldier_profile_hearing_factor: 1.0,
-            soldier_profile_initiative: 50,
             ..Default::default()
         }
     }
@@ -393,6 +342,7 @@ impl EnemyAi {
 
     pub(crate) fn iq_for_difficulty(
         &self,
+        profiles: &crate::profiles::ProfileManager,
         difficulty: crate::player_profile::DifficultyLevel,
         hostile_to_player: bool,
     ) -> u16 {
@@ -400,17 +350,33 @@ impl EnemyAi {
         // is Lacklandists; Royalist soldiers (also EnemyAi-driven)
         // get the raw intelligence.
         if !hostile_to_player {
-            return self.soldier_profile_iq;
+            return self.profile(profiles).intelligence;
         }
-        difficulty.rules().enemy_iq(self.soldier_profile_iq, 100)
+        difficulty
+            .rules()
+            .enemy_iq(self.profile(profiles).intelligence, 100)
     }
 
-    pub fn get_courage(&self) -> u16 {
-        self.soldier_profile_courage
+    pub fn profile<'a>(
+        &self,
+        profiles: &'a crate::profiles::ProfileManager,
+    ) -> &'a crate::profiles::SoldierProfile {
+        profiles
+            .get_soldier(self.behavior_profile)
+            .unwrap_or_else(|| {
+                panic!(
+                    "enemy AI {} requires behavior profile {:?}",
+                    self.base.me, self.behavior_profile
+                )
+            })
     }
 
-    pub fn get_rank(&self) -> ProfileRank {
-        self.soldier_profile_rank
+    pub fn get_courage(&self, profiles: &crate::profiles::ProfileManager) -> u16 {
+        self.profile(profiles).courage
+    }
+
+    pub fn get_rank(&self, profiles: &crate::profiles::ProfileManager) -> ProfileRank {
+        self.profile(profiles).rank
     }
 
     pub fn is_archer(&self) -> bool {

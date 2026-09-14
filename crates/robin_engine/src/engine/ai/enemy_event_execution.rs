@@ -132,7 +132,7 @@ impl EngineInner {
             }
             StimulusType::CallCombatAlert => {
                 assert_eq!(
-                    self.observation_ai(owner).get_rank(),
+                    self.observation_ai(owner).get_rank(&assets.profile_manager),
                     crate::profiles::ProfileRank::Soldier
                 );
                 if matches!(

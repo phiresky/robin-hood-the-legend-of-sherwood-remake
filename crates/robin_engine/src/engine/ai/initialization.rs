@@ -845,7 +845,7 @@ impl EngineInner {
             _ => None,
         };
         if posture.is_none() || action == Some(OrderType::Sitting) {
-            let bored = self.ai_bored_time(sim, owner);
+            let bored = self.ai_bored_time(sim, assets, owner);
             let frame = self.control.frame_counter;
             let ai = self
                 .world

@@ -1239,7 +1239,7 @@ impl EngineInner {
         let ideal = crate::ai::AiController::value_between(
             crate::parameters_ai::OBSERVE_SWORDFIGHT_MAX_DISTANCE,
             crate::parameters_ai::OBSERVE_SWORDFIGHT_MIN_DISTANCE,
-            ai.get_courage() as u8,
+            ai.get_courage(&assets.profile_manager) as u8,
         );
         let aspect = crate::position_interface::ASPECT_RATIO;
         let mut distance = (me.map_point() - reference.map_point()).iso_norm(aspect) as u16;

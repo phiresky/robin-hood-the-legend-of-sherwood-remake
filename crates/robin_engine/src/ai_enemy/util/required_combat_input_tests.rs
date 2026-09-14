@@ -24,7 +24,7 @@ use crate::engine::EngineInner;
 
 // The kernel adapter borrows actual actors; there is no copied combat roster.
 #[derive(Clone, Copy)]
-struct Fighters<'a>(&'a EngineInner);
+struct Fighters<'a>(&'a EngineInner, &'a crate::profiles::ProfileManager);
 impl<'a> Fighters<'a> {
     fn actor(self, handle: u32) -> &'a Entity {
         self.0
@@ -62,7 +62,7 @@ impl CombatFighterAccess for Fighters<'_> {
         0
     }
     fn rank(self, handle: u32) -> ProfileRank {
-        self.actor(handle).enemy_ai().unwrap().get_rank()
+        self.actor(handle).enemy_ai().unwrap().get_rank(self.1)
     }
     fn is_pc(self, handle: u32) -> bool {
         matches!(self.actor(handle), Entity::Pc(_))
@@ -81,7 +81,7 @@ fn fighters(last: u32) -> EngineInner {
         let ai = engine.get_entity_mut(id).unwrap().enemy_ai_mut().unwrap();
         ai.hth_weapon_id = 1;
         ai.sword_range = 100;
-        ai.soldier_profile_rank = ProfileRank::Knight;
+        ai.behavior_profile = crate::profiles::SoldierProfileIdx(0);
     }
     engine
 }
@@ -125,47 +125,55 @@ fn profiles() -> crate::profiles::ProfileManager {
     };
     let mut profiles = crate::profiles::ProfileManager::new();
     profiles.hth_weapons.push(weapon);
+    profiles.soldiers.push(crate::profiles::SoldierProfile {
+        rank: ProfileRank::Knight,
+        ..Default::default()
+    });
     profiles
 }
 #[test]
 #[should_panic(expected = "missing kernel fighter 2")]
 fn damage_evaluation_rejects_a_missing_selected_target() {
+    let profiles = profiles();
     let engine = fighters(1);
     estimate_damage(
         1,
         &mut combat_position(),
-        Fighters(&engine),
-        &profiles(),
+        Fighters(&engine, &profiles),
+        &profiles,
         50,
     );
 }
 #[test]
 #[should_panic(expected = "fighter 1 requires missing HtH weapon profile 1")]
 fn damage_evaluation_rejects_a_missing_required_weapon() {
+    let profiles = crate::profiles::ProfileManager::new();
     let engine = fighters(2);
     estimate_damage(
         1,
         &mut combat_position(),
-        Fighters(&engine),
-        &crate::profiles::ProfileManager::new(),
+        Fighters(&engine, &profiles),
+        &profiles,
         50,
     );
 }
 #[test]
 #[should_panic(expected = "fighter 1 requires missing HtH weapon profile 1")]
 fn damage_evaluation_resolves_distant_live_combatants() {
+    let profiles = crate::profiles::ProfileManager::new();
     let mut engine = fighters(2);
     place(&mut engine, 1, 10000.0, 10000.0, 0.0, 0);
     estimate_damage(
         1,
         &mut combat_position(),
-        Fighters(&engine),
-        &crate::profiles::ProfileManager::new(),
+        Fighters(&engine, &profiles),
+        &profiles,
         50,
     );
 }
 #[test]
 fn damage_evaluation_reuses_the_combat_position_cache() {
+    let profiles = crate::profiles::ProfileManager::new();
     let engine = EngineInner::new();
     let mut position = combat_position();
     position.estimated_damage = 123;
@@ -173,8 +181,8 @@ fn damage_evaluation_reuses_the_combat_position_cache() {
         estimate_damage(
             1,
             &mut position,
-            Fighters(&engine),
-            &crate::profiles::ProfileManager::new(),
+            Fighters(&engine, &profiles),
+            &profiles,
             50
         ),
         123
@@ -182,28 +190,37 @@ fn damage_evaluation_reuses_the_combat_position_cache() {
 }
 #[test]
 fn damage_protection_uses_live_target_facing_not_proposed_facing() {
+    let profiles = profiles();
     let mut engine = fighters(2);
     place(&mut engine, 1, 0.0, -10.0, 0.0, 0);
     place(&mut engine, 2, 0.0, 0.0, 0.0, 0);
     let mut position = combat_position();
     position.target_direction = 4;
     assert_eq!(
-        estimate_damage(1, &mut position, Fighters(&engine), &profiles(), 0),
+        estimate_damage(1, &mut position, Fighters(&engine, &profiles), &profiles, 0),
         10
     );
 }
 #[test]
 fn damage_protection_sector_uses_live_ground_y() {
+    let profiles = profiles();
     let mut engine = fighters(2);
     place(&mut engine, 1, 155.0, 104.0, 0.0, 0);
     place(&mut engine, 2, 0.0, 0.0, 150.0, 6);
     assert_eq!(
-        estimate_damage(1, &mut combat_position(), Fighters(&engine), &profiles(), 0),
+        estimate_damage(
+            1,
+            &mut combat_position(),
+            Fighters(&engine, &profiles),
+            &profiles,
+            0
+        ),
         1
     );
 }
 #[test]
 fn combat_position_score_truncates_distance_before_fractional_penalty() {
+    let profiles = crate::profiles::ProfileManager::new();
     let engine = EngineInner::new();
     let mut position = CombatPosition {
         attacker_position: Position {
@@ -221,8 +238,8 @@ fn combat_position_score_truncates_distance_before_fractional_penalty() {
             &mut position,
             &mut [],
             &mut [],
-            Fighters(&engine),
-            &crate::profiles::ProfileManager::new(),
+            Fighters(&engine, &profiles),
+            &profiles,
             50
         ),
         -7

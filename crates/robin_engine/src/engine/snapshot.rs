@@ -36,27 +36,27 @@ struct FlatEngineSnapshot {
 }
 
 /// Owned persisted mission state, deliberately distinct from a raw rollback
-/// clone. Every nested projection explicitly owns its surviving fields and
-/// reconstructs its process-local state without executing a serialization codec.
+/// clone. Canonical domains selectively copy surviving state and reconstruct
+/// process-local resources without executing a serialization codec.
 /// Its serde representation is the existing nine-domain engine save layout.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename = "EngineInner")]
 pub struct PersistedEngineState {
     mission_domain: MissionDomain,
-    control: super::state::PersistedSimulationControl,
-    ai: super::state::PersistedAiRuntime,
-    world: super::state::PersistedWorldState,
-    script_domains: super::state::PersistedScriptDomains,
-    orders: super::state::PersistedOrderRuntime,
-    scripts: super::state::PersistedScriptRuntime,
-    players: super::state::PersistedPlayerRuntime,
-    feedback: super::state::PersistedFeedbackRuntime,
+    control: SimulationControl,
+    ai: AiRuntime,
+    world: WorldState,
+    script_domains: ScriptDomains,
+    orders: OrderRuntime,
+    scripts: ScriptRuntime,
+    players: PlayerRuntime,
+    feedback: FeedbackRuntime,
 }
 
 impl PersistedEngineState {
     /// Serialize borrowed domains, avoiding an additional full-world copy for
-    /// ordinary disk writes and diagnostic serialization. Each runtime owner
-    /// delegates its surviving fields to its explicit persistence adapter.
+    /// ordinary disk writes and diagnostic serialization. Runtime owners
+    /// serialize their surviving fields directly.
     fn serialize_runtime<S: Serializer>(
         inner: &EngineInner,
         serializer: S,
@@ -86,7 +86,6 @@ impl PersistedEngineState {
     }
 
     pub(super) fn capture(inner: &EngineInner) -> Result<Self, String> {
-        use super::state::*;
         let EngineInner {
             mission_domain,
             control,
@@ -102,14 +101,14 @@ impl PersistedEngineState {
         scripts.spellforge.validate_snapshot()?;
         let persisted = Self {
             mission_domain: mission_domain.clone(),
-            control: PersistedSimulationControl::capture(control)?,
-            ai: PersistedAiRuntime::capture(ai),
-            world: PersistedWorldState::capture(world),
-            script_domains: PersistedScriptDomains::capture(script_domains),
-            orders: PersistedOrderRuntime::capture(orders),
-            scripts: PersistedScriptRuntime::capture(scripts)?,
-            players: PersistedPlayerRuntime::capture(players),
-            feedback: PersistedFeedbackRuntime::capture(feedback),
+            control: control.persisted_clone()?,
+            ai: ai.persisted_clone(),
+            world: world.persisted_clone(),
+            script_domains: script_domains.persisted_clone(),
+            orders: orders.persisted_clone(),
+            scripts: scripts.persisted_clone()?,
+            players: players.persisted_clone(),
+            feedback: feedback.persisted_clone(),
         };
         robin_util::persistence_validation::validate(&persisted)
             .map_err(|error| error.to_string())?;
@@ -119,14 +118,14 @@ impl PersistedEngineState {
     pub(super) fn into_engine_inner(self) -> EngineInner {
         EngineInner {
             mission_domain: self.mission_domain,
-            control: self.control.into_runtime(),
-            ai: self.ai.into_runtime(),
-            world: self.world.into_runtime(),
-            script_domains: self.script_domains.into_runtime(),
-            orders: self.orders.into_runtime(),
-            scripts: self.scripts.into_runtime(),
-            players: self.players.into_runtime(),
-            feedback: self.feedback.into_runtime(),
+            control: self.control,
+            ai: self.ai,
+            world: self.world,
+            script_domains: self.script_domains,
+            orders: self.orders,
+            scripts: self.scripts,
+            players: self.players,
+            feedback: self.feedback,
         }
     }
 }

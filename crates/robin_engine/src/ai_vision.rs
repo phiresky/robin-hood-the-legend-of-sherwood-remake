@@ -2993,8 +2993,7 @@ mod tests {
     fn officer_bored_random_event_sets_right_look() {
         // Only officers trigger the right-look during
         // WaitingUprightBoredRandom.  This is plumbed via
-        // `apply_npc_execute_side_effects` on the motion-start edge,
-        // which inspects `enemy_ai.soldier_profile_rank == Officer`.
+        // the motion-start edge, which reads the officer's behavior profile.
         // `refresh_view` itself no longer knows about rank — so here
         // we just confirm that once the look-right status has been
         // set (by the animation dispatcher), `refresh_view`

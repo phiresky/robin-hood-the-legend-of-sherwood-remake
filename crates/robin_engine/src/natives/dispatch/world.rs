@@ -39,49 +39,21 @@ impl NativeContext<'_, '_> {
                 let h = stack.pop_i32();
                 self.get_patch(h).map_or(0, |p| i32::from(p.is_applied()))
             }
-            ApplyPatch => {
+            ApplyPatch | ResetPatch => {
                 let h = stack.pop_i32();
-                if let Some(patch_index) = Self::patch_index(h)
-                    && let Some(patch) = self
+                if let Some(index) = Self::patch_index(h)
+                    && self
                         .script_domains
                         .interactables
                         .patches
-                        .get_mut(patch_index)
+                        .get(index)
+                        .is_some()
                 {
-                    let effects = patch.apply();
-                    if !effects.is_empty()
-                        && let Some(patch_index) = crate::patch::PatchIndex::new(patch_index as u32)
-                    {
-                        self.script_effects_mut().emit_barrier(
-                            DeferredCommand::ProcessPatchEffects {
-                                patch_index,
-                                effects,
-                            },
-                        );
-                    }
-                }
-                1
-            }
-            ResetPatch => {
-                let h = stack.pop_i32();
-                if let Some(patch_index) = Self::patch_index(h)
-                    && let Some(patch) = self
-                        .script_domains
-                        .interactables
-                        .patches
-                        .get_mut(patch_index)
-                {
-                    let effects = patch.force_reset();
-                    if !effects.is_empty()
-                        && let Some(patch_index) = crate::patch::PatchIndex::new(patch_index as u32)
-                    {
-                        self.script_effects_mut().emit_barrier(
-                            DeferredCommand::ProcessPatchEffects {
-                                patch_index,
-                                effects,
-                            },
-                        );
-                    }
+                    self.yield_world_command(WorldNativeCommand::ApplyPatch {
+                        patch_index: crate::patch::PatchIndex::new(index as u32)
+                            .expect("validated patch index"),
+                        reset: native == ResetPatch,
+                    });
                 }
                 1
             }
@@ -171,39 +143,28 @@ impl NativeContext<'_, '_> {
 
             // --- sound ---
             SuspendAllSoundSources => {
-                self.script_effects_mut()
-                    .emit_sound(SoundCommand::SuspendAll);
+                self.yield_sound_command(SoundCommand::SuspendAll);
                 1
             }
             ResumeAllSoundSources => {
-                self.script_effects_mut()
-                    .emit_sound(SoundCommand::ResumeAll);
+                self.yield_sound_command(SoundCommand::ResumeAll);
                 1
             }
             ActivateSoundSource => {
                 let ss_h = stack.pop_i32();
                 if ss_h != 0 {
-                    self.script_effects_mut()
-                        .emit_sound(SoundCommand::Activate(ss_h));
+                    self.yield_sound_command(SoundCommand::Activate(ss_h));
                 }
                 1
             }
             DeactivateSoundSource => {
                 let ss_h = stack.pop_i32();
-                self.script_effects_mut()
-                    .emit_sound(SoundCommand::Deactivate(ss_h));
+                self.yield_sound_command(SoundCommand::Deactivate(ss_h));
                 1
             }
             DestroySoundSource => {
                 let ss_h = stack.pop_i32();
-                if let Some(index) = Self::sound_source_index(ss_h) {
-                    self.sound_sources
-                        .as_mut()
-                        .expect("DestroySoundSource requires live sound-source state")
-                        .delete(index);
-                }
-                self.script_effects_mut()
-                    .emit_sound(SoundCommand::Destroy(ss_h));
+                self.yield_sound_command(SoundCommand::Destroy(ss_h));
                 1
             }
 
@@ -296,11 +257,10 @@ impl NativeContext<'_, '_> {
                 // EngineInner applies positioning (inactive + special layer +
                 // building sector + gate point_in + DisableAllActionsTemp
                 // for PCs) after the script step.
-                self.script_effects_mut()
-                    .emit_barrier(DeferredCommand::PutActorInBuilding {
-                        actor: actor_h,
-                        building: bld_h,
-                    });
+                self.yield_world_command(WorldNativeCommand::PutActorInBuilding {
+                    actor: actor_h,
+                    building: bld_h,
+                });
                 0
             }
             SetBuildingActive => {
@@ -549,12 +509,10 @@ impl NativeContext<'_, '_> {
                     script_error!(native, "status {status} out of range (must be 0..=3)");
                     return 0;
                 }
-                self.script_domains.scrolls.status.insert(scroll_h, status);
-                self.script_effects_mut()
-                    .emit_engine(EngineCommand::SetScrollStatus {
-                        scroll_handle: scroll_h,
-                        status,
-                    });
+                self.yield_engine_command(EngineCommand::SetScrollStatus {
+                    scroll_handle: scroll_h,
+                    status,
+                });
                 0
             }
             AttachScrollToNPC => {

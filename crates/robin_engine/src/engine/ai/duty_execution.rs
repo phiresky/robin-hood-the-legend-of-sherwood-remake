@@ -163,7 +163,10 @@ impl DutyExecution<'_> {
             && !flags.contains(DutyFlags::BECAUSE_COULDNT_REACHPOINT)
         {
             self.enemy_mut().seek_flags = SeekFlags::empty();
-            debug_assert_eq!(self.enemy().get_rank(), ProfileRank::Soldier);
+            debug_assert_eq!(
+                self.enemy().get_rank(&self.assets.profile_manager),
+                ProfileRank::Soldier
+            );
             if self.alert_officer_after_search() {
                 return;
             }
@@ -212,7 +215,7 @@ impl DutyExecution<'_> {
                         .engine
                         .entity_building_sector(owner.element_data().sector())
                         .is_none()
-                    && self.enemy().soldier_profile_money > 0);
+                    && self.enemy().profile(&self.assets.profile_manager).money > 0);
             if takes_money
                 && !flags.contains(DutyFlags::BECAUSE_COULDNT_REACHPOINT)
                 && self
@@ -394,7 +397,7 @@ impl DutyExecution<'_> {
             let ai = entity
                 .enemy_ai()
                 .expect("officer registry soldier has no Enemy AI");
-            match ai.get_rank() {
+            match ai.get_rank(&self.assets.profile_manager) {
                 ProfileRank::Officer
                     if matches!(entity, Entity::Soldier(soldier) if soldier.is_able_to_fight())
                         && ai.base.current_state == AiState::Default

@@ -359,128 +359,6 @@ pub(super) fn soldier_is_attentive(entity: &Entity) -> bool {
     attentive_flag && not_sword
 }
 
-/// Side effects that need to touch entities other than the
-/// soldier itself — returned by
-/// [`apply_soldier_execute_side_effects`] so the caller (which has
-/// `&mut self` on the engine) can apply them.  Covers cross-entity
-/// mutations the per-anim handlers need (deactivating the antagonist
-/// bottle on DRINKING_ALE, removing a picked-up object on TAKING,
-/// etc.).
-#[derive(Debug, Clone, Default)]
-pub(super) struct ExecuteSideOutcomes {
-    /// Dead/DeadBack humans whose idle START requested Upright. Original's
-    /// base posture setter rejects the write, but the human override
-    /// still fires the lying-to-nonlying corpse callback from the requested
-    /// posture.
-    pub rejected_dead_idle_posture_requests: Vec<EntityId>,
-    /// Soldiers executing WAITING_UPRIGHT. Original's
-    /// Soldier action arm
-    /// launches ENTER_ATTENTIVE_MODE when the requested attentive state is
-    /// true unless an equivalent element is already waiting to launch.
-    pub waiting_upright: Vec<EntityId>,
-    /// Soldiers executing WAITING_ALERTED. Original's
-    /// Soldier action arm
-    /// performs two corrections there, in this order: it launches
-    /// LEAVE_ATTENTIVE_MODE when the requested attentive state is false
-    /// (unless an equivalent element is already waiting in the
-    /// sequence-manager launch queue), and it leaves swordfight when
-    /// the soldier is still swordfighting despite playing a non-sword
-    /// animation.
-    pub waiting_alerted: Vec<EntityId>,
-    /// PCs whose DROPPING_ALE animation reached DONE. Original creates the
-    /// bottle and consumes one ale at this action point, before the order's
-    /// later TERMINATED edge advances the sequence.
-    pub drop_ale_done: Vec<EntityId>,
-    /// Antagonist IDs whose `is_active` should be cleared (bottle hide
-    /// on DRINKING_ALE DONE).
-    pub deactivate_entities: Vec<EntityId>,
-    /// `(taker, object)` pairs: the `taker` picks up `object` (purse
-    /// or coin); the `object` is removed from the world and the
-    /// `taker`'s money grows by the object's value.  Fired on
-    /// TAKING DONE.
-    pub pickups: Vec<(EntityId, EntityId)>,
-    /// Per-owner-slot tail of the net-taking animation. `action_done` marks
-    /// the first DONE edge; `order_was_done` keeps the eight-tick pull/removal
-    /// lifecycle running on the animation tail after that edge.
-    pub taking_net_ticks: Vec<TakingNetTick>,
-    /// Soldiers that should gain `blood_alcohol += profile.beer` on
-    /// DRINKING_ALE TERMINATED.
-    pub drink_done: Vec<(EntityId, Option<EntityId>)>,
-    /// Entities that should say the wasp-sting remark on
-    /// GETTING_FREE_FROM_WASP initialisation.
-    pub wasp_sting_remark: Vec<EntityId>,
-    /// Entities that should fire the special-action remark
-    /// (SPECIAL at start-of-anim).
-    pub special_remark: Vec<EntityId>,
-    /// Humans whose weak/stunned sword animation just initialized, paired
-    /// with the exact wrapper type. Both add the weak-stunned titbit and
-    /// notify soldier opponents; only `BeingWeakSword` transfers initiative.
-    /// Weak/stunned initialization callbacks run before action processing in
-    /// Original. Retain the actor action state from that pre-sprite boundary
-    /// so nested adversary AI sees the same target state even though Rust
-    /// drains the cross-entity callback after releasing the animation borrow.
-    pub weak_stunned_start: Vec<(EntityId, OrderType, ActionState)>,
-    /// `(thief, victim)` — NPC-on-NPC pickpocket transfer on
-    /// SEARCHING DONE: thief gains the victim's money and the victim
-    /// is zeroed out.
-    pub pickpockets: Vec<(EntityId, EntityId)>,
-    /// `(pc, target, activation_cmd)` — PC target interaction animation
-    /// reached DONE, so launch the target-side activation sequence.
-    /// Covers USING_LEVER / HITTING_TARGET / HANDLING_TARGET /
-    /// TAKING_TARGET / SEARCHING.
-    pub pc_target_activations: Vec<(EntityId, EntityId, Command)>,
-    /// Entities that rolled the LYING_STUCK_UNDER_NET 1/31
-    /// cycle-flip this tick and are NPCs.  Each fires
-    /// `Say(REMARK_UNDER_NET)` or `Say(CIV_REMARK_UNDER_NET)`
-    /// depending on Soldier vs Civilian, plus a `HEEELP` noise at
-    /// the entity's position (volume 200).
-    pub cry_for_help_under_net: Vec<EntityId>,
-    /// `(attacker, antagonist, strike)` triples whose smalltalk sword strike
-    /// reached its action-done tag. A back-hit against a swordfighting
-    /// antagonist launches real sword damage; a harmless mutually-engaged
-    /// swipe only plays its FX.
-    pub smalltalk_strikes: Vec<(EntityId, EntityId, crate::weapons::SwordStrike)>,
-    /// `(victim, killer)` pairs launched when STRIKING_DOWN_SWORD
-    /// reaches its action-done tag.
-    pub killed_at_bottom: Vec<(EntityId, EntityId)>,
-    /// `(rescuer, target)` pairs fired when WAKING_UP reaches DONE.
-    /// The target receives the original game's wake-up side effect in the
-    /// post-animation drain where the engine can mutate another human.
-    pub waking_up_done: Vec<(EntityId, EntityId)>,
-    /// PCs leaving cape/tree disguise remove their Hidden titbit when
-    /// the transition reaches DONE.
-    pub hidden_titbit_removals: Vec<EntityId>,
-    /// PC beggar transitions whose DONE edge toggles nearby ground-coin
-    /// eligibility. `true` enters the disguise; `false` leaves it.
-    pub beggar_coin_flags: Vec<(EntityId, bool)>,
-    /// PCs whose beggar transition reached DONE. Both Original transition
-    /// arms call `Wait()` synchronously before returning that DONE result;
-    /// `true` distinguishes entry's following SelectAction(Beggar) message.
-    pub beggar_wait_handoffs: Vec<(EntityId, bool)>,
-    /// PCs whose crouch posture transition reached DONE or TERMINATED.
-    /// Original forwards the unparameterized stature-change notification
-    /// from both terminal switch arms.
-    pub stature_change_end: Vec<EntityId>,
-    /// Non-script PC bow-equip transitions that reached START. Original
-    /// forwards `MSG_SELECT_ACTION(BOW)` from the Human Execute arm after
-    /// entering the aiming state, restoring the PC's remembered action (and
-    /// the messenger action when that PC is selected).
-    pub pc_bow_equip_action: Vec<EntityId>,
-    /// PC bow-unequip transitions that reached START, with the element's
-    /// script-driven flag. The original game's human execution arm
-    /// The unequip-bow transition start disables
-    /// the Bow action when the quiver is empty, and otherwise forwards
-    /// `MSG_UNSELECT_ACTION(BOW)` for non-script elements — clearing the
-    /// messenger-selected action and the PC's remembered action when Bow is
-    /// the currently selected UI action.
-    pub pc_bow_unequip_action: Vec<(EntityId, bool)>,
-    /// PCs whose helping-to-climb entry transition reached DONE. Original
-    /// forwards `MSG_SELECT_ACTION(HELP_TO_CLIMB)` right after setting the
-    /// stance, which reselects the already-current action and therefore
-    /// still stops a selected PC's group at Normal priority.
-    pub pc_helping_climb_action: Vec<EntityId>,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TakingNetTick {
     pub taker: EntityId,
@@ -512,20 +390,21 @@ fn forwards_pc_bow_action_on_start(
 /// DRINKING_ALE / TAKING / SPECIAL / GETTING_FREE_FROM_WASP
 /// antagonist-dependent effects.
 ///
-/// Invoked from `tick_actor_animation_for` after each `perform_action`
-/// call on an `active_ai_anim`.  Mutations that can be applied to
-/// `entity` directly are; cross-entity mutations (bottle hide,
-/// coin pickup) accumulate in the returned [`ExecuteSideOutcomes`]
-/// so the caller can process them with `&mut self` after the entity
-/// loop.
+/// Executes owner and antagonist changes before the selected animation arm returns.
 fn apply_soldier_execute_side_effects(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
     entity_id: EntityId,
-    outcomes: &mut ExecuteSideOutcomes,
 ) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     use crate::order::OrderType as OT;
     use crate::sprite::MotionState as MS;
 
@@ -707,11 +586,11 @@ fn apply_soldier_execute_side_effects(
         }
         (OT::DrinkingAle, MS::Done) => {
             if let Some(a) = antagonist {
-                outcomes.deactivate_entities.push(a);
+                engine.execute_deactivate_entities(a);
             }
         }
         (OT::DrinkingAle, MS::Terminated) => {
-            outcomes.drink_done.push((entity_id, antagonist));
+            engine.execute_drink_done(assets, (entity_id, antagonist));
         }
 
         // TAKING DONE: pick up the antagonist (Purse or Coin) and add
@@ -720,7 +599,7 @@ fn apply_soldier_execute_side_effects(
         // for `(OT::Taking, MS::Terminated)` fires before this).
         (OT::Taking, MS::Done) => {
             if let Some(a) = antagonist {
-                outcomes.pickups.push((entity_id, a));
+                engine.execute_pickups(sim, assets, (entity_id, a));
             }
         }
 
@@ -732,7 +611,7 @@ fn apply_soldier_execute_side_effects(
         // target direction is correct); here we just fire the remark
         // once the animation actually starts.
         (OT::GettingFreeFromWasp, MS::Start) => {
-            outcomes.wasp_sting_remark.push(entity_id);
+            engine.execute_wasp_sting_remark(sim, assets, entity_id);
         }
         // NB: `wasp_victim = false` is not handled here.  The reset
         // lives in `EngineInner::send_condolation_card`
@@ -765,20 +644,6 @@ fn special_remark_due_at_sprite_phase(
         } else {
             current_frame == 0
         }
-}
-
-fn special_remark_due_for_execute(
-    speech_id: u32,
-    before_perform: (u16, u16),
-    after_perform: (u16, u16),
-) -> bool {
-    const SPEECH_ID_HELBARDMAN: u32 = 0x4c484453;
-    let (current_frame, frame_count) = if speech_id == SPEECH_ID_HELBARDMAN {
-        after_perform
-    } else {
-        before_perform
-    };
-    special_remark_due_at_sprite_phase(speech_id, current_frame, frame_count)
 }
 
 /// Walk/run animation Start → flip `action_state` to the matching
@@ -852,13 +717,19 @@ pub(super) fn apply_actor_walk_start_side_effect(
 /// `apply_soldier_execute_side_effects` so soldier-specific
 /// overrides still take priority.
 pub(super) fn apply_npc_execute_side_effects(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
     entity_id: EntityId,
-    outcomes: &mut ExecuteSideOutcomes,
 ) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     use crate::order::OrderType as OT;
     use crate::sprite::MotionState as MS;
 
@@ -927,7 +798,9 @@ pub(super) fn apply_npc_execute_side_effects(
             // Officer-only: LookToTheRight on START, LookForward on DONE.
             if entity
                 .enemy_ai()
-                .map(|e| e.soldier_profile_rank == crate::profiles::ProfileRank::Officer)
+                .map(|e| {
+                    e.profile(&assets.profile_manager).rank == crate::profiles::ProfileRank::Officer
+                })
                 .unwrap_or(false)
                 && let Some(npc) = entity.npc_data_mut()
             {
@@ -937,7 +810,9 @@ pub(super) fn apply_npc_execute_side_effects(
         (OT::WaitingUprightBoredRandom, MS::Done) => {
             if entity
                 .enemy_ai()
-                .map(|e| e.soldier_profile_rank == crate::profiles::ProfileRank::Officer)
+                .map(|e| {
+                    e.profile(&assets.profile_manager).rank == crate::profiles::ProfileRank::Officer
+                })
                 .unwrap_or(false)
                 && let Some(npc) = entity.npc_data_mut()
             {
@@ -952,7 +827,7 @@ pub(super) fn apply_npc_execute_side_effects(
         (OT::Searching, MS::Done) => {
             set_states(entity, Posture::Upright, ActionState::Waiting);
             if let Some(victim) = antagonist {
-                outcomes.pickpockets.push((entity_id, victim));
+                engine.execute_pickpockets((entity_id, victim));
             }
         }
 
@@ -964,13 +839,19 @@ pub(super) fn apply_npc_execute_side_effects(
 /// visible action animation, then the target receives the activation
 /// command on motion Done.
 pub(super) fn apply_pc_target_interaction_side_effect(
-    entity: &Entity,
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
     entity_id: EntityId,
-    outcomes: &mut ExecuteSideOutcomes,
 ) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     if !matches!(entity, Entity::Pc(_)) || !matches!(motion, MotionState::Done) {
         return;
     }
@@ -984,9 +865,7 @@ pub(super) fn apply_pc_target_interaction_side_effect(
         OrderType::Searching => Command::ActivateSearch,
         _ => return,
     };
-    outcomes
-        .pc_target_activations
-        .push((entity_id, target, activation));
+    engine.execute_pc_target_activations((entity_id, target, activation));
 }
 
 /// Stage the exact post-sprite `TakingNet` tail. The original does not remove
@@ -994,38 +873,46 @@ pub(super) fn apply_pc_target_interaction_side_effect(
 /// taker's live action point for eight ticks, then removes it on the following
 /// owner slot.
 fn apply_taking_net_side_effect(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
     entity_id: EntityId,
     order_was_done: bool,
-    outcomes: &mut ExecuteSideOutcomes,
 ) {
     if anim_type == OrderType::TakingNet
         && (motion == MotionState::Done || order_was_done)
         && let Some(net) = antagonist
     {
-        outcomes.taking_net_ticks.push(TakingNetTick {
-            taker: entity_id,
-            net,
-            action_done: motion == MotionState::Done,
-            order_was_done,
-        });
+        engine.execute_taking_net_ticks(
+            sim,
+            assets,
+            TakingNetTick {
+                taker: entity_id,
+                net,
+                action_done: motion == MotionState::Done,
+                order_was_done,
+            },
+        );
     }
 }
 
 fn apply_waking_up_done_side_effect(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
     entity_id: EntityId,
-    outcomes: &mut ExecuteSideOutcomes,
 ) {
     if matches!(anim_type, OrderType::WakingUp)
         && matches!(motion, MotionState::Done)
         && let Some(target) = antagonist
     {
-        outcomes.waking_up_done.push((entity_id, target));
+        engine.execute_waking_up_done(sim, assets, (entity_id, target));
     }
 }
 
@@ -1284,7 +1171,7 @@ fn apply_active_animation_start_state_side_effect(
             // unselected PC stores NoAction, while a selected PC forwards
             // MSG_UNSELECT_ACTION(BEGGAR); the messenger can reject that
             // message when another action has already replaced Beggar.
-            // Keep the action handoff in `drain_beggar_wait_handoffs`, where
+            // Keep the action handoff in `execute_beggar_wait_handoffs`, where
             // both selection and the live messenger action are available.
             return;
         }
@@ -1400,23 +1287,27 @@ fn rejected_dead_idle_posture_callback_required(
 /// and the default ammo-bonus fallthrough).  The soldier counterpart
 /// is handled by `apply_soldier_execute_side_effects`.
 ///
-/// Pushing into `outcomes.pickups` lets the post-tick handler in
-/// `tick.rs` run `scroll_is_taken` (for scrolls) or
-/// `apply_pc_take_object` (for bonuses/projectiles) with `&mut self`.
+/// Object removal and pickup callbacks finish before this action returns.
 fn apply_pc_taking_side_effect(
-    entity: &Entity,
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
     entity_id: EntityId,
-    outcomes: &mut ExecuteSideOutcomes,
 ) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     if matches!(entity, Entity::Pc(_))
         && matches!(anim_type, OrderType::Taking | OrderType::TakingCrouched)
         && matches!(motion, MotionState::Done)
         && let Some(a) = antagonist
     {
-        outcomes.pickups.push((entity_id, a));
+        engine.execute_pickups(sim, assets, (entity_id, a));
     }
 }
 
@@ -1737,14 +1628,20 @@ fn apply_smalltalk_start_and_recovery_side_effect(
 /// sword-waiting state at Start, then launches GET_KILLED_AT_BOTTOM on the
 /// victim at the action-done tag.
 fn apply_striking_down_sword_side_effect(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
     antagonist_direction: Option<i16>,
     entity_id: EntityId,
-    outcomes: &mut ExecuteSideOutcomes,
 ) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     if anim_type != OrderType::StrikingDownSword {
         return;
     }
@@ -1771,7 +1668,7 @@ fn apply_striking_down_sword_side_effect(
                 );
                 return;
             };
-            outcomes.killed_at_bottom.push((target, entity_id));
+            engine.execute_killed_at_bottom((target, entity_id));
         }
         _ => {}
     }
@@ -2026,15 +1923,14 @@ fn apply_falling_completion_side_effect(
 /// `EXTRACTING_ARROW_SWORD`, `BEING_WEAK_SWORD`, `BEING_STUNNED_SWORD`,
 /// `STANDING_UP_SWORD`)
 /// dispatch `EventAfterCombatInjury` to the AI when they terminate so
-/// the soldier can resume the fight.  Pushes onto the caller-owned
-/// `combat_injury_terminated` list (which the post-tick loop in
-/// `tick.rs` drains with `&mut self`).
+/// the soldier can resume the fight before order advancement.
 fn apply_combat_injury_side_effect(
-    entity: &Entity,
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     anim_type: OrderType,
     motion: MotionState,
     entity_id: EntityId,
-    combat_injury_terminated: &mut Vec<EntityId>,
 ) {
     if matches!(motion, MotionState::Terminated)
         && matches!(
@@ -2045,9 +1941,14 @@ fn apply_combat_injury_side_effect(
                 | OrderType::BeingStunnedSword
                 | OrderType::StandingUpSword
         )
-        && matches!(entity, Entity::Soldier(_))
+        && engine
+            .expect_entity(entity_id, "combat injury owner")
+            .is_soldier()
     {
-        combat_injury_terminated.push(entity_id);
+        engine.dispatch_combat_injury_think_for_actor_hourglass(sim, entity_id, assets);
+        super::tick::observe_actor_animation_boundary(
+            super::tick::ActorAnimationBoundaryPhase::CombatInjuryThink(entity_id),
+        );
     }
 }
 
@@ -2126,16 +2027,22 @@ fn apply_shield_transition_side_effect(
 
 /// PC cape/tree disguise exit completion mirrors the original game's action
 /// arms: on DONE the actor becomes Upright/Waiting and the Hidden
-/// titbit is removed by the engine-side drain.
+/// titbit is removed before the transition returns.
 fn apply_pc_disguise_exit_side_effect(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     anim_type: OrderType,
     motion: MotionState,
     command: Option<Command>,
     reusable_cloaks_enabled: bool,
     entity_id: EntityId,
-    side_outcomes: &mut ExecuteSideOutcomes,
 ) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     if !entity.is_pc() || !matches!(motion, MotionState::Done) {
         return;
     }
@@ -2158,7 +2065,7 @@ fn apply_pc_disguise_exit_side_effect(
         actor.action_state = ActionState::Waiting;
     }
     if !entering_reusable_cloak {
-        side_outcomes.hidden_titbit_removals.push(entity_id);
+        engine.execute_hidden_titbit_removals(entity_id);
     }
 }
 
@@ -2420,9 +2327,8 @@ struct ArmCtx<'a> {
     is_unconscious: bool,
     seq_id: crate::sequence::SequenceId,
     elem_idx: usize,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-    next_order_id: &'a mut u32,
-    side_outcomes: &'a mut ExecuteSideOutcomes,
+    engine: &'a mut EngineInner,
+    assets: &'a LevelAssets,
 }
 
 fn dispatch_arm_completion(
@@ -2465,6 +2371,8 @@ fn dispatch_arm_completion(
         }
         if matches!(motion, MS::Terminated) {
             let is_wait_timer = ctx
+                .engine
+                .orders
                 .sequence_manager
                 .get_element(ctx.seq_id, ctx.elem_idx)
                 .map(|el| matches!(el.command, crate::element::Command::WaitTimer))
@@ -2495,12 +2403,15 @@ fn dispatch_arm_completion(
                 };
                 if let Some(next_type) = next_type
                     && let Some(elem) = ctx
+                        .engine
+                        .orders
                         .sequence_manager
                         .get_element_mut(ctx.seq_id, ctx.elem_idx)
                     && let Some(front) = elem.orders.front_mut()
                 {
                     front.order_type = next_type;
-                    front.order_id = crate::order::alloc_order_id(ctx.next_order_id);
+                    front.order_id =
+                        crate::order::alloc_order_id(&mut ctx.engine.orders.next_order_id);
                 }
             }
         }
@@ -2516,19 +2427,22 @@ fn dispatch_arm_completion(
     if matches!(anim_type, OT::LyingStuckUnderNet) {
         if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::NetWriggleGate, ..31) == 0 {
             if let Some(elem) = ctx
+                .engine
+                .orders
                 .sequence_manager
                 .get_element_mut(ctx.seq_id, ctx.elem_idx)
                 && let Some(front) = elem.orders.front_mut()
             {
                 front.order_type = OT::WriggleUnderNet;
-                front.order_id = crate::order::alloc_order_id(ctx.next_order_id);
+                front.order_id = crate::order::alloc_order_id(&mut ctx.engine.orders.next_order_id);
             }
             // Cry for help: NPCs (soldier or civilian) say
             // REMARK_UNDER_NET / CIV_REMARK_UNDER_NET and emit a
             // HEEELP noise at their position.  The remark variant is
             // picked at post-tick time based on entity subclass.
             if ctx.is_npc {
-                ctx.side_outcomes.cry_for_help_under_net.push(ctx.entity_id);
+                ctx.engine
+                    .execute_cry_for_help_under_net(sim, ctx.assets, ctx.entity_id);
             }
         }
         return ExecuteOutcome::Consumed;
@@ -2540,12 +2454,14 @@ fn dispatch_arm_completion(
     if matches!(anim_type, OT::WriggleUnderNet) {
         if matches!(motion, MS::Terminated)
             && let Some(elem) = ctx
+                .engine
+                .orders
                 .sequence_manager
                 .get_element_mut(ctx.seq_id, ctx.elem_idx)
             && let Some(front) = elem.orders.front_mut()
         {
             front.order_type = OT::LyingStuckUnderNet;
-            front.order_id = crate::order::alloc_order_id(ctx.next_order_id);
+            front.order_id = crate::order::alloc_order_id(&mut ctx.engine.orders.next_order_id);
         }
         return ExecuteOutcome::Consumed;
     }
@@ -2572,68 +2488,6 @@ fn dispatch_arm_completion(
     ExecuteOutcome::Forward(motion)
 }
 
-/// Side-effects collected by `tick_actor_animation_for` when an order's
-/// animation completes.  Matches the non-default variants of
-/// [`OrderCompletion`](crate::order::OrderCompletion), plus a generic
-/// "advance the owning element via `do_next_order`" bucket and the
-/// cross-entity effects fired via the order's antagonist
-/// (bottle-hide on DRINKING_ALE, coin pickup on TAKING, etc.).  The
-/// caller processes these post-tick because they require `&mut self`
-/// on the engine (sequence manager, door table, element removal,
-/// speech manager, etc.).
-#[derive(Debug, Clone, Default)]
-pub(super) struct AnimCompletionOutcomes {
-    /// Sequence elements whose priority must become non-interruptable as soon
-    /// as their actor's animation enters `Start`.
-    pub non_interruptable_lifts: Vec<(crate::sequence::SequenceId, usize)>,
-    /// Default path: `do_next_order` pops the just-completed front order
-    /// and advances the owning element (or terminates + ensures a wait
-    /// element when the queue is empty).
-    pub seq_advance: Vec<(crate::sequence::SequenceId, usize)>,
-    /// Wasp-last-cycle termination: terminate the element so wasp-victim
-    /// cleanup + EVENT_WASP_AWAY fire.
-    pub seq_terminate: Vec<(crate::sequence::SequenceId, usize)>,
-    /// Sequence elements whose driving animation returned `Aborted`.
-    /// The actor-update dispatch maps Aborted to `Impossible` for the
-    /// owning element.
-    pub seq_impossible: Vec<(crate::sequence::SequenceId, usize)>,
-    /// Wasp struggle-cycle refill: `(seq_id, elem_idx, cycles_remaining)`
-    /// — push a fresh `GettingFreeFromWasp` order with the decremented
-    /// counter, then advance the element (popping the just-completed
-    /// cycle).
-    pub wasp_next_cycle: Vec<(crate::sequence::SequenceId, usize, u16)>,
-    /// Doors whose lockpick animation reached `MOTION_DONE` this owner slot.
-    /// Original clears every live lock/authorization flag at the action point;
-    /// order advancement remains tied to the later `MOTION_TERMINATED` edge.
-    pub unlock_door_done: Vec<crate::gate::DoorIndex>,
-    /// Entities whose door-pass chain should continue.
-    pub resume_door_pass: Vec<EntityId>,
-    /// PC/Human SELECT action points whose hulk flash starts in this owner
-    /// slot. The stored float is the authored door-pass speed.
-    pub select_hulk: Vec<(EntityId, f32)>,
-    /// Entities whose active jump should advance to the next step.
-    pub next_jump_step: Vec<EntityId>,
-    /// The original game's custom-freeze action launches a follow-up
-    /// `PLAY_ANIM_FROZEN` sequence when the animation terminates, so
-    /// the actor holds the last frame as a separate in-progress
-    /// element.
-    pub play_anim_frozen: Vec<(EntityId, u16, OrderType)>,
-    /// PCs whose carried-corpse exit transition reached TERMINATED. Original
-    /// drops the corpse inside that exact execution branch, before the actor update
-    /// advances to the following order.
-    pub corpse_drop_done: Vec<EntityId>,
-    /// Carried PCs woken by the first Execute of their carrier's
-    /// `WaitingCarryingOnShoulders` idle. The original game makes the carried actor wait
-    /// from that initialization arm.
-    pub shoulder_carried_waits: Vec<EntityId>,
-    /// Helper-driven shoulder dismount ticks. These must drain before the
-    /// helper advances from the lowering order to its stand-up order.
-    pub shoulder_helper_dismounts: Vec<ShoulderHelperDismount>,
-    /// Soldier-style side effects that touch other entities —
-    /// accumulated from `apply_soldier_execute_side_effects`.
-    pub execute_sides: ExecuteSideOutcomes,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ShoulderHelperDismount {
     pub helper_id: EntityId,
@@ -2645,7 +2499,7 @@ pub(super) struct ShoulderHelperDismount {
 }
 
 /// The base-Actor completion control that must remain unresolved until every
-/// synchronous callback inside the derived Execute arm has drained.
+/// synchronous callback inside the derived Execute arm has returned.
 /// TERMINATED targets the owner's then-live sequence element; ABORTED retains
 /// the element snapshot taken on entry to Execute.
 #[derive(Debug, Clone)]
@@ -2656,8 +2510,7 @@ pub(super) struct ActorExecuteResult {
     pub motion: MotionState,
 }
 
-/// One already-executed order, shared by the ordered post-sprite phases.
-/// This snapshot carries no engine borrow and never dispatches callbacks itself.
+/// Selected order operands retained while its motion branches execute.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct ActorMotionPhase {
     entity_id: EntityId,
@@ -2667,335 +2520,231 @@ struct ActorMotionPhase {
 }
 
 impl ActorMotionPhase {
-    fn record_derived_effects(
+    fn execute(
         &self,
-        entity: &mut Entity,
+        engine: &mut EngineInner,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         order_is_initialising: bool,
-        special_speech_id: Option<u32>,
-        special_sprite_before_perform: Option<(u16, u16)>,
-        completion_outcomes: &mut AnimCompletionOutcomes,
+        current_element_script_driven: bool,
+        taking_net_order_was_done: bool,
+        principal_frames_from_now: Option<i16>,
+        tiredness_probe: Option<(u32, u32)>,
+        striking_down_sword_direction_goal: Option<i16>,
+        cur_command: Option<Command>,
+        reusable_cloaks_enabled: bool,
     ) {
         let Self {
             entity_id,
             anim_type,
             motion_state,
             antagonist,
-            ..
         } = *self;
-        if anim_type == OrderType::TransitionHelpingClimbingDown
-            && let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried)
-        {
-            let sprite = entity.sprite();
-            completion_outcomes
-                .shoulder_helper_dismounts
-                .push(ShoulderHelperDismount {
-                    helper_id: entity_id,
-                    carried_id,
-                    initialising: order_is_initialising,
-                    motion: motion_state,
-                    helper_frame: sprite.current_frame,
-                    helper_frame_count: sprite.frame_count,
-                });
-        }
-        if let Entity::Soldier(soldier) = entity {
-            match anim_type {
-                OrderType::WaitingUpright => {
-                    // The original game stores desired attentiveness on
-                    // the soldier actor itself. Rust's
-                    // equivalent exists only on EnemyAi, while
-                    // generic actor fixtures may deliberately
-                    // use a skeletal Soldier with AiBrain::None.
-                    // There is no requested attentive state to
-                    // reconcile for that representation.
-                    if soldier.npc.ai_brain.enemy().is_some() {
-                        completion_outcomes
-                            .execute_sides
-                            .waiting_upright
-                            .push(entity_id);
-                    }
-                }
-                OrderType::WaitingAlerted => {
-                    soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
-                        panic!("WaitingAlerted soldier {entity_id:?} has no enemy AI state")
-                    });
-                    // Both corrections in the Original's arm
-                    // are decided in the drain so they stay
-                    // ordered per-soldier as `Execute` runs them.
-                    completion_outcomes
-                        .execute_sides
-                        .waiting_alerted
-                        .push(entity_id);
-                }
-                _ => {}
+        if anim_type == OrderType::TransitionHelpingClimbingDown {
+            let dismount = engine.world.entities.get(entity_id).and_then(|entity| {
+                entity
+                    .pc_data()
+                    .and_then(|pc| pc.carried)
+                    .map(|carried_id| {
+                        let sprite = entity.sprite();
+                        ShoulderHelperDismount {
+                            helper_id: entity_id,
+                            carried_id,
+                            initialising: order_is_initialising,
+                            motion: motion_state,
+                            helper_frame: sprite.current_frame,
+                            helper_frame_count: sprite.frame_count,
+                        }
+                    })
+            });
+            if let Some(dismount) = dismount {
+                engine.apply_helper_driven_shoulder_dismount(sim, assets, dismount);
             }
         }
-        if entity.is_pc()
+        let entity = engine.expect_entity(entity_id, "animation owner");
+        let owner_is_pc = entity.is_pc();
+        if owner_is_pc
             && anim_type == OrderType::TransitionCarryingCorpseWaitingUpright
             && motion_state == MotionState::Terminated
         {
-            completion_outcomes.corpse_drop_done.push(entity_id);
-        }
-        let special_remark_now = special_speech_id
-            .zip(special_sprite_before_perform)
-            .is_some_and(|(speech_id, before_perform)| {
-                let sprite = entity.sprite();
-                special_remark_due_for_execute(
-                    speech_id,
-                    before_perform,
-                    (sprite.current_frame, sprite.frame_count),
-                )
-            });
-        if special_remark_now {
-            completion_outcomes
-                .execute_sides
-                .special_remark
-                .push(entity_id);
+            engine.execute_corpse_drop_done(assets, entity_id);
         }
         apply_soldier_execute_side_effects(
-            entity,
+            engine,
+            sim,
+            assets,
             anim_type,
             motion_state,
             antagonist,
             entity_id,
-            &mut completion_outcomes.execute_sides,
         );
         apply_npc_execute_side_effects(
-            entity,
+            engine,
+            sim,
+            assets,
             anim_type,
             motion_state,
             antagonist,
             entity_id,
-            &mut completion_outcomes.execute_sides,
         );
-    }
-
-    fn apply_start_feedback(
-        &self,
-        entity: &mut Entity,
-        current_element_script_driven: bool,
-        completion_outcomes: &mut AnimCompletionOutcomes,
-    ) {
-        let Self {
-            entity_id,
-            anim_type,
-            motion_state,
-            ..
-        } = *self;
-        // Universal walk/run Start handler — applies
-        // to all actor kinds (PC included).  Must run
-        // *before* `tick_entity_movement` on the next
-        // tick consults `is_moving()`, otherwise the
-        // actor walks-in-place.
+        let entity = engine
+            .world
+            .entities
+            .get_mut(entity_id)
+            .expect("animation owner disappeared");
         apply_actor_walk_start_side_effect(entity, anim_type, motion_state);
         super::jump::apply_jump_down_takeoff_drop(entity, anim_type, motion_state);
-        // Universal handlers (run for any actor type).
-        let rejected_dead_idle_posture_request =
+        let rejected_posture =
             rejected_dead_idle_posture_callback_required(entity, anim_type, motion_state);
         apply_active_animation_start_state_side_effect(entity, anim_type, motion_state);
-        if rejected_dead_idle_posture_request {
-            completion_outcomes
-                .execute_sides
-                .rejected_dead_idle_posture_requests
-                .push(entity_id);
-        }
-        if forwards_pc_bow_action_on_start(
+        let equip_bow = forwards_pc_bow_action_on_start(
             entity,
             anim_type,
             motion_state,
             current_element_script_driven,
-        ) {
-            completion_outcomes
-                .execute_sides
-                .pc_bow_equip_action
-                .push(entity_id);
+        );
+        if rejected_posture {
+            engine.process_rejected_nonlying_posture_request_for(entity_id);
         }
-        // Original-game bow-unequip transition start for a player character:
-        // empty quiver disables the Bow action regardless of
-        // the script flag; otherwise only non-script elements
-        // forward MSG_UNSELECT_ACTION(BOW). The ammo read
-        // needs `&mut self`, so defer the whole decision.
-        if entity.is_pc()
+        if equip_bow {
+            engine.execute_pc_bow_equip_action(sim, assets, entity_id);
+        }
+        if owner_is_pc
             && motion_state == MotionState::Start
             && matches!(
                 anim_type,
                 OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous
             )
         {
-            completion_outcomes
-                .execute_sides
-                .pc_bow_unequip_action
-                .push((entity_id, current_element_script_driven));
+            engine.execute_pc_bow_unequip_action(
+                sim,
+                assets,
+                (entity_id, current_element_script_driven),
+            );
         }
-        if entity.is_pc() && motion_state == MotionState::Done {
+        if owner_is_pc && motion_state == MotionState::Done {
+            if matches!(
+                anim_type,
+                OrderType::DroppingAle | OrderType::DroppingAleCrouched
+            ) {
+                engine.execute_drop_ale_done(assets, entity_id);
+            }
             match anim_type {
-                OrderType::TransitionWaitingUprightSimulatingBeggar => {
-                    completion_outcomes
-                        .execute_sides
-                        .beggar_coin_flags
-                        .push((entity_id, true));
-                    completion_outcomes
-                        .execute_sides
-                        .beggar_wait_handoffs
-                        .push((entity_id, true));
-                }
-                OrderType::TransitionSimulatingBeggarWaitingUpright => {
-                    completion_outcomes
-                        .execute_sides
-                        .beggar_coin_flags
-                        .push((entity_id, false));
-                    completion_outcomes
-                        .execute_sides
-                        .beggar_wait_handoffs
-                        .push((entity_id, false));
+                OrderType::TransitionWaitingUprightSimulatingBeggar
+                | OrderType::TransitionSimulatingBeggarWaitingUpright => {
+                    let entering = anim_type == OrderType::TransitionWaitingUprightSimulatingBeggar;
+                    engine.execute_beggar_wait_handoffs(sim, assets, (entity_id, entering));
+                    engine.execute_beggar_coin_flags(assets, (entity_id, entering));
                 }
                 OrderType::TransitionWaitingUprightHelpingClimbing => {
-                    completion_outcomes
-                        .execute_sides
-                        .pc_helping_climb_action
-                        .push(entity_id);
+                    engine.execute_pc_helping_climb_action(sim, assets, entity_id);
                 }
                 _ => {}
             }
         }
-        if entity.is_pc()
+        if owner_is_pc
             && matches!(
                 anim_type,
                 OrderType::TransitionCrouchingUp | OrderType::TransitionCrouchingDown
             )
             && matches!(motion_state, MotionState::Done | MotionState::Terminated)
         {
-            completion_outcomes
-                .execute_sides
-                .stature_change_end
-                .push(entity_id);
+            engine.execute_stature_change_end(entity_id);
         }
-    }
-
-    fn apply_interaction_effects(
-        &self,
-        entity: &mut Entity,
-        taking_net_order_was_done: bool,
-        completion_outcomes: &mut AnimCompletionOutcomes,
-    ) {
-        let Self {
-            entity_id,
-            anim_type,
-            motion_state,
-            antagonist,
-            ..
-        } = *self;
         apply_taking_net_side_effect(
+            engine,
+            sim,
+            assets,
             anim_type,
             motion_state,
             antagonist,
             entity_id,
             taking_net_order_was_done,
-            &mut completion_outcomes.execute_sides,
         );
         apply_waking_up_done_side_effect(
+            engine,
+            sim,
+            assets,
             anim_type,
             motion_state,
             antagonist,
             entity_id,
-            &mut completion_outcomes.execute_sides,
         );
         apply_pc_taking_side_effect(
-            entity,
+            engine,
+            sim,
+            assets,
             anim_type,
             motion_state,
             antagonist,
             entity_id,
-            &mut completion_outcomes.execute_sides,
         );
         apply_pc_target_interaction_side_effect(
-            entity,
+            engine,
+            sim,
+            assets,
             anim_type,
             motion_state,
             antagonist,
             entity_id,
-            &mut completion_outcomes.execute_sides,
         );
-    }
-
-    fn apply_combat_recovery(
-        &self,
-        entity: &mut Entity,
-        profiles: &crate::profiles::ProfileManager,
-        principal_frames_from_now: Option<i16>,
-        tiredness_probe: Option<(u32, u32)>,
-        striking_down_sword_direction_goal: Option<i16>,
-        completion_outcomes: &mut AnimCompletionOutcomes,
-    ) {
-        let Self {
-            entity_id,
-            anim_type,
-            motion_state,
-            antagonist,
-            ..
-        } = *self;
+        let entity = engine
+            .world
+            .entities
+            .get_mut(entity_id)
+            .expect("animation owner disappeared");
         apply_sword_parry_side_effect(entity, anim_type, motion_state, principal_frames_from_now);
         apply_under_net_termination_side_effect(entity, anim_type, motion_state);
         apply_smalltalk_start_and_recovery_side_effect(
             entity,
             anim_type,
             motion_state,
-            profiles,
+            &assets.profile_manager,
             tiredness_probe,
         );
         apply_striking_down_sword_side_effect(
-            entity,
+            engine,
+            sim,
+            assets,
             anim_type,
             motion_state,
             antagonist,
             striking_down_sword_direction_goal,
             entity_id,
-            &mut completion_outcomes.execute_sides,
         );
+        let entity = engine
+            .world
+            .entities
+            .get_mut(entity_id)
+            .expect("animation owner disappeared");
         apply_arrow_extraction_start_side_effect(entity, anim_type, motion_state);
         apply_shield_transition_side_effect(entity, anim_type, motion_state);
         if anim_type == OrderType::RaisingShield && motion_state == MotionState::Done {
-            crate::bow_shot::refresh_retained_shield_obstacle(entity, profiles);
+            crate::bow_shot::refresh_retained_shield_obstacle(entity, &assets.profile_manager);
         }
-    }
-
-    fn apply_posture_completion(
-        &self,
-        entity: &mut Entity,
-        cur_command: Option<Command>,
-        reusable_cloaks_enabled: bool,
-        combat_injury_terminated: &mut Vec<EntityId>,
-        completion_outcomes: &mut AnimCompletionOutcomes,
-    ) {
-        let Self {
-            entity_id,
-            anim_type,
-            motion_state,
-            antagonist,
-            ..
-        } = *self;
         apply_pc_disguise_exit_side_effect(
-            entity,
+            engine,
+            sim,
+            assets,
             anim_type,
             motion_state,
             cur_command,
             reusable_cloaks_enabled,
             entity_id,
-            &mut completion_outcomes.execute_sides,
         );
+        let entity = engine
+            .world
+            .entities
+            .get_mut(entity_id)
+            .expect("animation owner disappeared");
         apply_standing_up_start_side_effect(entity, anim_type, motion_state);
         apply_carried_start_side_effect(entity, anim_type, motion_state);
         apply_falling_start_side_effect(entity, anim_type, motion_state);
         apply_falling_completion_side_effect(entity, anim_type, motion_state);
         apply_dying_start_side_effect(entity, anim_type, motion_state);
         apply_being_dead_start_side_effect(entity, anim_type, motion_state);
-        apply_combat_injury_side_effect(
-            entity,
-            anim_type,
-            motion_state,
-            entity_id,
-            combat_injury_terminated,
-        );
-        if matches!(motion_state, MotionState::Done) {
+        apply_combat_injury_side_effect(engine, sim, assets, anim_type, motion_state, entity_id);
+        if motion_state == MotionState::Done {
             let strike = match anim_type {
                 OrderType::StrikingLeftSmalltalk | OrderType::StrikingLowLeftSmalltalk => {
                     Some(crate::weapons::SwordStrike::SmalltalkLeft)
@@ -3006,22 +2755,23 @@ impl ActorMotionPhase {
                 _ => None,
             };
             if let Some(strike) = strike {
-                completion_outcomes.execute_sides.smalltalk_strikes.push((
-                    entity_id,
-                    antagonist.expect("smalltalk strike order must retain its antagonist"),
-                    strike,
-                ));
+                engine.execute_smalltalk_strikes(
+                    assets,
+                    (
+                        entity_id,
+                        antagonist.expect("smalltalk strike order must retain its antagonist"),
+                        strike,
+                    ),
+                );
             }
         }
     }
 }
 
-/// Resolve the per-arm return only after all derived side effects were staged.
-/// This does not advance the sequence: the owner coordinator must first drain
-/// callbacks, then apply TERMINATED to its then-live sequence identity.
+/// Resolve the arm's return after its callbacks. The actor update applies
+/// wait modifiers and crossings before completing the then-live sequence.
 fn finish_actor_execute_result(
     sim: &crate::sim_rng::SimulationContext,
-    entity: &mut Entity,
     anim_type: OrderType,
     motion: Option<MotionState>,
     arm_ctx: &mut ArmCtx<'_>,
@@ -3044,6 +2794,8 @@ fn finish_actor_execute_result(
     )
     .then(|| {
         arm_ctx
+            .engine
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|element| element.current_order())
@@ -3054,7 +2806,12 @@ fn finish_actor_execute_result(
     })
     .flatten();
     if let Some(installed_order) = mutated_installed_order {
-        entity
+        arm_ctx
+            .engine
+            .world
+            .entities
+            .get_mut(entity_id)
+            .expect("animation owner disappeared")
             .actor_data_mut()
             .expect("in-place order mutation owner lost actor data")
             .installed_order = Some(installed_order);
@@ -3132,26 +2889,14 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::types::LevelAssets,
         entity_id: EntityId,
-    ) -> (
-        Vec<EntityId>,
-        AnimCompletionOutcomes,
-        Option<ActorExecuteResult>,
-    ) {
+    ) -> Option<ActorExecuteResult> {
         let entry = match self.actor_animation_entry(entity_id) {
             std::ops::ControlFlow::Continue(entry) => entry,
             std::ops::ControlFlow::Break(frozen_wait) => {
-                return (Vec::new(), AnimCompletionOutcomes::default(), frozen_wait);
+                return frozen_wait;
             }
         };
 
-        let combat_injury_terminated: Vec<EntityId> = Vec::new();
-        // Sequence elements whose priority should be lifted to
-        // `NonInterruptable` because their currently-driven anim hit
-        // motion Start and is one of the always-non-interruptable
-        // families (see `anim_forces_non_interruptable_on_start`).
-        // Applied after the entity loop so we don't double-borrow
-        // `self.orders.sequence_manager` while iterating `self.world.entities`.
-        let completion_outcomes = AnimCompletionOutcomes::default();
         // The original game dispatches the selected actor order through ordinary
         // Execute regardless of the actor's stale action-state enum. Only an
         // order stored in the movement sequence element belongs to the separate
@@ -3160,7 +2905,7 @@ impl EngineInner {
         let selected_generic_order = self.actor_animation_selects_generic_order(entity_id);
         let Some(operands) = self.actor_animation_operands(entity_id, selected_generic_order)
         else {
-            return (Vec::new(), AnimCompletionOutcomes::default(), None);
+            return None;
         };
 
         self.initialize_actor_animation_placement(assets, entity_id);
@@ -3176,28 +2921,18 @@ impl EngineInner {
             self.striking_down_sword_valid_after_perform(assets, entity_id);
 
         let reusable_cloaks_enabled = self.control.sim_config.reusable_cloaks;
-        let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
-            panic!("actor {entity_id:?} vanished before generic animation dispatch")
-        });
-        // `actor_animation_operands` already panics on a non-actor.
-        assert!(
-            entity.actor_data().is_some(),
-            "generic animation dispatch owner {entity_id:?} is not an actor"
-        );
+        let frame_counter = self.control.frame_counter;
         ActorAnimationStepCtx {
-            entity,
-            orders: &mut self.orders,
+            engine: self,
             sim,
             assets,
             entity_id,
-            frame_counter: self.control.frame_counter,
+            frame_counter,
             reusable_cloaks_enabled,
             selected_generic_order,
             entry,
             operands,
             striking_down_sword_valid_after_perform,
-            combat_injury_terminated,
-            completion_outcomes,
         }
         .run()
     }
@@ -3657,9 +3392,7 @@ mod shoulder_idle_initialization_tests {
             0,
         );
 
-        let (_, outcomes, _) = engine.tick_actor_animation_for(&sim, &assets, helper_id);
-        assert_eq!(outcomes.shoulder_carried_waits, vec![climber_id]);
-        engine.process_anim_completion_outcomes(&sim, outcomes, &assets);
+        engine.tick_actor_animation_for(&sim, &assets, helper_id);
         engine
             .drain_script_synchronous_actions(&sim, &assets, &mut Vec::new())
             .expect("carried Wait should install synchronously");
@@ -3683,9 +3416,23 @@ mod shoulder_idle_initialization_tests {
             .actor_data_mut()
             .unwrap()
             .execute_order_initialising = false;
-        let (_, next_outcomes, _) = engine.tick_actor_animation_for(&sim, &assets, helper_id);
-        assert!(
-            next_outcomes.shoulder_carried_waits.is_empty(),
+        let carried_order = engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(climber_id)
+            .expect("carried wait must remain selected")
+            .2
+            .order_id;
+        engine.tick_actor_animation_for(&sim, &assets, helper_id);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(climber_id)
+                .expect("carried wait must remain selected")
+                .2
+                .order_id,
+            carried_order,
             "the carried Wait is an initialization-only side effect"
         );
     }

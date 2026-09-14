@@ -94,7 +94,7 @@ fn waiting_alerted_execute_registers_corrective_leave_when_requested_state_is_no
         0,
     );
 
-    let (_, mut outcomes, executed) = engine.tick_actor_animation_for(
+    let executed = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
@@ -103,12 +103,6 @@ fn waiting_alerted_execute_registers_corrective_leave_when_requested_state_is_no
         executed.map(|result| result.order_type),
         Some(OrderType::WaitingAlerted),
         "the regression must enter the actual soldier WaitingAlerted Execute arm"
-    );
-    assert_eq!(outcomes.execute_sides.waiting_alerted, [owner]);
-    engine.drain_waiting_alerted(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        std::mem::take(&mut outcomes.execute_sides.waiting_alerted),
     );
 
     let matching: Vec<_> = engine
@@ -170,7 +164,7 @@ fn waiting_upright_execute_registers_corrective_enter_when_requested_state_is_at
         0,
     );
 
-    let (_, mut outcomes, executed) = engine.tick_actor_animation_for(
+    let executed = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
@@ -180,8 +174,6 @@ fn waiting_upright_execute_registers_corrective_enter_when_requested_state_is_at
         Some(OrderType::WaitingUpright),
         "the regression must enter the actual soldier WaitingUpright Execute arm"
     );
-    assert_eq!(outcomes.execute_sides.waiting_upright, [owner]);
-    engine.drain_waiting_upright(std::mem::take(&mut outcomes.execute_sides.waiting_upright));
 
     let matching: Vec<_> = engine
         .orders
@@ -235,7 +227,7 @@ fn waiting_upright_execute_needs_represented_attentive_state_for_correction() {
         0,
     );
 
-    let (_, outcomes, executed) = engine.tick_actor_animation_for(
+    let executed = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
@@ -244,7 +236,12 @@ fn waiting_upright_execute_needs_represented_attentive_state_for_correction() {
         executed.map(|result| result.order_type),
         Some(OrderType::WaitingUpright)
     );
-    assert!(outcomes.execute_sides.waiting_upright.is_empty());
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched(owner, Command::EnterAttentiveMode)
+    );
 }
 
 #[test]
@@ -265,11 +262,7 @@ fn waiting_alerted_execute_does_not_duplicate_a_leave_already_waiting_to_launch(
         Some(owner),
     ));
 
-    engine.drain_waiting_alerted(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        vec![owner],
-    );
+    engine.execute_waiting_alerted(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
 
     let matching = engine
         .orders
@@ -296,11 +289,7 @@ fn waiting_alerted_execute_preserves_attentive_requested_state() {
     enemy.attentive = true;
     enemy.will_be_attentive = true;
 
-    engine.drain_waiting_alerted(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        vec![owner],
-    );
+    engine.execute_waiting_alerted(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
 
     assert!(
         !engine
@@ -5000,7 +4989,7 @@ fn pc_shoot_list_readmits_retained_terminated_element() {
         "Friday cleanup must preserve the backing allocation of a retained raw shoot pointer"
     );
 
-    let (_, _, result) = engine.tick_actor_animation_for(&sim, &assets, pc);
+    let result = engine.tick_actor_animation_for(&sim, &assets, pc);
     assert_eq!(
         result.unwrap().motion,
         crate::sprite::MotionState::InProgress
@@ -5829,7 +5818,6 @@ fn wake_up_translate_books_turning_then_waking_up_with_antagonist() {
 fn waking_up_done_clears_target_concussion_and_waits() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
-    use super::animation::{AnimCompletionOutcomes, ExecuteSideOutcomes};
     use crate::combat::CONCUSSION_THRESHOLD;
     use crate::element::{ActionState, Posture};
     use crate::order::OrderType;
@@ -5849,13 +5837,6 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         target_entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
     }
 
-    let outcomes = AnimCompletionOutcomes {
-        execute_sides: ExecuteSideOutcomes {
-            waking_up_done: vec![(rescuer, target)],
-            ..Default::default()
-        },
-        ..Default::default()
-    };
     let mut assets = engine.test_runtime_assets();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .soldiers
@@ -5877,7 +5858,7 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         Some(OrderType::BeingUnconscious)
     );
 
-    engine.process_anim_completion_outcomes(sim, outcomes, &assets);
+    engine.execute_waking_up_done(sim, &assets, (rescuer, target));
     engine
         .drain_script_synchronous_actions(sim, &assets, &mut Vec::new())
         .expect("wake completion's fresh Wait should translate synchronously");
@@ -5919,7 +5900,6 @@ fn waking_up_done_clears_target_concussion_and_waits() {
 
 #[test]
 fn waking_up_done_publishes_transient_lying_corpse_intersection() {
-    use super::animation::{AnimCompletionOutcomes, ExecuteSideOutcomes};
     use crate::combat::CONCUSSION_THRESHOLD;
     use crate::element::Posture;
 
@@ -5952,17 +5932,7 @@ fn waking_up_done_publishes_transient_lying_corpse_intersection() {
         .soldiers
         .resize_with(1, crate::profiles::SoldierProfile::default);
 
-    engine.process_anim_completion_outcomes(
-        &sim,
-        AnimCompletionOutcomes {
-            execute_sides: ExecuteSideOutcomes {
-                waking_up_done: vec![(rescuer, target)],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        &assets,
-    );
+    engine.execute_waking_up_done(&sim, &assets, (rescuer, target));
 
     for id in [target, neighbour] {
         assert!(
@@ -6148,22 +6118,24 @@ fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save_and_preserves_existing_coma
 /// the actor's posture flips to `Sitting`.
 #[test]
 fn npc_sit_down_anim_completion_flips_posture_to_sitting() {
-    use super::animation::{ExecuteSideOutcomes, apply_npc_execute_side_effects};
-    use crate::element::{ActionState, EntityId, Posture};
+    use super::animation::apply_npc_execute_side_effects;
+    use crate::element::{ActionState, Posture};
     use crate::order::OrderType;
     use crate::sprite::MotionState;
 
-    let mut entity = make_test_soldier(Posture::Upright);
-    let mut outcomes = ExecuteSideOutcomes::default();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     apply_npc_execute_side_effects(
-        &mut entity,
+        &mut engine,
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
         OrderType::TransitionWaitingUprightSitting,
         MotionState::Terminated,
         None,
-        EntityId::Pc(crate::entity_id::PcId(0)),
-        &mut outcomes,
+        owner,
     );
+    let entity = engine.get_entity(owner).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Sitting);
     assert_eq!(
@@ -6234,22 +6206,24 @@ fn enter_leisure_on_leisuring_npc_skips_auto_leave() {
 /// the actor's posture flips to `Leisure`.
 #[test]
 fn npc_enter_leisure_anim_completion_flips_posture_to_leisure() {
-    use super::animation::{ExecuteSideOutcomes, apply_npc_execute_side_effects};
-    use crate::element::{ActionState, EntityId, Posture};
+    use super::animation::apply_npc_execute_side_effects;
+    use crate::element::{ActionState, Posture};
     use crate::order::OrderType;
     use crate::sprite::MotionState;
 
-    let mut entity = make_test_soldier(Posture::Upright);
-    let mut outcomes = ExecuteSideOutcomes::default();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     apply_npc_execute_side_effects(
-        &mut entity,
+        &mut engine,
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
         OrderType::TransitionWaitingUprightSpecial,
         MotionState::Done,
         None,
-        EntityId::Pc(crate::entity_id::PcId(0)),
-        &mut outcomes,
+        owner,
     );
+    let entity = engine.get_entity(owner).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Leisure);
     assert_eq!(

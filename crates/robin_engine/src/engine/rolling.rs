@@ -8,7 +8,7 @@ use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
 use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionState};
 
-use super::animation::{ActorExecuteResult, AnimCompletionOutcomes};
+use super::animation::ActorExecuteResult;
 use super::{EngineInner, LevelAssets};
 
 fn rolling_initial_direction(position: MapPoint, goal: MapPoint) -> i16 {
@@ -50,11 +50,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-    ) -> (
-        Vec<EntityId>,
-        AnimCompletionOutcomes,
-        Option<ActorExecuteResult>,
-    ) {
+    ) -> Option<ActorExecuteResult> {
         let Some((seq_id, elem_idx, order, next_order)) = self
             .orders
             .sequence_manager
@@ -74,7 +70,7 @@ impl EngineInner {
                 )
             })
         else {
-            return (Vec::new(), AnimCompletionOutcomes::default(), None);
+            return None;
         };
 
         let initialising = self.world.entities[owner]
@@ -84,10 +80,6 @@ impl EngineInner {
             .execute_order_initialising;
         let goal = MapPoint::new(order.target_x, order.target_y);
 
-        // Snapshot everything before borrowing the owner mutably. Original
-        // performs the collision scan at this creation-order slot.
-        let snapshots =
-            super::anti_collision::snapshot_all(&self.world.entities, &assets.profile_manager);
         let mut mobile_points: BTreeMap<u16, Vec<crate::repulsive::RepulsivePoint>> =
             BTreeMap::new();
         let mut mobile_lines: BTreeMap<u16, Vec<crate::fast_find_grid::GridLine>> = BTreeMap::new();
@@ -167,15 +159,14 @@ impl EngineInner {
 
         let mut effective_motion = motion;
         if speed != 0.0 {
-            let mut mover = snapshots[owner]
-                .as_ref()
-                .expect("Rolling actor missing anti-collision snapshot")
-                .clone();
+            let (entity, neighbours) = self
+                .world
+                .entities
+                .split_owner(owner)
+                .expect("Rolling owner disappeared before movement commit");
+            let mut mover = super::anti_collision::CollisionMover::new(owner, entity);
             // Motion processing has just installed the current order antagonist.
             mover.target_element = order.antagonist;
-            let entity = self.world.entities[owner]
-                .as_mut()
-                .expect("Rolling owner disappeared before movement commit");
             let cached = entity.position_iface().get_increment_map();
             let anti_on = entity.position_iface().is_anti_collision_on();
             let (move_box, half_diagonal, live_goal) = {
@@ -195,7 +186,10 @@ impl EngineInner {
             };
             let (dx, dy) = super::anti_collision::apply_anti_collision_step(
                 &mover,
-                snapshots.as_slice(),
+                super::anti_collision::CollisionWorld {
+                    neighbours,
+                    profiles: &assets.profile_manager,
+                },
                 &self.ai.global.repulsive_points,
                 mobile_points.get(&layer).map(Vec::as_slice).unwrap_or(&[]),
                 mobile_lines.get(&layer).map(Vec::as_slice).unwrap_or(&[]),
@@ -301,20 +295,15 @@ impl EngineInner {
                 .set_posture(posture);
         }
 
-        let mut outcomes = AnimCompletionOutcomes::default();
         if motion == MotionState::Start {
-            outcomes.non_interruptable_lifts.push((seq_id, elem_idx));
+            self.execute_non_interruptable_lifts((seq_id, elem_idx));
         }
-        (
-            Vec::new(),
-            outcomes,
-            Some(ActorExecuteResult {
-                order_type: OrderType::Rolling,
-                entry_seq_id: seq_id,
-                entry_elem_idx: elem_idx,
-                motion: effective_motion,
-            }),
-        )
+        Some(ActorExecuteResult {
+            order_type: OrderType::Rolling,
+            entry_seq_id: seq_id,
+            entry_elem_idx: elem_idx,
+            motion: effective_motion,
+        })
     }
 }
 

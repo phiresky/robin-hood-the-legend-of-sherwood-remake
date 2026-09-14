@@ -63,16 +63,15 @@ impl std::ops::Deref for ScriptBindings<'_> {
 mod tests {
     use super::*;
     use crate::interp::{HostFunctions, NativeStack};
-    use crate::natives::{NativeContext, NativeFn, ScriptEffects, ScriptState};
+    use crate::natives::{NativeContext, NativeFn, ScriptState};
 
     fn get_location(bindings: &AttachedScriptBindings, index: i32) -> i32 {
-        let mut host = ScriptEffects::new();
         let mut entities = crate::entities::Entities::new();
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
         let mut globals = Vec::new();
         let sim = crate::sim_rng::test_context();
-        let capabilities = crate::natives::NativeSessionCapabilities::new(
+        let mut capabilities = crate::natives::NativeSessionCapabilities::new(
             &sim,
             &mut entities,
             &mut ai_global,
@@ -84,24 +83,22 @@ mod tests {
         let mut stack = NativeStack::default();
         stack.push_i32(index);
         let mut context = NativeContext::with_bindings(
-            &mut host,
             &mut state,
             &mut script_domains,
             bindings,
-            &capabilities,
+            &mut capabilities,
         );
         HostFunctions::call(&mut context, NativeFn::GetLocationScript as u32, &mut stack)
             .expect_return("GetLocationScript is synchronous")
     }
 
     fn get_location_index(bindings: &AttachedScriptBindings, handle: i32) -> i32 {
-        let mut host = ScriptEffects::new();
         let mut entities = crate::entities::Entities::new();
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
         let mut globals = Vec::new();
         let sim = crate::sim_rng::test_context();
-        let capabilities = crate::natives::NativeSessionCapabilities::new(
+        let mut capabilities = crate::natives::NativeSessionCapabilities::new(
             &sim,
             &mut entities,
             &mut ai_global,
@@ -113,11 +110,10 @@ mod tests {
         let mut stack = NativeStack::default();
         stack.push_i32(handle);
         let mut context = NativeContext::with_bindings(
-            &mut host,
             &mut state,
             &mut script_domains,
             bindings,
-            &capabilities,
+            &mut capabilities,
         );
         HostFunctions::call(&mut context, NativeFn::GetLocationIndex as u32, &mut stack)
             .expect_return("GetLocationIndex is synchronous")

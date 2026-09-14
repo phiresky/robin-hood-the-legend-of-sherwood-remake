@@ -877,54 +877,62 @@ fn reactive_zero_distance_step_back_completes_before_returning() {
 fn empty_true_circle_sweep_advances_until_rotation_complete() {
     let mut engine = make_engine();
     let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
-
-    if let Some(actor) = engine.get_entity_mut(attacker).unwrap().actor_data_mut() {
-        actor.sweep_state = Some(crate::movement::SweepState {
-            pending_victims: Vec::new(),
-            current_angle: 0.0,
-            final_angle: std::f32::consts::PI * 2.0,
-            rotation_per_frame: std::f32::consts::PI,
-            direction: crate::profiles::WeaponThrustDirection::LeftToRight,
-            strike: SwordStrike::H,
-            strike_kind: crate::profiles::WeaponThrustKind::TrueCircle,
-            ..Default::default()
-        });
-    }
-
-    engine.tick_sweep_for(&LevelAssets::default(), attacker, false);
-    assert!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .sweep_state
-            .is_some(),
-        "true-circle sweep with no victims must still rotate instead of clearing immediately"
+    let target = engine.add_test_entity(make_soldier(wp(1000.0, 100.0), None));
+    let mut assets = assets_with_nonstraight_profile(
+        SwordStrike::H,
+        crate::profiles::WeaponThrustKind::TrueCircle,
     );
-
-    engine.tick_sweep_for(&LevelAssets::default(), attacker, false);
-    assert!(
+    std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].thrusts
+        [SwordStrike::H as usize]
+        .rotation_angle = 180;
+    install_test_melee_order(&mut engine, attacker, target, SwordStrike::H, true);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .sword_sweep = crate::element::HumanSwordSweepState {
+        victims: Vec::new(),
+        initial_angle: 0.0,
+        current_angle: 0.0,
+        final_angle: std::f32::consts::TAU,
+    };
+    engine.tick_sweep_for(&assets, attacker, false);
+    assert_eq!(
         engine
             .get_entity(attacker)
             .unwrap()
-            .actor_data()
+            .human_data()
             .unwrap()
-            .sweep_state
-            .is_some(),
-        "the tick that reaches the final angle must retain it for the terminal Execute call"
+            .sword_sweep
+            .current_angle,
+        std::f32::consts::PI
     );
-
-    engine.tick_sweep_for(&LevelAssets::default(), attacker, false);
-    assert!(
+    engine.tick_sweep_for(&assets, attacker, false);
+    assert_eq!(
         engine
             .get_entity(attacker)
             .unwrap()
-            .actor_data()
+            .human_data()
             .unwrap()
-            .sweep_state
-            .is_none(),
-        "empty true-circle sweep should clear after presenting its terminal angle"
+            .sword_sweep
+            .current_angle,
+        std::f32::consts::TAU
+    );
+    engine.tick_sweep_for(&assets, attacker, false);
+    let attacker = engine.get_entity(attacker).unwrap();
+    assert_eq!(attacker.element_data().direction(), 0);
+    assert_eq!(
+        attacker.human_data().unwrap().sword_sweep.current_angle,
+        std::f32::consts::TAU
+    );
+    assert!(
+        attacker
+            .human_data()
+            .unwrap()
+            .sword_sweep
+            .victims
+            .is_empty()
     );
 }
 
@@ -1008,7 +1016,7 @@ fn lateral_seed_uses_ground_direction_instead_of_map_direction() {
 }
 
 #[test]
-fn interrupted_lateral_sweep_is_retained_and_rebound_by_next_strike() {
+fn interrupted_lateral_sweep_uses_the_replacement_strike() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
@@ -1055,37 +1063,29 @@ fn interrupted_lateral_sweep_is_retained_and_rebound_by_next_strike() {
     engine
         .get_entity_mut(attacker)
         .unwrap()
-        .actor_data_mut()
+        .human_data_mut()
         .unwrap()
-        .sweep_state = Some(crate::movement::SweepState {
-        pending_victims: vec![victim, unreached_victim],
+        .sword_sweep = crate::element::HumanSwordSweepState {
+        victims: vec![victim, unreached_victim],
         initial_angle: 0.0,
         current_angle: 0.0,
         final_angle: -std::f32::consts::PI,
-        rotation_per_frame: -5.0_f32.to_radians(),
-        direction: crate::profiles::WeaponThrustDirection::RightToLeft,
-        strike: SwordStrike::D,
-        attacker_profile_idx: Some(1),
-        gesture_quality: crate::player_command::GestureQuality::PERFECT,
-        strike_kind: crate::profiles::WeaponThrustKind::Lateral,
-    });
+    };
 
     crate::engine::order_arbitration::stop_owner_active_mechanics(
         &mut engine.world,
         &mut engine.orders,
         attacker,
     );
-    let retained_after_interrupt = engine
+    let retained_after_interrupt = &engine
         .get_entity(attacker)
         .unwrap()
-        .actor_data()
+        .human_data()
         .unwrap()
-        .sweep_state
-        .as_ref()
-        .expect("interrupting the D sequence must retain its human-owned sweep");
-    assert_eq!(retained_after_interrupt.strike, SwordStrike::D);
+        .sword_sweep;
+
     assert_eq!(
-        retained_after_interrupt.pending_victims,
+        retained_after_interrupt.victims,
         vec![victim, unreached_victim]
     );
 
@@ -1126,14 +1126,12 @@ fn interrupted_lateral_sweep_is_retained_and_rebound_by_next_strike() {
     }
 
     engine.tick_melee_strikes(sim, &assets);
-    let retained_on_start = engine
+    let retained_on_start = &engine
         .get_entity(attacker)
         .unwrap()
-        .actor_data()
+        .human_data()
         .unwrap()
-        .sweep_state
-        .as_ref()
-        .expect("the replacement strike START must not consume the retained sweep");
+        .sword_sweep;
     let replacement_direction_angle = sector_to_angle(
         engine
             .get_entity(attacker)
@@ -1141,9 +1139,9 @@ fn interrupted_lateral_sweep_is_retained_and_rebound_by_next_strike() {
             .element_data()
             .direction(),
     );
-    assert_eq!(retained_on_start.strike, SwordStrike::E);
+
     assert_eq!(
-        retained_on_start.pending_victims,
+        retained_on_start.victims,
         vec![victim, unreached_victim],
         "the START warning forecast rebases geometry but keeps the interrupted victim FIFO"
     );
@@ -1152,30 +1150,22 @@ fn interrupted_lateral_sweep_is_retained_and_rebound_by_next_strike() {
     assert_eq!(retained_on_start.final_angle, replacement_direction_angle);
     assert_eq!(soldier_life(&engine, victim), 50);
 
-    engine.rebind_retained_sweep_to_active_strike(&assets, attacker);
     engine.tick_sweep_for(&assets, attacker, false);
 
-    let retained_after_hit = engine
+    let retained_after_hit = &engine
         .get_entity(attacker)
         .unwrap()
-        .actor_data()
+        .human_data()
         .unwrap()
-        .sweep_state
-        .as_ref()
-        .expect("a lateral sweep remains allocated until its animation terminates");
-    assert_eq!(retained_after_hit.strike, SwordStrike::E);
+        .sword_sweep;
     assert_eq!(
-        retained_after_hit.direction,
-        crate::profiles::WeaponThrustDirection::LeftToRight
-    );
-    assert!(
-        (retained_after_hit.rotation_per_frame - std::f32::consts::FRAC_PI_2).abs() < f32::EPSILON,
-        "the retained geometry must advance using E's rotation, not D's"
+        retained_after_hit.current_angle,
+        replacement_direction_angle + strike_profile_angle(90)
     );
 }
 
 #[test]
-fn interrupted_push_victims_are_rebound_by_replacement_lateral_start() {
+fn interrupted_push_victims_survive_replacement_lateral_start() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
     let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
@@ -1195,24 +1185,15 @@ fn interrupted_push_victims_are_rebound_by_replacement_lateral_start() {
     engine
         .get_entity_mut(attacker)
         .unwrap()
-        .actor_data_mut()
+        .human_data_mut()
         .unwrap()
-        .pending_push_swordfight = vec![victim];
+        .sword_sweep
+        .victims = vec![victim];
 
     crate::engine::order_arbitration::stop_owner_active_mechanics(
         &mut engine.world,
         &mut engine.orders,
         attacker,
-    );
-    assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .pending_push_swordfight,
-        vec![victim],
-        "interrupting PushAside preserves Original's human-owned victim list"
     );
 
     let assets =
@@ -1233,18 +1214,15 @@ fn interrupted_push_victims_are_rebound_by_replacement_lateral_start() {
 
     engine.tick_selected_melee_owner(&sim, &assets, attacker, selected);
 
-    let actor = engine.get_entity(attacker).unwrap().actor_data().unwrap();
     assert_eq!(
-        actor
-            .sweep_state
-            .as_ref()
-            .expect("replacement lateral owns the retained push list")
-            .pending_victims,
-        vec![victim],
-    );
-    assert!(
-        actor.pending_push_swordfight.is_empty(),
-        "Original has one shared victim list, not duplicate push/sweep ownership"
+        engine
+            .get_entity(attacker)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .sword_sweep
+            .victims,
+        vec![victim]
     );
 }
 
@@ -1310,20 +1288,14 @@ fn interrupted_h_circle_runs_replacement_i_effect_without_advancing_geometry() {
     engine
         .get_entity_mut(attacker)
         .unwrap()
-        .actor_data_mut()
+        .human_data_mut()
         .unwrap()
-        .sweep_state = Some(crate::movement::SweepState {
-        pending_victims: vec![victim, unreached_victim],
+        .sword_sweep = crate::element::HumanSwordSweepState {
+        victims: vec![victim, unreached_victim],
         initial_angle: retained_initial_angle,
         current_angle: retained_current_angle,
         final_angle: retained_final_angle,
-        rotation_per_frame: 0.383_972_44,
-        direction: crate::profiles::WeaponThrustDirection::LeftToRight,
-        strike: SwordStrike::H,
-        attacker_profile_idx: Some(1),
-        gesture_quality: crate::player_command::GestureQuality::PERFECT,
-        strike_kind: crate::profiles::WeaponThrustKind::TrueCircle,
-    });
+    };
 
     let replacement_order_id = engine.orders.allocate_order_id();
     let replacement_element = engine
@@ -1431,14 +1403,6 @@ fn interrupted_h_circle_runs_replacement_i_effect_without_advancing_geometry() {
     assert_eq!(retained.initial_angle, retained_initial_angle);
     assert_eq!(retained.current_angle, retained_current_angle);
     assert_eq!(retained.final_angle, retained_final_angle);
-    let executable = attacker_entity
-        .actor_data()
-        .unwrap()
-        .sweep_state
-        .as_ref()
-        .expect("the unreached victim keeps retained geometry executable");
-    assert_eq!(executable.strike, SwordStrike::I);
-    assert_eq!(executable.current_angle, retained_current_angle);
     assert_eq!(
         attacker_entity
             .element_data()
@@ -1494,23 +1458,17 @@ fn replacement_half_circle_start_rebases_retained_angles_before_effect() {
     engine
         .get_entity_mut(attacker)
         .unwrap()
-        .actor_data_mut()
+        .human_data_mut()
         .unwrap()
-        .sweep_state = Some(crate::movement::SweepState {
-        pending_victims: vec![retained_victim],
+        .sword_sweep = crate::element::HumanSwordSweepState {
+        victims: vec![retained_victim],
         // Stale left-to-right H geometry already spans the victim's
         // sector. Without the START warning-query rebase, G's first
         // IN_PROGRESS effect would queue a second sword hit.
         initial_angle: 0.0,
         current_angle: std::f32::consts::PI,
         final_angle: std::f32::consts::TAU,
-        rotation_per_frame: std::f32::consts::FRAC_PI_2,
-        direction: crate::profiles::WeaponThrustDirection::LeftToRight,
-        strike: SwordStrike::H,
-        attacker_profile_idx: Some(1),
-        gesture_quality: crate::player_command::GestureQuality::PERFECT,
-        strike_kind: crate::profiles::WeaponThrustKind::TrueCircle,
-    });
+    };
     {
         // The shared order fixture advances to the action point for most
         // sweep tests. Rewind only its sprite identity so the established
@@ -1550,20 +1508,14 @@ fn replacement_half_circle_start_rebases_retained_angles_before_effect() {
         "replacement G must turn right while the stale H victim remains on the left"
     );
 
-    let sweep = engine
+    let sweep = &engine
         .get_entity(attacker)
         .unwrap()
-        .actor_data()
+        .human_data()
         .unwrap()
-        .sweep_state
-        .as_ref()
-        .expect("replacement G keeps the interrupted victim FIFO");
-    assert_eq!(sweep.pending_victims, vec![retained_victim]);
-    assert_eq!(sweep.strike, SwordStrike::G);
-    assert_eq!(
-        sweep.direction,
-        crate::profiles::WeaponThrustDirection::RightToLeft
-    );
+        .sword_sweep;
+    assert_eq!(sweep.victims, vec![retained_victim]);
+
     let replacement_direction_angle = sector_to_angle(0);
     assert!((sweep.initial_angle - replacement_direction_angle).abs() < f32::EPSILON);
     assert!((sweep.current_angle - replacement_direction_angle).abs() < f32::EPSILON);
@@ -1625,20 +1577,12 @@ fn terminal_true_circle_direction_is_presented_before_done_progresses() {
         let sprite = &mut entity.element_data_mut().sprite;
         assert_eq!(sprite.current_frame, sprite.action_done_frame);
         assert_eq!(sprite.frame_count, sprite.action_done_counter);
-        entity.actor_data_mut().unwrap().sweep_state = Some(crate::movement::SweepState {
-            pending_victims: Vec::new(),
+        entity.human_data_mut().unwrap().sword_sweep = crate::element::HumanSwordSweepState {
+            victims: Vec::new(),
             initial_angle: terminal_angle + std::f32::consts::PI,
             current_angle: terminal_angle,
             final_angle: terminal_angle,
-            rotation_per_frame: -std::f32::consts::FRAC_PI_2,
-            // Deliberately stale retained metadata: Original dispatches
-            // terminal action semantics from the current G call.
-            direction: crate::profiles::WeaponThrustDirection::RightToLeft,
-            strike: SwordStrike::F,
-            attacker_profile_idx: Some(1),
-            gesture_quality: crate::player_command::GestureQuality::PERFECT,
-            strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
-        });
+        };
     }
 
     engine.tick_selected_melee_owner(sim, &assets, attacker, selected);
@@ -1667,14 +1611,10 @@ fn terminal_true_circle_direction_is_presented_before_done_progresses() {
         sprite.frame_count, 0,
         "the zero-delay next frame begins at counter zero"
     );
-    assert!(
-        attacker_entity.actor_data().unwrap().sweep_state.is_none(),
-        "the terminal presentation call clears an exhausted sweep mirror"
-    );
 }
 
 #[test]
-fn saved_empty_true_circle_sweep_is_rehydrated_and_rotates() {
+fn saved_empty_true_circle_sweep_rotates_from_persistent_angles() {
     let mut engine = make_engine();
     let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
     let target = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
@@ -1697,20 +1637,15 @@ fn saved_empty_true_circle_sweep_is_rehydrated_and_rotates() {
             current_angle,
             final_angle: current_angle - std::f32::consts::PI,
         };
-        assert!(entity.actor_data().unwrap().sweep_state.is_none());
     }
 
-    engine.rebind_retained_sweep_to_active_strike(&assets, attacker);
-
-    let sweep = engine
+    let sweep = &engine
         .get_entity(attacker)
         .unwrap()
-        .actor_data()
+        .human_data()
         .unwrap()
-        .sweep_state
-        .as_ref()
-        .expect("an empty loaded true-circle still owns executable angle state");
-    assert!(sweep.pending_victims.is_empty());
+        .sword_sweep;
+    assert!(sweep.victims.is_empty());
     assert_eq!(sweep.current_angle.to_bits(), current_angle.to_bits());
 
     engine.tick_sweep_for(&assets, attacker, false);
@@ -1742,7 +1677,7 @@ fn lateral_start_rebases_retained_serialized_human_victims() {
             current_angle: 0.1,
             final_angle: 0.1 - std::f32::consts::PI,
         };
-        assert!(entity.actor_data().unwrap().sweep_state.is_none());
+
         let sprite = &mut entity.element_data_mut().sprite;
         sprite.last_processed_order_id = u32::MAX;
         sprite.last_action = crate::order::OrderType::WaitingSword;
@@ -1758,14 +1693,9 @@ fn lateral_start_rebases_retained_serialized_human_victims() {
         Some(crate::sprite::MotionState::Start)
     );
     let direction_angle = sector_to_angle(attacker.element_data().direction());
-    let sweep = attacker
-        .actor_data()
-        .unwrap()
-        .sweep_state
-        .as_ref()
-        .expect("the START warning must make the retained rider-charge list executable");
-    assert_eq!(sweep.pending_victims, vec![victim]);
-    assert_eq!(sweep.strike, SwordStrike::D);
+    let sweep = &attacker.human_data().unwrap().sword_sweep;
+    assert_eq!(sweep.victims, vec![victim]);
+
     assert_eq!(sweep.initial_angle, direction_angle);
     assert_eq!(sweep.current_angle, direction_angle);
     assert_eq!(sweep.final_angle, direction_angle + std::f32::consts::PI);
@@ -1777,7 +1707,7 @@ fn lateral_start_rebases_retained_serialized_human_victims() {
 }
 
 #[test]
-fn terminated_lateral_sweep_cannot_rehydrate_into_a_fresh_strike() {
+fn terminated_lateral_sweep_cannot_hit_again_in_a_fresh_strike() {
     let mut engine = make_engine();
     let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
     let victim = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
@@ -1815,10 +1745,7 @@ fn terminated_lateral_sweep_cannot_rehydrate_into_a_fresh_strike() {
     );
 
     let attacker_entity = engine.get_entity(attacker).unwrap();
-    assert!(
-        attacker_entity.actor_data().unwrap().sweep_state.is_none(),
-        "termination clears the executable sweep"
-    );
+
     assert!(
         attacker_entity
             .human_data()
@@ -1830,16 +1757,25 @@ fn terminated_lateral_sweep_cannot_rehydrate_into_a_fresh_strike() {
     );
 
     install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, true);
-    engine.rebind_retained_sweep_to_active_strike(&assets, attacker);
+    engine.tick_sweep_for(&assets, attacker, false);
     assert!(
         engine
             .get_entity(attacker)
             .unwrap()
-            .actor_data()
+            .human_data()
             .unwrap()
-            .sweep_state
-            .is_none(),
-        "a fresh lateral strike must wait for its own action-done initialization"
+            .sword_sweep
+            .victims
+            .is_empty()
+    );
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| element.command == Command::ReceiveSwordDamage
+                && element.owner == Some(victim))
     );
 }
 
@@ -1848,27 +1784,25 @@ fn later_circle_frame_tests_existing_angle_before_tail_advance() {
     let mut engine = make_engine();
     let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
     let victim = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
-    let assets = assets_with_nonstraight_profile(
+    let mut assets = assets_with_nonstraight_profile(
         SwordStrike::F,
         crate::profiles::WeaponThrustKind::FalseHalfCircle,
     );
+    std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].thrusts
+        [SwordStrike::F as usize]
+        .rotation_angle = 90;
+    install_test_melee_order(&mut engine, attacker, victim, SwordStrike::F, true);
     engine
         .get_entity_mut(attacker)
         .unwrap()
-        .actor_data_mut()
+        .human_data_mut()
         .unwrap()
-        .sweep_state = Some(crate::movement::SweepState {
-        pending_victims: vec![victim],
+        .sword_sweep = crate::element::HumanSwordSweepState {
+        victims: vec![victim],
         initial_angle: 0.0,
         current_angle: 0.0,
         final_angle: std::f32::consts::PI,
-        rotation_per_frame: std::f32::consts::FRAC_PI_2,
-        direction: crate::profiles::WeaponThrustDirection::LeftToRight,
-        strike: SwordStrike::F,
-        attacker_profile_idx: Some(1),
-        gesture_quality: crate::player_command::GestureQuality::PERFECT,
-        strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
-    });
+    };
 
     let queued_damage_count = |engine: &EngineInner| {
         engine
@@ -1888,14 +1822,12 @@ fn later_circle_frame_tests_existing_angle_before_tail_advance() {
         0,
         "the victim in the newly reached sector cannot be tested before the circle tail advance"
     );
-    let sweep = engine
+    let sweep = &engine
         .get_entity(attacker)
         .unwrap()
-        .actor_data()
+        .human_data()
         .unwrap()
-        .sweep_state
-        .as_ref()
-        .expect("pending final-sector victim must keep the sweep alive");
+        .sword_sweep;
     assert!((sweep.current_angle - std::f32::consts::FRAC_PI_2).abs() < f32::EPSILON);
 
     engine.tick_sweep_for(&assets, attacker, false);
@@ -1911,39 +1843,35 @@ fn lateral_advance_is_raw_and_does_not_use_circle_final_clamping() {
     let mut engine = make_engine();
     let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
     let pending_victim = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
-    let assets =
+    let mut assets =
         assets_with_nonstraight_profile(SwordStrike::D, crate::profiles::WeaponThrustKind::Lateral);
+    std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].thrusts
+        [SwordStrike::D as usize]
+        .rotation_angle = 69;
+    install_test_melee_order(&mut engine, attacker, pending_victim, SwordStrike::D, true);
     engine
         .get_entity_mut(attacker)
         .unwrap()
-        .actor_data_mut()
+        .human_data_mut()
         .unwrap()
-        .sweep_state = Some(crate::movement::SweepState {
-        pending_victims: vec![pending_victim],
+        .sword_sweep = crate::element::HumanSwordSweepState {
+        victims: vec![pending_victim],
         initial_angle: 0.0,
         current_angle: 0.0,
         final_angle: 0.70,
-        rotation_per_frame: 1.20,
-        direction: crate::profiles::WeaponThrustDirection::LeftToRight,
-        strike: SwordStrike::D,
-        attacker_profile_idx: Some(1),
-        gesture_quality: crate::player_command::GestureQuality::PERFECT,
-        strike_kind: crate::profiles::WeaponThrustKind::Lateral,
-    });
+    };
 
     engine.tick_sweep_for(&assets, attacker, false);
 
     let current = engine
         .get_entity(attacker)
         .unwrap()
-        .actor_data()
+        .human_data()
         .unwrap()
-        .sweep_state
-        .as_ref()
-        .expect("unreached victim keeps the lateral sweep observable")
+        .sword_sweep
         .current_angle;
     assert!(
-        (current - 1.20).abs() < f32::EPSILON,
+        (current - strike_profile_angle(69)).abs() < f32::EPSILON,
         "lateral Execute applies its signed rotation directly even past final_angle"
     );
 }
@@ -1978,20 +1906,14 @@ fn push_replacement_executes_without_advancing_retained_circle_sweep() {
     engine
         .get_entity_mut(attacker)
         .unwrap()
-        .actor_data_mut()
+        .human_data_mut()
         .unwrap()
-        .sweep_state = Some(crate::movement::SweepState {
-        pending_victims: vec![victim],
+        .sword_sweep = crate::element::HumanSwordSweepState {
+        victims: vec![victim],
         initial_angle: 2.0,
         current_angle: 5.5,
         final_angle: 5.5,
-        rotation_per_frame: std::f32::consts::FRAC_PI_4,
-        direction: crate::profiles::WeaponThrustDirection::LeftToRight,
-        strike: SwordStrike::F,
-        attacker_profile_idx: Some(1),
-        gesture_quality: crate::player_command::GestureQuality::PERFECT,
-        strike_kind: crate::profiles::WeaponThrustKind::TrueHalfCircle,
-    });
+    };
 
     engine.tick_selected_melee_owner(sim, &assets, attacker, selected);
 
@@ -2004,18 +1926,7 @@ fn push_replacement_executes_without_advancing_retained_circle_sweep() {
         8,
         "PushAside must not present the retained F sweep's terminal direction"
     );
-    assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .sweep_state
-            .as_ref()
-            .expect("PushAside leaves interrupted sweep storage dormant")
-            .strike,
-        SwordStrike::F,
-    );
+
     assert!(
         engine
             .orders
@@ -2026,6 +1937,16 @@ fn push_replacement_executes_without_advancing_retained_circle_sweep() {
                 element.command == Command::ReceiveSwordDamage && element.owner == Some(victim)
             }),
         "the replacement PushAside must still execute and queue its damage"
+    );
+    let sweep = &engine
+        .get_entity(attacker)
+        .unwrap()
+        .human_data()
+        .unwrap()
+        .sword_sweep;
+    assert_eq!(
+        (sweep.initial_angle, sweep.current_angle, sweep.final_angle),
+        (2.0, 5.5, 5.5)
     );
 }
 

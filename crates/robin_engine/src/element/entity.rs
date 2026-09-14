@@ -19,23 +19,6 @@ struct HumanBodyContext<'a> {
     dir: usize,
 }
 
-/// Helper macro — dispatch `$self` to the `element` field of every variant.
-macro_rules! dispatch_element {
-    ($self:expr_2021, $field:ident) => {
-        match $self {
-            Entity::Pc(e) => &e.element.$field,
-            Entity::Soldier(e) => &e.element.$field,
-            Entity::Civilian(e) => &e.element.$field,
-            Entity::Fx(e) => &e.element.$field,
-            Entity::Target(e) => &e.element.$field,
-            Entity::Bonus(e) => &e.element.$field,
-            Entity::Scroll(e) => &e.element.$field,
-            Entity::Projectile(e) => &e.element.$field,
-            Entity::Net(e) => &e.element.$field,
-        }
-    };
-}
-
 macro_rules! entity_variant_accessors {
     ($as_ref:ident, $as_mut:ident, $variant:ident, $entity:ty) => {
         pub fn $as_ref(&self) -> Option<&$entity> {
@@ -253,7 +236,7 @@ impl Entity {
     }
 
     pub fn kind(&self) -> ElementKind {
-        *dispatch_element!(self, kind)
+        self.element_data().kind
     }
 
     pub fn is_active(&self) -> bool {
@@ -733,12 +716,7 @@ impl Entity {
     }
 
     pub fn is_dead(&self) -> bool {
-        match self {
-            Self::Pc(e) => e.pc.life_points <= 0,
-            Self::Soldier(e) => e.npc.life_points <= 0,
-            Self::Civilian(e) => e.npc.life_points <= 0,
-            _ => true,
-        }
+        self.human_life_points() <= 0
     }
 
     /// Whether this human is knocked out (`HumanData::unconscious`).
@@ -892,22 +870,12 @@ impl Entity {
 
     /// Get an actor's base AI controller, if it owns an AI brain.
     pub fn ai_controller(&self) -> Option<&AiController> {
-        match self {
-            Self::Pc(e) => e.pc.ai.as_deref()?.ai_brain.base(),
-            Self::Soldier(e) => e.npc.ai_brain.base(),
-            Self::Civilian(e) => e.npc.ai_brain.base(),
-            _ => None,
-        }
+        self.ai_actor_data()?.ai_brain.base()
     }
 
     /// Get an actor's base AI controller mutably.
     pub fn ai_controller_mut(&mut self) -> Option<&mut AiController> {
-        match self {
-            Self::Pc(e) => e.pc.ai.as_deref_mut()?.ai_brain.base_mut(),
-            Self::Soldier(e) => e.npc.ai_brain.base_mut(),
-            Self::Civilian(e) => e.npc.ai_brain.base_mut(),
-            _ => None,
-        }
+        self.ai_actor_data_mut()?.ai_brain.base_mut()
     }
 
     /// Get the enemy AI subclass, if this actor has enemy AI.

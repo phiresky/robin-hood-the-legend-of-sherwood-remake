@@ -1,32 +1,28 @@
-use std::cell::{RefCell, RefMut};
-
-use super::{
-    AttachedScriptBindings, ScriptBindings, ScriptEffects, ScriptHandleCodec, ScriptState,
-};
+use super::{AttachedScriptBindings, ScriptBindings, ScriptHandleCodec, ScriptState};
 use crate::element::EntityId;
 
 /// Canonical engine owners and read views borrowed for one complete script
 /// session. Each [`NativeContext`] takes short-lived mutable borrows for one VM
 /// resume; nested dispatch can then borrow the same owners before resuming the
-/// outer VM. None of these values move into or through [`ScriptEffects`].
+/// outer VM. The compiler prevents overlapping contexts; each resume drops its context before callbacks.
 pub struct NativeSessionCapabilities<'a> {
     simulation: &'a crate::sim_rng::SimulationContext,
-    entities: RefCell<&'a mut crate::entities::Entities>,
+    entities: &'a mut crate::entities::Entities,
     pc_registry: Option<&'a [EntityId]>,
-    ai_global: RefCell<&'a mut crate::ai::AiGlobalState>,
-    fast_grid: RefCell<&'a mut crate::fast_find_grid::FastFindGrid>,
-    script_globals: RefCell<&'a mut Vec<i32>>,
-    campaign: Option<RefCell<&'a mut crate::campaign::Campaign>>,
-    mission_stat: Option<RefCell<&'a mut crate::mission_stat::MissionStat>>,
-    diplomacy: Option<RefCell<&'a mut crate::diplomacy::DiplomacyState>>,
-    sequence_manager: Option<RefCell<&'a mut crate::sequence::SequenceManager>>,
-    selected_pcs: Option<RefCell<&'a mut Vec<EntityId>>>,
-    selected_action: Option<RefCell<&'a mut crate::profiles::Action>>,
-    short_briefings: Option<RefCell<&'a mut crate::short_briefings::ShortBriefings>>,
-    standard_view_radius: Option<RefCell<&'a mut u16>>,
-    view_radius_cache: Option<RefCell<&'a mut crate::ai_vision::ViewRadiusCache>>,
+    ai_global: &'a mut crate::ai::AiGlobalState,
+    fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
+    script_globals: &'a mut Vec<i32>,
+    campaign: Option<&'a mut crate::campaign::Campaign>,
+    mission_stat: Option<&'a mut crate::mission_stat::MissionStat>,
+    diplomacy: Option<&'a mut crate::diplomacy::DiplomacyState>,
+    sequence_manager: Option<&'a mut crate::sequence::SequenceManager>,
+    selected_pcs: Option<&'a mut Vec<EntityId>>,
+    selected_action: Option<&'a mut crate::profiles::Action>,
+    short_briefings: Option<&'a mut crate::short_briefings::ShortBriefings>,
+    standard_view_radius: Option<&'a mut u16>,
+    view_radius_cache: Option<&'a mut crate::ai_vision::ViewRadiusCache>,
     sight_obstacles: Option<crate::sight_obstacle::ObstacleList<'a>>,
-    sound_sources: Option<RefCell<&'a mut crate::sound_source::SoundSourceManager>>,
+    sound_sources: Option<&'a mut crate::sound_source::SoundSourceManager>,
     weather: Option<&'a crate::engine::WeatherState>,
     frame_counter: Option<&'a u32>,
 }
@@ -41,11 +37,11 @@ impl<'a> NativeSessionCapabilities<'a> {
     ) -> Self {
         Self {
             simulation,
-            entities: RefCell::new(entities),
+            entities: entities,
             pc_registry: None,
-            ai_global: RefCell::new(ai_global),
-            fast_grid: RefCell::new(fast_grid),
-            script_globals: RefCell::new(script_globals),
+            ai_global: ai_global,
+            fast_grid: fast_grid,
+            script_globals: script_globals,
             campaign: None,
             mission_stat: None,
             diplomacy: None,
@@ -78,9 +74,9 @@ impl<'a> NativeSessionCapabilities<'a> {
         weather: &'a crate::engine::WeatherState,
         frame_counter: &'a u32,
     ) -> Self {
-        self.sequence_manager = Some(RefCell::new(sequence_manager));
-        self.selected_pcs = Some(RefCell::new(selected_pcs));
-        self.sound_sources = Some(RefCell::new(sound_sources));
+        self.sequence_manager = Some(sequence_manager);
+        self.selected_pcs = Some(selected_pcs);
+        self.sound_sources = Some(sound_sources);
         self.weather = Some(weather);
         self.frame_counter = Some(frame_counter);
         self
@@ -89,7 +85,7 @@ impl<'a> NativeSessionCapabilities<'a> {
     /// Attach the original game's globally armed player action.
     /// This is intentionally separate from each PC's remembered action.
     pub fn with_selected_action(mut self, action: &'a mut crate::profiles::Action) -> Self {
-        self.selected_action = Some(RefCell::new(action));
+        self.selected_action = Some(action);
         self
     }
 
@@ -115,13 +111,13 @@ impl<'a> NativeSessionCapabilities<'a> {
         campaign: &'a mut crate::campaign::Campaign,
         mission_stat: &'a mut crate::mission_stat::MissionStat,
     ) -> Self {
-        self.campaign = Some(RefCell::new(campaign));
-        self.mission_stat = Some(RefCell::new(mission_stat));
+        self.campaign = Some(campaign);
+        self.mission_stat = Some(mission_stat);
         self
     }
 
     pub fn with_diplomacy(mut self, diplomacy: &'a mut crate::diplomacy::DiplomacyState) -> Self {
-        self.diplomacy = Some(RefCell::new(diplomacy));
+        self.diplomacy = Some(diplomacy);
         self
     }
 
@@ -132,7 +128,7 @@ impl<'a> NativeSessionCapabilities<'a> {
         mut self,
         short_briefings: &'a mut crate::short_briefings::ShortBriefings,
     ) -> Self {
-        self.short_briefings = Some(RefCell::new(short_briefings));
+        self.short_briefings = Some(short_briefings);
         self
     }
 
@@ -141,7 +137,7 @@ impl<'a> NativeSessionCapabilities<'a> {
     /// Original-game standard view-radius update followed by every NPC's
     /// the original game's view-radius initialization.
     pub fn with_standard_view_radius(mut self, radius: &'a mut u16) -> Self {
-        self.standard_view_radius = Some(RefCell::new(radius));
+        self.standard_view_radius = Some(radius);
         self
     }
 
@@ -149,54 +145,13 @@ impl<'a> NativeSessionCapabilities<'a> {
         mut self,
         cache: &'a mut crate::ai_vision::ViewRadiusCache,
     ) -> Self {
-        self.view_radius_cache = Some(RefCell::new(cache));
+        self.view_radius_cache = Some(cache);
         self
-    }
-
-    fn entities(&self) -> RefMut<'_, crate::entities::Entities> {
-        RefMut::map(self.entities.borrow_mut(), |entities| &mut **entities)
-    }
-
-    fn pc_registry_option(&self) -> Option<&'a [EntityId]> {
-        self.pc_registry
-    }
-
-    fn ai_global(&self) -> RefMut<'_, crate::ai::AiGlobalState> {
-        RefMut::map(self.ai_global.borrow_mut(), |ai_global| &mut **ai_global)
-    }
-
-    fn fast_grid(&self) -> RefMut<'_, crate::fast_find_grid::FastFindGrid> {
-        RefMut::map(self.fast_grid.borrow_mut(), |fast_grid| &mut **fast_grid)
-    }
-
-    fn campaign(&self) -> Option<RefMut<'_, crate::campaign::Campaign>> {
-        self.campaign
-            .as_ref()
-            .map(|campaign| RefMut::map(campaign.borrow_mut(), |campaign| &mut **campaign))
-    }
-
-    fn mission_stat(&self) -> Option<RefMut<'_, crate::mission_stat::MissionStat>> {
-        self.mission_stat.as_ref().map(|mission_stat| {
-            RefMut::map(mission_stat.borrow_mut(), |mission_stat| {
-                &mut **mission_stat
-            })
-        })
-    }
-
-    fn diplomacy(&self) -> Option<RefMut<'_, crate::diplomacy::DiplomacyState>> {
-        self.diplomacy
-            .as_ref()
-            .map(|diplomacy| RefMut::map(diplomacy.borrow_mut(), |value| &mut **value))
     }
 
     #[cfg(test)]
     pub(crate) fn entities_owner_ptr(&self) -> *const crate::entities::Entities {
-        let entities = self.entities.borrow();
-        std::ptr::from_ref(&**entities)
-    }
-
-    fn script_globals(&self) -> RefMut<'_, Vec<i32>> {
-        RefMut::map(self.script_globals.borrow_mut(), |value| &mut **value)
+        std::ptr::from_ref(self.entities)
     }
 }
 
@@ -265,114 +220,34 @@ impl<'a> NativeSessionCapabilities<'a> {
     pub fn simulation_context(&self) -> &crate::sim_rng::SimulationContext {
         self.simulation
     }
-
-    #[doc(hidden)]
-    pub fn sequence_manager_option(&self) -> Option<RefMut<'_, crate::sequence::SequenceManager>> {
-        self.sequence_manager.as_ref().map(|sequence_manager| {
-            RefMut::map(sequence_manager.borrow_mut(), |sequence_manager| {
-                &mut **sequence_manager
-            })
-        })
-    }
-
-    #[doc(hidden)]
-    pub fn selected_pcs_option(&self) -> Option<RefMut<'_, Vec<EntityId>>> {
-        self.selected_pcs.as_ref().map(|selected_pcs| {
-            RefMut::map(selected_pcs.borrow_mut(), |selected_pcs| {
-                &mut **selected_pcs
-            })
-        })
-    }
-
-    #[doc(hidden)]
-    pub fn selected_action_option(&self) -> Option<RefMut<'_, crate::profiles::Action>> {
-        self.selected_action.as_ref().map(|selected_action| {
-            RefMut::map(selected_action.borrow_mut(), |selected_action| {
-                &mut **selected_action
-            })
-        })
-    }
-
-    #[doc(hidden)]
-    pub fn short_briefings_option(
-        &self,
-    ) -> Option<RefMut<'_, crate::short_briefings::ShortBriefings>> {
-        self.short_briefings.as_ref().map(|short_briefings| {
-            RefMut::map(short_briefings.borrow_mut(), |short_briefings| {
-                &mut **short_briefings
-            })
-        })
-    }
-
-    #[doc(hidden)]
-    pub fn standard_view_radius_option(&self) -> Option<RefMut<'_, u16>> {
-        self.standard_view_radius
-            .as_ref()
-            .map(|radius| RefMut::map(radius.borrow_mut(), |radius| &mut **radius))
-    }
-
-    #[doc(hidden)]
-    pub(crate) fn view_radius_cache_option(
-        &self,
-    ) -> Option<RefMut<'_, crate::ai_vision::ViewRadiusCache>> {
-        self.view_radius_cache
-            .as_ref()
-            .map(|cache| RefMut::map(cache.borrow_mut(), |cache| &mut **cache))
-    }
-
-    #[doc(hidden)]
-    pub fn sight_obstacles_option(&self) -> Option<crate::sight_obstacle::ObstacleList<'a>> {
-        self.sight_obstacles
-    }
-
-    #[doc(hidden)]
-    pub fn sound_sources_option(
-        &self,
-    ) -> Option<RefMut<'_, crate::sound_source::SoundSourceManager>> {
-        self.sound_sources.as_ref().map(|sound_sources| {
-            RefMut::map(sound_sources.borrow_mut(), |sound_sources| {
-                &mut **sound_sources
-            })
-        })
-    }
-
-    #[doc(hidden)]
-    pub fn weather_option(&self) -> Option<&'a crate::engine::WeatherState> {
-        self.weather
-    }
-
-    #[doc(hidden)]
-    pub fn frame_counter_option(&self) -> Option<&'a u32> {
-        self.frame_counter
-    }
 }
 
 /// Short-lived native dispatcher assembled for one VM resume.
 ///
 /// Script globals, computed locations, and recorder state are borrowed from
-/// their sole owner on `MissionScript`; only typed effects are buffered here.
+/// their sole owner on `MissionScript`. Yielded native requests leave this
+/// context before the engine executes callbacks.
 pub struct NativeContext<'ctx, 'owners: 'ctx> {
     pub(crate) simulation: &'ctx crate::sim_rng::SimulationContext,
-    pub(crate) script_effects: &'ctx mut ScriptEffects,
-    pub(crate) entities: RefMut<'ctx, crate::entities::Entities>,
+    pub(crate) entities: &'ctx mut crate::entities::Entities,
     pub(crate) pc_registry: Option<&'owners [EntityId]>,
-    pub(crate) ai_global: RefMut<'ctx, crate::ai::AiGlobalState>,
-    pub(crate) fast_grid: RefMut<'ctx, crate::fast_find_grid::FastFindGrid>,
+    pub(crate) ai_global: &'ctx mut crate::ai::AiGlobalState,
+    pub(crate) fast_grid: &'ctx mut crate::fast_find_grid::FastFindGrid,
     pub(crate) script_state: &'ctx mut ScriptState,
-    pub(crate) script_globals: RefMut<'ctx, Vec<i32>>,
+    pub(crate) script_globals: &'ctx mut Vec<i32>,
     pub(crate) script_domains: &'ctx mut crate::engine::ScriptDomains,
     pub(crate) bindings: ScriptBindings<'ctx>,
-    pub(crate) campaign: Option<RefMut<'ctx, crate::campaign::Campaign>>,
-    pub(crate) mission_stat: Option<RefMut<'ctx, crate::mission_stat::MissionStat>>,
-    pub(crate) diplomacy: Option<RefMut<'ctx, crate::diplomacy::DiplomacyState>>,
-    pub(crate) sequence_manager: Option<RefMut<'ctx, crate::sequence::SequenceManager>>,
-    pub(crate) selected_pcs: Option<RefMut<'ctx, Vec<EntityId>>>,
-    pub(crate) selected_action: Option<RefMut<'ctx, crate::profiles::Action>>,
-    pub(crate) short_briefings: Option<RefMut<'ctx, crate::short_briefings::ShortBriefings>>,
-    pub(crate) standard_view_radius: Option<RefMut<'ctx, u16>>,
-    pub(crate) view_radius_cache: Option<RefMut<'ctx, crate::ai_vision::ViewRadiusCache>>,
+    pub(crate) campaign: Option<&'ctx mut crate::campaign::Campaign>,
+    pub(crate) mission_stat: Option<&'ctx mut crate::mission_stat::MissionStat>,
+    pub(crate) diplomacy: Option<&'ctx mut crate::diplomacy::DiplomacyState>,
+    pub(crate) sequence_manager: Option<&'ctx mut crate::sequence::SequenceManager>,
+    pub(crate) selected_pcs: Option<&'ctx mut Vec<EntityId>>,
+    pub(crate) selected_action: Option<&'ctx mut crate::profiles::Action>,
+    pub(crate) short_briefings: Option<&'ctx mut crate::short_briefings::ShortBriefings>,
+    pub(crate) standard_view_radius: Option<&'ctx mut u16>,
+    pub(crate) view_radius_cache: Option<&'ctx mut crate::ai_vision::ViewRadiusCache>,
     pub(crate) sight_obstacles: Option<crate::sight_obstacle::ObstacleList<'owners>>,
-    pub(crate) sound_sources: Option<RefMut<'ctx, crate::sound_source::SoundSourceManager>>,
+    pub(crate) sound_sources: Option<&'ctx mut crate::sound_source::SoundSourceManager>,
     pub(crate) weather: Option<&'owners crate::engine::WeatherState>,
     pub(crate) frame_counter: Option<&'owners u32>,
     pub(crate) call_frame: ScriptCallFrame,
@@ -396,35 +271,33 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
     }
 
     pub fn new(
-        script_effects: &'ctx mut ScriptEffects,
         script_state: &'ctx mut ScriptState,
         script_domains: &'ctx mut crate::engine::ScriptDomains,
-        capabilities: &'ctx NativeSessionCapabilities<'owners>,
+        capabilities: &'ctx mut NativeSessionCapabilities<'owners>,
     ) -> Self {
         Self {
-            simulation: capabilities.simulation_context(),
-            script_effects,
-            entities: capabilities.entities(),
-            pc_registry: capabilities.pc_registry_option(),
-            ai_global: capabilities.ai_global(),
-            fast_grid: capabilities.fast_grid(),
+            simulation: capabilities.simulation,
+            entities: &mut *capabilities.entities,
+            pc_registry: capabilities.pc_registry,
+            ai_global: &mut *capabilities.ai_global,
+            fast_grid: &mut *capabilities.fast_grid,
             script_state,
-            script_globals: capabilities.script_globals(),
+            script_globals: &mut *capabilities.script_globals,
             script_domains,
             bindings: ScriptBindings::empty(),
-            campaign: capabilities.campaign(),
-            mission_stat: capabilities.mission_stat(),
-            diplomacy: capabilities.diplomacy(),
-            sequence_manager: capabilities.sequence_manager_option(),
-            selected_pcs: capabilities.selected_pcs_option(),
-            selected_action: capabilities.selected_action_option(),
-            short_briefings: capabilities.short_briefings_option(),
-            standard_view_radius: capabilities.standard_view_radius_option(),
-            view_radius_cache: capabilities.view_radius_cache_option(),
-            sight_obstacles: capabilities.sight_obstacles_option(),
-            sound_sources: capabilities.sound_sources_option(),
-            weather: capabilities.weather_option(),
-            frame_counter: capabilities.frame_counter_option(),
+            campaign: capabilities.campaign.as_deref_mut(),
+            mission_stat: capabilities.mission_stat.as_deref_mut(),
+            diplomacy: capabilities.diplomacy.as_deref_mut(),
+            sequence_manager: capabilities.sequence_manager.as_deref_mut(),
+            selected_pcs: capabilities.selected_pcs.as_deref_mut(),
+            selected_action: capabilities.selected_action.as_deref_mut(),
+            short_briefings: capabilities.short_briefings.as_deref_mut(),
+            standard_view_radius: capabilities.standard_view_radius.as_deref_mut(),
+            view_radius_cache: capabilities.view_radius_cache.as_deref_mut(),
+            sight_obstacles: capabilities.sight_obstacles,
+            sound_sources: capabilities.sound_sources.as_deref_mut(),
+            weather: capabilities.weather,
+            frame_counter: capabilities.frame_counter,
             call_frame: ScriptCallFrame::default(),
             script_vm_diagnostic: None,
             pending_yield: None,
@@ -432,14 +305,12 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
     }
 
     pub fn with_bindings(
-        script_effects: &'ctx mut ScriptEffects,
         script_state: &'ctx mut ScriptState,
         script_domains: &'ctx mut crate::engine::ScriptDomains,
         bindings: &'ctx AttachedScriptBindings,
-        capabilities: &'ctx NativeSessionCapabilities<'owners>,
+        capabilities: &'ctx mut NativeSessionCapabilities<'owners>,
     ) -> Self {
         Self::with_call_frame(
-            script_effects,
             script_state,
             script_domains,
             bindings,
@@ -449,14 +320,13 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
     }
 
     pub fn with_call_frame(
-        script_effects: &'ctx mut ScriptEffects,
         script_state: &'ctx mut ScriptState,
         script_domains: &'ctx mut crate::engine::ScriptDomains,
         bindings: &'ctx AttachedScriptBindings,
-        capabilities: &'ctx NativeSessionCapabilities<'owners>,
+        capabilities: &'ctx mut NativeSessionCapabilities<'owners>,
         call_frame: ScriptCallFrame,
     ) -> Self {
-        let mut context = Self::new(script_effects, script_state, script_domains, capabilities);
+        let mut context = Self::new(script_state, script_domains, capabilities);
         context.bindings = bindings.view();
         context.call_frame = call_frame;
         context
@@ -472,17 +342,6 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
 
     pub fn script_globals(&self) -> &[i32] {
         &self.script_globals
-    }
-
-    pub fn script_effects(&self) -> &ScriptEffects {
-        self.script_effects
-    }
-
-    /// Mutable access to the effect queue natives append to. Explicit
-    /// instead of `DerefMut` so an effect emission is visible at the call
-    /// site rather than hidden behind method auto-deref.
-    pub(crate) fn script_effects_mut(&mut self) -> &mut ScriptEffects {
-        self.script_effects
     }
 
     pub fn script_state_mut(&mut self) -> &mut ScriptState {

@@ -200,46 +200,36 @@ impl EngineInner {
                 h.small_repulsive_radius = false;
             }
 
-            let victims = self.find_intersecting_corpses(
-                corpse,
-                corpse_sector,
-                corpse_layer,
-                corpse_pos,
-                /* candidate_small_flag */ false,
-                logically_lying,
-            );
-
-            if super::diagnostics::config().corpse_intersection {
-                eprintln!("[CORPSE   victims={victims:?}]");
-            }
-
-            if !victims.is_empty() {
-                if let Some(h) = self.get_entity_mut(corpse).and_then(|e| e.human_data_mut()) {
-                    h.small_repulsive_radius = true;
-                }
-                for id in victims {
+            let actor_count = self.world.actor_registry_ids.len();
+            for index in 0..actor_count {
+                let id = self.world.actor_registry_ids[index];
+                if self.is_intersecting_corpse_candidate(
+                    id,
+                    corpse,
+                    corpse_sector,
+                    corpse_layer,
+                    corpse_pos,
+                    /* candidate_small_flag */ false,
+                    logically_lying,
+                ) {
                     if let Some(h) = self.get_entity_mut(id).and_then(|e| e.human_data_mut()) {
+                        h.small_repulsive_radius = true;
+                    }
+                    if let Some(h) = self.get_entity_mut(corpse).and_then(|e| e.human_data_mut()) {
                         h.small_repulsive_radius = true;
                     }
                 }
             }
         } else {
             // Removing a corpse.
-            // The original game walks the actor collection live here. A recursive addition
+            // A recursive addition
             // call can change the small-radius flag of an actor that the
             // outer walk has not reached yet, and the later actor must be
-            // tested against that new flag. Snapshot only the stable actor
-            // identities so recursive mutation is borrow-safe, then perform
-            // every predicate check against live state.
-            let mut human_ids: Vec<EntityId> = self
-                .world
-                .entities
-                .humans()
-                .map(|(id, _)| id.into())
-                .collect();
-            human_ids.sort_by_key(|&id| self.world.original_creation_order(id));
-
-            for id in human_ids {
+            // tested against that new flag. These updates do not change actor
+            // membership, so each short lookup follows the canonical registry.
+            let actor_count = self.world.actor_registry_ids.len();
+            for index in 0..actor_count {
+                let id = self.world.actor_registry_ids[index];
                 if self.is_intersecting_corpse_candidate(
                     id,
                     corpse,
@@ -262,36 +252,6 @@ impl EngineInner {
                 }
             }
         }
-    }
-
-    /// Scan for humans that are lying, in the same layer+sector as
-    /// `corpse`, within `INTERSECT_SQ_DIST` of `corpse_pos`, and whose
-    /// `small_repulsive_radius` flag matches `candidate_small_flag`.
-    fn find_intersecting_corpses(
-        &self,
-        corpse: EntityId,
-        corpse_sector: Option<crate::position_interface::SectorHandle>,
-        corpse_layer: u16,
-        corpse_pos: MapPoint,
-        candidate_small_flag: bool,
-        logically_lying: Option<&HashSet<EntityId>>,
-    ) -> Vec<EntityId> {
-        let mut out = Vec::new();
-        for (id, _) in self.world.entities.humans() {
-            let candidate_id = EntityId::from(id);
-            if self.is_intersecting_corpse_candidate(
-                candidate_id,
-                corpse,
-                corpse_sector,
-                corpse_layer,
-                corpse_pos,
-                candidate_small_flag,
-                logically_lying,
-            ) {
-                out.push(candidate_id);
-            }
-        }
-        out
     }
 
     fn is_intersecting_corpse_candidate(
@@ -435,7 +395,6 @@ mod tests {
         Entity, HumanData, NpcData, PcData, Posture, SoldierData,
     };
     use crate::engine::EngineInner;
-    use crate::engine::animation::{AnimCompletionOutcomes, ExecuteSideOutcomes};
 
     fn civilian_at(x: f32, y: f32, posture: Posture, sector: u16) -> ActorCivilian {
         let mut element = {
@@ -511,18 +470,7 @@ mod tests {
             "the base element rejects the requested upright posture"
         );
 
-        let outcomes = AnimCompletionOutcomes {
-            execute_sides: ExecuteSideOutcomes {
-                rejected_dead_idle_posture_requests: vec![corpse],
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        engine.process_anim_completion_outcomes(
-            &crate::sim_rng::test_context(),
-            outcomes,
-            &crate::engine::types::LevelAssets::new(),
-        );
+        engine.process_rejected_nonlying_posture_request_for(corpse);
 
         for id in [corpse, pc] {
             assert!(

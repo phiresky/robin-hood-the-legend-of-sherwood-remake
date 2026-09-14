@@ -18,7 +18,7 @@ impl EngineInner {
             .base
             .set_emoticon(EmoticonType::QuestionMark);
 
-        if self.observation_ai(owner).get_rank() == ProfileRank::Officer {
+        if self.observation_ai(owner).get_rank(&assets.profile_manager) == ProfileRank::Officer {
             self.execute_ai_missed_charly_alert(sim, assets, owner);
             return;
         }
@@ -150,7 +150,7 @@ impl EngineInner {
             .entities
             .expect_enemy_ai_mut(charly, format_args!("checkpoint reporting status"))
             .reported_to_officer = false;
-        match self.observation_ai(owner).get_rank() {
+        match self.observation_ai(owner).get_rank(&assets.profile_manager) {
             ProfileRank::Soldier => {
                 if self.execute_ai_alert_officer(sim, assets, owner) {
                     return;

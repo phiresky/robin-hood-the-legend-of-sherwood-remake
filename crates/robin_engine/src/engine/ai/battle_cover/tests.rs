@@ -46,7 +46,9 @@ fn fixture(points: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
         .world
         .entities
         .expect_enemy_ai_mut(ids[0], format_args!("pride fixture"));
-    ai.soldier_profile_pride = 1;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+        profile.pride = 1
+    });
     ai.base.current_substate = Substate::AttackingOfficerGivingOrdersWaiting;
     ai.list_them = ids[1..].iter().map(|id| id.index()).collect();
     (engine, assets, ids)

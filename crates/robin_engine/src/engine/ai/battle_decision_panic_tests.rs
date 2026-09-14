@@ -158,7 +158,11 @@ fn help_decision_finishes_real_officer_route_before_fallback_and_logs_once() {
             .unwrap()
             .enemy_ai_mut()
             .unwrap();
-        officer_ai.soldier_profile_rank = crate::profiles::ProfileRank::Officer;
+        crate::engine::test_support::actors::edit_enemy_profile(
+            &mut assets,
+            officer_ai,
+            |profile| profile.rank = crate::profiles::ProfileRank::Officer,
+        );
         officer_ai.base.current_state = AiState::Default;
         officer_ai.base.current_substate = Substate::DefaultOnPost;
         let ai = engine
@@ -166,7 +170,9 @@ fn help_decision_finishes_real_officer_route_before_fallback_and_logs_once() {
             .unwrap()
             .enemy_ai_mut()
             .unwrap();
-        ai.soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = crate::profiles::ProfileRank::Soldier
+        });
         ai.forced_next_battle_decision = Decision::LookForHelp;
         let (_, draws) = crate::sim_rng::with_draw_trace(|| {
             engine.execute_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);

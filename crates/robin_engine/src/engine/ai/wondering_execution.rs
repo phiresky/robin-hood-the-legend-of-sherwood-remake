@@ -61,7 +61,8 @@ impl EngineInner {
                 self.execute_noise_pre_reaction(sim, assets, owner);
             }
             (Substate::SeekingHeardstepsReactiontime, EventTimer) => {
-                let officer = if self.seek_enemy(owner).soldier_profile_rank == ProfileRank::Soldier
+                let officer = if self.seek_enemy(owner).profile(&assets.profile_manager).rank
+                    == ProfileRank::Soldier
                 {
                     self.live_whistle_officer(assets, owner)
                 } else {
@@ -128,7 +129,7 @@ impl EngineInner {
                 self.execute_ai_look_sidewards(owner, direction);
             }
             (Substate::SeekingJustWatchingSidewards, EventDone) => {
-                match self.seek_enemy(owner).soldier_profile_rank {
+                match self.seek_enemy(owner).profile(&assets.profile_manager).rank {
                     ProfileRank::Soldier => {
                         self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty())
                     }
@@ -158,7 +159,7 @@ impl EngineInner {
                 let entity = self.expect_entity(owner, "apple reaction owner");
                 let outside = entity.element_data().active
                     && !self.entity_data_in_building_sector(entity.element_data());
-                let react = drunk || outside && ai.soldier_profile_apple > 0;
+                let react = drunk || outside && ai.profile(&assets.profile_manager).apple > 0;
                 if !react || !self.chase_live_children(sim, assets, owner) {
                     self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
                 }
@@ -245,7 +246,7 @@ impl EngineInner {
         let decline = if ai.investigating_distraction {
             false
         } else {
-            match ai.soldier_profile_rank {
+            match ai.profile(&assets.profile_manager).rank {
                 ProfileRank::Officer => {
                     let here = self.live_ai_position(owner);
                     let source = ai.base.seek_position;
@@ -257,7 +258,7 @@ impl EngineInner {
                     ai.base.blood_alcohol as i32 > crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
                         || !entity.element_data().active
                         || self.entity_data_in_building_sector(entity.element_data())
-                        || ai.soldier_profile_duty
+                        || ai.profile(&assets.profile_manager).duty
                         || ai.company_number == 100
                 }
                 ProfileRank::None => false,
@@ -436,7 +437,7 @@ impl EngineInner {
             );
         }
         let ai = self.seek_enemy_mut(owner);
-        ai.base.lasting_panic_runs = (ai.soldier_profile_apple / 2) as u8;
+        ai.base.lasting_panic_runs = (ai.profile(&assets.profile_manager).apple / 2) as u8;
         ai.base.set_emoticon(EmoticonType::Thunderstorm);
         self.execute_ai_speech(
             sim,
@@ -515,20 +516,20 @@ impl EngineInner {
             && !self.entity_data_in_building_sector(entity.element_data());
         if ai.base.blood_alcohol as i32 > crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
             || !outside
-            || ai.soldier_profile_whistle <= 1
+            || ai.profile(&assets.profile_manager).whistle <= 1
             || ai.company_number == 100
         {
             self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
             return;
         }
-        let officer = if ai.soldier_profile_rank == ProfileRank::Soldier {
+        let officer = if ai.profile(&assets.profile_manager).rank == ProfileRank::Soldier {
             self.live_whistle_officer(assets, owner)
         } else {
             None
         };
         let ai = self.seek_enemy(owner);
-        let send_soldier = ai.soldier_profile_rank == ProfileRank::Officer
-            && (ai.soldier_profile_initiative < 50 || !ai.base.patrol.is_empty());
+        let send_soldier = ai.profile(&assets.profile_manager).rank == ProfileRank::Officer
+            && (ai.profile(&assets.profile_manager).initiative < 50 || !ai.base.patrol.is_empty());
         if let Some(officer) = officer {
             self.wondering_face_entity(sim, assets, owner, officer);
             self.duty_set_state(
@@ -547,7 +548,8 @@ impl EngineInner {
         } else {
             let ai = self.seek_enemy(owner);
             let position = ai.base.seek_position;
-            let radius = (400 * (ai.soldier_profile_whistle as u32 - 2) / 98) as u16;
+            let radius =
+                (400 * (ai.profile(&assets.profile_manager).whistle as u32 - 2) / 98) as u16;
             self.execute_ai_seek_area(
                 sim,
                 assets,
@@ -575,7 +577,7 @@ impl EngineInner {
                 .enemy()
                 .expect("officer requires enemy AI");
             if soldier.camp() != viewer.camp()
-                || ai.soldier_profile_rank != ProfileRank::Officer
+                || ai.profile(&assets.profile_manager).rank != ProfileRank::Officer
                 || !soldier.is_able_to_fight()
             {
                 continue;
@@ -645,7 +647,7 @@ mod tests {
                 Substate::SeekingJustWatching,
             ),
         ] {
-            let (mut engine, assets, owner, target) = fixture(false);
+            let (mut engine, mut assets, owner, target) = fixture(false);
             engine
                 .get_entity_mut(owner)
                 .unwrap()
@@ -655,8 +657,12 @@ mod tests {
             let ai = engine.seek_enemy_mut(owner);
             ai.base.current_state = AiState::Seeking;
             ai.base.current_substate = Substate::SeekingHeardstepsPreReactiontime;
-            ai.soldier_profile_rank = rank;
-            ai.soldier_profile_duty = false;
+            crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+                profile.rank = rank
+            });
+            crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+                profile.duty = false
+            });
             ai.base.seek_position = Position {
                 x: position.x + 50.0,
                 ..position
@@ -682,13 +688,17 @@ mod tests {
 
     #[test]
     fn distraction_keeps_running_investigation_through_live_noise_handlers() {
-        let (mut engine, assets, owner, target) = fixture(false);
+        let (mut engine, mut assets, owner, target) = fixture(false);
         let destination = engine.live_ai_position(target);
         let ai = engine.seek_enemy_mut(owner);
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingHeardstepsPreReactiontime;
-        ai.soldier_profile_rank = ProfileRank::Soldier;
-        ai.soldier_profile_duty = true;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = ProfileRank::Soldier
+        });
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.duty = true
+        });
         ai.investigating_distraction = true;
         ai.base.seek_position = destination;
         let sim = crate::sim_rng::test_context();

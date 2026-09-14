@@ -4,7 +4,7 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use robin_assets::scb;
-use robin_engine::natives::{NativeContext, ScriptEffects, ScriptState};
+use robin_engine::natives::{NativeContext, ScriptState};
 use robin_engine::script_manager::{ScriptManager, ScriptProgram};
 use std::path::Path;
 use std::sync::Arc;
@@ -24,7 +24,6 @@ struct ScriptResult {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct ExecutionStats {
-    deferred_commands: usize,
     ip: u32,
     frames: usize,
 }
@@ -72,13 +71,12 @@ fn run_initialize(file: scb::ScbFile) -> Result<Option<ScriptResult>, String> {
     let mut activation = instance
         .begin_activation(&manager, "Initialize", &vec![0; count])
         .map_err(|error| error.to_string())?;
-    let mut script_effects = ScriptEffects::new();
     let mut entities = robin_engine::entities::Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let simulation = robin_engine::sim_rng::SimulationContext::with_seed(0);
     let mut native_globals = Vec::new();
-    let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
+    let mut capabilities = robin_engine::natives::NativeSessionCapabilities::new(
         &simulation,
         &mut entities,
         &mut ai_global,
@@ -87,12 +85,7 @@ fn run_initialize(file: scb::ScbFile) -> Result<Option<ScriptResult>, String> {
     );
     let mut script_state = ScriptState::default();
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
-    let mut context = NativeContext::new(
-        &mut script_effects,
-        &mut script_state,
-        &mut script_domains,
-        &capabilities,
-    );
+    let mut context = NativeContext::new(&mut script_state, &mut script_domains, &mut capabilities);
 
     let stop = instance.poll_activation_with_host(
         &mut manager,
@@ -107,7 +100,6 @@ fn run_initialize(file: scb::ScbFile) -> Result<Option<ScriptResult>, String> {
         // and a nested return are not claims of completed initialization.
         status: format!("{stop:?}"),
         execution: Some(ExecutionStats {
-            deferred_commands: context.script_effects().engine_commands().len(),
             ip: activation.ip,
             frames: activation.frames.len(),
         }),
@@ -175,10 +167,9 @@ fn main() -> std::process::ExitCode {
     for result in &report.results {
         if let Some(execution) = &result.execution {
             tracing::info!(
-                "{}: {} (deferred commands: {}, ip: {}, frames: {})",
+                "{}: {} (ip: {}, frames: {})",
                 result.script,
                 result.status,
-                execution.deferred_commands,
                 execution.ip,
                 execution.frames
             );

@@ -199,14 +199,14 @@ impl EngineInner {
     ) {
         self.add_weak_stunned(entity_id);
 
-        let opponents: Vec<EntityId> = self
-            .get_entity(entity_id)
-            .and_then(|e| e.human_data())
-            .map(|h| h.opponents.ids())
-            .unwrap_or_default();
-
         if transfer_smalltalk_initiative {
-            let principal_id = opponents.first().copied();
+            let principal_id = self
+                .expect_entity(entity_id, "weak actor")
+                .human_data()
+                .expect("weak actor must be human")
+                .opponents
+                .first()
+                .copied();
             let is_mutual = principal_id
                 .and_then(|pid| {
                     self.get_entity(pid)
@@ -230,7 +230,22 @@ impl EngineInner {
             }
         }
 
-        for opponent_id in opponents {
+        let opponent_count = self
+            .expect_entity(entity_id, "weak/stunned actor")
+            .human_data()
+            .expect("weak/stunned actor must be human")
+            .opponents
+            .len();
+        for index in 0..opponent_count {
+            // Each adversary callback finishes before selecting the next
+            // opponent; the callback may replace that live opponent slot.
+            let opponent_id = *self
+                .expect_entity(entity_id, "weak/stunned actor")
+                .human_data()
+                .expect("weak/stunned actor must be human")
+                .opponents
+                .get(index)
+                .expect("weak/stunned callback removed a required opponent slot");
             let opponent = self.world.entities.get(opponent_id).unwrap_or_else(|| {
                 panic!(
                     "weak/stunned actor {} references missing opponent {}",
@@ -242,10 +257,7 @@ impl EngineInner {
                 continue;
             }
 
-            // Original-game actor execution calls each soldier opponent's
-            // Think(EVENT_ADVERSARY_WEAK) directly during the weak/stunned
-            // order's initialization. Preserve older detection stimuli, but
-            // close this call before advancing to the next opponent or the
+            // Close this call before advancing to the next opponent or the
             // actor's action processing.
             self.execute_ai_callback(
                 sim,

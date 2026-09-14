@@ -7,7 +7,14 @@ use super::super::{LevelAssets, MissionScript};
 /// Native calls still borrow the world, AI, campaign, orders, and feedback
 /// state they operate on. Keeping those capabilities outside this owner is
 /// important: this type owns the script runtime, not a second engine model.
-#[derive(Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct ScriptRuntime {
     /// Canonical cross-script globals, including zero-filled valid slots added
     /// by Original's `InitGlobal` growth. Native calls borrow this same array;
@@ -16,6 +23,7 @@ pub(crate) struct ScriptRuntime {
     pub(crate) mission: Option<MissionScript>,
     /// Serializable Spellforge package and event/native journal.  The Lua VM
     /// itself is a process-local level asset and reconstructs from this tape.
+    #[serde(default)]
     pub(crate) spellforge: crate::spellforge::SpellforgeTape,
 
     /// Immutable bytecode and native bindings are deliberately omitted from
@@ -23,35 +31,13 @@ pub(crate) struct ScriptRuntime {
     /// dispatch before the live level has reattached both resources.
     #[state_hash(skip)]
     #[bitcode(skip)]
+    #[serde(skip)]
     native_attachments_ready: bool,
 }
 
-impl serde::Serialize for ScriptRuntime {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedScriptRuntime::capture(self)
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
-    }
-}
-impl<'de> serde::Deserialize<'de> for ScriptRuntime {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(PersistedScriptRuntime::deserialize(deserializer)?.into_runtime())
-    }
-}
-
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedScriptRuntime {
-    globals: Vec<i32>,
-
-    mission: Option<MissionScript>,
-    #[serde(default)]
-    spellforge: crate::spellforge::SpellforgeTape,
-}
-
-impl PersistedScriptRuntime {
-    pub(crate) fn capture(value: &ScriptRuntime) -> Result<Self, String> {
+impl ScriptRuntime {
+    pub(crate) fn persisted_clone(&self) -> Result<Self, String> {
+        let value = self;
         let ScriptRuntime {
             globals: _,
             mission: _,
@@ -59,6 +45,7 @@ impl PersistedScriptRuntime {
             native_attachments_ready: _,
         } = value;
         Ok(Self {
+            native_attachments_ready: false,
             globals: value.globals.clone(),
             mission: value
                 .mission
@@ -67,15 +54,6 @@ impl PersistedScriptRuntime {
                 .transpose()?,
             spellforge: value.spellforge.clone(),
         })
-    }
-
-    pub(crate) fn into_runtime(self) -> ScriptRuntime {
-        ScriptRuntime {
-            globals: self.globals,
-            mission: self.mission,
-            spellforge: self.spellforge,
-            native_attachments_ready: false,
-        }
     }
 }
 

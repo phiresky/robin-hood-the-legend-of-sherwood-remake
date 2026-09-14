@@ -574,14 +574,14 @@ impl EngineInner {
     }
 
     /// Generic/rolling/corpse-exit Execute and the in-slot Execute tail up
-    /// to the staged completion of the Execute result.
+    /// through completion of the Execute result.
     pub(super) fn action_change_generic_execute(
         &mut self,
         ctx: ActionChangeSlotCtx<'_>,
         entry: ActionChangeEntryOrder,
         selections: ActionChangeOwnerSelections,
         motion: ActionChangeSpecializedMotion,
-    ) -> super::animation::AnimCompletionOutcomes {
+    ) {
         let ActionChangeSlotCtx {
             sim,
             assets,
@@ -610,20 +610,19 @@ impl EngineInner {
             ..
         } = motion;
         observe_actor_animation_boundary(ActorAnimationBoundaryPhase::GenericExecute(entity_id));
-        let (combat_injury_terminated, mut outcomes, mut execute_result) =
-            if validity_short_circuited
-                || movement_selection.is_some()
-                || melee_selection.is_some()
-                || bow_selection.is_some()
-                || ability_selection.is_some()
-                || beggar_selection.is_some()
-            {
-                (Vec::new(), Default::default(), None)
-            } else if enter_swordfight_corpse_exit {
-                let (seq_id, elem_idx, _) = selected_order.unwrap_or_else(|| {
-                    panic!("ENTER_SWORDFIGHT corpse-exit Execute lost its entry order")
-                });
-                self.world
+        let mut execute_result = if validity_short_circuited
+            || movement_selection.is_some()
+            || melee_selection.is_some()
+            || bow_selection.is_some()
+            || ability_selection.is_some()
+            || beggar_selection.is_some()
+        {
+            None
+        } else if enter_swordfight_corpse_exit {
+            let (seq_id, elem_idx, _) = selected_order.unwrap_or_else(|| {
+                panic!("ENTER_SWORDFIGHT corpse-exit Execute lost its entry order")
+            });
+            self.world
                 .entities
                 .get(entity_id)
                 .and_then(Entity::pc_data)
@@ -633,46 +632,18 @@ impl EngineInner {
                         "ENTER_SWORDFIGHT corpse-exit Execute owner {entity_id:?} has no carried body"
                     )
                 });
-                self.force_drop_carried_corpse_instant(entity_id);
-                (
-                    Vec::new(),
-                    Default::default(),
-                    Some(super::animation::ActorExecuteResult {
-                        order_type: crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
-                        entry_seq_id: seq_id,
-                        entry_elem_idx: elem_idx,
-                        motion: crate::sprite::MotionState::Terminated,
-                    }),
-                )
-            } else if selected_order_type == Some(crate::order::OrderType::Rolling) {
-                self.tick_rolling_owner(sim, assets, entity_id)
-            } else {
-                self.tick_actor_animation_for(sim, assets, entity_id)
-            };
-        if specialized_wait_modifier_terminated {
-            let (entry_seq_id, entry_elem_idx, entry_order_id) =
-                selected_order.expect("specialized wait modifier lost its entry order");
-            self.stage_actor_execute_completion(
-                entity_id,
-                Some(entry_order_id),
-                super::animation::ActorExecuteResult {
-                    order_type: selected_order_type
-                        .expect("specialized wait modifier lost its entry order type"),
-                    entry_seq_id,
-                    entry_elem_idx,
-                    motion: crate::sprite::MotionState::Terminated,
-                },
-                &mut outcomes,
-            );
-        }
-        if explicit_execute_terminated {
-            let (seq_id, elem_idx, _) = selected_order.unwrap_or_else(|| {
-            panic!(
-                "actor {entity_id:?} returned explicit Terminated without an entry-latched order"
-            )
-        });
-            outcomes.seq_advance.push((seq_id, elem_idx));
-        }
+            self.force_drop_carried_corpse_instant(entity_id);
+            Some(super::animation::ActorExecuteResult {
+                order_type: crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
+                entry_seq_id: seq_id,
+                entry_elem_idx: elem_idx,
+                motion: crate::sprite::MotionState::Terminated,
+            })
+        } else if selected_order_type == Some(crate::order::OrderType::Rolling) {
+            self.tick_rolling_owner(sim, assets, entity_id)
+        } else {
+            self.tick_actor_animation_for(sim, assets, entity_id)
+        };
         // Falling-hit/pushed/lift flight is part of this
         // actor's selected Execute arm in Original. Advance it
         // before the derived NPC tail so later creation slots
@@ -716,21 +687,6 @@ impl EngineInner {
         {
             actor.sequence_element_started = false;
         }
-        for injured_id in combat_injury_terminated.iter().copied() {
-            self.dispatch_combat_injury_think_for_actor_hourglass(sim, injured_id, assets);
-        }
-        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-    .unwrap_or_else(|error| {
-        panic!(
-            "actor {entity_id:?} combat-injury Think at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
-        )
-    });
-        for injured_id in combat_injury_terminated {
-            observe_actor_animation_boundary(ActorAnimationBoundaryPhase::CombatInjuryThink(
-                injured_id,
-            ));
-        }
-
         // Human-actor execution performs this work inside
         // the sword-waiting arm, after action processing and before
         // returning its motion result to the actor update. Keep
@@ -789,6 +745,31 @@ impl EngineInner {
                 selected_order_compute_direction,
             );
         }
+        if specialized_wait_modifier_terminated {
+            let (entry_seq_id, entry_elem_idx, entry_order_id) =
+                selected_order.expect("specialized wait modifier lost its entry order");
+            self.finish_actor_execute_completion(
+                sim,
+                assets,
+                entity_id,
+                Some(entry_order_id),
+                super::animation::ActorExecuteResult {
+                    order_type: selected_order_type
+                        .expect("specialized wait modifier lost its entry order type"),
+                    entry_seq_id,
+                    entry_elem_idx,
+                    motion: crate::sprite::MotionState::Terminated,
+                },
+            );
+        }
+        if explicit_execute_terminated {
+            let (seq_id, elem_idx, _) = selected_order.unwrap_or_else(|| {
+            panic!(
+                "actor {entity_id:?} returned explicit Terminated without an entry-latched order"
+            )
+        });
+            self.execute_seq_advance(sim, assets, (seq_id, elem_idx));
+        }
         if let Some(result) = execute_result.take() {
             // The actor update stores every execution
             // return in serialized `mmotionState` before it
@@ -804,14 +785,14 @@ impl EngineInner {
                 .expect("Execute owner disappeared before motion-state latch")
                 .continuation
                 .motion_state = result.motion;
-            self.stage_actor_execute_completion(
+            self.finish_actor_execute_completion(
+                sim,
+                assets,
                 entity_id,
                 selected_order.map(|(_, _, order_id)| order_id),
                 result,
-                &mut outcomes,
             );
         }
-        outcomes
     }
 
     /// Completion processing, owner-boundary condolences, and the
@@ -821,7 +802,6 @@ impl EngineInner {
         ctx: ActionChangeSlotCtx<'_>,
         entry: ActionChangeEntryOrder,
         motion: ActionChangeSpecializedMotion,
-        outcomes: super::animation::AnimCompletionOutcomes,
     ) {
         let ActionChangeSlotCtx {
             sim,
@@ -845,7 +825,6 @@ impl EngineInner {
         // Terminated to the base actor update. Only after that
         // synchronous decision tick finishes may order advancement/completion
         // promote the actor's successor order.
-        self.process_anim_completion_outcomes(sim, outcomes, assets);
         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
     .unwrap_or_else(|error| {
         panic!(

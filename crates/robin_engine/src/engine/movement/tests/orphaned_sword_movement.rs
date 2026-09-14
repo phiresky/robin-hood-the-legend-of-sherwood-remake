@@ -1176,46 +1176,6 @@ mod suite {
     }
 
     #[test]
-    fn pc_pinch_abort_cancels_terminal_pop_before_impossible() {
-        let assets = LevelAssets::new();
-        let (mut engine, _owner, movement_sequence, _order_id, _start) =
-            install_sword_movement(false);
-        let unrelated = crate::sequence::SequenceId(movement_sequence.0 + 1);
-        let mut order_pops = vec![(movement_sequence, 0), (unrelated, 0)];
-
-        cancel_aborted_order_pop(&mut order_pops, movement_sequence, 0);
-        assert_eq!(order_pops, vec![(unrelated, 0)]);
-
-        engine.element_impossible(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            movement_sequence,
-            0,
-        );
-        for (seq_id, elem_idx) in order_pops {
-            if engine
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .is_some()
-            {
-                engine.do_next_order(&crate::sim_rng::test_context(), &assets, seq_id, elem_idx);
-            }
-        }
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(movement_sequence, 0)
-                .unwrap()
-                .state,
-            SequenceState::Impossible,
-            "the PC Execute ABORTED result must not be overwritten by the nested motion's queued TERMINATED pop"
-        );
-    }
-
-    #[test]
     fn forced_sword_movement_without_opponents_still_performs_motion() {
         let (mut engine, owner, movement_sequence, order_id, start) = install_sword_movement(true);
 

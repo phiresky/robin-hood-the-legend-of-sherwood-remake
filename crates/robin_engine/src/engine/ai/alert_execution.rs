@@ -376,7 +376,8 @@ impl EngineInner {
             .world
             .entities
             .expect_enemy_ai(owner, format_args!("brawl owner"))
-            .soldier_profile_rank
+            .profile(&assets.profile_manager)
+            .rank
             != ProfileRank::Soldier
         {
             return;
@@ -397,7 +398,7 @@ impl EngineInner {
                 .ai_brain
                 .enemy()
                 .expect("officer candidate has no brain");
-            if enemy.soldier_profile_rank != ProfileRank::Officer
+            if enemy.profile(&assets.profile_manager).rank != ProfileRank::Officer
                 || !(enemy.base.current_state == AiState::Default
                     || enemy.base.current_substate == Substate::WonderingMoneyReactiontime)
             {
@@ -541,7 +542,8 @@ impl AlertExecution<'_> {
                         .ai_brain
                         .enemy()
                         .expect("reservist brain")
-                        .soldier_profile_rank
+                        .profile(&self.assets.profile_manager)
+                        .rank
                         == ProfileRank::Soldier
                     && soldier.is_able_to_help()
                 {
@@ -597,10 +599,13 @@ impl AlertExecution<'_> {
         true
     }
     fn officer_look_for_soldier(&mut self, reason: crate::ai::ReportType) {
-        assert_eq!(self.enemy().soldier_profile_rank, ProfileRank::Officer);
+        assert_eq!(
+            self.enemy().profile(&self.assets.profile_manager).rank,
+            ProfileRank::Officer
+        );
         let head = self.enemy().base.patrol.first().copied().filter(|id| {
             matches!(self.engine.world.entities.get(*id), Some(Entity::Soldier(soldier))
-                if soldier.npc.ai_brain.enemy().expect("patrol soldier brain").soldier_profile_rank == ProfileRank::Soldier)
+                if soldier.npc.ai_brain.enemy().expect("patrol soldier brain").profile(&self.assets.profile_manager).rank == ProfileRank::Soldier)
         });
         let camp = self.engine.expect_entity(self.owner, "officer camp").camp();
         let count = self.engine.world.soldier_registry.camp(camp).len();
@@ -624,7 +629,7 @@ impl AlertExecution<'_> {
                     continue;
                 }
                 let brain = soldier.npc.ai_brain.enemy().expect("soldier brain");
-                if brain.soldier_profile_rank != ProfileRank::Soldier
+                if brain.profile(&self.assets.profile_manager).rank != ProfileRank::Soldier
                     || !(brain.base.current_state == AiState::Default
                         || (brain.base.current_state == AiState::Seeking
                             && brain.base.current_substate == Substate::SeekingBodyReactiontime))
@@ -665,7 +670,8 @@ impl AlertExecution<'_> {
                 .world
                 .entities
                 .expect_enemy_ai(id, format_args!("alert-list soldier rank"))
-                .soldier_profile_rank
+                .profile(&self.assets.profile_manager)
+                .rank
                 != ProfileRank::Soldier
             {
                 continue;
@@ -781,7 +787,8 @@ impl AlertExecution<'_> {
                     .world
                     .entities
                     .expect_enemy_ai(id, format_args!("alerted recipient rank"))
-                    .soldier_profile_rank
+                    .profile(&self.assets.profile_manager)
+                    .rank
                 {
                     ProfileRank::Soldier if nearest.is_none() => hearing_soldiers += 1,
                     ProfileRank::Officer if distance < officer_distance => {
@@ -795,7 +802,8 @@ impl AlertExecution<'_> {
                 .world
                 .entities
                 .expect_enemy_ai(id, format_args!("far officer rank"))
-                .soldier_profile_rank
+                .profile(&self.assets.profile_manager)
+                .rank
                 == ProfileRank::Officer
                 && distance < officer_distance
             {
@@ -846,7 +854,10 @@ impl AlertExecution<'_> {
     fn alert_officer(&mut self) -> bool {
         use crate::ai::{AiEntityHandle, GotoFlags};
         use crate::ai_enemy::SeekFlags;
-        assert_eq!(self.enemy().soldier_profile_rank, ProfileRank::Soldier);
+        assert_eq!(
+            self.enemy().profile(&self.assets.profile_manager).rank,
+            ProfileRank::Soldier
+        );
         self.engine.execute_ai_unfocus(self.owner);
 
         let camp = self
@@ -910,7 +921,7 @@ impl AlertExecution<'_> {
                     .ai_brain
                     .enemy()
                     .expect("officer candidate requires brain");
-                match brain.soldier_profile_rank {
+                match brain.profile(&self.assets.profile_manager).rank {
                     ProfileRank::Officer => {
                         if !crate::element::Human::is_able_to_fight(soldier)
                             || brain.base.current_state != AiState::Default
@@ -1017,7 +1028,10 @@ impl AlertExecution<'_> {
             enemy.base.list_staying_us.clear();
             enemy.base.list_us.clear();
         }
-        assert_eq!(self.enemy().soldier_profile_rank, ProfileRank::Officer);
+        assert_eq!(
+            self.enemy().profile(&self.assets.profile_manager).rank,
+            ProfileRank::Officer
+        );
         let member_count = self.engine.world.soldier_registry.camp(camp).len();
         let mut average = crate::coordinates::MapVec::new(0.0, 0.0);
         for member_index in 0..member_count {
@@ -1032,7 +1046,7 @@ impl AlertExecution<'_> {
                 .ai_brain
                 .enemy()
                 .expect("alert candidate requires a brain");
-            if brain.soldier_profile_rank != ProfileRank::Soldier
+            if brain.profile(&self.assets.profile_manager).rank != ProfileRank::Soldier
                 || !crate::element::Human::is_able_to_help(soldier)
             {
                 continue;
@@ -1042,7 +1056,7 @@ impl AlertExecution<'_> {
                 || (soldier.element.active
                     && !self.engine.entity_data_in_building_sector(&soldier.element)
                     && (brain.tower_guard
-                        || brain.soldier_profile_duty
+                        || brain.profile(&self.assets.profile_manager).duty
                         || brain.company_number == 100));
             if stays && brain.base.patrol_chief != Some(self.owner) {
                 continue;
@@ -1400,7 +1414,10 @@ impl AlertExecution<'_> {
     }
 
     fn command_soldiers_to_attack(&mut self, center: Position) -> bool {
-        assert_eq!(self.enemy().soldier_profile_rank, ProfileRank::Officer);
+        assert_eq!(
+            self.enemy().profile(&self.assets.profile_manager).rank,
+            ProfileRank::Officer
+        );
         let initial_position = self.engine.live_ai_position(self.owner);
         self.enemy_mut().base.seek_position = center;
         self.enemy_mut().current_task_priority = task_priority::ALERT;
@@ -1418,7 +1435,8 @@ impl AlertExecution<'_> {
                 .ai_brain
                 .enemy()
                 .expect("soldier has no hostile brain")
-                .soldier_profile_rank
+                .profile(&self.assets.profile_manager)
+                .rank
                 != ProfileRank::Soldier
                 || !crate::element::Human::is_able_to_fight(soldier)
                 || !self

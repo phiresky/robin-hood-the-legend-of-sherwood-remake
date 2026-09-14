@@ -449,10 +449,8 @@ fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
         },
     ];
 
-    let friend_position = crate::engine::ai::lookup_primary_target_position(&engine, friend)
-        .expect("friend position");
-    let target_position = crate::engine::ai::lookup_primary_target_position(&engine, target)
-        .expect("target position");
+    let friend_position = engine.live_ai_position(friend);
+    let target_position = engine.live_ai_position(target);
     assert_eq!(friend_position.x, 101.0);
     assert_eq!(friend_position.y, 102.0);
     assert_eq!(
@@ -602,10 +600,10 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
         object_id,
         |_| raw,
     );
-    assert_eq!(resolved.effective.x, raw.x);
-    assert_eq!(resolved.effective.y, raw.y);
-    assert_eq!(resolved.effective.sector, raw.sector);
-    assert_eq!(resolved.effective.level, raw.level);
+    assert_eq!(resolved.x, raw.x);
+    assert_eq!(resolved.y, raw.y);
+    assert_eq!(resolved.sector, raw.sector);
+    assert_eq!(resolved.level, raw.level);
 }
 
 #[test]

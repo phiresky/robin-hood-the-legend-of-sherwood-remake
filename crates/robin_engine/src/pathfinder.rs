@@ -959,7 +959,14 @@ pub struct PathFinderRuntime {
 /// deterministic engine movement queues, so the remaining pathfinder
 /// snapshot is just the attempt count plus per-area obstacle state
 /// table.
-#[derive(Debug, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PathFinder {
     pub number_of_attempts: u16,
     pub states: Vec<Vec<u32>>,
@@ -972,49 +979,8 @@ pub struct PathFinder {
     /// rebuilds it on the next query.
     #[bitcode(skip)]
     #[state_hash(skip)]
+    #[serde(skip)]
     cache: Option<Box<PathFinderCache>>,
-}
-
-impl serde::Serialize for PathFinder {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedPathFinder::capture(self).serialize(serializer)
-    }
-}
-impl<'de> serde::Deserialize<'de> for PathFinder {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(PersistedPathFinder::deserialize(deserializer)?.into_runtime())
-    }
-}
-
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedPathFinder {
-    number_of_attempts: u16,
-
-    states: Vec<Vec<u32>>,
-}
-
-impl PersistedPathFinder {
-    pub(crate) fn capture(value: &PathFinder) -> Self {
-        let PathFinder {
-            number_of_attempts: _,
-            states: _,
-            cache: _,
-        } = value;
-        Self {
-            number_of_attempts: value.number_of_attempts,
-            states: value.states.clone(),
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> PathFinder {
-        PathFinder {
-            number_of_attempts: self.number_of_attempts,
-            states: self.states,
-            cache: None,
-        }
-    }
 }
 
 /// See [`PathFinder::cache`].

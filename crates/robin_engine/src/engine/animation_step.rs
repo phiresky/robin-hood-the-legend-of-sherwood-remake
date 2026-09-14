@@ -7,9 +7,8 @@
 //! The shell in `animation.rs` sequences these phases in the exact statement
 //! order of the former monolithic body. Phases that could leave Execute early
 //! report that through their return value and the shell returns immediately.
-//! `ActorAnimationStepCtx` owns the single mutable entity borrow for the
-//! generic dispatch (re-looking the entity up mutably would bump its slot
-//! generation) next to the disjoint engine borrows the phases need.
+//! `ActorAnimationStepCtx` retains the selected order operands and borrows the
+//! engine. Each operation releases its owner borrow before calling other owners.
 
 use super::*;
 use std::ops::ControlFlow;
@@ -24,8 +23,7 @@ pub(super) struct ActorAnimationEntry {
     pub(super) tiredness_probe: Option<(u32, u32)>,
 }
 
-/// Non-sprite operands snapshotted from the entity table before the
-/// exclusive actor borrow is taken.
+/// Non-sprite operands retained at the selected Execute entry.
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(super) struct ActorAnimationOperands {
     pub(super) principal_frames_from_now: Option<i16>,
@@ -671,7 +669,6 @@ struct ActorAnimationPrep {
     order_is_initialising: bool,
     drinking_ale_antagonist_inactive: bool,
     special_speech_id: Option<u32>,
-    special_sprite_before_perform: Option<(u16, u16)>,
     weak_stunned_action_before_perform: Option<ActionState>,
 }
 
@@ -688,8 +685,7 @@ struct ActorAnimationSpriteTurn {
 ///
 /// No serde: this is a borrow bundle, not data.
 pub(super) struct ActorAnimationStepCtx<'a> {
-    pub(super) entity: &'a mut Entity,
-    pub(super) orders: &'a mut super::state::OrderRuntime,
+    pub(super) engine: &'a mut EngineInner,
     pub(super) sim: &'a crate::sim_rng::SimulationContext,
     pub(super) assets: &'a LevelAssets,
     pub(super) entity_id: EntityId,
@@ -699,19 +695,11 @@ pub(super) struct ActorAnimationStepCtx<'a> {
     pub(super) entry: ActorAnimationEntry,
     pub(super) operands: ActorAnimationOperands,
     pub(super) striking_down_sword_valid_after_perform: Option<bool>,
-    pub(super) combat_injury_terminated: Vec<EntityId>,
-    pub(super) completion_outcomes: AnimCompletionOutcomes,
 }
 
 impl ActorAnimationStepCtx<'_> {
     /// Generic Execute dispatch for an actor entity.
-    pub(super) fn run(
-        mut self,
-    ) -> (
-        Vec<EntityId>,
-        AnimCompletionOutcomes,
-        Option<ActorExecuteResult>,
-    ) {
+    pub(super) fn run(mut self) -> Option<ActorExecuteResult> {
         let mut execute_result = None;
         'actor: {
             let ControlFlow::Continue(view) = self.selected_order_view() else {
@@ -735,16 +723,17 @@ impl ActorAnimationStepCtx<'_> {
             // over next hourglass.
             let _ = view.direction;
         }
-        (
-            self.combat_injury_terminated,
-            self.completion_outcomes,
-            execute_result,
-        )
+        execute_result
     }
 
     /// Movement/bow admission re-check and the selected order snapshot.
     fn selected_order_view(&self) -> ControlFlow<(), ActorAnimationOrderView> {
-        let entity: &Entity = &*self.entity;
+        let entity: &Entity = self
+            .engine
+            .world
+            .entities
+            .get(self.entity_id)
+            .expect("animation owner disappeared");
         let entity_id = self.entity_id;
         let selected_generic_order = self.selected_generic_order;
         let validated_antagonist = self.operands.validated_antagonist;
@@ -780,9 +769,9 @@ impl ActorAnimationStepCtx<'_> {
         // Read the actor's current in-progress sequence element
         // and its front order.  All animation driving flows off
         // this — dispatch is on the current element's front
-        // order. The step context borrows the order domain beside the
-        // actor's entity, so no engine-wide borrow is involved.
+        // order. The selected identity survives synchronous owner callbacks.
         let order_snapshot = self
+            .engine
             .orders
             .sequence_manager
             .current_order_for_actor(entity_id);
@@ -834,25 +823,29 @@ impl ActorAnimationStepCtx<'_> {
         // sprite row on the corpse/KO hold row used by
         // body-point calculations (e.g. compute-stars-point).
         let cur_command = order_seq_elem.and_then(|(s, e)| {
-            self.orders
+            self.engine
+                .orders
                 .sequence_manager
                 .get_element(s, e)
                 .map(|el| el.command)
         });
         let cur_command_level = order_seq_elem.and_then(|(s, e)| {
-            self.orders
+            self.engine
+                .orders
                 .sequence_manager
                 .get_element(s, e)
                 .map(|el| el.command_level)
         });
         let current_element_script_driven = order_seq_elem.is_some_and(|(s, e)| {
-            self.orders
+            self.engine
+                .orders
                 .sequence_manager
                 .get_element(s, e)
                 .is_some_and(|element| element.script_driven)
         });
         let element_retains_movement_goal = order_seq_elem.is_some_and(|(s, e)| {
-            self.orders
+            self.engine
+                .orders
                 .sequence_manager
                 .get_element(s, e)
                 .is_some_and(|element| {
@@ -863,7 +856,8 @@ impl ActorAnimationStepCtx<'_> {
                 })
         });
         let turn_resumed_from_legacy_save = order_seq_elem.is_some_and(|(s, e)| {
-            self.orders
+            self.engine
+                .orders
                 .sequence_manager
                 .get_element(s, e)
                 .is_some_and(|element| element.legacy_v48.is_some())
@@ -879,7 +873,7 @@ impl ActorAnimationStepCtx<'_> {
             .then_some(order_seq_elem)
             .flatten()
             .and_then(|(s, e)| {
-                let element = self.orders.sequence_manager.get_element(s, e)?;
+                let element = self.engine.orders.sequence_manager.get_element(s, e)?;
                 if !matches!(
                     element.command,
                     Command::PlayAnim
@@ -900,7 +894,8 @@ impl ActorAnimationStepCtx<'_> {
         let pointing_direction_goal = if cur_command == Some(Command::Point) {
             let direction = order_seq_elem
                 .and_then(|(s, e)| {
-                    self.orders
+                    self.engine
+                        .orders
                         .sequence_manager
                         .get_element(s, e)
                         .and_then(|element| element.get_property(crate::sequence::Field::Direction))
@@ -943,12 +938,57 @@ impl ActorAnimationStepCtx<'_> {
         elem_idx: usize,
         view: ActorAnimationOrderView,
     ) -> ActorExecuteResult {
+        let owner = self.engine.expect_entity(self.entity_id, "animation owner");
+        if owner.is_soldier() {
+            match view.anim_type {
+                OrderType::WaitingUpright if owner.enemy_ai().is_some() => {
+                    self.engine.execute_waiting_upright(self.entity_id);
+                }
+                OrderType::WaitingAlerted => {
+                    self.engine
+                        .execute_waiting_alerted(self.sim, self.assets, self.entity_id);
+                }
+                _ => {}
+            }
+        }
         let prep = self.prepare_selected_order(&view);
+        if prep.weak_stunned_action_before_perform.is_some() {
+            self.engine.add_weak_stunned_combat(
+                self.sim,
+                self.assets,
+                self.entity_id,
+                view.anim_type == OrderType::BeingWeakSword,
+            );
+        }
+        const SPEECH_ID_HELBARDMAN: u32 = 0x4c484453;
+        if let Some(speech_id) = prep
+            .special_speech_id
+            .filter(|id| *id != SPEECH_ID_HELBARDMAN)
+        {
+            self.execute_special_remark_at_sprite_point(speech_id);
+        }
         let (motion, weak_sword_held) = self.selected_order_motion(&view, &prep);
+        if let Some(speech_id) = prep
+            .special_speech_id
+            .filter(|id| *id == SPEECH_ID_HELBARDMAN)
+        {
+            self.execute_special_remark_at_sprite_point(speech_id);
+        }
         let motion = self.apply_post_perform_effects(&view, &prep, motion, weak_sword_held);
         let anim_type = view.anim_type;
         self.apply_motion_side_effects(seq_id, elem_idx, view, &prep, motion);
         self.finish_selected_order(seq_id, elem_idx, anim_type, motion)
+    }
+
+    fn execute_special_remark_at_sprite_point(&mut self, speech_id: u32) {
+        let sprite = self
+            .engine
+            .expect_entity(self.entity_id, "special action owner")
+            .sprite();
+        if special_remark_due_at_sprite_phase(speech_id, sprite.current_frame, sprite.frame_count) {
+            self.engine
+                .execute_special_remark(self.sim, self.assets, self.entity_id);
+        }
     }
 
     /// Order-initialisation facing, posture and goal writes that precede the
@@ -976,7 +1016,12 @@ impl ActorAnimationStepCtx<'_> {
         } = self.operands;
         let entity_id = self.entity_id;
         let assets = self.assets;
-        let entity = &mut *self.entity;
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("animation owner disappeared");
         let actor = entity
             .actor_data()
             .expect("actor animation step requires actor data");
@@ -1048,10 +1093,14 @@ impl ActorAnimationStepCtx<'_> {
             && anim_type == OrderType::WaitingCarryingOnShoulders
             && let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried)
         {
-            self.completion_outcomes
-                .shoulder_carried_waits
-                .push(carried_id);
+            self.engine.actor_wait(carried_id);
         }
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get_mut(entity_id)
+            .expect("animation owner disappeared");
         if anim_type == OrderType::TransitionHelpingClimbingDown
             && entity.pc_data().is_some_and(|pc| pc.carried.is_some())
         {
@@ -1122,14 +1171,6 @@ impl ActorAnimationStepCtx<'_> {
         } else {
             None
         };
-        // Soldier execution checks an ordinary
-        // special animation's start-of-animation test before
-        // action processing. The halberdman exception is deliberately
-        // checked after action processing at frame 40 below.
-        let special_sprite_before_perform = special_speech_id.map(|_| {
-            let sprite = entity.sprite();
-            (sprite.current_frame, sprite.frame_count)
-        });
         if order_is_initialising
             && matches!(cur_command, Some(Command::Turn | Command::TurnFast))
             && !element_retains_movement_goal
@@ -1174,7 +1215,6 @@ impl ActorAnimationStepCtx<'_> {
             order_is_initialising,
             drinking_ale_antagonist_inactive,
             special_speech_id,
-            special_sprite_before_perform,
             weak_stunned_action_before_perform,
         }
     }
@@ -1199,6 +1239,7 @@ impl ActorAnimationStepCtx<'_> {
         } = prep;
         let entity_id = self.entity_id;
         let sim = self.sim;
+        let assets = self.assets;
         let mut weak_sword_held = false;
         let motion = if is_turn {
             self.turn_order_motion(view, prep)
@@ -1208,9 +1249,8 @@ impl ActorAnimationStepCtx<'_> {
             // effect and terminates in this owner slot without
             // dispatching a sprite animation.
             if order_is_initialising {
-                self.completion_outcomes
-                    .select_hulk
-                    .push((entity_id, order_tolerance));
+                self.engine
+                    .execute_select_hulk((entity_id, order_tolerance));
             }
             Some(MotionState::Terminated)
         } else if matches!(anim_type, OrderType::DrinkingAle)
@@ -1228,7 +1268,15 @@ impl ActorAnimationStepCtx<'_> {
                     OrderType::LyingStuckUnderNet | OrderType::WriggleUnderNet
                 )
             {
-                apply_under_net_initialization_side_effect(sim, self.entity, anim_type);
+                apply_under_net_initialization_side_effect(
+                    sim,
+                    self.engine
+                        .world
+                        .entities
+                        .get_mut(self.entity_id)
+                        .expect("animation owner disappeared"),
+                    anim_type,
+                );
             }
             let turn = self.pre_sprite_turn(view, prep);
             let wasp_still_turning = turn.wasp_still_turning;
@@ -1271,7 +1319,12 @@ impl ActorAnimationStepCtx<'_> {
         let sim = self.sim;
         let frame_counter = self.frame_counter;
         let globally_frozen = self.entry.globally_frozen;
-        let entity = &mut *self.entity;
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("animation owner disappeared");
         let direction_before_turn = entity.element_data().direction() as u16;
         let still_turning = turn_with_provenance(
             entity,
@@ -1351,7 +1404,12 @@ impl ActorAnimationStepCtx<'_> {
         let entity_id = self.entity_id;
         let assets = self.assets;
         let frame_counter = self.frame_counter;
-        let entity = &mut *self.entity;
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("animation owner disappeared");
         // Many per-anim handlers call `Turn()` each
         // tick so the body keeps rotating toward the
         // direction goal *while* the action animation
@@ -1594,7 +1652,12 @@ impl ActorAnimationStepCtx<'_> {
         } = self.entry;
         let entity_id = self.entity_id;
         let sim = self.sim;
-        let entity = &mut *self.entity;
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("animation owner disappeared");
         let row = actor_action_row(
             anim_type,
             effective_anim,
@@ -1783,12 +1846,16 @@ impl ActorAnimationStepCtx<'_> {
         weak_sword_held: bool,
     ) -> Option<MotionState> {
         let anim_type = view.anim_type;
-        let weak_stunned_action_before_perform = prep.weak_stunned_action_before_perform;
         let striking_down_sword_valid_after_perform = self.striking_down_sword_valid_after_perform;
         let standing_up_sword_direction_goal = self.operands.standing_up_sword_direction_goal;
         let entity_id = self.entity_id;
         let frame_counter = self.frame_counter;
-        let entity = &mut *self.entity;
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("animation owner disappeared");
         let motion = motion.map(|mut motion_state| {
             if anim_type == OrderType::StrikingDownSword
                 && striking_down_sword_valid_after_perform == Some(false)
@@ -1814,12 +1881,7 @@ impl ActorAnimationStepCtx<'_> {
             if !weak_sword_held {
                 apply_weak_sword_tiredness_after_perform(entity, anim_type);
             }
-            if let Some(action_state_before_perform) = weak_stunned_action_before_perform {
-                self.completion_outcomes
-                    .execute_sides
-                    .weak_stunned_start
-                    .push((entity_id, anim_type, action_state_before_perform));
-            }
+
             motion_state
         });
         motion
@@ -1846,8 +1908,6 @@ impl ActorAnimationStepCtx<'_> {
         } = view;
         let &ActorAnimationPrep {
             order_is_initialising,
-            special_speech_id,
-            special_sprite_before_perform,
             ..
         } = prep;
         let ActorAnimationOperands {
@@ -1860,7 +1920,6 @@ impl ActorAnimationStepCtx<'_> {
         let reusable_cloaks_enabled = self.reusable_cloaks_enabled;
         let entity_id = self.entity_id;
         let assets = self.assets;
-        let entity = &mut *self.entity;
         // Apply soldier-side per-anim-type side effects
         // (posture/action-state transitions, attentive-flag
         // toggling, view-status updates, bottle-hide /
@@ -1883,59 +1942,37 @@ impl ActorAnimationStepCtx<'_> {
                 motion_state,
                 antagonist,
             };
-            phase.record_derived_effects(
-                entity,
+            phase.execute(
+                self.engine,
+                self.sim,
+                assets,
                 order_is_initialising,
-                special_speech_id,
-                special_sprite_before_perform,
-                &mut self.completion_outcomes,
-            );
-            phase.apply_start_feedback(
-                entity,
                 current_element_script_driven,
-                &mut self.completion_outcomes,
-            );
-            phase.apply_interaction_effects(
-                entity,
                 taking_net_order_was_done,
-                &mut self.completion_outcomes,
-            );
-            phase.apply_combat_recovery(
-                entity,
-                &assets.profile_manager,
                 principal_frames_from_now,
                 tiredness_probe,
                 striking_down_sword_direction_goal,
-                &mut self.completion_outcomes,
-            );
-            phase.apply_posture_completion(
-                entity,
                 cur_command,
                 reusable_cloaks_enabled,
-                &mut self.combat_injury_terminated,
-                &mut self.completion_outcomes,
             );
             if matches!(motion_state, MotionState::Done)
                 && let Some(crate::order::OrderCompletion::UnlockDoor { door_id }) =
                     order_completion
             {
-                self.completion_outcomes.unlock_door_done.push(door_id);
+                self.engine.execute_unlock_door_done(door_id);
             }
             // Lift sequence-element priority to
             // NonInterruptable on initialisation for the
             // always-non-interruptable anim families.
-            // Stage as a deferred sequence-element priority
-            // bump so we don't borrow the sequence manager
-            // mid-entity-loop.
+            // This priority change is complete before the arm returns.
             if matches!(motion_state, MotionState::Start)
                 && anim_forces_non_interruptable_on_start(anim_type)
             {
-                self.completion_outcomes
-                    .non_interruptable_lifts
-                    .push((seq_id, elem_idx));
+                self.engine
+                    .execute_non_interruptable_lifts((seq_id, elem_idx));
             }
             if play_anim_freeze_completed(motion_state, cur_command, anim_type) {
-                self.completion_outcomes.play_anim_frozen.push((
+                self.engine.execute_play_anim_frozen((
                     entity_id,
                     cur_command_level.unwrap_or(1),
                     requested_custom_animation.unwrap_or_else(|| {
@@ -1956,13 +1993,15 @@ impl ActorAnimationStepCtx<'_> {
     ) -> ActorExecuteResult {
         let entity_id = self.entity_id;
         let sim = self.sim;
-        let entity = &mut *self.entity;
-        // Dispatch the per-arm return decision, but retain the
-        // resulting base-Actor motion until the coordinator has
-        // drained synchronous derived-Execute callbacks. Those
-        // callbacks may replace this owner's live sequence
-        // element; original-game termination uses that live identity,
-        // while ABORTED uses the entry snapshot.
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("animation owner disappeared");
+        // Derived callbacks have completed. Retain the resulting motion for
+        // the actor update's wait modifiers and crossing checks; termination
+        // follows the live selection while abortion targets the entry element.
         let is_npc = matches!(entity, Entity::Soldier(_) | Entity::Civilian(_));
         let is_unconscious = entity.is_unconscious();
         let mut arm_ctx = ArmCtx {
@@ -1971,10 +2010,9 @@ impl ActorAnimationStepCtx<'_> {
             is_unconscious,
             seq_id,
             elem_idx,
-            sequence_manager: &mut self.orders.sequence_manager,
-            next_order_id: &mut self.orders.next_order_id,
-            side_outcomes: &mut self.completion_outcomes.execute_sides,
+            engine: self.engine,
+            assets: self.assets,
         };
-        finish_actor_execute_result(sim, entity, anim_type, motion, &mut arm_ctx)
+        finish_actor_execute_result(sim, anim_type, motion, &mut arm_ctx)
     }
 }

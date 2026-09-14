@@ -153,6 +153,7 @@ impl EngineInner {
     pub(super) fn execute_ai_react_live(
         &mut self,
         sim: &SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         maximum: u16,
     ) {
@@ -177,7 +178,11 @@ impl EngineInner {
             } else {
                 1.0
             };
-            ((100.0 - self.observation_ai(owner).soldier_profile_iq as f32)
+            ((100.0
+                - self
+                    .observation_ai(owner)
+                    .profile(&assets.profile_manager)
+                    .intelligence as f32)
                 * 0.01
                 * f32::from(maximum)
                 * modifier
@@ -415,9 +420,9 @@ impl EngineInner {
             .my_reconnaissance_report
             .update(ReportType::Enemy, origin);
         let ai = self.observation_ai(owner);
-        let seeking =
-            ai.base.current_state == AiState::Seeking && ai.get_rank() != ProfileRank::Officer;
-        let rank = ai.get_rank();
+        let seeking = ai.base.current_state == AiState::Seeking
+            && ai.get_rank(&assets.profile_manager) != ProfileRank::Officer;
+        let rank = ai.get_rank(&assets.profile_manager);
         if !seeking
             && !matches!(
                 rank,
@@ -455,6 +460,7 @@ impl EngineInner {
         } else {
             self.execute_ai_react_live(
                 sim,
+                assets,
                 owner,
                 crate::parameters_ai::AI_MAX_STANDARD_REACTIONTIME as u16 + 50,
             );
@@ -503,7 +509,9 @@ impl EngineInner {
                 );
                 let object = self.observation_ai(owner).base.interesting_object;
                 self.observation_focus(sim, assets, owner, object);
-                let delay = if self.observation_ai(owner).get_rank() == ProfileRank::Officer {
+                let delay = if self.observation_ai(owner).get_rank(&assets.profile_manager)
+                    == ProfileRank::Officer
+                {
                     60
                 } else {
                     30
@@ -532,6 +540,7 @@ impl EngineInner {
                 );
                 self.execute_ai_react_live(
                     sim,
+                    assets,
                     owner,
                     crate::parameters_ai::AI_FIRST_LOOK_TIME as u16,
                 );
@@ -658,7 +667,8 @@ impl EngineInner {
             > crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
             || (actor.element_data().active
                 && !self.entity_data_in_building_sector(actor.element_data())
-                && (ai.soldier_profile_beer > 0 || ai.ale_reliable_distraction));
+                && (ai.profile(&assets.profile_manager).beer > 0
+                    || self.reliable_ale_for_actor(assets, owner)));
         if take {
             let ai = self.observation_ai_mut(owner);
             ai.base.object_of_desire = ai.base.interesting_object;
@@ -711,6 +721,34 @@ impl EngineInner {
             self.observation_say(sim, assets, owner, remark);
             self.execute_ai_return_to_duty(sim, assets, owner, crate::ai::DutyFlags::KEEP_EMOTICON);
         }
+    }
+
+    pub(in crate::engine) fn reliable_ale_for_actor(
+        &self,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) -> bool {
+        if !self
+            .control
+            .sim_config
+            .item_gameplay
+            .ale_reliable_distraction
+        {
+            return false;
+        }
+        let Entity::Soldier(soldier) = self.expect_entity(owner, "ale reliability owner") else {
+            return false;
+        };
+        !assets
+            .profile_manager
+            .get_soldier(soldier.soldier.soldier_profile_index)
+            .unwrap_or_else(|| {
+                panic!(
+                    "ale reliability requires soldier profile {:?} for {owner:?}",
+                    soldier.soldier.soldier_profile_index
+                )
+            })
+            .vip
     }
 
     fn observation_object_position(&self, object: EntityId) -> Position {

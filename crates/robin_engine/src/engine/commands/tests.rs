@@ -112,7 +112,7 @@ fn deterministic_settings_and_seat_lifecycle_are_host_authoritative() {
 }
 
 #[test]
-fn ale_reliability_command_updates_spawned_soldiers_but_not_autonomous_pcs() {
+fn ale_reliability_command_applies_live_with_physical_soldier_eligibility() {
     let sim_context = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
@@ -196,27 +196,19 @@ fn ale_reliability_command_updates_spawned_soldiers_but_not_autonomous_pcs() {
         &PlayerCommand::SetItemGameplayConfig { config: rules },
     );
 
-    assert!(
-        engine
-            .get_entity(soldier_id)
-            .and_then(Entity::enemy_ai)
-            .expect("test soldier enemy AI")
-            .ale_reliable_distraction
+    assert!(engine.reliable_ale_for_actor(&assets, soldier_id));
+    assert!(!engine.reliable_ale_for_actor(&assets, vip_soldier_id));
+    assert!(!engine.reliable_ale_for_actor(&assets, autonomous_pc_id));
+
+    rules.ale_reliable_distraction = false;
+    engine.apply_command(
+        &sim_context,
+        &mut display,
+        &mut input,
+        &assets,
+        &PlayerCommand::SetItemGameplayConfig { config: rules },
     );
-    assert!(
-        !engine
-            .get_entity(vip_soldier_id)
-            .and_then(Entity::enemy_ai)
-            .expect("test VIP soldier enemy AI")
-            .ale_reliable_distraction
-    );
-    assert!(
-        !engine
-            .get_entity(autonomous_pc_id)
-            .and_then(Entity::enemy_ai)
-            .expect("test autonomous PC enemy AI")
-            .ale_reliable_distraction
-    );
+    assert!(!engine.reliable_ale_for_actor(&assets, soldier_id));
 }
 
 #[test]

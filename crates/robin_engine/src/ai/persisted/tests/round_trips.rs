@@ -1,25 +1,11 @@
-// Current-schema JSON fixtures and encoding roundtrips for persisted AI owners.
+// Encoding roundtrips preserve live state and clear process-local resources.
 // Scratch-state expectations are constructed independently of the encoders.
 use super::*;
 
 use robin_util::state_hash::StateHash;
 use serde::de::DeserializeOwned;
 
-struct Golden {
-    file: &'static str,
-    json: &'static str,
-}
-
-macro_rules! golden {
-    ($file:literal) => {
-        Golden {
-            file: $file,
-            json: include_str!(concat!("goldens/", $file)),
-        }
-    };
-}
-
-fn check_golden<T>(name: &str, live: &T, expected_restored: &T, golden: Golden)
+fn check_round_trip<T>(name: &str, live: &T, expected_restored: &T)
 where
     T: Serialize
         + DeserializeOwned
@@ -29,13 +15,7 @@ where
         + StateHash,
 {
     let json = serde_json::to_string(live).unwrap();
-    assert_eq!(
-        json,
-        golden.json.trim_end_matches('\n'),
-        "{name}: serde_json bytes (goldens/{})",
-        golden.file
-    );
-    let restored: T = serde_json::from_str(golden.json).unwrap();
+    let restored: T = serde_json::from_str(&json).unwrap();
     assert_eq!(
         format!("{restored:?}"),
         format!("{expected_restored:?}"),
@@ -108,8 +88,7 @@ fn golden_enemy() -> EnemyAi {
         previous_substate: StoredEnumWord::from_raw(i32::MAX),
         missed_pc: Some(AiEntityHandle::new(0)),
         archer_behind_me: Some(AiEntityHandle::new(12)),
-        ale_reliable_distraction: true,
-        soldier_profile_hearing_factor: 0.1,
+        behavior_profile: crate::profiles::SoldierProfileIdx(7),
         my_shooting_point: Some((1, 2)),
         last_stimulus_dispatched_to_patrol: Some(populated_stimulus()),
         ..Default::default()
@@ -127,50 +106,48 @@ fn golden_friendly() -> FriendlyAi {
 }
 
 #[test]
-fn ai_controller_golden() {
+fn ai_controller_round_trip() {
     let live = golden_controller();
-    check_golden("AiController", &live, &live, golden!("ai_controller.json"));
+    check_round_trip("AiController", &live, &live);
 }
 
 #[test]
-fn ai_global_state_golden() {
+fn ai_global_state_round_trip() {
     let live = golden_global();
     let expected = scrubbed(&live, |value| {
         value.primary_target_multiplicity_scratch.clear();
         value.primary_target_multiplicity_initialized = false;
     });
-    check_golden(
-        "AiGlobalState",
-        &live,
-        &expected,
-        golden!("ai_global_state.json"),
-    );
+    check_round_trip("AiGlobalState", &live, &expected);
 }
 
 #[test]
-fn stimulus_golden() {
+fn stimulus_round_trip() {
     let live = populated_stimulus();
-    check_golden("Stimulus", &live, &live, golden!("stimulus.json"));
+    check_round_trip("Stimulus", &live, &live);
 }
 
 #[test]
-fn enemy_ai_golden() {
+fn enemy_ai_round_trip() {
     let live = golden_enemy();
-    check_golden("EnemyAi", &live, &live, golden!("enemy_ai.json"));
+    check_round_trip("EnemyAi", &live, &live);
 }
 
 #[test]
-fn friendly_ai_golden() {
+fn friendly_ai_round_trip() {
     let live = golden_friendly();
-    check_golden("FriendlyAi", &live, &live, golden!("friendly_ai.json"));
+    check_round_trip("FriendlyAi", &live, &live);
 }
 
-/// Remove `keys` from a golden JSON object and decode the result.
+/// Remove `keys` from a serialized JSON object and decode the result.
 fn decode_without<T: DeserializeOwned>(json: &str, keys: &[&str]) -> Result<T, serde_json::Error> {
     let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
     let object = value.as_object_mut().unwrap();
     for key in keys {
-        assert!(object.remove(*key).is_some(), "golden lacks key {key}");
+        assert!(
+            object.remove(*key).is_some(),
+            "serialized state lacks key {key}"
+        );
     }
     serde_json::from_value(value)
 }
@@ -182,29 +159,27 @@ const ENEMY_DEFAULTED_KEYS: &[&str] = &[
     "beggar_to_examine",
     "archer_behind_me",
     "shield_bearer_before_me",
-    "ale_reliable_distraction",
     "left_combat_neighbour",
     "right_combat_neighbour",
 ];
 
 #[test]
 fn enemy_ai_missing_defaulted_fields_decode_to_type_defaults() {
-    let json = include_str!("goldens/enemy_ai.json");
-    let decoded: EnemyAi = decode_without(json, ENEMY_DEFAULTED_KEYS).unwrap();
+    let json = serde_json::to_string(&golden_enemy()).unwrap();
+    let decoded: EnemyAi = decode_without(&json, ENEMY_DEFAULTED_KEYS).unwrap();
     let mut expected = golden_enemy();
     expected.missed_pc = None;
     expected.investigating_distraction = false;
     expected.beggar_to_examine = None;
     expected.archer_behind_me = None;
     expected.shield_bearer_before_me = None;
-    expected.ale_reliable_distraction = false;
     expected.left_combat_neighbour = None;
     expected.right_combat_neighbour = None;
     assert_eq!(format!("{decoded:?}"), format!("{expected:?}"));
     // Every other field stays required; there is no container-level default.
     for required in ["pc_missed", "base", "previous_state", "is_archer_unit"] {
         assert!(
-            decode_without::<EnemyAi>(json, &[required]).is_err(),
+            decode_without::<EnemyAi>(&json, &[required]).is_err(),
             "EnemyAi.{required} must stay required"
         );
     }

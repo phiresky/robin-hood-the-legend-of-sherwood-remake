@@ -58,11 +58,7 @@ pub(super) struct MovementStepSelection {
 ///
 /// No serde: this is a borrow bundle, not data.
 pub(super) struct MovementStepCtx<'a> {
-    pub(super) entity: &'a mut crate::element::Entity,
-    pub(super) orders: &'a mut super::state::OrderRuntime,
-    pub(super) fast_grid: &'a crate::fast_find_grid::FastFindGrid,
-    pub(super) repulsive_points: &'a [crate::ai::RepulsivePoint],
-    pub(super) frame_counter: u32,
+    pub(super) engine: &'a mut EngineInner,
     pub(super) sim: &'a crate::sim_rng::SimulationContext,
     pub(super) assets: &'a LevelAssets,
     pub(super) owner: EntityId,
@@ -70,8 +66,7 @@ pub(super) struct MovementStepCtx<'a> {
     pub(super) entity_id: EntityId,
     pub(super) prepass: &'a MovementPrepass,
     pub(super) prepared: &'a LiveMobileGeometry,
-    pub(super) anti_snapshots: &'a mut EntitySlots<Option<super::anti_collision::ActorSnapshot>>,
-    pub(super) deferred: &'a mut MovementDeferred,
+    pub(super) deferred: &'a mut MovementCompletion,
     pub(super) entry: MovementStepEntry,
     pub(super) traits: MovementActorTraits,
     pub(super) order: SelectedMovementOrder,
@@ -84,7 +79,7 @@ pub(super) struct MovementStepCtx<'a> {
 /// Seek-countdown phase results.
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(super) struct MovementSeekEntry {
-    tolerance_arrival: bool,
+    pub(super) tolerance_arrival: bool,
     soldier_attentive: bool,
     execute_order_initialising: bool,
 }
@@ -94,7 +89,7 @@ pub(super) struct MovementSeekEntry {
 pub(super) struct MovementCombatFacing {
     dx: f32,
     dy: f32,
-    dist: f32,
+    pub(super) dist: f32,
     combat_target: Option<MapPoint>,
     is_sword_motion: bool,
     executes_sword_movement: bool,
@@ -105,8 +100,8 @@ pub(super) struct MovementCombatFacing {
 /// Every pre-motion decision for this Execute.
 #[derive(Clone, Copy)]
 pub(super) struct MovementMotionPlan {
-    seek: MovementSeekEntry,
-    facing: MovementCombatFacing,
+    pub(super) seek: MovementSeekEntry,
+    pub(super) facing: MovementCombatFacing,
     anim: OrderType,
     speed_factor: f32,
     is_transition_anim: bool,
@@ -141,7 +136,7 @@ pub(super) struct MovementMotionStep {
 #[derive(Clone, Copy)]
 pub(super) struct MovementStepEffects {
     direction_differs_from_goal: bool,
-    speed: f32,
+    pub(super) speed: f32,
     split_motion_speeds: Option<(f32, f32)>,
     entity_target_seek: bool,
     state_effect_motion: MotionState,
@@ -249,8 +244,7 @@ impl EngineInner {
         // transition can therefore have no FinalTol target while the
         // actor still owns the entity interaction. Keep this snapshot
         // separate: genuine point seeks have no actor-owned target.
-        let actor_seek_flags = self
-            .orders
+        let actor_seek_flags = self.orders
             .sequence_manager
             .get_element(selected.seq_id, selected.elem_idx)
             .and_then(|element| match &element.data {
@@ -432,134 +426,180 @@ impl MovementStepCtx<'_> {
             legacy_serialized_order_chain,
             ..
         } = self.order;
-        let entity_id = self.entity_id;
-        let entity = &mut *self.entity;
-        let deferred = &mut *self.deferred;
+        if !matches!(order_action, OrderType::Freezing | OrderType::PassingDoor) {
+            return false;
+        }
+        let owner = self.entity_id;
+        self.engine
+            .world
+            .entities
+            .get_mut(owner)
+            .expect("movement owner disappeared")
+            .element_data_mut()
+            .sprite
+            .last_motion_state = non_sprite_movement_motion(order_action);
         if order_action == OrderType::Freezing {
-            // `MOVE_WAITING` carries a temporary FREEZING order while
-            // the pathfinder owns the request.  The original
-            // movement action returns IN_PROGRESS without
-            // touching the sprite; this token has no destination-backed
-            // motion state to initialize or validate.
-            entity.element_data_mut().sprite.last_motion_state =
-                non_sprite_movement_motion(order_action);
             return true;
         }
-
-        if order_action == OrderType::PassingDoor {
-            // Actor action execution returns TERMINATED directly after the door
-            // callback; no Sprite method runs for this action point.
-            entity.element_data_mut().sprite.last_motion_state =
-                non_sprite_movement_motion(order_action);
-            let eid = entity_id;
-            if entity
-                .actor_data()
-                .expect("door-pass action point owner is not an actor")
-                .active_door_pass
-                .is_none()
-            {
-                assert!(
-                    legacy_serialized_order_chain,
-                    "runtime door-pass action point {order_action:?} for {eid:?} lost its active pass"
-                );
-                // Original saves the complete translated order queue,
-                // PositionInterface door pointer/direction, and the
-                // actor's direct flag. It has no separate ActiveDoorPass.
-                // Execute that authoritative queue directly: the first
-                // PassingDoor consumes the saved door and changes sector;
-                // a later one sees no value and merely restores
-                // anti-collision.
-                let door = entity.position_iface().get_door();
-                if let Some(door) = door {
-                    let direct = entity.position_iface().get_door_direction();
-                    deferred.door_triggers.push((eid, door, direct, 0));
-                    entity.position_iface_mut().clear_door();
-                } else {
-                    entity.position_iface_mut().set_anti_collision_on(true);
-                }
-                self.orders.messenger.send(crate::messenger::Message::new(
-                    crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
-                ));
-                deferred.order_pops.push((move_seq_id, move_elem_idx));
-                return true;
-            }
-            let actor = entity
-                .actor_data_mut()
-                .expect("door-pass action point owner is not an actor");
-            let dp = actor.active_door_pass.as_mut().unwrap_or_else(|| {
-                panic!("door-pass action point {order_action:?} for {eid:?} has no active pass")
-            });
-            let trigger_num = dp.triggers_fired;
-            dp.triggers_fired += 1;
-            deferred
-                .door_triggers
-                .push((eid, dp.door_index, dp.direct, trigger_num));
-
-            // A TillLastFrame continuation can force the action-point prefix
-            // into the concrete queue. In that case generic order advancement must
-            // select the already-queued successor; advancing the lazy tail as
-            // well would skip ahead of the copied continuation.
-            if !is_final_waypoint {
-                self.orders.messenger.send(crate::messenger::Message::new(
-                    crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
-                ));
-                deferred.order_pops.push((move_seq_id, move_elem_idx));
-                return true;
-            }
-
-            let advance =
-                EngineInner::advance_door_pass(actor, eid, goal, &mut self.orders.next_order_id);
-            match advance {
-                DoorPassAdvance::Continue {
-                    order_id,
-                    destination,
-                    action,
-                    reverse,
-                    compute_direction,
-                    tolerance,
-                } => {
-                    let mut order =
-                        crate::order::Order::new(action, destination.x, destination.y, order_id);
-                    order.reverse = reverse;
-                    order.compute_direction = compute_direction;
-                    order.tolerance = tolerance;
-                    deferred
-                        .transition_pushes
-                        .push((move_seq_id, move_elem_idx, order));
-                }
-                DoorPassAdvance::Paused { transition_order } => {
-                    deferred
-                        .transition_pushes
-                        .push((move_seq_id, move_elem_idx, transition_order));
-                }
-                DoorPassAdvance::ActionPoint { order } => {
-                    deferred
-                        .transition_pushes
-                        .push((move_seq_id, move_elem_idx, order));
-                }
-                DoorPassAdvance::Done { completed } => {
-                    if let Some((door_index, direct)) = completed {
-                        deferred
-                            .completed_door_passes
-                            .push((eid, door_index, direct));
+        let has_active_pass = self
+            .engine
+            .world
+            .entities
+            .get(owner)
+            .expect("door owner disappeared")
+            .actor_data()
+            .expect("door owner must be an actor")
+            .active_door_pass
+            .is_some();
+        if has_active_pass {
+            let (door, direct, trigger) = {
+                let pass = self
+                    .engine
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .expect("door owner disappeared")
+                    .actor_data_mut()
+                    .expect("door owner must be an actor")
+                    .active_door_pass
+                    .as_mut()
+                    .expect("door pass disappeared");
+                let trigger = pass.triggers_fired;
+                pass.triggers_fired += 1;
+                (pass.door_index, pass.direct, trigger)
+            };
+            self.engine
+                .execute_pass_door(self.sim, self.assets, owner, door, direct, trigger);
+            if is_final_waypoint {
+                let advance = {
+                    let actor = self
+                        .engine
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .expect("door owner disappeared")
+                        .actor_data_mut()
+                        .expect("door owner must be an actor");
+                    EngineInner::advance_door_pass(
+                        actor,
+                        owner,
+                        goal,
+                        &mut self.engine.orders.next_order_id,
+                    )
+                };
+                match advance {
+                    DoorPassAdvance::Continue {
+                        order_id,
+                        destination,
+                        action,
+                        reverse,
+                        compute_direction,
+                        tolerance,
+                    } => {
+                        let mut order = crate::order::Order::new(
+                            action,
+                            destination.x,
+                            destination.y,
+                            order_id,
+                        );
+                        order.reverse = reverse;
+                        order.compute_direction = compute_direction;
+                        order.tolerance = tolerance;
+                        insert_door_pass_successor(
+                            self.engine
+                                .orders
+                                .sequence_manager
+                                .get_element_mut(move_seq_id, move_elem_idx)
+                                .expect("door successor disappeared"),
+                            order,
+                        );
                     }
-                    actor.clear_path();
-                    actor.active_movement.clear();
-                    actor.active_door_pass = None;
-                }
-                DoorPassAdvance::NoActive => {
-                    panic!(
-                        "door-pass action point {order_action:?} for {eid:?} lost its active pass"
-                    );
+                    DoorPassAdvance::Paused {
+                        transition_order: order,
+                    }
+                    | DoorPassAdvance::ActionPoint { order } => {
+                        insert_door_pass_successor(
+                            self.engine
+                                .orders
+                                .sequence_manager
+                                .get_element_mut(move_seq_id, move_elem_idx)
+                                .expect("door successor disappeared"),
+                            order,
+                        );
+                    }
+                    DoorPassAdvance::Done { completed } => {
+                        if let Some((door, direct)) = completed {
+                            self.engine.commit_completed_door_pass_position(
+                                self.assets,
+                                owner,
+                                door,
+                                direct,
+                            );
+                            self.engine
+                                .apply_completed_door_pass_lift_entry_state(owner, door, direct);
+                        }
+                        let actor = self
+                            .engine
+                            .world
+                            .entities
+                            .get_mut(owner)
+                            .expect("door owner disappeared")
+                            .actor_data_mut()
+                            .expect("door owner must be an actor");
+                        actor.clear_path();
+                        actor.active_movement.clear();
+                        actor.active_door_pass = None;
+                    }
+                    DoorPassAdvance::NoActive => {
+                        panic!("door pass disappeared during action point")
+                    }
                 }
             }
-            self.orders.messenger.send(crate::messenger::Message::new(
+        } else {
+            assert!(
+                legacy_serialized_order_chain,
+                "runtime door action point lost its active pass"
+            );
+            let door = {
+                let position = self
+                    .engine
+                    .world
+                    .entities
+                    .get(owner)
+                    .expect("door owner disappeared")
+                    .position_iface();
+                position
+                    .get_door()
+                    .map(|door| (door, position.get_door_direction()))
+            };
+            if let Some((door, direct)) = door {
+                self.engine
+                    .execute_pass_door(self.sim, self.assets, owner, door, direct, 0);
+                self.engine
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .expect("door owner disappeared")
+                    .position_iface_mut()
+                    .clear_door();
+            } else {
+                self.engine
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .expect("door owner disappeared")
+                    .position_iface_mut()
+                    .set_anti_collision_on(true);
+            }
+        }
+        self.engine
+            .orders
+            .messenger
+            .send(crate::messenger::Message::new(
                 crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
             ));
-            deferred.order_pops.push((move_seq_id, move_elem_idx));
-            return true;
-        }
-        false
+        self.deferred.completion = Some(MotionState::Terminated);
+        true
     }
 
     /// Sample pre-motion seek tolerance, age the seek refresh countdown and
@@ -575,7 +615,12 @@ impl MovementStepCtx<'_> {
         } = self.order;
         let entity_id = self.entity_id;
         let ft = self.prepass.final_tolerance;
-        let entity = &mut *self.entity;
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("movement owner disappeared during execution");
         let tolerance_arrival = seek_tolerance_reached(
             ft,
             self.entry.live_seek_target,
@@ -632,6 +677,7 @@ impl MovementStepCtx<'_> {
             // destination vector. This is observable when a save resumes
             // with the new-order flag set on an already-running climb.
             let order = self
+                .engine
                 .orders
                 .sequence_manager
                 .get_element_mut(move_seq_id, move_elem_idx)
@@ -665,7 +711,13 @@ impl MovementStepCtx<'_> {
         let entity_id = self.entity_id;
         let prepass = self.prepass;
         let provenance_frame = self.entry.provenance_frame;
-        let elem = self.entity.element_data_mut();
+        let elem = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("movement owner disappeared during execution")
+            .element_data_mut();
         let dx = goal.x - elem.position_map().x;
         let dy = goal.y - elem.position_map().y;
         let dist = (dx * dx + dy * dy).sqrt();
@@ -696,7 +748,7 @@ impl MovementStepCtx<'_> {
                 let fdy = opp_pos.y - face_origin.y;
                 tracing::trace!(
                     entity = ?entity_id,
-                    frame = self.frame_counter,
+                    frame = self.engine.control.frame_counter,
                     origin_x = face_origin.x,
                     origin_y = face_origin.y,
                     target_x = opp_pos.x,
@@ -765,7 +817,13 @@ impl MovementStepCtx<'_> {
         } = facing_ctx;
         let entity_id = self.entity_id;
         let prepass = self.prepass;
-        let elem = self.entity.element_data();
+        let elem = self
+            .engine
+            .world
+            .entities
+            .get(self.entity_id)
+            .expect("movement owner disappeared during execution")
+            .element_data();
         if let Some(dp_anim) = door_pass_sprite_animation_override(order_action, door_pass_anim)
             .filter(|anim| !is_sword_movement_nonanimation(*anim))
         {
@@ -991,7 +1049,13 @@ impl MovementStepCtx<'_> {
         let provenance_frame = self.entry.provenance_frame;
         let live_seek_target = self.entry.live_seek_target;
         let order_compute_direction = self.order_compute_direction;
-        let elem = self.entity.element_data_mut();
+        let elem = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("movement owner disappeared during execution")
+            .element_data_mut();
         let mut speed_factor = prepass.speed_factor;
         // Advance sprite animation and get per-frame distance.
         // Motion processing adds direction to the converted animation row,
@@ -1243,7 +1307,14 @@ impl MovementStepCtx<'_> {
         let entity_id = self.entity_id;
         let ft = self.prepass.final_tolerance;
         let sim = self.sim;
-        let sprite = &mut self.entity.element_data_mut().sprite;
+        let sprite = &mut self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("movement owner disappeared during execution")
+            .element_data_mut()
+            .sprite;
         let previous_sprite_action = sprite.last_action;
         // Human opponent/danger facing turns before
         // seeking. When the seek continues, it turns a
@@ -1429,12 +1500,21 @@ impl MovementStepCtx<'_> {
         } = *plan;
         let (mut motion_state, mut frame_dist_raw) = first;
         let goal = self.order.goal;
-        let actor_id = self.actor_id;
         let prepass = self.prepass;
         let provenance_frame = self.entry.provenance_frame;
         let sim = self.sim;
-        let anti_snapshots = &mut *self.anti_snapshots;
-        let sprite = &mut self.entity.element_data_mut().sprite;
+        let (collision_entity, neighbours) = self
+            .engine
+            .world
+            .entities
+            .split_owner(self.entity_id)
+            .expect("movement owner disappeared during execution");
+        let collision = super::anti_collision::CollisionWorld {
+            neighbours,
+            profiles: &self.assets.profile_manager,
+        };
+        let mover = super::anti_collision::CollisionMover::new(self.entity_id, collision_entity);
+        let sprite = &mut collision_entity.element_data_mut().sprite;
         let first_frame_dist_raw = frame_dist_raw;
         let first_direction_differs_from_goal =
             sprite.position_iface.get_direction() != sprite.position_iface.get_direction_goal();
@@ -1463,11 +1543,11 @@ impl MovementStepCtx<'_> {
             );
             projected_step_reaches_goal(
                 &sprite.position_iface,
-                anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref()),
-                anti_snapshots.as_slice(),
-                self.repulsive_points,
+                Some(&mover),
+                collision,
+                &self.engine.ai.global.repulsive_points,
                 self.prepared,
-                self.fast_grid,
+                &self.engine.world.fast_grid,
                 goal,
                 prepass.goal_target_info,
                 first_speed,
@@ -1492,13 +1572,13 @@ impl MovementStepCtx<'_> {
                     sprite,
                     self.order,
                     prepass,
-                    actor_id,
                     provenance_frame,
                     first_speed,
-                    anti_snapshots,
-                    self.repulsive_points,
+                    mover,
+                    collision,
+                    &self.engine.ai.global.repulsive_points,
                     self.prepared,
-                    self.fast_grid,
+                    &self.engine.world.fast_grid,
                 ));
             }
             let _ = sprite.position_iface.turn();
@@ -1532,11 +1612,12 @@ impl MovementStepCtx<'_> {
         }
     }
 
-    /// Refresh the mover snapshot and collect post-motion sprite callbacks.
-    pub(super) fn publish_movement_motion_callbacks(
+    /// Finish the selected Execute arm after movement and synchronous seeking return.
+    pub(super) fn finish_movement_execute(
         &mut self,
         plan: &MovementMotionPlan,
         step: &MovementMotionStep,
+        effects: &MovementStepEffects,
     ) {
         let SelectedMovementOrder {
             door_pass_anim,
@@ -1551,30 +1632,92 @@ impl MovementStepCtx<'_> {
             anim,
             ..
         } = *plan;
-        let motion_state = step.motion_state;
         let entity_id = self.entity_id;
-        let owner = self.owner;
-        let deferred = &mut *self.deferred;
-        let sprite = &mut self.entity.element_data_mut().sprite;
-        // Motion refreshes the retained target element
-        // when a new order is initialized. Anti-collision follows that
-        // call in the same actor slot in Original, so the mover snapshot
-        // must observe the newly installed order's antagonist now rather
-        // than the target retained from the preceding order at the
-        // top-of-tick snapshot boundary.
-        if let Some(snapshot) = self
-            .anti_snapshots
-            .get_mut(self.actor_id)
-            .and_then(|slot| slot.as_mut())
+        let motion_state = if self.deferred.refreshed_seek_in_progress {
+            MotionState::InProgress
+        } else if self.deferred.post_seek_reentrant_order_advance {
+            MotionState::Terminated
+        } else {
+            self.deferred.completion.unwrap_or_else(|| {
+                if plan.is_transition_without_tolerance_arrival() {
+                    movement_execute_visible_motion(
+                        order_action,
+                        step.motion_state,
+                        false,
+                        effects.entity_target_seek,
+                    )
+                } else {
+                    effects.state_effect_motion
+                }
+            })
+        };
+        if self.traits.is_pc && order_action == OrderType::WalkingWithCorpse {
+            crate::abilities::sync_walking_corpse_for_carrier(
+                &mut self.engine.world.entities,
+                &self.assets.profile_manager,
+                entity_id,
+            );
+        }
+        if is_sword_motion {
+            self.engine
+                .quit_swordfight_with_far_opponents(self.sim, self.assets, entity_id);
+        }
+        let start_survives = motion_state != MotionState::Start
+            || self
+                .engine
+                .orders
+                .sequence_manager
+                .get_element(self.order.move_seq_id, self.order.move_elem_idx)
+                .and_then(|element| element.current_order())
+                .is_some_and(|order| Some(order.order_id) == self.order.order_id);
+        if start_survives
+            && let Some((posture, action_state)) =
+                movement_execute_state_effect(order_action, motion_state)
         {
-            snapshot.target_element = sprite.position_iface.target_element();
+            let entity = self
+                .engine
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("movement Execute owner disappeared");
+            if action_state.is_moving()
+                && let Some(pass) = entity
+                    .actor_data_mut()
+                    .and_then(|actor| actor.active_door_pass.as_mut())
+            {
+                pass.saved_action_state = None;
+            }
+            entity.set_posture(posture);
+            entity
+                .actor_data_mut()
+                .expect("movement Execute owner must be actor")
+                .action_state = action_state;
         }
-        deferred.executed_sword_movement = is_sword_motion;
-        if self.traits.is_pc {
-            deferred
-                .executed_pc_movement_actions
-                .push((entity_id, order_action));
+        if plan.facing.executes_sword_movement
+            && motion_state == MotionState::Start
+            && start_survives
+        {
+            self.engine
+                .apply_sword_movement_start_initiative_transfer(entity_id);
         }
+        if is_sword_motion
+            && motion_state == MotionState::Terminated
+            && self
+                .engine
+                .sword_movement_termination_warrants_provoke(self.assets, entity_id)
+        {
+            self.engine
+                .launch_sword_movement_termination_provoke(entity_id);
+        }
+        refresh_pc_walking_shield_after_execute(
+            self.engine
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("movement Execute owner disappeared"),
+            &self.assets.profile_manager,
+            order_action,
+        );
         if door_pass_anim.is_some()
             && matches!(motion_state, MotionState::Start)
             && matches!(
@@ -1583,7 +1726,8 @@ impl MovementStepCtx<'_> {
                     | OrderType::TransitionClimbingLadderUpWaitingUprightAlerted
             )
         {
-            deferred.door_pass_transition_start_effects.push(entity_id);
+            self.engine
+                .apply_door_pass_transition_start_side_effects(self.assets, entity_id);
         }
         if door_pass_anim.is_some()
             && matches!(motion_state, MotionState::Done)
@@ -1599,18 +1743,46 @@ impl MovementStepCtx<'_> {
                     | OrderType::TransitionClimbingLadderUpWaitingUprightAlerted
             )
         {
-            deferred.door_pass_transition_done_effects.push(entity_id);
+            self.engine
+                .apply_door_pass_transition_done_side_effects(self.assets, entity_id);
+        }
+        if plan.is_transition_without_tolerance_arrival()
+            && !self.deferred.refreshed_seek_in_progress
+        {
+            self.finish_transition_execution(plan, step, effects);
         }
         if active_move_flags.contains(MoveFlags::RIDER_CHARGE) && anim == OrderType::RunningUpright
         {
+            let sprite = self
+                .engine
+                .world
+                .entities
+                .get(entity_id)
+                .expect("rider Execute owner disappeared")
+                .sprite();
             let frame_count = sprite.num_frames_for_anim(OrderType::RunningUpright);
             let cur = sprite.current_frame;
             if is_galopp_decision_frame(cur, frame_count) {
-                assert_eq!(
-                    entity_id, owner,
-                    "owner-local rider Execute collected a gallop callback for another actor"
+                self.engine
+                    .dispatch_galopp_loop_event(self.sim, self.assets, entity_id);
+            }
+        }
+        if self.traits.is_pc {
+            self.engine
+                .tick_shouldered_carry_ceiling(self.assets, &[(entity_id, order_action)]);
+            if is_sword_motion {
+                let selected = MovementOwnerSelection {
+                    seq_id: self.order.move_seq_id,
+                    elem_idx: self.order.move_elem_idx,
+                    order_id: self.order.order_id.expect("movement order must have an ID"),
+                };
+                self.engine.abort_pinched_pc_sword_movement(
+                    self.sim,
+                    self.assets,
+                    entity_id,
+                    selected,
+                    &mut self.deferred.completion,
                 );
-                deferred.galopp_event = true;
             }
         }
     }
@@ -1660,12 +1832,21 @@ impl MovementStepCtx<'_> {
             ..
         } = *step;
         let entity_id = self.entity_id;
-        let actor_id = self.actor_id;
         let prepass = self.prepass;
         let ft = prepass.final_tolerance;
-        let anti_snapshots = &*self.anti_snapshots;
+        let (collision_entity, neighbours) = self
+            .engine
+            .world
+            .entities
+            .split_owner(self.entity_id)
+            .expect("movement owner disappeared during execution");
+        let collision = super::anti_collision::CollisionWorld {
+            neighbours,
+            profiles: &self.assets.profile_manager,
+        };
+        let mover = super::anti_collision::CollisionMover::new(self.entity_id, collision_entity);
         let deferred = &mut *self.deferred;
-        let sprite = &mut self.entity.element_data_mut().sprite;
+        let sprite = &mut collision_entity.element_data_mut().sprite;
         // Motion processing applies the sequence speed factor before its
         // turn slowdown and 0.7-unit minimum. The order is observable:
         // a slow patrol member with raw distance 2 and factor ~0.58 is
@@ -1733,11 +1914,11 @@ impl MovementStepCtx<'_> {
         let reaches_goal_this_step = !is_transition_anim
             && projected_step_reaches_goal(
                 &sprite.position_iface,
-                anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref()),
-                anti_snapshots.as_slice(),
-                self.repulsive_points,
+                Some(&mover),
+                collision,
+                &self.engine.ai.global.repulsive_points,
                 self.prepared,
-                self.fast_grid,
+                &self.engine.world.fast_grid,
                 goal,
                 prepass.goal_target_info,
                 speed,
@@ -1754,8 +1935,7 @@ impl MovementStepCtx<'_> {
             reaches_goal_this_step,
         );
         let deferred_movement_state_start_due = if deferred_movement_state_start {
-            let current_order = self
-                .orders
+            let current_order = self.engine.orders
                 .sequence_manager
                 .get_element_mut(move_seq_id, move_elem_idx)
                 .and_then(|element| element.orders.front_mut())
@@ -1779,16 +1959,9 @@ impl MovementStepCtx<'_> {
         } else {
             false
         };
-        // The initiative handoff belongs to the Human Execute START arm,
-        // so it observes entity-target seeking's wrapper result just
-        // like posture/action-state changes do. A raw sprite START hidden
-        // as in progress by seeking must not transfer initiative.
-        if matches!(state_effect_motion, MotionState::Start) && executes_sword_movement {
-            deferred.sword_movement_starts.push(entity_id);
-        }
         tracing::trace!(
             entity = ?entity_id,
-            frame = self.frame_counter,
+            frame = self.engine.control.frame_counter,
             ?order_action,
             ?motion_state,
             ?state_effect_motion,
@@ -1817,8 +1990,7 @@ impl MovementStepCtx<'_> {
         // Motion processing returns that final result, before advancement rewrites
         // the diagnostic motion for a successor order.
         let transition_distance_first_execute_due = if transition_distance_continuation {
-            let element = self
-                .orders
+            let element = self.engine.orders
                 .sequence_manager
                 .get_element_mut(move_seq_id, move_elem_idx)
                 .unwrap_or_else(|| {
@@ -1842,54 +2014,6 @@ impl MovementStepCtx<'_> {
         } else {
             false
         };
-        let suppress_transition_continuation_start = transition_distance_first_execute_due
-            && matches!(state_effect_motion, MotionState::Start);
-        if !is_transition_anim
-            && !suppress_transition_continuation_start
-            // A deferred PC successor deliberately postpones this
-            // START-only state effect until after order completion has
-            // decided whether the authored walking order survived.  The
-            // guarded handoff below owns that one-shot side effect.
-            && !deferred_movement_state_start_due
-            // Motion processing commits the physical step before returning.
-            // A fresh order can therefore reach its goal and return
-            // TERMINATED instead of exposing START to Execute. Defer all
-            // START-only effects until the committed step has decided
-            // whether this exact order survives.
-            && !matches!(state_effect_motion, MotionState::Start)
-            && let Some((posture, action_state)) =
-                movement_execute_state_effect(order_action, state_effect_motion)
-        {
-            deferred
-                .movement_state_effects
-                .push((entity_id, posture, action_state));
-        }
-        if is_transition_anim
-            && tolerance_arrival
-            && let Some((posture, action_state)) =
-                movement_execute_state_effect(order_action, state_effect_motion)
-        {
-            if ft.launches_post_seek {
-                // Post-seek sequence launch runs synchronously inside
-                // seeking. Its interaction callbacks must therefore see
-                // the pre-transition action state. The surrounding transition
-                // Execute switch applies TERMINATED only after that recursive
-                // work returns.
-                deferred
-                    .post_seek_terminal_state_effects
-                    .push((entity_id, posture, action_state));
-            } else if ft.has_post_seek {
-                deferred.sequence_seek_terminal_state_effects.push((
-                    entity_id,
-                    posture,
-                    action_state,
-                ));
-            } else {
-                deferred
-                    .movement_state_effects
-                    .push((entity_id, posture, action_state));
-            }
-        }
         MovementStepEffects {
             direction_differs_from_goal,
             speed,
@@ -1916,7 +2040,13 @@ impl MovementStepCtx<'_> {
         let dist = plan.facing.dist;
         let speed = effects.speed;
         let entity_id = self.entity_id;
-        let elem = self.entity.element_data();
+        let elem = self
+            .engine
+            .world
+            .entities
+            .get(self.entity_id)
+            .expect("movement owner disappeared during execution")
+            .element_data();
         if door_pass_anim.is_some()
             && matches!(
                 anim,
@@ -1984,16 +2114,12 @@ impl MovementStepCtx<'_> {
         effects: &MovementStepEffects,
     ) {
         let commit = self.commit_transition_displacement(plan, step, effects);
-        self.publish_transition_effects(plan, step, effects, commit);
         if matches!(step.motion_state, MotionState::Terminated) {
             if let Some((external_direction, movement_direction)) =
                 self.terminal_pc_external_direction_goal
             {
-                self.deferred.terminal_pc_direction_goal_restores.push((
-                    self.entity_id,
-                    external_direction,
-                    movement_direction,
-                ));
+                self.deferred.terminal_direction_restore =
+                    Some((external_direction, movement_direction));
             }
             let mut discarded_lazy_door_followers = false;
             // TillLastFrame can exhaust its animation before its
@@ -2045,12 +2171,21 @@ impl MovementStepCtx<'_> {
             ..
         } = *effects;
         let entity_id = self.entity_id;
-        let actor_id = self.actor_id;
         let prepass = self.prepass;
         let provenance_frame = self.entry.provenance_frame;
         let human_is_carried = self.traits.human_is_carried;
-        let anti_snapshots = &mut *self.anti_snapshots;
-        let entity = &mut *self.entity;
+        let (collision_entity, neighbours) = self
+            .engine
+            .world
+            .entities
+            .split_owner(self.entity_id)
+            .expect("movement owner disappeared during execution");
+        let collision = super::anti_collision::CollisionWorld {
+            neighbours,
+            profiles: &self.assets.profile_manager,
+        };
+        let mover = super::anti_collision::CollisionMover::new(self.entity_id, collision_entity);
+        let entity = collision_entity;
         let transition_has_map_target = goal.x != 0.0 || goal.y != 0.0;
         if !transition_has_map_target && !is_in_place_movement_transition(order_action) {
             panic!(
@@ -2080,7 +2215,12 @@ impl MovementStepCtx<'_> {
             let eligible = actor_line_crossing_eligible(
                 entity.element_data().posture(),
                 human_is_carried,
-                self.fast_grid.level.map_bbox.contains_point(old_pos),
+                self.engine
+                    .world
+                    .fast_grid
+                    .level
+                    .map_bbox
+                    .contains_point(old_pos),
             );
             (old_pos, layer, eligible)
         });
@@ -2114,12 +2254,7 @@ impl MovementStepCtx<'_> {
                 let pi = entity.position_iface();
                 (*pi.get_move_box(), pi.get_half_diagonal())
             };
-            let (dx_step, dy_step, deviated, recovered_from_deviation) = if let Some(mover_snap) =
-                anti_snapshots
-                    .get(actor_id)
-                    .and_then(|slot| slot.as_ref())
-                    .filter(|snapshot| snapshot.active)
-            {
+            let (dx_step, dy_step, deviated, recovered_from_deviation) = if mover.active {
                 let pi = entity.position_iface_mut();
                 let was_deviated = pi.is_deviated();
                 let mut state = super::anti_collision::AntiCollisionState {
@@ -2130,11 +2265,11 @@ impl MovementStepCtx<'_> {
                 };
                 let (dx_step, dy_step) = apply_prepared_anti_collision_step(
                     provenance_frame,
-                    mover_snap,
-                    anti_snapshots,
-                    self.repulsive_points,
+                    &mover,
+                    collision,
+                    &self.engine.ai.global.repulsive_points,
                     self.prepared,
-                    self.fast_grid,
+                    &self.engine.world.fast_grid,
                     &mut state,
                     nx,
                     ny,
@@ -2189,43 +2324,39 @@ impl MovementStepCtx<'_> {
             // call left a stopping soldier in turn-vibration suppression on the
             // following frame (Linux Savegame_036 replay-015, Soldier
             // 144), delaying the visible counter-clockwise turn.
-            let recovered_from_deviation = if entity.position_iface().is_anti_collision_on()
-                && let Some(mover_snap) = anti_snapshots
-                    .get(actor_id)
-                    .and_then(|slot| slot.as_ref())
-                    .filter(|snapshot| snapshot.active)
-            {
-                let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
-                let (move_box, half_diagonal) = {
-                    let pi = entity.position_iface();
-                    (*pi.get_move_box(), pi.get_half_diagonal())
+            let recovered_from_deviation =
+                if entity.position_iface().is_anti_collision_on() && mover.active {
+                    let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
+                    let (move_box, half_diagonal) = {
+                        let pi = entity.position_iface();
+                        (*pi.get_move_box(), pi.get_half_diagonal())
+                    };
+                    let pi = entity.position_iface_mut();
+                    let was_deviated = pi.is_deviated();
+                    let mut state = super::anti_collision::AntiCollisionState {
+                        pi,
+                        move_box,
+                        half_diagonal,
+                        goal_map,
+                    };
+                    let step = apply_prepared_anti_collision_step(
+                        provenance_frame,
+                        &mover,
+                        collision,
+                        &self.engine.ai.global.repulsive_points,
+                        self.prepared,
+                        &self.engine.world.fast_grid,
+                        &mut state,
+                        0.0,
+                        0.0,
+                        speed,
+                        true,
+                    );
+                    debug_assert_eq!(step, (0.0, 0.0));
+                    was_deviated && !state.pi.is_deviated()
+                } else {
+                    false
                 };
-                let pi = entity.position_iface_mut();
-                let was_deviated = pi.is_deviated();
-                let mut state = super::anti_collision::AntiCollisionState {
-                    pi,
-                    move_box,
-                    half_diagonal,
-                    goal_map,
-                };
-                let step = apply_prepared_anti_collision_step(
-                    provenance_frame,
-                    mover_snap,
-                    anti_snapshots,
-                    self.repulsive_points,
-                    self.prepared,
-                    self.fast_grid,
-                    &mut state,
-                    0.0,
-                    0.0,
-                    speed,
-                    true,
-                );
-                debug_assert_eq!(step, (0.0, 0.0));
-                was_deviated && !state.pi.is_deviated()
-            } else {
-                false
-            };
             let position = entity.element_data().position_map();
             let elem = entity.element_data_mut();
             elem.set_position_map(position);
@@ -2255,7 +2386,7 @@ impl MovementStepCtx<'_> {
         // loops unless the next order uses the same animation.
         let transition_goal_reached = entity
             .position_iface()
-            .is_goal_reached(self.fast_grid, prepass.goal_target_info);
+            .is_goal_reached(&self.engine.world.fast_grid, prepass.goal_target_info);
         let transition_increment_nonzero = {
             let increment = entity.position_iface().get_increment_map();
             increment.x != 0.0 || increment.y != 0.0
@@ -2285,12 +2416,11 @@ impl MovementStepCtx<'_> {
     }
 
     /// Queue transition crossings and the transition's Execute state effects.
-    fn publish_transition_effects(
+    fn finish_transition_execution(
         &mut self,
         plan: &MovementMotionPlan,
         step: &MovementMotionStep,
         effects: &MovementStepEffects,
-        commit: TransitionCommit,
     ) {
         let SelectedMovementOrder {
             door_pass_anim,
@@ -2304,41 +2434,6 @@ impl MovementStepCtx<'_> {
         let selected_command = self.entry.selected_command;
         let is_pc = self.traits.is_pc;
         let entity_id = self.entity_id;
-        let entity = &mut *self.entity;
-        let deferred = &mut *self.deferred;
-        // The actor update runs line-crossing detection after execution
-        // returns, so the segment endpoint is resolved from the live
-        // position at dispatch time. A TillLastFrame step may
-        // overshoot and snap back to its goal; the discarded
-        // overshoot must not trigger a boundary.
-        if let Some((old_pos, layer, eligible)) = commit.crossing_start
-            && eligible
-        {
-            deferred.line_cross_checks.push((entity_id, old_pos, layer));
-            deferred
-                .non_elevation_cross_checks
-                .push((entity_id, old_pos, layer));
-        }
-        let transition_effect_motion =
-            movement_execute_visible_motion(order_action, motion_state, false, entity_target_seek);
-        if let Some((posture, next_action_state)) =
-            movement_execute_state_effect(order_action, transition_effect_motion)
-        {
-            // A speed-transition completion establishes the live
-            // walking/running state itself. Do not let an older state
-            // saved by a preceding door transition overwrite it when
-            // the generated continuation order executes next tick.
-            if next_action_state.is_moving()
-                && let Some(pass) = entity
-                    .actor_data_mut()
-                    .and_then(|actor| actor.active_door_pass.as_mut())
-            {
-                pass.saved_action_state = None;
-            }
-            deferred
-                .movement_state_effects
-                .push((entity_id, posture, next_action_state));
-        }
         let door_transition_state_effect_due = matches!(motion_state, MotionState::Terminated)
             || matches!(motion_state, MotionState::Done)
                 && matches!(
@@ -2368,9 +2463,12 @@ impl MovementStepCtx<'_> {
                     | OrderType::TransitionClimbingWallDownWaitingUpright
             )
         {
-            deferred
-                .door_pass_transition_completion_effects
-                .push((entity_id, order_action));
+            self.engine
+                .apply_door_pass_transition_completion_side_effects(
+                    self.assets,
+                    entity_id,
+                    order_action,
+                );
         }
     }
 
@@ -2385,7 +2483,12 @@ impl MovementStepCtx<'_> {
             ..
         } = self.order;
         let is_pc = self.traits.is_pc;
-        let entity = &mut *self.entity;
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("movement owner disappeared during execution");
         let mut discarded_lazy_door_followers = false;
         // Original's movement element already contains the
         // whole PassDoor route. Rust keeps the untranslated
@@ -2410,7 +2513,10 @@ impl MovementStepCtx<'_> {
                 .actor_data_mut()
                 .and_then(|actor| actor.active_door_pass.as_mut())
                 .map(|pass| {
-                    materialize_door_action_point_prefix(pass, &mut self.orders.next_order_id)
+                    materialize_door_action_point_prefix(
+                        pass,
+                        &mut self.engine.orders.next_order_id,
+                    )
                 })
                 .unwrap_or_default()
         } else {
@@ -2419,6 +2525,7 @@ impl MovementStepCtx<'_> {
         let mut continuation_door_action = None;
         let mut discard_lazy_door_followers = false;
         if let Some((element, next_order_id)) = self
+            .engine
             .orders
             .element_with_order_ids_mut(move_seq_id, move_elem_idx)
         {
@@ -2515,7 +2622,12 @@ impl MovementStepCtx<'_> {
             ..
         } = self.entry;
         let ft = self.prepass.final_tolerance;
-        let entity = &mut *self.entity;
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("movement owner disappeared during execution");
         let deferred = &mut *self.deferred;
         let eid = self.entity_id;
         // Seeking wraps the transition animation too. When
@@ -2534,11 +2646,13 @@ impl MovementStepCtx<'_> {
         // the just-truncated current order is now the final
         // waypoint even when it was not final at Execute entry.
         let is_final_waypoint_after_transition_cleanup = self
+            .engine
             .orders
             .sequence_manager
             .get_element(move_seq_id, move_elem_idx)
             .is_none_or(|element| element.orders.len() <= 1);
         let movement_is_last_sequence_element = self
+            .engine
             .orders
             .sequence_manager
             .get_sequence(move_seq_id)
@@ -2566,12 +2680,13 @@ impl MovementStepCtx<'_> {
             // strands the actor at a standstill, and the refresh
             // then reads that as a walk rather than the run it was
             // already doing.
-            deferred
-                .movement_state_effects
-                .retain(|(id, _, _)| *id != eid);
-            deferred
-                .transition_seek_refreshes
-                .push((eid, move_seq_id, move_elem_idx));
+            deferred.refreshed_seek_in_progress = self.engine.refresh_movement_transition_seek(
+                self.sim,
+                self.assets,
+                eid,
+                move_seq_id,
+                move_elem_idx,
+            );
             return None;
         }
         // Motion through the last frame can mutate the order list
@@ -2586,6 +2701,7 @@ impl MovementStepCtx<'_> {
             && let Some((target_position, _, target_point)) = live_seek_target
             && target_position != ft.last_seek_target_position
             && let Some(next_action) = self
+                .engine
                 .orders
                 .sequence_manager
                 .get_element(move_seq_id, move_elem_idx)
@@ -2610,12 +2726,13 @@ impl MovementStepCtx<'_> {
             let reach =
                 (f32::from(entity.sprite().distance_for_animation(next_action)) + ft.tol) * 1.05;
             if dx * dx + dy * dy > reach * reach {
-                deferred
-                    .movement_state_effects
-                    .retain(|(id, _, _)| *id != eid);
-                deferred
-                    .transition_seek_refreshes
-                    .push((eid, move_seq_id, move_elem_idx));
+                deferred.refreshed_seek_in_progress = self.engine.refresh_movement_transition_seek(
+                    self.sim,
+                    self.assets,
+                    eid,
+                    move_seq_id,
+                    move_elem_idx,
+                );
                 tracing::trace!(
                     ?eid,
                     ?next_action,
@@ -2676,18 +2793,22 @@ impl MovementStepCtx<'_> {
             // instructed; the later ABORTED result does not
             // restore any of it. Mirror that pre-abort teardown.
             actor.abort_out_of_range_hit_seek();
-            deferred.order_pops.push((move_seq_id, move_elem_idx));
+            deferred.completion = Some(MotionState::Terminated);
             return None;
         }
         if final_entity_seek_arrival == Some(true) {
             let actor = entity.actor_data_mut().expect("actor-only branch");
             if actor.post_seek_sequence.is_some() && actor.active_door_pass.is_none() {
-                deferred
-                    .post_seek_arrivals
-                    .push((eid, move_seq_id, move_elem_idx));
                 actor.clear_path();
                 actor.active_movement.clear();
                 actor.active_door_pass = None;
+                deferred.post_seek_reentrant_order_advance = self.engine.launch_movement_post_seek(
+                    self.sim,
+                    self.assets,
+                    eid,
+                    move_seq_id,
+                    move_elem_idx,
+                );
             } else {
                 // No action consumes the arrival yet. Match
                 // seeking's frozen refresh arm rather than
@@ -2722,7 +2843,12 @@ impl MovementStepCtx<'_> {
         } = self.entry;
         let ft = self.prepass.final_tolerance;
         let prepass = self.prepass;
-        let entity = &mut *self.entity;
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("movement owner disappeared during execution");
         let deferred = &mut *self.deferred;
         let eid = self.entity_id;
         // Point-target Seek reaches this early transition arm
@@ -2800,17 +2926,21 @@ impl MovementStepCtx<'_> {
 
             let actor = entity.actor_data_mut().expect("actor-only branch");
             actor.abort_out_of_range_hit_seek();
-            deferred.order_pops.push((move_seq_id, move_elem_idx));
+            deferred.completion = Some(MotionState::Terminated);
             return true;
         }
         let actor = entity.actor_data_mut().expect("actor-only branch");
         if final_actor_owned_post_seek_arrival {
-            deferred
-                .post_seek_arrivals
-                .push((eid, move_seq_id, move_elem_idx));
             actor.clear_path();
             actor.active_movement.clear();
             actor.active_door_pass = None;
+            deferred.post_seek_reentrant_order_advance = self.engine.launch_movement_post_seek(
+                self.sim,
+                self.assets,
+                eid,
+                move_seq_id,
+                move_elem_idx,
+            );
             return true;
         }
         false
@@ -2830,13 +2960,20 @@ impl MovementStepCtx<'_> {
         let deferred = &mut *self.deferred;
         let eid = self.entity_id;
         // Re-borrow of the actor already checked by the post-seek handoff.
-        let actor = self.entity.actor_data_mut().expect("actor-only branch");
+        let actor = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("movement owner disappeared during execution")
+            .actor_data_mut()
+            .expect("actor-only branch");
         // Pop via the element we actually dispatched (`move_seq_id` /
         // `move_elem_idx`), not `actor.active_movement.sequence_id`
         // — the latter can be stale/None when the Move element was
         // launched by the AI without setting active_movement
         // (soldier chase paths).
-        deferred.order_pops.push((move_seq_id, move_elem_idx));
+        deferred.completion = Some(MotionState::Terminated);
         // Last order of the Move element just completed — flip
         // back to Waiting and clear the active movement.
         // Matches the `DoorPassAdvance::Done` arm below but for
@@ -2844,7 +2981,12 @@ impl MovementStepCtx<'_> {
         if is_final_waypoint {
             let mut clear_completed_movement_goal = false;
             let advance = if actor.active_door_pass.is_some() {
-                EngineInner::advance_door_pass(actor, eid, goal, &mut self.orders.next_order_id)
+                EngineInner::advance_door_pass(
+                    actor,
+                    eid,
+                    goal,
+                    &mut self.engine.orders.next_order_id,
+                )
             } else {
                 DoorPassAdvance::Done { completed: None }
             };
@@ -2862,28 +3004,36 @@ impl MovementStepCtx<'_> {
                     order.reverse = reverse;
                     order.compute_direction = compute_direction;
                     order.tolerance = tolerance;
-                    deferred
-                        .transition_pushes
-                        .push((move_seq_id, move_elem_idx, order));
+                    insert_door_pass_successor(
+                        self.engine
+                            .orders
+                            .sequence_manager
+                            .get_element_mut(move_seq_id, move_elem_idx)
+                            .expect("door-pass successor element disappeared"),
+                        order,
+                    );
                 }
                 DoorPassAdvance::Paused { transition_order } => {
-                    deferred
-                        .transition_pushes
-                        .push((move_seq_id, move_elem_idx, transition_order));
+                    insert_door_pass_successor(
+                        self.engine
+                            .orders
+                            .sequence_manager
+                            .get_element_mut(move_seq_id, move_elem_idx)
+                            .expect("door-pass successor element disappeared"),
+                        transition_order,
+                    );
                 }
                 DoorPassAdvance::ActionPoint { order } => {
-                    deferred
-                        .transition_pushes
-                        .push((move_seq_id, move_elem_idx, order));
+                    insert_door_pass_successor(
+                        self.engine
+                            .orders
+                            .sequence_manager
+                            .get_element_mut(move_seq_id, move_elem_idx)
+                            .expect("door-pass successor element disappeared"),
+                        order,
+                    );
                 }
                 DoorPassAdvance::Done { completed } => {
-                    if let Some((door_index, direct)) =
-                        completed_door_pass_to_commit(discarded_lazy_door_followers, completed)
-                    {
-                        deferred
-                            .completed_door_passes
-                            .push((eid, door_index, direct));
-                    }
                     actor.clear_path();
                     actor.action_state = if is_swordfighting || actor.action_state.is_sword() {
                         crate::element::ActionState::WaitingSword
@@ -2893,6 +3043,18 @@ impl MovementStepCtx<'_> {
                     actor.active_movement.clear();
                     actor.active_door_pass = None;
                     clear_completed_movement_goal = true;
+                    if let Some((door_index, direct)) =
+                        completed_door_pass_to_commit(discarded_lazy_door_followers, completed)
+                    {
+                        self.engine.commit_completed_door_pass_position(
+                            self.assets,
+                            eid,
+                            door_index,
+                            direct,
+                        );
+                        self.engine
+                            .apply_completed_door_pass_lift_entry_state(eid, door_index, direct);
+                    }
                 }
                 DoorPassAdvance::NoActive => {
                     tracing::warn!(
@@ -2902,41 +3064,11 @@ impl MovementStepCtx<'_> {
                 }
             }
             if clear_completed_movement_goal {
-                deferred.terminal_door_pass_goal_clears.push(eid);
+                deferred.clear_terminal_door_goal = true;
             }
         }
     }
 
-    /// Zero-distance animation ticks are still real seeking /
-    /// motion steps. The pre-motion tolerance branch and an
-    /// ordinary order whose destination already equals the actor's
-    /// position both complete without sprite displacement. In
-    /// particular, a freshly initialized exact-position walk returns
-    /// TERMINATED on that first execution. Only defer a
-    /// genuinely stationary motion that has not reached its goal.
-    /// Returns `true` when the Execute is complete.
-    pub(super) fn queue_stationary_motion_wait(
-        &mut self,
-        plan: &MovementMotionPlan,
-        effects: &MovementStepEffects,
-    ) -> bool {
-        if stationary_motion_waits(effects.speed, plan.seek.tolerance_arrival, plan.facing.dist) {
-            if let Some((posture, next_action_state)) =
-                movement_execute_state_effect(self.order.order_action, effects.state_effect_motion)
-            {
-                self.deferred.movement_state_effects.push((
-                    self.entity_id,
-                    posture,
-                    next_action_state,
-                ));
-            }
-            return true;
-        }
-        false
-    }
-
-    /// Snapshot the pre-step crossing inputs and handle the frozen seek wait.
-    /// `None` means the Execute is complete.
     pub(super) fn prepare_movement_arrival(
         &mut self,
         plan: &MovementMotionPlan,
@@ -2962,7 +3094,12 @@ impl MovementStepCtx<'_> {
         let entity_id = self.entity_id;
         let prepass = self.prepass;
         let human_is_carried = self.traits.human_is_carried;
-        let entity = &mut *self.entity;
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("movement owner disappeared during execution");
         let elem = entity.element_data_mut();
         tracing::trace!(
             "tick_move: entity={:?} pos=({:.0},{:.0}) goal=({:.0},{:.0}) speed={speed:.1} action={:?} state={:?}",
@@ -2997,7 +3134,9 @@ impl MovementStepCtx<'_> {
         let eligible_for_crossing = actor_line_crossing_eligible(
             entity_posture,
             human_is_carried,
-            self.fast_grid
+            self.engine
+                .world
+                .fast_grid
                 .level
                 .map_bbox
                 .contains_point(crossing_old_pos),
@@ -3119,9 +3258,8 @@ impl MovementStepCtx<'_> {
         let mut arrival_crossing_queued = false;
         'arrival: loop {
             if post_step_arrival {
-                match EngineInner::settle_movement_waypoint(
-                    self.entity,
-                    self.orders,
+                match self.engine.settle_movement_waypoint(
+                    self.sim,
                     self.assets,
                     prepass,
                     self.order,
@@ -3160,7 +3298,16 @@ impl MovementStepCtx<'_> {
                 // deviation state. Recomputing here introduced tiny drift
                 // into patrol-chief history and eventually flipped exact
                 // transition-arrival dot products.
-                let entity = &mut *self.entity;
+                let (entity, neighbours) = self
+                    .engine
+                    .world
+                    .entities
+                    .split_owner(self.entity_id)
+                    .expect("movement owner disappeared during execution");
+                let collision = super::anti_collision::CollisionWorld {
+                    neighbours,
+                    profiles: &self.assets.profile_manager,
+                };
                 let cached_increment = entity.position_iface().get_increment_map();
                 let anti_on = entity.position_iface().is_anti_collision_on();
                 let diagnostic_pre = OrdinaryStepDiagnosticPre {
@@ -3187,10 +3334,11 @@ impl MovementStepCtx<'_> {
                         cached_increment,
                         anti_on,
                     },
-                    self.anti_snapshots,
-                    self.repulsive_points,
+                    collision,
+                    &self.engine.ai.global.repulsive_points,
                     self.prepared,
-                    self.fast_grid,
+                    &self.engine.world.fast_grid,
+                    &mut self.engine.feedback.titbit_manager,
                     self.deferred,
                 );
 
@@ -3202,9 +3350,13 @@ impl MovementStepCtx<'_> {
                 // ordinary frame and rebuilt the increment when deviation
                 // changed. This is the exact point where goal completion is checked.
                 let movement_goal_reached = self
-                    .entity
+                    .engine
+                    .world
+                    .entities
+                    .get(self.entity_id)
+                    .expect("movement owner disappeared during execution")
                     .position_iface()
-                    .is_goal_reached(self.fast_grid, prepass.goal_target_info);
+                    .is_goal_reached(&self.engine.world.fast_grid, prepass.goal_target_info);
                 self.record_ordinary_movement_step_diagnostic(
                     plan,
                     step,
@@ -3216,7 +3368,16 @@ impl MovementStepCtx<'_> {
                     && movement_goal_reached
                     && prepass
                         .point_seek_post_sector
-                        .map(|seek_sector| self.entity.element_data().sector() == Some(seek_sector))
+                        .map(|seek_sector| {
+                            self.engine
+                                .world
+                                .entities
+                                .get(self.entity_id)
+                                .expect("movement owner disappeared during execution")
+                                .element_data()
+                                .sector()
+                                == Some(seek_sector)
+                        })
                         .unwrap_or(false);
                 post_step_arrival = movement_goal_reached || tolerance_arrival;
                 if post_step_arrival {
@@ -3276,7 +3437,12 @@ impl MovementStepCtx<'_> {
         let nx = cached_increment.x;
         let ny = cached_increment.y;
         let entity_id = self.entity_id;
-        let entity = &*self.entity;
+        let entity = self
+            .engine
+            .world
+            .entities
+            .get(self.entity_id)
+            .expect("movement owner disappeared during execution");
         let movement_diag_raw_post = entity.element_data().position_map();
         // Motion processing snaps an undeviated zero-tolerance arrival
         // after goal-arrival testing. Include that authoritative visible
@@ -3357,159 +3523,5 @@ impl MovementStepCtx<'_> {
                 split_calls: movement_diag_split_calls,
             },
         );
-    }
-
-    /// Refresh the shield, queue this step's line crossings and publish the
-    /// START state effects that survive the committed step.
-    pub(super) fn publish_movement_start_effects(
-        &mut self,
-        plan: &MovementMotionPlan,
-        effects: &MovementStepEffects,
-        arrival: &MovementArrivalState,
-        arrival_crossing_queued: bool,
-    ) {
-        let SelectedMovementOrder {
-            order_id,
-            order_action,
-            move_seq_id,
-            move_elem_idx,
-            ..
-        } = self.order;
-        let executes_sword_movement = plan.facing.executes_sword_movement;
-        let MovementStepEffects {
-            state_effect_motion,
-            deferred_movement_state_start_due,
-            transition_distance_first_execute_due,
-            ..
-        } = *effects;
-        let MovementArrivalState {
-            crossing_old_pos,
-            entity_layer,
-            entity_posture,
-            eligible_for_crossing,
-            ..
-        } = *arrival;
-        let entity_id = self.entity_id;
-        let human_is_carried = self.traits.human_is_carried;
-        let entity = &mut *self.entity;
-        let deferred = &mut *self.deferred;
-        // Player-character movement updates the retained shield after
-        // every shield-walking seek or motion step,
-        // including a tolerance-arrival frame with no displacement.
-        refresh_pc_walking_shield_after_execute(entity, &self.assets.profile_manager, order_action);
-
-        // Queue an elevation-line-cross check for this tick. The
-        // actual fast-grid query + obstacle swap runs after the
-        // loop, since `check_for_line_crossing` needs `&mut self`.
-        //
-        // Also queue a patch-line-cross check for PC actors —
-        // LINE_PATCH handling is gated to PCs only.
-        let new_pos = entity.element_data().position_map();
-        let new_position_in_bounds = self.fast_grid.level.map_bbox.contains_point(new_pos);
-        tracing::trace!(
-            target: "robin_engine::elevation_crossing",
-            ?entity_id,
-            eligible_for_crossing,
-            new_position_in_bounds,
-            posture = ?entity_posture,
-            human_is_carried,
-            layer = entity_layer,
-            old_x = crossing_old_pos.x,
-            old_y = crossing_old_pos.y,
-            new_x = new_pos.x,
-            new_y = new_pos.y,
-            "considered queuing elevation crossing"
-        );
-        if eligible_for_crossing && !arrival_crossing_queued {
-            deferred
-                .line_cross_checks
-                .push((entity_id, crossing_old_pos, entity_layer));
-            deferred
-                .non_elevation_cross_checks
-                .push((entity_id, crossing_old_pos, entity_layer));
-        }
-        // Order pops are drained after all actors so the current order is
-        // still physically at the front here. Treat an already-queued
-        // pop as a completed Execute when deciding whether a deferred
-        // START survives this actor slot.
-        let current_order_will_advance = deferred
-            .order_pops
-            .iter()
-            .any(|&(seq_id, elem_idx)| seq_id == move_seq_id && elem_idx == move_elem_idx);
-        // Ordinary walking START effects have the same survival rule as
-        // generated transition-distance and deferred PC successors.
-        // The original game moves first and only then returns its
-        // final motion state to Execute; when anti-collision deviation
-        // lands inside the goal predicate on that first call, Execute
-        // observes TERMINATED and must not briefly enter Moving.
-        if matches!(state_effect_motion, MotionState::Start)
-            && !deferred_movement_state_start_due
-            && !transition_distance_first_execute_due
-            && !current_order_will_advance
-            && self
-                .orders
-                .sequence_manager
-                .get_element(move_seq_id, move_elem_idx)
-                .and_then(|element| element.orders.front())
-                .is_some_and(|order| Some(order.order_id) == order_id)
-            && let Some((posture, next_action_state)) =
-                movement_execute_state_effect(order_action, MotionState::Start)
-        {
-            deferred
-                .movement_state_effects
-                .push((entity_id, posture, next_action_state));
-        }
-        // The authored successor owns the deferred movement START only
-        // if it remains current after this Execute. A very short
-        // successor can complete and hand off to its stop transition in
-        // the same call; Original retains Waiting in that case. The
-        // Execute switch still only reacts to the motion state it is
-        // handed, so a successor whose START the seek wrapper swallowed
-        // owns no state effect to postpone.
-        if deferred_movement_state_start_due
-            && matches!(state_effect_motion, MotionState::Start)
-            && !current_order_will_advance
-            && self
-                .orders
-                .sequence_manager
-                .get_element(move_seq_id, move_elem_idx)
-                .and_then(|element| element.orders.front())
-                .is_some_and(|order| Some(order.order_id) == order_id)
-            && let Some((posture, next_action_state)) =
-                movement_execute_state_effect(order_action, MotionState::Start)
-        {
-            if executes_sword_movement {
-                deferred.sword_movement_starts.push(entity_id);
-            }
-            deferred
-                .movement_state_effects
-                .push((entity_id, posture, next_action_state));
-        }
-        // A generated transition-distance copy reports START when first
-        // booked, but its movement state is authoritative only if that
-        // copied order remains current after the Execute. A short copy
-        // may satisfy its arrival predicate and hand off in the same
-        // call; Original retains the transition's Waiting state for that
-        // frame. This survival rule applies to PCs too; their separate
-        // deferred-successor marker covers the later authored order.
-        if transition_distance_first_execute_due
-            && matches!(state_effect_motion, MotionState::Start)
-            && !current_order_will_advance
-            && self
-                .orders
-                .sequence_manager
-                .get_element(move_seq_id, move_elem_idx)
-                .and_then(|element| element.orders.front())
-                .is_some_and(|order| Some(order.order_id) == order_id)
-            && let Some((posture, next_action_state)) =
-                movement_execute_state_effect(order_action, MotionState::Start)
-        {
-            if executes_sword_movement {
-                deferred.sword_movement_starts.push(entity_id);
-            }
-            deferred
-                .movement_state_effects
-                .push((entity_id, posture, next_action_state));
-        }
     }
 }

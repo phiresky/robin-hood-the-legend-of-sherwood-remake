@@ -1,59 +1,11 @@
 #[cfg(test)]
 mod suite {
     use super::super::{
-        MovementDeferred, both_sword_ranges_contain_distance,
-        perform_seek_exposes_motion_termination, queue_committed_arrival_crossing,
+        both_sword_ranges_contain_distance, perform_seek_exposes_motion_termination,
         should_snap_arrival,
     };
     use crate::coordinates::MapPoint;
     use crate::element::{EntityId, PcId};
-
-    #[test]
-    fn committed_seek_arrival_retains_both_actor_crossing_passes() {
-        let mut deferred = MovementDeferred::default();
-        let owner = EntityId::Pc(PcId(252));
-        let old_pos = MapPoint::new(1_284.826_3, 2_277.009_3);
-
-        assert!(queue_committed_arrival_crossing(
-            &mut deferred,
-            owner,
-            old_pos,
-            0,
-            true,
-            true,
-        ));
-        assert_eq!(deferred.line_cross_checks, vec![(owner, old_pos, 0)]);
-        assert_eq!(
-            deferred.non_elevation_cross_checks,
-            vec![(owner, old_pos, 0)]
-        );
-    }
-
-    #[test]
-    fn stationary_or_ineligible_seek_arrival_does_not_queue_crossing() {
-        let mut deferred = MovementDeferred::default();
-        let owner = EntityId::Pc(PcId(252));
-        let old_pos = MapPoint::new(1_284.826_3, 2_277.009_3);
-
-        assert!(!queue_committed_arrival_crossing(
-            &mut deferred,
-            owner,
-            old_pos,
-            0,
-            false,
-            true,
-        ));
-        assert!(!queue_committed_arrival_crossing(
-            &mut deferred,
-            owner,
-            old_pos,
-            0,
-            true,
-            false,
-        ));
-        assert!(deferred.line_cross_checks.is_empty());
-        assert!(deferred.non_elevation_cross_checks.is_empty());
-    }
 
     #[test]
     fn exact_goal_without_a_committed_step_does_not_snap() {

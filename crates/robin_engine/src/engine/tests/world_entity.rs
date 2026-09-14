@@ -95,12 +95,13 @@ fn add_speech_test_npc(
             };
             soldier.soldier.soldier_profile_index = profile_index;
             soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-            soldier
+            let enemy = soldier
                 .npc
                 .ai_brain
                 .enemy_mut()
-                .expect("speech soldier has EnemyAi")
-                .hth_weapon_id = 1;
+                .expect("speech soldier has EnemyAi");
+            enemy.behavior_profile = profile_index;
+            enemy.hth_weapon_id = 1;
             engine.add_test_entity(entity)
         }
         SpeechNpcKind::Civilian { vip } => {
@@ -585,7 +586,9 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
             .enemy_mut()
             .expect("review2 soldier has EnemyAi");
         ai.base.me = id.index();
-        ai.soldier_profile_rank = rank;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = rank
+        });
         {
             let base = &mut ai.base;
             base.set_ai_state(AiState::Default);

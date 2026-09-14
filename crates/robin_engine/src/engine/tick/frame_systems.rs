@@ -287,7 +287,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         display: &mut CameraDisplayState,
         assets: &LevelAssets,
-    ) -> Vec<crate::engine::movement::TerminalMovementOrderPop> {
+    ) {
         // ── Per-frame movement tick ─────────────────────────────
         // Actor movement runs later, inside the live legacy-slot owner walk.
 
@@ -326,8 +326,7 @@ impl EngineInner {
         // Every supported nonactor update now runs below at its
         // live legacy slot: mobile boundary first, then static owners, then
         // projectile/net dispatch.
-        let terminal_movement_order_pops =
-            self.tick_actor_owner_envelopes_with_display(sim, display, assets);
+        self.tick_actor_owner_envelopes_with_display(sim, display, assets);
         // ── Corpse-intersection repulsion hook ────────────────────
         // Scan for lying↔non-lying posture transitions and fire
         // `update_intersecting_corpses` so stacked corpses get the
@@ -348,7 +347,6 @@ impl EngineInner {
         // mixed pre/post inputs required at an individual creation slot.
 
         finish_entity_system_detail_frame();
-        terminal_movement_order_pops
     }
 
     /// Preserve the coarse NPC observations, validate closed owner boundaries,

@@ -723,53 +723,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        manager_fifo_before_entity_phase: &[(crate::sequence::SequenceId, usize)],
-        terminal_movement_order_pops: &[super::super::movement::TerminalMovementOrderPop],
     ) {
-        let terminal_movement_handoffs: Vec<_> = self
-            .world
-            .entities
-            .actors()
-            .filter_map(|(actor_id, entity)| {
-                let owner = EntityId::from(actor_id);
-                let actor = entity.actor_data()?;
-                (actor.installed_order.is_none()
-                    && matches!(
-                        entity.element_data().sprite.last_action,
-                        OrderType::TransitionRunningUprightWaitingUpright
-                            | OrderType::TransitionWalkingUprightWaitingUpright
-                            | OrderType::TransitionWalkingCrouchedWaitingCrouched
-                    )
-                    && self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(owner)
-                        .is_none())
-                .then_some(owner)
-            })
-            .collect();
-
-        // An actor order can terminate during the preceding entity phase.
-        // The original-game state change closes its condolence/ready
-        // stack immediately, so a postponed successor is registered before
-        // Sequence processing starts and is instructed by that
-        // same drain. Rust defers the callback to avoid re-entrant borrows;
-        // close any such pre-existing stacks before collecting manager work.
-        //
-        // This deliberately does not process paths. A resumed Move/Seek is
-        // translated below, after this frame's path phase, and its request
-        // remains queued for the next frame just as in the Original.
-        let manager_fifo_before_condolations =
-            self.orders.sequence_manager.deferred_elements_to_go();
-
-        let terminal_handoff_successors = self
-            .orders
-            .sequence_manager
-            .deferred_elements_to_go()
-            .into_iter()
-            .filter(|element_ref| !manager_fifo_before_condolations.contains(element_ref))
-            .collect::<Vec<_>>();
-
         // Release cross-actor shoulder-climb dependencies from canonical
         // gameplay state rather than the optional UI action callback. The
         // helping transition publishes HelpingToClimb on its DONE edge, but
@@ -877,105 +831,6 @@ impl EngineInner {
             actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
         }
 
-        for owner in terminal_movement_handoffs {
-            let causal_condolation_handoff = self
-                .live_pending_freezing_order_is_one_of(owner, &terminal_handoff_successors)
-                && (self.live_move_has_completed_parallel_element(owner)
-                    || self.recent_terminal_move_has_completed_parallel_element(owner));
-            let stopped_movement_handoff = terminal_movement_order_pops
-                .iter()
-                .filter(|pop| pop.owner == owner)
-                .any(|pop| {
-                    let actor = self.world.entities.expect_actor_data(
-                        owner,
-                        format_args!("same-frame terminal movement pop owner"),
-                    );
-                    assert_eq!(
-                        actor.last_execute_order_id,
-                        Some(pop.order_id),
-                        "same-frame terminal movement pop lost its actor-update order identity"
-                    );
-                    let element = self
-                        .orders
-                        .sequence_manager
-                        .get_element(pop.sequence_id, pop.element_index)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "same-frame terminal movement pop {:?}:{} disappeared",
-                                pop.sequence_id, pop.element_index
-                            )
-                        });
-                    assert_eq!(
-                        element.owner,
-                        Some(owner),
-                        "same-frame terminal movement pop owner changed"
-                    );
-                    assert!(
-                        element.data.is_movement(),
-                        "same-frame terminal movement pop no longer names movement"
-                    );
-                    assert_eq!(
-                        element.state,
-                        crate::sequence::SequenceState::Terminated,
-                        "same-frame terminal movement pop changed state"
-                    );
-
-                    if !matches!(
-                        pop.order_type,
-                        OrderType::TransitionRunningUprightWaitingUpright
-                            | OrderType::TransitionWalkingUprightWaitingUpright
-                            | OrderType::TransitionWalkingCrouchedWaitingCrouched
-                    ) {
-                        return false;
-                    }
-                    pop.live_following_before_pop.iter().any(|following_ref| {
-                        let following = self
-                            .orders
-                            .sequence_manager
-                            .get_element(following_ref.0, following_ref.1)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "following element {:?}:{} disappeared",
-                                    following_ref.0, following_ref.1
-                                )
-                            });
-                        following.owner == Some(owner)
-                            && matches!(
-                                following.state,
-                                crate::sequence::SequenceState::Impossible
-                                    | crate::sequence::SequenceState::Interrupted
-                            )
-                    })
-                })
-                && self
-                    .live_pending_freezing_order_is_one_of(owner, manager_fifo_before_entity_phase);
-            if accepted_instruct_owners.contains(&owner)
-                && (causal_condolation_handoff || stopped_movement_handoff)
-            {
-                // The entity loop has already returned TERMINATED for this
-                // movement, while its Ready/callback tail registers a
-                // replacement for this manager update. This covers both
-                // post-seek interactions and a Stop-rewritten walk whose
-                // completed parallel sibling releases a postponed group Move.
-                // The original actor update uses the live selected sequence element in its
-                // terminal next-order arm,
-                // so the replacement's sole Freezing order is consumed even
-                // though its path request remains queued until the next path
-                // phase. This seam exists only when the manager also closed a
-                // sibling on the replacement or the just-completed outgoing
-                // sequence. An independently queued player/AI Move can share
-                // the owner and stale terminal sequence history, but was never
-                // the live pointer in this actor stack and must remain
-                // selected. The sole manager-FIFO exception requires the
-                // replacement to have been queued before the actor phase, then
-                // installed while that synchronous terminal close was active.
-                // Its exact outgoing movement pop must also have a linked
-                // descendant that was live immediately before the pop and
-                // became Impossible/Interrupted afterward.
-                self.advance_live_order_after_terminal_handoff(sim, assets, owner);
-            }
-        }
-
         // The redundant-EnterSwordfight retention above is only a bridge
         // across a re-entrant actor-update lazy Wait. If that Wait is
         // published, `publish_selected_order_as_installed` consumes the marker
@@ -1007,26 +862,8 @@ impl EngineInner {
         display: &mut HostDisplayState,
         assets: &LevelAssets,
     ) {
-        self.hourglass_phase_sequences_with_terminal_movement_pops(sim, display, assets, &[]);
-    }
-
-    #[cfg(test)]
-    pub(in crate::engine) fn hourglass_phase_sequences_with_terminal_movement_pops(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
-        assets: &LevelAssets,
-        terminal_movement_order_pops: &[super::super::movement::TerminalMovementOrderPop],
-    ) {
         let camera = self.feedback.cutscene_camera.display.clone();
-        let manager_fifo_before_entity_phase =
-            self.orders.sequence_manager.deferred_elements_to_go();
-        self.hourglass_phase_sequences_authoritative(
-            sim,
-            assets,
-            &manager_fifo_before_entity_phase,
-            terminal_movement_order_pops,
-        );
+        self.hourglass_phase_sequences_authoritative(sim, assets);
         self.feedback.cutscene_camera.display = camera;
         let mut input = InputState::default();
         for event in self

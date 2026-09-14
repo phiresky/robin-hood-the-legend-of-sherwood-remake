@@ -663,26 +663,6 @@ pub struct ActiveFlight {
     pub ladder_fall: bool,
 }
 
-/// Active rider charge state.
-///
-/// The Original keeps only the candidate list between calls to
-/// rider-charge execution; origin, direction, layer, and animation frame are
-/// sampled live on every owner movement slot.
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct ActiveRiderCharge {
-    /// Candidate victims (entities inside the initial large hit zone).
-    /// Removed as they get hit.
-    pub pending_victims: Vec<EntityId>,
-}
-
 /// One step in a door-pass sub-order chain.
 ///
 /// Built by `translate_pass_door_*`. Each door type produces a specific
@@ -1077,17 +1057,6 @@ pub struct ActorData {
     /// See [`ActiveAbility`][crate::movement::ActiveAbility] for details.
     pub active_ability: crate::movement::ActiveAbility,
 
-    /// Per-frame sweep state for lateral/circle strikes.
-    /// Initialized at the hit frame; cleared when the melee strike ends.
-    pub sweep_state: Option<crate::movement::SweepState>,
-
-    /// Victims to enter sword-fight with when the current push strike
-    /// finishes. Populated at the push-strike hit frame (MOTION_DONE) and
-    /// drained when the strike terminates (MOTION_TERMINATED).
-    /// The victim list launches `EnterSwordfight` at terminate time,
-    /// not at hit time.
-    pub pending_push_swordfight: Vec<EntityId>,
-
     /// Destination point for rolling after a death/knockout fall on a slope.
     /// When `combat_anim` finishes and this is set, a Rolling animation is
     /// queued toward this point.
@@ -1112,12 +1081,6 @@ pub struct ActorData {
     /// `translate_ladder_wall_fall` to decrement the sector occupancy
     /// counter when a climber gets shoved off.
     pub active_lift: Option<ActiveLiftClimb>,
-
-    // -- Rider charge state --
-    /// Active rider charge state.  When `Some`, the rider is executing
-    /// Rider-charge execution — moving along a path while checking a
-    /// polygon hit zone each frame.
-    pub active_rider_charge: Option<ActiveRiderCharge>,
 
     /// Actor-level identity of the last `RiderCharging` order whose
     /// rider-charge pass completed. This is intentionally distinct
@@ -1197,8 +1160,6 @@ impl Default for ActorData {
             active_door_pass: None,
             active_shot: ActiveShot::none(),
             active_ability: crate::movement::ActiveAbility::default(),
-            sweep_state: None,
-            pending_push_swordfight: Vec::new(),
             pending_roll: None,
             shield_face_point: None,
             active_jump: None,
@@ -1207,7 +1168,6 @@ impl Default for ActorData {
             jump_z_offset: 0.0,
             active_flight: None,
             active_lift: None,
-            active_rider_charge: None,
             last_executed_rider_charge_order_id: None,
             shield_obstacle: None,
             last_noise_volume: 0,

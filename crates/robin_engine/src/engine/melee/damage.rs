@@ -214,20 +214,19 @@ impl SwordDamageProbe {
         let attacker = engine
             .get_entity(attacker_id)
             .expect("sword damage test attacker exists");
-        let actor = attacker
-            .actor_data()
-            .expect("sword damage attacker is actor");
         let observation = TestSwordDamageObservation {
             victim_id,
             attacker_id,
             strike,
             attacker_direction: attacker.element_data().direction(),
-            active_rider_charge: actor.active_rider_charge.is_some(),
-            pending_victims: actor
-                .active_rider_charge
-                .as_ref()
-                .map(|charge| charge.pending_victims.clone())
-                .unwrap_or_default(),
+            active_rider_charge: engine.live_actor_animation(attacker_id)
+                == Some(crate::order::OrderType::RiderCharging),
+            pending_victims: attacker
+                .human_data()
+                .expect("damage attacker must be human")
+                .sword_sweep
+                .victims
+                .clone(),
             life_points_before: self.life_points_before,
             life_points_after: engine
                 .get_entity(victim_id)
@@ -2621,9 +2620,8 @@ impl EngineInner {
                     .soldier_data()
                     .map(|soldier| soldier.rider)
                     .unwrap_or(false);
-                let charging = attacker
-                    .actor_data()
-                    .is_some_and(|actor| actor.active_rider_charge.is_some());
+                let charging = attacker_id.and_then(|id| self.live_actor_animation(id))
+                    == Some(crate::order::OrderType::RiderCharging);
                 (rider && charging).then_some(attacker.element_data().direction() as u16)
             });
         let attacker_pos = attacker_id.map(|id| {

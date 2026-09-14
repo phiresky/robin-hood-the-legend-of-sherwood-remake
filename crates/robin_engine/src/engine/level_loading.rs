@@ -5063,7 +5063,7 @@ impl EngineInner {
             bonus_spawns: Vec<(usize, u16)>, // (point_idx, quantity)
             occupants: Vec<crate::sector_production::Occupant>,
             zone_layer: Option<u16>,
-            zone_sector: Option<u16>,
+            zone_sector: Option<crate::position_interface::SectorHandle>,
             // Applied-in-engine post-mission PC updates
             xp_gain: u16,   // TRAIN_* only
             heal_gain: u16, // HEAL only
@@ -5072,8 +5072,10 @@ impl EngineInner {
         let mut plans: Vec<SectorPlan> = Vec::new();
 
         // Build a zone-type → (layer, sector) map for attaching sectors.
-        let mut zone_location: std::collections::HashMap<PT, (u16, u16)> =
-            std::collections::HashMap::new();
+        let mut zone_location: std::collections::HashMap<
+            PT,
+            (u16, Option<crate::position_interface::SectorHandle>),
+        > = std::collections::HashMap::new();
         for (zone_idx, zone) in self.script_domains.zones.scripts.iter().enumerate() {
             let pt = zone.production_sector_type;
             if pt == PT::Unknown {
@@ -5082,7 +5084,7 @@ impl EngineInner {
             let loc_handle_idx = points_count + zone_idx; // 0-based index into script_location_*
             if let (Some(&layer), Some(&sector)) = (
                 assets.scripts.location_layers.get(loc_handle_idx),
-                assets.scripts.location_sectors.get(loc_handle_idx),
+                assets.scripts.location_sector_handles.get(loc_handle_idx),
             ) {
                 zone_location.entry(pt).or_insert((layer, sector));
             }
@@ -5143,7 +5145,7 @@ impl EngineInner {
                             bonus_spawns,
                             occupants: sector.occupants.clone(),
                             zone_layer: layer,
-                            zone_sector: sector_idx,
+                            zone_sector: sector_idx.flatten(),
                             xp_gain: 0,
                             heal_gain: 0,
                         });
@@ -5174,7 +5176,7 @@ impl EngineInner {
                             bonus_spawns: Vec::new(),
                             occupants: sector.occupants.clone(),
                             zone_layer: layer,
-                            zone_sector: sector_idx,
+                            zone_sector: sector_idx.flatten(),
                             xp_gain: xp,
                             heal_gain: 0,
                         });
@@ -5199,7 +5201,7 @@ impl EngineInner {
                             bonus_spawns: Vec::new(),
                             occupants: sector.occupants.clone(),
                             zone_layer: layer,
-                            zone_sector: sector_idx,
+                            zone_sector: sector_idx.flatten(),
                             xp_gain: 0,
                             heal_gain: heal,
                         });
@@ -5212,7 +5214,7 @@ impl EngineInner {
                             bonus_spawns: Vec::new(), // relics handled separately
                             occupants: Vec::new(),
                             zone_layer: layer,
-                            zone_sector: sector_idx,
+                            zone_sector: sector_idx.flatten(),
                             xp_gain: 0,
                             heal_gain: 0,
                         });
@@ -5394,7 +5396,7 @@ impl EngineInner {
                 };
                 let entity_id = EntityId::Pc(pc_id);
 
-                let (Some(layer), Some(sector_idx)) = (plan.zone_layer, plan.zone_sector) else {
+                let Some(layer) = plan.zone_layer else {
                     // No script-zone for this production type — cannot
                     // position.  Leave the PC where it is.
                     continue;
@@ -5412,8 +5414,7 @@ impl EngineInner {
                     pc.element
                         .set_position_map(MapPoint::new(occupant.x, occupant.y));
                     pc.element.set_layer(layer);
-                    pc.element
-                        .set_sector(crate::position_interface::SectorHandle::new(sector_idx));
+                    pc.element.set_sector(plan.zone_sector);
                     {
                         let pi = &mut pc.element.sprite.position_iface;
                         pi.set_map_position(MapPoint::new(occupant.x, occupant.y));

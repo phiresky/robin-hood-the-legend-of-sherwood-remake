@@ -210,7 +210,7 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
 
     let mut executed_transition = false;
     for _ in 0..16 {
-        let (_, _, executed) = engine.tick_actor_animation_for(&sim, &assets, owner);
+        let executed = engine.tick_actor_animation_for(&sim, &assets, owner);
         executed_transition |= executed.is_some();
         if engine
             .get_entity(owner)

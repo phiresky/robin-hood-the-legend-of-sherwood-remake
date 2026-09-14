@@ -908,35 +908,6 @@ impl EngineInner {
                 } else {
                     self.control.sim_config.item_gameplay = *config;
                 }
-                let reliable_ale = self
-                    .control
-                    .sim_config
-                    .item_gameplay
-                    .ale_reliable_distraction;
-                for (actor_id, entity) in self.world.entities.actors_mut() {
-                    // Ale completion resolves a SoldierProfile from SoldierData;
-                    // autonomous PC enemies must not gain the soldier-only
-                    // zero-beer eligibility without that completion contract.
-                    let reliable_for_actor = if !reliable_ale {
-                        false
-                    } else if let Entity::Soldier(soldier) = entity {
-                        !assets
-                            .profile_manager
-                            .get_soldier(soldier.soldier.soldier_profile_index)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "ale reliability requires missing soldier profile {:?} for {actor_id:?}",
-                                    soldier.soldier.soldier_profile_index,
-                                )
-                            })
-                            .vip
-                    } else {
-                        false
-                    };
-                    if let Some(enemy) = entity.enemy_ai_mut() {
-                        enemy.ale_reliable_distraction = reliable_for_actor;
-                    }
-                }
             }
             SetNoiseDistractionFeedback { enabled } => {
                 if self.control.rng.original_replay_cursor().is_some() {

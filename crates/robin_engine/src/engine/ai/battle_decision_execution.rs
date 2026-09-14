@@ -407,7 +407,7 @@ impl EngineInner {
             {
                 Decision::RunForNewArrows
             } else if !ai.base.friends_are_alerted && !only_soldiers && ai.base.blood_alcohol == 0 {
-                match ai.get_rank() {
+                match ai.get_rank(&assets.profile_manager) {
                     crate::profiles::ProfileRank::Soldier => Decision::LookForHelp,
                     crate::profiles::ProfileRank::Officer => Decision::RunAndAlertSoldiers,
                     _ => Decision::Cassos,
@@ -478,7 +478,7 @@ impl EngineInner {
                 0,
             );
         }
-        if ai.get_rank() == crate::profiles::ProfileRank::Officer
+        if ai.get_rank(&assets.profile_manager) == crate::profiles::ProfileRank::Officer
             && inputs.simple_soldiers_near
             && !ai.base.friends_are_alerted
             && ai.base.blood_alcohol == 0
@@ -505,7 +505,7 @@ impl EngineInner {
                 .world
                 .entities
                 .expect_enemy_ai(owner, format_args!("observe courage"))
-                .get_courage();
+                .get_courage(&assets.profile_manager);
             let enemies = inputs.num_enemies_i_can_see as f32;
             if f32::from(inputs.friends_nearer_to_enemy)
                 >= enemies + enemies * (0.045_f32 * f32::from(courage))
@@ -806,7 +806,7 @@ impl EngineInner {
             let distance = crate::ai::AiController::value_between(
                 crate::parameters_ai::OBSERVE_SWORDFIGHT_MAX_DISTANCE,
                 crate::parameters_ai::OBSERVE_SWORDFIGHT_MIN_DISTANCE,
-                ai.get_courage() as u8,
+                ai.get_courage(&assets.profile_manager) as u8,
             );
             self.duty_go_near(
                 sim,

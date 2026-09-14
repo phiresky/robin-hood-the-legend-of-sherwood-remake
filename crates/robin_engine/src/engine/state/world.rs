@@ -103,43 +103,9 @@ pub(crate) struct WorldState {
     pub(crate) original_repulsive_point_counter: u32,
 }
 
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedWorldState {
-    entities: Entities,
-    soldier_registry: SoldierRegistry,
-    npc_registry_ids: Vec<EntityId>,
-    actor_registry_ids: Vec<EntityId>,
-    fighter_registry_ids: Vec<EntityId>,
-
-    pc_ids: Vec<EntityId>,
-
-    original_pc_registry_ids: Vec<EntityId>,
-
-    fast_grid: crate::fast_find_grid::FastFindGridSnapshot,
-
-    pathfinder: crate::pathfinder::PersistedPathFinder,
-
-    weather: WeatherState,
-
-    shield: ShieldState,
-
-    dynamic_sight_obstacles: Vec<SightObstacle>,
-
-    static_sight_obstacle_active: Vec<bool>,
-
-    mobile_elements: Vec<crate::mobile::MobileElement>,
-    #[serde(with = "entity_creation_order_pairs")]
-    original_creation_order_by_entity: BTreeMap<EntityId, u32>,
-
-    next_original_creation_order: u32,
-
-    original_repulsive_point_counter: u32,
-}
-
-impl PersistedWorldState {
-    pub(crate) fn capture(value: &WorldState) -> Self {
+impl WorldState {
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let value = self;
         let WorldState {
             entities: _,
             soldier_registry: _,
@@ -167,8 +133,8 @@ impl PersistedWorldState {
             fighter_registry_ids: value.fighter_registry_ids.clone(),
             pc_ids: value.pc_ids.clone(),
             original_pc_registry_ids: value.original_pc_registry_ids.clone(),
-            fast_grid: crate::fast_find_grid::FastFindGridSnapshot::capture(&value.fast_grid),
-            pathfinder: crate::pathfinder::PersistedPathFinder::capture(&value.pathfinder),
+            fast_grid: std::sync::Arc::new(value.fast_grid.persisted_clone()),
+            pathfinder: value.pathfinder.clone(),
             weather: value.weather.clone(),
             shield: value.shield.clone(),
             dynamic_sight_obstacles: value.dynamic_sight_obstacles.clone(),
@@ -177,28 +143,6 @@ impl PersistedWorldState {
             original_creation_order_by_entity: value.original_creation_order_by_entity.clone(),
             next_original_creation_order: value.next_original_creation_order,
             original_repulsive_point_counter: value.original_repulsive_point_counter,
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> WorldState {
-        WorldState {
-            entities: self.entities,
-            soldier_registry: self.soldier_registry,
-            npc_registry_ids: self.npc_registry_ids,
-            actor_registry_ids: self.actor_registry_ids,
-            fighter_registry_ids: self.fighter_registry_ids,
-            pc_ids: self.pc_ids,
-            original_pc_registry_ids: self.original_pc_registry_ids,
-            fast_grid: std::sync::Arc::new(self.fast_grid.into_runtime()),
-            pathfinder: self.pathfinder.into_runtime(),
-            weather: self.weather,
-            shield: self.shield,
-            dynamic_sight_obstacles: self.dynamic_sight_obstacles,
-            static_sight_obstacle_active: self.static_sight_obstacle_active,
-            mobile_elements: self.mobile_elements,
-            original_creation_order_by_entity: self.original_creation_order_by_entity,
-            next_original_creation_order: self.next_original_creation_order,
-            original_repulsive_point_counter: self.original_repulsive_point_counter,
         }
     }
 }
@@ -622,6 +566,18 @@ impl WorldState {
         self.validate_fast_grid_indices_against(assets.navigation.level_grid.sectors.len())?;
 
         for (id, entity) in self.entities.occupied() {
+            if let Some(enemy) = entity.enemy_ai() {
+                if assets
+                    .profile_manager
+                    .get_soldier(enemy.behavior_profile)
+                    .is_none()
+                {
+                    return Err(format!(
+                        "entity {id} references missing behavior profile {}",
+                        enemy.behavior_profile.0
+                    ));
+                }
+            }
             entity
                 .sprite()
                 .validate_runtime_cache(&assets.sprite_scriptor)
@@ -841,9 +797,9 @@ mod tests {
             .world
             .soldier_registry
             .rebuild_from_order(&engine.world.entities, [third, first, second]);
-        let wire = serde_json::to_vec(&PersistedWorldState::capture(&engine.world)).unwrap();
-        let saved: PersistedWorldState = serde_json::from_slice(&wire).unwrap();
-        let restored = saved.into_runtime();
+        let wire = serde_json::to_vec(&engine.world.persisted_clone()).unwrap();
+        let saved: WorldState = serde_json::from_slice(&wire).unwrap();
+        let restored = saved;
         let rollback: WorldState = bitcode::decode(&bitcode::encode(&engine.world)).unwrap();
         for world in [&restored, &rollback] {
             assert_eq!(world.npc_registry_ids, npc_order);

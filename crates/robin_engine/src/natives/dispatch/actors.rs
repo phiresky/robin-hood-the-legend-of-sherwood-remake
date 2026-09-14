@@ -491,10 +491,9 @@ impl NativeContext<'_, '_> {
                 // engine-side state. Validation (existing PC)
                 // and the actual `actor_make_crouched`
                 // call happen in the engine-side handler.
-                self.script_effects_mut()
-                    .emit_engine(EngineCommand::ScriptMakePCCrouched {
-                        actor_handle: actor,
-                    });
+                self.yield_engine_command(EngineCommand::ScriptMakePCCrouched {
+                    actor_handle: actor,
+                });
                 0
             }
             GetActorActionState => {

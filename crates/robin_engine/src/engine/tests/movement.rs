@@ -1224,7 +1224,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             owner,
             |_| panic!("selected PassDoor must not use the actor's raw position"),
         );
-        (direction, resolved.effective)
+        (direction, resolved)
     };
 
     let (direct_direction, direct_position) = capture(true);
@@ -1808,7 +1808,6 @@ fn production_owner_execution_frozen_blocks_rider_charge_execute_entirely() {
         .get_entity(rider)
         .and_then(crate::element::Entity::actor_data)
         .expect("rider remains an actor");
-    assert!(actor.active_rider_charge.is_none());
     assert!(actor.last_executed_rider_charge_order_id.is_none());
     assert!(observations.is_empty());
 }
@@ -2010,7 +2009,6 @@ fn production_owner_uses_exact_selected_element_not_background_movement() {
         .get_entity(rider)
         .and_then(crate::element::Entity::actor_data)
         .expect("rider remains an actor");
-    assert!(actor.active_rider_charge.is_none());
     assert!(actor.last_executed_rider_charge_order_id.is_none());
 }
 
@@ -2381,13 +2379,7 @@ fn rider_charge_approach_never_initializes_from_flags_alone() {
     engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
 
     assert!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_rider_charge
-            .is_none(),
+        engine.live_actor_animation(rider) != Some(crate::order::OrderType::RiderCharging),
         "RIDER_CHARGE on RunningUpright is only the approach/gallop loop"
     );
 }
@@ -2415,13 +2407,7 @@ fn rider_charging_action_executes_without_rider_charge_flag() {
     engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
 
     assert!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_rider_charge
-            .is_some(),
+        engine.live_actor_animation(rider) == Some(crate::order::OrderType::RiderCharging),
         "RiderCharging dispatch is keyed solely by the live action"
     );
 }
@@ -2446,12 +2432,10 @@ fn rider_charge_fresh_id_same_action_replacement_reinitializes_candidates_immedi
         engine
             .get_entity(rider)
             .unwrap()
-            .actor_data()
+            .human_data()
             .unwrap()
-            .active_rider_charge
-            .as_ref()
-            .unwrap()
-            .pending_victims,
+            .sword_sweep
+            .victims,
         vec![stale]
     );
 
@@ -2483,12 +2467,10 @@ fn rider_charge_fresh_id_same_action_replacement_reinitializes_candidates_immedi
         engine
             .get_entity(rider)
             .unwrap()
-            .actor_data()
+            .human_data()
             .unwrap()
-            .active_rider_charge
-            .as_ref()
-            .unwrap()
-            .pending_victims,
+            .sword_sweep
+            .victims,
         vec![replacement],
         "fresh same-action identity clears and rebuilds candidates before motion"
     );
@@ -2527,15 +2509,7 @@ fn rider_charge_uses_actual_sprite_waits_and_rewrites_same_order_on_actual_last_
     assert_eq!(rewritten.tolerance, 7.0);
     assert!(rewritten.lock_ai);
     assert!(rewritten.compute_direction);
-    assert!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_rider_charge
-            .is_none()
-    );
+    assert!(engine.live_actor_animation(rider) != Some(crate::order::OrderType::RiderCharging));
 }
 
 #[test]
@@ -2565,12 +2539,10 @@ fn rider_charge_initializes_once_resamples_geometry_and_keeps_wrong_layer_pendin
         engine
             .get_entity(rider)
             .unwrap()
-            .actor_data()
+            .human_data()
             .unwrap()
-            .active_rider_charge
-            .as_ref()
-            .unwrap()
-            .pending_victims,
+            .sword_sweep
+            .victims,
         vec![victim_id]
     );
 
@@ -2591,12 +2563,10 @@ fn rider_charge_initializes_once_resamples_geometry_and_keeps_wrong_layer_pendin
         engine
             .get_entity(rider)
             .unwrap()
-            .actor_data()
+            .human_data()
             .unwrap()
-            .active_rider_charge
-            .as_ref()
-            .unwrap()
-            .pending_victims,
+            .sword_sweep
+            .victims,
         vec![victim_id],
         "a candidate on another live layer stays pending"
     );
@@ -2614,15 +2584,7 @@ fn rider_charge_interruption_clears_state_and_new_charge_reinitializes() {
     );
     let sim = crate::sim_rng::test_context();
     engine.tick_entity_movement(&sim, &assets);
-    assert!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_rider_charge
-            .is_some()
-    );
+    assert!(engine.live_actor_animation(rider) == Some(crate::order::OrderType::RiderCharging));
 
     let interrupted = engine
         .orders
@@ -2637,15 +2599,7 @@ fn rider_charge_interruption_clears_state_and_new_charge_reinitializes() {
     engine.set_actors_frozen(true);
     engine.tick_entity_movement(&sim, &assets);
     engine.set_actors_frozen(false);
-    assert!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_rider_charge
-            .is_none()
-    );
+    assert!(engine.live_actor_animation(rider) != Some(crate::order::OrderType::RiderCharging));
 
     let fresh_id = engine.orders.allocate_order_id();
     let order = engine
@@ -2659,15 +2613,7 @@ fn rider_charge_interruption_clears_state_and_new_charge_reinitializes() {
     order.order_type = crate::order::OrderType::RiderCharging;
     order.order_id = fresh_id;
     engine.tick_entity_movement(&sim, &assets);
-    assert!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_rider_charge
-            .is_some()
-    );
+    assert!(engine.live_actor_animation(rider) == Some(crate::order::OrderType::RiderCharging));
 }
 
 #[test]
@@ -2691,7 +2637,11 @@ fn rider_charge_frozen_all_still_initializes_and_runs_polygon_on_frozen_frame() 
         MapPoint::new(100.0, 100.0)
     );
     assert!(
-        entity.actor_data().unwrap().active_rider_charge.is_some(),
+        entity
+            .actor_data()
+            .unwrap()
+            .last_executed_rider_charge_order_id
+            .is_some(),
         "FrozenAll preserves rider-charge initialization/polygon work"
     );
 }
@@ -2732,14 +2682,7 @@ fn rider_charge_frozen_all_real_victim_is_damaged_once_across_multiple_ticks() {
         Some(order_id)
     );
     assert!(
-        entity
-            .actor_data()
-            .unwrap()
-            .active_rider_charge
-            .as_ref()
-            .unwrap()
-            .pending_victims
-            .is_empty(),
+        entity.human_data().unwrap().sword_sweep.victims.is_empty(),
         "the resolved victim remains removed while FrozenAll persists"
     );
 }
@@ -2782,12 +2725,10 @@ fn rider_charge_frozen_all_fresh_id_same_action_reinitializes_candidates() {
         engine
             .get_entity(rider)
             .unwrap()
-            .actor_data()
+            .human_data()
             .unwrap()
-            .active_rider_charge
-            .as_ref()
-            .unwrap()
-            .pending_victims,
+            .sword_sweep
+            .victims,
         vec![stale]
     );
 
@@ -2824,13 +2765,7 @@ fn rider_charge_frozen_all_fresh_id_same_action_reinitializes_candidates() {
         Some(fresh_id)
     );
     assert_eq!(
-        entity
-            .actor_data()
-            .unwrap()
-            .active_rider_charge
-            .as_ref()
-            .unwrap()
-            .pending_victims,
+        entity.human_data().unwrap().sword_sweep.victims,
         vec![replacement],
         "fresh frozen identity rebuilds candidates without a noncharge tick"
     );
@@ -2949,12 +2884,10 @@ fn rider_charge_first_execute_turns_before_initializing_new_motion_goal() {
         engine
             .get_entity(rider)
             .unwrap()
-            .actor_data()
+            .human_data()
             .unwrap()
-            .active_rider_charge
-            .as_ref()
-            .unwrap()
-            .pending_victims
+            .sword_sweep
+            .victims
             .is_empty()
     );
 
@@ -3322,15 +3255,7 @@ fn rider_charge_last_frame_damage_lands_after_the_rewrite_and_clear() {
         .unwrap();
     assert_eq!(order.order_type, crate::order::OrderType::RunningUpright);
     assert_ne!(order.order_id, old_id);
-    assert!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_rider_charge
-            .is_none()
-    );
+    assert!(engine.live_actor_animation(rider) != Some(crate::order::OrderType::RiderCharging));
     assert!(
         engine
             .get_entity(rider)
@@ -3364,7 +3289,6 @@ fn rider_charge_retains_unhit_candidates_in_shared_human_sword_list() {
     tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
 
     let rider = engine.get_entity(rider).unwrap();
-    assert!(rider.actor_data().unwrap().active_rider_charge.is_none());
     assert_eq!(rider.human_data().unwrap().sword_sweep.victims, vec![unhit]);
 }
 

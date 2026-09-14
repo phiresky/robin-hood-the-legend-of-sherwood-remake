@@ -1741,7 +1741,7 @@ impl EngineInner {
                     // saved double-click. At this input boundary no entity
                     // phase work remains; the normal sequence phase drains
                     // precisely the newly registered click sequence.
-                    self.hourglass_phase_sequences_authoritative(sim, assets, &[], &[]);
+                    self.hourglass_phase_sequences_authoritative(sim, assets);
                     self.actor_make_fast(sim, pc);
                 }
                 succeeded

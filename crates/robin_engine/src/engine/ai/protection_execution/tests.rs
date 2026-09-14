@@ -482,7 +482,7 @@ fn live_cover_position_preserves_aspect_then_distance_rounding() {
 
 #[test]
 fn live_already_in_cover_decision_does_not_require_a_route() {
-    let (mut engine, assets, ids) = fixture(&[(1123.7424, 396.0593), (1144.9557, 408.22668)]);
+    let (mut engine, mut assets, ids) = fixture(&[(1123.7424, 396.0593), (1144.9557, 408.22668)]);
     let (owner, bearer) = (ids[0], ids[1]);
     engine
         .world
@@ -505,7 +505,9 @@ fn live_already_in_cover_decision_does_not_require_a_route() {
         .expect_enemy_ai_mut(owner, format_args!("already covered archer"));
     ai.base.current_state = AiState::Attacking;
     ai.is_archer_unit = true;
-    ai.soldier_profile_courage = 100;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+        profile.courage = 100
+    });
     ai.shield_bearer_before_me = Some(AiEntityHandle::new(bearer.index()));
     ai.forced_next_battle_decision = crate::ai::Decision::None;
     // No navigation layers are available; this branch needs only the current

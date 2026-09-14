@@ -105,15 +105,11 @@ impl EngineInner {
     #[inline(never)]
     fn trace_sweep_phase(&self, attacker_id: EntityId, phase: SweepTickPhase) {
         eprintln!(
-            "[SWEEPPHASE f={} attacker={:?} (co {}) phase={:?} sweep_state={:?} human_victims={:?}]",
+            "[SWEEPPHASE f={} attacker={:?} (co {}) phase={:?} victims={:?}]",
             self.control.frame_counter,
             attacker_id,
             self.world.original_creation_order(attacker_id),
             phase,
-            self.get_entity(attacker_id)
-                .and_then(Entity::actor_data)
-                .and_then(|a| a.sweep_state.as_ref())
-                .map(|s| s.pending_victims.len()),
             self.get_entity(attacker_id)
                 .and_then(Entity::human_data)
                 .map(|h| h.sword_sweep.victims.len()),
@@ -358,18 +354,13 @@ pub(crate) enum SweepTickPhase {
     Initialized,
 }
 
-fn sweep_rotation_complete(sweep: &crate::movement::SweepState) -> bool {
-    match sweep.direction {
-        crate::profiles::WeaponThrustDirection::LeftToRight => {
-            sweep.current_angle >= sweep.final_angle
-        }
-        _ => sweep.current_angle <= sweep.final_angle,
-    }
-}
-
-fn advance_circle_angle(sweep: &mut crate::movement::SweepState) {
-    let candidate = sweep.current_angle + sweep.rotation_per_frame;
-    let past_final = match sweep.direction {
+fn advance_circle_angle(
+    sweep: &mut crate::element::HumanSwordSweepState,
+    rotation_per_frame: f32,
+    direction: crate::profiles::WeaponThrustDirection,
+) {
+    let candidate = sweep.current_angle + rotation_per_frame;
+    let past_final = match direction {
         crate::profiles::WeaponThrustDirection::LeftToRight => candidate >= sweep.final_angle,
         _ => candidate <= sweep.final_angle,
     };
@@ -378,12 +369,6 @@ fn advance_circle_angle(sweep: &mut crate::movement::SweepState) {
     } else {
         sweep.current_angle = sweep.final_angle;
     }
-}
-
-fn advance_lateral_angle(sweep: &mut crate::movement::SweepState) {
-    // Lateral sword strikes apply the signed rotation directly. They have
-    // no circle-style final-angle clamp or same-sector overshoot branch.
-    sweep.current_angle += sweep.rotation_per_frame;
 }
 
 fn is_circle_sweep(kind: WeaponThrustKind) -> bool {
@@ -545,19 +530,6 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
-        let gesture_quality = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(attacker_id)
-            .and_then(|(sequence_id, element_index)| {
-                self.orders
-                    .sequence_manager
-                    .get_element(sequence_id, element_index)
-            })
-            .unwrap_or_else(|| {
-                panic!("melee MotionState::Start owner {attacker_id:?} has no sequence element")
-            })
-            .gesture_quality;
         let profile_idx = {
             let entity = self.expect_entity_mut(attacker_id, "melee MotionState::Start owner");
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
@@ -596,56 +568,11 @@ impl EngineInner {
         // angles, so full circles deliberately retain the old geometry here.
         // Do not create a sweep for an ordinary fresh strike here; its real
         // victim list is still initialized only at MotionState::Done.
-        let retained_victims = self.get_entity(attacker_id).and_then(|entity| {
-            entity
-                .actor_data()
-                .and_then(|actor| actor.sweep_state.as_ref())
-                .map(|sweep| sweep.pending_victims.clone())
-                .filter(|victims| !victims.is_empty())
-                .or_else(|| {
-                    entity
-                        .human_data()
-                        .map(|human| human.sword_sweep.victims.clone())
-                        .filter(|victims| !victims.is_empty())
-                })
-                .or_else(|| {
-                    entity
-                        .actor_data()
-                        .map(|actor| actor.pending_push_swordfight.clone())
-                        .filter(|victims| !victims.is_empty())
-                })
-        });
-        let strike_kind = profile_idx
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
-            .map(|profile| profile.thrusts[strike as usize].kind);
-        if strike_kind.is_some_and(|kind| {
-            matches!(
-                kind,
-                WeaponThrustKind::Lateral
-                    | WeaponThrustKind::TrueHalfCircle
-                    | WeaponThrustKind::FalseHalfCircle
-            )
-        }) && let Some(retained_victims) = retained_victims
-        {
-            self.initialize_sweep(
-                assets,
-                attacker_id,
-                strike,
-                profile_idx,
-                strike_kind.expect("rebased warning strike kind disappeared"),
-                retained_victims,
-                gesture_quality,
-            );
-            if let Some(actor) = self
-                .get_entity_mut(attacker_id)
-                .and_then(Entity::actor_data_mut)
-            {
-                // These are two Rust mirrors of Original's single shared
-                // victim list. Once the replacement sweep takes ownership,
-                // the push-completion mirror must not retain a duplicate.
-                actor.pending_push_swordfight.clear();
-            }
-        }
+        self.apply_strike_selection_sweep_rebase(
+            assets,
+            attacker_id,
+            Some(crate::combat::StrikeSelectionSweepRebase { strike }),
+        );
 
         let mut victims =
             self.collect_sword_strike_warning_victims(assets, attacker_id, strike, profile_idx);
@@ -1131,41 +1058,40 @@ impl EngineInner {
                     WeaponThrustKind::PushAside
                 )
             });
-        let pending_swordfights = if let Some(entity) = self.world.entities.get_mut(actor_id)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            if clears_shared_sweep {
-                actor.sweep_state = None;
+        if completes_push_strike {
+            while let Some(victim_id) = self
+                .expect_entity(actor_id, "push completion attacker")
+                .human_data()
+                .expect("push attacker must be human")
+                .sword_sweep
+                .victims
+                .first()
+                .copied()
+            {
+                let attacker = self.expect_entity(actor_id, "push completion attacker");
+                let victim = self.expect_entity(victim_id, "push completion victim");
+                if should_enter_swordfight_after_strike(
+                    attacker,
+                    victim,
+                    &assets.profile_manager,
+                    &self.mission_domain.diplomacy,
+                ) {
+                    self.queue_enter_swordfight_after_strike(victim_id, actor_id);
+                }
+                self.expect_entity_mut(actor_id, "push completion attacker")
+                    .human_data_mut()
+                    .expect("push attacker must be human")
+                    .sword_sweep
+                    .victims
+                    .remove(0);
             }
-            let pending_swordfights = if completes_push_strike {
-                std::mem::take(&mut actor.pending_push_swordfight)
-            } else {
-                Vec::new()
-            };
-            if clears_shared_sweep && let Some(human) = entity.human_data_mut() {
-                // Lateral and circle sword-strike execution delete
-                // their human-owned victim list when the strike genuinely
-                // terminates. Keep the serialized mirror in lockstep with
-                // the executable Rust sweep so a later fresh strike cannot
-                // mistake terminated geometry for a resumed saved sweep.
-                human.sword_sweep = crate::element::HumanSwordSweepState::default();
-            }
-            pending_swordfights
-        } else {
-            Vec::new()
-        };
-        for victim_id in pending_swordfights {
-            let attacker = self.expect_entity(actor_id, "push completion attacker");
-            let victim = self.expect_entity(victim_id, "push completion victim");
-            let should_enter = should_enter_swordfight_after_strike(
-                attacker,
-                victim,
-                &assets.profile_manager,
-                &self.mission_domain.diplomacy,
-            );
-            if should_enter {
-                self.queue_enter_swordfight_after_strike(victim_id, actor_id);
-            }
+        } else if clears_shared_sweep {
+            self.expect_entity_mut(actor_id, "sweep completion attacker")
+                .human_data_mut()
+                .expect("sweep attacker must be human")
+                .sword_sweep
+                .victims
+                .clear();
         }
 
         match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
@@ -1379,11 +1305,7 @@ impl EngineInner {
                 strike_kind,
                 WeaponThrustKind::TrueCircle | WeaponThrustKind::TrueHalfCircle
             )
-            .then(|| {
-                entity
-                    .actor_data()
-                    .and_then(|actor| actor.sweep_state.as_ref())
-            })
+            .then(|| entity.human_data().map(|human| &human.sword_sweep))
             .flatten()
             .filter(|_| {
                 entity.element_data().sprite.last_processed_order_id == selected.order_id.get()
@@ -1529,10 +1451,7 @@ impl EngineInner {
                     all_victims,
                     hit.gesture_quality,
                 );
-                initialized_sweep = self
-                    .get_entity(hit.attacker_id)
-                    .and_then(|entity| entity.actor_data())
-                    .is_some_and(|actor| actor.sweep_state.is_some());
+                initialized_sweep = hit.attacker_profile_idx.is_some();
             } else if is_push {
                 // Push strike: apply damage to all victims at the
                 // hit frame (no AI warn tolerance), but defer the
@@ -1556,9 +1475,9 @@ impl EngineInner {
                     }
                 }
                 if let Some(entity) = self.world.entities.get_mut(hit.attacker_id)
-                    && let Some(actor) = entity.actor_data_mut()
+                    && let Some(human) = entity.human_data_mut()
                 {
-                    actor.pending_push_swordfight = all_victims;
+                    human.sword_sweep.victims = all_victims;
                 }
             } else {
                 self.resolve_straight_melee_hit(
@@ -1665,11 +1584,8 @@ impl EngineInner {
                         == entity.element_data().sprite.action_done_frame
                     && entity.element_data().sprite.frame_count
                         == entity.element_data().sprite.action_done_counter;
-                let retained_circle_off_action_point = self
-                    .get_entity(attacker_id)
-                    .and_then(|entity| entity.actor_data())
-                    .and_then(|actor| actor.sweep_state.as_ref())
-                    .is_some_and(|_| is_circle_sweep(active_kind) && !at_action_point);
+                let retained_circle_off_action_point =
+                    is_circle_sweep(active_kind) && !at_action_point;
                 if retained_circle_off_action_point {
                     // Circle sword-strike execution always runs the effect with
                     // the current Execute call's strike, even before that
@@ -1677,138 +1593,11 @@ impl EngineInner {
                     // gate only protects the tail angle advance.  Preserve
                     // the retained victim/angle geometry, but rebind the
                     // payload and direction to the replacement strike.
-                    self.rebind_retained_sweep_to_active_strike(assets, attacker_id);
                     self.tick_sweep_for_mode(assets, attacker_id, false, true);
                     return;
                 }
-                self.rebind_retained_sweep_to_active_strike(assets, attacker_id);
                 self.tick_sweep_for(assets, attacker_id, false);
             }
-        }
-    }
-
-    /// Original stores sweep victims and angles on the human, but reads the
-    /// strike direction, rotation, kind, and damage payload from the current
-    /// Execute call. If a strike is interrupted after its action point, a new
-    /// sweep strike therefore advances the retained geometry using its own
-    /// semantics.
-    pub(super) fn rebind_retained_sweep_to_active_strike(
-        &mut self,
-        assets: &LevelAssets,
-        attacker_id: EntityId,
-    ) {
-        let Some((strike, active_order_id, gesture_quality)) = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(attacker_id)
-            .and_then(|(sequence_id, element_index, order)| {
-                let strike = sword_strike_from_animation(order.order_type)?;
-                let gesture_quality = self
-                    .orders
-                    .sequence_manager
-                    .get_element(sequence_id, element_index)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "active sweep owner {attacker_id:?} lost sequence element {sequence_id:?}/{element_index}"
-                        )
-                    })
-                    .gesture_quality;
-                Some((strike, order.order_id, gesture_quality))
-            })
-        else {
-            return;
-        };
-        let Some(entity) = self.get_entity(attacker_id) else {
-            return;
-        };
-        // The legacy save owns these fields on the human actor itself.
-        // Rust's SweepState is only the executable mirror, so reconstruct it
-        // lazily when a loaded strike resumes in the middle of its sweep.
-        let serialized_sweep = entity.human_data().map(|human| human.sword_sweep.clone());
-        let Some(profile_idx) = get_hth_weapon_id_full(entity, &assets.profile_manager) else {
-            return;
-        };
-        let profile = assets
-            .profile_manager
-            .get_hth_weapon(profile_idx)
-            .unwrap_or_else(|| {
-                panic!(
-                    "retained sweep attacker {attacker_id:?} references missing weapon profile {profile_idx}"
-                )
-            });
-        let thrust = &profile.thrusts[strike as usize];
-        if !matches!(
-            thrust.kind,
-            WeaponThrustKind::Lateral
-                | WeaponThrustKind::TrueHalfCircle
-                | WeaponThrustKind::FalseHalfCircle
-                | WeaponThrustKind::TrueCircle
-                | WeaponThrustKind::FalseCircle
-        ) {
-            return;
-        }
-        // Original serializes the victim FIFO and the three sweep angles as
-        // independent human-actor fields. The angles remain live
-        // for a true-circle rotation even when its victim scan found nobody:
-        // True-circle sword-strike execution unconditionally presents
-        // current strike angle once the sprite reaches its action point.
-        //
-        // A fresh strike's untouched serialized mirror is all zeroes.  Keep
-        // that sentinel from fabricating a pre-action sweep, while accepting
-        // non-default true-circle geometry without requiring a victim.
-        let saved_sweep = serialized_sweep.filter(|saved| {
-            let sprite = &entity.element_data().sprite;
-            // This hook runs after the action executor, so the DONE call may
-            // already have incremented the frame counter.  It must still be
-            // on the action-done frame: accepting later animation frames
-            // would resurrect the same serialized sweep on the next tick.
-            let on_action_point_frame = sprite.last_processed_order_id == active_order_id.get()
-                && sprite.current_frame == sprite.action_done_frame
-                && sprite.frame_count >= sprite.action_done_counter;
-            !saved.victims.is_empty()
-                || (matches!(
-                    thrust.kind,
-                    WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::TrueCircle
-                ) && on_action_point_frame
-                    && (saved.initial_angle.to_bits() != 0
-                        || saved.current_angle.to_bits() != 0
-                        || saved.final_angle.to_bits() != 0))
-        });
-        let signed_rotation = strike_profile_angle(thrust.rotation_angle)
-            * if thrust.direction == crate::profiles::WeaponThrustDirection::RightToLeft {
-                -1.0
-            } else {
-                1.0
-            };
-        if let Some(actor) = self
-            .get_entity_mut(attacker_id)
-            .and_then(Entity::actor_data_mut)
-        {
-            if actor.sweep_state.is_none()
-                && let Some(saved) = saved_sweep
-            {
-                actor.sweep_state = Some(crate::movement::SweepState {
-                    pending_victims: saved.victims,
-                    initial_angle: saved.initial_angle,
-                    current_angle: saved.current_angle,
-                    final_angle: saved.final_angle,
-                    rotation_per_frame: signed_rotation,
-                    direction: thrust.direction,
-                    strike,
-                    attacker_profile_idx: Some(profile_idx),
-                    gesture_quality,
-                    strike_kind: thrust.kind,
-                });
-            }
-            let Some(sweep) = actor.sweep_state.as_mut() else {
-                return;
-            };
-            sweep.rotation_per_frame = signed_rotation;
-            sweep.direction = thrust.direction;
-            sweep.strike = strike;
-            sweep.attacker_profile_idx = Some(profile_idx);
-            sweep.gesture_quality = gesture_quality;
-            sweep.strike_kind = thrust.kind;
         }
     }
 
@@ -1880,15 +1669,6 @@ impl EngineInner {
             human.sword_sweep.initial_angle = initial;
             human.sword_sweep.current_angle = dir_angle;
             human.sword_sweep.final_angle = final_a;
-        }
-        // The executable mirror shares the same storage in the Original, so
-        // a live sweep must follow the rebase too.
-        if let Some(actor) = entity.actor_data_mut()
-            && let Some(sweep) = actor.sweep_state.as_mut()
-        {
-            sweep.initial_angle = initial;
-            sweep.current_angle = dir_angle;
-            sweep.final_angle = final_a;
         }
     }
 
@@ -1987,32 +1767,16 @@ impl EngineInner {
                 [initial, dir_angle, final_a, signed_rotation],
             );
         }
-        let sweep = crate::movement::SweepState {
-            pending_victims: victims,
+        let human = self
+            .expect_entity_mut(attacker_id, "sweep initialization attacker")
+            .human_data_mut()
+            .expect("sweep attacker must be human");
+        human.sword_sweep = crate::element::HumanSwordSweepState {
+            victims,
             initial_angle: initial,
             current_angle: dir_angle,
             final_angle: final_a,
-            rotation_per_frame: signed_rotation,
-            direction,
-            strike,
-            attacker_profile_idx: Some(profile_idx),
-            gesture_quality,
-            strike_kind,
         };
-
-        if let Some(entity) = self.world.entities.get_mut(attacker_id) {
-            if let Some(human) = entity.human_data_mut() {
-                human.sword_sweep = crate::element::HumanSwordSweepState {
-                    victims: sweep.pending_victims.clone(),
-                    initial_angle: sweep.initial_angle,
-                    current_angle: sweep.current_angle,
-                    final_angle: sweep.final_angle,
-                };
-            }
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.sweep_state = Some(sweep);
-            }
-        }
 
         tracing::debug!(
             attacker = ?attacker_id,
@@ -2044,215 +1808,174 @@ impl EngineInner {
         initialized_this_hourglass: bool,
         effect_only_before_action_point: bool,
     ) {
-        if self
-            .get_entity(attacker_id)
-            .and_then(Entity::actor_data)
-            .is_some_and(|actor| actor.execution_frozen)
+        use crate::profiles::WeaponThrustDirection;
+        let entity = self.expect_entity(attacker_id, "sweep attacker");
+        if entity
+            .actor_data()
+            .expect("sweep attacker must be an actor")
+            .execution_frozen
         {
             return;
         }
-
-        use crate::profiles::WeaponThrustDirection;
-
-        // Phase 1: collect active sweeps (clone to avoid borrow conflicts)
-        struct ActiveSweep {
-            attacker_id: EntityId,
-            attacker_pos: (f32, f32),
-            sweep: crate::movement::SweepState,
-            rotation_complete_on_entry: bool,
-        }
-        let mut sweeps: Vec<ActiveSweep> = Vec::new();
-
-        {
-            let entity_id = attacker_id;
-            let Some(entity) = self.world.entities.get(attacker_id) else {
-                return;
+        let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager)
+            .expect("sweep attacker must have a melee weapon");
+        let (sequence_id, element_index, order) = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(attacker_id)
+            .expect("sweep attacker must have a selected order");
+        let strike = sword_strike_from_animation(order.order_type)
+            .expect("sweep attacker must have a selected strike");
+        let gesture_quality = self
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, element_index)
+            .expect("selected sweep sequence must exist")
+            .gesture_quality;
+        let thrust = &assets
+            .profile_manager
+            .get_hth_weapon(profile_idx)
+            .expect("sweep weapon profile must exist")
+            .thrusts[strike as usize];
+        let kind = thrust.kind;
+        let direction = thrust.direction;
+        let rotation_per_frame = strike_profile_angle(thrust.rotation_angle)
+            * if direction == WeaponThrustDirection::RightToLeft {
+                -1.0
+            } else {
+                1.0
             };
-            let Some(actor) = entity.actor_data() else {
-                // Sweep polling admits entities without actor capability.
-                return;
-            };
-            if let Some(sweep) = &actor.sweep_state {
-                let pos = entity.element_data().position_map();
-                sweeps.push(ActiveSweep {
-                    attacker_id: entity_id,
-                    attacker_pos: (pos.x, pos.y),
-                    rotation_complete_on_entry: sweep_rotation_complete(sweep),
-                    sweep: sweep.clone(),
-                });
+        let circle = is_circle_sweep(kind);
+        assert!(
+            circle || kind == WeaponThrustKind::Lateral,
+            "selected strike is not a sweep"
+        );
+        let sweep = &entity
+            .human_data()
+            .expect("sweep attacker must be human")
+            .sword_sweep;
+        if initialized_this_hourglass {
+            if circle {
+                let sweep = &mut self
+                    .expect_entity_mut(attacker_id, "sweep attacker")
+                    .human_data_mut()
+                    .expect("sweep attacker must be human")
+                    .sword_sweep;
+                advance_circle_angle(sweep, rotation_per_frame, direction);
             }
+            return;
         }
-
-        // Phase 2: preserve the two Original effect orders:
-        // - lateral IN_PROGRESS advances, then tests victims;
-        // - circle IN_PROGRESS tests the existing angle, then advances at
-        //   circle sword-strike execution's tail.
-        // A circle DONE call still reaches that tail and advances once, but
-        // neither family tests victims (or rotates a true-circle sprite) on
-        // its initialization call.
-        for active in &mut sweeps {
-            let circle = is_circle_sweep(active.sweep.strike_kind);
-            if initialized_this_hourglass {
-                if circle {
-                    advance_circle_angle(&mut active.sweep);
+        if kind == WeaponThrustKind::Lateral {
+            if sweep.victims.is_empty() {
+                return;
+            }
+            self.expect_entity_mut(attacker_id, "sweep attacker")
+                .human_data_mut()
+                .expect("sweep attacker must be human")
+                .sword_sweep
+                .current_angle += rotation_per_frame;
+        }
+        if !effect_only_before_action_point
+            && matches!(
+                kind,
+                WeaponThrustKind::TrueCircle | WeaponThrustKind::TrueHalfCircle
+            )
+        {
+            let entity = self.expect_entity_mut(attacker_id, "sweep attacker");
+            let new_dir = angle_to_sector(
+                entity
+                    .human_data()
+                    .expect("sweep attacker must be human")
+                    .sword_sweep
+                    .current_angle,
+            );
+            let element = entity.element_data_mut();
+            element.set_direction_instantly(new_dir as i16);
+            element
+                .sprite
+                .force_action_direction(strike_to_animation(strike), new_dir.into());
+        }
+        let sweep = &self
+            .expect_entity(attacker_id, "sweep attacker")
+            .human_data()
+            .expect("sweep attacker must be human")
+            .sword_sweep;
+        let initial_sector = angle_to_sector(sweep.initial_angle);
+        let current_sector = angle_to_sector(sweep.current_angle);
+        if sword_damage_debug_enabled() {
+            Self::trace_sweep_tick(
+                self.control.frame_counter,
+                attacker_id,
+                kind,
+                [initial_sector, current_sector],
+                sweep.current_angle,
+                sweep.victims.len(),
+            );
+        }
+        let mut index = 0;
+        loop {
+            let attacker = self.expect_entity(attacker_id, "sweep attacker");
+            let Some(victim_id) = attacker
+                .human_data()
+                .expect("sweep attacker must be human")
+                .sword_sweep
+                .victims
+                .get(index)
+                .copied()
+            else {
+                break;
+            };
+            let position = attacker.element_data().position_map();
+            let hit = self.get_entity(victim_id).map(|victim| {
+                let victim_position = victim.element_data().position_map();
+                let sector = crate::position_interface::vector_to_sector_0_to_15(
+                    victim_position.x - position.x,
+                    (victim_position.y - position.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO,
+                ) as u8;
+                match direction {
+                    WeaponThrustDirection::LeftToRight => {
+                        is_sector_between(sector, initial_sector, current_sector)
+                    }
+                    _ => is_sector_between(sector, current_sector, initial_sector),
                 }
+            });
+            if hit == Some(false) {
+                index += 1;
                 continue;
             }
-            if !effect_only_before_action_point
-                && matches!(active.sweep.strike_kind, WeaponThrustKind::Lateral)
-            {
-                advance_lateral_angle(&mut active.sweep);
+            if hit == Some(true) {
+                self.queue_scaled_sword_damage(
+                    victim_id,
+                    attacker_id,
+                    strike,
+                    profile_idx,
+                    gesture_quality,
+                );
             }
-
-            // Rotate the attacker's sprite direction to follow the
-            // circle using the angle that existed on entry. Only the TRUE
-            // variants rotate; FALSE variants do not.
-            if !effect_only_before_action_point
-                && matches!(
-                    active.sweep.strike_kind,
-                    crate::profiles::WeaponThrustKind::TrueCircle
-                        | crate::profiles::WeaponThrustKind::TrueHalfCircle
+            self.expect_entity_mut(attacker_id, "sweep attacker")
+                .human_data_mut()
+                .expect("sweep attacker must be human")
+                .sword_sweep
+                .victims
+                .remove(index);
+            if hit == Some(true)
+                && should_enter_swordfight_after_strike(
+                    self.expect_entity(attacker_id, "sweep attacker"),
+                    self.expect_entity(victim_id, "sweep victim"),
+                    &assets.profile_manager,
+                    &self.mission_domain.diplomacy,
                 )
             {
-                let new_dir = angle_to_sector(active.sweep.current_angle);
-                if let Some(entity) = self.world.entities.get_mut(active.attacker_id) {
-                    let elem = entity.element_data_mut();
-                    elem.set_direction_instantly(new_dir as i16);
-                    elem.sprite.force_action_direction(
-                        strike_to_animation(active.sweep.strike),
-                        new_dir.into(),
-                    );
-                }
-            }
-
-            let initial_sector = angle_to_sector(active.sweep.initial_angle);
-            let current_sector = angle_to_sector(active.sweep.current_angle);
-            if sword_damage_debug_enabled() {
-                Self::trace_sweep_tick(
-                    self.control.frame_counter,
-                    active.attacker_id,
-                    active.sweep.strike_kind,
-                    [initial_sector, current_sector],
-                    active.sweep.current_angle,
-                    active.sweep.pending_victims.len(),
-                );
-            }
-
-            let mut hit_indices = Vec::new();
-
-            // Victim eligibility is settled once, when the sweep seeds its
-            // list.  The per-frame pass only asks whether the arc has reached
-            // the victim's sector; a victim who dies, falls unconscious or
-            // otherwise stops qualifying mid-sweep still takes the blow that
-            // was already on its way.
-            for (i, &victim_id) in active.sweep.pending_victims.iter().enumerate() {
-                let victim_pos = match self.get_entity(victim_id) {
-                    Some(e) => e.element_data().position_map(),
-                    None => {
-                        hit_indices.push(i); // remove dead/gone victims
-                        continue;
-                    }
-                };
-                let dx = victim_pos.x - active.attacker_pos.0;
-                let dy = (victim_pos.y - active.attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-                let victim_sector =
-                    crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
-
-                // Check if victim is in the swept arc
-                let is_hit = match active.sweep.direction {
-                    WeaponThrustDirection::LeftToRight => {
-                        is_sector_between(victim_sector, initial_sector, current_sector)
-                    }
-                    _ => is_sector_between(victim_sector, current_sector, initial_sector),
-                };
-
-                if is_hit {
-                    hit_indices.push(i);
-                }
-            }
-
-            // Apply damage to hit victims (separate pass to avoid borrow issues)
-            let hit_victim_ids: Vec<EntityId> = hit_indices
-                .iter()
-                .filter_map(|&i| {
-                    let vid = active.sweep.pending_victims[i];
-                    // Only apply damage if the entity still exists
-                    if self.get_entity(vid).is_some() {
-                        Some(vid)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            for victim_id in hit_victim_ids {
-                if let Some(profile_idx) = active.sweep.attacker_profile_idx {
-                    self.queue_scaled_sword_damage(
-                        victim_id,
-                        active.attacker_id,
-                        active.sweep.strike,
-                        profile_idx,
-                        active.sweep.gesture_quality,
-                    );
-                }
-                let should_enter = match (
-                    self.get_entity(active.attacker_id),
-                    self.get_entity(victim_id),
-                ) {
-                    (Some(a), Some(v)) => should_enter_swordfight_after_strike(
-                        a,
-                        v,
-                        &assets.profile_manager,
-                        &self.mission_domain.diplomacy,
-                    ),
-                    _ => false,
-                };
-                if should_enter {
-                    self.queue_enter_swordfight_after_strike(victim_id, active.attacker_id);
-                }
-            }
-
-            // Remove hit victims (reverse to preserve indices)
-            for &i in hit_indices.iter().rev() {
-                active.sweep.pending_victims.remove(i);
-            }
-
-            if circle && !effect_only_before_action_point {
-                advance_circle_angle(&mut active.sweep);
+                self.queue_enter_swordfight_after_strike(victim_id, attacker_id);
             }
         }
-
-        // Phase 3: write back updated sweep states
-        for active in sweeps {
-            if let Some(entity) = self.world.entities.get_mut(active.attacker_id) {
-                let true_sweep = matches!(
-                    active.sweep.strike_kind,
-                    WeaponThrustKind::TrueCircle | WeaponThrustKind::TrueHalfCircle
-                );
-                // An incomplete true sweep remains live while rotating. If
-                // this tick's tail reaches the final angle, the same rule
-                // retains it once more so the next Execute call can present
-                // that terminal direction before clearing it.
-                let keep_for_terminal_execute = true_sweep && !active.rotation_complete_on_entry;
-                // Circle effects test victims before their tail advance. If
-                // that advance reaches the final angle, retain pending
-                // victims and true-circle rotation state for the next
-                // update so the final sector is observable before the
-                // state is cleared.
-                let retain_executable =
-                    !active.sweep.pending_victims.is_empty() || keep_for_terminal_execute;
-                if let Some(human) = entity.human_data_mut() {
-                    human.sword_sweep = crate::element::HumanSwordSweepState {
-                        victims: active.sweep.pending_victims.clone(),
-                        initial_angle: active.sweep.initial_angle,
-                        current_angle: active.sweep.current_angle,
-                        final_angle: active.sweep.final_angle,
-                    };
-                }
-                if let Some(actor) = entity.actor_data_mut() {
-                    actor.sweep_state = retain_executable.then_some(active.sweep);
-                }
-            }
+        if circle && !effect_only_before_action_point {
+            let sweep = &mut self
+                .expect_entity_mut(attacker_id, "sweep attacker")
+                .human_data_mut()
+                .expect("sweep attacker must be human")
+                .sword_sweep;
+            advance_circle_angle(sweep, rotation_per_frame, direction);
         }
     }
 
@@ -3179,7 +2902,8 @@ impl EngineInner {
             &self.mission_domain.diplomacy,
         );
         let blood_alcohol = ai.base.blood_alcohol;
-        let is_rank_soldier = ai.soldier_profile_rank == crate::profiles::ProfileRank::Soldier;
+        let is_rank_soldier =
+            ai.profile(&assets.profile_manager).rank == crate::profiles::ProfileRank::Soldier;
         let attacker_direction = attacker.element_data().direction();
         let attacker_camp = attacker.camp();
         let map = attacker.element_data().position_map();
@@ -4616,9 +4340,10 @@ mod tests {
         engine
             .get_entity_mut(attacker_id)
             .unwrap()
-            .actor_data_mut()
+            .human_data_mut()
             .unwrap()
-            .pending_push_swordfight = vec![victim_id];
+            .sword_sweep
+            .victims = vec![victim_id];
         engine.complete_melee_strike(
             &crate::sim_rng::test_context(),
             &assets,
@@ -4636,9 +4361,10 @@ mod tests {
         engine
             .get_entity_mut(attacker_id)
             .unwrap()
-            .actor_data_mut()
+            .human_data_mut()
             .unwrap()
-            .pending_push_swordfight = vec![victim_id];
+            .sword_sweep
+            .victims = vec![victim_id];
         engine.complete_melee_strike(
             &crate::sim_rng::test_context(),
             &assets,

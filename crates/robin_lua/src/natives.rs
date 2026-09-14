@@ -2,7 +2,7 @@
 //!
 //! Every Spellforge `api.lua` entry that mission scripts actually
 //! call gets a Rust shim here. The shim runs against the engine's
-//! `ScriptEffects` (the same dispatcher the `.scb` VM uses), so a Lua
+//! `NativeContext` (the same dispatcher the `.scb` VM uses), so a Lua
 //! script and an `.scb` script behave identically when they invoke
 //! the same engine function.
 //!
@@ -43,7 +43,7 @@ use robin_engine::engine::ScriptDomains;
 use robin_engine::interp::{NativeCallOutcome, NativeStack};
 use robin_engine::natives::{
     AttachedScriptBindings, NATIVE_REGISTRY, NativeAbiType, NativeContext, NativeFn,
-    NativeSessionCapabilities, NativeSignature, ScriptEffects, ScriptState,
+    NativeSessionCapabilities, NativeSignature, ScriptState,
 };
 
 pub use robin_engine::natives::SPELLFORGE_NATIVE_ALIASES as NATIVE_ALIASES;
@@ -55,23 +55,20 @@ use crate::state::MissionLuaState;
 /// This value stays on the Rust stack. Only [`AttachedNativeCall`]'s guarded
 /// pointer handle crosses mlua's `'static` app-data boundary.
 pub(crate) struct NativeCallSession<'call, 'owners> {
-    host: &'call mut ScriptEffects,
     script_state: &'call mut ScriptState,
     script_domains: &'call mut ScriptDomains,
     bindings: &'call AttachedScriptBindings,
-    capabilities: &'call NativeSessionCapabilities<'owners>,
+    capabilities: &'call mut NativeSessionCapabilities<'owners>,
 }
 
 impl<'call, 'owners> NativeCallSession<'call, 'owners> {
     pub(crate) fn new(
-        host: &'call mut ScriptEffects,
         script_state: &'call mut ScriptState,
         script_domains: &'call mut ScriptDomains,
         bindings: &'call AttachedScriptBindings,
-        capabilities: &'call NativeSessionCapabilities<'owners>,
+        capabilities: &'call mut NativeSessionCapabilities<'owners>,
     ) -> Self {
         Self {
-            host,
             script_state,
             script_domains,
             bindings,
@@ -81,7 +78,6 @@ impl<'call, 'owners> NativeCallSession<'call, 'owners> {
 
     fn native_context(&mut self) -> NativeContext<'_, 'owners> {
         NativeContext::with_bindings(
-            self.host,
             self.script_state,
             self.script_domains,
             self.bindings,
@@ -227,7 +223,7 @@ fn with_attached_bindings<R>(
 
 /// Descriptor for one Lua-side binding. The dispatcher used by all
 /// "calls a NativeFn" shims pushes the args onto a NativeStack in
-/// the order the engine expects, invokes `ScriptEffects::call(index)`,
+/// the order the engine expects, invokes `NativeContext::call(index)`,
 /// then returns the result.
 pub struct NativeBinding {
     pub lua_name: &'static str,
@@ -333,7 +329,7 @@ pub fn register_natives(state: &mut MissionLuaState) -> mlua::Result<()> {
 }
 
 /// Build a Lua function that marshals its declared arguments onto a
-/// `NativeStack` (in argument order), calls `ScriptEffects::call`, and marshals
+/// `NativeStack` (in argument order), calls `NativeContext::call`, and marshals
 /// the declared return type back to Lua.
 ///
 /// The original game defines the `int`/`float`/`bool`/`void`/handle signatures mirrored by
@@ -370,7 +366,7 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
             lua,
             || {
                 mlua::Error::RuntimeError(format!(
-                    "{}: called with no ScriptEffects attached",
+                    "{}: called with no native session attached",
                     sig.name
                 ))
             },
@@ -663,7 +659,6 @@ mod tests {
 
     #[test]
     fn overlapping_session_reborrow_is_rejected_and_released() {
-        let mut host = ScriptEffects::new();
         let mut script_state = ScriptState::default();
         let mut script_domains = ScriptDomains::default();
         let bindings = AttachedScriptBindings::default();
@@ -672,7 +667,7 @@ mod tests {
         let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
         let simulation = robin_engine::sim_rng::SimulationContext::with_seed(1);
         let mut native_globals = Vec::new();
-        let capabilities = NativeSessionCapabilities::new(
+        let mut capabilities = NativeSessionCapabilities::new(
             &simulation,
             &mut entities,
             &mut ai_global,
@@ -680,11 +675,10 @@ mod tests {
             &mut native_globals,
         );
         let mut session = NativeCallSession::new(
-            &mut host,
             &mut script_state,
             &mut script_domains,
             &bindings,
-            &capabilities,
+            &mut capabilities,
         );
         let attachment = AttachedNativeCall::new(&mut session);
 

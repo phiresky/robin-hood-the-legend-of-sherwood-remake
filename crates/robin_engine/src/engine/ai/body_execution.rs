@@ -178,7 +178,7 @@ impl EngineInner {
                     .base
                     .set_emoticon(EmoticonType::QuestionMark);
 
-                match self.seek_enemy(owner).get_rank() {
+                match self.seek_enemy(owner).get_rank(&assets.profile_manager) {
                     ProfileRank::Officer => {
                         let center = self.live_ai_position(owner);
                         if self.execute_ai_alert_soldiers(sim, assets, owner, center, 0) {
@@ -266,7 +266,7 @@ impl EngineInner {
             .base
             .my_reconnaissance_report
             .update(ReportType::DeadBody, center);
-        match self.seek_enemy(owner).get_rank() {
+        match self.seek_enemy(owner).get_rank(&assets.profile_manager) {
             ProfileRank::Soldier => {
                 let entity = self.expect_entity(owner, "body alert owner");
                 let ai = self.seek_enemy(owner);
@@ -274,7 +274,7 @@ impl EngineInner {
                     <= parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
                     && entity.is_active()
                     && !self.entity_data_in_building_sector(entity.element_data())
-                    && ai.soldier_profile_initiative >= 50
+                    && ai.profile(&assets.profile_manager).initiative >= 50
                     && ai.base.antagonist.is_none();
                 let flags = if seek_first {
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK | SeekFlags::LOOK_FOR_HELP_AFTER
@@ -284,7 +284,7 @@ impl EngineInner {
                     }
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK
                 };
-                let radius = self.body_alert_radius(owner);
+                let radius = self.body_alert_radius(assets, owner);
                 self.execute_ai_seek_area(
                     sim,
                     assets,
@@ -310,7 +310,7 @@ impl EngineInner {
                     position,
                     SeekFlags::BODY_SEEK.bits(),
                 ) {
-                    let radius = self.body_alert_radius(owner);
+                    let radius = self.body_alert_radius(assets, owner);
                     self.execute_ai_seek_area(
                         sim,
                         assets,
@@ -324,7 +324,7 @@ impl EngineInner {
             }
             ProfileRank::Knight => {
                 let position = self.live_ai_position(owner);
-                let radius = self.body_alert_radius(owner);
+                let radius = self.body_alert_radius(assets, owner);
                 self.execute_ai_seek_area(
                     sim,
                     assets,
@@ -339,8 +339,8 @@ impl EngineInner {
         }
     }
 
-    fn body_alert_radius(&self, owner: EntityId) -> u16 {
-        if self.seek_enemy(owner).soldier_profile_duty {
+    fn body_alert_radius(&self, assets: &LevelAssets, owner: EntityId) -> u16 {
+        if self.seek_enemy(owner).profile(&assets.profile_manager).duty {
             parameters_ai::AI_SOD_DEAD_BODY_SEEK_RADIUS as u16
         } else {
             parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16
@@ -398,7 +398,9 @@ mod tests {
         ));
         let initial = engine.live_ai_position(owner);
         let ai = engine.seek_enemy_mut(owner);
-        ai.soldier_profile_rank = ProfileRank::Soldier;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = ProfileRank::Soldier
+        });
         ai.base.initial_position = initial;
         ai.base.special_action = true;
         ai.base.current_state = AiState::Seeking;
@@ -597,7 +599,11 @@ mod tests {
                     locked: false,
                 });
             }
-            engine.seek_enemy_mut(owner).soldier_profile_duty = duty;
+            crate::engine::test_support::actors::edit_enemy_profile(
+                &mut assets,
+                engine.seek_enemy_mut(owner),
+                |profile| profile.duty = duty,
+            );
             let profile = engine
                 .get_entity(owner)
                 .unwrap()

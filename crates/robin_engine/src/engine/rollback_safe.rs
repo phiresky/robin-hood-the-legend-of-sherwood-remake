@@ -910,11 +910,6 @@ impl Engine {
             .control
             .mission_start_sim_config
             .noise_distraction_feedback = false;
-        for (_, entity) in self.inner.world.entities.actors_mut() {
-            if let Some(enemy) = entity.enemy_ai_mut() {
-                enemy.ale_reliable_distraction = false;
-            }
-        }
         self.inner.control.rng.replace_original_replay(draws);
     }
 
@@ -1772,17 +1767,16 @@ impl Engine {
     /// one authoritative stream instead of panicking for lack of a scope or
     /// inventing a second RNG. The closure must not retain the host reference.
     #[cfg(any(test, feature = "test-helpers"))]
-    pub fn test_with_mission_script_effects_and_rng<R>(
+    pub fn test_with_mission_script_and_rng<R>(
         &mut self,
         assets: &LevelAssets,
         f: impl FnOnce(
             &crate::sim_rng::SimulationContext,
             Option<(
-                &mut crate::natives::ScriptEffects,
                 &mut crate::natives::ScriptState,
                 &mut crate::engine::ScriptDomains,
                 &crate::natives::AttachedScriptBindings,
-                &crate::natives::NativeSessionCapabilities<'_>,
+                &mut crate::natives::NativeSessionCapabilities<'_>,
             )>,
         ) -> R,
     ) -> R {
@@ -1795,7 +1789,6 @@ impl Engine {
                     f(
                         sim,
                         Some((
-                            &mut script.script_effects,
                             &mut script.state,
                             script_domains,
                             &script.bindings,
@@ -1995,7 +1988,6 @@ impl Engine {
         let mut inner = Self::prepare_snapshot(saved, assets)?;
         inner.post_load_fixups(display);
         post_fixup_observer(&inner);
-        inner.queue_update_information_bars();
         Ok(Self {
             inner,
             bootstrap_open: false,

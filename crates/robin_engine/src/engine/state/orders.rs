@@ -30,33 +30,9 @@ pub(crate) struct OrderRuntime {
     pub(crate) pending_hades_kills: Vec<EntityId>,
 }
 
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedOrderRuntime {
-    next_order_id: u32,
-
-    messenger: Messenger,
-
-    pending_path_requests: movement::PendingPathRequestQueue,
-
-    failed_path_requests: Vec<movement::FailedPathRequest>,
-
-    timer_elements: Vec<TimerEntry>,
-
-    sequence_manager: crate::sequence::PersistedSequenceManager,
-
-    pending_reinforcements: Vec<Option<EntityId>>,
-
-    pending_scroll_amulets: Vec<PendingScrollAmulet>,
-
-    pending_hero_speeches: Vec<(EntityId, u16)>,
-
-    pending_hades_kills: Vec<EntityId>,
-}
-
-impl PersistedOrderRuntime {
-    pub(crate) fn capture(value: &OrderRuntime) -> Self {
+impl OrderRuntime {
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let value = self;
         let OrderRuntime {
             next_order_id: _,
             messenger: _,
@@ -75,28 +51,11 @@ impl PersistedOrderRuntime {
             pending_path_requests: value.pending_path_requests.clone(),
             failed_path_requests: value.failed_path_requests.clone(),
             timer_elements: value.timer_elements.clone(),
-            sequence_manager: crate::sequence::PersistedSequenceManager::capture(
-                &value.sequence_manager,
-            ),
+            sequence_manager: value.sequence_manager.persisted_clone(),
             pending_reinforcements: value.pending_reinforcements.clone(),
             pending_scroll_amulets: value.pending_scroll_amulets.clone(),
             pending_hero_speeches: value.pending_hero_speeches.clone(),
             pending_hades_kills: value.pending_hades_kills.clone(),
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> OrderRuntime {
-        OrderRuntime {
-            next_order_id: self.next_order_id,
-            messenger: self.messenger,
-            pending_path_requests: self.pending_path_requests,
-            failed_path_requests: self.failed_path_requests,
-            timer_elements: self.timer_elements,
-            sequence_manager: self.sequence_manager.into_runtime(),
-            pending_reinforcements: self.pending_reinforcements,
-            pending_scroll_amulets: self.pending_scroll_amulets,
-            pending_hero_speeches: self.pending_hero_speeches,
-            pending_hades_kills: self.pending_hades_kills,
         }
     }
 }
@@ -194,13 +153,12 @@ mod tests {
         let mut orders = OrderRuntime::new();
         let message = Message::new(MessageType::Simple(SimpleMessage::Pause));
         orders.messenger.send(message.clone());
-        let json = serde_json::to_value(PersistedOrderRuntime::capture(&orders)).unwrap();
+        let json = serde_json::to_value(orders.persisted_clone()).unwrap();
         assert_eq!(
             json["messenger"],
             serde_json::json!({ "queue": [message.clone()] })
         );
-        let persisted: PersistedOrderRuntime = serde_json::from_value(json).unwrap();
-        let mut restored = persisted.into_runtime();
+        let mut restored: OrderRuntime = serde_json::from_value(json).unwrap();
         let mut snapshot: Messenger = bitcode::decode(&bitcode::encode(&orders.messenger)).unwrap();
         for messenger in [&mut restored.messenger, &mut snapshot] {
             assert_eq!(

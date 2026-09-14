@@ -47,37 +47,9 @@ pub(crate) struct PlayerRuntime {
     pub(crate) fog_of_war: FogOfWarState,
 }
 
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedPlayerRuntime {
-    seats: Vec<SeatState>,
-
-    macro_store: MacroStore,
-
-    auto_queues: AutoQueueStore,
-
-    user_locked: bool,
-
-    view_locked: bool,
-
-    selection_before_user_lock: Vec<EntityId>,
-
-    qa_recording_for: Vec<EntityId>,
-
-    qa_recording_slot: u8,
-
-    action_before_recording_macro: Action,
-
-    auto_queue_active: Vec<EntityId>,
-    #[serde(rename = "allied")]
-    tactical: TacticalControlState,
-
-    fog_of_war: crate::fog_of_war::PersistedFogOfWarState,
-}
-
-impl PersistedPlayerRuntime {
-    pub(crate) fn capture(value: &PlayerRuntime) -> Self {
+impl PlayerRuntime {
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let value = self;
         let PlayerRuntime {
             seats: _,
             macro_store: _,
@@ -104,24 +76,7 @@ impl PersistedPlayerRuntime {
             action_before_recording_macro: value.action_before_recording_macro,
             auto_queue_active: value.auto_queue_active.clone(),
             tactical: value.tactical.clone(),
-            fog_of_war: crate::fog_of_war::PersistedFogOfWarState::capture(&value.fog_of_war),
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> PlayerRuntime {
-        PlayerRuntime {
-            seats: self.seats,
-            macro_store: self.macro_store,
-            auto_queues: self.auto_queues,
-            user_locked: self.user_locked,
-            view_locked: self.view_locked,
-            selection_before_user_lock: self.selection_before_user_lock,
-            qa_recording_for: self.qa_recording_for,
-            qa_recording_slot: self.qa_recording_slot,
-            action_before_recording_macro: self.action_before_recording_macro,
-            auto_queue_active: self.auto_queue_active,
-            tactical: self.tactical,
-            fog_of_war: self.fog_of_war.into_runtime(),
+            fog_of_war: value.fog_of_war.persisted_clone(),
         }
     }
 }

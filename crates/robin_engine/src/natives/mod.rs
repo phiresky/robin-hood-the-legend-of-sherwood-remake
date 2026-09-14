@@ -5,9 +5,8 @@
 //!
 //! 1. A name table mapping each index to its registered name (for logging
 //!    and debugging).
-//! 2. A `ScriptEffects` struct implementing `interp::HostFunctions` that
-//!    dispatches native calls. Functions without a real implementation
-//!    are logged and return 0.
+//! 2. A `NativeContext` implementing `interp::HostFunctions` with short
+//!    canonical owner borrows and synchronous engine operations.
 //!
 //! Real implementations are added incrementally. Currently implemented:
 //!   - 0/1/2: InitGlobal, SetGlobal, GetGlobal — cross-script globals
@@ -101,7 +100,7 @@ mod state;
 mod tests;
 
 pub use bindings::{AttachedScriptBindings, ScriptBindings, ScriptNameBindings};
-pub use commands::{DeferredCommand, EngineCommand, ScriptCommandDomain, SoundCommand};
+pub use commands::{EngineCommand, NativeCommand, SoundCommand, WorldNativeCommand};
 pub use context::{NativeContext, NativeSessionCapabilities, ScriptCallFrame};
 pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
 pub use handle_codec::ScriptHandleCodec;
@@ -252,58 +251,6 @@ fn anim_ordinal_to_order_type(anim: i32, native: &str) -> OrderType {
         .unwrap_or_else(|_| panic!("{native}: script passed invalid animation ordinal {anim}"))
 }
 
-/// One entry in the globally ordered script-effect stream. Domain typing is
-/// retained in the enum rather than by separate queues: a later sound or
-/// simulation barrier must never overtake an earlier command from another
-/// domain.
-#[derive(
-    Debug,
-    Clone,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum ScriptEffect {
-    Presentation(EngineCommand),
-    ExternalSound(SoundCommand),
-    Simulation(SimulationEffect),
-}
-
-/// Wider-context deterministic mutations in the globally ordered stream.
-/// Native-local mutations never enter this enum: only work that needs the
-/// owning `EngineInner` boundary belongs here.
-#[derive(
-    Debug,
-    Clone,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum SimulationEffect {
-    Engine(EngineCommand),
-    Deferred(DeferredCommand),
-}
-
-/// Serialized script output shell. This is an effect buffer, not a host and
-/// not a world owner; deterministic state queried by natives lives in the
-/// engine capabilities borrowed by [`NativeContext`].
-#[derive(
-    Default,
-    Clone,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct ScriptEffects {
-    pub ordered: std::collections::VecDeque<ScriptEffect>,
-}
-
 /// Maximum allowed depth of nested script calls (e.g. one
 /// `PrototypeFilterEvent` whose target itself calls
 /// `PrototypeFilterEvent`). Beyond this, the sole engine driver reports an
@@ -311,80 +258,6 @@ pub struct ScriptEffects {
 /// realistic A → B → A → B chains without turning an accidental cycle into
 /// unbounded host recursion.
 pub const MAX_NESTED_CALL_DEPTH: u8 = 4;
-
-impl ScriptEffects {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn emit_engine(&mut self, command: EngineCommand) {
-        let effect = match command.domain() {
-            ScriptCommandDomain::Presentation => ScriptEffect::Presentation(command),
-            ScriptCommandDomain::SimulationBarrier => {
-                ScriptEffect::Simulation(SimulationEffect::Engine(command))
-            }
-        };
-        self.ordered.push_back(effect);
-    }
-
-    pub fn emit_sound(&mut self, command: SoundCommand) {
-        self.ordered.push_back(ScriptEffect::ExternalSound(command));
-    }
-
-    pub fn emit_barrier(&mut self, command: DeferredCommand) {
-        self.ordered
-            .push_back(ScriptEffect::Simulation(SimulationEffect::Deferred(
-                command,
-            )));
-    }
-
-    pub fn pop_front(&mut self) -> Option<ScriptEffect> {
-        self.ordered.pop_front()
-    }
-
-    pub fn take_tail(&mut self) -> std::collections::VecDeque<ScriptEffect> {
-        std::mem::take(&mut self.ordered)
-    }
-
-    pub fn restore_tail(&mut self, tail: std::collections::VecDeque<ScriptEffect>) {
-        self.ordered.extend(tail);
-    }
-
-    pub fn engine_commands(&self) -> Vec<EngineCommand> {
-        self.ordered
-            .iter()
-            .filter_map(|effect| match effect {
-                ScriptEffect::Presentation(command)
-                | ScriptEffect::Simulation(SimulationEffect::Engine(command)) => {
-                    Some(command.clone())
-                }
-                _ => None,
-            })
-            .collect()
-    }
-
-    pub fn sound_commands(&self) -> Vec<SoundCommand> {
-        self.ordered
-            .iter()
-            .filter_map(|effect| match effect {
-                ScriptEffect::ExternalSound(command) => Some(command.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    pub fn simulation_barriers(&self) -> Vec<DeferredCommand> {
-        self.ordered
-            .iter()
-            .filter_map(|effect| match effect {
-                ScriptEffect::Simulation(SimulationEffect::Deferred(command)) => {
-                    Some(command.clone())
-                }
-                _ => None,
-            })
-            .collect()
-    }
-}
 
 impl NativeContext<'_, '_> {
     /// Look up an entity by actor handle in the canonical Engine store.
@@ -549,8 +422,9 @@ impl NativeContext<'_, '_> {
                     .expect("RANSOM campaign mutation requires live mission statistics")
                     .add_collected_money(amount);
                 if amount > 0 && frame_counter > 0 {
-                    self.script_effects_mut()
-                        .emit_sound(SoundCommand::PlayJingle(crate::sound::Jingle::CashWon));
+                    self.yield_sound_command(SoundCommand::PlayJingle(
+                        crate::sound::Jingle::CashWon,
+                    ));
                 }
             }
             crate::campaign::CampaignValue::Score => {
@@ -579,8 +453,7 @@ impl NativeContext<'_, '_> {
         let old = campaign.values[name];
         campaign.values[name] = value;
         if name == crate::campaign::CampaignValue::Ransom && value > old && frame_counter > 0 {
-            self.script_effects_mut()
-                .emit_sound(SoundCommand::PlayJingle(crate::sound::Jingle::CashWon));
+            self.yield_sound_command(SoundCommand::PlayJingle(crate::sound::Jingle::CashWon));
         }
     }
 
@@ -617,112 +490,6 @@ impl NativeContext<'_, '_> {
             .collect()
     }
 
-    /// Original-game message forwarding applies PC selection before
-    /// returning to the script VM. Keep that query-visible mutation on the
-    /// canonical local-seat vector; the deferred command remains only for
-    /// engine/sequence side effects that cannot run under this borrow set.
-    fn apply_script_selection(&mut self, actor: i32, select: bool) {
-        if actor == 0 {
-            let selected = if select {
-                let pc_ids = self
-                    .pc_registry
-                    .expect("script native requires the live Original PC registry")
-                    .to_vec();
-                let mut selected = Vec::new();
-                for id in pc_ids {
-                    if !self.pc_is_selectable(id) {
-                        continue;
-                    }
-                    let is_robin = matches!(
-                        self.entities.get(id),
-                        Some(Entity::Pc(pc)) if pc.pc.robin
-                    );
-                    if is_robin {
-                        selected.insert(0, id);
-                    } else {
-                        selected.push(id);
-                    }
-                }
-                selected
-            } else {
-                Vec::new()
-            };
-            *self
-                .selected_pcs
-                .as_deref_mut()
-                .expect("script native requires a live player-selection query view") = selected;
-            return;
-        }
-
-        let id = self
-            .actor_id(actor)
-            .expect("SelectActorPC validates the actor before applying selection");
-        if select {
-            if self.pc_is_selectable(id) {
-                let selected = self
-                    .selected_pcs
-                    .as_deref_mut()
-                    .expect("script native requires a live player-selection query view");
-                selected.clear();
-                selected.push(id);
-            }
-        } else {
-            self.selected_pcs
-                .as_deref_mut()
-                .expect("script native requires a live player-selection query view")
-                .retain(|&selected| selected != id);
-        }
-    }
-
-    fn pc_is_selectable(&self, id: EntityId) -> bool {
-        let Some(Entity::Pc(pc)) = self.entities.get(id) else {
-            return false;
-        };
-        let posture = pc.element.posture();
-        let in_coma = self
-            .campaign
-            .as_deref()
-            .and_then(|campaign| campaign.characters.get(usize::from(pc.pc.list_index)))
-            .filter(|description| description.character_profile_idx == Some(pc.pc.profile_index))
-            .is_some_and(|description| description.status.in_coma);
-        if pc.pc.life_points == 0
-            || pc.human.unconscious
-            || pc.human.stuck_under_nets_counter > 0
-            || matches!(posture, Posture::Tied | Posture::Carried)
-            || in_coma
-            || !pc.pc.playable
-        {
-            return false;
-        }
-
-        let in_building = if pc.element.active {
-            false
-        } else {
-            let position = pc.element.position_map();
-            let point = crate::coordinates::MapPoint::new(position.x, position.y);
-            matches!(
-                self.fast_grid.get_sector(point, point, pc.element.layer()),
-                crate::fast_find_grid::SectorHit::Found { sector_idx, .. }
-                    if self
-                        .fast_grid
-                        .level
-                        .sectors
-                        .get(usize::from(sector_idx))
-                        .is_some_and(|sector| sector.sector_type.is_building())
-            )
-        };
-        if !pc.element.active && !in_building {
-            return false;
-        }
-
-        let is_vip = self
-            .bindings
-            .profile_manager
-            .get_character(pc.pc.profile_index)
-            .is_some_and(|profile| profile.vip);
-        !is_vip || !self.script_domains.mission_ui.men_to_blazon_conversion_mode
-    }
-
     fn sound_source_count(&self) -> usize {
         self.sound_sources
             .as_ref()
@@ -731,9 +498,6 @@ impl NativeContext<'_, '_> {
     }
 
     fn sound_source_alive(&self, index: usize) -> bool {
-        if index >= self.sound_source_count() {
-            return false;
-        }
         self.sound_sources
             .as_ref()
             .expect("script native requires a live SoundSourceManager query view")
@@ -800,6 +564,14 @@ impl NativeContext<'_, '_> {
             signatures::NativeYieldPolicy::Conditional => {}
         }
         match native {
+            NativeFn::SetAIAlertStatus => {
+                args.first().is_some_and(|actor| {
+                    self.get_entity(*actor)
+                        .is_some_and(|entity| entity.is_npc())
+                }) && args
+                    .get(1)
+                    .is_some_and(|value| AlertLevel::try_from(*value as u32).is_ok())
+            }
             NativeFn::SetAIState => {
                 let Some((&actor, &state)) = args.first().zip(args.get(1)) else {
                     return false;
@@ -859,6 +631,30 @@ impl NativeContext<'_, '_> {
             operation: crate::interp::NativeOperation::EngineAction(request),
             resume,
         });
+    }
+
+    fn yield_command(&mut self, command: NativeCommand) {
+        assert!(
+            self.pending_yield.is_none(),
+            "a native must yield one complete operation"
+        );
+        self.pending_yield = Some(NativeYield {
+            operation: NativeOperation::Command(command),
+            // Replaced by the admitted native return value after dispatch.
+            resume: ResumePolicy::Fixed(0),
+        });
+    }
+
+    fn yield_engine_command(&mut self, command: EngineCommand) {
+        self.yield_command(NativeCommand::Engine(command));
+    }
+
+    fn yield_sound_command(&mut self, command: SoundCommand) {
+        self.yield_command(NativeCommand::Sound(command));
+    }
+
+    fn yield_world_command(&mut self, command: WorldNativeCommand) {
+        self.yield_command(NativeCommand::World(command));
     }
 
     fn current_animation(&self, actor: i32) -> Option<OrderType> {
@@ -1378,6 +1174,7 @@ impl NativeContext<'_, '_> {
         // the blink latch; handle it here so the blazon bar picks it
         // up on the next frame).
         let mut tactical_overflow: Option<u32> = None;
+        let mut win = false;
         let profile_manager = self.bindings.profile_manager.clone();
         if let Some(campaign) = self.campaign.as_mut() {
             campaign.add_value(crate::campaign::CampaignValue::Blazon, quantity);
@@ -1395,8 +1192,7 @@ impl NativeContext<'_, '_> {
                             .profile(&profile_manager)
                             .number_of_blazons_to_win;
                         if to_win as i32 <= current_blazons {
-                            self.script_effects_mut()
-                                .emit_engine(EngineCommand::Win { show_window: true });
+                            win = true;
                         }
                     }
                     crate::profiles::MissionType::Tactical => {
@@ -1431,9 +1227,8 @@ impl NativeContext<'_, '_> {
 
         // Information-bar and blazon updates only fire in
         // campaign mode; in single-mission mode the update is skipped.
-        if self.campaign.is_some() {
-            self.script_effects_mut()
-                .emit_engine(EngineCommand::UpdateInformationBars);
+        if win {
+            self.yield_engine_command(EngineCommand::Win { show_window: true });
         }
     }
 
@@ -1448,14 +1243,8 @@ impl NativeContext<'_, '_> {
                 let quantity = e.object.quantity as i32;
                 e.element.active = true;
 
-                let had_campaign = self.campaign.is_some();
                 if let Some(campaign) = self.campaign.as_mut() {
                     campaign.subtract_value(crate::campaign::CampaignValue::Blazon, quantity);
-                }
-                if had_campaign {
-                    // Refresh the information bars in campaign mode.
-                    self.script_effects_mut()
-                        .emit_engine(EngineCommand::UpdateInformationBars);
                 }
             }
             Some(_) => {
@@ -1580,13 +1369,13 @@ impl NativeContext<'_, '_> {
         // the PC alongside the position.  Without this the PC's
         // layer/sector stay stale, so collision/LOS/display-order
         // queries still use the old sector.
-        let dest_layer_sector = self.resolve_location_layer_sector(loc);
+        let dest_layer_sector = self.resolve_location_layer_sector_handle(loc);
         if let Some(entity) = self.get_entity_mut(handle) {
             let ed = entity.element_data_mut();
             ed.set_position_map(crate::coordinates::MapPoint { x, y });
-            if let Some((layer, sector_num)) = dest_layer_sector {
+            if let Some((layer, sector)) = dest_layer_sector {
                 ed.set_layer(layer);
-                ed.set_sector(crate::position_interface::SectorHandle::new(sector_num));
+                ed.set_sector(Some(sector));
             }
             ed.update_grid_cell();
         }
@@ -2508,41 +2297,10 @@ impl NativeContext<'_, '_> {
         // Phase 2: apply changes with separate mutable borrows.
         match action {
             Action::Pc => {
-                // PCs go through `playable` instead of `active`:
-                // toggles `playable` without touching `active`, then
-                // sends portrait-bar enable/disable messages.
-                if let Some(entity) = self.get_entity_mut(actor)
-                    && let Some(pc) = entity.pc_data_mut()
-                {
-                    pc.set_playable(activate);
-                    if !activate {
-                        // The Deactivate PC branch walks every
-                        // quick-action memory slot, deleting
-                        // seek/action sequences, resetting QUICKITOS,
-                        // zeroing special-QA counts, removing QA
-                        // titbits, and storing the empty-titbit
-                        // sentinel.  Apply the entity-local state
-                        // here; the engine-side helper clears
-                        // titbit/macro-store state post-script.
-                        pc.quick_action_types.clear();
-                        for slot in pc.quick_action_sequences.iter_mut() {
-                            *slot = None;
-                        }
-                        pc.titbits.clear();
-                    }
-                }
-                // Queue portrait bar update.
-                self.script_effects_mut()
-                    .emit_barrier(DeferredCommand::SetPlayable {
-                        actor,
-                        playable: activate,
-                    });
-                // On deactivate, also queue engine-side cleanup of QA
-                // titbits and macro-store slots.
-                if !activate {
-                    self.script_effects_mut()
-                        .emit_barrier(DeferredCommand::ClearAllQuickActionSlots { actor });
-                }
+                self.yield_world_command(WorldNativeCommand::SetPlayable {
+                    actor,
+                    playable: activate,
+                });
             }
             Action::General => {
                 // Soldiers, civilians, animals, objects, etc.
@@ -2551,19 +2309,10 @@ impl NativeContext<'_, '_> {
                 }
             }
             Action::Mobile(mobile_index) => {
-                for (_, entity) in self.entities.occupied_mut() {
-                    if entity
-                        .as_fx()
-                        .is_some_and(|fx| fx.fx.mobile_index == Some(mobile_index))
-                    {
-                        entity.element_data_mut().active = activate;
-                    }
-                }
-                self.script_effects_mut()
-                    .emit_engine(EngineCommand::SetMobileActive {
-                        mobile_index,
-                        active: activate,
-                    });
+                self.yield_engine_command(EngineCommand::SetMobileActive {
+                    mobile_index,
+                    active: activate,
+                });
             }
             Action::Invalid => {
                 script_error!(
@@ -2698,7 +2447,10 @@ impl HostFunctions for NativeContext<'_, '_> {
 
         let value = dispatch::call_immediate(self, index, stack);
         match self.pending_yield.take() {
-            Some(request) => {
+            Some(mut request) => {
+                if matches!(request.operation, NativeOperation::Command(_)) {
+                    request.resume = ResumePolicy::Fixed(value);
+                }
                 assert!(
                     NativeFn::try_from(index)
                         .expect("dispatched native must be registered")

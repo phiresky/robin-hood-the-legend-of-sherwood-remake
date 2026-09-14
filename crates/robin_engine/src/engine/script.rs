@@ -596,7 +596,7 @@ impl EngineInner {
             .scripts
             .mission
             .as_ref()
-            .ok_or_else(|| ScriptDriverError::new("Spellforge requires mission ScriptEffects"))?
+            .ok_or_else(|| ScriptDriverError::new("Spellforge requires mission script"))?
             .active_vm_depth();
         if real_depth >= usize::from(crate::natives::MAX_NESTED_CALL_DEPTH) {
             return Err(ScriptDriverError::new(format!(
@@ -622,7 +622,7 @@ impl EngineInner {
         self.scripts
             .mission
             .as_mut()
-            .ok_or_else(|| ScriptDriverError::new("Spellforge requires mission ScriptEffects"))?
+            .ok_or_else(|| ScriptDriverError::new("Spellforge requires mission script"))?
             .push_active_driver_frame(frame, true);
         active.push(ActiveScriptCall { target: key, frame });
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -692,7 +692,6 @@ impl EngineInner {
                                 stack.push_i32(*word);
                             }
                             let mut context = crate::natives::NativeContext::with_bindings(
-                                &mut script.script_effects,
                                 &mut script.state,
                                 domains,
                                 &script.bindings,
@@ -706,41 +705,20 @@ impl EngineInner {
                         },
                     )
                     .ok_or_else(|| {
-                        ScriptDriverError::new("Spellforge native lost mission ScriptEffects")
+                        ScriptDriverError::new("Spellforge native lost mission script")
                     })?
                 };
-                self.drain_script_effects_with_active(sim, assets, active)?;
                 self.drain_script_registration_inline_actions(sim, assets, active)?;
                 let return_word = match outcome {
                     crate::interp::NativeCallOutcome::Return(value) => value,
                     crate::interp::NativeCallOutcome::Yield(request) => {
-                        let operation_result = match request.operation {
-                            crate::interp::NativeOperation::ScriptCall(call) => {
-                                let nested_frame = match call.script_this {
-                                    crate::interp::NestedCallScriptThis::TargetActor => {
-                                        frame.with_script_this(call.actor_handle)
-                                    }
-                                    crate::interp::NestedCallScriptThis::PreserveCaller => frame,
-                                };
-                                self.call_script_vm_inner(
-                                    sim,
-                                    assets,
-                                    ScriptVmKey::Actor(call.actor_handle),
-                                    &call.fn_name,
-                                    &call.params,
-                                    nested_frame,
-                                    active,
-                                )?
-                            }
-                            crate::interp::NativeOperation::SequenceAction(operation) => {
-                                self.drive_detached_sequence_operation(
-                                    sim, assets, operation, active,
-                                )?;
-                                0
-                            }
-                            crate::interp::NativeOperation::EngineAction(action) => self
-                                .execute_synchronous_script_request(sim, assets, action, active)?,
-                        };
+                        let operation_result = self.execute_native_operation(
+                            sim,
+                            assets,
+                            frame,
+                            request.operation,
+                            active,
+                        )?;
                         match request.resume {
                             crate::interp::ResumePolicy::OperationResult => operation_result,
                             crate::interp::ResumePolicy::Fixed(value) => value,
@@ -800,49 +778,20 @@ impl EngineInner {
                     },
                 )
                 .expect("mission script vanished while callback was suspended");
-            self.drain_script_effects_with_active(sim, assets, active)?;
-            // `Thanx()` launches the recorded sequence directly through the
-            // sequence manager rather than through `ScriptEffects`.  Its
-            // initial WAIT/immediate elements execute from the launch call
-            // stack in the Original, so close that synchronous registration
-            // boundary before returning from (or resuming) the VM callback.
-            //
-            // Without this drain a zone callback that records
-            // LockUser+SendMessage leaves both actions queued until the next
-            // engine hourglass.  Actors then receive one extra movement tick
-            // before the message's synchronous LockAI loop can stop them.
+            // Complete registration-time immediate elements before the VM
+            // returns or enters its next native operation.
             self.drain_script_registration_inline_actions(sim, assets, active)?;
             match stop {
                 crate::interp::StopReason::ReturnedValue(value) => return Ok(value),
                 crate::interp::StopReason::Returned => return Ok(0),
                 crate::interp::StopReason::Yield(request) => {
-                    let operation_result = match request.operation {
-                        crate::interp::NativeOperation::ScriptCall(call) => {
-                            let nested_frame = match call.script_this {
-                                crate::interp::NestedCallScriptThis::TargetActor => {
-                                    frame.with_script_this(call.actor_handle)
-                                }
-                                crate::interp::NestedCallScriptThis::PreserveCaller => frame,
-                            };
-                            let nested_key = ScriptVmKey::Actor(call.actor_handle);
-                            self.call_script_vm_inner(
-                                sim,
-                                assets,
-                                nested_key,
-                                &call.fn_name,
-                                &call.params,
-                                nested_frame,
-                                active,
-                            )?
-                        }
-                        crate::interp::NativeOperation::SequenceAction(operation) => {
-                            self.drive_detached_sequence_operation(sim, assets, operation, active)?;
-                            0
-                        }
-                        crate::interp::NativeOperation::EngineAction(action) => {
-                            self.execute_synchronous_script_request(sim, assets, action, active)?
-                        }
-                    };
+                    let operation_result = self.execute_native_operation(
+                        sim,
+                        assets,
+                        frame,
+                        request.operation,
+                        active,
+                    )?;
                     activation.native_return_value = match request.resume {
                         crate::interp::ResumePolicy::OperationResult => operation_result,
                         crate::interp::ResumePolicy::Fixed(value) => value,
@@ -858,6 +807,46 @@ impl EngineInner {
                         "{key:?} script {fn_name} stopped abnormally: {other:?}"
                     )));
                 }
+            }
+        }
+    }
+
+    /// Shared semantic boundary for bytecode, Spellforge, and external calls.
+    fn execute_native_operation(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        frame: crate::natives::ScriptCallFrame,
+        operation: crate::interp::NativeOperation,
+        active: &mut Vec<ActiveScriptCall>,
+    ) -> Result<i32, ScriptDriverError> {
+        match operation {
+            crate::interp::NativeOperation::ScriptCall(call) => {
+                let nested_frame = match call.script_this {
+                    crate::interp::NestedCallScriptThis::TargetActor => {
+                        frame.with_script_this(call.actor_handle)
+                    }
+                    crate::interp::NestedCallScriptThis::PreserveCaller => frame,
+                };
+                self.call_script_vm_inner(
+                    sim,
+                    assets,
+                    ScriptVmKey::Actor(call.actor_handle),
+                    &call.fn_name,
+                    &call.params,
+                    nested_frame,
+                    active,
+                )
+            }
+            crate::interp::NativeOperation::SequenceAction(operation) => {
+                self.drive_detached_sequence_operation(sim, assets, operation, active)?;
+                Ok(0)
+            }
+            crate::interp::NativeOperation::EngineAction(action) => {
+                self.execute_synchronous_script_request(sim, assets, action, active)
+            }
+            crate::interp::NativeOperation::Command(command) => {
+                self.execute_native_command(sim, assets, command, active)
             }
         }
     }
@@ -1766,15 +1755,13 @@ impl EngineInner {
         callback: impl FnOnce(
             &mut MissionScript,
             &mut crate::engine::ScriptDomains,
-            &crate::natives::NativeSessionCapabilities<'_>,
+            &mut crate::natives::NativeSessionCapabilities<'_>,
         ) -> R,
     ) -> Option<R> {
         if let Some(script) = self.scripts.mission.as_ref() {
             script.assert_no_active_call_frames();
         }
         let result = self.with_script_session_in_driver(sim, assets, callback);
-        self.drain_script_effects_with_active(sim, assets, &mut Vec::new())
-            .unwrap_or_else(|error| panic!("script effect drain failed: {}", error.detail));
         if let Some(script) = self.scripts.mission.as_ref() {
             script.assert_no_active_call_frames();
         }
@@ -1788,7 +1775,7 @@ impl EngineInner {
         callback: impl FnOnce(
             &mut MissionScript,
             &mut crate::engine::ScriptDomains,
-            &crate::natives::NativeSessionCapabilities<'_>,
+            &mut crate::natives::NativeSessionCapabilities<'_>,
         ) -> R,
     ) -> Option<R> {
         // Unlike `with_script_session`, this helper deliberately does not
@@ -1813,7 +1800,7 @@ impl EngineInner {
             let script = scripts.mission.as_mut()?;
             let campaign = &mut mission_domain.campaign;
             let host_seat = &mut players.seats[0];
-            let capabilities = crate::natives::NativeSessionCapabilities::new(
+            let mut capabilities = crate::natives::NativeSessionCapabilities::new(
                 sim,
                 &mut world.entities,
                 &mut ai.global,
@@ -1840,7 +1827,7 @@ impl EngineInner {
             .with_standard_view_radius(&mut ai.standard_view_polygon_radius)
             .with_view_radius_cache(&mut ai.view_radius_cache);
 
-            callback(script, script_domains, &capabilities)
+            callback(script, script_domains, &mut capabilities)
         };
         Some(result)
     }
@@ -1853,56 +1840,16 @@ impl EngineInner {
         self.scripts.attach_native_capabilities(assets);
     }
 
-    /// Drain and apply script-originated effects after a callback batch.
-    ///
-    /// The queue batch is removed under a short `ScriptRuntime` borrow before
-    /// any effect is executed. Handlers can therefore re-enter the same live
-    /// VM synchronously without a take/restore ownership transaction.
-    fn drain_script_effects_with_active(
+    /// Complete a native operation with the VM and native owner borrows released.
+    fn execute_native_command(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        command: crate::natives::NativeCommand,
         active_scripts: &mut Vec<ActiveScriptCall>,
-    ) -> Result<(), ScriptDriverError> {
-        loop {
-            let (effect, parent_tail) = match self.scripts.mission.as_mut() {
-                Some(script) => {
-                    let Some(effect) = script.script_effects.pop_front() else {
-                        return Ok(());
-                    };
-                    (effect, script.script_effects.take_tail())
-                }
-                None => return Ok(()),
-            };
-            #[cfg(test)]
-            ACTIVE_DRIVER_SNAPSHOT_ERRORS.with(|errors| {
-                errors.record_with(|| {
-                    serde_json::to_string(&*self)
-                        .expect_err("active driver must reject full EngineInner serialization")
-                        .to_string()
-                });
-            });
-            let (sound, engine_commands, deferred) = match effect {
-                crate::natives::ScriptEffect::ExternalSound(command) => {
-                    (vec![command], Vec::new(), Vec::new())
-                }
-                crate::natives::ScriptEffect::Presentation(command)
-                | crate::natives::ScriptEffect::Simulation(
-                    crate::natives::SimulationEffect::Engine(command),
-                ) => (Vec::new(), vec![command], Vec::new()),
-                crate::natives::ScriptEffect::Simulation(
-                    crate::natives::SimulationEffect::Deferred(command),
-                ) => (Vec::new(), Vec::new(), vec![command]),
-            };
-
-            // Commands whose handlers can synchronously call the mission VM are
-            // kept until the first-pass state effects have completed.
-            let mut post_script: Vec<crate::natives::DeferredCommand> = Vec::new();
-
-            // ── Sound commands ──
-            // Commands that don't need an AudioBackend are processed now.
-            // The remaining ones are queued for main_entry to flush.
-            for cmd in sound {
+    ) -> Result<i32, ScriptDriverError> {
+        match command {
+            crate::natives::NativeCommand::Sound(cmd) => {
                 match cmd {
                     crate::natives::SoundCommand::SuspendAll => {
                         // SuspendAllSoundSources stops the audio
@@ -2033,13 +1980,9 @@ impl EngineInner {
                     }
                 }
             }
-
-            // ── Deferred game-logic commands ──
-            // Re-entrant handlers are deferred until the first-pass effects
-            // have released all temporary borrows.
-            for cmd in deferred {
+            crate::natives::NativeCommand::World(cmd) => {
                 match cmd {
-                    crate::natives::DeferredCommand::AddAsSubordinateInitialize {
+                    crate::natives::WorldNativeCommand::AddAsSubordinateInitialize {
                         chief,
                         member_count,
                     } => {
@@ -2054,16 +1997,7 @@ impl EngineInner {
                         // final roster once per member.
                         self.initialize_patrol_for_npc_prefix(assets, chief_id, member_count);
                     }
-                    crate::natives::DeferredCommand::RemoveAllSubordinates { actor } => {
-                        if let Some(chief) = self.entity_id_for_actor_handle(actor) {
-                            self.script_remove_all_subordinates(sim, assets, chief);
-                        } else {
-                            tracing::warn!(
-                                "RemoveAllSubordinates ignored invalid chief handle {actor}"
-                            );
-                        }
-                    }
-                    crate::natives::DeferredCommand::SelectPC { actor, select } => {
+                    crate::natives::WorldNativeCommand::SelectPC { actor, select } => {
                         // Scripted scene: targets the LOCAL seat.
                         if actor == 0 {
                             // No actor specified: select or deselect all
@@ -2082,75 +2016,43 @@ impl EngineInner {
                             }
                         }
                     }
-                    crate::natives::DeferredCommand::StopActor { actor } => {
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            self.stop_actor_orders(
-                                sim,
-                                assets,
-                                active_scripts,
-                                id,
-                                crate::sequence::SequencePriority::Script,
-                            );
-                        }
-                    }
-                    crate::natives::DeferredCommand::FreezeAll { freeze } => {
+                    crate::natives::WorldNativeCommand::FreezeAll { freeze } => {
                         self.set_actors_frozen(freeze);
                     }
-                    crate::natives::DeferredCommand::QuitSwordfight { actor } => {
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            self.quit_swordfight(sim, assets, id);
-                        }
-                    }
-                    crate::natives::DeferredCommand::RemoveUnconsciousStars { actor } => {
-                        // The titbit is only dropped when the actor is *not*
-                        // currently unconscious — `remove_unconscious_stars_if`
-                        // takes `is_still_unconscious` and short-circuits
-                        // otherwise.  Read the live human-data flag now.
-                        if let Some(id) = self.entity_id_for_actor_handle(actor)
-                            && let Some(entity) = self.world.entities.get(id)
-                        {
-                            let still_unconscious =
-                                entity.human_data().is_some_and(|h| h.unconscious);
-                            self.feedback.titbit_manager.remove_unconscious_stars_if(
-                                crate::titbit::ElementHandle(id.index()),
-                                still_unconscious,
-                            );
-                        }
-                    }
-                    crate::natives::DeferredCommand::SetPlayable { actor, playable } => {
-                        // PC playable state (pc.playable) was already set on
-                        // the entity by the native call. Forward
-                        // MSG_ENABLE/DISABLE_CHARACTER to the messenger
-                        // carrying the actor's entity id so the handler
-                        // can drop the PC from the selection and update
-                        // Sherwood interface-hidden state.
-                        let msg_type = if playable {
-                            crate::messenger::PcMessage::EnableCharacter
+                    crate::natives::WorldNativeCommand::SetPlayable { actor, playable } => {
+                        let pc_id = self
+                            .entity_id_for_actor_handle(actor)
+                            .expect("validated playable PC");
+                        self.world
+                            .entities
+                            .get_mut(pc_id)
+                            .and_then(Entity::pc_data_mut)
+                            .expect("playable native requires a PC")
+                            .set_playable(playable);
+                        if playable {
+                            self.world
+                                .entities
+                                .get_mut(pc_id)
+                                .unwrap()
+                                .pc_data_mut()
+                                .unwrap()
+                                .interface_hidden = false;
                         } else {
-                            crate::messenger::PcMessage::DisableCharacter
-                        };
-                        let pc_id = self.entity_id_for_actor_handle(actor);
-                        self.orders.messenger.send(Message::pc(msg_type, pc_id));
-                        tracing::debug!("SetPlayable: actor {actor} → playable={playable}");
-                    }
-                    cmd @ crate::natives::DeferredCommand::ProcessPatchEffects { .. } => {
-                        post_script.push(cmd);
-                    }
-                    crate::natives::DeferredCommand::PutActorInBuilding { actor, building } => {
-                        self.put_actor_in_building(actor, building);
-                    }
-                    crate::natives::DeferredCommand::ResetSpriteFrame { actor } => {
-                        // Rewind the actor's sprite to frame 0 of its current row.
-                        if let Some(id) = self.entity_id_for_actor_handle(actor)
-                            && let Some(entity) = self.world.entities.get_mut(id)
-                        {
-                            entity.sprite_mut().reset_sprite_frame(false);
-                        }
-                    }
-                    crate::natives::DeferredCommand::ClearAllQuickActionSlots { actor } => {
-                        // Clear each quick-action slot: drop its titbits and
-                        // clear its macro_store entry.
-                        if let Some(pc_id) = self.entity_id_for_actor_handle(actor) {
+                            self.unselect_single_pc(pc_id);
+                            let hide_interface = !self.is_sherwood(&assets.profile_manager);
+                            let pc = self
+                                .world
+                                .entities
+                                .get_mut(pc_id)
+                                .unwrap()
+                                .pc_data_mut()
+                                .unwrap();
+                            if hide_interface {
+                                pc.interface_hidden = true;
+                            }
+                            pc.quick_action_types.clear();
+                            pc.quick_action_sequences.fill(None);
+                            pc.titbits.clear();
                             for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
                                 self.remove_quick_action_titbits_for(pc_id, slot);
                                 if let Some(state) = self.players.macro_store.get_mut(pc_id) {
@@ -2159,39 +2061,39 @@ impl EngineInner {
                             }
                         }
                     }
-                }
-            }
-
-            for cmd in post_script {
-                match cmd {
-                    crate::natives::DeferredCommand::ProcessPatchEffects {
-                        patch_index,
-                        effects,
-                    } => {
+                    crate::natives::WorldNativeCommand::ApplyPatch { patch_index, reset } => {
+                        let patch = self
+                            .script_domains
+                            .interactables
+                            .patches
+                            .get_mut(usize::from(patch_index))
+                            .expect("validated native patch");
+                        let effects = if reset {
+                            patch.force_reset()
+                        } else {
+                            patch.apply()
+                        };
                         self.process_patch_effects(sim, assets, patch_index, effects);
                     }
-                    _ => unreachable!("only ProcessPatchEffects is deferred post-script"),
+                    crate::natives::WorldNativeCommand::PutActorInBuilding { actor, building } => {
+                        self.put_actor_in_building(actor, building);
+                    }
+                    crate::natives::WorldNativeCommand::ResetSpriteFrame { actor } => {
+                        // Rewind the actor's sprite to frame 0 of its current row.
+                        if let Some(id) = self.entity_id_for_actor_handle(actor)
+                            && let Some(entity) = self.world.entities.get_mut(id)
+                        {
+                            entity.sprite_mut().reset_sprite_frame(false);
+                        }
+                    }
                 }
             }
-
-            if !engine_commands.is_empty() {
-                self.apply_host_commands(sim, assets, engine_commands);
+            crate::natives::NativeCommand::Engine(cmd) => {
+                self.apply_host_commands(sim, assets, std::iter::once(cmd));
             }
-
-            // Sequence actions and effects emitted by this handler are
-            // children of the current effect. Fully drive them with the same
-            // active VM stack before exposing the detached parent tail.
-            let child_result = self
-                .drain_script_synchronous_actions(sim, assets, active_scripts)
-                .and_then(|()| self.drain_script_effects_with_active(sim, assets, active_scripts));
-            self.scripts
-                .mission
-                .as_mut()
-                .expect("mission script vanished while restoring effect tail")
-                .script_effects
-                .restore_tail(parent_tail);
-            child_result?;
         }
+        self.drain_script_synchronous_actions(sim, assets, active_scripts)?;
+        Ok(0)
     }
 
     /// Load a mission script from the level directory.
@@ -2274,7 +2176,7 @@ impl EngineInner {
             self.scripts
                 .mission
                 .as_mut()
-                .expect("Spellforge requires a loaded mission ScriptEffects owner")
+                .expect("Spellforge requires a loaded mission script owner")
                 .enable_spellforge_virtual_bindings();
         }
 
@@ -3869,13 +3771,12 @@ impl EngineInner {
 
     // ─── Script command processing ──────────────────────────────
 
-    /// Process all deferred commands from script native calls.
-    /// Called after each script tick (Hourglass / CheckVictoryCondition).
+    /// Execute native engine operations before resuming their calling VM.
     pub(crate) fn apply_host_commands(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        commands: Vec<crate::natives::EngineCommand>,
+        commands: impl IntoIterator<Item = crate::natives::EngineCommand>,
     ) {
         use crate::natives::EngineCommand;
 
@@ -4373,8 +4274,7 @@ impl EngineInner {
                             panic!("SetMobileActive references missing mobile {mobile_index}")
                         });
                     mobile.set_active(active);
-                    let sprite_ids = mobile.sprite_ids.clone();
-                    for sprite_id in sprite_ids {
+                    for &sprite_id in &mobile.sprite_ids {
                         let fx = self
                             .world
                             .entities
@@ -4405,84 +4305,6 @@ impl EngineInner {
                                 "MarkPc: handle {actor_handle} does not resolve to a PC"
                             );
                         }
-                    }
-                }
-                EngineCommand::UpdateInformationBars => {
-                    // The original `UpdateInformationBars` does two
-                    // things:
-                    //   (a) tears down and rebuilds the blazon bar
-                    //       vs. the mission-requirements widget based
-                    //       on blazon production and the next-mission
-                    //       profile type.
-                    //   (b) updates status on the blazon
-                    //       bar so its counter matches the current
-                    //       human-status / mission-stat values.
-                    //
-                    // Our HUD (see `game_render.rs`, `hud_text.rs`,
-                    // `ui_panel.rs`) is immediate-mode: every frame
-                    // re-reads mission + campaign + money state
-                    // directly from the engine, campaign, and
-                    // mission-stat it already has in scope.  There are
-                    // no cached widget instances to recreate, and
-                    // money / blazon counters do not cache their
-                    // displayed value.  Therefore (b) is a no-op —
-                    // the next frame will render the updated counters
-                    // automatically.
-                    //
-                    // For (a), the blazon-bar and mission-requirements
-                    // widgets are data-computation modules (see
-                    // `widget/blazon_bar.rs`, `widget/requirements.rs`)
-                    // that the immediate-mode HUD reads per-frame.
-                    // Nothing to cache on the engine side: derive the
-                    // states here so the log/trace reflects what the
-                    // next HUD frame will show.
-                    if let Some(campaign) = Some(&self.mission_domain.campaign) {
-                        // `Game::is_men_to_blazon_conversion` is reflected in
-                        // the engine-owned mission UI domain by the
-                        // `SetMenToBlazonConversionMode` player command.
-                        // Read that state here so the blazon bar can
-                        // switch to next-mission targeting during
-                        // conversion mode without needing a `&Game`
-                        // borrow at the engine tick.
-                        let men_to_blazon =
-                            self.script_domains.mission_ui.men_to_blazon_conversion_mode;
-                        let blinking = self
-                            .script_domains
-                            .mission_ui
-                            .active_blinking_blazons(self.control.frame_counter);
-                        let bb = crate::widget_state::blazon_bar::build_blazon_bar_state(
-                            campaign,
-                            &assets.profile_manager,
-                            men_to_blazon,
-                            blinking,
-                        );
-                        let mission_team: Vec<crate::profiles::CharacterProfileIdx> =
-                            campaign.mission_team_profile_indices();
-                        let selected: Vec<crate::profiles::CharacterProfileIdx> =
-                            self.players.seats[0]
-                                .selection
-                                .iter()
-                                .filter_map(|&id| match self.get_entity(id)? {
-                                    crate::element::Entity::Pc(pc) => Some(pc.pc.profile_index),
-                                    _ => None,
-                                })
-                                .collect();
-                        let req = campaign.next_mission_idx.and_then(|idx| {
-                            crate::widget_state::requirements::build_requirements_state(
-                                campaign,
-                                &assets.profile_manager,
-                                idx,
-                                &mission_team,
-                                &selected,
-                            )
-                        });
-                        tracing::debug!(
-                            ?bb,
-                            req_slots = req.as_ref().map(|r| r.slots.len()),
-                            "UpdateInformationBars: recomputed HUD states"
-                        );
-                    } else {
-                        tracing::debug!("UpdateInformationBars: no campaign — HUD states skipped");
                     }
                 }
                 EngineCommand::HeroSpeak { pc_id, expression } => {
@@ -4800,11 +4622,8 @@ impl EngineInner {
     /// Dispatch a single native function from outside the script VM
     /// (HTTP-RPC, debug console, etc.).
     ///
-    /// Goes through the same disjoint-owner boundary script callbacks use,
-    /// so any side-effect commands the
-    /// native queues (camera, dialog, sequence Start/Thanx, sound,
-    /// deferred game-logic) are drained as if a script had made the
-    /// call.
+    /// Uses the same native boundary as script callbacks, including recursive
+    /// calls, sequence launches, and complete engine operations.
     ///
     /// `args` are pushed onto a fresh `NativeStack` in script-source
     /// order (i.e. `args[0]` is the first argument to the native, and
@@ -4882,7 +4701,6 @@ impl EngineInner {
                             stack.push_i32(a);
                         }
                         let mut native_context = crate::natives::NativeContext::with_call_frame(
-                            &mut script.script_effects,
                             &mut script.state,
                             script_domains,
                             &script.bindings,
@@ -4893,40 +4711,16 @@ impl EngineInner {
                     },
                 )
                 .expect("mission-script presence checked above");
-            self.drain_script_effects_with_active(sim, assets, &mut active)?;
             match outcome {
                 crate::interp::NativeCallOutcome::Return(value) => Ok(value),
                 crate::interp::NativeCallOutcome::Yield(request) => {
-                    let operation_result = match request.operation {
-                        crate::interp::NativeOperation::ScriptCall(call) => {
-                            let frame = match call.script_this {
-                                crate::interp::NestedCallScriptThis::TargetActor => {
-                                    base_frame.with_script_this(call.actor_handle)
-                                }
-                                crate::interp::NestedCallScriptThis::PreserveCaller => base_frame,
-                            };
-                            self.call_script_vm_inner(
-                                sim,
-                                assets,
-                                ScriptVmKey::Actor(call.actor_handle),
-                                &call.fn_name,
-                                &call.params,
-                                frame,
-                                &mut active,
-                            )?
-                        }
-                        crate::interp::NativeOperation::SequenceAction(operation) => {
-                            self.drive_detached_sequence_operation(
-                                sim,
-                                assets,
-                                operation,
-                                &mut active,
-                            )?;
-                            0
-                        }
-                        crate::interp::NativeOperation::EngineAction(action) => self
-                            .execute_synchronous_script_request(sim, assets, action, &mut active)?,
-                    };
+                    let operation_result = self.execute_native_operation(
+                        sim,
+                        assets,
+                        base_frame,
+                        request.operation,
+                        &mut active,
+                    )?;
                     Ok(match request.resume {
                         crate::interp::ResumePolicy::OperationResult => operation_result,
                         crate::interp::ResumePolicy::Fixed(value) => value,

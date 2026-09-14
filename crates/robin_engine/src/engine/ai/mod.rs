@@ -58,7 +58,6 @@ mod officer_rpc;
 mod out_of_view_execution;
 mod owner_scheduling;
 mod panic_execution;
-mod patrol_assembly;
 mod patrol_coordination;
 mod patrol_dispatch;
 mod phalanx_execution;
@@ -1168,33 +1167,6 @@ pub(super) fn build_detectable_enemies_for_with(
     out
 }
 
-/// Preserve the original game's left-to-right patrol initialization evaluation.
-///
-/// The visibility operand precedes the member-state predicates, so an active
-/// outdoor member can emit an authoritative LOS query even when it is not in
-/// `STATE_DEFAULT` and will therefore not be admitted.
-fn patrol_member_admitted(
-    both_active: bool,
-    detect_360: impl FnOnce() -> bool,
-    ai_state: crate::ai::AiState,
-    is_civilian: bool,
-    is_able_to_fight: bool,
-) -> bool {
-    let detected = both_active && detect_360();
-    detected && ai_state == crate::ai::AiState::Default && (is_civilian || is_able_to_fight)
-}
-
-/// Preserve patrol initialization's insertion-loop comparison exactly.
-///
-/// The original game advances past an existing member only while
-/// `new_distance > existing_distance`.  Spelling the stopping condition as
-/// `new_distance <= existing_distance` is not equivalent for unordered IEEE
-/// values: a NaN distance stops the original-game loop immediately and is inserted at
-/// that position.
-fn patrol_distance_inserts_before(new_distance: f32, existing_distance: f32) -> bool {
-    !(new_distance > existing_distance)
-}
-
 /// Preserve the look-there broadcast's positive, strict range admission.
 ///
 /// The original game sends the look-there callback only within the squared radius.
@@ -1353,25 +1325,6 @@ mod parity_tests {
     }
 
     #[test]
-    fn patrol_distance_insertion_preserves_unordered_and_tie_semantics() {
-        assert!(patrol_distance_inserts_before(4.0, 4.0));
-        assert!(patrol_distance_inserts_before(f32::NAN, 4.0));
-        assert!(patrol_distance_inserts_before(4.0, f32::NAN));
-        assert!(!patrol_distance_inserts_before(5.0, 4.0));
-
-        let mut sorted = vec![1.0, 3.0];
-        for distance in [2.0, f32::NAN] {
-            let insert_at = sorted
-                .iter()
-                .position(|&existing| patrol_distance_inserts_before(distance, existing))
-                .unwrap_or(sorted.len());
-            sorted.insert(insert_at, distance);
-        }
-        assert!(sorted[0].is_nan());
-        assert_eq!(&sorted[1..], &[1.0, 2.0, 3.0]);
-    }
-
-    #[test]
     fn look_there_range_admission_preserves_nan_and_boundary_semantics() {
         let radius_squared = 100.0;
 
@@ -1387,36 +1340,6 @@ mod parity_tests {
             radius_squared - 1.0,
             radius_squared
         ));
-    }
-
-    #[test]
-    fn patrol_visibility_precedes_member_admission_predicates() {
-        let calls = std::cell::Cell::new(0);
-        let admitted = patrol_member_admitted(
-            true,
-            || {
-                calls.set(calls.get() + 1);
-                true
-            },
-            crate::ai::AiState::Attacking,
-            false,
-            false,
-        );
-        assert!(!admitted);
-        assert_eq!(calls.get(), 1, "visibility must run before state rejection");
-
-        let admitted = patrol_member_admitted(
-            false,
-            || {
-                calls.set(calls.get() + 1);
-                true
-            },
-            crate::ai::AiState::Default,
-            false,
-            true,
-        );
-        assert!(!admitted);
-        assert_eq!(calls.get(), 1, "inactive actors return before LOS");
     }
 
     #[test]
@@ -2164,12 +2087,18 @@ impl EngineInner {
     pub(in crate::engine) fn ai_bored_time(
         &self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
     ) -> u16 {
         let entity = self.expect_entity(owner, "bored timer owner");
         let (rank, pride) = entity
             .enemy_ai()
-            .map(|ai| (ai.soldier_profile_rank, ai.soldier_profile_pride))
+            .map(|ai| {
+                (
+                    ai.profile(&assets.profile_manager).rank,
+                    ai.profile(&assets.profile_manager).pride,
+                )
+            })
             .unwrap_or((crate::profiles::ProfileRank::None, 0));
         entity
             .ai_controller()
@@ -2178,35 +2107,14 @@ impl EngineInner {
     }
 }
 
-pub(super) struct AiPositionResolution {
-    /// Target's own position after the door-first arm, before an optional
-    /// carried-PC substitution.
-    pub(super) target: crate::ai::Position,
-    /// Final AI position for the entity.
-    pub(super) effective: crate::ai::Position,
-}
-
 pub(super) fn resolve_ai_position_with(
     entities: &crate::entities::Entities,
     doors: &[crate::gate::Door],
     sequence_manager: &crate::sequence::SequenceManager,
     target_id: crate::element::EntityId,
-    position_of: impl FnMut(crate::element::EntityId) -> crate::ai::Position,
-) -> AiPositionResolution {
-    let selected_door = selected_pass_door_movement(sequence_manager, target_id);
-    resolve_ai_position_with_selected(entities, doors, target_id, selected_door, position_of)
-}
-
-/// Resolve AI position from an already-sampled selected PassDoor element.
-/// Callers constructing multiple fields at one synchronous boundary use this
-/// to avoid repeating the same sequence-manager lookup.
-fn resolve_ai_position_with_selected(
-    entities: &crate::entities::Entities,
-    doors: &[crate::gate::Door],
-    target_id: crate::element::EntityId,
-    selected_door: Option<(crate::gate::DoorIndex, i16)>,
     mut position_of: impl FnMut(crate::element::EntityId) -> crate::ai::Position,
-) -> AiPositionResolution {
+) -> crate::ai::Position {
+    let selected_door = selected_pass_door_movement(sequence_manager, target_id);
     let target = entities
         .get(target_id)
         .unwrap_or_else(|| panic!("AI position target {target_id:?} disappeared"));
@@ -2250,13 +2158,9 @@ fn resolve_ai_position_with_selected(
                 level: door.layer_out,
             }
         };
-        return AiPositionResolution {
-            target: position,
-            effective: position,
-        };
+        return position;
     }
 
-    let target_position = position_of(target_id);
     let carrier_id = match target {
         Entity::Pc(pc) if pc.element.posture() == crate::element::Posture::OnShoulders => {
             Some(pc.human.carrier.unwrap_or_else(|| {
@@ -2265,39 +2169,7 @@ fn resolve_ai_position_with_selected(
         }
         _ => None,
     };
-    let carrier = carrier_id.map(&mut position_of);
-    AiPositionResolution {
-        target: target_position,
-        effective: carrier.unwrap_or(target_position),
-    }
-}
-
-pub(super) fn lookup_primary_target_position(
-    engine: &EngineInner,
-    target_id: crate::element::EntityId,
-) -> Option<crate::ai::Position> {
-    if target_id.index() == 0 {
-        return None;
-    }
-    engine.world.entities.get(target_id)?;
-    let resolved = resolve_ai_position_with(
-        &engine.world.entities,
-        engine.script_domains.interactables.doors.as_slice(),
-        &engine.orders.sequence_manager,
-        target_id,
-        |id| {
-            let element = engine
-                .expect_entity(id, "AI metadata position owner")
-                .element_data();
-            crate::ai::Position {
-                x: element.position_map().x,
-                y: element.position_map().y,
-                sector: ai_view_position_sector(engine, element),
-                level: element.layer(),
-            }
-        },
-    );
-    Some(resolved.target)
+    position_of(carrier_id.unwrap_or(target_id))
 }
 
 /// Run the "avenger on the roof" wait-position lookup for the
@@ -2355,7 +2227,6 @@ pub(super) fn precompute_avenger_on_roof_wait_position(
                 level: element.layer(),
             }
         })
-        .effective
     };
     let me_position = resolve_position(me_id);
     let target_position = resolve_position(target_id);
@@ -2399,15 +2270,9 @@ impl EngineInner {
             entity_has_ai_view(entity),
             "live AI position unavailable for {id:?}"
         );
-        let doors = self
-            .scripts
-            .mission
-            .as_ref()
-            .map(|_| self.script_domains.interactables.doors.as_slice())
-            .unwrap_or(&[]);
         resolve_ai_position_with(
             &self.world.entities,
-            doors,
+            &self.script_domains.interactables.doors,
             &self.orders.sequence_manager,
             id,
             |position_id| {
@@ -2422,7 +2287,6 @@ impl EngineInner {
                 }
             },
         )
-        .effective
     }
 }
 
@@ -2544,6 +2408,56 @@ mod ai_view_position_sector_tests {
     use crate::sector::SectorNumber;
 
     #[test]
+    fn copied_exact_sector_survives_overlapping_public_sector_numbers() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(8, 8);
+        engine.world.fast_grid_mut().allocate_layers(3);
+        let first = engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                88,
+                2,
+                MapPoint::new(100.0, 100.0),
+                MapPoint::new(200.0, 200.0),
+            ),
+            2,
+        );
+        let second = engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                88,
+                2,
+                MapPoint::new(100.0, 100.0),
+                MapPoint::new(200.0, 200.0),
+            ),
+            2,
+        );
+        assert_ne!(first, second);
+        let sector = crate::position_interface::SectorHandle::new(88)
+            .unwrap()
+            .with_arena_index(SectorIndex::new(second).unwrap());
+        let mut pc =
+            crate::engine::test_support::actors::unbound_pc(crate::element::Posture::Upright);
+        pc.element.set_position_map(MapPoint::new(150.0, 150.0));
+        pc.element.set_layer(2);
+        pc.element.set_sector(Some(sector));
+        pc.element
+            .sprite
+            .position_iface
+            .set_goal_sector(Some(sector));
+        let target = engine.add_test_entity(Entity::Pc(pc));
+        let position = engine.live_ai_position(target);
+        assert_eq!(
+            position.sector.unwrap().arena_index(),
+            SectorIndex::new(second)
+        );
+        let interface = engine.get_entity(target).unwrap().position_iface();
+        assert_eq!(interface.get_sector_topology().1, SectorIndex::new(second));
+        assert_eq!(
+            interface.get_goal_sector_topology().1,
+            SectorIndex::new(second)
+        );
+    }
+
+    #[test]
     fn entity_view_recovers_duplicate_public_goal_for_exact_gate_route() {
         let mut engine = EngineInner::new();
         engine.world.fast_grid_mut().size_map(8, 8);
@@ -2609,8 +2523,7 @@ mod ai_view_position_sector_tests {
             goal_position.sector.and_then(|sector| sector.arena_index()),
             SectorIndex::new(goal)
         );
-        let metadata_position = lookup_primary_target_position(&engine, target)
-            .expect("live primary target metadata exists");
+        let metadata_position = engine.live_ai_position(target);
         assert_eq!(
             metadata_position
                 .sector
@@ -2717,8 +2630,7 @@ mod ai_view_position_sector_tests {
         target_element.set_position_map(MapPoint::new(150.0, 150.0));
         target_element.set_layer(2);
         target_element.set_sector(crate::position_interface::SectorHandle::new(88));
-        let metadata_position = lookup_primary_target_position(&engine, target)
-            .expect("compatibility primary target metadata exists");
+        let metadata_position = engine.live_ai_position(target);
         assert_eq!(
             metadata_position
                 .sector

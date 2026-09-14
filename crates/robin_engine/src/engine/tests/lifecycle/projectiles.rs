@@ -747,7 +747,7 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
     };
 
     assert!(engine.selected_bow_order(owner).is_none());
-    let (_, _, executed) = engine.tick_actor_animation_for(
+    let executed = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
@@ -1025,7 +1025,7 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
         OrderType::WaitingUpright
     );
 
-    let (_, _, next_execute) = engine.tick_actor_animation_for(&sim_context, &assets, owner);
+    let next_execute = engine.tick_actor_animation_for(&sim_context, &assets, owner);
     assert_eq!(
         next_execute.unwrap().order_type,
         OrderType::WaitingUpright,

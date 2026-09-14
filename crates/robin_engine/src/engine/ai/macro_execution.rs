@@ -243,7 +243,7 @@ impl MacroExecution<'_> {
             self_rank: entity
                 .enemy_ai()
                 .map_or(crate::profiles::ProfileRank::None, |ai| {
-                    ai.soldier_profile_rank
+                    ai.profile(&self.assets.profile_manager).rank
                 }),
         }
     }

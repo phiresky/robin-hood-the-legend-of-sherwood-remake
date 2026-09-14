@@ -762,6 +762,8 @@ fn combat_command_consumes_live_script_filter_refusal() {
         .expect("caller actor has an entity index") as u32;
     let caller_id = engine.entity_id_for_index(caller).expect("caller exists");
     let target_id = engine.entity_id_for_index(target).expect("target exists");
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     for (id, x, rank) in [
         (caller_id, 100.0, ProfileRank::Officer),
         (target_id, 125.0, ProfileRank::Soldier),
@@ -778,12 +780,12 @@ fn combat_command_consumes_live_script_filter_refusal() {
             .view_radius = 500;
         let enemy = entity.enemy_ai_mut().expect("combat alert brain");
         enemy.base.me = id.index();
-        enemy.soldier_profile_rank = rank;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, enemy, |profile| {
+            profile.rank = rank;
+        });
         enemy.base.current_state = AiState::Default;
         enemy.base.current_substate = Substate::DefaultOnPost;
     }
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     let center = Position {
         x: 200.0,
         y: 100.0,
@@ -833,6 +835,7 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         candidates.push(engine.add_test_entity(make_scripted_soldier(class)));
     }
 
+    let mut assets = engine.test_runtime_assets();
     for (index, id) in std::iter::once(officer_id)
         .chain(candidates.iter().copied())
         .enumerate()
@@ -855,16 +858,17 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
             .enemy_mut()
             .expect("closure-review alert actor has EnemyAi");
         ai.base.me = id.index();
-        ai.soldier_profile_rank = if id == officer_id {
-            ProfileRank::Officer
-        } else {
-            ProfileRank::Soldier
-        };
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = if id == officer_id {
+                ProfileRank::Officer
+            } else {
+                ProfileRank::Soldier
+            };
+        });
         ai.base.set_ai_state(AiState::Default);
         ai.base.current_substate = Substate::DefaultOnPost;
     }
 
-    let assets = engine.test_runtime_assets();
     engine.attach_script_bindings(&assets);
     let mission = engine
         .scripts
@@ -2479,11 +2483,9 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
             .sequence_manager
             .take_pending_synchronous_actions();
 
-        let (injuries, outcomes, executed) =
+        let executed =
             engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
 
-        assert!(injuries.is_empty(), "{movement_order:?}");
-        assert!(outcomes.seq_advance.is_empty(), "{movement_order:?}");
         assert!(executed.is_none(), "{movement_order:?}");
         assert_eq!(
             engine
@@ -3789,7 +3791,7 @@ fn waiting_sword_execute_faces_world_xy_not_projected_map_xy() {
         .opponents
         .push(opponent);
 
-    let (_, _, execute_result) =
+    let execute_result =
         engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
 
     assert_eq!(
@@ -6246,7 +6248,7 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
     use crate::sim_rng::{RngSite, with_draw_trace};
     use std::collections::VecDeque;
 
-    let (mut engine, assets, owner) = setup_ai_state_native_probe("DetectionRngProbe", 3);
+    let (mut engine, mut assets, owner) = setup_ai_state_native_probe("DetectionRngProbe", 3);
     let entering_primary = install_unrelated_multi_exit_building_actor(&mut engine, owner);
     let entering_officer = engine.add_test_entity(make_scripted_soldier(""));
     let owner_camp = engine
@@ -6270,7 +6272,9 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
         saved_action_state: None,
     });
     let officer_ai = officer.npc.ai_brain.enemy_mut().unwrap();
-    officer_ai.soldier_profile_rank = ProfileRank::Officer;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, officer_ai, |profile| {
+        profile.rank = ProfileRank::Officer;
+    });
     officer_ai.hth_weapon_id = 1;
 
     let owner_ai = engine

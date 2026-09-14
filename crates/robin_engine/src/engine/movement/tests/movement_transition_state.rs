@@ -84,8 +84,8 @@ mod suite {
         );
 
         let reentrant =
-            engine.launch_perform_seek_arrivals(&sim, &assets, vec![(owner, movement_sequence, 0)]);
-        assert_eq!(reentrant, vec![owner]);
+            engine.launch_movement_post_seek(&sim, &assets, owner, movement_sequence, 0);
+        assert!(reentrant);
         engine.launch_sword_movement_termination_provoke(owner);
 
         let commands = engine
@@ -1179,139 +1179,6 @@ mod suite {
     }
 
     #[test]
-    fn stale_nonselected_final_pop_does_not_clear_live_replacement_goal() {
-        let assets = LevelAssets::new();
-        let mut engine = EngineInner::new();
-        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element.active = true;
-                initial_element
-            },
-            actor: ActorData::default(),
-            human: HumanData::default(),
-            pc: PcData::default(),
-        }));
-        let stale_goal = MapPoint::new(263.0, 794.0);
-        let replacement_goal = MapPoint::new(363.0, 794.0);
-
-        let mut stale = SequenceElement::new_movement(
-            1,
-            Command::MoveOk,
-            Some(owner),
-            OrderType::RunningUpright,
-        );
-        stale.orders.push_back(Order::test_new(
-            OrderType::RunningUpright,
-            stale_goal.x,
-            stale_goal.y,
-        ));
-        let stale_sequence = engine.orders.sequence_manager.launch_element(stale);
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            stale_sequence,
-            0,
-        );
-
-        let mut replacement = SequenceElement::new_movement(
-            1,
-            Command::MoveWaiting,
-            Some(owner),
-            OrderType::RunningUpright,
-        );
-        replacement.retained_movement_goal = Some(replacement_goal);
-        replacement.orders.push_back(Order::test_new(
-            OrderType::Freezing,
-            replacement_goal.x,
-            replacement_goal.y,
-        ));
-        let replacement_sequence = engine.orders.sequence_manager.launch_element(replacement);
-        engine
-            .orders
-            .sequence_manager
-            .set_translating_element(Some((
-                owner,
-                crate::sequence::SequenceElementRef::new(replacement_sequence, 0),
-            )));
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner),
-            Some((replacement_sequence, 0)),
-            "control requires the replacement to be authoritative before the stale pop drains"
-        );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .position_iface_mut()
-            .set_map_goal(replacement_goal);
-        let stale_orders_before_pop = engine
-            .orders
-            .sequence_manager
-            .get_element(stale_sequence, 0)
-            .unwrap()
-            .orders
-            .len();
-        assert_eq!(
-            stale_orders_before_pop, 1,
-            "control requires a live final stale order for the queued pop"
-        );
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(stale_sequence, 0)
-                .unwrap()
-                .state,
-            crate::sequence::SequenceState::InProgress,
-            "control requires a stale InProgress owner, not prior terminal teardown"
-        );
-
-        engine.pop_selected_movement_order(
-            &crate::sim_rng::test_context(),
-            &assets,
-            stale_sequence,
-            0,
-        );
-        engine.orders.sequence_manager.set_translating_element(None);
-
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(stale_sequence, 0)
-                .unwrap()
-                .orders
-                .len(),
-            stale_orders_before_pop,
-            "the stale queued pop must not perform any further order teardown after replacement selection"
-        );
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(replacement_sequence, 0)
-                .unwrap()
-                .retained_movement_goal,
-            Some(replacement_goal),
-            "a stale pop must not erase the authoritative replacement's retained goal"
-        );
-        assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .position_iface()
-                .map_goal(),
-            replacement_goal,
-            "a stale pop must leave the authoritative replacement goal untouched"
-        );
-    }
-
-    #[test]
     fn terminal_movement_handoff_advances_live_move_waiting_order_without_seek_metadata() {
         let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
@@ -1400,18 +1267,6 @@ mod suite {
             .pending_path_requests
             .enqueue(PendingPathRequest::test_request(owner, sequence, 0));
 
-        assert!(engine.live_pending_freezing_order(owner));
-        assert!(
-            !engine.live_move_has_completed_parallel_element(owner),
-            "a completed later-level element must not consume an ordinary postponed Move"
-        );
-        engine
-            .orders
-            .sequence_manager
-            .get_element_mut(sequence, 1)
-            .unwrap()
-            .command_level = 1;
-        assert!(engine.live_move_has_completed_parallel_element(owner));
         engine.advance_live_order_after_terminal_handoff(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1459,148 +1314,8 @@ mod suite {
     }
 
     #[test]
-    fn terminal_group_move_handoff_requires_causally_released_successor() {
-        let mut engine = EngineInner::new();
-        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element.active = true;
-                initial_element
-            },
-            actor: ActorData::default(),
-            human: HumanData::default(),
-            pc: PcData::default(),
-        }));
-
-        let mut outgoing = SequenceElement::new_movement(
-            1,
-            Command::MoveOk,
-            Some(owner),
-            OrderType::WalkingCrouched,
-        );
-        let SequenceElementData::Movement { destination, .. } = &mut outgoing.data else {
-            panic!("movement fixture lost movement data");
-        };
-        *destination = MapPoint::new(100.0, 50.0);
-        outgoing.state = SequenceState::Terminated;
-        let outgoing_sequence = engine.orders.sequence_manager.launch_element(outgoing);
-        let mut completed_sibling =
-            SequenceElement::new(2, Command::SpeakHeroReachDestination, Some(owner));
-        completed_sibling.state = SequenceState::Terminated;
-        engine
-            .orders
-            .sequence_manager
-            .get_sequence_mut(outgoing_sequence)
-            .unwrap()
-            .elements
-            .push(completed_sibling);
-
-        let mut replacement = SequenceElement::new_movement(
-            1,
-            Command::MoveWaiting,
-            Some(owner),
-            OrderType::WalkingCrouched,
-        );
-        replacement.state = SequenceState::InProgress;
-        replacement
-            .orders
-            .push_back(Order::test_new(OrderType::Freezing, 867.70776, 2471.1958));
-        let replacement_sequence = engine.orders.sequence_manager.launch_element(replacement);
-        engine
-            .orders
-            .sequence_manager
-            .set_translating_element(Some((
-                owner,
-                crate::sequence::SequenceElementRef::new(replacement_sequence, 0),
-            )));
-
-        assert!(
-            !engine.recent_terminal_move_has_completed_parallel_element(owner),
-            "a later-level arrival callback does not keep the actor update on the terminal stack"
-        );
-        engine
-            .orders
-            .sequence_manager
-            .get_element_mut(outgoing_sequence, 1)
-            .unwrap()
-            .command_level = 1;
-        assert!(engine.recent_terminal_move_has_completed_parallel_element(owner));
-        assert!(
-            !engine.live_pending_freezing_order_is_one_of(owner, &[]),
-            "a stale completed sibling cannot consume an independently queued MoveWaiting"
-        );
-        assert!(engine.live_pending_freezing_order_is_one_of(owner, &[(replacement_sequence, 0)]));
-    }
-
-    #[test]
-    fn normally_arrived_group_move_has_no_completed_sibling_handoff() {
-        let mut engine = EngineInner::new();
-        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element.active = true;
-                initial_element
-            },
-            actor: ActorData::default(),
-            human: HumanData::default(),
-            pc: PcData::default(),
-        }));
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .element_data_mut()
-            .set_position_map(MapPoint::new(100.0, 50.0));
-
-        let mut outgoing = SequenceElement::new_movement(
-            1,
-            Command::MoveOk,
-            Some(owner),
-            OrderType::WalkingUpright,
-        );
-        let SequenceElementData::Movement { destination, .. } = &mut outgoing.data else {
-            panic!("movement fixture lost movement data");
-        };
-        *destination = MapPoint::new(100.0, 50.0);
-        outgoing.state = SequenceState::Terminated;
-        let outgoing_sequence = engine.orders.sequence_manager.launch_element(outgoing);
-        let mut completed_sibling =
-            SequenceElement::new(2, Command::SpeakHeroReachDestination, Some(owner));
-        completed_sibling.state = SequenceState::Terminated;
-        engine
-            .orders
-            .sequence_manager
-            .get_sequence_mut(outgoing_sequence)
-            .unwrap()
-            .elements
-            .push(completed_sibling);
-
-        let mut replacement = SequenceElement::new_movement(
-            1,
-            Command::MoveWaiting,
-            Some(owner),
-            OrderType::WalkingUpright,
-        );
-        replacement.state = SequenceState::InProgress;
-        replacement
-            .orders
-            .push_back(Order::test_new(OrderType::Freezing, 100.0, 50.0));
-        engine.orders.sequence_manager.launch_element(replacement);
-
-        assert!(engine.live_pending_freezing_order(owner));
-        assert!(
-            !engine.recent_terminal_move_has_completed_parallel_element(owner),
-            "a normal arrival installs its replacement from order advancement and must leave freezing selected"
-        );
-    }
-
-    #[test]
-    fn exact_terminal_pop_controls_stopped_route_manager_fifo_handoff() {
-        for (has_exact_terminal_pop, descendant_stopped_this_frame) in
-            [(false, false), (true, false), (true, true)]
+    fn manager_fifo_does_not_repeat_completed_actor_execution() {
         {
-            let consume_handoff = has_exact_terminal_pop && descendant_stopped_this_frame;
             let mut engine = EngineInner::new();
             let points = vec![
                 MapPoint::new(0.0, 0.0),
@@ -1749,62 +1464,21 @@ mod suite {
                 .sprite
                 .last_action = OrderType::TransitionWalkingUprightWaitingUpright;
 
-            let popped_order_id = std::num::NonZeroU32::new(42).unwrap();
-            if has_exact_terminal_pop {
-                engine
-                    .get_entity_mut(owner)
-                    .unwrap()
-                    .actor_data_mut()
-                    .unwrap()
-                    .last_execute_order_id = Some(popped_order_id);
-            }
-            let terminal_pops = has_exact_terminal_pop.then_some(TerminalMovementOrderPop {
-                owner,
-                sequence_id: stale_sequence,
-                element_index: 0,
-                order_id: popped_order_id,
-                order_type: OrderType::TransitionWalkingUprightWaitingUpright,
-                live_following_before_pop: descendant_stopped_this_frame
-                    .then_some(vec![(stale_sequence, 1), (stale_sequence, 2)])
-                    .unwrap_or_default(),
-            });
-            engine.hourglass_phase_sequences_with_terminal_movement_pops(
+            engine.hourglass_phase_sequences(
                 &crate::sim_rng::test_context(),
                 &mut HostDisplayState::default(),
                 &LevelAssets::new(),
-                terminal_pops.as_slice(),
             );
 
-            assert_eq!(
-                engine.actor_command(owner),
-                if consume_handoff {
-                    Command::Wait
-                } else {
-                    Command::MoveWaiting
-                }
-            );
-            assert_eq!(
-                engine.actor_order_type(owner),
-                Some(if consume_handoff {
-                    OrderType::NonanimationEnd
-                } else {
-                    OrderType::Freezing
-                })
-            );
+            assert_eq!(engine.actor_command(owner), Command::MoveWaiting);
+            assert_eq!(engine.actor_order_type(owner), Some(OrderType::Freezing));
             let incoming = engine
                 .orders
                 .sequence_manager
                 .get_element(incoming_sequence, 0)
                 .unwrap();
-            assert_eq!(
-                incoming.state,
-                if consume_handoff {
-                    SequenceState::Terminated
-                } else {
-                    SequenceState::InProgress
-                }
-            );
-            assert_eq!(incoming.orders.len(), usize::from(!consume_handoff));
+            assert_eq!(incoming.state, SequenceState::InProgress);
+            assert_eq!(incoming.orders.len(), 1);
         }
     }
 

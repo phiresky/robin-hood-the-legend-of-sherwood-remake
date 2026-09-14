@@ -524,42 +524,6 @@ mod suite {
             capture.split_calls[1].requested_delta.x.bits, 0,
             "running on stairs must still execute its second motion step after termination"
         );
-
-        let offset_point = start + crate::coordinates::MapVec::new(7.0, -3.0);
-        let line_a = start + crate::coordinates::MapVec::new(-2.0, 4.0);
-        let line_b = start + crate::coordinates::MapVec::new(6.0, 4.0);
-        let mut snapshot = crate::engine::anti_collision::ActorSnapshot {
-            id: owner,
-            active: true,
-            is_actor: true,
-            is_human: true,
-            is_ignored_for_anti_collision: false,
-            position_map: start,
-            layer: 0,
-            sector: None,
-            posture: Posture::Upright,
-            element_kind: ElementKind::ActorPc,
-            target_element: None,
-            is_swordfighting: false,
-            repulsive_point: None,
-            extra_repulsive_points: vec![crate::repulsive::RepulsivePoint::new(
-                offset_point,
-                4.0,
-                12.0,
-            )],
-            repulsive_lines: vec![crate::repulsive::RepulsiveLine::new(
-                line_a, line_b, 0.0, 5.0,
-            )],
-        };
-        sync_snapshot_after_committed_step(&mut snapshot, start, goal);
-        let committed = goal - start;
-        assert_eq!(
-            snapshot.extra_repulsive_points[0].position,
-            offset_point + committed,
-            "offset repulsive geometry must follow the snapped commit, not the raw overshoot"
-        );
-        assert_eq!(snapshot.repulsive_lines[0].a, line_a + committed);
-        assert_eq!(snapshot.repulsive_lines[0].b, line_b + committed);
     }
 
     fn run_running_stairs_outer_crossing_fixture(

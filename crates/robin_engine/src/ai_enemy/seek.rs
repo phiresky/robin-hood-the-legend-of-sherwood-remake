@@ -308,7 +308,7 @@ impl EnemyAi {
             // is a plain `min + rand() % range` and ignores consideration
             // scores, so courage does not bias this sample. Rust's uniform
             // sample matches. The courage axis itself *is* implemented
-            // (`AiBrain::soldier_profile_courage` / `get_courage`),
+            // (`EnemyAi::get_courage`),
             // wired into the call sites that actually use it
             // (`CHARGE_MIN_COURAGE`, `OBSERVE_SWORDFIGHT` distance,
             // courage_distance, etc).

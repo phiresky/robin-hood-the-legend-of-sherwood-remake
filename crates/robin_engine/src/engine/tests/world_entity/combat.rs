@@ -758,7 +758,9 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
         .enemy_mut()
         .expect("partial-refusal acceptor has EnemyAi");
     accepted_ai.base.me = accepted_id.index();
-    accepted_ai.soldier_profile_rank = ProfileRank::Soldier;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, accepted_ai, |profile| {
+        profile.rank = ProfileRank::Soldier
+    });
     {
         let base = &mut accepted_ai.base;
         base.set_ai_state(AiState::Default);

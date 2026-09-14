@@ -36,14 +36,12 @@ fn sweep_state_uses_angles_returned_by_original_sword_getters() {
             .element_data()
             .direction(),
     );
-    let sweep = engine
+    let sweep = &engine
         .get_entity(attacker)
         .unwrap()
-        .actor_data()
+        .human_data()
         .unwrap()
-        .sweep_state
-        .as_ref()
-        .unwrap();
+        .sword_sweep;
     let five_degrees = f32::from_bits(0x3db2_b8c3);
     assert_eq!(
         sweep.initial_angle.to_bits(),
@@ -53,29 +51,20 @@ fn sweep_state_uses_angles_returned_by_original_sword_getters() {
         sweep.final_angle.to_bits(),
         (direction_angle + five_degrees).to_bits()
     );
-    assert_eq!(sweep.rotation_per_frame.to_bits(), five_degrees.to_bits());
 
+    let initial_angle = sweep.current_angle;
     install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, true);
-    engine
-        .get_entity_mut(attacker)
+    engine.tick_sweep_for(&assets, attacker, false);
+    let advanced_angle = engine
+        .get_entity(attacker)
         .unwrap()
-        .actor_data_mut()
+        .human_data()
         .unwrap()
-        .sweep_state = None;
-    engine.rebind_retained_sweep_to_active_strike(&assets, attacker);
+        .sword_sweep
+        .current_angle;
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .sweep_state
-            .as_ref()
-            .unwrap()
-            .rotation_per_frame
-            .to_bits(),
-        five_degrees.to_bits(),
-        "loaded sweep reconstruction uses the same sword-profile conversion"
+        advanced_angle.to_bits(),
+        (initial_angle + five_degrees).to_bits()
     );
 
     // Keep a common authored angle as a control alongside the one-bit 5° case.
@@ -455,11 +444,34 @@ fn charging_rider_falling_hit_normalizes_non_cardinal_sector_vector() {
             unreachable!()
         };
         attacker.soldier.rider = true;
-        attacker.actor.active_rider_charge = Some(crate::element::ActiveRiderCharge {
-            pending_victims: vec![victim],
-        });
+        attacker.human.sword_sweep.victims = vec![victim];
         attacker.element.set_direction_instantly(11);
     }
+
+    let mut charge = crate::sequence::SequenceElement::new_movement(
+        1,
+        Command::Move,
+        Some(attacker),
+        OrderType::RiderCharging,
+    );
+    charge.orders.push_back(crate::order::Order::new(
+        OrderType::RiderCharging,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    ));
+    let sequence = engine.launch_element(charge);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::default(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
+    assert_eq!(
+        engine.live_actor_animation(attacker),
+        Some(OrderType::RiderCharging)
+    );
 
     engine.initialize_hit_flight(
         &LevelAssets::new(),
@@ -1025,6 +1037,7 @@ fn circle_done_initialization_advances_without_rotating_or_hitting() {
         crate::profiles::WeaponThrustKind::TrueHalfCircle,
     );
 
+    install_test_melee_order(&mut engine, attacker, victim, SwordStrike::F, true);
     engine.initialize_sweep(
         &assets,
         attacker,
@@ -1037,22 +1050,15 @@ fn circle_done_initialization_advances_without_rotating_or_hitting() {
     let initial_angle = engine
         .get_entity(attacker)
         .unwrap()
-        .actor_data()
+        .human_data()
         .unwrap()
-        .sweep_state
-        .as_ref()
-        .unwrap()
+        .sword_sweep
         .current_angle;
 
     engine.tick_sweep_for(&assets, attacker, true);
 
     let attacker_entity = engine.get_entity(attacker).unwrap();
-    let sweep = attacker_entity
-        .actor_data()
-        .unwrap()
-        .sweep_state
-        .as_ref()
-        .expect("true half-circle must retain its initialized sweep");
+    let sweep = &attacker_entity.human_data().unwrap().sword_sweep;
     assert!(
         (sweep.current_angle - (initial_angle + std::f32::consts::FRAC_PI_2)).abs() < f32::EPSILON,
         "circle sword-strike execution advances its internal angle at the DONE-call tail"
@@ -1088,22 +1094,18 @@ fn lateral_done_initialization_does_not_advance_or_hit() {
     let initial_current = engine
         .get_entity(attacker)
         .unwrap()
-        .actor_data()
+        .human_data()
         .unwrap()
-        .sweep_state
-        .as_ref()
-        .unwrap()
+        .sword_sweep
         .current_angle;
     engine.tick_sweep_for(&assets, attacker, true);
 
     let current = engine
         .get_entity(attacker)
         .unwrap()
-        .actor_data()
+        .human_data()
         .unwrap()
-        .sweep_state
-        .as_ref()
-        .expect("lateral victim must remain pending after DONE")
+        .sword_sweep
         .current_angle;
     assert_eq!(
         current, initial_current,

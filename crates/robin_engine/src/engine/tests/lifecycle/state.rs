@@ -636,7 +636,7 @@ fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm(
         .unwrap()
         .execution_frozen = true;
 
-    let (_, outcomes, result) = engine.tick_actor_animation_for(
+    let result = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
@@ -646,7 +646,6 @@ fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm(
     assert_eq!(result.entry_elem_idx, 0);
     assert_eq!(result.order_type, OrderType::WaitingUpright);
     assert_eq!(result.motion, crate::sprite::MotionState::InProgress);
-    assert!(outcomes.seq_advance.is_empty());
     assert_ne!(
         engine
             .get_entity(owner)

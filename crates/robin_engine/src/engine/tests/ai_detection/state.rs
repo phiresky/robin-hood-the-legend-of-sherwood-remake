@@ -289,7 +289,7 @@ fn ambush_idle_reset_preserves_the_low_intelligence_gate() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
-    let assets = engine.test_runtime_assets();
+    let mut assets = engine.test_runtime_assets();
     engine.ai.global.ambush_points = vec![AmbushPoint {
         position: Default::default(),
         direction: 0,
@@ -302,7 +302,9 @@ fn ambush_idle_reset_preserves_the_low_intelligence_gate() {
             .unwrap()
             .enemy_ai_mut()
             .unwrap();
-        enemy.soldier_profile_iq = iq;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, enemy, |profile| {
+            profile.intelligence = iq
+        });
         enemy.base.current_substate = Substate::DefaultInMacro;
         enemy.ambush_point_array_reset = false;
         enemy.ambush_point_status = vec![AmbushPointStatus::Near];
@@ -329,7 +331,7 @@ fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let assets = engine.test_runtime_assets();
+    let mut assets = engine.test_runtime_assets();
     let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("ambush owner exists")
     else {
         panic!("ambush owner changed kind")
@@ -344,7 +346,9 @@ fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
         .expect("ambush owner has enemy AI");
     enemy.base.current_state = AiState::Seeking;
     enemy.base.current_substate = Substate::SeekingSeekpoint;
-    enemy.soldier_profile_iq = 100;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, enemy, |profile| {
+        profile.intelligence = 100
+    });
     enemy.ambush_point_status = vec![AmbushPointStatus::Near];
     engine.ai.global.ambush_points = vec![AmbushPoint {
         position: Position {
@@ -1228,6 +1232,7 @@ fn entering_beggar_registers_every_transition_for_intelligent_lacklandist_seeker
     let low_iq = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let not_seeking = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let wrong_camp = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let mut assets = engine.test_runtime_assets();
 
     for (id, iq, substate) in [
         // Hard difficulty doubles enemy IQ: the recorded boundary has a
@@ -1248,13 +1253,16 @@ fn entering_beggar_registers_every_transition_for_intelligent_lacklandist_seeker
             .ai_brain
             .enemy_mut()
             .expect("test observer must retain enemy AI");
-        ai.soldier_profile_iq = iq;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.intelligence = iq
+        });
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = substate;
     }
 
     crate::engine::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
         &mut engine.world.entities,
+        &assets.profile_manager,
         &engine.mission_domain.diplomacy,
         beggar,
         crate::player_profile::DifficultyLevel::Hard,
@@ -1263,6 +1271,7 @@ fn entering_beggar_registers_every_transition_for_intelligent_lacklandist_seeker
     // same Beggar detectable again.
     crate::engine::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
         &mut engine.world.entities,
+        &assets.profile_manager,
         &engine.mission_domain.diplomacy,
         beggar,
         crate::player_profile::DifficultyLevel::Hard,

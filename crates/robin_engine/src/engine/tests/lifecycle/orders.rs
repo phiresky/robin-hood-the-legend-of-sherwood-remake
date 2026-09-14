@@ -530,7 +530,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
     let mut executed_idle = false;
     let mut forwarded_termination = false;
     for _ in 0..16 {
-        let (_, _, executed) = engine.tick_actor_animation_for(&sim, &assets, animated);
+        let executed = engine.tick_actor_animation_for(&sim, &assets, animated);
         executed_idle |= executed.is_some();
         forwarded_termination |= executed
             .as_ref()
@@ -598,7 +598,7 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
     entity.element_data_mut().sprite.last_action = OrderType::BeingTied;
     entity.element_data_mut().sprite.last_processed_order_id = order_id.get();
 
-    let (_, _, executed) = engine.tick_actor_animation_for(
+    let executed = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
@@ -1163,7 +1163,7 @@ fn selected_beggar_entry_stop_leaves_transient_nonanimation_before_next_idle() {
     // Execute side effects are drained in Rust. Original still has that
     // transition selected here: Wait is postponed behind it and the following
     // selected-PC SelectAction(Beggar) Stop discards the Wait.
-    engine.drain_beggar_wait_handoffs(&sim, &assets, vec![(pc, true)]);
+    engine.execute_beggar_wait_handoffs(&sim, &assets, (pc, true));
 
     assert_eq!(
         engine.actor_order_type(pc),
@@ -1242,7 +1242,7 @@ fn selected_beggar_exit_preserves_action_that_replaced_beggar() {
     let mut assets = assets_with_test_pc_profile();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    engine.drain_beggar_wait_handoffs(&sim, &assets, vec![(pc, false)]);
+    engine.execute_beggar_wait_handoffs(&sim, &assets, (pc, false));
 
     assert_eq!(engine.players.seats[0].selected_action, Action::Net);
     assert_eq!(
@@ -1276,7 +1276,7 @@ fn selected_beggar_exit_clears_action_while_beggar_is_still_selected() {
     let mut assets = assets_with_test_pc_profile();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    engine.drain_beggar_wait_handoffs(&sim, &assets, vec![(pc, false)]);
+    engine.execute_beggar_wait_handoffs(&sim, &assets, (pc, false));
 
     assert_eq!(engine.players.seats[0].selected_action, Action::NoAction);
     assert_eq!(

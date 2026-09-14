@@ -104,8 +104,12 @@ mod tests {
             level: 0,
         };
         let ai = engine.seek_enemy_mut(owner);
-        ai.soldier_profile_rank = ProfileRank::Soldier;
-        ai.soldier_profile_initiative = 0;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = ProfileRank::Soldier
+        });
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.initiative = 0
+        });
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingGetAlertingReportFromCivilianLook;
         ai.base.seek_position = report;
@@ -873,11 +877,14 @@ impl Rendezvous<'_> {
             tracing::trace!("indoor initiative question falls back to the stay-on-post answer");
             return false;
         }
-        self.enemy().soldier_profile_initiative >= 50
+        self.enemy()
+            .profile(&self.assets.profile_manager)
+            .initiative
+            >= 50
     }
 
     fn act_on_civilian_report(&mut self) {
-        match self.enemy().get_rank() {
+        match self.enemy().get_rank(&self.assets.profile_manager) {
             ProfileRank::Officer => {
                 if self.seek_before_alert() {
                     self.seek(

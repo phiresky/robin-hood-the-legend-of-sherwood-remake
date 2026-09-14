@@ -1374,7 +1374,7 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
         engine.publish_selected_order_as_installed(attacker);
 
         let sim = crate::sim_rng::test_context();
-        let (_, _, executed) = engine.tick_actor_animation_for(&sim, &assets, attacker);
+        let executed = engine.tick_actor_animation_for(&sim, &assets, attacker);
         let executed = executed.expect("the selected WaitingSword order must execute");
         assert_eq!(executed.order_type, waiting);
         engine.tick_waiting_sword_execute_for(&sim, &assets, attacker);

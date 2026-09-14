@@ -5,9 +5,7 @@ use crate::element::EntityId;
 /// Original-game scripts used typed opaque handles: null was zero and every
 /// valid object handle was non-null. The Rust VM stores script values as
 /// `i32`, so the upper nibble identifies the object table and the lower 28
-/// bits retain the original zero-based table index. Keeping this outside
-/// [`super::ScriptEffects`] makes the representation independent of queued host
-/// effects and preserves sparse legacy table slots.
+/// bits retain the zero-based table index, preserving sparse table slots.
 #[derive(Debug, Clone, Copy)]
 pub struct ScriptHandleCodec;
 

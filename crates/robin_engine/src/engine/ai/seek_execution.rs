@@ -87,9 +87,11 @@ impl EngineInner {
 
         let hostile =
             self.is_hostile_to_player_camp(self.expect_entity(owner, "seek IQ camp").camp());
-        let iq = self
-            .seek_enemy(owner)
-            .iq_for_difficulty(self.control.sim_config.difficulty, hostile);
+        let iq = self.seek_enemy(owner).iq_for_difficulty(
+            &assets.profile_manager,
+            self.control.sim_config.difficulty,
+            hostile,
+        );
         if i32::from(iq) >= parameters_ai::CHECK_BEGGAR_MIN_IQ
             && !self.seek_enemy(owner).combat_trainer
         {

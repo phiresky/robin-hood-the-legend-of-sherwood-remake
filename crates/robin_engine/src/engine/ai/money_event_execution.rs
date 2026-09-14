@@ -295,7 +295,7 @@ impl EngineInner {
         let wants = i32::from(ai.base.blood_alcohol) > parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
             || (actor.is_active()
                 && !self.entity_data_in_building_sector(actor.element_data())
-                && ai.soldier_profile_money > 0);
+                && ai.profile(&assets.profile_manager).money > 0);
         let angry = if wants {
             let position = self.live_ai_position(self.money_object(owner));
             let camp = actor.camp();
@@ -405,7 +405,7 @@ impl EngineInner {
                     .expect_entity(chief, "money patrol chief")
                     .soldier_data()
                     .is_some()
-                && self.seek_enemy(chief).soldier_profile_rank
+                && self.seek_enemy(chief).profile(&assets.profile_manager).rank
                     == crate::profiles::ProfileRank::Officer
                 && self.live_ai_detects_180(assets, chief, owner)
             {

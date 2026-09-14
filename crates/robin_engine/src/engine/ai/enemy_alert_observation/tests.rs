@@ -6,7 +6,7 @@ use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::profiles::ProfileRank;
 
 fn fixture(state: AiState, substate: Substate) -> (EngineInner, LevelAssets, EntityId, EntityId) {
-    let (mut engine, assets, owner, target) =
+    let (mut engine, mut assets, owner, target) =
         crate::engine::ai::battle_decision_observation_tests::fixture(false);
     let ai = engine
         .world
@@ -17,7 +17,9 @@ fn fixture(state: AiState, substate: Substate) -> (EngineInner, LevelAssets, Ent
     ai.base.primary_target = None;
     ai.current_task_priority = crate::ai_enemy::task_priority::NONE;
     ai.new_task_priority = crate::ai_enemy::task_priority::STRANGE_THING;
-    ai.soldier_profile_rank = ProfileRank::Soldier;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+        profile.rank = ProfileRank::Soldier
+    });
     (engine, assets, owner, target)
 }
 
@@ -257,7 +259,7 @@ fn tower_alert_selects_rank_branch_and_preserves_running_macro() {
         ProfileRank::Officer,
         ProfileRank::Knight,
     ] {
-        let (mut engine, assets, owner, caller) =
+        let (mut engine, mut assets, owner, caller) =
             fixture(AiState::Default, Substate::DefaultOnPost);
         let position = Position {
             x: 500.0,
@@ -268,7 +270,9 @@ fn tower_alert_selects_rank_branch_and_preserves_running_macro() {
             .world
             .entities
             .expect_enemy_ai_mut(owner, format_args!("tower alert rank"));
-        ai.soldier_profile_rank = rank;
+        crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
+            profile.rank = rank
+        });
         ai.base.macro_in_progress = true;
         engine.execute_ai_enemy_observation(
             &crate::sim_rng::test_context(),
