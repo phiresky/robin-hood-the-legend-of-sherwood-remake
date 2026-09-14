@@ -4516,20 +4516,15 @@ impl EngineInner {
         }
         let mut deferred = MovementDeferred::default();
 
-        // Iterate a stable creation-order ID list instead of holding one
-        // mutable iterator borrow across the whole pass. This lets each actor
-        // sample its SEEK target directly from the entity table immediately
-        // before its own movement. Mutations by an earlier-created actor are
-        // therefore visible, while a later-created target still exposes its
-        // pre-movement state, matching the original engine update loop.
-        let movement_actor_ids: Vec<_> = self
-            .world
-            .entities
-            .actors()
-            .filter(|(id, _)| EntityId::from(*id) == owner)
-            .map(|(id, _)| id)
-            .collect();
-        for actor_id in movement_actor_ids {
+        // The coordinator already chose the one live owner. Resolve its typed
+        // actor ID directly instead of scanning and allocating an actor list.
+        let actor_id = match owner {
+            EntityId::Pc(id) => Some(crate::entity_id::ActorId::Pc(id)),
+            EntityId::Soldier(id) => Some(crate::entity_id::ActorId::Soldier(id)),
+            EntityId::Civilian(id) => Some(crate::entity_id::ActorId::Civilian(id)),
+            _ => None,
+        };
+        if let Some(actor_id) = actor_id.filter(|_| self.world.entities.get(owner).is_some()) {
             self.tick_one_movement_actor(
                 sim,
                 assets,
@@ -5886,10 +5881,8 @@ impl EngineInner {
         false
     }
 
-    /// Movement Execute body for the single movement owner. The caller's
-    /// actor-id collection filters the entity table down to `actor_id ==
-    /// owner`, so this runs at most once per `tick_entity_movement_owner`
-    /// call; every early `return` is a per-actor "done" exit.
+    /// Movement Execute body for the single movement owner. Every early
+    /// `return` is a per-actor "done" exit.
     fn tick_one_movement_actor(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
