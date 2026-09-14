@@ -17,13 +17,8 @@ fn make_button() -> WidgetButton {
     let mut btn = WidgetButton::new(1);
     btn.base
         .create("Test", ScreenBBox::from_coords(0.0, 0.0, 100.0, 30.0), 0);
-    // Use a bitmap renderer with a matching bbox for hit testing.
-    btn.base.renderer = super::super::WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
-        base: crate::ui::RendererBase {
-            bbox: ScreenBBox::from_coords(0.0, 0.0, 100.0, 30.0),
-            ..Default::default()
-        },
-    });
+    // Enable asset-backed hit testing.
+    btn.base.appearance = Some(crate::ui::WidgetAppearance::default());
     btn
 }
 

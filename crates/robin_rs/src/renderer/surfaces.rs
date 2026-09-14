@@ -334,7 +334,7 @@ impl Renderer {
 
     /// Build an `AlphaMask` from a managed surface — one bit per pixel,
     /// flagging non-transparent (`pixel != color_key`) pixels. Used by
-    /// the UI hit-test path (`RendererBase::is_real_point`) so widget
+    /// the UI hit-test path (`WidgetAppearance::is_real_point`) so widget
     /// clicks on visually-transparent corners of round/non-rectangular
     /// sprites get rejected via a viewport pixel sample.
     pub fn build_alpha_mask(&self, id: u32) -> Option<AlphaMask> {

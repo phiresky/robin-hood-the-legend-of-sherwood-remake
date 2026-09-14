@@ -200,10 +200,6 @@ pub struct WidgetListbox<T = ()> {
     /// First_visible at drag start, for computing drag delta.
     drag_start_first: usize,
 
-    /// Double-buffered state tracking for probe_refresh.
-    remember: [[u16; 6]; 2],
-    force_refresh: [bool; 2],
-
     /// Column layout for multi-column rendering. Empty by default,
     /// meaning the list renders single-column. Populated via
     /// [`WidgetListbox::set_columns`] for pipe-delimited multi-column
@@ -227,8 +223,6 @@ impl<T> Default for WidgetListbox<T> {
             item_height: 16.0,
             drag_start_y: 0.0,
             drag_start_first: 0,
-            remember: [[0; 6]; 2],
-            force_refresh: [false; 2],
             column_layout: ColumnLayout::default(),
         }
     }

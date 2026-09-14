@@ -160,7 +160,7 @@ impl WidgetToggleButton {
     /// against any attached alpha mask.
     ///
     /// `WidgetBase::is_inside` does both halves: bbox via
-    /// `BBox2D::is_boxed_point`, then `RendererBase::is_real_point`
+    /// `BBox2D::is_boxed_point`, then `WidgetAppearance::is_real_point`
     /// rejects clicks on transparent pixels when an `AlphaMask` is
     /// attached (the wiring layer — `widget_bridge::attach_alpha_masks` —
     /// bakes one for any widget whose `resource_id` resolves to a known
@@ -462,21 +462,13 @@ impl WidgetToggleButton {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::{RendererBase, RendererBitmap, UiKeyboard};
-    use crate::widget::WidgetRenderer;
+    use crate::ui::UiKeyboard;
 
     fn test_widget() -> WidgetToggleButton {
         let mut w = WidgetToggleButton::new(1);
         w.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 10.0, 10.0);
-        // No renderer attached → `is_real_point` would return false and
-        // `is_inside` would fail. Give it a bitmap renderer with the
-        // same bbox so hit-testing succeeds.
-        w.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
-            base: RendererBase {
-                bbox: w.base.bbox,
-                ..Default::default()
-            },
-        });
+        // Asset-backed widgets participate in hit testing.
+        w.base.appearance = Some(crate::ui::WidgetAppearance::default());
         w
     }
 

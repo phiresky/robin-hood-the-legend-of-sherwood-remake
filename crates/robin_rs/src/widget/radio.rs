@@ -311,7 +311,7 @@ impl WidgetRadioButton {
     }
 
     /// Hit-test for the focus manager: bbox + per-pixel transparency
-    /// via `WidgetBase::is_inside` → `RendererBase::is_real_point`
+    /// via `WidgetBase::is_inside` → `WidgetAppearance::is_real_point`
     /// (samples an `AlphaMask` baked from the bound sprite if the
     /// wiring layer attached one — see
     /// `widget_bridge::attach_alpha_masks`). Falls back to bbox-only

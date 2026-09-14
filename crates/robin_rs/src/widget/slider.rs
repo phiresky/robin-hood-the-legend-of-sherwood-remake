@@ -330,19 +330,13 @@ impl WidgetSlider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::{RendererBase, RendererBitmap, UiKeyboard};
-    use crate::widget::WidgetRenderer;
+    use crate::ui::UiKeyboard;
 
     fn make_slider(step_count: u32) -> WidgetSlider {
         let mut slider = WidgetSlider::new(7);
         let bbox = ScreenBBox::from_coords(0.0, 0.0, 100.0, 10.0);
         slider.base.bbox = bbox;
-        slider.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
-            base: RendererBase {
-                bbox,
-                ..Default::default()
-            },
-        });
+        slider.base.appearance = Some(crate::ui::WidgetAppearance::default());
         slider.set_range(0.0, 9.0);
         slider.set_step_count(step_count);
         slider
