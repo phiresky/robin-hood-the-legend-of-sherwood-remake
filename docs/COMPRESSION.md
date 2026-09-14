@@ -4220,26 +4220,78 @@ below).
   music output (kept off, upstream default); `--disable-intrinsics
   --disable-rtcd` changes every output. Encodes are therefore byte-reproducible
   only for the same toolchain on the same SIMD dispatch path (e.g. AVX2 hosts).
-- Integration: FFmpeg (Debian 7.1.5, dynamically linked) runs with the 1.6.1
-  directory first on `LD_LIBRARY_PATH` (same soname as the system 1.5.2).
-  `convert_datadir --libopus-dir` is required for `--audio-format opus`; it
-  loads that `libopus.so.0`, requires `opus_get_version_string()` to be
-  `libopus 1.6.1`, and for every FFmpeg process reads glibc's loader trace
-  (`LD_DEBUG=libs` into a private `LD_DEBUG_OUTPUT` file) and requires that
-  exactly that file was initialized. The system library, an `LD_PRELOAD` of
-  it, a static or setuid FFmpeg, or a missing flag all abort the conversion.
-  `scripts/build_web_shipping_datadir.sh` and `scripts/release.sh` pass and
-  check the toolchain directory like `cjxl`.
+- Encoder: opus-tools 0.2 `opusenc` on libopusenc 0.3, both built against that
+  libopus with an rpath, in `deployment-toolchain/opus-tools-0.2` (with libogg
+  1.3.6 and opusfile 0.12, `--disable-http`). Sources, SHA-256 verified:
+  `opus-tools-0.2.tar.gz` `b4e56cb0…ff86`, `opusfile-0.12.tar.gz`
+  `118d8601…550b` (xiph `SHA256SUMS.txt`), `libogg-1.3.6.tar.gz`
+  `83e67047…4638` (xiph ogg `SHA256SUMS`), `libopusenc-0.3.tar.gz`
+  `f616d3af…642c` (not in xiph's list; matches the GitHub release digest).
+  FFmpeg is used only to decode sources to 32-bit float PCM WAV (the Demo's
+  `.wav` music and speech are Ogg Vorbis inside).
+- Verification: `convert_datadir --opus-tools-dir` is required for
+  `--audio-format opus`. It runs `bin/opusenc --version` and requires
+  `(using libopus 1.6.1)`, takes the one `libopus.so*` that process initialized
+  from glibc's loader trace (`LD_DEBUG=libs` into a private `LD_DEBUG_OUTPUT`
+  file), loads that file and requires `opus_get_version_string()` to be
+  `libopus 1.6.1`, and repeats the loader check for every opusenc process.
+  A missing flag, `LD_LIBRARY_PATH` pointing at the system 1.5.2 (overrides
+  opusenc's RUNPATH; opusenc then reports 1.5.2), or a wrapper that loads no
+  libopus all abort the conversion. `scripts/build_web_shipping_datadir.sh`
+  and `scripts/release.sh` require the opus-tools prefix and its version line
+  like `cjxl`.
+- Reproducibility: opusenc's packets, granules and `OpusHead` are identical
+  across runs and between file and pipe input; only its random Ogg serial
+  differs, which the converter's remux (fixed serial, canonical `OpusTags`)
+  removes. `opus_transcode_is_byte_deterministic` checks two encodes.
+- The first implementation on this branch encoded through FFmpeg's libopus
+  wrapper with the 1.6.1 library on `LD_LIBRARY_PATH`; it was replaced by
+  opusenc after listening (below).
 
 ### Effective settings
 
-No `-application` is passed any more: FFmpeg creates the encoder with its
-default `OPUS_APPLICATION_AUDIO` (libopus has no "auto" application), and
-signal type, bandwidth and SILK/CELT/hybrid selection stay `OPUS_AUTO`. VBR
-on, complexity 10, 20 ms frames. Bitrates: voice 24 kbit/s, effects
-48 → 40 kbit/s, music 48 → 40 kbit/s. The 22,050 Hz game WAVs make FFmpeg feed
-libopus 24 kHz (12 kHz audio bandwidth), as before; music masters are 44.1 kHz
-and encode at 48 kHz.
+opusenc runs with `--bitrate N --vbr --comp 10 --framesize 20
+--discard-comments` and no `--speech`/`--music`: signal type `OPUS_AUTO`.
+libopusenc always creates the libopus encoder at 48 kHz with
+`OPUS_APPLICATION_AUDIO` and resamples other input rates with its speex
+resampler (quality 5), so the 22,050 Hz game WAVs now code at 48 kHz with
+bandwidth chosen by libopus (hybrid SWB/FB for speech) instead of FFmpeg's
+24 kHz encoder rate (SILK WB / hybrid SWB). Bandwidth and SILK/CELT/hybrid
+selection stay automatic. Bitrates: voice 24 kbit/s, effects 48 → 40 kbit/s,
+music 48 → 40 kbit/s. The `OpusHead` records the source rate.
+
+### Voice mode choice (listening, 2026-09-14)
+
+On libopus 1.6.1 at 24 kbit/s: FFmpeg auto (application audio), FFmpeg
+`-application voip`, opusenc `--speech` and opusenc auto all sounded fine on
+the flagged and typical exclamations (`/tmp/opus-comparison`); opusenc auto
+was chosen. The metrics disagreed rather than ranked: e.g. `X_PC_LM_E05_V02`
+FFmpeg voip 0.46 error / 6.5 dB SI-SDR, FFmpeg auto 4.20 / 13.3 dB, opusenc
+3.92 / 13.3 dB. FFmpeg auto and voip picked identical packet modes and
+bandwidths and near-identical band energies there; the remaining encoder-side
+difference is VOIP's input filter. libopus 1.6.1 `src/opus_encoder.c`:
+
+- Input filter: VOIP only applies the variable high-pass (`:1980-1982`,
+  `hp_cutoff(pcm, cutoff_Hz, …)`, cutoff smoothed from SILK between
+  `VARIABLE_HP_MIN_CUTOFF_HZ 60` and `VARIABLE_HP_MAX_CUTOFF_HZ 100`,
+  reset to 60 Hz in CELT-only frames, `:1969-1975`); every other application,
+  including RESTRICTED_LOWDELAY, uses `dc_reject(pcm, 3, …)` (`:2008`).
+- `voice_est` (`:1413-1426`): `OPUS_SIGNAL_VOICE` → 127, `OPUS_SIGNAL_MUSIC`
+  → 0; in signal auto the analyzer's `voice_ratio*327>>8` (from music
+  probability, `:1282-1291`; analysis only at complexity ≥ 7 and 16–48 kHz,
+  `:1252`), capped at 115 for AUDIO and uncapped for VOIP; without analysis
+  115 for VOIP, 48 otherwise.
+- VOIP biases SILK: `threshold += 8000` on the SILK/CELT mode threshold
+  (`:1503-1504`; base thresholds voice 64000 / music 10000 mono, `:180-184`).
+- `voice_est` also interpolates the stereo threshold (`:1443`) and the
+  bandwidth thresholds (`:1601-1602`; SWB at 13.5 kbit/s voice vs 11 kbit/s
+  music, `:151-173`), and gates SILK for FEC (`:1517`) and DTX (`:1521`).
+- RESTRICTED_LOWDELAY: CELT only (`:1470-1472`) and no delay compensation
+  (`:1903-1904`, lookahead without the 4 ms `Fs/250`, `:3090-3091`).
+  `OPUS_SET_APPLICATION` accepts VOIP/AUDIO/LOWDELAY and only before the first
+  frame (`:2794-2796`); 1.6's RESTRICTED_SILK/CELT are create-time only.
+- `OPUS_SET_SIGNAL` (`:3062-3069`) only overrides `voice_est`; the input filter
+  and the VOIP SILK bias depend on the application alone.
 
 ### Comparison on the Demo corpus
 
@@ -4282,6 +4334,36 @@ comparable items; the largest regressions are
 `fx_0470` (0.77 → 2.41) and `fx_0243` (0.42 → 1.97). The worst absolute effect
 errors (`snd_036`, `fx_0289`, `fx_0446`) are unchanged from 1.5.2.
 
+### opusenc auto vs FFmpeg libopus (both 1.6.1, 24/40/40 kbit/s)
+
+Same 1,095 Demo assets (music with the corrected mapping), exact converter
+bytes, same metrics as above. FFmpeg column: the table above (application
+audio, encoder Fs 24 kHz for the 22,050 Hz sources). opusenc column: the
+shipped path (ffmpeg float WAV decode, opusenc auto, encoder Fs 48 kHz).
+
+| Kind | FFmpeg bytes | opusenc bytes | err median / p95 (FFmpeg → opusenc) | SI-SDR median (FFmpeg → opusenc) |
+|---|---|---|---|---|
+| Voice (606) | 3,372,238 | 3,688,708 (+9.4%) | 0.541 / 1.471 → 0.524 / 1.311 | 12.99 → 12.99 dB |
+| Effect (485) | 2,161,300 | 2,322,502 (+7.5%) | 0.450 / 3.024 → 0.441 / 2.887 | 11.51 → 12.95 dB |
+| Music (4) | 1,588,018 | 1,590,176 (+0.1%) | 2.195 / 6.367 → 2.173 / 6.421 | 15.31 → 15.40 dB |
+| All | 7,121,556 | 7,601,386 (+6.7%) | 0.518 / 2.194 → 0.507 / 1.962 | 12.56 → 12.99 dB |
+
+opusenc is larger for the short 22,050 Hz voice and effect clips, not better
+compressed: packet counts are identical, but libopusenc's 48 kHz encoder
+chooses full-band CELT/hybrid where FFmpeg's 24 kHz encoder chose SILK WB or
+hybrid SWB (e.g. `X_SD_BW_E49_V00`: FFmpeg 53 hybrid-SWB + 23 CELT-SWB
+packets, 5,110 B; opusenc 76 CELT-FB packets, 6,828 B). Aggregate measured
+quality is equal or slightly better; opusenc has lower error on 333/605 voice
+and 205/451 effect items. Flagged regressions to listen to: effect
+`jingle_03` (44.1 kHz stereo, 0.738 → 7.540; pair in
+`/tmp/opus-comparison/effect-flag-opusenc-jingle_03`), voice
+`X_PC_FT_E07_V01` (0.586 → 2.256), `X_SD_BW_E49_V00` (0.500 → 1.969),
+`X_CV_CH_E02_V00` (0.453 → 1.750); music is effectively unchanged
+(`Leicester_Night` 6.367 → 6.421). TODO: if the +9% voice/effect bytes
+matter, test feeding opusenc at a lower `--bitrate` or capping bandwidth
+(`OPUS_SET_MAX_BANDWIDTH` is not exposed by opusenc 0.2) rather than
+returning to FFmpeg.
+
 ### Lossless music remaster mapping
 
 `datadirs/music-rhmods-lossless/mapping.json` (untracked, backed up as
@@ -4323,14 +4405,20 @@ and need their own verified sections.
 
 ### Demo web conversion
 
-`scripts/build_web_shipping_datadir.sh` on the Demo (libopus 1.6.1, auto mode,
-24/40/40 kbit/s, corrected mapping): `audio/` 6,944,920 B vs published v16r2
-7,168,560 B (−223,640 B, −3.1%). 1,095 encodes; 19 bundles hold 1,054 files
-(5,797,008 B); two standalone assets remain: `Leicester_Day` (587,063 B, shared
-content-addressed by `Musics/Menu` and `Musics/Leicester_D`) and
-`Leicester_Night` (553,405 B). The `menu` bundle is 3,011 B and now holds only
-the eight `Sounds/Menu` effects (v16r2: 3,452 B); the menu music is the shared
-`Leicester_Day` asset. The `music` bundle (447,550 B) holds `Cast_orange` and
-`Castles_red - Alternative`. An intermediate run with the old file-name mapping
-gave 6,549,473 B, because the 47 s `Menü-Soundtrack` (241,774 B) stood in for
-the 114 s menu piece and the 36.9 s `Castles_red` for the 49.8 s castle fight.
+`scripts/build_web_shipping_datadir.sh` on the Demo with the shipped path
+(opusenc auto on libopus 1.6.1, 24/40/40 kbit/s, corrected mapping): `audio/`
+7,410,463 B vs published v16r2 7,168,560 B (+241,903 B, +3.4%). 1,095
+encodes; 19 bundles hold 1,054 files (6,259,959 B); two standalone assets
+remain: `Leicester_Day` (588,505 B, shared content-addressed by `Musics/Menu`
+and `Musics/Leicester_D`) and `Leicester_Night` (554,555 B). The `menu` bundle
+is 4,914 B and holds only the eight `Sounds/Menu` effects (v16r2: 3,452 B);
+the menu music is the shared `Leicester_Day` asset. The `music` bundle
+(447,108 B) holds `Cast_orange` and `Castles_red - Alternative`.
+`datadir.bin` 3,698,289 B.
+
+Intermediate runs on this branch: FFmpeg libopus 1.6.1 with the same bitrates
+and corrected mapping gave 6,944,920 B (−3.1% vs v16r2); the opusenc switch
+costs +465,543 B (+6.7%, matching the per-asset comparison above). FFmpeg with
+the old file-name mapping gave 6,549,473 B, because the 47 s
+`Menü-Soundtrack` (241,774 B) stood in for the 114 s menu piece and the 36.9 s
+`Castles_red` for the 49.8 s castle fight.

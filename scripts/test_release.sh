@@ -38,10 +38,12 @@ fake() {
     chmod +x "$path"
 }
 fake "$toolchain/wasm-bindgen-0.2.128/bin/wasm-bindgen" </dev/null
-# Datadir rebuilds require libopus 1.6.1 and the lossless music WAV directory
-# to exist; the real version and mapping checks live in convert_datadir.
-mkdir -p "$toolchain/libopus-1.6.1/lib" "$work/main/datadirs/music-rhmods-lossless"
-touch "$toolchain/libopus-1.6.1/lib/libopus.so.0"
+# Datadir rebuilds require opusenc on libopus 1.6.1 and the lossless music WAV
+# directory; the real loader and mapping checks live in convert_datadir.
+mkdir -p "$toolchain/opus-tools-0.2/bin" "$work/main/datadirs/music-rhmods-lossless"
+fake "$toolchain/opus-tools-0.2/bin/opusenc" <<'EOF'
+echo "opusenc opus-tools 0.2 (using ${FAKE_OPUSENC_LIBOPUS:-libopus 1.6.1})"
+EOF
 fake "$bin/git" <<'EOF'
 case "$*" in
     "status --porcelain --untracked-files=no") [[ -z ${FAKE_DIRTY:-} ]] || echo ' M crates/robin_rs/src/lib.rs' ;;
@@ -145,12 +147,17 @@ expect_status 0
 expect 'build_web_shipping_datadir.sh'
 reject 'building a new datadir generation'
 
-# 3b. A rebuild without the pinned libopus 1.6.1 is refused before converting.
-mv "$toolchain/libopus-1.6.1" "$toolchain/libopus-moved"
+# 3b. A rebuild without opusenc, or with one on another libopus, is refused
+# before converting.
+mv "$toolchain/opus-tools-0.2" "$toolchain/opus-tools-moved"
 release --web-only --rebuild-datadir --dry-run
-mv "$toolchain/libopus-moved" "$toolchain/libopus-1.6.1"
+mv "$toolchain/opus-tools-moved" "$toolchain/opus-tools-0.2"
 expect_status 1
-expect 'libopus-1.6.1/lib/libopus.so.0'
+expect 'opus-tools-0.2/bin/opusenc'
+reject 'build_web_shipping_datadir.sh'
+FAKE_OPUSENC_LIBOPUS='libopus 1.5.2' release --web-only --rebuild-datadir --dry-run
+expect_status 1
+expect 'does not report libopus 1.6.1'
 reject 'build_web_shipping_datadir.sh'
 
 # 4. Dirty tree and a HEAD that is not main are refused before any work.

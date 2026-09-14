@@ -186,10 +186,12 @@ release_web() {
     if ((rebuild)); then
         step "web: build and deploy a new datadir generation"
         command -v cjxl >/dev/null || die "cjxl not on PATH (put the static cjxl binary in $toolchain/bin)"
-        # The converter itself verifies the loaded version string and that
-        # ffmpeg resolved exactly this file (docs/COMPRESSION.md, 2026-09-14).
-        export ROBIN_LIBOPUS_DIR=$toolchain/libopus-1.6.1/lib
-        [[ -e $ROBIN_LIBOPUS_DIR/libopus.so.0 ]] || die "missing $ROBIN_LIBOPUS_DIR/libopus.so.0 (build libopus 1.6.1 into $toolchain/libopus-1.6.1)"
+        # Opus is encoded by opusenc on libopus 1.6.1; the converter itself
+        # verifies the loaded library (docs/COMPRESSION.md, 2026-09-14).
+        export ROBIN_OPUS_TOOLS_DIR=$toolchain/opus-tools-0.2
+        [[ -x $ROBIN_OPUS_TOOLS_DIR/bin/opusenc ]] || die "missing $ROBIN_OPUS_TOOLS_DIR/bin/opusenc (build opus-tools 0.2 on libopus 1.6.1 into $toolchain)"
+        "$ROBIN_OPUS_TOOLS_DIR/bin/opusenc" --version | grep -qF '(using libopus 1.6.1)' ||
+            die "$ROBIN_OPUS_TOOLS_DIR/bin/opusenc does not report libopus 1.6.1"
         export ROBIN_LOSSLESS_MUSIC_DIR=$main_repo/datadirs/music-rhmods-lossless
         [[ -d $ROBIN_LOSSLESS_MUSIC_DIR ]] || die "missing lossless music WAV directory $ROBIN_LOSSLESS_MUSIC_DIR (mapping: convert_datadir/lossless_music_mapping.json)"
         run scripts/build_web_shipping_datadir.sh "$datadir_source" "$stage/demo-converter-output"

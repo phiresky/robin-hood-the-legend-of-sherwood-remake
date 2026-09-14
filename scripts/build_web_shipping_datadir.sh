@@ -22,10 +22,11 @@ fi
 # breaks framebuffer parity, so native shipping keeps exact RLE).
 # The RLE atlas encode shells out to `cjxl`, which must be on PATH.
 #
-# Opus audio must be encoded by libopus 1.6.1 (docs/COMPRESSION.md,
-# 2026-09-14). The converter loads $libopus_dir/libopus.so.0, requires its
-# version string, and checks from the loader trace that every ffmpeg process
-# really used that file; any other libopus fails the conversion.
+# Opus audio is encoded by opus-tools' opusenc on libopus 1.6.1
+# (docs/COMPRESSION.md, 2026-09-14); ffmpeg only decodes sources to PCM. The
+# converter requires `$opus_tools_dir/bin/opusenc --version` to report libopus
+# 1.6.1, checks that library's version string, and verifies from the loader
+# trace that every opusenc process really used it.
 #
 # Music encodes from the lossless remaster WAVs. The directory is passed
 # explicitly: the converter used to look it up relative to the current
@@ -35,11 +36,15 @@ fi
 # by the sha256 of the datadir's music files; the drop's own mapping.json is
 # superseded and ignored.
 toolchain=${ROBIN_RELEASE_TOOLCHAIN:-$HOME/.local/share/robin_hood/deployment-toolchain}
-libopus_dir=${ROBIN_LIBOPUS_DIR:-$toolchain/libopus-1.6.1/lib}
+opus_tools_dir=${ROBIN_OPUS_TOOLS_DIR:-$toolchain/opus-tools-0.2}
 main_repo=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
 lossless_music_dir=${ROBIN_LOSSLESS_MUSIC_DIR:-$main_repo/datadirs/music-rhmods-lossless}
-if [[ ! -e "$libopus_dir/libopus.so.0" ]]; then
-    echo "missing $libopus_dir/libopus.so.0 (build libopus 1.6.1 into the toolchain or set ROBIN_LIBOPUS_DIR)" >&2
+if [[ ! -x "$opus_tools_dir/bin/opusenc" ]]; then
+    echo "missing $opus_tools_dir/bin/opusenc (build opus-tools 0.2 on libopus 1.6.1 into the toolchain or set ROBIN_OPUS_TOOLS_DIR)" >&2
+    exit 1
+fi
+if ! "$opus_tools_dir/bin/opusenc" --version | grep -qF '(using libopus 1.6.1)'; then
+    echo "$opus_tools_dir/bin/opusenc does not report libopus 1.6.1: $("$opus_tools_dir/bin/opusenc" --version | head -n 1)" >&2
     exit 1
 fi
 if [[ ! -d "$lossless_music_dir" ]]; then
@@ -51,7 +56,7 @@ target/release/convert_datadir \
     --input "$source_datadir" \
     --output "$output_dir" \
     --format shipping \
-    --libopus-dir "$libopus_dir" \
+    --opus-tools-dir "$opus_tools_dir" \
     --lossless-music-dir "$lossless_music_dir" \
     --map-format jxl-q80 \
     --interface-image-format jxl-q80 \

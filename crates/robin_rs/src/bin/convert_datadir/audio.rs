@@ -46,9 +46,9 @@ pub(super) enum AudioKind {
 }
 
 impl AudioKind {
-    /// Target VBR bitrate. Everything else (application, signal type,
-    /// bandwidth, SILK/CELT/hybrid mode) stays on the libopus/FFmpeg defaults:
-    /// see `transcode_audio_to_opus` and docs/COMPRESSION.md (2026-09-14).
+    /// Target opusenc VBR bitrate. Everything else (signal type, bandwidth,
+    /// SILK/CELT/hybrid mode) stays on the opusenc/libopus defaults: see
+    /// `transcode_audio_to_opus` and docs/COMPRESSION.md (2026-09-14).
     pub(super) fn bitrate_kbps(self) -> u32 {
         match self {
             Self::Voice => 24,
@@ -65,72 +65,82 @@ impl AudioKind {
 /// content-addressed, so a different libopus silently changes every audio
 /// chunk hash (and quality); the converter refuses to run with anything else.
 pub(super) const REQUIRED_LIBOPUS_VERSION: &str = "libopus 1.6.1";
+/// What `opusenc --version` must report about the libopus it runs on.
+const REQUIRED_OPUSENC_LIBOPUS: &str = "(using libopus 1.6.1)";
 
 #[derive(Debug)]
 pub(super) struct OpusToolchain {
-    /// Directory placed first on FFmpeg's `LD_LIBRARY_PATH`.
-    lib_dir: PathBuf,
-    /// Canonical path of the verified `libopus.so.0`.
+    /// Canonical path of opus-tools' `opusenc` (built against libopusenc and
+    /// the pinned libopus, see docs/COMPRESSION.md 2026-09-14).
+    opusenc: PathBuf,
+    /// Canonical path of the verified `libopus.so.0` that opusenc loads.
     library: PathBuf,
 }
 
 static OPUS_TOOLCHAIN: std::sync::OnceLock<OpusToolchain> = std::sync::OnceLock::new();
 
-/// Verify and select the libopus used by every subsequent Opus encode.
+/// Verify and select the opusenc used by every subsequent Opus encode.
 ///
-/// Loads `<lib_dir>/libopus.so.0` in-process and requires
-/// `opus_get_version_string()` to be [`REQUIRED_LIBOPUS_VERSION`], then runs
-/// FFmpeg once against it and requires the dynamic loader to have resolved
-/// exactly that file (see [`run_ffmpeg_with_verified_libopus`], which repeats
-/// the loader check for every encode).
-pub(super) fn configure_opus_toolchain(lib_dir: &Path) -> Result<()> {
-    let candidate = lib_dir.join("libopus.so.0");
-    let library = fs::canonicalize(&candidate)
-        .with_context(|| format!("resolve libopus {}", candidate.display()))?;
+/// Runs `<opus_tools_dir>/bin/opusenc --version` and requires it to report
+/// [`REQUIRED_OPUSENC_LIBOPUS`]; from glibc's loader trace takes the one
+/// `libopus.so.0` that process initialized, loads that file in-process and
+/// requires `opus_get_version_string()` to be [`REQUIRED_LIBOPUS_VERSION`].
+/// Every later encode repeats the loader check against that exact file (see
+/// [`run_verified_opusenc`]).
+pub(super) fn configure_opus_toolchain(opus_tools_dir: &Path) -> Result<()> {
+    let candidate = opus_tools_dir.join("bin").join("opusenc");
+    let opusenc = fs::canonicalize(&candidate)
+        .with_context(|| format!("resolve opusenc {}", candidate.display()))?;
+    let (probe, loaded) = run_with_loader_trace(Command::new(&opusenc).arg("--version"))?;
+    let version_line = String::from_utf8_lossy(&probe.stdout)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    anyhow::ensure!(
+        probe.status.success() && version_line.contains(REQUIRED_OPUSENC_LIBOPUS),
+        "{} --version reports {version_line:?} ({}); web Opus encodes require {REQUIRED_OPUSENC_LIBOPUS:?}",
+        opusenc.display(),
+        probe.status
+    );
+    let library = match loaded.iter().collect::<Vec<_>>().as_slice() {
+        [single] => (*single).clone(),
+        other => bail!(
+            "{} must load exactly one libopus.so; loader trace shows {other:?} \
+             (a static or setuid opusenc cannot be verified)",
+            opusenc.display()
+        ),
+    };
     let version = libopus_version_string(&library)?;
     anyhow::ensure!(
         version == REQUIRED_LIBOPUS_VERSION,
-        "{} reports {version:?}; web Opus encodes require {REQUIRED_LIBOPUS_VERSION:?}",
+        "{} (loaded by opusenc) reports {version:?}; web Opus encodes require {REQUIRED_LIBOPUS_VERSION:?}",
         library.display()
     );
-    let lib_dir = fs::canonicalize(lib_dir)
-        .with_context(|| format!("resolve libopus directory {}", lib_dir.display()))?;
-    let toolchain = OpusToolchain { lib_dir, library };
-    // Probe FFmpeg itself before the first real encode, so a missing libopus
-    // encoder or an ignored LD_LIBRARY_PATH fails at startup.
-    let probe = run_ffmpeg_with_verified_libopus(
-        &toolchain,
-        Command::new("ffmpeg").args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-h",
-            "encoder=libopus",
-        ]),
-    )?;
-    anyhow::ensure!(
-        probe.status.success()
-            && String::from_utf8_lossy(&probe.stdout).contains("Encoder libopus"),
-        "ffmpeg has no libopus encoder ({}): {}",
-        probe.status,
-        String::from_utf8_lossy(&probe.stderr).trim()
-    );
-    let library_sha256 = {
+    let sha256 = |path: &Path| -> Result<String> {
         use sha2::{Digest as _, Sha256};
-        hex::encode(Sha256::digest(fs::read(&toolchain.library)?))
+        Ok(hex::encode(Sha256::digest(
+            fs::read(path).with_context(|| format!("read {}", path.display()))?,
+        )))
     };
     tracing::info!(
-        version,
-        library = %toolchain.library.display(),
-        library_sha256,
-        "verified libopus for Opus encodes"
+        opusenc = %opusenc.display(),
+        opusenc_version = version_line,
+        opusenc_sha256 = sha256(&opusenc)?,
+        libopus = %library.display(),
+        libopus_version = version,
+        libopus_sha256 = sha256(&library)?,
+        "verified opusenc and libopus for Opus encodes"
     );
+    let toolchain = OpusToolchain { opusenc, library };
     match OPUS_TOOLCHAIN.get() {
-        Some(existing) if existing.library == toolchain.library => Ok(()),
+        Some(existing)
+            if existing.opusenc == toolchain.opusenc && existing.library == toolchain.library =>
+        {
+            Ok(())
+        }
         Some(existing) => bail!(
-            "libopus already configured as {}, refusing to switch to {}",
-            existing.library.display(),
-            toolchain.library.display()
+            "Opus toolchain already configured as {existing:?}, refusing to switch to {toolchain:?}"
         ),
         None => {
             // A concurrent identical configuration is harmless.
@@ -162,34 +172,41 @@ fn libopus_version_string(library: &Path) -> Result<String> {
 fn configured_opus_toolchain() -> Result<&'static OpusToolchain> {
     OPUS_TOOLCHAIN.get().with_context(|| {
         format!(
-            "Opus encoding requires a verified {REQUIRED_LIBOPUS_VERSION} \
-             (pass --libopus-dir <dir containing libopus.so.0>)"
+            "Opus encoding requires a verified opusenc on {REQUIRED_LIBOPUS_VERSION} \
+             (pass --opus-tools-dir <dir containing bin/opusenc>)"
         )
     })
 }
 
-/// Run FFmpeg with the verified libopus first on `LD_LIBRARY_PATH`, and prove
-/// from glibc's loader trace (`LD_DEBUG=libs`, written to a private
-/// `LD_DEBUG_OUTPUT` file so FFmpeg's stderr stays clean) that this very
-/// process initialized exactly that `libopus.so.0`. A statically linked
-/// FFmpeg, a secure-mode (setuid) FFmpeg that ignores `LD_*`, or a resolution
-/// to any other libopus all fail loudly instead of encoding.
-fn run_ffmpeg_with_verified_libopus(
+/// Run opusenc and prove from the loader trace that this very process
+/// initialized exactly the verified `libopus.so.0`. An `LD_LIBRARY_PATH` or
+/// `LD_PRELOAD` pointing at another libopus fails loudly instead of encoding.
+fn run_verified_opusenc(
     toolchain: &OpusToolchain,
     command: &mut Command,
 ) -> Result<std::process::Output> {
+    let (output, loaded) = run_with_loader_trace(command)?;
+    anyhow::ensure!(
+        loaded.len() == 1 && loaded.contains(&toolchain.library),
+        "opusenc did not load the verified {REQUIRED_LIBOPUS_VERSION} at {}; loader trace shows {:?}",
+        toolchain.library.display(),
+        loaded
+    );
+    Ok(output)
+}
+
+/// Run a dynamically linked tool with glibc's loader trace (`LD_DEBUG=libs`,
+/// written to a private `LD_DEBUG_OUTPUT` file so its stderr stays clean) and
+/// return the canonical paths of every `libopus.so*` it initialized.
+fn run_with_loader_trace(
+    command: &mut Command,
+) -> Result<(std::process::Output, BTreeSet<PathBuf>)> {
     let trace_dir = tempfile::tempdir().context("create loader trace directory")?;
-    let mut library_path = std::ffi::OsString::from(&toolchain.lib_dir);
-    if let Some(existing) = std::env::var_os("LD_LIBRARY_PATH").filter(|value| !value.is_empty()) {
-        library_path.push(":");
-        library_path.push(existing);
-    }
     let output = command
-        .env("LD_LIBRARY_PATH", library_path)
         .env("LD_DEBUG", "libs")
         .env("LD_DEBUG_OUTPUT", trace_dir.path().join("ld"))
         .output()
-        .context("run ffmpeg with libopus support (is ffmpeg installed?)")?;
+        .with_context(|| format!("run {:?}", command.get_program()))?;
     let mut loaded = BTreeSet::new();
     for entry in fs::read_dir(trace_dir.path()).context("read loader trace directory")? {
         let path = entry?.path();
@@ -212,14 +229,7 @@ fn run_ffmpeg_with_verified_libopus(
             }
         }
     }
-    anyhow::ensure!(
-        loaded.len() == 1 && loaded.contains(&toolchain.library),
-        "ffmpeg did not load the verified {REQUIRED_LIBOPUS_VERSION} at {}; loader trace shows {:?} \
-         (a static or setuid ffmpeg cannot be verified)",
-        toolchain.library.display(),
-        loaded
-    );
-    Ok(output)
+    Ok((output, loaded))
 }
 
 /// Logical bundle groups recorded during catalog construction, keyed by the
@@ -972,48 +982,72 @@ pub(super) fn standalone_audio_filename(bytes: &[u8]) -> String {
     format!("{hash}.opus")
 }
 
-/// Encode through FFmpeg's mature libopus integration (against the verified
-/// libopus 1.6.1, see [`configure_opus_toolchain`]), then remux the packets
-/// with a fixed Ogg stream serial and vendor packet. FFmpeg randomizes Ogg
-/// serials, which would otherwise make content-addressed shipping chunks and
-/// `--resume` nondeterministic even when the encoded Opus packets are equal.
+/// Decode the source to PCM with FFmpeg (the Demo's `.wav` files are really
+/// Ogg Vorbis), encode it with the verified opusenc (see
+/// [`configure_opus_toolchain`]), then remux the packets with a fixed Ogg
+/// stream serial and vendor packet. opusenc randomizes Ogg serials, which would
+/// otherwise make content-addressed shipping chunks and `--resume`
+/// nondeterministic even though the encoded Opus packets are identical.
 ///
-/// Only bitrate, VBR, complexity and frame size are set. No `-application`
-/// is passed, so FFmpeg creates the encoder with its default
-/// `OPUS_APPLICATION_AUDIO` (libopus has no "auto" application); signal type,
-/// bandwidth and SILK/CELT/hybrid mode selection stay `OPUS_AUTO`.
+/// opusenc runs with only `--bitrate`, `--vbr`, `--comp 10` and
+/// `--framesize 20`: no `--speech`/`--music`, so the signal type is
+/// `OPUS_AUTO`. libopusenc always creates the libopus encoder at 48 kHz with
+/// `OPUS_APPLICATION_AUDIO` and resamples other input rates with its speex
+/// resampler; bandwidth and SILK/CELT/hybrid selection stay automatic.
 pub(super) fn transcode_audio_to_opus(source_path: &Path, kind: AudioKind) -> Result<Vec<u8>> {
     use std::io::Cursor;
 
     let toolchain = configured_opus_toolchain()?;
-    let bitrate = format!("{}k", kind.bitrate_kbps());
-    let output = run_ffmpeg_with_verified_libopus(
+    let scratch = tempfile::tempdir().context("create PCM scratch directory")?;
+    let pcm = scratch.path().join("source.wav");
+    // 32-bit float keeps the decode exact for the 16-bit PCM sources and
+    // avoids a requantization of the Vorbis ones before opusenc's resampler.
+    let decoded = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-i"])
+        .arg(source_path)
+        .args([
+            "-map_metadata",
+            "-1",
+            "-vn",
+            "-fflags",
+            "+bitexact",
+            "-c:a",
+            "pcm_f32le",
+            "-f",
+            "wav",
+        ])
+        .arg(&pcm)
+        .output()
+        .context("run ffmpeg to decode audio (is ffmpeg installed?)")?;
+    if !decoded.status.success() {
+        bail!(
+            "ffmpeg decode failed for {} ({}): {}",
+            source_path.display(),
+            decoded.status,
+            String::from_utf8_lossy(&decoded.stderr).trim()
+        );
+    }
+    let bitrate = kind.bitrate_kbps().to_string();
+    let output = run_verified_opusenc(
         toolchain,
-        Command::new("ffmpeg")
-            .args(["-hide_banner", "-loglevel", "error", "-i"])
-            .arg(source_path)
+        Command::new(&toolchain.opusenc)
             .args([
-                "-map_metadata",
-                "-1",
-                "-vn",
-                "-c:a",
-                "libopus",
-                "-b:a",
+                "--quiet",
+                "--bitrate",
                 &bitrate,
-                "-vbr",
-                "on",
-                "-compression_level",
+                "--vbr",
+                "--comp",
                 "10",
-                "-frame_duration",
+                "--framesize",
                 "20",
-                "-f",
-                "ogg",
-                "pipe:1",
-            ]),
+                "--discard-comments",
+            ])
+            .arg(&pcm)
+            .arg("-"),
     )?;
     if !output.status.success() {
         bail!(
-            "ffmpeg Opus encode failed for {} ({}): {}",
+            "opusenc encode failed for {} ({}): {}",
             source_path.display(),
             output.status,
             String::from_utf8_lossy(&output.stderr).trim()
@@ -1024,7 +1058,7 @@ pub(super) fn transcode_audio_to_opus(source_path: &Path, kind: AudioKind) -> Re
     let mut packets = Vec::new();
     while let Some(packet) = reader
         .read_packet()
-        .with_context(|| format!("parse ffmpeg Ogg output for {}", source_path.display()))?
+        .with_context(|| format!("parse opusenc Ogg output for {}", source_path.display()))?
     {
         packets.push(packet);
     }
@@ -1033,13 +1067,13 @@ pub(super) fn transcode_audio_to_opus(source_path: &Path, kind: AudioKind) -> Re
         .is_none_or(|packet| !packet.data.starts_with(b"OpusHead"))
     {
         bail!(
-            "ffmpeg produced non-Opus Ogg output for {}",
+            "opusenc produced non-Opus Ogg output for {}",
             source_path.display()
         );
     }
     if packets.len() < 3 {
         bail!(
-            "ffmpeg produced incomplete Opus stream for {}",
+            "opusenc produced incomplete Opus stream for {}",
             source_path.display()
         );
     }
@@ -1104,12 +1138,14 @@ pub(super) fn write_shipping_dependency(
     Ok(Some(format!("audio/{filename}")))
 }
 
-/// Tests that really encode need the pinned libopus: `ROBIN_LIBOPUS_DIR`
+/// Tests that really encode need the pinned opus-tools: `ROBIN_OPUS_TOOLS_DIR`
 /// (the same variable `scripts/build_web_shipping_datadir.sh` reads).
 #[cfg(test)]
 pub(super) fn configure_test_opus_toolchain() {
-    let dir = std::env::var_os("ROBIN_LIBOPUS_DIR").unwrap_or_else(|| {
-        panic!("set ROBIN_LIBOPUS_DIR to the directory containing {REQUIRED_LIBOPUS_VERSION}")
+    let dir = std::env::var_os("ROBIN_OPUS_TOOLS_DIR").unwrap_or_else(|| {
+        panic!(
+            "set ROBIN_OPUS_TOOLS_DIR to the opus-tools prefix whose bin/opusenc uses {REQUIRED_LIBOPUS_VERSION}"
+        )
     });
     configure_opus_toolchain(Path::new(&dir)).unwrap();
 }
@@ -1477,7 +1513,7 @@ mod boot_trim_tests {
     }
 
     #[test]
-    #[ignore = "requires ffmpeg and ROBIN_LIBOPUS_DIR pointing at libopus 1.6.1"]
+    #[ignore = "requires ffmpeg and ROBIN_OPUS_TOOLS_DIR (opusenc on libopus 1.6.1)"]
     fn boot_trim_uses_actual_catalog_source_when_aliases_collide() {
         configure_test_opus_toolchain();
         let mut wav = b"RIFF".to_vec();

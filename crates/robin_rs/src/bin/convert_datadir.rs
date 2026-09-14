@@ -135,12 +135,12 @@ struct Args {
     #[arg(long, value_enum, default_value_t = AudioFormat::Source)]
     audio_format: AudioFormat,
 
-    /// Shipping `--audio-format opus`: directory containing the libopus 1.6.1
-    /// `libopus.so.0` FFmpeg must encode with. The converter verifies the
-    /// library's version string and, for every FFmpeg run, that the loader
-    /// resolved exactly this file.
+    /// Shipping `--audio-format opus`: opus-tools prefix whose `bin/opusenc`
+    /// encodes all Opus audio. Its `--version` must report libopus 1.6.1; the
+    /// converter loads the libopus it resolves to check the version string and,
+    /// for every opusenc run, that the loader used exactly that file.
     #[arg(long)]
-    libopus_dir: Option<PathBuf>,
+    opus_tools_dir: Option<PathBuf>,
 
     /// Shipping `--audio-format opus`: directory of lossless remaster WAVs that
     /// music encodes from. Which remaster belongs to which game track comes
@@ -319,12 +319,12 @@ fn main() -> Result<()> {
         OutFormat::Hackable => Converter::new(data_in, data_out).run(),
         OutFormat::Shipping => {
             if args.audio_format == AudioFormat::Opus {
-                let libopus_dir = args.libopus_dir.as_deref().with_context(|| {
+                let opus_tools_dir = args.opus_tools_dir.as_deref().with_context(|| {
                     format!(
-                        "--audio-format opus requires --libopus-dir ({REQUIRED_LIBOPUS_VERSION})"
+                        "--audio-format opus requires --opus-tools-dir (opusenc on {REQUIRED_LIBOPUS_VERSION})"
                     )
                 })?;
-                configure_opus_toolchain(libopus_dir)?;
+                configure_opus_toolchain(opus_tools_dir)?;
                 let musics_dir = resolve_case_insensitive(&data_in.join("Musics"))
                     .filter(|path| path.is_dir())
                     .with_context(|| format!("no Musics directory in {}", data_in.display()))?;
