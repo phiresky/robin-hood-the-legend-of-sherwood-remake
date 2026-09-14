@@ -186,6 +186,12 @@ release_web() {
     if ((rebuild)); then
         step "web: build and deploy a new datadir generation"
         command -v cjxl >/dev/null || die "cjxl not on PATH (put the static cjxl binary in $toolchain/bin)"
+        # The converter itself verifies the loaded version string and that
+        # ffmpeg resolved exactly this file (docs/COMPRESSION.md, 2026-09-14).
+        export ROBIN_LIBOPUS_DIR=$toolchain/libopus-1.6.1/lib
+        [[ -e $ROBIN_LIBOPUS_DIR/libopus.so.0 ]] || die "missing $ROBIN_LIBOPUS_DIR/libopus.so.0 (build libopus 1.6.1 into $toolchain/libopus-1.6.1)"
+        export ROBIN_LOSSLESS_MUSIC_DIR=$main_repo/datadirs/music-rhmods-lossless
+        [[ -d $ROBIN_LOSSLESS_MUSIC_DIR ]] || die "missing lossless music WAV directory $ROBIN_LOSSLESS_MUSIC_DIR (mapping: convert_datadir/lossless_music_mapping.json)"
         run scripts/build_web_shipping_datadir.sh "$datadir_source" "$stage/demo-converter-output"
         run node wasm-www/scripts/assemble-datadir-corpus.mjs --update "$prior/datadir-dist" "$stage/demo-converter-output" "$stage/datadir-dist"
         run node wasm-www/scripts/datadir-release-authority.mjs author "$stage/datadir-dist" "$commit" \

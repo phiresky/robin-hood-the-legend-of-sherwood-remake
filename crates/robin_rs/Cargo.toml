@@ -96,6 +96,8 @@ dirs = "7"
 robin_manifest_tool = { workspace = true, optional = true }
 rayon = { version = "1", optional = true }
 ogg = { version = "0.9.2", optional = true }
+# convert_datadir: load the pinned libopus to verify its version string.
+libloading = { version = "0.8.9", optional = true }
 # Keep Kira's complete native decoder/backend feature set. Native installs can
 # point at user-supplied data directories, so restricting their accepted audio
 # formats would be an unnecessary compatibility regression.
@@ -272,7 +274,7 @@ multiplayer = [
     "dep:iroh-mainline-address-lookup",
 ]
 # Developer conversion/inspection binaries are built only on demand.
-tools = ["dep:ogg", "dep:rayon"]
+tools = ["dep:ogg", "dep:rayon", "dep:libloading"]
 android = ["audio"]
 audio = ["dep:kira", "dep:lru", "dep:mint", "dep:ogg"]
 dialogs = ["dep:rfd"]

@@ -4199,4 +4199,138 @@ production uses `wide` without family gating.
 
 The canonical conversion's `audio/` closure (7,655,624 B) matches the first
 v16 build, not the published v16r2 closure (7,168,560 B); that difference
-predates this change and is unrelated to VQ coding.
+predates this change and is unrelated to VQ coding. Root cause: music source
+selection depended on the working directory (see the libopus 1.6.1 section
+below).
+
+## libopus 1.6.1 web audio and content-keyed music remasters (2026-09-14)
+
+### Encoder toolchain
+
+- Source: `https://downloads.xiph.org/releases/opus/opus-1.6.1.tar.gz`,
+  SHA-256 `6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1`
+  (matches upstream `SHA256SUMS.txt`). Built with upstream defaults
+  (`./configure --disable-static --disable-doc --disable-extra-programs`) into
+  `~/.local/share/robin_hood/deployment-toolchain/libopus-1.6.1`; the tarball is
+  kept next to it. `libopus.so.0.11.1` SHA-256 `8733ea5d…7295`.
+- Build flags checked by byte-comparing ffmpeg encodes of a voice, an effect
+  and a music track: `--enable-float-approx` is already on by default on x86
+  (identical output); `--enable-dred --enable-deep-plc --enable-osce` is
+  byte-identical (decoder-side / opt-in features); `--enable-qext` changes
+  music output (kept off, upstream default); `--disable-intrinsics
+  --disable-rtcd` changes every output. Encodes are therefore byte-reproducible
+  only for the same toolchain on the same SIMD dispatch path (e.g. AVX2 hosts).
+- Integration: FFmpeg (Debian 7.1.5, dynamically linked) runs with the 1.6.1
+  directory first on `LD_LIBRARY_PATH` (same soname as the system 1.5.2).
+  `convert_datadir --libopus-dir` is required for `--audio-format opus`; it
+  loads that `libopus.so.0`, requires `opus_get_version_string()` to be
+  `libopus 1.6.1`, and for every FFmpeg process reads glibc's loader trace
+  (`LD_DEBUG=libs` into a private `LD_DEBUG_OUTPUT` file) and requires that
+  exactly that file was initialized. The system library, an `LD_PRELOAD` of
+  it, a static or setuid FFmpeg, or a missing flag all abort the conversion.
+  `scripts/build_web_shipping_datadir.sh` and `scripts/release.sh` pass and
+  check the toolchain directory like `cjxl`.
+
+### Effective settings
+
+No `-application` is passed any more: FFmpeg creates the encoder with its
+default `OPUS_APPLICATION_AUDIO` (libopus has no "auto" application), and
+signal type, bandwidth and SILK/CELT/hybrid selection stay `OPUS_AUTO`. VBR
+on, complexity 10, 20 ms frames. Bitrates: voice 24 kbit/s, effects
+48 → 40 kbit/s, music 48 → 40 kbit/s. The 22,050 Hz game WAVs make FFmpeg feed
+libopus 24 kHz (12 kHz audio bandwidth), as before; music masters are 44.1 kHz
+and encode at 48 kHz.
+
+### Comparison on the Demo corpus
+
+All 1,095 assets the Demo web conversion encodes (per-asset sums before boot
+locale trim and bundling). Sizes are exact converter bytes (FFmpeg Ogg with the
+canonical 38-byte `OpusTags`). Quality: upstream `opus_compare` internal
+weighted error (lower is better; every item "fails" its conformance threshold
+at these bitrates, so only the relative value is meaningful) and FFmpeg
+`asisdr` scale-invariant SDR, both on 48 kHz stereo decodes against the source.
+No perceptual metric (ViSQOL/PEAQ) was available on the build host.
+
+| Kind | 1.5.2, old settings | 1.6.1, old settings | 1.6.1, auto, 40 kbit/s |
+|---|---|---|---|
+| Voice (606) bytes | 3,352,359 | 3,352,208 | 3,372,238 (+0.6%) |
+| Voice err median / mean | 0.537 / 0.642 | 0.536 / 0.640 | 0.541 / 0.698 |
+| Voice SI-SDR median | 9.44 dB | 9.44 dB | 12.99 dB |
+| Effect (485) bytes | 2,613,351 | 2,611,939 | 2,161,300 (−17.3%) |
+| Effect err median / mean | 0.419 / 0.956 | 0.419 / 0.957 | 0.450 / 0.938 |
+| Effect SI-SDR median | 13.92 dB | 13.93 dB | 11.51 dB |
+| Music (4 remasters, corrected mapping) bytes | 1,895,086 | 1,896,883 | 1,588,018 (−16.2%) |
+| Music err median / mean | 2.639 / 3.179 | 2.201 / 2.961 | 2.195 / 2.847 |
+| Music SI-SDR median | 16.07 dB | 16.10 dB | 15.31 dB |
+
+Music per track (1.5.2 old → 1.6.1 auto 40 kbit/s, `opus_compare` error):
+`Leicester_Day` 699,180 → 587,063 B (4.67 → 3.65), `Leicester_Night`
+656,525 → 553,405 B (6.90 → 6.37), `Cast_orange` 265,066 → 220,209 B
+(0.54 → 0.63), `Castles_red - Alternative` 274,315 → 227,341 B (0.61 → 0.74).
+The two long tracks measure better despite 40 kbit/s (1.6.1 improves them even
+at 48 kbit/s); the two castle cues are slightly worse.
+
+1.6.1 at the same settings is size-neutral (VBR: 884/1,095 assets identical in
+size, totals within 0.1%) with equal measured quality. Auto mode makes voice
+slightly larger and, by SI-SDR, closer to the source on median, but a handful
+of short exclamations regress sharply in `opus_compare` error and should be
+listened to before release: `X_PC_LM_E05_V02` (0.46 → 4.20),
+`X_CV_RW_E06_V00` (0.44 → 4.15), `X_SD_SW_E08_V00` (0.40 → 3.80),
+`X_SD_HL_E24_V00` (0.59 → 3.75), `X_CV_RW_E12_V00`, `X_CV_MT_E09_V00`. Effects at
+40 kbit/s have lower error than 1.5.2 at 48 kbit/s on only 130 of 421
+comparable items; the largest regressions are
+`fx_0470` (0.77 → 2.41) and `fx_0243` (0.42 → 1.97). The worst absolute effect
+errors (`snd_036`, `fx_0289`, `fx_0446`) are unchanged from 1.5.2.
+
+### Lossless music remaster mapping
+
+`datadirs/music-rhmods-lossless/mapping.json` (untracked, backed up as
+`mapping.json.bak-2026-09-14`, now superseded and ignored) was one flat,
+file-name-keyed table built from the full game's WAV release. Two problems:
+
+- Source selection depended on the working directory: the converter opened
+  `datadirs/music-rhmods-lossless` relative to its CWD. v16 was converted from
+  the `.worktrees/web-release` worktree (no `datadirs/`), so its music encoded
+  from the game files; v16r2 was converted by `release.sh` from the main
+  checkout and used the remasters. Only music differs between the two
+  generations (v16 1,908,258 B vs v16r2 1,421,196 B; the 487,062 B delta is
+  the whole `audio/` difference).
+- File-name keys gave the Demo the wrong remasters. With the file's documented
+  method (peak normalized whole-track waveform correlation, FFmpeg decode, mono,
+  4 kHz, 100 ms edge trim; reproduced within 0.005 of every full-game value):
+  Demo `Menu.wav` (114.0 s) is the Leicester Day piece in a louder mix
+  (0.602 against `Leicester_Day.wav`, 0.599 against the Demo's own
+  `Leicester_D.wav`, next best remaster 0.17), not `Menü-Soundtrack.wav`
+  (0.020; that is the full game's 47.1 s `Menu.ogg`, 0.994). Demo
+  `Cast_Fight.wav` (49.8 s) is `Castles_red - Alternative.wav` (0.974), not
+  `Castles_red.wav` (0.025; the full game's 36.9 s `Cast_Fight.ogg`, 0.9998).
+  The Linux full game ships `.ogg`, so the `.wav` keys never matched it at all.
+  Published v16r2 carries both Demo errors.
+
+The mapping is now tracked at
+`crates/robin_rs/src/bin/convert_datadir/lossless_music_mapping.json`
+(schema 2) and `--lossless-music-dir` only supplies the WAVs. Each source
+section (`demo_leicester`, `fullgame_linux`) has its own `game_root`,
+`game_to_lossless`, `correlation` and `identity.music_sha256` (every `.wav`/`.ogg`
+in the Musics directory); `lossless_root` and `lossless_only` are shared. The
+converter hashes the datadir's Musics directory and requires exactly one
+matching section, logs every source → remaster decision, encodes unmapped
+tracks from the game file, and fails when a remaster's duration differs from
+its game track by more than max(0.25 s, 3%) capped at 2 s unless the track is
+listed in `intentional_duration_edits`. TODO: `fullgame_gog` (the WAV release
+the old table came from) and `demo_lincoln` were not available on this host
+and need their own verified sections.
+
+### Demo web conversion
+
+`scripts/build_web_shipping_datadir.sh` on the Demo (libopus 1.6.1, auto mode,
+24/40/40 kbit/s, corrected mapping): `audio/` 6,944,920 B vs published v16r2
+7,168,560 B (−223,640 B, −3.1%). 1,095 encodes; 19 bundles hold 1,054 files
+(5,797,008 B); two standalone assets remain: `Leicester_Day` (587,063 B, shared
+content-addressed by `Musics/Menu` and `Musics/Leicester_D`) and
+`Leicester_Night` (553,405 B). The `menu` bundle is 3,011 B and now holds only
+the eight `Sounds/Menu` effects (v16r2: 3,452 B); the menu music is the shared
+`Leicester_Day` asset. The `music` bundle (447,550 B) holds `Cast_orange` and
+`Castles_red - Alternative`. An intermediate run with the old file-name mapping
+gave 6,549,473 B, because the 47 s `Menü-Soundtrack` (241,774 B) stood in for
+the 114 s menu piece and the 36.9 s `Castles_red` for the 49.8 s castle fight.

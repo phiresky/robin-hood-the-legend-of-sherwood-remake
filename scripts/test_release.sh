@@ -38,6 +38,10 @@ fake() {
     chmod +x "$path"
 }
 fake "$toolchain/wasm-bindgen-0.2.128/bin/wasm-bindgen" </dev/null
+# Datadir rebuilds require libopus 1.6.1 and the lossless music WAV directory
+# to exist; the real version and mapping checks live in convert_datadir.
+mkdir -p "$toolchain/libopus-1.6.1/lib" "$work/main/datadirs/music-rhmods-lossless"
+touch "$toolchain/libopus-1.6.1/lib/libopus.so.0"
 fake "$bin/git" <<'EOF'
 case "$*" in
     "status --porcelain --untracked-files=no") [[ -z ${FAKE_DIRTY:-} ]] || echo ' M crates/robin_rs/src/lib.rs' ;;
@@ -140,6 +144,14 @@ release --web-only --rebuild-datadir --dry-run
 expect_status 0
 expect 'build_web_shipping_datadir.sh'
 reject 'building a new datadir generation'
+
+# 3b. A rebuild without the pinned libopus 1.6.1 is refused before converting.
+mv "$toolchain/libopus-1.6.1" "$toolchain/libopus-moved"
+release --web-only --rebuild-datadir --dry-run
+mv "$toolchain/libopus-moved" "$toolchain/libopus-1.6.1"
+expect_status 1
+expect 'libopus-1.6.1/lib/libopus.so.0'
+reject 'build_web_shipping_datadir.sh'
 
 # 4. Dirty tree and a HEAD that is not main are refused before any work.
 FAKE_DIRTY=1 release --dry-run
