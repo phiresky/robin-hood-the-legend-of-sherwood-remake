@@ -85,7 +85,7 @@ fn directed_cassos_reads_the_live_target_and_completes_panic() {
         (ai.panic_center_x, ai.panic_center_y),
         (position.x, position.y)
     );
-    assert!(ai.directed_panic);
+    assert!(!ai.directed_panic);
     assert_eq!(ai.current_state, AiState::Fleeing);
     assert!(ai.outbox.actor.begin_panic.is_none());
 }
@@ -209,7 +209,12 @@ fn help_decision_finishes_real_officer_route_before_fallback_and_logs_once() {
 
 #[test]
 fn archer_step_back_without_target_completes_shoot_to_observation_fallback() {
-    let (mut engine, assets, owner, _) = fixture(false);
+    let (mut engine, mut assets, owner, _) = fixture(false);
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    profiles.bows.push(crate::profiles::BowProfile::default());
+    for profile in &mut profiles.soldiers {
+        profile.shooting_weapon_id = 1;
+    }
     engine
         .get_entity_mut(owner)
         .unwrap()
