@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stub test for scripts/release.sh. Every external tool (git, docker, ssh, scp,
-# curl, zstd, node, wrangler, cjxl) is a fake; nothing touches the network, the
+# curl, zstd, node, wrangler, avifenc, avifdec) is a fake; nothing touches the network, the
 # VPS or Cloudflare.
 set -euo pipefail
 
@@ -61,7 +61,11 @@ esac
 EOF
 fake "$bin/scp" </dev/null
 fake "$bin/node" </dev/null
-fake "$bin/cjxl" </dev/null
+for avif_tool in avifenc avifdec; do
+    fake "$bin/$avif_tool" <<'EOF'
+echo 'Version: 1.4.2 (aom [enc/dec]:3.15.0)'
+EOF
+done
 fake "$bin/zstd" <<'EOF'
 cat
 EOF

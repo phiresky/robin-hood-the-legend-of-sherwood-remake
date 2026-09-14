@@ -185,7 +185,11 @@ release_web() {
     binding=$prior/datadir-deployment.json
     if ((rebuild)); then
         step "web: build and deploy a new datadir generation"
-        command -v cjxl >/dev/null || die "cjxl not on PATH (put the static cjxl binary in $toolchain/bin)"
+        for avif_tool in avifenc avifdec; do
+            command -v $avif_tool >/dev/null || die "$avif_tool not on PATH (scripts/install_pinned_avif_tools.sh, then copy bin/$avif_tool into $toolchain/bin)"
+            [[ $($avif_tool --version | head -n 1) == 'Version: 1.4.2 (aom [enc/dec]:3.15.0)' ]] ||
+                die "$avif_tool is not the pinned libavif 1.4.2 / libaom 3.15.0 build (scripts/install_pinned_avif_tools.sh)"
+        done
         run scripts/build_web_shipping_datadir.sh "$datadir_source" "$stage/demo-converter-output"
         run node wasm-www/scripts/assemble-datadir-corpus.mjs --update "$prior/datadir-dist" "$stage/demo-converter-output" "$stage/datadir-dist"
         run node wasm-www/scripts/datadir-release-authority.mjs author "$stage/datadir-dist" "$commit" \
