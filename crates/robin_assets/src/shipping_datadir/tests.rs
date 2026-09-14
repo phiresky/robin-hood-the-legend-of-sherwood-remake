@@ -636,7 +636,63 @@ fn duplicate_preload_error_preserves_authenticated_bytes() {
 }
 
 #[test]
+fn installed_mission_keeps_browser_decoded_raw_images_for_later_decodes() {
+    use crate::browser_images::{DecodedRgba, ImageScope, clear_scope, insert_decoded, is_decoded};
+    // Web regression: `seal` moves raw assets into the raw bundle before the
+    // decoded-image eviction runs, so the minimap (decoded on a worker only
+    // after install) was evicted and the mission booted without a minimap.
+    const MINIMAP: &[u8] = include_bytes!("../../testdata/avif/rgb2x3_q60.avif");
+    const RELEASED: &[u8] = include_bytes!("../../testdata/avif/rgba8x4_lossless.avif");
+    let _guard = crate::browser_images::TEST_CACHE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    clear_scope(ImageScope::Boot).unwrap();
+    clear_scope(ImageScope::Mission).unwrap();
+    let red = |width: u32, height: u32| DecodedRgba {
+        width,
+        height,
+        rgba: [255, 0, 0, 255].repeat((width * height) as usize),
+    };
+    insert_decoded(MINIMAP, ImageScope::Mission, red(2, 3)).unwrap();
+    insert_decoded(RELEASED, ImageScope::Mission, red(8, 4)).unwrap();
+
+    let level = LoadedLevel::hackable_from_json(
+        br#"{
+            "map_filename":"test", "spawn":[5,5],
+            "walkable_polygon":[[0,0],[100,0],[100,100],[0,100]]
+        }"#,
+    )
+    .unwrap();
+    let mut mission = ShippingMission::default();
+    mission.levels.insert("m".into(), level);
+    mission
+        .raw
+        .insert("levels/day/test.min".into(), MINIMAP.to_vec());
+    let assets = ShippingAssets::install(
+        Arc::new(ShippingDatadir::default()),
+        Arc::new(AssetVfs::new()),
+    )
+    .unwrap();
+    assets.datadir().install_mission("m", mission).unwrap();
+
+    let installed = assets.datadir().loaded_mission("m").unwrap();
+    assert_eq!(
+        installed.raw_asset("levels/day/test.min"),
+        Some(MINIMAP),
+        "raw asset moved into the sealed bundle"
+    );
+    assert!(is_decoded(MINIMAP).unwrap(), "installed minimap evicted");
+    assert!(
+        !is_decoded(RELEASED).unwrap(),
+        "unreferenced image retained"
+    );
+}
+
+#[test]
 fn mission_replacement_retires_only_its_own_stream_after_success() {
+    let _guard = crate::browser_images::TEST_CACHE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     fn payload(name: &str) -> ShippingMission {
         let level = LoadedLevel::hackable_from_json(
             br#"{

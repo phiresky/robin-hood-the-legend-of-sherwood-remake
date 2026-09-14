@@ -626,6 +626,11 @@ pub fn load_avif_rgb565_opaque(bytes: &[u8]) -> Result<Picture> {
     rgba_to_rgb565_opaque(&decoded)
 }
 
+/// Serializes crate tests that touch the process-global decoded-image cache,
+/// including mission installs (which evict mission-scoped entries).
+#[cfg(test)]
+pub(crate) static TEST_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 #[path = "browser_images_tests.rs"]
 mod avif_tests;

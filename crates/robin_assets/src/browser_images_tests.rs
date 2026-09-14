@@ -5,20 +5,22 @@
 //! produces. The cache is process-global: every test holds [`LOCK`] and
 //! (re)injects the entries it relies on.
 
-use std::sync::Mutex;
-
 use super::*;
 use crate::frame_holder::{SHADOW_KEY, TRANSPARENT_COLOR_16};
-
-static LOCK: Mutex<()> = Mutex::new(());
 
 const LOSSLESS_8X4: &[u8] = include_bytes!("../testdata/avif/rgba8x4_lossless.avif");
 const KEYED_8X4: &[u8] = include_bytes!("../testdata/avif/rgba8x4_keyed_q60.avif");
 const RGB_2X3: &[u8] = include_bytes!("../testdata/avif/rgb2x3_q60.avif");
 
+/// Serialize on the crate-wide cache lock and start from an empty cache, so
+/// no test observes entries (e.g. boot-scoped ones) another test left behind.
 fn lock() -> std::sync::MutexGuard<'static, ()> {
-    LOCK.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    let guard = TEST_CACHE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    clear_scope(ImageScope::Boot).unwrap();
+    clear_scope(ImageScope::Mission).unwrap();
+    guard
 }
 
 /// The keyed fixture's class layout: columns 0-1 transparent, (7,3) shadow,

@@ -538,9 +538,13 @@ impl ShippingDatadir {
         loaded.clear();
         // Browser-decoded pixels of released payloads and of this mission's
         // already-materialized atlases are no longer reachable; keep only
-        // the images the installed mission still decodes later (terrain).
-        crate::browser_images::retain_mission_images(&prepared.mission.browser_image_blobs())
-            .context("release decoded images of replaced missions")?;
+        // the images the installed mission still decodes later (terrain,
+        // minimaps). `seal` has already moved those raw assets into the
+        // mission's raw bundle, so the keep list must read the bundle.
+        crate::browser_images::retain_mission_images(
+            &prepared.mission.installed_browser_image_blobs(),
+        )
+        .context("release decoded images of replaced missions")?;
         loaded.insert(mission.to_owned(), Arc::new(prepared.mission));
         Ok(())
     }

@@ -427,6 +427,25 @@ pub struct ShippingMission {
     sprite_streaming: crate::late_sprites::SpriteStreaming,
 }
 
+impl ShippingMission {
+    /// [`ShippingMissionPayload::browser_image_blobs`] plus the AVIF images
+    /// already moved into this mission's sealed raw bundle — the images an
+    /// installed mission still decodes after publication (terrain maps,
+    /// minimaps read through [`Self::raw_asset`]).
+    pub fn installed_browser_image_blobs(&self) -> Vec<&[u8]> {
+        let mut blobs = self.payload.browser_image_blobs();
+        if let Some(bundle) = self.raw_bundle.get() {
+            blobs.extend(
+                bundle
+                    .values()
+                    .map(AsRef::as_ref)
+                    .filter(|bytes| crate::browser_images::is_avif(bytes)),
+            );
+        }
+        blobs
+    }
+}
+
 impl std::ops::Deref for ShippingMission {
     type Target = ShippingMissionPayload;
     fn deref(&self) -> &Self::Target {
