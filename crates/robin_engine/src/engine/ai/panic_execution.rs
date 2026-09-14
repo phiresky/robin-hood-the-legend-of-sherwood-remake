@@ -29,6 +29,7 @@ mod tests {
                 engine.control.frame_counter = 70;
                 engine.enter_ai_think_frame(owner);
                 let entity = engine.get_entity_mut(owner).unwrap();
+                entity.enemy_ai_mut().unwrap().fleeing_seen_enemy_counter = 20;
                 let ai = entity.ai_controller_mut().unwrap();
                 ai.current_state = AiState::Fleeing;
                 ai.current_substate = Substate::FleeingPanic;
@@ -44,14 +45,30 @@ mod tests {
                         ..Default::default()
                     });
                 let (_, draws) = crate::sim_rng::with_draw_trace(|| {
-                    engine.execute_ai_panic_segment(
-                        &crate::sim_rng::test_context(),
-                        &assets,
-                        owner,
-                        stimulus,
-                    );
+                    engine
+                        .execute_ai_common_fleeing_event(
+                            &crate::sim_rng::test_context(),
+                            &assets,
+                            owner,
+                            &Stimulus::new(stimulus),
+                        )
+                        .expect("spent panic event must be handled");
                 });
                 let ai = engine.get_entity(owner).unwrap().ai_controller().unwrap();
+                assert_eq!(
+                    engine
+                        .get_entity(owner)
+                        .unwrap()
+                        .enemy_ai()
+                        .unwrap()
+                        .fleeing_seen_enemy_counter,
+                    if stimulus == StimulusType::EventReachPoint {
+                        0
+                    } else {
+                        20
+                    },
+                    "only arrival renews the soldier's panic sighting budget",
+                );
                 assert_eq!(ai.current_substate, Substate::FleeingHiding);
                 assert_eq!(ai.view_alert_status, AlertLevel::Yellow);
                 assert!(ai.timer_is_running);
@@ -273,10 +290,10 @@ impl EngineInner {
                         .expect_entity_mut(owner, format_args!("panic counter"));
                     if let Some(friendly) = entity.friendly_ai_mut() {
                         friendly.fleeing_seen_enemy_counter = 0;
-                    } else if matches!(
-                        event,
-                        StimulusType::EventReachPoint | StimulusType::EventCouldntReachPoint
-                    ) {
+                    } else if event == StimulusType::EventReachPoint {
+                        // Arrival renews the soldier's sighting budget. A failed
+                        // final segment enters hiding through failure recovery
+                        // and retains the budget already spent while fleeing.
                         entity
                             .enemy_ai_mut()
                             .expect("panic owner needs AI role")
