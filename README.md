@@ -371,7 +371,9 @@ datadir only when the live datadir's format header differs from
 `SHIPPING_DATADIR_VERSION` (or with `--rebuild-datadir`); a format bump must
 already have moved `DEMO_ROOT` to a new generation directory. Credentials come
 from the main checkout's `.env`, tools from
-`~/.local/share/robin_hood/deployment-toolchain` (static `cjxl` in its `bin/`).
+`~/.local/share/robin_hood/deployment-toolchain` (static `avifenc`/`avifdec`
+from `scripts/install_pinned_avif_tools.sh` — libavif 1.4.2 on libaom 3.15.0,
+version-checked by the release — in its `bin/`).
 `--dry-run` prints every command without running it. On failure the script
 prints the rollback for the failed stage. Logs go to
 `~/.local/share/robin_hood/release-logs/`. Stub test: `bash scripts/test_release.sh`.
