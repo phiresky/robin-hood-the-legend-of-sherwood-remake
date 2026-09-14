@@ -472,7 +472,7 @@ pub const SAVE_MAGIC: &str = "RHSG";
 
 /// Current save format version. Bump on incompatible serialized-field changes.
 /// See `docs/SAVE_FORMAT.md` for the version history.
-pub const SAVE_FORMAT_VERSION: u32 = 83;
+pub const SAVE_FORMAT_VERSION: u32 = 84;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -1082,11 +1082,6 @@ mod tests {
             "TestMap",
         )
         .unwrap()
-    }
-
-    #[test]
-    fn save_format_version_uses_synchronous_ai_execution() {
-        assert_eq!(SAVE_FORMAT_VERSION, 83);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

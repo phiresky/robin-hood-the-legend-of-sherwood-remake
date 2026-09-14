@@ -109,8 +109,8 @@ pub(super) fn capture_ai_state_callback_observations<R>(
     AI_STATE_CALLBACK_OBSERVATIONS.with(|observations| observations.capture(f))
 }
 
-/// Captures, for every script effect drained inside `f`, the error a full
-/// `EngineInner` serialization reports while the driver is active.
+/// Captures the full-engine snapshot rejection at each native operation while
+/// its calling VM activation remains suspended on the driver stack.
 #[cfg(test)]
 pub(super) fn capture_active_driver_snapshot_errors<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
     ACTIVE_DRIVER_SNAPSHOT_ERRORS.with(|errors| errors.capture(f))
@@ -820,6 +820,14 @@ impl EngineInner {
         operation: crate::interp::NativeOperation,
         active: &mut Vec<ActiveScriptCall>,
     ) -> Result<i32, ScriptDriverError> {
+        #[cfg(test)]
+        ACTIVE_DRIVER_SNAPSHOT_ERRORS.with(|errors| {
+            errors.record_with(|| {
+                serde_json::to_string(self)
+                    .expect_err("an active native driver must reject snapshots")
+                    .to_string()
+            });
+        });
         match operation {
             crate::interp::NativeOperation::ScriptCall(call) => {
                 let nested_frame = match call.script_this {
