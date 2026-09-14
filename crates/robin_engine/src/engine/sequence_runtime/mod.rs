@@ -3289,7 +3289,8 @@ mod sequence_phase_context_tests {
             .sequence_manager
             .get_element(sequence, 0)
             .expect("admitted wait remains live");
-        assert_eq!(element.state, SequenceState::Postponed);
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert!(!element.orders.is_empty());
     }
 
     fn interaction_object(object_type: crate::element::ObjectType) -> Entity {

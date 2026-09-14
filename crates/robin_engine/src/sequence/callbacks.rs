@@ -51,17 +51,6 @@ impl SequenceManager {
                 && let Some(owner) = owner
             {
                 self.invalidate_postpone_tail_cache_for(owner);
-                if priority > old_priority {
-                    if let Some(summary) = self.actor_stop_summaries.get_mut(&owner) {
-                        summary.weakest_priority = summary.weakest_priority.max(priority);
-                    }
-                } else if self
-                    .actor_stop_summaries
-                    .get(&owner)
-                    .is_some_and(|summary| summary.weakest_priority == old_priority)
-                {
-                    self.actor_stop_summaries.remove(&owner);
-                }
             }
         }
     }
@@ -138,15 +127,10 @@ impl SequenceManager {
             .postpone_tail_cache
             .remove(&owner)
             .map_or(0, |entries| entries.len());
-        let stop_entries = self
-            .stop_noop_cache
-            .remove(&owner)
-            .map_or(0, |entries| entries.len());
         tracing::trace!(
             target: "parity_stop_cache",
             ?owner,
             append_entries,
-            stop_entries,
             reason = "topology_or_priority",
             "invalidate owner chain caches"
         );
@@ -200,8 +184,6 @@ impl SequenceManager {
 
         let mut current = root;
         let mut hops = 0;
-        let mut weakest_priority = SequencePriority::NonInterruptable;
-        let mut cross_only = true;
         let mut visited = HashSet::new();
         loop {
             assert!(
@@ -223,20 +205,12 @@ impl SequenceManager {
                 current.0,
                 current.1
             );
-            weakest_priority = weakest_priority.max(element.priority);
-            cross_only &= self
-                .get_sequence(current.0)
-                .and_then(|sequence| sequence.following_element_index(current.1))
-                .is_none()
-                && element.postponed_element_index.is_none();
             let Some(next) = element.cross_postponed else {
                 self.postpone_tail_cache.entry(owner).or_default().insert(
                     (root_ref, waiter_priority),
                     PostponeTailSummary {
                         tail: SequenceElementRef::new(current.0, current.1),
                         hops,
-                        weakest_priority,
-                        cross_only,
                     },
                 );
                 return (current, hops, true);
@@ -290,37 +264,9 @@ impl SequenceManager {
             "cacheable postpone append blocker is not the cached tail"
         );
         assert_eq!(prior_summary.hops, prior_hops);
-        let waiter_cross_only = self
-            .get_sequence(waiter.0)
-            .and_then(|sequence| sequence.following_element_index(waiter.1))
-            .is_none()
-            && self
-                .get_element(waiter.0, waiter.1)
-                .is_some_and(|element| element.postponed_element_index.is_none());
         let waiter_has_no_cross_successor = self
             .get_element(waiter.0, waiter.1)
             .is_some_and(|element| element.cross_postponed.is_none());
-        let root_ref = SequenceElementRef::new(root.0, root.1);
-        let preserved_stop_priorities = self
-            .stop_noop_cache
-            .get(&owner)
-            .into_iter()
-            .flat_map(|entries| entries.iter())
-            .filter_map(|((cached_root, stop_priority), summary)| {
-                if *cached_root != root_ref {
-                    return None;
-                }
-                assert_eq!(
-                    summary.tail,
-                    SequenceElementRef::new(blocker.0, blocker.1),
-                    "cached no-op Stop tail disagrees with append tail"
-                );
-                (waiter_cross_only
-                    && waiter_has_no_cross_successor
-                    && waiter_priority < *stop_priority)
-                    .then_some(*stop_priority)
-            })
-            .collect::<Vec<_>>();
         self.invalidate_postpone_tail_cache_for(owner);
         let blocker_element = self
             .get_element_mut(blocker.0, blocker.1)
@@ -342,123 +288,9 @@ impl SequenceManager {
                 PostponeTailSummary {
                     tail: SequenceElementRef::new(waiter.0, waiter.1),
                     hops: prior_hops + 1,
-                    weakest_priority: prior_summary.weakest_priority.max(waiter_priority),
-                    cross_only: prior_summary.cross_only && waiter_cross_only,
                 },
             );
         }
-        for stop_priority in preserved_stop_priorities {
-            self.stop_noop_cache.entry(owner).or_default().insert(
-                (root_ref, stop_priority),
-                StopNoopSummary {
-                    tail: SequenceElementRef::new(waiter.0, waiter.1),
-                },
-            );
-        }
-    }
-
-    pub(super) fn selected_cross_chain_all_stronger(
-        &self,
-        root: (SequenceId, usize),
-        stop_priority: SequencePriority,
-    ) -> bool {
-        let Some(owner) = self
-            .get_element(root.0, root.1)
-            .and_then(|element| element.owner)
-        else {
-            return false;
-        };
-        let root_ref = SequenceElementRef::new(root.0, root.1);
-        let Some(summary) = self.postpone_tail_cache.get(&owner).and_then(|cache| {
-            cache.iter().find_map(|((cached_root, _), summary)| {
-                (*cached_root == root_ref).then_some(*summary)
-            })
-        }) else {
-            return false;
-        };
-        let tail = self
-            .get_element(summary.tail.sequence_id, summary.tail.element_index)
-            .unwrap_or_else(|| {
-                panic!(
-                    "selected Stop cache references missing tail {:?}/{}",
-                    summary.tail.sequence_id, summary.tail.element_index
-                )
-            });
-        assert!(
-            tail.cross_postponed.is_none(),
-            "selected Stop cache was not invalidated before its tail changed"
-        );
-        summary.cross_only && summary.weakest_priority < stop_priority
-    }
-
-    pub(super) fn selected_stop_is_cached_noop(
-        &self,
-        root: (SequenceId, usize),
-        stop_priority: SequencePriority,
-    ) -> bool {
-        let Some(owner) = self
-            .get_element(root.0, root.1)
-            .and_then(|element| element.owner)
-        else {
-            return false;
-        };
-        let Some(summary) = self.stop_noop_cache.get(&owner).and_then(|entries| {
-            entries.get(&(SequenceElementRef::new(root.0, root.1), stop_priority))
-        }) else {
-            return false;
-        };
-        let tail = self
-            .get_element(summary.tail.sequence_id, summary.tail.element_index)
-            .unwrap_or_else(|| {
-                panic!(
-                    "cached no-op Stop references missing tail {:?}/{}",
-                    summary.tail.sequence_id, summary.tail.element_index
-                )
-            });
-        assert!(
-            tail.cross_postponed.is_none(),
-            "cached no-op Stop was not invalidated before its tail changed"
-        );
-        true
-    }
-
-    pub(super) fn repair_selected_stop_noop(
-        &mut self,
-        owner: EntityId,
-        root: (SequenceId, usize),
-        stop_priority: SequencePriority,
-    ) {
-        let mut tail = root;
-        let mut visited = HashSet::new();
-        loop {
-            assert!(
-                visited.insert(tail),
-                "cross-postponed cycle while caching no-op Stop at {:?}/{}",
-                tail.0,
-                tail.1
-            );
-            let element = self.get_element(tail.0, tail.1).unwrap_or_else(|| {
-                panic!(
-                    "no-op Stop graph references missing {:?}/{}",
-                    tail.0, tail.1
-                )
-            });
-            assert_eq!(
-                element.owner,
-                Some(owner),
-                "no-op Stop graph crosses owners"
-            );
-            let Some(next) = element.cross_postponed else {
-                break;
-            };
-            tail = next;
-        }
-        self.stop_noop_cache.entry(owner).or_default().insert(
-            (SequenceElementRef::new(root.0, root.1), stop_priority),
-            StopNoopSummary {
-                tail: SequenceElementRef::new(tail.0, tail.1),
-            },
-        );
     }
 
     pub(crate) fn set_cross_postponed_link(
@@ -629,7 +461,7 @@ impl crate::engine::EngineInner {
     /// Advances the sequence to the next command level if all elements at
     /// the current level are done.
     #[track_caller]
-    pub fn element_terminated(
+    pub(crate) fn element_terminated(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -675,7 +507,7 @@ impl crate::engine::EngineInner {
     /// by external events. When something tries, the call is logged
     /// and treated as a no-op so the element stays `InProgress` and
     /// finishes normally.
-    pub fn element_impossible(
+    pub(crate) fn element_impossible(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -733,7 +565,7 @@ impl crate::engine::EngineInner {
     /// mark the sequence impossible after an intrinsic execution abort.
     /// Preserve that release behavior for malformed/sentinel orders authored
     /// by Original itself.
-    pub fn element_impossible_from_execute(
+    pub(crate) fn element_impossible_from_execute(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -766,7 +598,7 @@ impl crate::engine::EngineInner {
     }
 
     /// Called when an element starts executing (enters InProgress).
-    pub fn element_in_progress(
+    pub(crate) fn element_in_progress(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -799,7 +631,7 @@ impl crate::engine::EngineInner {
     }
 
     /// Called when an element is interrupted.
-    pub fn element_interrupted(
+    pub(crate) fn element_interrupted(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -841,7 +673,7 @@ impl crate::engine::EngineInner {
     /// incoming element is still `Todo` at this borrow-safe boundary, so the
     /// actor-in-progress index alone would incorrectly mark the old card as
     /// selected.
-    pub fn element_interrupted_after_replacement_selected(
+    pub(crate) fn element_interrupted_after_replacement_selected(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -893,7 +725,7 @@ impl crate::engine::EngineInner {
     ///
     /// Our arbitration doesn't run on state changes, so we do the
     /// cleanup explicitly here.
-    pub fn kill_owner_sequences(
+    pub(crate) fn kill_owner_sequences(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -967,7 +799,7 @@ impl crate::engine::EngineInner {
     /// / `elements_in_progress` consistent on the InProgress→Postponed
     /// transition.  The element's `cross_postponed` / `postponed_by`
     /// links are set separately by the caller before this call.
-    pub fn postpone_element(
+    pub(crate) fn postpone_element(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,

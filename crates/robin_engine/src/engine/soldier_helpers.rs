@@ -24,10 +24,6 @@ fn door_battle_outside_sector(door: &crate::gate::Door) -> crate::position_inter
         .unwrap_or(handle)
 }
 
-fn damage_parry_handoff_debug_config() -> Option<&'static super::diagnostics::ExactOwnerFrame> {
-    super::diagnostics::config().damage_parry.as_ref()
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AttentiveModeCaller {
     ScriptNative,
@@ -55,10 +51,6 @@ thread_local! {
         const { super::test_support::Probe::new() };
     static CONDOLATION_NESTED_TERMINATION: std::cell::RefCell<Option<(EntityId, StimulusType, SequenceId, usize)>> =
         const { std::cell::RefCell::new(None) };
-    static OWNER_BOUNDARY_RESUME_TRACE: super::test_support::Probe<EntityId> =
-        const { super::test_support::Probe::new() };
-    static OWNER_BOUNDARY_REENTRANT_TRACE: super::test_support::Probe<&'static str> =
-        const { super::test_support::Probe::new() };
     static STRANGLE_CONDOLATION_TRACE: super::test_support::Probe<&'static str> =
         const { super::test_support::Probe::new() };
 }
@@ -148,23 +140,6 @@ pub(super) fn install_condolation_nested_termination(
 }
 
 #[cfg(test)]
-pub(super) fn capture_owner_boundary_resumes<T>(f: impl FnOnce() -> T) -> (T, Vec<EntityId>) {
-    OWNER_BOUNDARY_RESUME_TRACE.with(|trace| trace.capture(f))
-}
-
-#[cfg(test)]
-pub(super) fn capture_owner_boundary_reentrant_order<T>(
-    f: impl FnOnce() -> T,
-) -> (T, Vec<&'static str>) {
-    OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| trace.capture(f))
-}
-
-#[cfg(test)]
-fn observe_owner_boundary_reentrant_step(step: &'static str) {
-    OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| trace.record(step));
-}
-
-#[cfg(test)]
 fn take_condolation_nested_termination(
     owner: EntityId,
     stimulus: StimulusType,
@@ -186,78 +161,6 @@ fn take_condolation_nested_termination(
 }
 
 impl EngineInner {
-    fn trace_damage_parry_handoff(
-        &self,
-        phase: &str,
-        card: CondolationCard,
-        cross_postponed: Option<(SequenceId, usize)>,
-    ) {
-        let Some(config) = damage_parry_handoff_debug_config() else {
-            return;
-        };
-        if card.command != Command::ReceiveSwordDamage || config.frame != self.control.frame_counter
-        {
-            return;
-        }
-        let creation_order = self.world.original_creation_order(card.owner);
-        if creation_order != config.creation_order {
-            return;
-        }
-
-        let manager = &self.orders.sequence_manager;
-        let selected = manager.current_element_for_actor(card.owner);
-        let deferred = manager
-            .deferred_elements_to_go()
-            .into_iter()
-            .filter(|(seq_id, elem_idx)| {
-                manager
-                    .get_element(*seq_id, *elem_idx)
-                    .is_some_and(|element| element.owner == Some(card.owner))
-            })
-            .collect::<Vec<_>>();
-        eprintln!(
-            "PARITY_DAMAGE_PARRY_HANDOFF frame={} phase={} owner={} owner_co={} terminal_seq={} terminal_elem={} terminal_state={:?} selected={selected:?} cross_postponed={cross_postponed:?} deferred={deferred:?}",
-            self.control.frame_counter,
-            phase,
-            card.owner.index(),
-            creation_order,
-            card.seq_id.0,
-            card.elem_idx,
-            card.terminal_state,
-        );
-        for sequence in manager.sequences_iter() {
-            for (elem_idx, element) in sequence.elements.iter().enumerate() {
-                if element.owner != Some(card.owner) {
-                    continue;
-                }
-                eprintln!(
-                    "PARITY_DAMAGE_PARRY_HANDOFF frame={} phase=element owner={} owner_co={} seq={} elem={} id={} command={:?} level={} state={:?} priority={:?} legacy_v48={} postponed={:?} cross_postponed={:?} first_order={:?} last_order={:?}",
-                    self.control.frame_counter,
-                    card.owner.index(),
-                    creation_order,
-                    sequence.id.0,
-                    elem_idx,
-                    element.id,
-                    element.command,
-                    element.command_level,
-                    element.state,
-                    element.priority,
-                    element.legacy_v48.is_some(),
-                    element.postponed_element_index,
-                    element.cross_postponed,
-                    element
-                        .orders
-                        .front()
-                        .map(|order| (order.order_type, order.done)),
-                    element
-                        .orders
-                        .back()
-                        .map(|order| (order.order_type, order.done)),
-                );
-            }
-        }
-    }
-
     /// Request a soldier enter or leave attentive mode, launching the
     /// appropriate transition-animation sequence element.
     ///

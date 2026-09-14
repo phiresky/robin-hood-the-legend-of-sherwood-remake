@@ -35,17 +35,15 @@ pub use model::{
     AMBUSH_BOX_HALF_SIZE, AiState, AlertLevel, AlertSoldiersFailureContinuation, AmbushPoint,
     Attitude, CombatInfo, Curiosity, Decision, Detection, DoorCombatInfo, DoorSeekInfo,
     EmoticonType, ForbiddenRemark, Hint, LogLine, LogLineType, LookDirection, Noise, NoiseOrigin,
-    NoiseType, OriginalEnumWord, PanicRequest, PatrolAssignment, PointArchery,
-    ProbabilityDistribution, Question, ReconnaissanceReport, Remark, ReportType, RepulsivePoint,
-    ScreenRemark, ScriptSeekAreaRequest, SectorArchery, SeekPoint, SeekPointDirection, Stimulus,
-    StimulusCategory, StimulusInfo, StimulusType, StolenObject, StoredEnumWord, Substate,
-    TargetType, ViewCone, stimulus_to_ai_event_code,
+    NoiseType, OriginalEnumWord, PatrolAssignment, PointArchery, ProbabilityDistribution, Question,
+    ReconnaissanceReport, Remark, ReportType, RepulsivePoint, ScreenRemark, SectorArchery,
+    SeekPoint, SeekPointDirection, Stimulus, StimulusInfo, StimulusType, StolenObject,
+    StoredEnumWord, Substate, TargetType, ViewCone, stimulus_to_ai_event_code,
 };
 
 mod contexts;
 pub use contexts::{
-    AI_DOOR_RALLY_POINT_DISTANCE, AiGlobalState, AntagonistInfo, DoorRallyPoint, House,
-    ReinforcementDoorInfo,
+    AI_DOOR_RALLY_POINT_DISTANCE, AiGlobalState, DoorRallyPoint, House, ReinforcementDoorInfo,
 };
 pub(crate) use contexts::{ai_position_to_point_3d, enemy_lift_approach_for_position};
 

@@ -146,6 +146,17 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
     );
     shot.priority = crate::sequence::SequencePriority::Preference;
     let shot_seq = engine.orders.sequence_manager.launch_element(shot);
+    engine.queue_pc_shoot_bow(pc, crate::sequence::SequenceElementRef::new(shot_seq, 0));
+    assert_eq!(
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .pending_shoots
+            .len(),
+        1
+    );
     assert!(engine.pc_has_pending_shoot_bow(pc));
 
     let _ = engine.enter_swordfight(sim, &assets, pc, opponent, false);
@@ -157,12 +168,20 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
             .get_element(shot_seq, 0)
             .unwrap()
             .state,
-        crate::sequence::SequenceState::Interrupted
+        crate::sequence::SequenceState::Todo,
+        "clearing the shoot FIFO leaves the registered sequence unchanged"
     );
     assert!(
-        !engine.pc_has_pending_shoot_bow(pc),
-        "swordfight entry clears the actor's pending shoot list before validity checks"
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .pending_shoots
+            .is_empty(),
+        "swordfight entry clears the retained human shoot FIFO before validity checks"
     );
+    assert!(engine.pc_has_pending_shoot_bow(pc));
 }
 
 #[test]

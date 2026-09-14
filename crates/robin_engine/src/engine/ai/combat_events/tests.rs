@@ -21,6 +21,19 @@ fn after_combat_injury_speaks_once_only_after_a_rejected_strike_proposal() {
             entity.element_data_mut().set_direction_instantly(
                 crate::position_interface::vector_to_sector_0_to_15_iso(dx, 0.0) as i16,
             );
+            let sprite = &mut entity.element_data_mut().sprite;
+            sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                action_done: 1,
+                frame_ids: vec![0, 1, 2],
+                delays: vec![1, 1, 1],
+                distances: vec![0, 0, 0],
+                offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+                sound_ids: vec![0, 0, 0],
+                ..Default::default()
+            }]);
+            sprite.conversion =
+                std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
+            sprite.last_action = OrderType::WaitingSword;
         }
         let initial = {
             let entity = engine.get_entity(owner).unwrap();
@@ -48,7 +61,9 @@ fn after_combat_injury_speaks_once_only_after_a_rejected_strike_proposal() {
         thrust.cutting = 4;
         profiles.hth_weapons[0] = weapon;
 
-        engine.control.rng = SimulationRng::with_original_replay(vec![roll, 37]);
+        // Reconsideration checks both alcohol gates even when sober, before
+        // proposing a strike. Positive gate rolls let both cases reach it.
+        engine.control.rng = SimulationRng::with_original_replay(vec![99, 99, roll, 37]);
         engine.with_simulation_context(|engine, sim| {
             engine.execute_ai_callback(
                 sim,
@@ -90,10 +105,10 @@ fn after_combat_injury_speaks_once_only_after_a_rejected_strike_proposal() {
                 .count(),
             usize::from(!accepted)
         );
-        assert_eq!(engine.control.rng.original_replay_cursor(), Some(1));
+        assert_eq!(engine.control.rng.original_replay_cursor(), Some(3));
         assert_eq!(
-            engine.control.rng.original_replay_sites(0..1).unwrap(),
-            vec![RngSite::SwordStrikeSelection]
+            engine.control.rng.original_replay_sites(0..3).unwrap(),
+            vec![RngSite::DrunkCombatFreeze, RngSite::DrunkCombatFreeze, RngSite::SwordStrikeSelection]
         );
         engine.with_simulation_context(|_, sim| {
             assert_eq!(crate::sim_rng::u32(sim, RngSite::ScriptRand, 0..100), 37);

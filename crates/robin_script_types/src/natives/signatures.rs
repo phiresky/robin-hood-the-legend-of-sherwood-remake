@@ -300,7 +300,7 @@ macro_rules! native_registry {
             IsAnyEnemyDead => ("bool", [], lua, Actors, Never);
             GetOverallEnemyAlert => ("int", [], lua, Actors, Never);
             GetOverallCivilianAlert => ("int", [], lua, Actors, Never);
-            SetAIAlertStatus => ("bool", [("Actor", "actor"), ("int", "iStatus")], lua, Ai, Never);
+            SetAIAlertStatus => ("bool", [("Actor", "actor"), ("int", "iStatus")], lua, Ai, Conditional);
             GetAIAlertStatus => ("int", [("Actor", "actor")], lua, Ai, Never);
             SetAIState => ("bool", [("Actor", "actor"), ("int", "iState")], lua, Ai, Conditional);
             GetAIState => ("int", [("Actor", "actor")], lua, Ai, Never);
