@@ -8,6 +8,7 @@ use crate::ai::{
 use crate::ai_enemy::{EnemyAi, SeekFlags, task_priority};
 use crate::element::{Element as _, Human as _};
 use crate::parameters_ai;
+use crate::profiles::ProfileRank;
 use crate::sim_rng::SimulationContext;
 
 struct Rendezvous<'a> {
@@ -123,7 +124,15 @@ impl EngineInner {
         }
         if !matches!(
             substate,
-            SeekingOfficerWaitForSoldier
+            SeekingOfficerCallSoldier
+                | SeekingRunningToOfficer
+                | SeekingWaitForAlertingCivilian
+                | SeekingGetReportFromCivilian
+                | SeekingGetAlertingReportFromCivilian
+                | SeekingGetAlertingReportFromCivilianLook
+                | SeekingOfficerWaitForAlertingSoldier
+                | SeekingOfficerGetAlertingReportFromSoldier
+                | SeekingOfficerWaitForSoldier
                 | SeekingOfficerInstructSoldier
                 | SeekingOfficerWaitForInstructedSoldier
                 | SeekingSoldierCalledByOfficer
@@ -141,8 +150,19 @@ impl EngineInner {
                 | SeekingGroupGetInstructedByOfficer
         ) || matches!(
             substate,
-            SeekingOfficerWaitForInstructedSoldier | SeekingOfficerWaitForInstructedGroup
+            SeekingOfficerWaitForInstructedSoldier
+                | SeekingOfficerWaitForInstructedGroup
+                | SeekingOfficerWaitForAlertingSoldier
+                | SeekingWaitForAlertingCivilian
         ) && stimulus.stimulus_type == StimulusType::CallReport
+        {
+            return Option::None;
+        }
+        if substate == SeekingOfficerGetAlertingReportFromSoldier
+            && matches!(
+                stimulus.stimulus_type,
+                StimulusType::CallYourTalk1 | StimulusType::EventMyTalk1
+            )
         {
             return Option::None;
         }
@@ -260,6 +280,104 @@ impl Rendezvous<'_> {
         use Substate::*;
         let event = stimulus.stimulus_type;
         match substate {
+            SeekingOfficerCallSoldier if event == EventDone => {
+                let mut call = Stimulus::new(CallHey);
+                call.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
+                let target = self.target();
+                if self
+                    .engine
+                    .execute_ai_callback(self.sim, self.assets, target, &call)
+                {
+                    self.state(SeekingOfficerWaitForSoldier);
+                    let frame = self.engine.control.frame_counter;
+                    self.enemy_mut().base.set_transient_emoticon(
+                        crate::ai::EmoticonType::XMark,
+                        20,
+                        frame,
+                    );
+                    self.engine
+                        .drain_direct_ai_owner_boundary(self.sim, self.owner, self.assets);
+                    self.say(Remark::OfficerCallsSoldier, SpeechFlags::empty());
+                    self.timer(20);
+                } else {
+                    self.duty();
+                }
+            }
+            SeekingRunningToOfficer => self.running_to_officer(event),
+            SeekingWaitForAlertingCivilian if event == EventTimer => {
+                if matches!(
+                    self.substate(self.target()),
+                    SeekingCivilianRunningToSoldierSeen
+                        | SeekingCivilianGiveAlertingReportToSoldierStart
+                        | SeekingCivilianGiveAlertingReportToSoldierPoint
+                        | SeekingCivilianGiveAlertingReportToSoldierEnd
+                ) {
+                    self.face_target();
+                    self.timer(20);
+                } else {
+                    self.duty();
+                }
+            }
+            SeekingGetReportFromCivilian if event == EventTimer => self.duty(),
+            SeekingGetAlertingReportFromCivilian if event == EventTimer => {
+                let point = self.enemy().base.seek_position;
+                let point = self.engine.position_to_point_3d(
+                    self.assets,
+                    point.sector,
+                    point.level,
+                    point.x,
+                    point.y,
+                );
+                let body = self
+                    .engine
+                    .expect_entity(self.owner, "civilian report listener")
+                    .element_data()
+                    .position();
+                let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+                    point.x - body.x,
+                    point.y - body.y,
+                );
+                self.engine.duty_face_direction(
+                    self.sim,
+                    self.assets,
+                    self.owner,
+                    direction as u16,
+                );
+                self.state(SeekingGetAlertingReportFromCivilianLook);
+                self.timer(30);
+            }
+            SeekingGetAlertingReportFromCivilianLook if event == EventTimer => {
+                self.act_on_civilian_report()
+            }
+            SeekingOfficerWaitForAlertingSoldier => match event {
+                CallYourTalk0 => self.say(Remark::OfficerAsksWhatsup, SpeechFlags::empty()),
+                EventTimer => {
+                    if matches!(
+                        self.substate(self.target()),
+                        SeekingRunningToOfficerSeen
+                            | SeekingSoldierGiveAlertingReportToOfficerStart
+                            | SeekingSoldierGiveAlertingReportToOfficerPoint
+                            | SeekingSoldierGiveAlertingReportToOfficerEnd
+                    ) {
+                        self.face_target();
+                        self.timer(20);
+                    } else {
+                        self.duty();
+                    }
+                }
+                _ => {}
+            },
+            SeekingOfficerGetAlertingReportFromSoldier if event == EventTimer => {
+                if !self.engine.execute_ai_alert_soldiers(
+                    self.sim,
+                    self.assets,
+                    self.owner,
+                    self.enemy().base.seek_position,
+                    0,
+                ) {
+                    self.duty();
+                }
+            }
             SeekingOfficerWaitForSoldier => match event {
                 EventTimer => {
                     if matches!(
@@ -609,6 +727,158 @@ impl Rendezvous<'_> {
             _ => {}
         }
         false
+    }
+
+    fn forecast_officer(&mut self) {
+        let target = self.target();
+        let input = extract_exact_forecast_input(
+            self.engine,
+            self.engine
+                .expect_entity(target, "officer destination forecast"),
+            selected_actor_is_passing_door(&self.engine.orders.sequence_manager, target),
+        )
+        .expect("officer forecast requires an actor");
+        let destination = crate::ai::prepare_forecast_destination_for_ia(
+            &input,
+            &self.engine.script_domains.interactables.doors,
+            &self.engine.world.fast_grid.level.sectors,
+            &self.engine.world.fast_grid.level.sector_number_map,
+        )
+        .resolve(self.sim)
+        .position;
+        self.enemy_mut().gather_position = destination;
+        self.engine.duty_go_near(
+            self.sim,
+            self.assets,
+            self.owner,
+            destination,
+            parameters_ai::AI_TALK_DISTANCE,
+            GotoFlags::RUN,
+        );
+    }
+
+    fn running_to_officer(&mut self, event: StimulusType) {
+        match event {
+            StimulusType::EventTimer => {
+                let position = self.engine.live_ai_position(self.target());
+                let gather = self.enemy().gather_position;
+                let dx = position.x - gather.x;
+                let dy = position.y - gather.y;
+                if dx * dx + dy * dy
+                    > (parameters_ai::AI_TALK_DISTANCE * parameters_ai::AI_TALK_DISTANCE) as f32
+                {
+                    self.forecast_officer();
+                }
+                self.timer(50);
+            }
+            StimulusType::EventReachPoint => {
+                let target = self.target();
+                let officer = self
+                    .engine
+                    .world
+                    .entities
+                    .expect_ai_controller(target, format_args!("officer arrival"));
+                if officer.current_state == AiState::Default
+                    || matches!(
+                        officer.current_substate,
+                        Substate::SeekingOfficerWaitForInstructedSoldier
+                            | Substate::SeekingDetectedCharly
+                            | Substate::SeekingOfficerWaitForInstructedGroup
+                    )
+                {
+                    let officer = self.engine.live_ai_position(target);
+                    let here = self.engine.live_ai_position(self.owner);
+                    let dx = officer.x - here.x;
+                    let dy = officer.y - here.y;
+                    if dx * dx + dy * dy
+                        > (parameters_ai::AI_TALK_DISTANCE * parameters_ai::AI_TALK_DISTANCE) as f32
+                    {
+                        self.forecast_officer();
+                    } else {
+                        self.enemy_mut()
+                            .base
+                            .outbox
+                            .actor
+                            .delete_detectable_type(crate::element::DetectableType::Friend);
+                        self.engine.drain_direct_ai_owner_boundary(
+                            self.sim,
+                            self.owner,
+                            self.assets,
+                        );
+                        self.state(Substate::SeekingRunningToOfficerSeen);
+                        self.call(self.owner, StimulusType::EventReachPoint, false);
+                    }
+                } else if !self
+                    .engine
+                    .execute_ai_alert_officer(self.sim, self.assets, self.owner)
+                {
+                    self.duty();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn seek_before_alert(&self) -> bool {
+        if self.enemy().base.blood_alcohol as i32 > parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT {
+            return false;
+        }
+        let entity = self.engine.expect_entity(self.owner, "report initiative");
+        if !entity.is_active()
+            || self
+                .engine
+                .entity_data_in_building_sector(entity.element_data())
+        {
+            tracing::trace!("indoor initiative question falls back to the stay-on-post answer");
+            return false;
+        }
+        self.enemy().soldier_profile_initiative >= 50
+    }
+
+    fn act_on_civilian_report(&mut self) {
+        match self.enemy().get_rank() {
+            ProfileRank::Officer => {
+                if self.seek_before_alert() {
+                    self.seek(
+                        self.enemy().base.seek_position,
+                        0,
+                        SeekFlags::LOCATION_FIRST | SeekFlags::LOOK_FOR_HELP_AFTER,
+                    );
+                } else if !self.engine.execute_ai_alert_soldiers(
+                    self.sim,
+                    self.assets,
+                    self.owner,
+                    self.enemy().base.seek_position,
+                    0,
+                ) {
+                    self.duty();
+                }
+            }
+            ProfileRank::Soldier => {
+                if self.seek_before_alert() {
+                    self.seek(
+                        self.enemy().base.seek_position,
+                        parameters_ai::AI_HINT_SEEK_RADIUS as u16,
+                        SeekFlags::LOCATION_FIRST | SeekFlags::LOOK_FOR_HELP_AFTER,
+                    );
+                } else if !self
+                    .engine
+                    .execute_ai_alert_officer(self.sim, self.assets, self.owner)
+                {
+                    self.seek(
+                        self.enemy().base.seek_position,
+                        parameters_ai::AI_HINT_SEEK_RADIUS as u16,
+                        SeekFlags::LOCATION_FIRST,
+                    );
+                }
+            }
+            ProfileRank::Knight => self.seek(
+                self.enemy().base.seek_position,
+                parameters_ai::AI_HINT_SEEK_RADIUS as u16,
+                SeekFlags::LOCATION_FIRST,
+            ),
+            _ => {}
+        }
     }
 
     fn wait_for_instructed_group(&mut self) {

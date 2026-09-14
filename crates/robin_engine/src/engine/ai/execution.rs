@@ -81,6 +81,9 @@ impl EngineInner {
         call: crate::ai::DutyCall,
     ) -> bool {
         match call.tail {
+            crate::ai::DutyTail::PanicSegment { stimulus } => {
+                self.execute_ai_panic_segment(sim, assets, owner, stimulus);
+            }
             crate::ai::DutyTail::BodyReaction { operation } => {
                 self.execute_ai_body_reaction(sim, assets, owner, operation);
             }
@@ -375,7 +378,19 @@ impl EngineInner {
         } else {
             None
         };
-        let handled = if let Some(operation) = body_reaction {
+        let panic_segment = matches!(
+            stimulus.stimulus_type,
+            StimulusType::EventReachPoint | StimulusType::EventCouldntReachPoint
+        ) && self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("panic dispatch"))
+            .current_substate
+            == crate::ai::Substate::FleeingPanic;
+        let handled = if panic_segment {
+            self.execute_ai_panic_segment(sim, assets, owner, stimulus.stimulus_type);
+            Ok(false)
+        } else if let Some(operation) = body_reaction {
             self.execute_ai_body_reaction(sim, assets, owner, operation);
             Ok(false)
         } else if enemy_owner && stimulus.stimulus_type == StimulusType::EventSeesBody {

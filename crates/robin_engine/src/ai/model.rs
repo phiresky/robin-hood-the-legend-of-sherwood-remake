@@ -1618,7 +1618,6 @@ pub enum LookThereContinuation {
     bitcode::Decode,
 )]
 pub enum ThinkResultContinuation {
-    OfficerCalledSoldier,
     OfficerSentCharlyToOfficer,
 }
 

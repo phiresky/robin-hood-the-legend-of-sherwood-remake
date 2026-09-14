@@ -19,6 +19,9 @@ pub(crate) struct DutyCall {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum DutyTail {
     None,
+    PanicSegment {
+        stimulus: super::StimulusType,
+    },
     BodyReaction {
         operation: BodyReaction,
     },
@@ -113,9 +116,6 @@ pub(crate) enum OfficerAlertCaller {
     SeekBody {
         center: super::Position,
         radius: u16,
-    },
-    SeekHint {
-        center: super::Position,
     },
     SeekMissedCharly {
         center: super::Position,

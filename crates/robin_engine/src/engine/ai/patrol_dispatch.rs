@@ -228,22 +228,7 @@ impl EngineInner {
                 Ok(false) => {}
             }
 
-            // The continuation is the caller's original-game stack frame resuming
-            // immediately after target event processing returned. The officer's
-            // single-soldier call can reject into returning to duty, whose
-            // state changes and following movement synchronously publish actor work as
-            // well as owner callbacks. Close that exact caller stack through
-            // the full owner-local fixed point. Other result continuations
-            // retain their narrower owner-work boundary because their outer
-            // loops still own subsequent member calls.
-            if matches!(
-                continuation,
-                crate::ai::ThinkResultContinuation::OfficerCalledSoldier
-            ) {
-                self.drain_direct_ai_owner_boundary(sim, source_id, assets);
-            } else {
-                self.drain_ai_owner_work_for(sim, assets, source_id);
-            }
+            self.drain_ai_owner_work_for(sim, assets, source_id);
         }
     }
 

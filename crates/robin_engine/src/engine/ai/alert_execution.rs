@@ -262,15 +262,6 @@ impl EngineInner {
                     center: self.live_ai_position(owner),
                 },
             ),
-            OfficerAlertCaller::SeekHint { center } => self.execute_ai_seek_area(
-                sim,
-                assets,
-                owner,
-                center,
-                crate::parameters_ai::AI_HINT_SEEK_RADIUS as u16,
-                crate::ai_enemy::SeekFlags::LOCATION_FIRST,
-                crate::ai_enemy::UNDEFINED_DIRECTION,
-            ),
             _ => unreachable!(),
         }
     }

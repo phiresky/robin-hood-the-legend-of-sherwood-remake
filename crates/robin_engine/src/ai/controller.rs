@@ -9,18 +9,6 @@ fn panic_debug_matches(frame: u32) -> bool {
     gate.enabled() && gate.matches_required([Some(frame)])
 }
 
-#[inline]
-fn panic_retry_side(original_creation_order: u32) -> u8 {
-    if original_creation_order & 1 != 0 {
-        4
-    } else {
-        12
-    }
-}
-
-/// The shared [`ParityGate`](crate::engine::diagnostics::ParityGate) owns the
-/// master switch and exact frame filter; it has no range filter, so the
-/// inclusive owner bounds are parsed alongside it (only while enabled).
 #[derive(Debug)]
 struct BoredBoundaryDebugConfig {
     gate: crate::engine::diagnostics::ParityGate<1>,
@@ -1339,8 +1327,10 @@ impl AiController {
         for (idx, sp) in seek_points.iter().enumerate() {
             let dx = sp.position.x - my_pos.x;
             let dy = sp.position.y - my_pos.y;
-            let mut distance = dx.abs().max(dy.abs()) as u16;
-            if sp.position.sector != my_sector {
+            let mut distance = (dx.abs().max(dy.abs()) as u32) as u16;
+            if sp.position.sector.map(|sector| sector.reference())
+                != my_sector.map(|sector| sector.reference())
+            {
                 distance = distance.wrapping_add(1000);
             }
             if self.directed_panic {
@@ -3220,7 +3210,19 @@ impl AiController {
             // into `FleeingHiding` (panic is spent) or pick a new run
             // direction and move along it.
             Substate::FleeingPanic => {
-                return Ok(self.expected_common_fleeing_panic(sim, stimulus, ctx));
+                if matches!(
+                    stimulus_type,
+                    StimulusType::EventReachPoint | StimulusType::EventCouldntReachPoint
+                ) {
+                    return Err(DutyCall {
+                        flags: DutyFlags::empty(),
+                        think_result: false,
+                        tail: super::DutyTail::PanicSegment {
+                            stimulus: stimulus_type,
+                        },
+                        after: Vec::new(),
+                    });
+                }
             }
 
             Substate::FleeingHiding => {
@@ -3789,186 +3791,6 @@ impl AiController {
                     0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
                 );
             self.launch_timer(hiding_time, ctx.frame);
-        }
-        false
-    }
-
-    fn expected_common_fleeing_panic(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        stimulus: &Stimulus,
-        ctx: &AiContext,
-    ) -> bool {
-        let stimulus_type = stimulus.stimulus_type;
-        if stimulus_type != StimulusType::EventReachPoint
-            && stimulus_type != StimulusType::EventCouldntReachPoint
-        {
-            return false;
-        }
-        if panic_debug_matches(ctx.frame) {
-            crate::ai::parity_trace::Aipanic {
-                frame: &(ctx.frame),
-                me: &(self.me),
-                co: &(ctx.original_creation_order),
-                stimulus: &(stimulus_type),
-                runs: &(self.lasting_panic_runs),
-                directed: &(self.directed_panic),
-                first_try: &(self.first_try),
-            }
-            .emit();
-        }
-
-        if self.lasting_panic_runs == 0 {
-            // Panic is over — transition to hiding.
-            self.set_ai_state(AiState::Fleeing);
-            self.current_substate = Substate::FleeingHiding;
-            if self.directed_panic {
-                // Look back at the panic source.
-                self.face_position_with_ctx(
-                    Position {
-                        x: self.panic_center_x,
-                        y: self.panic_center_y,
-                        sector: None,
-                        level: 0,
-                    },
-                    ctx,
-                );
-            } else {
-                // Look in a random direction.
-                self.face_direction(
-                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..16) as u16,
-                    ctx,
-                );
-            }
-            self.clear_emoticon();
-            self.set_alert_status(AlertLevel::Yellow);
-            // Original-game AI fleeing-panic completion
-            // clears the blinking enemy even when the alert level did
-            // not change. The resulting next-frame EVENT_VIEW can
-            // immediately start another panic while the enemy stays
-            // visible.
-            self.outbox.actor.blink_all_enemies = true;
-            let hiding_time = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
-                + crate::sim_rng::u32(
-                    sim,
-                    crate::sim_rng::RngSite::AiPanic,
-                    0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
-                );
-            self.launch_timer(hiding_time, ctx.frame);
-            return true;
-        }
-
-        if stimulus_type == StimulusType::EventReachPoint {
-            // Decrement panic runs and start new movement toward
-            // a fresh escape vector.
-            self.lasting_panic_runs = self.lasting_panic_runs.saturating_sub(1);
-
-            let sector_index = if !self.directed_panic {
-                // Undirected panic — any direction.
-                (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..16) & 15) as u8
-            } else {
-                // Directed panic — run away from panic center.
-                let dx = ctx.position.x - self.panic_center_x;
-                let dy = ctx.position.y - self.panic_center_y;
-                let base = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
-                if self.first_try {
-                    // ±2 sector jitter around the base.
-                    let jitter = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..5)
-                        as i32
-                        - 2)
-                    .rem_euclid(16) as u8;
-                    base.wrapping_add(jitter) & 15
-                } else {
-                    // Previous attempt failed — rotate 90° to
-                    // the side determined by creation-order
-                    // parity, with ±3 sector jitter.
-                    let original_creation_order = ctx
-                        .original_creation_order
-                        .expect("panic retry owner is missing its authoritative creation order");
-                    let side = panic_retry_side(original_creation_order);
-                    let jitter = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..7)
-                        as i32
-                        - 3)
-                    .rem_euclid(16) as u8;
-                    base.wrapping_add(side).wrapping_add(jitter) & 15
-                }
-            };
-
-            let (vx, vy) = crate::element::direction_vector_16(sector_index as i16);
-            let segment = (crate::parameters_ai::AI_MIN_PANIC_RUN_SEGMENT_DISTANCE as u32
-                + crate::sim_rng::u32(
-                    sim,
-                    crate::sim_rng::RngSite::AiPanic,
-                    0..crate::parameters_ai::AI_DELTA_PANIC_RUN_SEGMENT_DISTANCE as u32,
-                )) as f32;
-            let dest = Position {
-                x: ctx.position.x + vx * segment,
-                y: ctx.position.y + vy * segment,
-                sector: ctx.position.sector,
-                level: ctx.position.level,
-            };
-
-            if panic_debug_matches(ctx.frame) {
-                let origin = crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y);
-                let destination = crate::coordinates::MapPoint::new(dest.x, dest.y);
-                let destination_box = ctx.move_box.translated(destination);
-                let half_diagonal = crate::coordinates::MoveBoxHalfDiagonal::new(
-                    ctx.move_box.x_max(),
-                    ctx.move_box.y_max(),
-                );
-                crate::ai::parity_trace::AipanicGeometry {
-                    frame: &(ctx.frame),
-                    me: &(self.me),
-                    sector: &(sector_index),
-                    distance_bits: &(segment.to_bits()),
-                    origin_x_bits: &(origin.x.to_bits()),
-                    origin_y_bits: &(origin.y.to_bits()),
-                    destination_x_bits: &(destination.x.to_bits()),
-                    destination_y_bits: &(destination.y.to_bits()),
-                    layer: &(ctx.position.level),
-                    move_box: &(ctx.move_box),
-                    position_authorized: &(ctx
-                        .fast_grid
-                        .is_position_authorized(&destination_box, ctx.position.level)),
-                    reachable_thick: &(ctx.fast_grid.is_reachable_thick(
-                        origin,
-                        destination,
-                        ctx.position.level,
-                        half_diagonal,
-                    )),
-                    straight_authorized: &(ctx.fast_grid.is_straight_movement_authorized(
-                        origin,
-                        destination,
-                        ctx.position.level,
-                        &ctx.move_box,
-                    )),
-                }
-                .emit();
-            }
-
-            // Next time around we're no longer on the first try.
-            self.first_try = true;
-
-            let mut flags = GotoFlags::RUN | GotoFlags::STRAIGHT | GotoFlags::ASK_OBSTACLE;
-            if self.lasting_panic_runs > 0 {
-                flags |= GotoFlags::DONT_STOP;
-            }
-            self.go_to(dest, flags, ctx);
-        } else {
-            // EventCouldntReachPoint — the random direction
-            // was blocked. Flip `first_try` so the next run
-            // uses the 90° side-step branch, and queue a
-            // `SeekPoint` fallback for the engine to drain.
-            // The engine has the `seek_points` array; the
-            // `AiController` here doesn't, so we hand off via
-            // `pending_panic_seek_fallback` and let
-            // `process_pending_panic_seek_fallback_for` pick
-            // the anchor + call `go_to` (RUN|DONT_STOP mid-run,
-            // RUN on the last segment). If no seek point is
-            // found, the engine drain re-fires the self
-            // `EventReachPoint` as an emergency fall-through.
-            self.first_try = false;
-            self.outbox.actor.panic_seek_fallback = true;
         }
         false
     }

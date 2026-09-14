@@ -652,13 +652,6 @@ impl EngineInner {
             friend_ai.primary_target = Some(new_target);
         }
 
-        // Process pending bow shot.
-        if let Some(target_handle) = effects.shoot_target {
-            let target_id =
-                self.expect_human_id_for_ai_handle(target_handle.get(), "AI bow target");
-            self.shoot_bow_at(assets, npc_id, target_id);
-        }
-
         // Process pending focus / focus_point / unfocus — the
         // focus by primary target, position, or no target
         // calls.  Each explicit channel "consumes" the primary_target
@@ -1109,33 +1102,6 @@ impl EngineInner {
             // ordinary owned command with SequenceManager. It does not run
             // the actor's instruction/arbitration synchronously at the AI call site.
             self.launch_sequence(sequence);
-        }
-
-        // Sequence commands the AI wants to launch on *another*
-        // entity (e.g. soldier forcing a beggar to stand up).
-        // Equivalent to a `launch_sequence_element(cmd,
-        // other_actor)` call as used by the enemy beggar-identify
-        // cascade.
-        for (target_handle, cmd) in std::mem::take(&mut effects.launch_on_target) {
-            let target_id =
-                self.expect_human_id_for_ai_handle(target_handle.get(), "AI command target");
-            let elem = crate::sequence::SequenceElement::new(1, cmd, Some(target_id));
-            self.launch_element(elem);
-        }
-
-        // Cross-actor speech authored directly after a target command. The
-        // beggar-identification path, for example, launches SHOW_FACE and
-        // then synchronously calls Say on that civilian. Queue through the
-        // target AI's ordinary owner-work path so all Say gates, sound
-        // requests, and automatic forbids remain authoritative.
-        for (target_handle, remark) in std::mem::take(&mut effects.say_on_target) {
-            let target_id =
-                self.expect_human_id_for_ai_handle(target_handle.get(), "AI speech target");
-            self.world
-                .entities
-                .expect_ai_controller_mut(target_id, format_args!("AI speech target before Say"))
-                .say(remark);
-            self.drain_ai_owner_work_for(sim, assets, target_id);
         }
 
         // Full sequences the AI wants to launch verbatim — the
@@ -1598,16 +1564,6 @@ impl EngineInner {
             .is_some_and(|ai| ai.outbox.actor.begin_panic.is_some());
         if has_begin_panic {
             self.process_pending_begin_panic_for(sim, assets, npc_id);
-        }
-
-        let has_panic_seek_fallback = self
-            .world
-            .entities
-            .get(npc_id)
-            .and_then(Entity::ai_controller)
-            .is_some_and(|ai| ai.outbox.actor.panic_seek_fallback);
-        if has_panic_seek_fallback {
-            self.process_pending_panic_seek_fallback_for(sim, assets, npc_id);
         }
 
         // Drain any pending script-driven area-search request. Matches

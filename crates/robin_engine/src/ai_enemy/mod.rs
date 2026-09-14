@@ -5,7 +5,6 @@
 //! specializations, money fights, and the massive Think state machine.
 
 mod alert;
-mod archer_combat;
 mod battle;
 pub(crate) use battle::rider_charge_goal_geometry;
 pub(crate) use battle::{
@@ -231,10 +230,6 @@ pub struct EnemyAi {
     pub last_seek_direction_index: u8,
     #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub beggar_to_examine: Option<AiEntityHandle>,
-    /// Whether the current `beggar_to_examine` is a real NPC beggar or a
-    /// PC in disguise. Set by the engine when populating `beggars_to_control`.
-    /// Checked during IdentifyingBeggar1.
-    pub beggar_is_npc: bool,
 
     pub current_task_priority: u16,
     pub minimal_task_priority: u16,

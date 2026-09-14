@@ -1,0 +1,279 @@
+//! Live panic segments and their synchronous movement-failure recovery.
+
+use super::*;
+use crate::ai::{AiState, AlertLevel, GotoFlags, Position, Stimulus, StimulusType, Substate};
+
+fn panic_retry_side(creation_order: u32) -> u8 {
+    if creation_order & 1 != 0 { 4 } else { 12 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spent_panic_hides_blinks_and_consumes_only_required_random_draws() {
+        for directed in [false, true] {
+            for stimulus in [
+                StimulusType::EventReachPoint,
+                StimulusType::EventCouldntReachPoint,
+            ] {
+                let mut engine = EngineInner::new();
+                let owner = engine.add_test_entity(
+                    crate::engine::test_support::actors::make_test_ai_soldier(
+                        crate::element::Camp::Lacklandists,
+                    ),
+                );
+                let mut assets = LevelAssets::new();
+                crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+                engine.control.frame_counter = 70;
+                engine.enter_ai_think_frame(owner);
+                let entity = engine.get_entity_mut(owner).unwrap();
+                let ai = entity.ai_controller_mut().unwrap();
+                ai.current_state = AiState::Fleeing;
+                ai.current_substate = Substate::FleeingPanic;
+                ai.directed_panic = directed;
+                ai.lasting_panic_runs = 0;
+                ai.panic_center_x = 100.0;
+                entity.npc_data_mut().unwrap().detectable_lists
+                    [crate::element::DetectableType::Enemy as usize]
+                    .push(crate::element::Detectable {
+                        detectable_type: crate::element::DetectableType::Enemy,
+                        seen_now: true,
+                        seen_last_frame: true,
+                        ..Default::default()
+                    });
+                let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+                    engine.execute_ai_panic_segment(
+                        &crate::sim_rng::test_context(),
+                        &assets,
+                        owner,
+                        stimulus,
+                    );
+                });
+                let ai = engine.get_entity(owner).unwrap().ai_controller().unwrap();
+                assert_eq!(ai.current_substate, Substate::FleeingHiding);
+                assert_eq!(ai.view_alert_status, AlertLevel::Yellow);
+                assert!(ai.timer_is_running);
+                assert!(
+                    (70 + crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
+                        ..70 + crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
+                            + crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32)
+                        .contains(&ai.when_does_timer_ring)
+                );
+                assert_eq!(draws.len(), if directed { 1 } else { 2 });
+                assert!(
+                    draws
+                        .iter()
+                        .all(|site| *site == crate::sim_rng::RngSite::AiPanic)
+                );
+                let detectable = &engine
+                    .get_entity(owner)
+                    .unwrap()
+                    .npc_data()
+                    .unwrap()
+                    .detectable_lists[crate::element::DetectableType::Enemy as usize][0];
+                assert!(!detectable.seen_now && !detectable.seen_last_frame);
+            }
+        }
+    }
+
+    #[test]
+    fn retry_turn_uses_creation_order_instead_of_entity_slot() {
+        assert_eq!(panic_retry_side(68), 12);
+        assert_eq!(panic_retry_side(69), 4);
+        assert_ne!(panic_retry_side(68), panic_retry_side(37));
+    }
+}
+
+impl EngineInner {
+    pub(in crate::engine) fn execute_ai_panic_segment(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        stimulus: StimulusType,
+    ) {
+        assert!(matches!(
+            stimulus,
+            StimulusType::EventReachPoint | StimulusType::EventCouldntReachPoint
+        ));
+        let runs = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("panic runs"))
+            .lasting_panic_runs;
+        if runs == 0 {
+            self.duty_set_state(
+                sim,
+                assets,
+                owner,
+                AiState::Fleeing,
+                Substate::FleeingHiding,
+            );
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("panic facing"));
+            let direction = if ai.directed_panic {
+                let position = self.live_ai_position(owner);
+                crate::position_interface::vector_to_sector_0_to_15_iso(
+                    ai.panic_center_x - position.x,
+                    ai.panic_center_y - position.y,
+                ) as u16
+            } else {
+                crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..16) as u16
+            };
+            self.duty_face_direction(sim, assets, owner, direction);
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("panic hiding"));
+            ai.clear_emoticon();
+            ai.set_alert_status(AlertLevel::Yellow);
+            let npc = self
+                .world
+                .entities
+                .expect_ai_actor_data_mut(owner, format_args!("panic blink"));
+            for detectable in
+                &mut npc.detectable_lists[crate::element::DetectableType::Enemy as usize]
+            {
+                detectable.seen_now = false;
+                detectable.seen_last_frame = false;
+            }
+            let frames = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
+                + crate::sim_rng::u32(
+                    sim,
+                    crate::sim_rng::RngSite::AiPanic,
+                    0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
+                );
+            let frame = self.control.frame_counter;
+            self.world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("panic hiding timer"))
+                .launch_timer(frames, frame);
+            return;
+        }
+        if stimulus == StimulusType::EventCouldntReachPoint {
+            self.world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("panic retry"))
+                .first_try = false;
+            self.execute_ai_panic_fallback(sim, assets, owner);
+            return;
+        }
+        self.world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("panic segment count"))
+            .lasting_panic_runs = runs.wrapping_sub(1);
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("panic direction"));
+        let sector = if !ai.directed_panic {
+            crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..16) as u8
+        } else {
+            let position = self.live_ai_position(owner);
+            let base = crate::position_interface::vector_to_sector_0_to_15(
+                position.x - ai.panic_center_x,
+                position.y - ai.panic_center_y,
+            ) as u8;
+            let (side, count, offset) = if ai.first_try {
+                (0, 5, 2)
+            } else {
+                (
+                    panic_retry_side(self.world.original_creation_order(owner)),
+                    7,
+                    3,
+                )
+            };
+            let jitter = crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..count) as u8;
+            base.wrapping_add(side)
+                .wrapping_add(jitter)
+                .wrapping_sub(offset)
+                & 15
+        };
+        let (vx, vy) = crate::element::direction_vector_16(sector as i16);
+        let distance = (crate::parameters_ai::AI_MIN_PANIC_RUN_SEGMENT_DISTANCE as u32
+            + crate::sim_rng::u32(
+                sim,
+                crate::sim_rng::RngSite::AiPanic,
+                0..crate::parameters_ai::AI_DELTA_PANIC_RUN_SEGMENT_DISTANCE as u32,
+            )) as f32;
+        self.world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("panic first try"))
+            .first_try = true;
+        let position = self.live_ai_position(owner);
+        let destination = Position {
+            x: position.x + vx * distance,
+            y: position.y + vy * distance,
+            ..position
+        };
+        let mut flags = GotoFlags::RUN | GotoFlags::STRAIGHT | GotoFlags::ASK_OBSTACLE;
+        if self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("panic movement flags"))
+            .lasting_panic_runs
+            > 0
+        {
+            flags |= GotoFlags::DONT_STOP;
+        }
+        self.duty_go_to(sim, assets, owner, destination, flags);
+    }
+
+    fn execute_ai_panic_fallback(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        let position = self.live_ai_position(owner);
+        let sector = super::ai_view_position_sector(
+            self,
+            self.expect_entity(owner, "panic fallback sector")
+                .element_data(),
+        );
+        let anchor = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("panic fallback owner"))
+            .nearest_seek_point_to_flee(&self.ai.global.seek_points, position, sector);
+        if let Some(index) = anchor {
+            let destination = self.ai.global.seek_points[index].position;
+            let mut flags = GotoFlags::RUN;
+            if self
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("panic fallback runs"))
+                .lasting_panic_runs
+                > 0
+            {
+                flags |= GotoFlags::DONT_STOP;
+            }
+            self.duty_go_to(sim, assets, owner, destination, flags);
+        } else {
+            self.execute_ai_callback(
+                sim,
+                assets,
+                owner,
+                &Stimulus::new(StimulusType::EventReachPoint),
+            );
+        }
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("panic fallback result"));
+        if ai.couldnt_reachpoint {
+            ai.couldnt_reachpoint = false;
+            ai.lasting_panic_runs = ai.lasting_panic_runs.wrapping_sub(1);
+            self.execute_ai_callback(
+                sim,
+                assets,
+                owner,
+                &Stimulus::new(StimulusType::EventReachPoint),
+            );
+        }
+    }
+}

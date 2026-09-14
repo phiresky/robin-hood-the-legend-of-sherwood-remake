@@ -39,6 +39,7 @@ mod macro_execution;
 mod money_execution;
 mod officer_rendezvous_execution;
 mod owner_scheduling;
+mod panic_execution;
 mod patrol_assembly;
 mod patrol_coordination;
 mod patrol_dispatch;
@@ -3585,7 +3586,6 @@ impl EngineInner {
             .expect("building panic civilian has no friendly AI")
             .panic_undirected(runs);
         self.process_pending_begin_panic_for(sim, assets, civ_id);
-        self.process_pending_panic_seek_fallback_for(sim, assets, civ_id);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(source = source.index()))]
@@ -4134,64 +4134,6 @@ impl EngineInner {
                 "BEXITWAIT_OCC {:?} co={} {detail}",
                 eid,
                 self.world.original_creation_order(eid)
-            );
-        }
-    }
-
-    /// Resolve a failed panic segment before deciding whether to retry.
-    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
-    pub(super) fn process_pending_panic_seek_fallback_for(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        npc_id: EntityId,
-    ) {
-        let position = self.live_ai_position(npc_id);
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(npc_id, format_args!("panic fallback owner"));
-        if !std::mem::take(&mut ai.outbox.actor.panic_seek_fallback) {
-            return;
-        }
-        let anchor =
-            ai.nearest_seek_point_to_flee(&self.ai.global.seek_points, position, position.sector);
-        if let Some(index) = anchor {
-            let destination = self.ai.global.seek_points[index].position;
-            let runs = self
-                .world
-                .entities
-                .expect_ai_controller(npc_id, format_args!("panic segment count"))
-                .lasting_panic_runs;
-            let flags = crate::ai::GotoFlags::RUN
-                | if runs > 0 {
-                    crate::ai::GotoFlags::DONT_STOP
-                } else {
-                    crate::ai::GotoFlags::empty()
-                };
-            self.duty_go_to(sim, assets, npc_id, destination, flags);
-        } else {
-            self.execute_ai_callback(
-                sim,
-                assets,
-                npc_id,
-                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReachPoint),
-            );
-        }
-        // Inspect the live failure latch after either movement or the nested
-        // emergency callback. A failed retry consumes one more panic segment.
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(npc_id, format_args!("panic fallback result"));
-        if ai.couldnt_reachpoint {
-            ai.couldnt_reachpoint = false;
-            ai.lasting_panic_runs = ai.lasting_panic_runs.wrapping_sub(1);
-            self.execute_ai_callback(
-                sim,
-                assets,
-                npc_id,
-                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReachPoint),
             );
         }
     }

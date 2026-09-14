@@ -238,17 +238,6 @@ impl EnemyAi {
         continuation: ThinkResultContinuation,
     ) -> AiFlow<bool> {
         match continuation {
-            ThinkResultContinuation::OfficerCalledSoldier => {
-                if accepted {
-                    self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForSoldier);
-                    self.base
-                        .set_transient_emoticon(EmoticonType::XMark, 20, frame);
-                    self.base.say(Remark::OfficerCallsSoldier);
-                    self.base.launch_timer(20, frame);
-                } else {
-                    return Err(DutyCall::new(DutyFlags::empty(), false));
-                }
-            }
             ThinkResultContinuation::OfficerSentCharlyToOfficer => {
                 if accepted {
                     self.base

@@ -70,7 +70,7 @@ fn object_view(object_type: ObjectType) -> AiEntityView {
 }
 
 #[test]
-fn failed_fleeing_panic_move_uses_panic_seek_fallback() {
+fn failed_fleeing_panic_move_yields_live_segment_execution() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(68);
     ai.base.current_state = AiState::Fleeing;
@@ -89,13 +89,17 @@ fn failed_fleeing_panic_move_uses_panic_seek_fallback() {
             &Stimulus::new(StimulusType::EventCouldntReachPoint),
             &mut AiGlobalState::default(),
         ),
-        Ok(false)
+        Err(crate::ai::DutyCall {
+            tail: crate::ai::DutyTail::PanicSegment {
+                stimulus: StimulusType::EventCouldntReachPoint
+            },
+            ..
+        })
     ));
 
     assert_eq!(ai.base.current_state, AiState::Fleeing);
     assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
     assert_eq!(ai.base.view_alert_status, crate::ai::AlertLevel::Red);
-    assert!(ai.base.outbox.actor.panic_seek_fallback);
 }
 
 #[test]

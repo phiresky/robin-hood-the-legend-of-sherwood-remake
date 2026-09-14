@@ -41,19 +41,6 @@ fn go_near_uses_live_actor_layer_while_door_position_is_snapped() {
 /// drain to close.
 
 #[test]
-fn panic_retry_side_uses_original_creation_order_parity() {
-    assert_eq!(panic_retry_side(68), 12);
-    assert_eq!(panic_retry_side(69), 4);
-
-    let rust_entity_slot = 37;
-    assert_ne!(
-        panic_retry_side(68),
-        panic_retry_side(rust_entity_slot),
-        "trace owner creation-order 68 must not inherit entity-slot 37 parity",
-    );
-}
-
-#[test]
 fn repeated_checkpoint_charly_calls_preserve_immediate_original_order() {
     use crate::element::{DetectableType, EntityId};
     use crate::entity_id::SoldierId;

@@ -48,10 +48,100 @@ impl EngineInner {
                 | Substate::WonderingAppleChasingChildEnd
                 | Substate::WonderingHeardWhistling
                 | Substate::WonderingWatchingWhistling
+                | Substate::SeekingHeardstepsPreReactiontime
+                | Substate::SeekingHeardstepsReactiontime
+                | Substate::SeekingHeardsteps
+                | Substate::SeekingJustWatching
+                | Substate::SeekingJustWatchingSidewards
         ) {
             return None;
         }
         match (substate, stimulus.stimulus_type) {
+            (Substate::SeekingHeardstepsPreReactiontime, EventTimer) => {
+                self.execute_noise_pre_reaction(sim, assets, owner);
+            }
+            (Substate::SeekingHeardstepsReactiontime, EventTimer) => {
+                let officer = if self.seek_enemy(owner).soldier_profile_rank == ProfileRank::Soldier
+                {
+                    self.live_whistle_officer(assets, owner)
+                } else {
+                    None
+                };
+                if officer.is_some() {
+                    self.duty_set_state(
+                        sim,
+                        assets,
+                        owner,
+                        AiState::Default,
+                        Substate::DefaultLookingOfficerForAdvice,
+                    );
+                    self.wondering_timer(owner, 100);
+                } else {
+                    self.duty_set_state(
+                        sim,
+                        assets,
+                        owner,
+                        AiState::Seeking,
+                        Substate::SeekingHeardsteps,
+                    );
+                    let ai = self.seek_enemy(owner);
+                    let destination = ai.base.seek_position;
+                    let flags = if ai.investigating_distraction {
+                        GotoFlags::RUN
+                    } else {
+                        GotoFlags::empty()
+                    };
+                    self.duty_go_to(sim, assets, owner, destination, flags);
+                    self.wondering_timer(owner, 200);
+                }
+            }
+            (Substate::SeekingHeardsteps, EventReachPoint | EventTimer) => {
+                let center = self.live_ai_position(owner);
+                self.execute_ai_seek_area(
+                    sim,
+                    assets,
+                    owner,
+                    center,
+                    0,
+                    SeekFlags::LOCATION_FIRST | SeekFlags::WALKING,
+                    UNDEFINED_DIRECTION,
+                );
+            }
+            (Substate::SeekingJustWatching, EventTimer) => {
+                self.duty_set_state(
+                    sim,
+                    assets,
+                    owner,
+                    AiState::Seeking,
+                    Substate::SeekingJustWatchingSidewards,
+                );
+                let direction = if crate::sim_rng::u32(
+                    sim,
+                    crate::sim_rng::RngSite::EnemySeekLook,
+                    0..2,
+                ) != 0
+                {
+                    crate::ai::LookDirection::RightLeft
+                } else {
+                    crate::ai::LookDirection::LeftRight
+                };
+                self.seek_enemy_mut(owner).base.outbox.actor.look_sidewards = Some(direction);
+                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            }
+            (Substate::SeekingJustWatchingSidewards, EventDone) => {
+                match self.seek_enemy(owner).soldier_profile_rank {
+                    ProfileRank::Soldier => {
+                        self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty())
+                    }
+                    ProfileRank::Officer => self.execute_ai_officer_look_for_soldier(
+                        sim,
+                        assets,
+                        owner,
+                        ReportType::Noise,
+                    ),
+                    ProfileRank::Knight | ProfileRank::None => {}
+                }
+            }
             (Substate::WonderingAppleSauceInTheVisor, EventTimer) => {
                 let unconscious = self
                     .expect_entity(owner, "apple visor owner")
@@ -144,6 +234,61 @@ impl EngineInner {
         self.seek_enemy_mut(owner)
             .base
             .launch_timer(duration, frame);
+    }
+
+    fn execute_noise_pre_reaction(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        let ai = self.seek_enemy(owner);
+        let decline = if ai.investigating_distraction {
+            false
+        } else {
+            match ai.soldier_profile_rank {
+                ProfileRank::Officer => {
+                    let here = self.live_ai_position(owner);
+                    let source = ai.base.seek_position;
+                    !ai.base.patrol.is_empty()
+                        || (here.x - source.x).abs().max((here.y - source.y).abs()) > 100.0
+                }
+                ProfileRank::Soldier | ProfileRank::Knight => {
+                    let entity = self.expect_entity(owner, "noise reaction owner");
+                    ai.base.blood_alcohol as i32 > crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
+                        || !entity.element_data().active
+                        || self.entity_data_in_building_sector(entity.element_data())
+                        || ai.soldier_profile_duty
+                        || ai.company_number == 100
+                }
+                ProfileRank::None => false,
+            }
+        };
+        self.seek_enemy_mut(owner)
+            .base
+            .set_emoticon(EmoticonType::QuestionMark);
+        if decline {
+            self.duty_set_state(
+                sim,
+                assets,
+                owner,
+                AiState::Seeking,
+                Substate::SeekingJustWatching,
+            );
+            let position = self.seek_enemy(owner).base.seek_position;
+            self.wondering_face_position(sim, assets, owner, position);
+        } else {
+            let position = self.seek_enemy(owner).base.seek_position;
+            self.wondering_face_position(sim, assets, owner, position);
+            self.duty_set_state(
+                sim,
+                assets,
+                owner,
+                AiState::Seeking,
+                Substate::SeekingHeardstepsReactiontime,
+            );
+        }
+        self.wondering_timer(owner, crate::parameters_ai::AI_FIRST_LOOK_TIME as u32);
     }
 
     fn wondering_antagonist(&self, owner: EntityId) -> EntityId {
@@ -461,6 +606,168 @@ impl EngineInner {
 mod tests {
     use super::super::battle_decision_observation_tests::fixture;
     use super::*;
+
+    #[test]
+    fn noise_reaction_uses_live_rank_activity_and_current_patrol_membership() {
+        for (rank, active, has_patrol, expected) in [
+            (
+                ProfileRank::None,
+                false,
+                false,
+                Substate::SeekingHeardstepsReactiontime,
+            ),
+            (
+                ProfileRank::Soldier,
+                false,
+                false,
+                Substate::SeekingJustWatching,
+            ),
+            (
+                ProfileRank::Officer,
+                true,
+                false,
+                Substate::SeekingHeardstepsReactiontime,
+            ),
+            (
+                ProfileRank::Officer,
+                true,
+                true,
+                Substate::SeekingJustWatching,
+            ),
+        ] {
+            let (mut engine, assets, owner, target) = fixture(false);
+            engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .element_data_mut()
+                .active = active;
+            let position = engine.live_ai_position(owner);
+            let ai = engine.seek_enemy_mut(owner);
+            ai.base.current_state = AiState::Seeking;
+            ai.base.current_substate = Substate::SeekingHeardstepsPreReactiontime;
+            ai.soldier_profile_rank = rank;
+            ai.soldier_profile_duty = false;
+            ai.base.seek_position = Position {
+                x: position.x + 50.0,
+                ..position
+            };
+            ai.base.theoretical_patrol.push(target);
+            ai.base.missed_patrol_members.push(target);
+            if has_patrol {
+                ai.base.patrol.push(target);
+            }
+            assert_eq!(
+                engine.execute_ai_wondering_event(
+                    &crate::sim_rng::test_context(),
+                    &assets,
+                    owner,
+                    &Stimulus::new(StimulusType::EventTimer)
+                ),
+                Some(false)
+            );
+            assert_eq!(engine.seek_enemy(owner).base.current_substate, expected);
+            assert_eq!(engine.seek_enemy(owner).base.when_does_timer_ring, 160);
+        }
+    }
+
+    #[test]
+    fn distraction_keeps_running_investigation_through_live_noise_handlers() {
+        let (mut engine, assets, owner, target) = fixture(false);
+        let destination = engine.live_ai_position(target);
+        let ai = engine.seek_enemy_mut(owner);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingHeardstepsPreReactiontime;
+        ai.soldier_profile_rank = ProfileRank::Soldier;
+        ai.soldier_profile_duty = true;
+        ai.investigating_distraction = true;
+        ai.base.seek_position = destination;
+        let sim = crate::sim_rng::test_context();
+        for expected in [
+            Substate::SeekingHeardstepsReactiontime,
+            Substate::SeekingHeardsteps,
+        ] {
+            assert_eq!(
+                engine.execute_ai_wondering_event(
+                    &sim,
+                    &assets,
+                    owner,
+                    &Stimulus::new(StimulusType::EventTimer)
+                ),
+                Some(false)
+            );
+            assert_eq!(engine.seek_enemy(owner).base.current_substate, expected);
+        }
+        assert_eq!(
+            engine.seek_enemy(owner).base.last_goto_destination,
+            destination
+        );
+        assert!(
+            engine
+                .seek_enemy(owner)
+                .base
+                .last_goto_flags
+                .contains(GotoFlags::RUN)
+        );
+    }
+
+    #[test]
+    fn heardsteps_arrival_searches_current_position_and_preserves_noise_location() {
+        let (mut engine, assets, owner, target) = fixture(false);
+        let here = engine.live_ai_position(owner);
+        let remembered = engine.live_ai_position(target);
+        let ai = engine.seek_enemy_mut(owner);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingHeardsteps;
+        ai.base.seek_position = remembered;
+        assert_eq!(
+            engine.execute_ai_wondering_event(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                &Stimulus::new(StimulusType::EventReachPoint)
+            ),
+            Some(false)
+        );
+        let ai = engine.seek_enemy(owner);
+        assert_eq!(ai.seek_center, here);
+        assert_eq!(
+            ai.seek_flags,
+            SeekFlags::LOCATION_FIRST | SeekFlags::WALKING
+        );
+        assert_eq!(ai.base.seek_position, remembered);
+        assert!(
+            ai.personal_seek_point_1
+                .as_ref()
+                .is_some_and(|point| point.position == here)
+        );
+    }
+
+    #[test]
+    fn just_watching_sweep_waits_for_completion_without_an_extra_timer() {
+        let (mut engine, assets, owner, _) = fixture(false);
+        let ai = engine.seek_enemy_mut(owner);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingJustWatching;
+        ai.base.launch_timer(60, 40);
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            assert_eq!(
+                engine.execute_ai_wondering_event(
+                    &crate::sim_rng::test_context(),
+                    &assets,
+                    owner,
+                    &Stimulus::new(StimulusType::EventTimer)
+                ),
+                Some(false)
+            );
+        });
+        let ai = engine.seek_enemy(owner);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingJustWatchingSidewards
+        );
+        assert!(!ai.base.timer_is_running);
+        assert_eq!(draws, vec![crate::sim_rng::RngSite::EnemySeekLook]);
+    }
 
     #[test]
     fn child_chase_refresh_keeps_running_state_until_actual_arrival() {

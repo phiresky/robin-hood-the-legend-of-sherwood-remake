@@ -436,7 +436,6 @@ pub struct AiActorOutbox {
     pub stop_target: Option<AiEntityHandle>,
     pub set_principal: Option<AiEntityHandle>,
     pub friend_primary_target_swaps: Vec<(EntityId, AiEntityHandle)>,
-    pub shoot_target: Option<AiEntityHandle>,
     /// Nominal element-table handle passed to original-game focus handling.
     /// Unlike combat targets, this may name an object (for example an ale
     /// bottle that an NPC is considering picking up).
@@ -465,17 +464,10 @@ pub struct AiActorOutbox {
     pub additional_set_attentive_modes: Vec<AttentiveModeEffect>,
     pub set_guarded_pc: Option<GuardedPcEffect>,
     pub launch_commands: Vec<crate::element::Command>,
-    pub launch_on_target: Vec<(AiEntityHandle, crate::element::Command)>,
-    /// Ordered NPC `Say` calls made on another actor. These remain in the
-    /// actor outbox so a preceding sequence-element launch on the same target
-    /// is applied first at the owner boundary.
-    #[serde(default)]
-    pub say_on_target: Vec<(AiEntityHandle, Remark)>,
     pub launch_sequences: Vec<crate::sequence::Sequence>,
     pub look_sidewards: Option<LookDirection>,
     pub posture: Option<crate::element::Posture>,
     pub begin_panic: Option<PanicRequest>,
-    pub panic_seek_fallback: bool,
     pub script_seek_area: Option<ScriptSeekAreaRequest>,
     pub archery_reservation_release: ArcheryReservationRelease,
 }
@@ -630,15 +622,12 @@ pub(crate) struct AiActorCoreEffects {
     pub stop_target: Option<AiEntityHandle>,
     pub set_principal: Option<AiEntityHandle>,
     pub friend_primary_target_swaps: Vec<(EntityId, AiEntityHandle)>,
-    pub shoot_target: Option<AiEntityHandle>,
     pub focus: Option<AiEntityHandle>,
     pub focus_point: Option<Position>,
     pub unfocus: bool,
     pub set_direction_instantly: Option<i16>,
     pub deactivate: bool,
     pub launch_commands: Vec<crate::element::Command>,
-    pub launch_on_target: Vec<(AiEntityHandle, crate::element::Command)>,
-    pub say_on_target: Vec<(AiEntityHandle, Remark)>,
     pub launch_sequences: Vec<crate::sequence::Sequence>,
     pub refresh_shield: bool,
     pub raise_shield_immediately: bool,
@@ -674,7 +663,6 @@ impl AiActorOutbox {
             || self.stop_target.is_some()
             || self.set_principal.is_some()
             || !self.friend_primary_target_swaps.is_empty()
-            || self.shoot_target.is_some()
             || self.focus.is_some()
             || self.unalert_near_charly_seekers.is_some()
             || self.refill_bow_ammo
@@ -688,13 +676,10 @@ impl AiActorOutbox {
             || self.has_pending_attentive_mode()
             || self.set_guarded_pc.is_some()
             || !self.launch_commands.is_empty()
-            || !self.launch_on_target.is_empty()
-            || !self.say_on_target.is_empty()
             || !self.launch_sequences.is_empty()
             || self.look_sidewards.is_some()
             || self.posture.is_some()
             || self.begin_panic.is_some()
-            || self.panic_seek_fallback
             || self.script_seek_area.is_some()
             || self.archery_reservation_release != ArcheryReservationRelease::default()
     }
@@ -744,15 +729,12 @@ impl AiActorOutbox {
             stop_target: self.stop_target.take(),
             set_principal: self.set_principal.take(),
             friend_primary_target_swaps: std::mem::take(&mut self.friend_primary_target_swaps),
-            shoot_target: self.shoot_target.take(),
             focus: self.focus.take(),
             focus_point: self.focus_point.take(),
             unfocus: std::mem::take(&mut self.unfocus),
             set_direction_instantly: self.set_direction_instantly.take(),
             deactivate: std::mem::take(&mut self.deactivate),
             launch_commands: std::mem::take(&mut self.launch_commands),
-            launch_on_target: std::mem::take(&mut self.launch_on_target),
-            say_on_target: std::mem::take(&mut self.say_on_target),
             launch_sequences: std::mem::take(&mut self.launch_sequences),
             refresh_shield: std::mem::take(&mut self.refresh_shield),
             raise_shield_immediately: std::mem::take(&mut self.raise_shield_immediately),
@@ -868,13 +850,11 @@ mod tests {
         let mut effects = AiActorOutbox::default();
         effects.set_focus(0);
         effects.stop_target = Some(AiEntityHandle::new(0));
-        effects.shoot_target = Some(AiEntityHandle::new(0));
 
         let encoded = bitcode::encode(&effects);
         let restored: AiActorOutbox = bitcode::decode(&encoded).unwrap();
         assert_eq!(restored.focus, Some(AiEntityHandle::new(0)));
         assert_eq!(restored.stop_target, Some(AiEntityHandle::new(0)));
-        assert_eq!(restored.shoot_target, Some(AiEntityHandle::new(0)));
     }
 
     #[test]

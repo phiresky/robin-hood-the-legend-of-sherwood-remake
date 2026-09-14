@@ -314,9 +314,6 @@ impl EngineInner {
                     .positions_of_beggars_to_control
                     .pop()
                     .expect("beggar position missing");
-                let id = self.expect_entity_id_for_index(beggar, "seek beggar identity");
-                let civilian = matches!(self.expect_entity(id, "seek beggar"), Entity::Civilian(_));
-                self.seek_enemy_mut(owner).beggar_is_npc = civilian;
                 self.duty_set_state(
                     sim,
                     assets,

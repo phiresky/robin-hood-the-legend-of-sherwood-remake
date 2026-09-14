@@ -881,9 +881,7 @@ impl EngineInner {
         // Cancel any pending AI bow shot.
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(initiator)
             && let Some(ai) = s.npc.ai_brain.base_mut()
-        {
-            ai.outbox.actor.shoot_target = None;
-        }
+        {}
 
         // ENTER_SWORDFIGHT translation prepares the opponent before entering
         // the fight. Swordfight reconsideration enters the fight directly,

@@ -636,7 +636,6 @@ impl EngineInner {
                 company_number: enemy_ai.company_number,
                 in_building,
                 detectable_bodies,
-                seek_position: enemy_ai.base.seek_position,
                 current_task_priority: enemy_ai.current_task_priority,
                 minimal_task_priority: enemy_ai.minimal_task_priority,
                 view_direction: s.npc.view_direction,

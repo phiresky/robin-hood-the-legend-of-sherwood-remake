@@ -263,7 +263,6 @@ fn classify_enemy_ai(value: &EnemyAi) {
                 investigating_distraction,
                 last_seek_direction_index,
                 beggar_to_examine,
-                beggar_is_npc,
                 current_task_priority,
                 minimal_task_priority,
                 new_task_priority,

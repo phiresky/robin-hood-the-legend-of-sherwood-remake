@@ -1187,11 +1187,7 @@ fn goto_route_turn_lookup_preserves_original_endpoint_direction_flip() {
 
 #[test]
 fn entering_fleeing_hiding_blinks_visible_enemies_for_redetection() {
-    for substate in [
-        Substate::FleeingRunToHide,
-        Substate::FleeingRunToDoor,
-        Substate::FleeingPanic,
-    ] {
+    for substate in [Substate::FleeingRunToHide, Substate::FleeingRunToDoor] {
         let mut ai = AiController::new(1);
         ai.current_state = AiState::Fleeing;
         ai.current_substate = substate;
@@ -1793,7 +1789,6 @@ fn clear_all_pending_clears_every_outbox_barrier() {
         alert: AlertLevel::Yellow,
         is_new_panic: true,
     });
-    ai.outbox.actor.panic_seek_fallback = true;
     ai.outbox.actor.archery_reservation_release = ArcheryReservationRelease {
         shooting_point: Some(ReservedShootingPoint {
             sector_index: 6,

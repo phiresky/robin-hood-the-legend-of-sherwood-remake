@@ -144,7 +144,6 @@ impl DutyExecution<'_> {
         {
             let enemy = self.enemy_mut();
             enemy.beggar_to_examine = None;
-            enemy.beggar_is_npc = false;
             enemy.known_enemy_strike_1 = None;
             enemy.known_enemy_strike_2 = None;
             enemy.known_enemy_strike_3 = None;

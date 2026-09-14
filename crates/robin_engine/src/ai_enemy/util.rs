@@ -267,11 +267,6 @@ pub struct CampSoldierInfo {
     /// data, refreshed every tick from
     /// `Soldier::detectable_lists[DetectableType::Body]`.
     pub detectable_bodies: Vec<HumanHandle>,
-    /// Soldier's own seek position (live AI field, not the
-    /// reconnaissance-report seek position).  Used by
-    /// nearby-officer noise matching to identify an
-    /// officer actively heading to the same noise.
-    pub seek_position: Position,
     /// Live current task priority from the soldier's AI brain.  Used
     /// by the officer's AlertSoldiers gate to predict whether the
     /// soldier's `Think(CALL_ALERT)` would have returned true (the

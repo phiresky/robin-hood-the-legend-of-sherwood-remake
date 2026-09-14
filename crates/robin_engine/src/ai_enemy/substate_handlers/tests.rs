@@ -1301,7 +1301,6 @@ fn officer_wait_missed_soldier_does_not_relaunch_timer() {
         company_number: 0,
         in_building: false,
         detectable_bodies: Vec::new(),
-        seek_position: Position::default(),
         current_task_priority: 0,
         minimal_task_priority: 0,
         view_direction: [1.0, 0.0],
@@ -1393,167 +1392,6 @@ fn goto_post_arrival_runs_enemy_attentive_tail_after_turn_request() {
 }
 
 #[test]
-fn reached_beggar_launches_one_ordered_turn_then_response_sequence() {
-    use crate::element::{Command, EntityId, Posture};
-    use crate::entity_id::SoldierId;
-    use crate::sequence::{Field, FieldValue};
-
-    for (archer, response, timer) in [
-        (false, Command::StartMenace, 30),
-        (true, Command::EquipBow, 100),
-    ] {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        ai.base.owner_entity_id = Some(EntityId::Soldier(SoldierId(1)));
-        ai.set_state(
-            AiState::Seeking,
-            Substate::SeekingSeekpointApproachingBeggar,
-        );
-        ai.beggar_to_examine = Some(AiEntityHandle::new(17));
-        ai.beggar_is_npc = false;
-        ai.is_archer_unit = archer;
-
-        let mut beggar = pc_view(Posture::SimulatingBeggar);
-        beggar.position = Position {
-            x: 140.0,
-            y: 80.0,
-            ..Position::default()
-        };
-        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-        views.insert(17, beggar);
-        let ctx = AiContext {
-            frame: 400,
-            position: Position {
-                x: 100.0,
-                y: 100.0,
-                ..Position::default()
-            },
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        ai.think_expected_event(
-            ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-            &Stimulus::new(StimulusType::EventReachPoint),
-            &mut AiGlobalState::default(),
-        )
-        .unwrap();
-
-        assert!(ai.base.outbox.actor.orders.is_empty());
-        assert!(ai.base.outbox.actor.launch_commands.is_empty());
-        let [sequence] = ai.base.outbox.actor.launch_sequences.as_slice() else {
-            panic!("beggar identification must launch exactly one sequence");
-        };
-        assert_eq!(sequence.elements.len(), 2);
-        assert_eq!(sequence.elements[0].command, Command::TurnFast);
-        assert_eq!(sequence.elements[0].command_level, 1);
-        assert_eq!(sequence.elements[1].command, response);
-        assert_eq!(sequence.elements[1].command_level, 2);
-        let expected_direction =
-            crate::position_interface::vector_to_sector_0_to_15_iso(40.0, -20.0);
-        assert!(matches!(
-            sequence.elements[0].get_property(Field::Direction),
-            Some(FieldValue::Integer(direction)) if *direction == expected_direction as u32
-        ));
-        assert_eq!(ai.base.when_does_timer_ring, 400 + timer);
-    }
-}
-
-#[test]
-fn identified_npc_beggar_shows_face_then_identifies_himself() {
-    use crate::ai::{AiOwnerWork, Remark};
-    use crate::element::Command;
-
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(1);
-    ai.set_state(
-        AiState::Seeking,
-        Substate::SeekingSeekpointIdentifyingBeggar1,
-    );
-    ai.base.outbox = crate::ai::AiOutbox::default();
-    ai.beggar_to_examine = Some(AiEntityHandle::new(70));
-    // A save can resume directly in IdentifyingBeggar1 without ever
-    // populating this transient compatibility cache.
-    ai.beggar_is_npc = false;
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(70, civilian_view(70, Position::default()));
-    let ctx = AiContext {
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    ai.think_expected_event(
-        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-        &Stimulus::new(StimulusType::EventTimer),
-        &mut AiGlobalState::default(),
-    )
-    .unwrap();
-
-    let prefix = ai
-        .base
-        .outbox
-        .reentrant
-        .owner_work
-        .iter()
-        .find_map(|work| match work {
-            AiOwnerWork::StateChange(change) => change.actor_effects_before_callback.as_ref(),
-            _ => None,
-        })
-        .expect("beggar response must precede the identifying-2 state-change callback");
-    assert_eq!(
-        prefix.launch_on_target,
-        vec![(AiEntityHandle::new(70), Command::BeggarShowFace)]
-    );
-    assert_eq!(
-        prefix.say_on_target,
-        vec![(AiEntityHandle::new(70), Remark::CivBeggarIdentifiesHimself)]
-    );
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::SeekingSeekpointIdentifyingBeggar2
-    );
-}
-
-#[test]
-fn identified_disguised_pc_uses_live_type_despite_stale_npc_cache() {
-    use crate::element::Posture;
-
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(1);
-    ai.set_state(
-        AiState::Seeking,
-        Substate::SeekingSeekpointIdentifyingBeggar1,
-    );
-    ai.base.outbox = crate::ai::AiOutbox::default();
-    ai.beggar_to_examine = Some(AiEntityHandle::new(70));
-    ai.beggar_is_npc = true;
-    ai.is_archer_unit = true;
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(70, pc_view(Posture::SimulatingBeggar));
-    let ctx = AiContext {
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        remaining_arrows: 1,
-        ..AiContext::test_fixture()
-    };
-
-    ai.think_expected_event(
-        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-        &Stimulus::new(StimulusType::EventTimer),
-        &mut AiGlobalState::default(),
-    )
-    .unwrap();
-
-    assert_eq!(ai.base.current_state, AiState::Attacking);
-    assert_eq!(ai.base.current_substate, Substate::AttackingBowShooting);
-    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(70)));
-    assert_eq!(ai.list_them, vec![70]);
-    assert_eq!(
-        ai.base.outbox.actor.shoot_target,
-        Some(AiEntityHandle::new(70))
-    );
-}
-
-#[test]
 fn combat_alert_ignores_timer_until_reaching_the_alert_point() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(1);
@@ -1607,75 +1445,6 @@ fn combat_alert_reachpoint_starts_lost_enemy_seek() {
 }
 
 #[test]
-fn heardsteps_arrival_starts_zero_radius_walking_seek() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(138);
-    ai.base.current_state = AiState::Seeking;
-    ai.base.current_substate = Substate::SeekingHeardsteps;
-    ai.base.seek_position = Position {
-        x: 900.0,
-        y: 700.0,
-        ..Position::default()
-    };
-    let here = Position {
-        x: 1630.6875,
-        y: 1_630.921_9,
-        ..Position::default()
-    };
-    let ctx = AiContext {
-        frame: 1257,
-        position: here,
-        camp: crate::element::Camp::Lacklandists,
-        self_animation: crate::order::OrderType::TransitionWalkingUprightWaitingUpright,
-        ..AiContext::test_fixture()
-    };
-    let mut global = AiGlobalState::default();
-
-    let (_, draws) = crate::sim_rng::with_draw_trace(|| {
-        ai.think_expected_event(
-            ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-            &Stimulus::new(StimulusType::EventReachPoint),
-            &mut global,
-        )
-        .unwrap();
-    });
-
-    assert_eq!(
-        draws,
-        vec![
-            crate::sim_rng::RngSite::SeekPointDirectionPattern,
-            crate::sim_rng::RngSite::SeekPointAcceptance,
-        ]
-    );
-    assert_eq!(ai.seek_center, here);
-    assert_eq!(
-        ai.seek_flags,
-        SeekFlags::LOCATION_FIRST | SeekFlags::WALKING
-    );
-    assert_eq!(ai.base.current_substate, Substate::SeekingSeekpoint);
-    assert_eq!(ai.actual_seek_point, Some(1111));
-    assert_eq!(
-        ai.base.seek_position,
-        Position {
-            x: 900.0,
-            y: 700.0,
-            ..Position::default()
-        },
-        "selecting a route point must preserve the semantic heard-steps position"
-    );
-    assert!(
-        ai.personal_seek_point_1
-            .as_ref()
-            .is_some_and(|point| point.locked)
-    );
-    // The old shortcut authored a Face/Turn order here. Area search owns the
-    // post-arrival lifecycle instead; at this pure-AI boundary it has no
-    // live actor order (the zero-distance completion is settled by the
-    // enclosing Think lifecycle).
-    assert!(ai.base.outbox.actor.orders.is_empty());
-}
-
-#[test]
 fn reaching_near_officer_redispatches_reachpoint_synchronously() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(1);
@@ -1710,7 +1479,6 @@ fn reaching_near_officer_redispatches_reachpoint_synchronously() {
         company_number: 0,
         in_building: false,
         detectable_bodies: Vec::new(),
-        seek_position: Position::default(),
         current_task_priority: 0,
         minimal_task_priority: 0,
         view_direction: [1.0, 0.0],
@@ -1879,7 +1647,6 @@ fn alert_candidate(handle: u32, position: Position) -> crate::ai_enemy::CampSold
         company_number: 0,
         in_building: false,
         detectable_bodies: Vec::new(),
-        seek_position: Position::default(),
         current_task_priority: 0,
         minimal_task_priority: 0,
         view_direction: [1.0, 0.0],
@@ -2141,7 +1908,6 @@ fn instructed_soldier_adds_officers_selected_body_after_speech() {
         company_number: 0,
         in_building: false,
         detectable_bodies: Vec::new(),
-        seek_position: Position::default(),
         current_task_priority: 0,
         minimal_task_priority: 0,
         view_direction: [1.0, 0.0],
@@ -2662,89 +2428,6 @@ fn charly_defence_completion_relays_talk_to_officer() {
 }
 
 #[test]
-fn rankless_heardsteps_pre_reaction_uses_linux_v48_investigate_result() {
-    let mut ai = EnemyAi::new(125);
-    ai.base.current_state = AiState::Seeking;
-    ai.base.current_substate = Substate::SeekingHeardstepsPreReactiontime;
-    ai.soldier_profile_rank = ProfileRank::None;
-    ai.base.seek_position = Position {
-        x: 100.0,
-        y: 50.0,
-        ..Position::default()
-    };
-    let ctx = AiContext {
-        frame: 54_726,
-        self_is_active: false,
-        in_building: false,
-        ..AiContext::test_fixture()
-    };
-
-    ai.seeking_heardsteps_pre_reactiontime(StimulusType::EventTimer, &ctx);
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::SeekingHeardstepsReactiontime
-    );
-    assert!(ai.base.timer_is_running);
-    assert_eq!(
-        ai.base.when_does_timer_ring,
-        ctx.frame + parameters_ai::AI_FIRST_LOOK_TIME as u32
-    );
-}
-
-#[test]
-fn inactive_ranked_soldier_still_declines_to_follow_steps() {
-    let mut ai = EnemyAi::new(126);
-    ai.base.current_state = AiState::Seeking;
-    ai.base.current_substate = Substate::SeekingHeardstepsPreReactiontime;
-    ai.soldier_profile_rank = ProfileRank::Soldier;
-    ai.soldier_profile_duty = false;
-    let ctx = AiContext {
-        frame: 100,
-        self_is_active: false,
-        in_building: false,
-        ..AiContext::test_fixture()
-    };
-
-    ai.seeking_heardsteps_pre_reactiontime(StimulusType::EventTimer, &ctx);
-
-    assert_eq!(ai.base.current_substate, Substate::SeekingJustWatching);
-}
-
-#[test]
-fn distraction_forces_a_running_investigation_even_for_reluctant_soldier() {
-    let mut ai = EnemyAi::new(127);
-    ai.base.current_state = AiState::Seeking;
-    ai.base.current_substate = Substate::SeekingHeardstepsPreReactiontime;
-    ai.soldier_profile_rank = ProfileRank::Soldier;
-    ai.soldier_profile_duty = false;
-    ai.investigating_distraction = true;
-    ai.base.seek_position = Position {
-        x: 120.0,
-        y: 75.0,
-        ..Position::default()
-    };
-    let ctx = AiContext {
-        frame: 100,
-        self_is_active: true,
-        in_building: false,
-        ..AiContext::test_fixture()
-    };
-    let tick = AiPerTickData::stub();
-
-    ai.seeking_heardsteps_pre_reactiontime(StimulusType::EventTimer, &ctx);
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::SeekingHeardstepsReactiontime
-    );
-
-    ai.seeking_heardsteps_reactiontime(StimulusType::EventTimer, &ctx, &tick);
-    assert_eq!(ai.base.current_substate, Substate::SeekingHeardsteps);
-    assert_eq!(ai.base.last_goto_flags, GotoFlags::RUN);
-    assert_eq!(ai.base.last_goto_destination, ai.base.seek_position);
-}
-
-#[test]
 fn group_called_by_officer_moves_before_single_state_transition() {
     let mut ai = EnemyAi::new(53);
     ai.base.current_state = AiState::Seeking;
@@ -2906,45 +2589,6 @@ fn group_reachpoint_keeps_raw_wrapped_gather_direction_for_face_to() {
     assert_eq!(turn.explicit_direction, Some(29));
     assert!(!ai.base.already_turned);
     assert_eq!(ai.base.current_substate, Substate::SeekingGroupGoToOfficer);
-}
-
-#[test]
-fn officer_ignores_missed_patrol_member_when_deciding_to_follow_nearby_steps() {
-    let mut ai = EnemyAi::new(125);
-    ai.base.current_state = AiState::Seeking;
-    ai.base.current_substate = Substate::SeekingHeardstepsPreReactiontime;
-    ai.soldier_profile_rank = ProfileRank::Officer;
-    let missed_member = crate::element::EntityId::Soldier(crate::entity_id::SoldierId(131));
-    ai.base.theoretical_patrol.push(missed_member);
-    ai.base.missed_patrol_members.push(missed_member);
-    ai.base.seek_position = Position {
-        x: 1569.0,
-        y: 705.0,
-        ..Position::default()
-    };
-    let ctx = AiContext {
-        frame: 54_703,
-        position: Position {
-            x: 1642.0,
-            y: 636.0,
-            ..Position::default()
-        },
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    let mut stale_member = alert_candidate(131, Position::default());
-    stale_member.patrol_chief = Some(crate::element::EntityId::Soldier(
-        crate::entity_id::SoldierId(125),
-    ));
-    tick.camp_soldiers.push(stale_member);
-
-    ai.seeking_heardsteps_pre_reactiontime(StimulusType::EventTimer, &ctx);
-
-    assert!(ai.base.patrol.is_empty());
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::SeekingHeardstepsReactiontime
-    );
 }
 
 #[test]

@@ -221,7 +221,6 @@ fn enemy_ai_scalar_projection_matrix() {
             frame_when_missed_charly: (8u32 + seed),
             investigating_distraction: seed & (1 << 2) != 0,
             last_seek_direction_index: (12u32 + seed) as u8,
-            beggar_is_npc: seed & (1 << 1) != 0,
             current_task_priority: (15u32 + seed) as u16,
             minimal_task_priority: (16u32 + seed) as u16,
             new_task_priority: (17u32 + seed) as u16,
