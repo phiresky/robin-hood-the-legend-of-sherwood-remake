@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { stageReleaseAssets, inventory, main, packageTimestamp, publish, releaseTag, runTimestamp, type GitHubScriptContext } from './publish_native_release.ts';
 
@@ -219,14 +220,6 @@ test('github-script entry points load through require without a build', async ()
   assert.deepEqual(outputs, [['timestamp', '202609072359']]);
 });
 
-test('workflow imports TypeScript directly for timestamp and publication', async () => {
-  const workflow = await readFile(new URL('../../.github/workflows/native-release.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /require\('\.\/scripts\/release\/publish_native_release\.ts'\)\.main/);
-  assert.match(workflow, /require\('\.\/scripts\/release\/publish_native_release\.ts'\)\.packageTimestamp/);
-  assert.doesNotMatch(workflow, /publish_native_release\.py/);
-});
-
-
 test('real Octokit uploads raw bytes to returned URL and decodes binary downloads', async t => {
   const { getOctokit } = await import('@actions/github');
   const root = await fixture(t);
@@ -329,15 +322,9 @@ test('staging renames downloads and both update packages without changing identi
 });
 
 test('normal release packages contain every modding binary on both platforms', async t => {
-  const workflow = await readFile(new URL('../../.github/workflows/native-release.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /cargo build --locked --release -p robin_modding_tools --bins --features robin_rs\/release/);
-  const stage = workflow.split('      - name: Stage package input\n')[1]
-    .split('\n      - name:')[0].split('        run: |\n')[1]
-    .split('\n').map(line => line.replace(/^          /, '')).join('\n');
+  const stage = fileURLToPath(new URL('./stage_package_input.sh', import.meta.url));
   const binaries = (await readdir(new URL('../../crates/robin_modding_tools/src/bin/', import.meta.url)))
     .filter(name => name.endsWith('.rs')).map(name => name.slice(0, -3));
-  assert.equal(binaries.length, 4);
-  assert.match(workflow, /cargo build --locked --release -p robin_replay_format --features native-admission --bin robin-replay-admission/);
   binaries.push('robin-replay-admission');
   for (const runtime of ['win-x64', 'linux-x64']) {
     const root = await mkdtemp(join(tmpdir(), 'modding-package-'));
@@ -356,12 +343,7 @@ test('normal release packages contain every modding binary on both platforms', a
     for (const name of [executable, ...binaries.map(name => name + suffix)]) {
       await writeFile(join(root, 'target', target, 'release', name), name, { mode: 0o755 });
     }
-    const script = stage
-      .replaceAll('${{ matrix.runtime }}', runtime)
-      .replaceAll('${{ matrix.target }}', target)
-      .replaceAll('${{ matrix.executable }}', executable)
-      .replaceAll('${{ matrix.pack_executable }}', packaged);
-    execFileSync('bash', ['-e', '-c', script], { cwd: root });
+    execFileSync('bash', [stage, runtime, target, executable, packaged], { cwd: root });
     for (const name of [...binaries.map(name => name + suffix), packaged]) {
       assert.equal(await readFile(join(root, 'target/package-input', name), 'utf8'), name === packaged ? executable : name);
     }

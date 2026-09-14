@@ -28,6 +28,7 @@ fn main() {
     install_crash_diagnostics();
     robin_rs::init_tracing();
     let args = robin_rs::main_entry::parse_cli();
+    robin_rs::bug_report::submit_pending();
     #[cfg(all(
         feature = "auto-update",
         any(target_os = "windows", target_os = "linux", target_os = "macos")
@@ -62,6 +63,11 @@ fn run_native(args: robin_rs::main_entry::CliArgs) -> i32 {
         }
         Err(e) => {
             tracing::error!("{}", e);
+            robin_rs::bug_report::capture_failure(
+                robin_run_protocol::diagnostics::DiagnosticKindV1::FatalError,
+                &format!("{e:#}"),
+                None,
+            );
             return 1;
         }
     };
@@ -73,6 +79,11 @@ fn run_native(args: robin_rs::main_entry::CliArgs) -> i32 {
             Ok(code) => code,
             Err(e) => {
                 tracing::error!("Headless game loop failed: {e}");
+                robin_rs::bug_report::capture_failure(
+                    robin_run_protocol::diagnostics::DiagnosticKindV1::FatalError,
+                    &format!("{e:#}"),
+                    None,
+                );
                 1
             }
         };
@@ -95,6 +106,11 @@ fn run_native(args: robin_rs::main_entry::CliArgs) -> i32 {
                 Ok(code) => code,
                 Err(e) => {
                     tracing::error!("Game loop failed: {e}");
+                    robin_rs::bug_report::capture_failure(
+                        robin_run_protocol::diagnostics::DiagnosticKindV1::FatalError,
+                        &format!("{e:#}"),
+                        None,
+                    );
                     1
                 }
             }
@@ -103,6 +119,11 @@ fn run_native(args: robin_rs::main_entry::CliArgs) -> i32 {
         Ok(code) => code,
         Err(e) => {
             tracing::error!("Window/event-loop init failed: {e}");
+            robin_rs::bug_report::capture_failure(
+                robin_run_protocol::diagnostics::DiagnosticKindV1::FatalError,
+                &format!("{e:#}"),
+                None,
+            );
             1
         }
     }
@@ -117,7 +138,11 @@ fn install_crash_diagnostics() {
     }
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        tracing::error!(target: "panic", "{}", info);
+        robin_rs::bug_report::capture_failure(
+            robin_run_protocol::diagnostics::DiagnosticKindV1::Panic,
+            &info.to_string(),
+            Some(std::backtrace::Backtrace::force_capture().to_string()),
+        );
         default_hook(info);
     }));
 
@@ -470,4 +495,51 @@ async fn wasm_main(
     .map(|_| ())
     .map_err(anyhow::Error::msg)
     .context("Window/event-loop init failed")
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod crash_report_tests {
+    #[test]
+    fn panic_child() {
+        if std::env::var_os("ROBIN_DIAGNOSTIC_TEST_CHILD").is_none() {
+            return;
+        }
+        let limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: valid limit pointer; affects only this disposable child.
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_CORE, &limit) }, 0);
+        super::install_crash_diagnostics();
+        robin_rs::init_tracing();
+        tracing::warn!("diagnostic child log");
+        panic!("diagnostic subprocess panic");
+    }
+
+    #[test]
+    fn panic_hook_persists_report_before_process_exit() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "crash_report_tests::panic_child", "--nocapture"])
+            .env("ROBIN_DIAGNOSTIC_TEST_CHILD", "1")
+            .env("XDG_DATA_HOME", directory.path())
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let reports = directory.path().join("robin_hood/reports");
+        let paths: Vec<_> = std::fs::read_dir(reports)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(paths.len(), 1);
+        let report: robin_run_protocol::diagnostics::DiagnosticReportV1 =
+            serde_json::from_reader(std::fs::File::open(&paths[0]).unwrap()).unwrap();
+        assert!(matches!(
+            report.kind,
+            robin_run_protocol::diagnostics::DiagnosticKindV1::Panic
+        ));
+        assert!(report.description.contains("diagnostic subprocess panic"));
+        assert!(report.recent_log.contains("diagnostic child log"));
+        assert!(report.backtrace.is_some_and(|trace| !trace.is_empty()));
+    }
 }

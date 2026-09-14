@@ -10,15 +10,15 @@
   },
   "dependencies": {
     "@rle/shared": "workspace:*",
-    "@solidjs/web": "2.0.0-rc.0",
-    "idb-keyval": "^6.2.2",
-    "solid-js": "2.0.0-rc.1",
-    "three": "^0.185.1"
+    "@solidjs/web": "2.0.0-rc.8",
+    "idb-keyval": "^6.3.0",
+    "solid-js": "2.0.0-rc.8",
+    "three": "^0.186.0"
   },
   "devDependencies": {
-    "@types/three": "^0.185.4",
-    "typescript": "^5.9.2",
-    "vite": "^7.1.2",
+    "@types/three": "^0.186.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
     "vite-plugin-solid": "3.0.0-next.27"
   }
 }

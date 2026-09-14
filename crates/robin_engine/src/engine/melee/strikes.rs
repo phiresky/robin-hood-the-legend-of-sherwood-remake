@@ -2395,10 +2395,40 @@ impl EngineInner {
         // lying posture, and fall-order retirement.
         let mut ladder_arrivals: Vec<EntityId> = Vec::new();
 
-        for (entity_id, entity) in self.world.entities.actors_mut() {
-            if selected_owner.is_some_and(|owner| owner != EntityId::from(entity_id)) {
-                continue;
-            }
+        // Select eligible flights before borrowing actors mutably so owner
+        // updates and terminal reconciliation touch only their candidates.
+        let eligible = |entity: &Entity| {
+            entity
+                .actor_data()
+                .and_then(|actor| actor.active_flight)
+                .is_some_and(|flight| {
+                    (!terminal_only || flight.frames_remaining == 0)
+                        && (!skip_terminal || flight.frames_remaining != 0)
+                })
+        };
+        let flight_ids: Vec<EntityId> = match selected_owner {
+            Some(owner) => std::iter::once(owner)
+                .filter(|owner| {
+                    matches!(
+                        owner,
+                        EntityId::Pc(_) | EntityId::Soldier(_) | EntityId::Civilian(_)
+                    ) && self.world.entities.get(*owner).is_some_and(eligible)
+                })
+                .collect(),
+            None => self
+                .world
+                .entities
+                .actors()
+                .filter(|(_, entity)| eligible(entity))
+                .map(|(id, _)| id.into())
+                .collect(),
+        };
+        for entity_id in flight_ids {
+            let entity = self
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("selected flight actor disappeared before flight execution");
             // Read flight state without holding a mutable borrow.
             let flight_info = entity.actor_data().and_then(|a| a.active_flight);
 
@@ -4005,6 +4035,47 @@ mod tests {
     };
     use crate::position_interface::SectorHandle;
     use crate::sequence::SequenceElement;
+
+    #[test]
+    fn flight_checks_preserve_idle_actors_and_nonterminal_flights() {
+        let mut engine = EngineInner::new();
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::default();
+        let idle = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
+            Posture::Upright,
+        ));
+        let mut flying = falling_pushed_soldier(false);
+        flying
+            .actor_data_mut()
+            .unwrap()
+            .active_flight
+            .as_mut()
+            .unwrap()
+            .frames_remaining = 8;
+        let flying = engine.add_test_entity(flying);
+        let actor_state = |engine: &EngineInner, owner| {
+            let entity = engine.get_entity(owner).unwrap();
+            let actor = entity.actor_data().unwrap();
+            (
+                entity.element_data().position(),
+                entity.element_data().position_map(),
+                entity.element_data().posture(),
+                actor.action_state,
+                actor.wait_time,
+                bitcode::encode(&actor.active_flight),
+            )
+        };
+        let before = [actor_state(&engine, idle), actor_state(&engine, flying)];
+
+        assert_eq!(engine.tick_push_flight_for_owner(&sim, &assets, idle), None);
+        engine.tick_push_flight_terminal_landings(&sim, &assets);
+
+        assert_eq!(
+            [actor_state(&engine, idle), actor_state(&engine, flying)],
+            before,
+            "neither the idle owner nor a nonterminal flight was eligible for mutation",
+        );
+    }
 
     #[test]
     fn perform_flight_stops_on_first_tick_of_final_sprite_frame() {

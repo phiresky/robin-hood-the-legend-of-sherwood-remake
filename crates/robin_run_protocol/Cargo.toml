@@ -13,6 +13,7 @@ authentication = ["dep:ed25519-dalek"]
 
 [dependencies]
 ed25519-dalek = { workspace = true, optional = true }
+zstd.workspace = true
 bitcode.workspace = true
 hex.workspace = true
 serde = { workspace = true, features = ["derive"] }

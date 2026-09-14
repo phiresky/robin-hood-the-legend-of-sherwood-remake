@@ -72,6 +72,7 @@ sd-notify = "0.5"
 [dev-dependencies]
 # Independent compatibility oracle for persisted HMAC authorities and cursors.
 ring = "0.17"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 bitcode.workspace = true
 http-body-util = "0.1"
 tracing-test = "0.2"

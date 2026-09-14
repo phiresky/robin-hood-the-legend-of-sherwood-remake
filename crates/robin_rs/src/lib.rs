@@ -24,6 +24,8 @@ use std::sync::{Mutex, OnceLock};
 pub mod auto_update;
 pub mod gameplay_settings;
 pub(crate) use leaderboard::signing as leaderboard_signing;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod bug_report;
 pub mod localization;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native_game_identity;
@@ -102,6 +104,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ReplayLogMakeWriter {
 #[cfg(not(target_arch = "wasm32"))]
 impl std::io::Write for ReplayLogWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        crate::bug_report::record_log(buf);
         if let Some(file) = REPLAY_LOG_FILE
             .get_or_init(|| Mutex::new(None))
             .lock()

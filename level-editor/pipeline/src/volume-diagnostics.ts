@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
+import sharp, { type OverlayOptions } from "sharp";
 import { groundToScene, type MapCamera } from "@rle/shared";
 import { workDir } from "./env.ts";
 import type { Geometry } from "./volume-geometry.ts";
@@ -137,7 +137,7 @@ export async function renders(
     const span = options.closeupSpan ?? 500;
     // --closeup-yaws a,b,… (default 35,125,215,305); yaw 0 with the map elevation is the map camera
     const yaws = options.closeupYaws ?? [35, 125, 215, 305];
-    const composites: sharp.OverlayOptions[] = [];
+    const composites: OverlayOptions[] = [];
     let svg = `<svg width="${yaws.length * vw}" height="${closeups.length * vh}" xmlns="http://www.w3.org/2000/svg">`;
     for (const [i, [x, y]] of closeups.entries()) {
       const c = groundToScene(cam, x, y);

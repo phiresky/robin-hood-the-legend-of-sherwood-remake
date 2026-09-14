@@ -8,7 +8,7 @@
 // (unlit) above an orbit view (shaded), labelled with fit IoU, colour
 // agreement, triangle count, request time and price.
 import path from "node:path";
-import sharp from "sharp";
+import sharp, { type OverlayOptions } from "sharp";
 import type { AssetModel, MapCamera } from "@rle/shared";
 import { readAssetDescriptor } from "./library.ts";
 import { libraryDir, workDir } from "./env.ts";
@@ -31,7 +31,7 @@ async function main() {
   const cell = Number(get("cell") ?? 260);
 
   const levels = new Map<string, { cam: MapCamera; src: string | Buffer }>();
-  const rows: { id: string; tiles: sharp.OverlayOptions[]; labels: string[]; table: string[] }[] = [];
+  const rows: { id: string; tiles: OverlayOptions[]; labels: string[]; table: string[] }[] = [];
   let map = "";
   for (const id of ids) {
     const desc = await readAssetDescriptor(path.join(libraryDir, id, "asset.json"));
@@ -69,7 +69,7 @@ async function main() {
     const fitCell = (buf: Buffer) =>
       sharp(buf).resize(cell, cell, { fit: "contain", background: "#202020" }).png().toBuffer();
 
-    const tiles: sharp.OverlayOptions[] = [{ input: await fitCell(cropPng), left: 0, top: 0 }];
+    const tiles: OverlayOptions[] = [{ input: await fitCell(cropPng), left: 0, top: 0 }];
     const labels: string[] = [`${id}`];
     const table: string[] = [];
     let col = 1;
@@ -114,7 +114,7 @@ async function main() {
 
   const cols = Math.max(...rows.map((r) => r.labels.length));
   const rowH = 2 * cell + 20;
-  const composites: sharp.OverlayOptions[] = [];
+  const composites: OverlayOptions[] = [];
   let svg = `<svg width="${cols * cell}" height="${rows.length * rowH}" xmlns="http://www.w3.org/2000/svg">`;
   rows.forEach((r, i) => {
     for (const t of r.tiles) composites.push({ ...t, top: (t.top as number) + i * rowH });

@@ -112,7 +112,7 @@ futures-util = { workspace = true, optional = true }
 # worker-pool decode scaling past ~4 threads, and talc is ~9% faster even
 # single-threaded on the sprite-decode corpus. Pinned exactly: a global
 # allocator swap should never ride in on an unrelated `cargo update`.
-talc = "=5.1.0"
+talc = "=5.1.1"
 spinning_top = "0.3"
 
 [features]

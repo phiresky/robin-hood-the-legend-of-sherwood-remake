@@ -5,7 +5,7 @@
 //   node src/contact-sheet.ts --map york [--cell 220] [--cols 8]
 //   -> work/<map>-scene/contact.png
 import path from "node:path";
-import sharp from "sharp";
+import sharp, { type OverlayOptions } from "sharp";
 import { readAssetDescriptor, readLibraryIndex } from "./library.ts";
 import { libraryDir, workDir } from "./env.ts";
 import { fileExists } from "./mesh.ts";
@@ -42,7 +42,7 @@ async function main() {
 
   const rows = Math.ceil(items.length / cols);
   const label = 18;
-  const composites: sharp.OverlayOptions[] = [];
+  const composites: OverlayOptions[] = [];
   let svg = `<svg width="${cols * cell}" height="${rows * (cell + label)}" xmlns="http://www.w3.org/2000/svg">`;
   items.forEach((it, i) => {
     const x = (i % cols) * cell;

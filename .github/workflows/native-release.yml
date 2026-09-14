@@ -230,28 +230,9 @@ jobs:
       - name: Stage package input
         shell: bash
         run: |
-          mkdir -p target/package-input target/release-assets
-          cp \
-            "target/${{ matrix.target }}/release/${{ matrix.executable }}" \
-            "target/package-input/${{ matrix.pack_executable }}"
-          cp README.md target/package-input/
-          mkdir -p target/package-input/docs
-          cp docs/MODDING_TOOLS.md docs/JSON_PATCH_MODS.md target/package-input/docs/
-          suffix=""
-          if [[ "${{ matrix.runtime }}" == win-x64 ]]; then suffix=".exe"; fi
-          cp "target/${{ matrix.target }}/release/robin-replay-admission${suffix}" target/package-input/
-          for tool in cpf_to_json encode_mod_sprites disasm_scb dump_res; do
-            cp "target/${{ matrix.target }}/release/${tool}${suffix}" target/package-input/
-          done
-          # Engine-shipped overlay datadirs, resolved relative to the
-          # executable at runtime: the core overlay (bitmap fonts, UI
-          # icons) is required; mods/ (e.g. hackable levels) ships when
-          # the checkout carries any.
-          mkdir -p target/package-input/assets
-          cp -R assets/core-datadir target/package-input/assets/
-          if [ -d mods ]; then
-            cp -R mods target/package-input/
-          fi
+          bash scripts/release/stage_package_input.sh \
+            "${{ matrix.runtime }}" "${{ matrix.target }}" \
+            "${{ matrix.executable }}" "${{ matrix.pack_executable }}"
 
       - name: Build Windows Velopack installers
         if: matrix.runtime == 'win-x64'

@@ -25,15 +25,15 @@
     "@gltf-transform/extensions": "^4.5.0",
     "@gltf-transform/functions": "^4.5.0",
     "@rle/shared": "workspace:*",
-    "dotenv": "^17.2.1",
+    "dotenv": "^17.4.2",
     "earcut": "^3.2.3",
     "gl-matrix": "^3.4.4",
     "polygon-clipping": "^0.15.7",
-    "sharp": "^0.34.3"
+    "sharp": "^0.35.4"
   },
   "devDependencies": {
     "@types/earcut": "^3.0.0",
-    "@types/node": "^24.3.0",
-    "typescript": "^5.9.2"
+    "@types/node": "^26.5.1",
+    "typescript": "^7.0.2"
   }
 }

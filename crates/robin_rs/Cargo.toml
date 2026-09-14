@@ -220,8 +220,9 @@ web-sys = { version = "0.3", features = [
     "UrlSearchParams",
 ] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "multipart", "stream"] }
-# Must match reqwest's wasm-streams: two versions export duplicate wasm-bindgen
-# symbols at link time even when `cargo check` succeeds.
+# Must match reqwest's wasm-streams, also enabled by iroh: mixed versions
+# produce duplicate JavaScript exports rejected by the wasm-bindgen CLI.
+# TODO: Upgrade to 0.6 once reqwest updates its stream adapter dependency.
 wasm-streams = "0.5"
 console_error_panic_hook = "0.1"
 tracing-wasm = "0.2"

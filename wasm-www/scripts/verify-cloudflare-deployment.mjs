@@ -12,7 +12,7 @@ export const DEPLOYMENT = Object.freeze({
     signerHost: 'identity.robinhood.phiresky.xyz',
     signerOrigin: 'https://identity.robinhood.phiresky.xyz',
     signerWorker: 'robinhood-identity-signer',
-    wranglerVersion: '4.127.1',
+    wranglerVersion: '4.131.1',
     zoneName: 'phiresky.xyz',
 });
 

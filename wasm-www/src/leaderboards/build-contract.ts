@@ -38,10 +38,10 @@ import { canonicalDocumentSha256Sync, verifyCanonicalDocument, type DigestVerifi
 
 export const CURRENT_RANKED_REPLAY_SCHEMA_VERSION = runtimeContract.replaySchema;
 
-export const WASM_BINDGEN_CLI_VERSION = '0.2.127' as const;
+export const WASM_BINDGEN_CLI_VERSION = '0.2.128' as const;
 
 export const WASM_BINDGEN_CLI_AUTHORITY_SHA256 =
-    '68ee22d8da662e20a7aa63d43354c59194530378898e2052079b9084580b89ba' as const;
+    'a91cc03b96fdafdc923a880009cf4ae08c5157578e03217908228e7cc3b98a03' as const;
 
 /**
  * Selects only the authenticated engine closure that replay playback may
@@ -184,7 +184,7 @@ export function parseBrowserViewerEngineV2(value: unknown): BrowserViewerEngineB
     const wasmBindgenCli = parseBuildToolAuthority(obj.wasm_bindgen_cli, `${path}.wasm_bindgen_cli`);
     if (wasmBindgenCli.version !== WASM_BINDGEN_CLI_VERSION
         || wasmBindgenCli.authoritySha256 !== WASM_BINDGEN_CLI_AUTHORITY_SHA256) {
-        throw new Error(`${path}.wasm_bindgen_cli must use the exact accepted 0.2.127 authority`);
+        throw new Error(`${path}.wasm_bindgen_cli must use the exact accepted 0.2.128 authority`);
     }
     return {
         targetTriple: exactString(obj.target_triple, 'wasm32-unknown-unknown', `${path}.target_triple`),
@@ -257,7 +257,7 @@ export function parseBrowserIdentitySignerV2(value: unknown): BrowserIdentitySig
     const wasmBindgenCli = parseBuildToolAuthority(obj.wasm_bindgen_cli, `${path}.wasm_bindgen_cli`);
     if (wasmBindgenCli.version !== WASM_BINDGEN_CLI_VERSION
         || wasmBindgenCli.authoritySha256 !== WASM_BINDGEN_CLI_AUTHORITY_SHA256) {
-        throw new Error(`${path}.wasm_bindgen_cli must use the exact accepted 0.2.127 authority`);
+        throw new Error(`${path}.wasm_bindgen_cli must use the exact accepted 0.2.128 authority`);
     }
     const identitySignerOriginArtifacts = parseBrowserOriginClosure(
         obj.identity_signer_origin_artifacts,

@@ -989,8 +989,8 @@ test('public BuildManifestV2 is exact, private-authority-free, and keeps origins
                 rust_toolchain: rustToolchain,
                 rust_toolchain_sha256: rustToolchainSha256,
                 wasm_bindgen_cli: tool(
-                    '0.2.127',
-                    '68ee22d8da662e20a7aa63d43354c59194530378898e2052079b9084580b89ba',
+                    '0.2.128',
+                    'a91cc03b96fdafdc923a880009cf4ae08c5157578e03217908228e7cc3b98a03',
                 ),
                 binaryen_wasm_opt: tool('132.0.0', sha('d')),
                 wabt_wasm_strip: tool('1.0.41', sha('e')),
@@ -1026,8 +1026,8 @@ test('public BuildManifestV2 is exact, private-authority-free, and keeps origins
                 rust_toolchain: rustToolchain,
                 rust_toolchain_sha256: rustToolchainSha256,
                 wasm_bindgen_cli: tool(
-                    '0.2.127',
-                    '68ee22d8da662e20a7aa63d43354c59194530378898e2052079b9084580b89ba',
+                    '0.2.128',
+                    'a91cc03b96fdafdc923a880009cf4ae08c5157578e03217908228e7cc3b98a03',
                 ),
                 identity_signer_origin_artifacts: [{
                     path: 'identity-signer/bridge/leaderboard_identity_bridge.js',

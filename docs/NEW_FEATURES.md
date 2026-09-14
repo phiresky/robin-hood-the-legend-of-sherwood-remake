@@ -1196,3 +1196,53 @@ rollback commands on failure. `deploy-cloudflare.sh` gained `--datadir-only`
 and `ROBINHOOD_PUBLIC_RETAIN`, so a public deploy keeps previously published
 public objects. `scripts/test_release.sh` (tooling suite) checks the script
 with stub tools.
+## Crash and bug reporting
+
+The native game queues Rust panic and fatal startup/game-loop reports under the
+OS data directory's `robin_hood/reports`. On the next launch it retries pending
+reports against the leaderboard VPS at `POST /api/v1/diagnostics`. Uploads run on
+a background worker with a timeout and no redirects. Reports remain queued on
+failure and are marked submitted only after a matching receipt.
+
+Open the in-game console (`~`) and enter `BUGREPORT description of the problem`
+to submit a manual report. Submission status and the report ID appear in the
+console. Reports include the engine commit, platform, panic backtrace, recent
+debug log (up to 32 MiB), and active replay JSON files (up to 224 MiB decoded). Missing or
+oversized replay attachments are explicitly reported. Logs and replays can
+contain player names, local paths and gameplay.
+
+The VPS stores diagnostics privately, separately from ranked evidence. Its
+existing operator bearer token protects list, detail and deletion endpoints:
+`GET /api/v1/operator/diagnostics`,
+`GET /api/v1/operator/diagnostics/{report_id}`, and
+`DELETE /api/v1/operator/diagnostics/{report_id}`.
+The latest 100 reports are listed. Identical compressed bytes share a receipt, allowing
+safe retries. Admission limits are 10 reports per IP/hour, 100 globally/hour,
+100 MiB compressed per complete report, and 512 MiB total stored payload. The
+native client compresses JSON with zstd; browsers use their built-in gzip
+`CompressionStream`. Compression happens before upload and size validation.
+The VPS stores the original compressed bytes and counts that size toward its
+storage budget. The server never decompresses diagnostic reports, either on
+submission or download, and there is no decoded-size or decompression-memory limit.
+Kind and build metadata come from client-supplied headers and are untrusted.
+The detail endpoint downloads the original compressed attachment without
+Content-Encoding, so browsers preserve its compression. Receipts hash the exact
+uploaded bytes. Legacy uncompressed entries remain downloadable as JSON.
+Entries older than 30 days
+are removed during the next successful submission transaction.
+
+Deployment requires database migrations 0003–0005 and a matching schema-version-5
+VPS release. Existing nginx and Cloudflare API routing covers the new endpoints.
+
+The browser toolbar's **Report bug** button opens a report form. Unhandled
+JavaScript errors, rejected promises, Rust panic console messages and fatal boot
+errors also queue reports. Failed reports retry on reload or when connectivity
+returns. The IndexedDB queue holds at most ten pending reports and migrates old
+localStorage entries; automatic capture is
+limited to three reports per page load. Browser reports include logs and build
+details, but do not yet include a replay attachment.
+
+TODO: a native report form, browser replay attachments, native fatal-signal
+minidumps, queue retention settings, and coherent replay snapshots. Rust panic
+hooks do not capture OOM, SIGKILL or native fatal signals; a captured replay can
+end in an incomplete write.

@@ -174,10 +174,22 @@
         <button id="fullscreen" type="button" title="Enter fullscreen">
             Fullscreen
         </button>
+        <button id="report-bug" type="button">Report bug</button>
         <a href="./leaderboards/" target="_blank" rel="noopener">
             Verified leaderboards
         </a>
     </div>
+    <dialog id="bug-report-dialog" style="max-width: 32rem; background: #222; color: #eee; border: 1px solid #777; border-radius: 8px">
+        <form id="bug-report-form">
+            <h2>Report a bug</h2>
+            <label for="bug-report-description">What happened? What did you expect?</label>
+            <textarea id="bug-report-description" rows="6" maxlength="4000" required style="display:block; box-sizing:border-box; width:100%; margin:1rem 0"></textarea>
+            <p>The report includes recent game logs and build details. It is sent privately to the game developer.</p>
+            <p id="bug-report-status" role="status" aria-live="polite"></p>
+            <button id="bug-report-send" type="submit">Send report</button>
+            <button id="bug-report-close" type="button">Close</button>
+        </form>
+    </dialog>
     <div id="log" role="status" aria-live="polite"></div>
     <script type="module" src="./src/main.ts"></script>
 </body>

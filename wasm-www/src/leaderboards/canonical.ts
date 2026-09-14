@@ -1,5 +1,5 @@
 // Canonical JSON and content-address verification; keep aligned with robin_run_protocol.
-import { sha256 as nobleSha256 } from '@noble/hashes/sha256';
+import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 import { nonzeroSha256, object, safeInteger, boundedString } from './decode.js';
 import { type CanonicalValue } from './types.js';
 

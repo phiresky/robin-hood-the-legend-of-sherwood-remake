@@ -1215,7 +1215,7 @@ mod tests {
         }
         fs::write(
             root.path().join("wasm-bindgen-authority.json"),
-            include_bytes!("../../../.github/tool-authorities/wasm-bindgen-cli-v0.2.127.json"),
+            include_bytes!("../../../.github/tool-authorities/wasm-bindgen-cli-v0.2.128.json"),
         )?;
         fs::write(
             root.path().join("binaryen-authority.json"),
@@ -1304,7 +1304,7 @@ mod tests {
                 },
             ],
             rust_toolchain_authority: root.path().join("rust-toolchain-authority.json"),
-            wasm_bindgen_cli: official_tool("0.2.127", "wasm-bindgen-authority.json"),
+            wasm_bindgen_cli: official_tool("0.2.128", "wasm-bindgen-authority.json"),
             binaryen_wasm_opt: official_tool("version_132", "binaryen-authority.json"),
             wabt_wasm_strip: official_tool("1.0.41", "wabt-authority.json"),
             node: javascript_tool("24.19.0", "node-authority.json"),
@@ -1375,7 +1375,7 @@ mod tests {
         );
 
         let mut moving_wasm_bindgen = draft.clone();
-        moving_wasm_bindgen.wasm_bindgen_cli.version = "0.2.128".into();
+        moving_wasm_bindgen.wasm_bindgen_cli.version = "0.0.0".into();
         assert!(
             moving_wasm_bindgen.author().is_err(),
             "public build accepted a non-pinned wasm-bindgen version"

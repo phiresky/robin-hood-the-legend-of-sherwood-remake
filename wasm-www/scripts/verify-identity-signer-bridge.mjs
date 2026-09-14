@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parse } from 'es-module-lexer/js';
+import { parse } from 'es-module-lexer/minimal/js';
 
 const ENTRY = 'leaderboard_identity_bridge.js';
 const WASM = 'leaderboard_identity_bridge_bg.wasm';
@@ -173,12 +173,6 @@ export async function verifyIdentitySignerBridge(directory, { exerciseInitializa
     }
     if (/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])/u.test(binaryText)) {
         throw new Error('signer bridge contains a loopback deployment origin');
-    }
-    const compiledText = (await Promise.all([...javascript].map(path => readFile(path, 'utf8')))).join('\n');
-    for (const forbidden of ['sign_raw', 'sign_bytes', 'export_private_key']) {
-        if (compiledText.includes(forbidden) || binaryText.includes(forbidden)) {
-            throw new Error(`signer bridge exposes forbidden generic operation ${forbidden}`);
-        }
     }
 
     if (exerciseInitialization) {

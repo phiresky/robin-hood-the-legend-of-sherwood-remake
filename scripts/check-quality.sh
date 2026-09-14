@@ -89,7 +89,7 @@ case "$1" in
         python3 scripts/test_quality_suites.py
         python3 scripts/test_workspace_hygiene.py
         python3 scripts/release/test_author_leaderboard_release.py
-        npm --prefix scripts/release run verify
+        pnpm --dir scripts/release verify
         test -f scripts/test_portable_linker.py
         python3 -m unittest discover -s scripts -p test_portable_linker.py
         test -f scripts/validation/save_load_live_test.py

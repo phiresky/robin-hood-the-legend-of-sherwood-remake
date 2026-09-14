@@ -3,13 +3,13 @@
 `publish_native_release.ts` runs directly in `actions/github-script@v9` using
 Node 24's native type stripping. The action supplies the authenticated Octokit
 client, workflow context and logging. All `@actions` imports are type-only, so
-the release workflow needs neither `npm install` nor a compilation step.
+the release workflow needs neither `pnpm install` nor a compilation step.
 
 For local checks with Node 24 or newer:
 
 ```sh
-npm ci --prefix scripts/release
-npm --prefix scripts/release run verify
+pnpm --dir scripts/release install --frozen-lockfile
+pnpm --dir scripts/release verify
 ```
 
 The tooling CI suite runs the same type check and Node tests. Keep TypeScript

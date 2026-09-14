@@ -71,6 +71,6 @@ test('header policies fail closed on clickjacking and cache weakening', async ()
 
 test('Wrangler is an exact lockfile-controlled tool, not a moving range', async () => {
     const snapshot = await loadDeploymentSnapshot();
-    snapshot.packageJson.devDependencies.wrangler = '^4.127.1';
+    snapshot.packageJson.devDependencies.wrangler = '^4.131.1';
     assert.throws(() => validateDeploymentSnapshot(snapshot), /exactly pinned/u);
 });

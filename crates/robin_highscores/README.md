@@ -750,11 +750,11 @@ To restore:
 
 ```sh
 CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_ZONE_ID=... CLOUDFLARE_API_TOKEN=... \
-ROBINHOOD_WASM_BINDGEN=/abs/path/wasm-bindgen-0.2.127 \
+ROBINHOOD_WASM_BINDGEN=/abs/path/wasm-bindgen-0.2.128 \
   wasm-www/scripts/deploy-cloudflare.sh [--datadir] [--runtime]
 ```
 
-The script needs Wrangler 4.127.1. It runs `verify:deployment-config`, builds
+The script needs Wrangler 4.131.1. It runs `verify:deployment-config`, builds
 and verifies the public site and signer, and runs `verify:wrangler`. It deploys
 `robinhood-identity-signer` then `robinhood-public-site`, reconciles routes with
 `scripts/sync-cloudflare-routes.mjs --apply` and `--check`, and runs
@@ -861,3 +861,10 @@ pnpm verify:runtime-source
 pnpm verify:runtime
 pnpm verify:deployment-config
 ```
+
+## Diagnostic reports
+
+Crash and bug reports use `/api/v1/diagnostics` and the private operator endpoints.
+See [Crash and bug reporting](../../docs/NEW_FEATURES.md#crash-and-bug-reporting)
+for payload limits, retention, client behavior and migration requirements.
+Diagnostics are included in the normal SQLite backup and maintenance fencing.

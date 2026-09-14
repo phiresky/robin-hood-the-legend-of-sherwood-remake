@@ -55,9 +55,9 @@ jobs:
       - name: Install pinned wasm-bindgen
         id: wasm-bindgen
         run: |
-          destination="${RUNNER_TEMP}/wasm-bindgen-cli-0.2.127"
+          destination="${RUNNER_TEMP}/wasm-bindgen-cli-0.2.128"
           executable="$(scripts/install_pinned_wasm_bindgen.sh "${destination}")"
-          test "$("${executable}" --version)" = 'wasm-bindgen 0.2.127'
+          test "$("${executable}" --version)" = 'wasm-bindgen 0.2.128'
           echo "executable=${executable}" >> "${GITHUB_OUTPUT}"
       - name: Test, build and verify public and signer origins
         working-directory: wasm-www
@@ -100,9 +100,9 @@ jobs:
       - name: Install pinned wasm-bindgen
         id: wasm-bindgen
         run: |
-          destination="${RUNNER_TEMP}/wasm-bindgen-cli-0.2.127"
+          destination="${RUNNER_TEMP}/wasm-bindgen-cli-0.2.128"
           executable="$(scripts/install_pinned_wasm_bindgen.sh "${destination}")"
-          test "$("${executable}" --version)" = 'wasm-bindgen 0.2.127'
+          test "$("${executable}" --version)" = 'wasm-bindgen 0.2.128'
           echo "executable=${executable}" >> "${GITHUB_OUTPUT}"
       - name: Build, verify and deploy to Cloudflare
         env:

@@ -76,9 +76,9 @@ jobs:
           tools_root="${RUNNER_TEMP}/authoritative-wasm-tools"
           scripts/install_pinned_wasm_tools.sh "${tools_root}"
           printf '%s\n' "${tools_root}/binaryen/bin" "${tools_root}/wabt/bin" >> "${GITHUB_PATH}"
-          wasm_bindgen_root="${RUNNER_TEMP}/wasm-bindgen-cli-0.2.127"
+          wasm_bindgen_root="${RUNNER_TEMP}/wasm-bindgen-cli-0.2.128"
           wasm_bindgen="$(scripts/install_pinned_wasm_bindgen.sh "${wasm_bindgen_root}")"
-          test "$("${wasm_bindgen}" --version)" = 'wasm-bindgen 0.2.127'
+          test "$("${wasm_bindgen}" --version)" = 'wasm-bindgen 0.2.128'
           echo "wasm-bindgen=${wasm_bindgen}" >> "${GITHUB_OUTPUT}"
 
       - name: Build and stage runtime addition

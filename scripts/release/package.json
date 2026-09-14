@@ -8,13 +8,13 @@
   "scripts": {
     "test": "node --test *.test.ts",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run typecheck && npm test"
+    "verify": "pnpm typecheck && pnpm test"
   },
   "devDependencies": {
-    "@actions/core": "^3.0.0",
-    "@actions/github": "^9.0.0",
-    "@types/node": "^24.0.0",
-    "typescript": "^5.9.3"
-  }
+    "@actions/core": "^3.0.1",
+    "@actions/github": "^9.1.1",
+    "@types/node": "^26.5.1",
+    "typescript": "^7.0.2"
+  },
+  "packageManager": "pnpm@12.3.4"
 }
-
