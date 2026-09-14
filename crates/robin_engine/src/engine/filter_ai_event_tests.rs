@@ -6535,37 +6535,34 @@ fn friendly_repeated_state_change_callbacks_see_target_alert_and_outgoing_state(
             .friendly_ai_mut()
             .unwrap();
         ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
-        ai.set_state(
-            crate::ai::AiState::Fleeing,
-            crate::ai::Substate::FleeingPanic,
-        );
     }
-    engine.drain_ai_state_change_notifications_for(&sim, &assets, friendly);
+    engine.duty_set_state(
+        &sim,
+        &assets,
+        friendly,
+        crate::ai::AiState::Fleeing,
+        crate::ai::Substate::FleeingPanic,
+    );
     let first = npc_custom_values(&engine, friendly);
     assert_eq!(first[0], target_handle);
     assert_eq!(first[1], 106);
     assert_eq!(first[2], crate::ai::AiState::Default.to_script_code());
     assert_eq!(first[3], crate::ai::AlertLevel::Yellow as i32);
 
-    engine
-        .world
-        .entities
-        .get_mut(friendly)
-        .unwrap()
-        .friendly_ai_mut()
-        .unwrap()
-        .set_state(
-            crate::ai::AiState::Fleeing,
-            crate::ai::Substate::FleeingPanic,
-        );
-    engine.drain_ai_state_change_notifications_for(&sim, &assets, friendly);
+    engine.duty_set_state(
+        &sim,
+        &assets,
+        friendly,
+        crate::ai::AiState::Fleeing,
+        crate::ai::Substate::FleeingPanic,
+    );
     let repeated = npc_custom_values(&engine, friendly);
     assert_eq!(&repeated[4..6], &[106, 106]);
     assert_eq!(repeated[9], 6, "Friendly notifies repeated transitions");
 }
 
 #[test]
-fn owner_state_change_fifo_preserves_every_transition() {
+fn owner_state_changes_complete_each_transition_inline() {
     let mut engine = EngineInner::new();
     let friendly = engine.add_test_entity(make_scripted_civilian("FriendlyRecorder"));
     let assets = install_state_change_script(
@@ -6578,32 +6575,23 @@ fn owner_state_change_fifo_preserves_every_transition() {
     );
     bind_state_change_actor(&mut engine, friendly, "FriendlyRecorder");
 
-    {
-        let ai = engine
-            .world
-            .entities
-            .get_mut(friendly)
-            .unwrap()
-            .friendly_ai_mut()
-            .unwrap();
-        ai.set_state(
+    let sim = crate::sim_rng::test_context();
+    for (state, substate) in [
+        (
             crate::ai::AiState::Wondering,
             crate::ai::Substate::WonderingWatching,
-        );
-        ai.set_state(
+        ),
+        (
             crate::ai::AiState::Seeking,
             crate::ai::Substate::SeekingJustWatching,
-        );
-        ai.set_state(
+        ),
+        (
             crate::ai::AiState::Default,
             crate::ai::Substate::DefaultOnPost,
-        );
+        ),
+    ] {
+        engine.duty_set_state(&sim, &assets, friendly, state, substate);
     }
-    engine.drain_ai_state_change_notifications_for(
-        &crate::sim_rng::test_context(),
-        &assets,
-        friendly,
-    );
     let values = npc_custom_values(&engine, friendly);
     assert_eq!(&values[4..7], &[102, 103, 101]);
     assert_eq!(values[9], 7);
