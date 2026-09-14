@@ -329,6 +329,10 @@ mod native {
                 f_n += 3;
             }
             let f_psnr = 10.0 * (255.0f64 * 255.0 / (f_sse / f_n.max(1) as f64)).log10();
+            if std::env::var_os("SCORE_PER_FILE").is_some() {
+                // One line per image: stem, opaque channel samples, PSNR565.
+                eprintln!("file {stem} {f_n} {f_psnr:.2}");
+            }
             if f_psnr < worst.0 {
                 worst = (f_psnr, stem.clone());
             }

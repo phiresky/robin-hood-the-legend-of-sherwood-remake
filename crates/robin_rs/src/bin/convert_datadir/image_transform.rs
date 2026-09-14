@@ -218,9 +218,39 @@ pub(super) fn transcode_picture_to_jxl_rgba_keyed(
             pic.width as usize,
             pic.height as usize,
         );
-        let encoded = transcode_pixels_to_jxl(pic, rgba, png::ColorType::Rgba, quality, 9)?;
-        verify_keyed_picture_classes(&encoded, &canvas)?;
-        return Ok(encoded);
+        let encoded = transcode_pixels_to_jxl(pic, rgba.clone(), png::ColorType::Rgba, quality, 9)?;
+        let decoded =
+            Picture::load_jxl_rgba565_keyed(&encoded).context("decode keyed interface picture")?;
+        verify_decoded_picture_classes(&decoded, &canvas)?;
+        let psnr = keyed_opaque_psnr565(&decoded, &canvas)?;
+        if psnr >= KEYED_PICTURE_MIN_PSNR_DB {
+            return Ok(encoded);
+        }
+        // Lossy VarDCT wrecks tiny keyed pictures (measured on the Demo
+        // interface corpus: every picture with a side under 8 px scored
+        // 8-19 dB at q80, and q90 did not rescue them). Lossless modular
+        // of the same class-marked RGBA is exact and, for exactly these
+        // pictures, was no larger (27 pictures: 1982 vs 2065 bytes).
+        let lossless = transcode_pixels_to_jxl(pic, rgba, png::ColorType::Rgba, None, 9)?;
+        let decoded = Picture::load_jxl_rgba565_keyed(&lossless)
+            .context("decode lossless keyed interface picture")?;
+        verify_decoded_picture_classes(&decoded, &canvas)?;
+        let lossless_psnr = keyed_opaque_psnr565(&decoded, &canvas)?;
+        anyhow::ensure!(
+            lossless_psnr == f64::INFINITY,
+            "lossless keyed picture {}x{} did not round-trip exactly ({lossless_psnr:.2} dB)",
+            pic.width,
+            pic.height
+        );
+        tracing::debug!(
+            width = pic.width,
+            height = pic.height,
+            lossy_psnr_db = psnr,
+            lossy_bytes = encoded.len(),
+            lossless_bytes = lossless.len(),
+            "keyed picture below the lossy quality floor; shipping lossless JXL"
+        );
+        return Ok(lossless);
     }
 
     let mut rgba = pic.to_rgba8888(Some(TRANSPARENT_COLOR_16));
@@ -245,6 +275,47 @@ pub(super) fn verify_keyed_picture_classes(encoded: &[u8], source: &[u16]) -> Re
     let decoded =
         Picture::load_jxl_rgba565_keyed(encoded).context("decode keyed interface picture")?;
     verify_decoded_picture_classes(&decoded, source)
+}
+
+/// Opaque-pixel quality floor for lossy keyed pictures (interface art and
+/// minimaps). Below it the picture ships as lossless JXL instead. Scored
+/// like the RLE sprite path's `member_quality` gate.
+///
+/// Measured on the Demo interface corpus at q80 (947 pictures): the damaged
+/// pictures are exactly the 25 with a side under 8 px (8.2-19.3 dB); the
+/// next picture scores 20.2 dB and is visually fine. A 20 dB floor catches
+/// all 25 and the lossless set is 90 bytes SMALLER in total; a 24 dB floor
+/// would pull in 88 pictures for +37.8 KB (+1.7%) without visible gain.
+pub(super) const KEYED_PICTURE_MIN_PSNR_DB: f64 = 20.0;
+
+/// PSNR over the source's opaque pixels, scored on the RGB565 values the
+/// runtime sees (bit-replicated back to 8 bits), like `member_quality`.
+/// `INFINITY` when every opaque pixel is exact (or there are none).
+pub(super) fn keyed_opaque_psnr565(decoded: &Picture, source: &[u16]) -> Result<f64> {
+    use robin_assets::rle_jxl::{CL_OPAQUE, class_of, expand565};
+    let pixel_count = usize::from(decoded.width) * usize::from(decoded.height);
+    anyhow::ensure!(
+        pixel_count == source.len(),
+        "keyed picture scored {} decoded pixels against {} source pixels",
+        pixel_count,
+        source.len()
+    );
+    let (mut sse, mut samples) = (0.0f64, 0u64);
+    for (&want, got) in source.iter().zip(picture_rgb16_pixels(decoded)?) {
+        if class_of(want) != CL_OPAQUE {
+            continue;
+        }
+        let (a, b) = (expand565(want), expand565(got));
+        for channel in 0..3 {
+            let d = f64::from(a[channel]) - f64::from(b[channel]);
+            sse += d * d;
+        }
+        samples += 3;
+    }
+    if samples == 0 || sse == 0.0 {
+        return Ok(f64::INFINITY);
+    }
+    Ok(10.0 * (255.0f64 * 255.0 / (sse / samples as f64)).log10())
 }
 
 fn verify_decoded_picture_classes(decoded: &Picture, source: &[u16]) -> Result<()> {

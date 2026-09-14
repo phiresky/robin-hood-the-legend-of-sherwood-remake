@@ -458,6 +458,66 @@ fn opus_membership_only_dependency_is_written_and_decodes() {
 
 #[test]
 #[ignore = "requires cjxl on PATH"]
+fn tiny_keyed_interface_picture_falls_back_to_exact_lossless_jxl() {
+    use robin_assets::frame_holder::{SHADOW_KEY, TRANSPARENT_COLOR_16};
+    use robin_assets::rle_jxl::canvas_to_rgba;
+
+    // Shaped like the damaged Demo interface pictures: 4x6, two colours
+    // (black and a saturated green-yellow) with keyed corners and a shadow
+    // pixel. Lossy q80 VarDCT scored ~8 dB on these.
+    let (width, height) = (4u16, 6u16);
+    const INK: u16 = 0x0000;
+    const FILL: u16 = (20 << 11) | (62 << 5) | 10;
+    let source: Vec<u16> = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .map(|(x, y)| match (x, y) {
+            (0, 0) | (3, 0) | (0, 5) | (3, 5) => TRANSPARENT_COLOR_16,
+            (2, 4) => SHADOW_KEY,
+            _ if (x + y) % 2 == 0 => INK,
+            _ => FILL,
+        })
+        .collect();
+    let picture = Picture {
+        width,
+        height,
+        pitch: width * 2,
+        pixel_format: PixelFormat::Rgb16,
+        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
+        palette: None,
+    };
+
+    // Premise: plain lossy q80 of this picture is below the floor, so the
+    // gate below is actually exercised.
+    let lossy = super::transcode_pixels_to_jxl(
+        &picture,
+        canvas_to_rgba(&source).unwrap(),
+        png::ColorType::Rgba,
+        Some(80),
+        9,
+    )
+    .unwrap();
+    let lossy_decoded = Picture::load_jxl_rgba565_keyed(&lossy).unwrap();
+    let lossy_psnr = super::keyed_opaque_psnr565(&lossy_decoded, &source).unwrap();
+    assert!(
+        lossy_psnr < super::KEYED_PICTURE_MIN_PSNR_DB,
+        "test premise: lossy q80 scored {lossy_psnr:.2} dB, above the floor"
+    );
+
+    let encoded = super::transcode_picture_to_jxl_rgba_keyed(&picture, Some(80)).unwrap();
+    let decoded = Picture::load_jxl_rgba565_keyed(&encoded).unwrap();
+    let pixels: Vec<u16> = decoded
+        .data
+        .chunks_exact(2)
+        .map(|word| u16::from_le_bytes([word[0], word[1]]))
+        .collect();
+    assert_eq!(
+        pixels, source,
+        "gated keyed picture must round-trip exactly"
+    );
+}
+
+#[test]
+#[ignore = "requires cjxl on PATH"]
 fn lossy_minimap_jxl_keeps_the_exact_transparent_key() {
     use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
     use robin_engine::minimap::HitMask;
