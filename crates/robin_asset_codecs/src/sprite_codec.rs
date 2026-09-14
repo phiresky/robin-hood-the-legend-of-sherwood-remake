@@ -393,6 +393,8 @@ const PROMOTE_MAX_ALPHABET: u32 = 4096;
 /// promotion happens at the same deterministic point on both coder sides.
 enum Ctx {
     Small {
+        // Inline capacity 4 is deliberate: 8 measured -2.6% instructions but
+        // +8-9% cycles (larger Ctx -> more cache misses) on Dem_Lei_MP.
         syms: SmallVec<[SymbolCount; 4]>,
         sum: u32,
         /// Lazily-allocated alphabet-sized count mirror, kept in exact sync
@@ -831,6 +833,10 @@ impl Ctx {
     }
 
     /// Append this context's symbols to the exclusion list.
+    ///
+    /// Inlined cap check with an outlined insertion loop: shipping streams
+    /// run with cap 0, so every escape pays one compare instead of a call.
+    #[inline(always)]
     fn exclude_into(&self, excl: &mut Excl) {
         // Capped exclusion: a large escaped context would flood the
         // exclusion set and force full filtered scans at every fallback
@@ -841,6 +847,11 @@ impl Ctx {
         if cap == 0 || self.distinct() > cap {
             return;
         }
+        self.exclude_into_uncapped(excl);
+    }
+
+    #[inline(never)]
+    fn exclude_into_uncapped(&self, excl: &mut Excl) {
         match self {
             Ctx::Small { syms, .. } => {
                 for &SymbolCount(s, _) in syms {
