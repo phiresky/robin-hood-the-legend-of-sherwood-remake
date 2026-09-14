@@ -151,7 +151,9 @@ impl EngineInner {
                 let friend = self.live_ai_position(id);
                 let dx = position.x - friend.x;
                 let dy = position.y - friend.y;
-                if dx * dx + dy * dy >= 500.0 * 500.0 {
+                // Membership requires a positively established distance. An
+                // unordered position must not increase the search workload.
+                if !(dx * dx + dy * dy < 500.0 * 500.0) {
                     continue;
                 }
                 seeking_friends += 1;
@@ -843,6 +845,72 @@ mod tests {
         engine.ai.global.seek_points = global.seek_points;
         (engine, assets, owner)
     }
+    #[test]
+    fn seek_area_counts_only_friends_within_an_ordered_distance() {
+        use crate::sim_rng::{RngSite, with_draw_trace};
+
+        for (friend_x, expected_points) in
+            [(f32::NAN, 5), (f32::INFINITY, 5), (525.0, 5), (524.0, 6)]
+        {
+            let center = Position {
+                x: 100.0,
+                y: 100.0,
+                sector: Some(test_sector()),
+                ..Position::default()
+            };
+            let global = AiGlobalState {
+                seek_points: (0..8)
+                    .map(|id| SeekPoint {
+                        id,
+                        position: Position {
+                            x: if id < 4 {
+                                110.0 + f32::from(id)
+                            } else {
+                                400.0 + f32::from(id)
+                            },
+                            ..center
+                        },
+                        frame_when_full_interest: 0,
+                        last_calculated_interest: 100,
+                        locked: false,
+                        directions: vec![0],
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            let (mut engine, assets, owner) = search_fixture(EnemyAi::new(1), global, false);
+            let mut friend = crate::engine::test_support::actors::make_test_ai_soldier(
+                crate::element::Camp::Lacklandists,
+            );
+            friend
+                .element_data_mut()
+                .set_position_map(MapPoint::new(friend_x, 25.0));
+            friend.element_data_mut().set_sector(Some(test_sector()));
+            friend.enemy_ai_mut().unwrap().base.view_alert_status = crate::ai::AlertLevel::Yellow;
+            engine.add_test_entity(friend);
+
+            let (_, draws) = with_draw_trace(|| {
+                engine.execute_ai_seek_area(
+                    &crate::sim_rng::test_context(),
+                    &assets,
+                    owner,
+                    center,
+                    100,
+                    SeekFlags::empty(),
+                    crate::ai_enemy::UNDEFINED_DIRECTION,
+                );
+            });
+            assert_eq!(
+                draws
+                    .iter()
+                    .filter(|site| **site == RngSite::SeekPointSelection)
+                    .count(),
+                expected_points * 2,
+                "friend x={friend_x:?} must only expand the search when distance is below 500",
+            );
+        }
+    }
+
     #[test]
     fn seek_area_obligatory_selection_respects_original_finite_sentinel() {
         let sim = crate::sim_rng::test_context();
