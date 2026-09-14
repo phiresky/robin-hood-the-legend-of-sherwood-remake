@@ -404,13 +404,21 @@ enum Ctx {
         /// [`Ctx::excl_stats`] can subtract the excluded mass by iterating
         /// the (small) exclusion list with O(1) count lookups instead of
         /// walking the whole symbol list.
-        dense: Option<Box<[u16]>>,
+        ///
+        /// Thin (double-boxed) pointer on purpose: the mirror only exists on
+        /// the native exclusion-research path, while every context pays for
+        /// this field. 8 instead of 16 bytes keeps `Ctx` at 40 bytes.
+        dense: Option<Box<Box<[u16]>>>,
     },
+    // Thin (double-boxed) pointers: `Big` is never constructed while
+    // promotion is disabled (`PROMOTE_AT`), but its fat boxes would set the
+    // size of every context. With them thin, `Small` (36 bytes) determines
+    // the 40-byte `Ctx`.
     Big {
-        counts: Box<[u16]>,
+        counts: Box<Box<[u16]>>,
         /// Fenwick tree over `counts` (1-based): prefix sums, point updates
         /// and target descent in O(log alphabet).
-        tree: Box<[u32]>,
+        tree: Box<Box<[u32]>>,
         sum: u32,
         distinct: u32,
     },
@@ -929,7 +937,7 @@ impl Ctx {
                     for &SymbolCount(s, c) in syms.iter() {
                         mirror[s as usize] = c;
                     }
-                    *dense = Some(mirror);
+                    *dense = Some(Box::new(mirror));
                 }
                 small_settle(syms, sum, dense);
                 if syms.len() >= PROMOTE_AT && alphabet <= PROMOTE_MAX_ALPHABET {
@@ -942,8 +950,8 @@ impl Ctx {
                     let distinct = syms.len() as u32;
                     let tree = rebuild_fenwick(&counts);
                     *self = Ctx::Big {
-                        counts,
-                        tree,
+                        counts: Box::new(counts),
+                        tree: Box::new(tree),
                         sum: new_sum,
                         distinct,
                     };
@@ -975,7 +983,7 @@ impl Ctx {
                             *sum += *c as u32;
                         }
                     }
-                    *tree = rebuild_fenwick(counts);
+                    **tree = rebuild_fenwick(counts);
                 }
             }
             Ctx::Small { .. } => unreachable!("bump_big on a Small context"),
@@ -1074,7 +1082,7 @@ fn decode_level_excluded(
 /// counts at the adaptation limit (with the dense mirror refreshed to
 /// match — symbols never leave the list, so refilling from `syms` covers
 /// every nonzero mirror slot).
-fn small_settle(syms: &mut [SymbolCount], sum: &mut u32, dense: &mut Option<Box<[u16]>>) {
+fn small_settle(syms: &mut [SymbolCount], sum: &mut u32, dense: &mut Option<Box<Box<[u16]>>>) {
     *sum += BUMP as u32;
     if *sum + escape_weight(syms.len() as u32) >= CTX_HALVE_LIMIT {
         *sum = 0;
@@ -2264,6 +2272,19 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn context_layout_stays_cache_dense() {
+        // Decode time is dominated by memory stalls over the context arrays
+        // and arenas: 48 -> 40 byte contexts cut cache misses ~6% on
+        // Dem_Lei_MP, and +16 bytes (SmallVec inline 8) cost 8-9% cycles.
+        assert!(
+            std::mem::size_of::<Ctx>() <= 40,
+            "Ctx grew to {} bytes",
+            std::mem::size_of::<Ctx>()
+        );
+        assert_eq!(std::mem::size_of::<CtxSlot>(), 8);
     }
 
     #[test]
