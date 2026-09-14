@@ -10,8 +10,10 @@ export const DEMO_PARENT_ROOT = 'datadirs/demo-leicester';
 // Every Demo datadir generation is served `immutable` under fixed names
 // (`robinhood-web-content.json`, the datadir object), so a new native datadir
 // format gets its own directory instead of replacing published bytes.
-export const DEMO_ROOT = `${DEMO_PARENT_ROOT}/v16`;
-export const DEMO_PATH = `${DEMO_ROOT}/v16-web-opus-q80.rhdata.zst`;
+// The directory also changes when a rebuild changes bytes without a format
+// bump (v16r2: keyed minimaps, shared-layer locale fallback).
+export const DEMO_ROOT = `${DEMO_PARENT_ROOT}/v16r2`;
+export const DEMO_PATH = `${DEMO_ROOT}/v16r2-web-opus-q80.rhdata.zst`;
 export const DEMO_CONTENT_MANIFEST_PATH = `${DEMO_ROOT}/robinhood-web-content.json`;
 export const WEB_CONTENT_MANIFEST_NAME = 'robinhood-web-content.json';
 export const WEB_CONTENT_MANIFEST_SCHEMA = 2;
@@ -33,6 +35,16 @@ export const RETAINED_DEMO_GENERATIONS = Object.freeze([
         contentManifestSha256: 'cd3fb3b379079237c0c480e2332b6bf381e0b7403eed8f834857011af0a9fb20',
         datadirSha256: '4b6e0fcba222b5df2b640ecf630d5101b94c4eae68bd0f9518f96658e28fd742',
         datadirByteLength: 7_966_731,
+        nativeContentSha256: 'b86d7c960d960f33a504905bc3b6e7d7dd0b168944fa34fcfb55787c34b3f8b3',
+    }),
+    Object.freeze({
+        // Native shipping datadir format 16 (`RHDDNA16`), published 2026-09-13.
+        root: `${DEMO_PARENT_ROOT}/v16`,
+        datadirPath: `${DEMO_PARENT_ROOT}/v16/v16-web-opus-q80.rhdata.zst`,
+        contentManifestPath: `${DEMO_PARENT_ROOT}/v16/robinhood-web-content.json`,
+        contentManifestSha256: '81927ca5e49586bb16d3850cfc7c592efd29898aab7db5e3caf65b814a5150bc',
+        datadirSha256: '1028ec06a0b8f96bcb47695b9acc795450396debb631eedaa6e21e0ac9c1121d',
+        datadirByteLength: 3_699_421,
         nativeContentSha256: 'b86d7c960d960f33a504905bc3b6e7d7dd0b168944fa34fcfb55787c34b3f8b3',
     }),
 ]);

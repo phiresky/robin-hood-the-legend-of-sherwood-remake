@@ -139,12 +139,13 @@ function fixtureFetch({
                 },
             });
         }
-        if (url.pathname === `/${RETAINED_DEMO_GENERATIONS[0].datadirPath}`) {
+        const retained = RETAINED_DEMO_GENERATIONS.find(generation => url.pathname === `/${generation.datadirPath}`);
+        if (retained !== undefined) {
             return new Response(null, {
                 status: retainedDemoStatus,
                 headers: {
                     'cache-control': 'public, max-age=31536000, immutable',
-                    'content-length': String(RETAINED_DEMO_GENERATIONS[0].datadirByteLength),
+                    'content-length': String(retained.datadirByteLength),
                     'x-robinhood-static-origin': 'datadir-v1',
                 },
             });
