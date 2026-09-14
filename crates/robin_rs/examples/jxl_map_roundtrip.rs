@@ -83,7 +83,12 @@ fn run(path: &Path, output: &mut impl Write) -> Result<()> {
             _ => "sixteen",
         };
         let t0 = std::time::Instant::now();
-        match Picture::load_terrain_from_bytes(bytes) {
+        let load = if k.ends_with(".min") {
+            Picture::load_minimap_from_bytes
+        } else {
+            Picture::load_terrain_from_bytes
+        };
+        match load(bytes) {
             Ok(p) => writeln!(
                 output,
                 "{:<48} {:>12} {:>9} {:>14} ok ({:.2}s)",

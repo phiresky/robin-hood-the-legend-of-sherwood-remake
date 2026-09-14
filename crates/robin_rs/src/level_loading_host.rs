@@ -142,9 +142,12 @@ fn decode_occlusion_depth_png(
         .collect())
 }
 
+/// `decode` is [`Picture::load_terrain_from_stream`] for `.map` or
+/// [`Picture::load_minimap_from_stream`] for `.min` (keyed JXL minimaps).
 fn load_terrain_candidate(
     path: &str,
     files: &sbfile::SbFileSystem,
+    decode: fn(&mut sbfile::SbFile) -> anyhow::Result<Picture>,
 ) -> Result<Option<Picture>, String> {
     let png_path = format!("{path}.png");
     if let Some(file) = open_candidate(&png_path, files)? {
@@ -154,7 +157,7 @@ fn load_terrain_candidate(
     let Some(mut file) = open_candidate(path, files)? else {
         return Ok(None);
     };
-    Picture::load_terrain_from_stream(&mut file)
+    decode(&mut file)
         .map(Some)
         .map_err(|error| format!("failed to load terrain image '{path}': {error}"))
 }
@@ -306,7 +309,9 @@ fn pre_decode_background_map_impl(
     }
     if picture.is_none() {
         for (candidate_index, path) in disk_candidates.iter().enumerate() {
-            if let Some(loaded) = load_terrain_candidate(path, files)? {
+            if let Some(loaded) =
+                load_terrain_candidate(path, files, Picture::load_terrain_from_stream)?
+            {
                 if candidate_index > 0 {
                     tracing::warn!(
                         requested_ambiance = ambiance_dir,
@@ -863,7 +868,7 @@ pub fn pre_decode_minimap_with_files(
                     );
                 }
                 tracing::info!("Loading minimap from shipping datadir: {key}");
-                match Picture::load_terrain_from_bytes(bytes) {
+                match Picture::load_minimap_from_bytes(bytes) {
                     Ok(p) => {
                         progress(1.0);
                         let pixels = decode_rgb565_words(&p.data);
@@ -886,7 +891,7 @@ pub fn pre_decode_minimap_with_files(
 
     let mut picture = None;
     for (candidate_index, path) in candidates.iter().enumerate() {
-        match load_terrain_candidate(path, files) {
+        match load_terrain_candidate(path, files, Picture::load_minimap_from_stream) {
             Ok(Some(loaded)) => {
                 if candidate_index > 0 {
                     tracing::warn!(
@@ -1059,7 +1064,10 @@ mod tests {
             probe_background_map_dims_with_files("Test", "Night", ".", None, &files),
             None
         );
-        assert!(load_terrain_candidate("Night/Test.map", &files).is_err());
+        assert!(
+            load_terrain_candidate("Night/Test.map", &files, Picture::load_terrain_from_stream)
+                .is_err()
+        );
     }
 
     #[test]
