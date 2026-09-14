@@ -899,9 +899,6 @@ pub struct AiPerTickData {
     /// before a later handler consumes the same tick data; consumers must
     /// not pair that new handle with this old target's geometry.
     pub primary_target_snapshot_handle: Option<AiEntityHandle>,
-    /// The target element's literal current position and sector, without
-    /// substituting a door endpoint.
-    pub primary_target_live_position: Option<Position>,
 
     /// Pre-computed fallback positions for the "avenger on the roof"
     /// branch, keyed by target handle. Populated by the engine when
@@ -966,7 +963,6 @@ impl AiPerTickData {
             enemy_detectable_positions: Vec::new(),
             enemy_detectable_live_world_positions: Vec::new(),
             primary_target_snapshot_handle: None,
-            primary_target_live_position: None,
             avenger_on_roof_wait_positions: Vec::new(),
         }
     }

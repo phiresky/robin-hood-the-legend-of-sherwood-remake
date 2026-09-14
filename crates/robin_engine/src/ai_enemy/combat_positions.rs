@@ -76,20 +76,6 @@ pub(crate) fn is_facing_swordfight_target(
     matches!(facing_delta, 15 | 0 | 1)
 }
 
-#[cfg(test)]
-fn swordfight_facing_target_position(
-    primary: &FighterSnapshot,
-    tick: &AiPerTickData,
-    refreshed_live_position: impl FnOnce(HumanHandle) -> Position,
-) -> Position {
-    if tick.primary_target_snapshot_handle == Some(AiEntityHandle::new(primary.handle)) {
-        tick.primary_target_live_position
-            .unwrap_or(primary.position)
-    } else {
-        refreshed_live_position(primary.handle)
-    }
-}
-
 /// The original game narrows combat-neighbour squared distance to an unsigned 32-bit value before
 /// ranking. Reject corrupt/out-of-domain geometry explicitly instead of using
 /// Rust's saturating float-to-integer cast, which could turn NaN into a

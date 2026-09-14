@@ -140,9 +140,6 @@ fn swordfight_facing_guard_uses_live_position_during_door_pass() {
         elevation,
         ..FighterSnapshot::default()
     };
-    let mut tick = AiPerTickData::stub();
-    tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(252));
-    tick.primary_target_live_position = Some(live_pc);
 
     assert!(!is_facing_swordfight_target(
         &soldier,
@@ -155,9 +152,7 @@ fn swordfight_facing_guard_uses_live_position_during_door_pass() {
         &soldier,
         elevation,
         12,
-        &swordfight_facing_target_position(&primary, &tick, |_| {
-            panic!("stable principal must use the tick-captured literal position")
-        }),
+        &live_pc,
         primary.elevation,
     ));
 }
@@ -171,19 +166,6 @@ fn swordfight_facing_guard_uses_literal_position_after_principal_refresh() {
     let forecast = position(1019.0, 2089.0);
     let live = position(1022.0, 2069.0);
     let target_elevation = 6.0522804;
-    let refreshed_primary = FighterSnapshot {
-        handle: 45,
-        position: forecast,
-        elevation: target_elevation,
-        ..FighterSnapshot::default()
-    };
-    let mut tick = AiPerTickData::stub();
-    tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(152));
-    tick.primary_target_live_position = Some(position(1031.0, 2089.0));
-    let resolved = swordfight_facing_target_position(&refreshed_primary, &tick, |target| {
-        assert_eq!(target, refreshed_primary.handle);
-        live
-    });
 
     assert!(!is_facing_swordfight_target(
         &soldier,
@@ -196,7 +178,7 @@ fn swordfight_facing_guard_uses_literal_position_after_principal_refresh() {
         &soldier,
         0.0,
         4,
-        &resolved,
+        &live,
         target_elevation,
     ));
 }

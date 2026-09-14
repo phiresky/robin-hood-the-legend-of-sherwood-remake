@@ -85,6 +85,46 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn civilian_report_seeks_report_location_when_no_officer_can_accept() {
+        let mut engine = EngineInner::new();
+        let sector = crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
+        let mut soldier = make_test_ai_soldier(crate::element::Camp::Lacklandists);
+        soldier.element_data_mut().set_sector(Some(sector));
+        soldier
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(100.0, 100.0, 0.0));
+        let owner = engine.add_test_entity(soldier);
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let report = Position {
+            x: 200.0,
+            y: 100.0,
+            sector: Some(sector),
+            level: 0,
+        };
+        let ai = engine.seek_enemy_mut(owner);
+        ai.soldier_profile_rank = ProfileRank::Soldier;
+        ai.soldier_profile_initiative = 0;
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingGetAlertingReportFromCivilianLook;
+        ai.base.seek_position = report;
+        assert_eq!(
+            engine.execute_ai_officer_rendezvous_event(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                &Stimulus::new(StimulusType::EventTimer),
+            ),
+            Some(false)
+        );
+        let ai = engine.seek_enemy(owner);
+        assert_eq!(ai.seek_center, report);
+        assert_eq!(ai.personal_seek_point_1.as_ref().unwrap().position, report);
+        assert!(ai.seek_flags.contains(SeekFlags::LOCATION_FIRST));
+        assert!(!ai.seek_flags.contains(SeekFlags::LOOK_FOR_HELP_AFTER));
+    }
 }
 
 impl EngineInner {
@@ -284,6 +324,13 @@ impl Rendezvous<'_> {
                 let mut call = Stimulus::new(CallHey);
                 call.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
                 let target = self.target();
+                assert!(
+                    self.engine
+                        .expect_entity(target, "called soldier")
+                        .enemy_ai()
+                        .is_some(),
+                    "officer call requires enemy-soldier target {target:?}"
+                );
                 if self
                     .engine
                     .execute_ai_callback(self.sim, self.assets, target, &call)

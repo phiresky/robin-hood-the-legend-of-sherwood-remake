@@ -514,17 +514,6 @@ impl EngineInner {
             return tick;
         };
 
-        if lookup_primary_target_position(self, target_id).is_some() {
-            let target = self.expect_entity(target_id, "resolved primary target");
-            let element = target.element_data();
-            tick.primary_target_live_position = Some(crate::ai::Position {
-                x: element.position_map().x,
-                y: element.position_map().y,
-                sector: element.sector(),
-                level: element.layer(),
-            });
-        }
-
         if build_forecasts
             && let Some(target_entity) = self.world.entities.get(target_id)
             && let Some(input) = extract_exact_forecast_input(

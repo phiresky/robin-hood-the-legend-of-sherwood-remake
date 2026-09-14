@@ -53,6 +53,9 @@ impl EngineInner {
             self.civilian_call_alert(sim, assets, owner, false);
             return Some(false);
         }
+        if let Some(result) = self.execute_friendly_behavior(sim, assets, owner, stimulus) {
+            return Some(result);
+        }
         if !matches!(
             event,
             StimulusType::EventReachPoint
@@ -486,7 +489,10 @@ impl EngineInner {
         .is_some()
     }
 
-    fn reporting_civilian_mut(&mut self, owner: EntityId) -> &mut crate::ai_friendly::FriendlyAi {
+    pub(super) fn reporting_civilian_mut(
+        &mut self,
+        owner: EntityId,
+    ) -> &mut crate::ai_friendly::FriendlyAi {
         self.world
             .entities
             .get_mut(owner)

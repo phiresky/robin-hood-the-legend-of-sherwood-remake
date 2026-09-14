@@ -1088,7 +1088,7 @@ fn charly_report_uses_synchronous_officer_acceptance_and_refusal() {
 
 #[test]
 fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
-    use crate::ai::{AiState, CrossNpcAction, Substate, ThinkResultContinuation};
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::element::{Command, Detectable, DetectableType};
 
     let sim = crate::sim_rng::test_context();
@@ -1128,27 +1128,21 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
     officer_ai.will_be_attentive = true;
     officer_ai.base.current_state = AiState::Seeking;
     officer_ai.base.current_substate = Substate::SeekingOfficerCallSoldier;
-    officer_ai
-        .base
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::RequestThinkResult {
-            target: soldier_id.index(),
-            caller: officer_id.index(),
-            stimulus_type: crate::ai::StimulusType::CallHey,
-            info: crate::ai::StimulusInfo::Human(crate::ai::AiEntityHandle::new(
-                officer_id.index(),
-            )),
-            continuation: ThinkResultContinuation::OfficerCalledSoldier,
-        });
     engine
         .get_entity_mut(soldier_id)
         .and_then(Entity::enemy_ai_mut)
         .expect("call rejector has EnemyAi")
         .set_state(AiState::Attacking, Substate::AttackingSwordfight);
 
-    engine.process_synchronous_think_results_for(&sim, officer_id, &assets);
+    assert_eq!(
+        engine.execute_ai_officer_rendezvous_event(
+            &sim,
+            &assets,
+            officer_id,
+            &Stimulus::new(StimulusType::EventDone)
+        ),
+        Some(false),
+    );
 
     let officer = engine
         .get_entity(officer_id)
@@ -1365,7 +1359,7 @@ fn live_return_to_duty_publishes_goto_after_attentive_inline() {
 
 #[test]
 fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
-    use crate::ai::{AiState, CrossNpcAction, Substate, ThinkResultContinuation};
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::element::{Detectable, DetectableType};
 
     let sim = crate::sim_rng::test_context();
@@ -1392,22 +1386,16 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
     officer_ai.will_be_attentive = true;
     officer_ai.base.current_state = AiState::Seeking;
     officer_ai.base.current_substate = Substate::SeekingOfficerCallSoldier;
-    officer_ai
-        .base
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::RequestThinkResult {
-            target: soldier_id.index(),
-            caller: officer_id.index(),
-            stimulus_type: crate::ai::StimulusType::CallHey,
-            info: crate::ai::StimulusInfo::Human(crate::ai::AiEntityHandle::new(
-                officer_id.index(),
-            )),
-            continuation: ThinkResultContinuation::OfficerCalledSoldier,
-        });
 
-    engine.process_synchronous_think_results_for(&sim, officer_id, &assets);
+    assert_eq!(
+        engine.execute_ai_officer_rendezvous_event(
+            &sim,
+            &assets,
+            officer_id,
+            &Stimulus::new(StimulusType::EventDone)
+        ),
+        Some(false),
+    );
 
     let officer = engine
         .get_entity(officer_id)

@@ -459,6 +459,10 @@ impl EngineInner {
         {
             Ok(false)
         } else if enemy_owner
+            && self.execute_ai_combat_expected_event(sim, assets, owner, stimulus.stimulus_type)
+        {
+            Ok(false)
+        } else if enemy_owner
             && let Some(handled) =
                 self.execute_ai_officer_rendezvous_event(sim, assets, owner, stimulus)
         {

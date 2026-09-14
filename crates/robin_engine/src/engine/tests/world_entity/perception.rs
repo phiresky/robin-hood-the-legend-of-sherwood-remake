@@ -2465,14 +2465,19 @@ fn review2_call_hey_to_civilian_panics_contextually() {
     let (mut engine, officer_id, _, mut assets) = setup_review2_officer_and_soldier();
     let civilian_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    queue_review2_wrong_kind_think(
-        &mut engine,
+    let officer = engine
+        .get_entity_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .unwrap();
+    officer.base.current_state = crate::ai::AiState::Seeking;
+    officer.base.current_substate = crate::ai::Substate::SeekingOfficerCallSoldier;
+    officer.base.antagonist = Some(crate::ai::AiEntityHandle::new(civilian_id.index()));
+    engine.execute_ai_officer_rendezvous_event(
+        &sim,
+        &assets,
         officer_id,
-        civilian_id,
-        crate::ai::StimulusType::CallHey,
-        crate::ai::ThinkResultContinuation::OfficerCalledSoldier,
+        &crate::ai::Stimulus::new(crate::ai::StimulusType::EventDone),
     );
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 }
 
 #[test]

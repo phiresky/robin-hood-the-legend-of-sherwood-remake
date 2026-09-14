@@ -19,18 +19,6 @@ use super::{
     ThinkEnv, UNDEFINED_DIRECTION, archer, combat, task_priority,
 };
 
-fn approaching_new_enemy_is_close_enough(
-    target: &Position,
-    target_elevation: f32,
-    owner: &Position,
-    owner_elevation: f32,
-    sword_range: u16,
-) -> bool {
-    let range_with_margin = u32::from(sword_range) + 10;
-    let range_squared = range_with_margin.wrapping_mul(range_with_margin);
-    ai_square_distance(target, target_elevation, owner, owner_elevation) < range_squared as f32
-}
-
 impl EnemyAi {
     // One dispatcher preserves the numeric Substate machine while the
     // implementations are owned by coherent state families. See
@@ -54,7 +42,7 @@ impl EnemyAi {
             AiState::Default => self.think_expected_default_event(stimulus, global, env)?,
             AiState::Wondering => self.think_expected_wondering_event(stimulus, global, env)?,
             AiState::Seeking => self.think_expected_seeking_event(stimulus, global, env)?,
-            AiState::Attacking => self.think_expected_attacking_event(stimulus, global, env)?,
+            AiState::Attacking => false,
             AiState::Menacing => self.think_expected_menacing_event(stimulus, env)?,
             AiState::Fleeing => self.think_expected_fleeing_event(stimulus, global, env)?,
         })

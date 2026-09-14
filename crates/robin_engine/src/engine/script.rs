@@ -3761,7 +3761,15 @@ impl EngineInner {
                 .outbox
                 .reentrant
                 .engine_drains_after_script_go_on = false;
-            if completed {
+            if completed
+                && self
+                    .world
+                    .entities
+                    .get(entity_id)
+                    .is_some_and(|entity| entity.friendly_ai().is_some())
+            {
+                self.execute_civilian_after_script(sim, assets, entity_id);
+            } else if completed {
                 let fresh_scratch = self.build_sim_scratch(assets);
                 let fresh_entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
                     panic!(
@@ -3819,15 +3827,6 @@ impl EngineInner {
                         ),
                         stimulus,
                         ai_global,
-                    )
-                } else if let Some(friendly) = entity.friendly_ai_mut() {
-                    friendly.think_unexpected_event(
-                        sim,
-                        stimulus,
-                        ai_global,
-                        &fresh_ctx,
-                        Some(&self.world.fast_grid),
-                        Some(self.script_domains.interactables.doors.as_slice()),
                     )
                 } else {
                     panic!(

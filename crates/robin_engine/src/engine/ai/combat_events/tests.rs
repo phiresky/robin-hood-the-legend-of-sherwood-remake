@@ -1,0 +1,399 @@
+use super::*;
+use crate::coordinates::{MapPoint, WorldPoint3D};
+use crate::element::Command;
+use crate::order::OrderType;
+
+fn fixture(substate: Substate) -> (EngineInner, LevelAssets, EntityId, EntityId) {
+    let (mut engine, assets, owner, target) =
+        crate::engine::ai::battle_decision_observation_tests::fixture(false);
+    engine.combat_event_ai_mut(owner).base.current_substate = substate;
+    for id in [owner, target] {
+        engine
+            .get_entity_mut(id)
+            .unwrap()
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
+    }
+    (engine, assets, owner, target)
+}
+
+fn place(engine: &mut EngineInner, id: EntityId, x: f32, y: f32, z: f32) {
+    engine
+        .get_entity_mut(id)
+        .unwrap()
+        .element_data_mut()
+        .set_position(WorldPoint3D::new(x, y, z));
+}
+
+fn event(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId, event: StimulusType) {
+    assert!(engine.execute_ai_combat_expected_event(
+        &crate::sim_rng::test_context(),
+        assets,
+        owner,
+        event
+    ));
+}
+
+fn selected_door_position(engine: &mut EngineInner, owner: EntityId, point: MapPoint) {
+    let sector = engine
+        .expect_entity(owner, "door actor")
+        .element_data()
+        .sector()
+        .unwrap();
+    let gate = crate::gate::DoorIndex::new(engine.script_domains.interactables.doors.len() as u32)
+        .unwrap();
+    engine
+        .script_domains
+        .interactables
+        .doors
+        .push(crate::gate::Door {
+            point_in: point,
+            point_out: point,
+            sector_in: crate::sector::SectorNumber::new(1),
+            sector_out: crate::sector::SectorNumber::new(1),
+            sector_in_index: sector.arena_index(),
+            sector_out_index: sector.arena_index(),
+            ..Default::default()
+        });
+    let mut element = crate::sequence::SequenceElement::new_movement(
+        1,
+        Command::PassDoor,
+        Some(owner),
+        OrderType::WalkingUpright,
+    );
+    let crate::sequence::SequenceElementData::Movement {
+        gate_id, direction, ..
+    } = &mut element.data
+    else {
+        unreachable!()
+    };
+    *gate_id = Some(gate);
+    *direction = 1;
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+}
+
+#[test]
+fn approaching_new_enemy_uses_raw_distance_then_live_approach_position() {
+    for (x, y, close) in [(110.0, 110.0, true), (83.73194, 32.8771, false)] {
+        let (mut engine, mut assets, owner, target) =
+            fixture(Substate::AttackingApproachingNewEnemy);
+        std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
+            [crate::weapons::WeaponDistance::Default as usize] = 65;
+        place(&mut engine, target, x, y, 0.0);
+        selected_door_position(&mut engine, target, MapPoint::new(800.0, 800.0));
+        event(&mut engine, &assets, owner, StimulusType::EventReachPoint);
+        let ai = engine.combat_event_ai(owner);
+        if close {
+            assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+            assert_eq!(ai.base.when_does_timer_ring, 120);
+        } else {
+            assert_eq!(
+                ai.base.current_substate,
+                Substate::AttackingApproachingNewEnemy
+            );
+            assert_eq!(
+                ai.base.last_goto_destination.map_point(),
+                MapPoint::new(800.0, 800.0)
+            );
+            assert!(
+                ai.base
+                    .last_goto_flags
+                    .contains(GotoFlags::NEAR | GotoFlags::RUN)
+            );
+        }
+    }
+}
+
+#[test]
+fn sleeping_enemy_distance_stretches_y_before_strike_or_approach() {
+    for (dx, dy, close) in [(15.0, 34.0, false), (10.0, 10.0, true)] {
+        let (mut engine, assets, owner, target) =
+            fixture(Substate::AttackingApproachingSleepingEnemy);
+        place(&mut engine, target, 100.0 + dx, 100.0 + dy, 0.0);
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .unconscious = true;
+        event(&mut engine, &assets, owner, StimulusType::EventDone);
+        let ai = engine.combat_event_ai(owner);
+        assert_eq!(
+            ai.base.current_substate,
+            if close {
+                Substate::AttackingKillingSleepingEnemy
+            } else {
+                Substate::AttackingApproachingSleepingEnemy
+            }
+        );
+        let has_strike = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|s| s.elements.iter())
+            .any(|e| e.owner == Some(owner) && e.command == Command::SwordstrikeDown);
+        assert_eq!(has_strike, close);
+        if !close {
+            assert_eq!(
+                ai.base.last_goto_destination.map_point(),
+                MapPoint::new(115.0, 134.0)
+            );
+            assert!(ai.base.last_goto_flags.contains(GotoFlags::NEAR));
+        }
+    }
+}
+
+#[test]
+fn reaction_timer_uses_raw_distance_and_installed_running_order() {
+    for (target_point, running, expected) in [
+        (
+            (354.0, 731.0),
+            false,
+            crate::parameters_ai::AI_QUICK_ENEMY_REACTIONTIME as u32,
+        ),
+        ((380.0, 757.0), false, 1),
+        (
+            (380.0, 757.0),
+            true,
+            crate::parameters_ai::AI_RUNNING_ENEMY_REACTIONTIME as u32,
+        ),
+    ] {
+        let (mut engine, assets, owner, target) = fixture(Substate::AttackingReactiontimeTurning);
+        place(&mut engine, owner, 367.0, 757.0 + 480.0, 480.0);
+        place(
+            &mut engine,
+            target,
+            target_point.0,
+            target_point.1 + 480.0,
+            480.0,
+        );
+        selected_door_position(&mut engine, target, MapPoint::new(360.0, 750.0));
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .installed_order = Some(crate::element::InstalledActorOrder {
+            order_id: std::num::NonZeroU32::new(1).unwrap(),
+            order_type: if running {
+                OrderType::RunningUpright
+            } else {
+                OrderType::WaitingUpright
+            },
+        });
+        event(&mut engine, &assets, owner, StimulusType::EventDone);
+        let ai = engine.combat_event_ai(owner);
+        assert_eq!(ai.base.current_substate, Substate::AttackingReactiontime);
+        assert_eq!(ai.base.when_does_timer_ring, 100 + expected);
+    }
+}
+
+#[test]
+fn ladder_and_roof_arrivals_keep_distinct_timers() {
+    for (substate, result, delay) in [
+        (
+            Substate::AttackingRunningToLadder,
+            Substate::AttackingWaitingAtLadder,
+            1,
+        ),
+        (
+            Substate::AttackingRunToAvengerOnRoof,
+            Substate::AttackingWaitForAvengerOnRoof,
+            100,
+        ),
+    ] {
+        let (mut engine, assets, owner, target) = fixture(substate);
+        let position = engine.live_ai_position(target);
+        engine.combat_event_ai_mut(owner).base.seek_position = position;
+        event(&mut engine, &assets, owner, StimulusType::EventReachPoint);
+        let ai = engine.combat_event_ai(owner);
+        assert_eq!(ai.base.current_substate, result);
+        assert_eq!(ai.base.when_does_timer_ring, 100 + delay);
+    }
+}
+
+#[test]
+fn roof_timeout_seeks_from_live_owner_position() {
+    let (mut engine, assets, owner, _) = fixture(Substate::AttackingWaitForAvengerOnRoof);
+    let position = engine.live_ai_position(owner);
+    let ai = engine.combat_event_ai_mut(owner);
+    ai.base.primary_target = None;
+    ai.base.seek_position = Position {
+        x: 900.0,
+        y: 900.0,
+        ..position
+    };
+    engine.ai.global.seek_points = [110.0, 120.0, 130.0]
+        .into_iter()
+        .enumerate()
+        .map(|(id, x)| crate::ai::SeekPoint {
+            position: Position { x, ..position },
+            frame_when_full_interest: 0,
+            directions: vec![0],
+            last_calculated_interest: 100,
+            locked: false,
+            id: id as u16,
+        })
+        .collect();
+    event(&mut engine, &assets, owner, StimulusType::EventTimer);
+    let ai = engine.combat_event_ai(owner);
+    assert_eq!(ai.seek_center, position);
+    assert!(ai.my_seek_points.iter().any(|id| *id < 3));
+}
+
+#[test]
+fn door_fight_wait_timer_starts_observation() {
+    let (mut engine, assets, owner, _) = fixture(Substate::AttackingDoorFightWaiting);
+    event(&mut engine, &assets, owner, StimulusType::EventTimer);
+    let ai = engine.combat_event_ai(owner);
+    assert_eq!(
+        ai.base.current_substate,
+        Substate::AttackingOverviewLookLeft
+    );
+    assert!(ai.list_them.is_empty());
+}
+
+#[test]
+fn archer_path_wait_returns_to_duty_only_on_timer() {
+    for state in [
+        Substate::AttackingArcherWaitOnArcheryPath,
+        Substate::AttackingArcherWaitOnArcheryPathBending,
+    ] {
+        let (mut engine, assets, owner, _) = fixture(state);
+        assert!(!engine.execute_ai_combat_expected_event(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            StimulusType::EventDone
+        ));
+        assert_eq!(engine.combat_event_ai(owner).base.current_substate, state);
+        event(&mut engine, &assets, owner, StimulusType::EventTimer);
+        assert_eq!(
+            engine.combat_event_ai(owner).base.current_state,
+            AiState::Default
+        );
+    }
+}
+
+#[test]
+fn bow_cover_arrival_faces_target_with_truncated_elevation() {
+    let (mut engine, assets, owner, target) =
+        fixture(Substate::AttackingBowRunningBehindShieldBearer);
+    place(&mut engine, owner, 436.9325, 1227.554 + 45.0, 45.0);
+    place(
+        &mut engine,
+        target,
+        265.35767,
+        1023.3345 + 151.12384,
+        151.12384,
+    );
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(3);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = crate::element::ActionState::Moving;
+    assert!(engine.execute_ai_archery_expected_event(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        StimulusType::EventReachPoint
+    ));
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|s| s.elements.iter())
+            .any(|e| e.owner == Some(owner)
+                && matches!(
+                    e.get_property(crate::sequence::Field::Direction),
+                    Some(crate::sequence::FieldValue::Integer(14))
+                ))
+    );
+}
+
+#[test]
+fn roof_timeout_refaces_visible_target_and_rearms_thirty_ticks() {
+    let (mut engine, assets, owner, target) = fixture(Substate::AttackingWaitForAvengerOnRoof);
+    place(&mut engine, target, 200.0, 100.0, 0.0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(crate::position_interface::vector_to_sector_0_to_15_iso(
+            100.0, 0.0,
+        ));
+    let visible = engine.live_ai_detects_180(&assets, owner, target);
+    assert!(visible, "roof fixture must admit its nearby target");
+    event(&mut engine, &assets, owner, StimulusType::EventTimer);
+    let ai = engine.combat_event_ai(owner);
+    assert_eq!(
+        ai.base.current_substate,
+        Substate::AttackingWaitForAvengerOnRoof
+    );
+    assert_eq!(ai.base.when_does_timer_ring, 130);
+}
+
+#[test]
+fn maximum_sword_range_wraps_squared_close_threshold_before_reapproach() {
+    let (mut engine, mut assets, owner, target) = fixture(Substate::AttackingApproachingNewEnemy);
+    std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
+        [crate::weapons::WeaponDistance::Default as usize] = u16::MAX;
+    // The target's map position stays inside the arena, while raw Y/Z distance
+    // exceeds the wrapped 32-bit threshold of 1,179,729.
+    place(&mut engine, target, 900.0, 1100.0, 1000.0);
+    let destination = engine.live_ai_position(target);
+    event(&mut engine, &assets, owner, StimulusType::EventReachPoint);
+    let ai = engine.combat_event_ai(owner);
+    assert_eq!(
+        ai.base.last_goto_destination, destination,
+        "wrapping range arithmetic takes GoNear before its immediate-arrival branch"
+    );
+    assert!(
+        ai.base
+            .last_goto_flags
+            .contains(GotoFlags::NEAR | GotoFlags::RUN)
+    );
+    assert_eq!(ai.base.stop_before_end_of_path_distance, u16::MAX);
+    assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+    assert!(!ai.base.already_on_point);
+}
+
+#[test]
+fn rider_retreat_direction_fifteen_wraps_to_zero_in_finite_arena() {
+    let (mut engine, _, owner, _) = fixture(Substate::AttackingRiderChargingGettingDistance);
+    place(&mut engine, owner, 500.0, 500.0, 0.0);
+    let mut goals = Vec::new();
+    for direction in [0, 15] {
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(direction);
+        goals.push(
+            engine
+                .combat_event_rider_retreat_goal(owner)
+                .expect("finite arena admits retreat"),
+        );
+    }
+    assert_eq!(
+        goals[0], goals[1],
+        "the fifteen-sector remainder maps heading 15 onto heading 0"
+    );
+    let vector = crate::coordinates::MapVec::from_sector_iso(0);
+    let delta = MapPoint::new(goals[0].x - 500.0, goals[0].y - 500.0);
+    assert_eq!(delta.x * vector.y - delta.y * vector.x, 0.0);
+    assert!(delta.x * vector.x + delta.y * vector.y > 0.0);
+}
