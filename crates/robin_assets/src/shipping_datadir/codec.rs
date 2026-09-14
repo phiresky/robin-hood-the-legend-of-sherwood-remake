@@ -47,8 +47,9 @@ use super::*;
 // Datadir v17 / mission v9: VQ sprite blobs use match-gated coding (an
 // adaptive "tile == predictor" bit in likely-flat spots skips the PPM chain;
 // see `sprite_codec`). Container layouts are unchanged, but every VQ blob's
-// bytes are, and both the boot datadir (core overlay, character closures)
-// and mission parts carry VQ chunks, so both magics advance.
+// bytes are: mission parts carry the VQ chunks and the boot datadir carries
+// the sprite bank they materialize into, and a datadir must never be paired
+// with mission parts of the other codec generation, so both magics advance.
 pub(super) const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA17";
 pub(super) const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN09";
 pub const SHIPPING_DATADIR_VERSION: u32 = 17;
