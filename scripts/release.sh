@@ -187,7 +187,9 @@ release_web() {
         step "web: build and deploy a new datadir generation"
         command -v cjxl >/dev/null || die "cjxl not on PATH (put the static cjxl binary in $toolchain/bin)"
         run scripts/build_web_shipping_datadir.sh "$datadir_source" "$stage/demo-converter-output"
-        run node wasm-www/scripts/assemble-datadir-corpus.mjs --update "$prior/datadir-dist" "$stage/demo-converter-output" "$stage/datadir-dist"
+        # A release that reused its datadir stages `datadir-dist` as a symlink;
+        # the corpus verifier rejects symlinks, so pass the resolved directory.
+        run node wasm-www/scripts/assemble-datadir-corpus.mjs --update "$(realpath "$prior/datadir-dist")" "$stage/demo-converter-output" "$stage/datadir-dist"
         run node wasm-www/scripts/datadir-release-authority.mjs author "$stage/datadir-dist" "$commit" \
             "$(sha256sum Cargo.lock | cut -d' ' -f1)" "$stage/datadir-inventory.json" "$stage/datadir-authority.json"
         stage_checkout "$stage/datadir-dist" wasm-www/datadir-dist
