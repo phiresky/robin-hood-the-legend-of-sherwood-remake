@@ -395,14 +395,26 @@ pub(super) fn build_level_assets(
                 let bytes = if let Some(bytes) = encoded_level_assets.get(&rel) {
                     bytes.clone()
                 } else {
-                    // Minimaps follow the map format's quality, but `.map`
-                    // terrain is opaque 3-channel JXL while `.min` carries
-                    // the exact transparent key and must use the keyed
-                    // RGBA encoding (decoded by
+                    // Minimaps follow the map format's codec and quality,
+                    // but `.map` terrain is opaque 3-channel while `.min`
+                    // carries the exact transparent key and must use the
+                    // keyed RGBA encoding (decoded by
                     // `Picture::load_minimap_from_bytes`).
-                    let bytes = match (opts.map_format.jxl_quality(), ext) {
-                        (Some(quality), ".min") => transcode_minimap_to_jxl(&path, quality)?,
-                        (Some(quality), _) => transcode_sixteen_to_jxl(&path, quality)?,
+                    let bytes = match (opts.map_format.web_codec(), ext) {
+                        (Some(WebImageCodec::Jxl(quality)), ".min") => {
+                            transcode_minimap_to_jxl(&path, quality)?
+                        }
+                        (Some(WebImageCodec::Jxl(quality)), _) => {
+                            transcode_sixteen_to_jxl(&path, quality)?
+                        }
+                        (Some(WebImageCodec::Avif(quality)), ".min") => {
+                            transcode_minimap_to_avif(&path, quality)
+                                .with_context(|| format!("encode AVIF minimap {rel}"))?
+                        }
+                        (Some(WebImageCodec::Avif(quality)), _) => {
+                            transcode_sixteen_to_avif(&path, quality)
+                                .with_context(|| format!("encode AVIF terrain {rel}"))?
+                        }
                         (None, _) => transcode_sixteen_drop_bzip(&path)?,
                     };
                     encoded_level_assets.insert(rel.clone(), bytes.clone());

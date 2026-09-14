@@ -574,7 +574,7 @@ pub(super) fn transform_rhs(
         rle_totals.add(&rle_stats);
         rhs_payloads.insert(rel, payload);
     }
-    if opts.rle_sprite_format.jxl_quality().is_some() {
+    if let Some(codec) = opts.rle_sprite_format.lossy_codec() {
         tracing::info!(
             atlased = rle_totals.atlased,
             individual = rle_totals.individual,
@@ -583,11 +583,12 @@ pub(super) fn transform_rhs(
             kept_shared = rle_totals.kept_shared,
             kept_irregular = rle_totals.kept_irregular,
             kept_low_psnr = rle_totals.kept_low_psnr,
-            jxl_bytes = rle_totals.jxl_bytes,
+            encoded_bytes = rle_totals.encoded_bytes,
             raw_bytes_replaced = 2 * rle_totals.raw_words_replaced,
             resident_atlas_bytes = 2 * rle_totals.atlas_pixels,
             resident_sprite_bytes = 2 * rle_totals.sprite_canvas_pixels,
-            "RLE sprite bucket encoded as lossy JXL (web recipe)"
+            "RLE sprite bucket encoded as lossy {}",
+            codec.name()
         );
     }
 

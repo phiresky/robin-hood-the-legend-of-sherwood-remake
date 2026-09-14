@@ -17,18 +17,20 @@ fi
 # This is the canonical browser artifact recipe. Keep these explicit: the
 # converter's source-preserving defaults are appropriate for native builds,
 # but would silently produce the much larger raw-map/source-audio artifact.
-# JXL is q80 across the board (maps, minimaps, interface images, and the
-# RLE patch/ambient-animation sprite bucket — the latter is WEB ONLY: it
-# breaks framebuffer parity, so native shipping keeps exact RLE).
-# The RLE atlas encode shells out to `cjxl`, which must be on PATH.
+# Images are browser-decoded AVIF q60 across the board (maps, keyed minimaps,
+# interface images, and the RLE patch/ambient-animation sprite bucket — the
+# latter is WEB ONLY: it breaks framebuffer parity, so native shipping keeps
+# exact RLE). The encodes shell out to the pinned `avifenc`/`avifdec`
+# (libavif 1.4.2 on libaom 3.15.0), which must be on PATH; see
+# scripts/install_pinned_avif_tools.sh.
 cargo build --locked --release -p robin_rs --bin convert_datadir --features tools
 target/release/convert_datadir \
     --input "$source_datadir" \
     --output "$output_dir" \
     --format shipping \
-    --map-format jxl-q80 \
-    --interface-image-format jxl-q80 \
-    --rle-sprite-format jxl-q80 \
+    --map-format avif-q60 \
+    --interface-image-format avif-q60 \
+    --rle-sprite-format avif-q60 \
     --audio-format opus \
     --zstd-window-log 30 \
     --web-content-manifest \
