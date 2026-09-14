@@ -403,7 +403,13 @@ pub(crate) fn next_directory() -> Result<String> {
     })
 }
 
-async fn commit(db: &Rexie, journal: &Journal) -> Result<()> {
+// Transaction bodies await between requests; see `indexed_db_executor`.
+async fn commit(db: &Rc<Rexie>, journal: &Journal) -> Result<()> {
+    let (db, journal) = (Rc::clone(db), journal.clone());
+    crate::indexed_db_executor::drive(async move { commit_transaction(&db, &journal).await }).await
+}
+
+async fn commit_transaction(db: &Rexie, journal: &Journal) -> Result<()> {
     journal.validate()?;
     let tx = db
         .transaction(&[FILES, BLOCKS, COMMITS], TransactionMode::ReadWrite)
@@ -635,6 +641,12 @@ impl Write for BrowserChunk {
 }
 
 async fn load_file(path: &Path, required: bool) -> Result<()> {
+    let path = path.to_path_buf();
+    crate::indexed_db_executor::drive(async move { load_file_transaction(&path, required).await })
+        .await
+}
+
+async fn load_file_transaction(path: &Path, required: bool) -> Result<()> {
     if with_session(|s| Ok(s.files.contains_key(path)))? {
         return Ok(());
     }

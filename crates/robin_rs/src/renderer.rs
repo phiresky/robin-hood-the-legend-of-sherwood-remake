@@ -896,6 +896,17 @@ impl Renderer {
     /// True only when a swapchain texture was acquired and submitted.
     /// This is not a physical display presentation timestamp.
     pub fn try_present(&mut self) -> bool {
+        let presented = self.try_present_unannounced();
+        if presented {
+            crate::window::announce_first_frame_presented();
+        }
+        presented
+    }
+
+    /// Present without counting as the runtime's first meaningful frame —
+    /// only for blank placeholder frames that precede real content, which
+    /// must not dismiss the page shell's boot overlay.
+    pub fn try_present_unannounced(&mut self) -> bool {
         self.frame
             .present(&self.gpu, &mut self.pipelines, &self.resources)
     }

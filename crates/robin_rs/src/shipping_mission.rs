@@ -7,9 +7,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
 use futures::StreamExt as _;
-#[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
-use robin_assets::shipping_datadir::ShippingMission;
-use robin_assets::shipping_datadir::{ShippingDatadir, decode_mission_compressed};
+use robin_assets::shipping_datadir::{
+    ShippingDatadir, ShippingMission, StagedMissionInstall, decode_mission_compressed,
+};
 
 #[cfg(target_arch = "wasm32")]
 mod browser;
@@ -101,15 +101,113 @@ fn remove_early_owner<T>(
 /// One observable step at the asynchronous shipping-data boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MissionLoadPhase {
+    /// Download and decompress mission parts. Worker-pool streaming builds
+    /// also decode activation-critical sprite chunks within this phase.
     Data,
+    /// Decode the remaining sprite chunks while installing the merged
+    /// mission (VQ chunks and RLE-JXL atlases).
+    Sprites,
     Audio,
 }
 
 pub struct MissionLoadProgress<'a> {
     pub phase: MissionLoadPhase,
+    /// Counted items shown to the player.
     pub completed: usize,
     pub total: usize,
+    /// Weighted completion of `phase` in `0.0..=1.0`. Counted phases use
+    /// `completed / total`; sprite decode weights items by decode cost.
+    pub fraction: f32,
     pub file: Option<&'a str>,
+}
+
+impl<'a> MissionLoadProgress<'a> {
+    pub fn counted(
+        phase: MissionLoadPhase,
+        completed: usize,
+        total: usize,
+        file: Option<&'a str>,
+    ) -> Self {
+        let fraction = if total == 0 {
+            1.0
+        } else {
+            (completed as f32 / total as f32).min(1.0)
+        };
+        Self {
+            phase,
+            completed,
+            total,
+            fraction,
+            file,
+        }
+    }
+}
+
+/// Wall-clock budget for decoding sprite chunks on the calling thread before
+/// the loader reports progress and yields. On the single-threaded browser
+/// build every yield is a macrotask boundary at which the compositor can show
+/// the loading screen's latest frame; ~30 fps keeps the bar visibly moving.
+const SPRITE_DECODE_YIELD_BUDGET: std::time::Duration = std::time::Duration::from_millis(33);
+
+/// Work items per decode step. Native rayon decodes a batch in parallel; the
+/// browser main thread decodes serially, so one item keeps steps short.
+fn sprite_decode_step_items() -> usize {
+    #[cfg(target_arch = "wasm32")]
+    {
+        1
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::thread::available_parallelism().map_or(1, |threads| threads.get())
+    }
+}
+
+/// Install `merged` with cooperative sprite decode: progress is reported and
+/// the task yields to the runtime whenever [`SPRITE_DECODE_YIELD_BUDGET`]
+/// elapses. Decode order and output are identical to a blocking install.
+async fn install_with_progress<F>(
+    datadir: &ShippingDatadir,
+    mission: &str,
+    merged: ShippingMission,
+    progress: &mut F,
+) -> Result<()>
+where
+    F: FnMut(MissionLoadProgress<'_>),
+{
+    let mut staged = datadir
+        .stage_mission_install(mission, merged)
+        .with_context(|| format!("install shipping mission {mission}"))?;
+    let report = |staged: &StagedMissionInstall, progress: &mut F| {
+        let sprites = staged.progress();
+        progress(MissionLoadProgress {
+            phase: MissionLoadPhase::Sprites,
+            completed: sprites.completed_items,
+            total: sprites.total_items,
+            fraction: sprites.fraction(),
+            file: None,
+        });
+    };
+    report(&staged, progress);
+    crate::window::yield_to_runtime().await;
+    let step_items = sprite_decode_step_items();
+    let mut last_yield = web_time::Instant::now();
+    let mut yields = 0usize;
+    while !staged
+        .step(step_items)
+        .with_context(|| format!("install shipping mission {mission}"))?
+    {
+        if last_yield.elapsed() >= SPRITE_DECODE_YIELD_BUDGET {
+            report(&staged, progress);
+            crate::window::yield_to_runtime().await;
+            yields += 1;
+            last_yield = web_time::Instant::now();
+        }
+    }
+    report(&staged, progress);
+    tracing::debug!(mission, yields, "sprite decode yielded to the runtime");
+    datadir
+        .finish_mission_install(staged)
+        .with_context(|| format!("install shipping mission {mission}"))
 }
 
 /// Validate and stage one exact local Full-content payload before the game
@@ -232,12 +330,12 @@ where
         .map(|audio| audio.pause_startup_warmup())
         .transpose()
         .map_err(anyhow::Error::msg)?;
-    progress(MissionLoadProgress {
-        phase: MissionLoadPhase::Data,
-        completed: 0,
+    progress(MissionLoadProgress::counted(
+        MissionLoadPhase::Data,
+        0,
         total,
-        file: None,
-    });
+        None,
+    ));
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
     if _warm_audio && datadir.active_mission_name().as_deref() != Some(mission) {
         crate::audio_backend::clear_mission(
@@ -253,12 +351,12 @@ where
             .activate_mission(mission)
             .with_context(|| format!("activate shipping mission {mission}"))?;
         datadir.set_active_exclamation_ids(dependencies.exclamation_ids);
-        progress(MissionLoadProgress {
-            phase: MissionLoadPhase::Data,
-            completed: total,
+        progress(MissionLoadProgress::counted(
+            MissionLoadPhase::Data,
             total,
-            file: None,
-        });
+            total,
+            None,
+        ));
         #[cfg(all(target_arch = "wasm32", feature = "audio"))]
         if _warm_audio {
             crate::audio_backend::preload_active_mission_in_background(
@@ -305,12 +403,12 @@ where
                 .merge_part(payload)
                 .with_context(|| format!("merge shipping file {file}"))?;
             completed += 1;
-            progress(MissionLoadProgress {
-                phase: MissionLoadPhase::Data,
+            progress(MissionLoadProgress::counted(
+                MissionLoadPhase::Data,
                 completed,
                 total,
-                file: Some(&file),
-            });
+                Some(&file),
+            ));
             // On wasm, presenting from the observer does not become visible
             // until this task yields back to the browser event loop. Native
             // builds make this a no-op.
@@ -338,9 +436,7 @@ where
     )
     .await?;
     let install_start = web_time::Instant::now();
-    datadir
-        .install_mission_parts(mission, std::iter::once(merged))
-        .with_context(|| format!("install shipping mission {mission}"))?;
+    install_with_progress(datadir, mission, merged, &mut progress).await?;
     tracing::info!(
         mission,
         elapsed_ms = install_start.elapsed().as_secs_f64() * 1000.0,

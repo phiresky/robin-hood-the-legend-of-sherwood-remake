@@ -44,6 +44,14 @@ all-at-once admission), `mission-downloads=unbounded` (alphabetical all-at-once)
 renderer preparation/reuse during loading). Download admission is separate from
 the bounded decode-worker scheduler; these switches do not omit required content.
 
+Every response carries the checked-in Cloudflare `_headers` policy for its origin
+(`wasm-www/deploy/{public,runtime,datadir}-headers.txt`: CSP, cache, COOP/COEP/CORP),
+so the page is cross-origin isolated exactly as in production. `--isolation off`
+strips the `Cross-Origin-*` headers to exercise the non-isolated serial-decode
+fallback of the same package. The JSON records `isolation` and the page's
+`crossOriginIsolated`; a threaded package logs `wasm rayon worker pool ready`
+with its thread count and `startup timing: worker pool`.
+
 The 1024×768 viewport uses production CSS unchanged; its canvas currently measures
 1008×752 because of page margins. Hardware concurrency is fixed to four, with
 `wasm-threads=4`. Headless Chrome uses software SwiftShader. JSON records actual

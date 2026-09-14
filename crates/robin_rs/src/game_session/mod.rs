@@ -17,6 +17,7 @@ mod input_handlers;
 mod interactive;
 pub(crate) mod leaderboard_runtime;
 mod live_gameplay;
+mod loading_progress;
 mod modal_state;
 mod mouse_input;
 mod multiplayer;
@@ -1131,7 +1132,10 @@ mod required_state_tests {
                 actor: ActorData::default(),
                 human: HumanData::default(),
                 npc: NpcData::default(),
-                soldier: SoldierData::default(),
+                soldier: SoldierData {
+                    cached_camp: robin_engine::element_kinds::Camp::Royalists,
+                    ..Default::default()
+                },
             }))
         };
         let left = add_member(MapPoint::new(100.0, 200.0));

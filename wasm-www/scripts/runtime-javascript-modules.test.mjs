@@ -110,6 +110,57 @@ test('rejects an identity vault and every orphan JavaScript module', async t => 
     );
 });
 
+const helperPath = 'snippets/wasm-bindgen-rayon-38edf6e439f6d70d/src/workerHelpers.no-bundler.js';
+
+async function pinnedHelperSource() {
+    // The verifier pins the exact published crate bytes. Read them from the
+    // local Cargo registry when present; otherwise the test is not meaningful.
+    const { readdir, readFile } = await import('node:fs/promises');
+    const home = process.env.CARGO_HOME ?? resolve(process.env.HOME ?? '', '.cargo');
+    const registry = resolve(home, 'registry/src');
+    for (const index of await readdir(registry).catch(() => [])) {
+        const path = resolve(registry, index, 'wasm-bindgen-rayon-1.3.0/src/workerHelpers.no-bundler.js');
+        const source = await readFile(path, 'utf8').catch(() => undefined);
+        if (source !== undefined) return source;
+    }
+    return undefined;
+}
+
+async function threadedFixture(helperSource) {
+    const root = await fixture();
+    await mkdir(resolve(root, helperPath, '..'), { recursive: true });
+    await writeFile(resolve(root, helperPath), helperSource);
+    await writeFile(
+        resolve(root, 'robin.js'),
+        `import { requestIdentity } from './${modulePath}';\nimport { startWorkers } from './${helperPath}';\nexport { requestIdentity, startWorkers };\n`,
+    );
+    return root;
+}
+
+test('threaded runtime admits only the pinned worker-pool helper and its one engine re-import', async t => {
+    const source = await pinnedHelperSource();
+    if (source === undefined) {
+        t.skip('wasm-bindgen-rayon 1.3.0 is not in the local Cargo registry');
+        return;
+    }
+    const root = await threadedFixture(source);
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const claims = await authorRuntimeJavascriptModules(root);
+    assert.deepEqual(claims.map(claim => claim.path), [modulePath, helperPath]);
+    await verifyRuntimeJavascriptModules(root, claims);
+
+    const reshaped = await threadedFixture(`${source}\n// reshaped\n`);
+    t.after(() => rm(reshaped, { recursive: true, force: true }));
+    await assert.rejects(authorRuntimeJavascriptModules(reshaped), /not the pinned wasm-bindgen-rayon helper/u);
+
+    // The exemption is bound to the helper path: the same dynamic import in
+    // any other runtime module stays forbidden.
+    const elsewhere = await fixture();
+    t.after(() => rm(elsewhere, { recursive: true, force: true }));
+    await writeFile(resolve(elsewhere, modulePath), 'export const requestIdentity = url => import(url);\n');
+    await assert.rejects(authorRuntimeJavascriptModules(elsewhere), /dynamic, phased, or attributed import/u);
+});
+
 test('replay validator is an explicitly authorized standalone second entry', async t => {
     const root = await fixture();
     t.after(() => rm(root, { recursive: true, force: true }));
