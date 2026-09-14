@@ -1013,10 +1013,25 @@ impl AlertExecution<'_> {
         )
     }
 
+    fn camp_members(&self, camp: crate::element::Camp) -> impl Iterator<Item = EntityId> + '_ {
+        self.engine
+            .ai
+            .global
+            .all_soldier_handles
+            .iter()
+            .copied()
+            .map(|handle| EntityId::Soldier(crate::entity_id::SoldierId(handle)))
+            .filter(move |id| {
+                matches!(self.engine.world.entities.get(*id), Some(Entity::Soldier(soldier))
+                    if soldier.soldier.cached_camp == camp)
+            })
+    }
+
     fn alert_soldiers(&mut self, center: Position, flags: u16) -> bool {
         use crate::ai::Remark;
         use crate::ai_enemy::ReportUpdateFlags;
         use crate::ai_enemy::SeekFlags;
+        let camp = self.engine.expect_entity(self.owner, "alert camp").camp();
         let initial_position = self.engine.live_ai_position(self.owner);
         self.enemy_mut().base.seek_position = center;
         self.enemy_mut().seek_flags = SeekFlags::from_bits_truncate(flags);
@@ -1037,17 +1052,18 @@ impl AlertExecution<'_> {
             enemy.base.list_us.clear();
         }
         assert_eq!(self.enemy().soldier_profile_rank, ProfileRank::Officer);
-        let camp = self.engine.expect_entity(self.owner, "alert camp").camp();
-        let members = self.engine.ai.global.all_soldier_handles.clone();
+        let member_count = self.camp_members(camp).count();
         let mut average = crate::coordinates::MapVec::new(0.0, 0.0);
-        for handle in members.iter().copied() {
-            let target = EntityId::Soldier(crate::entity_id::SoldierId(handle));
-            let Some(Entity::Soldier(soldier)) = self.engine.world.entities.get(target) else {
-                continue;
+        for member_index in 0..member_count {
+            let target = self
+                .camp_members(camp)
+                .nth(member_index)
+                .expect("alert camp roster shortened during recipient callback");
+            let handle = target.index();
+            let Entity::Soldier(soldier) = self.engine.expect_entity(target, "alert camp member")
+            else {
+                unreachable!("camp roster contains only soldiers");
             };
-            if soldier.soldier.cached_camp != camp {
-                continue;
-            }
             let brain = soldier
                 .npc
                 .ai_brain
@@ -1289,8 +1305,7 @@ impl AlertExecution<'_> {
         if !self.inside() {
             use crate::element::Command;
             use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
-            self.enemy_mut().base.stop_all();
-            self.settle();
+            self.engine.stop_ai_owner(self.sim, self.assets, self.owner);
             let mut sequence = Sequence::new();
             let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(self.owner));
             turn.set_property(
@@ -1499,8 +1514,7 @@ impl AlertExecution<'_> {
             target_world.x - owner_world.x,
             target_world.y - owner_world.y,
         ) as u16;
-        self.enemy_mut().base.stop_all();
-        self.settle();
+        self.engine.stop_ai_owner(self.sim, self.assets, self.owner);
         use crate::element::Command;
         use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
         let mut sequence = Sequence::new();

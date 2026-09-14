@@ -45,9 +45,6 @@ fn is_within_smalltalk_strike_range(maximal_range: u16, squared_distance: f32) -
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct ParadeVictim {
     victim_fighting_ability: u16,
-    victim_pos: crate::coordinates::MapPoint,
-    victim_layer: u16,
-    principal_opponent: Option<EntityId>,
 }
 
 #[derive(Clone, Copy)]
@@ -2392,14 +2389,7 @@ impl EngineInner {
             }
 
             Some(crate::combat::ProposedCombatAction::Strike(counter_strike)) => {
-                self.parade_counter_strike(
-                    sim,
-                    assets,
-                    victim_id,
-                    attacker_id,
-                    victim.principal_opponent,
-                    counter_strike,
-                );
+                self.parade_counter_strike(sim, assets, victim_id, attacker_id, counter_strike);
             }
 
             None => {
@@ -2536,7 +2526,6 @@ impl EngineInner {
             victim_elevation,
             victim_camp,
             victim_pos,
-            victim_layer,
             mut victim_boredom,
             principal_opponent,
         ) = {
@@ -2569,7 +2558,6 @@ impl EngineInner {
             let camp = s.soldier.cached_camp;
             let pos = s.element.position_map();
             let elev = s.element.position().z;
-            let layer = s.element.layer();
             let dir = s.element.direction();
             let boredom = s.human.sword_strike_boredom.clone();
             // The strike proposal times and aims the victim's *principal
@@ -2589,7 +2577,6 @@ impl EngineInner {
                 elev,
                 camp,
                 pos,
-                layer,
                 boredom,
                 principal,
             )
@@ -2778,9 +2765,6 @@ impl EngineInner {
         Some((
             ParadeVictim {
                 victim_fighting_ability,
-                victim_pos,
-                victim_layer,
-                principal_opponent,
             },
             proposed,
         ))
@@ -2820,12 +2804,14 @@ impl EngineInner {
             );
         }
 
-        self.world
-            .entities
-            .expect_enemy_ai_mut(victim_id, format_args!("parry stop owner"))
-            .base
-            .stop_all();
-        self.drain_ai_owner_halt_boundary(sim, assets, victim_id);
+        self.stop_ai_owner(sim, assets, victim_id);
+
+        let victim_fighting_ability = fighting_ability_from_profile(
+            self.expect_entity(victim_id, "parry capacity after stop"),
+            &assets.profile_manager,
+            sim.config().difficulty,
+            &self.mission_domain.diplomacy,
+        );
 
         if victim_fighting_ability >= MIN_CAPACITY_AVOID_PUSH_BACK && push_back_distance != 0 {
             let victim_ai_pos = self.live_ai_position(victim_id);
@@ -2980,7 +2966,6 @@ impl EngineInner {
         assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: EntityId,
-        principal_opponent: Option<EntityId>,
         counter_strike: SwordStrike,
     ) {
         // Counter-strike.  Order:
@@ -2998,36 +2983,27 @@ impl EngineInner {
         }
         self.drain_direct_ai_owner_boundary(sim, victim_id, assets);
         self.begin_ai_special_strike(sim, assets, victim_id);
-        self.world
-            .entities
-            .expect_enemy_ai_mut(victim_id, format_args!("counter-strike owner"))
-            .base
-            .stop_all();
-        self.drain_ai_owner_halt_boundary(sim, assets, victim_id);
+        self.stop_ai_owner(sim, assets, victim_id);
 
         // Launch counter-strike sequence
         let counter_cmd = counter_strike.to_command();
-        // The counter always goes to the principal opponent. A
-        // victim with an empty opponent list cannot reach this arm
-        // in the Original — the proposal refuses outright for an
-        // actor that is not swordfighting — so there is no
-        // substitute target to fall back to here.
-        let Some(target) = principal_opponent else {
-            tracing::warn!(
-                ?victim_id,
-                ?attacker_id,
-                ?counter_strike,
-                "ConsiderToBeginParade: counter-strike proposed for a victim with no principal opponent; dropping it"
-            );
-            return;
-        };
+        // State and halt callbacks may remove the last opponent. Register
+        // the interaction with the principal left by those callbacks,
+        // including an empty target.
+        let target = self
+            .expect_entity(victim_id, "counter-strike principal after stop")
+            .human_data()
+            .expect("counter-strike owner is human")
+            .opponents
+            .first()
+            .copied();
 
         let mut seq = crate::sequence::Sequence::new();
         let strike_elem = crate::sequence::SequenceElement::new_interaction(
             1,
             counter_cmd,
             Some(victim_id),
-            Some(target),
+            target,
         );
         seq.append_element(strike_elem);
         self.launch_sequence(seq);

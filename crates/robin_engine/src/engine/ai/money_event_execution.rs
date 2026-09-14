@@ -211,8 +211,7 @@ impl EngineInner {
                 if self.expect_entity(owner, "brawler posture").posture()
                     == crate::element::Posture::Lying
                 {
-                    self.seek_enemy_mut(owner).base.stop_all();
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                    self.stop_ai_owner(sim, assets, owner);
                     self.seek_enemy_mut(owner)
                         .base
                         .outbox
@@ -468,8 +467,7 @@ impl EngineInner {
             && (position.x - here.x).abs().max((position.y - here.y).abs()) < 25.0
         {
             let camp = self.expect_entity(owner, "coin recipient camp").camp();
-            self.seek_enemy_mut(owner).base.stop_all();
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.stop_ai_owner(sim, assets, owner);
             self.money_interaction_live(
                 sim,
                 assets,
@@ -554,8 +552,7 @@ impl EngineInner {
                 );
             } else {
                 assert_ne!(owner, friend, "brawler cannot hit himself");
-                self.seek_enemy_mut(owner).base.stop_all();
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.stop_ai_owner(sim, assets, owner);
                 self.money_interaction_live(
                     sim,
                     assets,
@@ -628,8 +625,7 @@ impl EngineInner {
                 AiState::Wondering,
                 Substate::WonderingLooting,
             );
-            self.seek_enemy_mut(owner).base.stop_all();
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.stop_ai_owner(sim, assets, owner);
             self.money_interaction_live(
                 sim,
                 assets,

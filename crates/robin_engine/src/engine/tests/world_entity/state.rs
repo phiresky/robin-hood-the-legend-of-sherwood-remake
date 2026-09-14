@@ -386,7 +386,7 @@ fn zero_duration_resolution_completes_mytalk_at_current_boundary() {
 
 #[test]
 fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo() {
-    use crate::ai::{AiActorOutbox, AiOwnerWork, AiState, AttentiveModeEffect, Substate};
+    use crate::ai::{AiState, AttentiveModeEffect, Substate};
     use crate::element::{AiBrain, Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::SequenceState;
@@ -407,20 +407,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
     let owner = engine.add_test_entity(soldier_entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    let mut face_prefix = AiActorOutbox::default();
-    face_prefix
-        .orders
-        .push(crate::order::AiOrderIntent::face_direction(7));
-    {
-        let ai = engine
-            .get_entity_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("Enemy test AI remains live");
-        ai.outbox
-            .reentrant
-            .owner_work
-            .push(AiOwnerWork::ActorEffects(face_prefix));
-    }
+    engine.duty_face_direction(&sim, &assets, owner, 7);
     engine.duty_set_state(
         &sim,
         &assets,
@@ -556,9 +543,10 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
     enemy.will_be_attentive = true;
     enemy.base.current_state = AiState::Seeking;
     enemy.base.current_substate = Substate::SeekingSeekpoint;
-    enemy.base.stop_all();
     let owner = engine.add_test_entity(soldier_entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine.stop_ai_owner(&sim, &assets, owner);
 
     engine.duty_set_state(
         &sim,
@@ -605,7 +593,6 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
 
 #[test]
 fn opposite_attentive_transitions_launch_before_following_turn() {
-    use crate::ai::AttentiveModeEffect;
     use crate::element::{AiBrain, Command, Posture};
     use crate::sequence::SequenceState;
 
@@ -620,23 +607,12 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
     let enemy = soldier.npc.ai_brain.enemy_mut().expect("Enemy test AI");
     enemy.attentive = false;
     enemy.will_be_attentive = false;
-    enemy
-        .base
-        .outbox
-        .actor
-        .queue_set_attentive_mode(AttentiveModeEffect::new(true, false));
-    enemy
-        .base
-        .outbox
-        .actor
-        .queue_set_attentive_mode(AttentiveModeEffect::new(false, false));
-    let mut turn = crate::order::AiOrderIntent::face_direction(14);
-    turn.after_attentive_mode = true;
-    enemy.base.outbox.actor.orders.push(turn);
     let owner = engine.add_test_entity(soldier_entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
+    engine.set_soldier_attentive_mode(owner, true, false);
+    engine.set_soldier_attentive_mode(owner, false, false);
+    engine.duty_face_direction(&sim, &assets, owner, 14);
 
     let owned: Vec<_> = engine
         .orders
@@ -653,7 +629,7 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
             (Command::LeaveAttentiveMode, SequenceState::Todo),
             (Command::Turn, SequenceState::Todo),
         ],
-        "the original game launches both opposite attentive-mode transitions synchronously before the following facing step"
+        "both opposite attentive-mode transitions register before the following facing step"
     );
     assert!(
         !engine
@@ -1203,7 +1179,6 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
     assert!(!ai.base.outbox.actor.has_boundary_work());
     assert!(ai.base.outbox.reentrant.owner_work.is_empty());
     assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
-    assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
 
     let commands: Vec<_> = engine
         .orders
@@ -1478,7 +1453,6 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
     assert!(!ai.base.outbox.actor.has_boundary_work());
     assert!(ai.base.outbox.reentrant.owner_work.is_empty());
     assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
-    assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
     assert!(
         !engine
             .orders
@@ -1507,7 +1481,7 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
 
 #[test]
 fn nested_reentrant_turn_remains_deferred_until_manager() {
-    use crate::ai::{AiState, CrossNpcAction, StimulusInfo, StimulusType, Substate};
+    use crate::ai::{AiState, StimulusType, Substate};
     use crate::element::Command;
     use crate::sequence::SequenceState;
 
@@ -1534,22 +1508,13 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
     target_ai.base.current_substate = Substate::SeekingOfficerWaitForCharly;
     target_ai.base.antagonist = Some(crate::ai::AiEntityHandle::new(source_id.index()));
 
-    engine
-        .get_entity_mut(source_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("nested-turn source has AI")
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::SendStimulus {
-            target: target_id.index(),
-            stimulus_type: StimulusType::CallCoordinate,
-            info: StimulusInfo::Human(crate::ai::AiEntityHandle::new(source_id.index())),
-            fallback_to_sender: None,
-            to_whole_patrol: false,
-        });
-
-    engine.drain_direct_ai_owner_boundary(&sim, source_id, &assets);
+    engine.dispatch_think_with_drain(
+        &sim,
+        target_id,
+        &crate::ai::Stimulus::with_human(StimulusType::CallCoordinate, source_id.index()),
+        None,
+        &assets,
+    );
 
     let turns: Vec<_> = engine
         .orders

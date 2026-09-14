@@ -499,7 +499,6 @@ impl EngineInner {
             .into();
         while let Some(dispatch) = pending.pop_front() {
             let owner = dispatch.card.owner;
-            let move_boundary = self.orders.sequence_manager.sequence_launch_boundary();
             let from_halt = dispatch.card.from_halt;
             let diagnostic = damage_parry_handoff_debug_config()
                 .map(|_| (dispatch.card, dispatch.cross_postponed_successor()));
@@ -526,26 +525,11 @@ impl EngineInner {
                 // while closing that native owner-local call stack.
                 #[cfg(test)]
                 observe_owner_boundary_reentrant_step("self_stimuli");
-                let launched_moves =
-                    self.drain_self_stimuli_for_npc_collect_moves(sim, owner, assets);
-                self.dispatch_synchronous_owner_move_sequences(
-                    sim,
-                    assets,
-                    owner,
-                    launched_moves,
-                    active_scripts,
-                )?;
+                self.drain_self_stimuli_for_npc(sim, owner, assets);
                 // A script-side state transition can restore the outer Think
                 // tail only after the recursive drain's ordinary order pass.
                 // Original remains inside removal notification here.
                 self.launch_pending_orders_for_npc(sim, assets, owner);
-                self.dispatch_synchronous_owner_moves(
-                    sim,
-                    assets,
-                    owner,
-                    move_boundary,
-                    active_scripts,
-                )?;
             }
             self.orders
                 .sequence_manager
@@ -638,7 +622,6 @@ impl EngineInner {
         resumed_cross_successors: &mut Vec<(crate::sequence::SequenceId, usize)>,
     ) {
         let card_owner = dispatch.card.owner;
-        let move_boundary = self.orders.sequence_manager.sequence_launch_boundary();
         let from_halt = dispatch.card.from_halt;
         let diagnostic = damage_parry_handoff_debug_config()
             .map(|_| (dispatch.card, dispatch.cross_postponed_successor()));
@@ -655,46 +638,9 @@ impl EngineInner {
             self.dispatch_pending_waypoint_script_for_owner(sim, card_owner, assets);
             #[cfg(test)]
             observe_owner_boundary_reentrant_step("self_stimuli");
-            let launched_moves =
-                self.drain_self_stimuli_for_npc_collect_moves(sim, card_owner, assets);
-            self.dispatch_synchronous_owner_move_sequences(
-                sim,
-                assets,
-                card_owner,
-                launched_moves,
-                &mut Vec::new(),
-            )
-            .unwrap_or_else(|error| {
-                panic!(
-                    "condolation owner {} collected Move dispatch failed: {error:?}",
-                    card_owner.index()
-                )
-            });
-            // Close a pending caller tail before selecting the Move it added.
+            self.drain_self_stimuli_for_npc(sim, card_owner, assets);
+            // Register movement produced by the callback for the manager update.
             self.launch_pending_orders_for_npc(sim, assets, card_owner);
-        }
-
-        // A condolence handler can issue movement for the next patrol leg. The original game
-        // Sequence-element launch immediately reaches the owner's instruction
-        // path inside removal notification, before the terminating element's
-        // Ready() continuation resumes. Select only this owner's newly
-        // registered movement and drive its exact deferred InstructOwner action at
-        // the same boundary. Other owners' FIFO positions remain untouched.
-        let mut active_scripts = Vec::new();
-        if !from_halt {
-            self.dispatch_synchronous_owner_moves(
-                sim,
-                assets,
-                card_owner,
-                move_boundary,
-                &mut active_scripts,
-            )
-            .unwrap_or_else(|error| {
-                panic!(
-                    "condolation owner {} synchronous Move dispatch failed: {error:?}",
-                    card_owner.index()
-                )
-            });
         }
 
         // A state change reached re-entrantly from a removal notification belongs
@@ -731,56 +677,6 @@ impl EngineInner {
         for nested in self.orders.sequence_manager.drain_pending_condolations() {
             self.close_owner_boundary_condolation(sim, assets, nested, resumed_cross_successors);
         }
-    }
-
-    /// Synchronously instruct movement registered by an owner's condolence
-    /// callback. The chain remains inside removal notification; unrelated
-    /// owners keep their established queue positions.
-    pub(super) fn dispatch_synchronous_owner_moves(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        move_boundary: u32,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    ) -> Result<(), crate::engine::script::ScriptDriverError> {
-        let launched_moves = self
-            .orders
-            .sequence_manager
-            .deferred_owner_moves_since(owner, move_boundary);
-        self.dispatch_synchronous_owner_move_sequences(
-            sim,
-            assets,
-            owner,
-            launched_moves,
-            active_scripts,
-        )
-    }
-
-    fn dispatch_synchronous_owner_move_sequences(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        launched_moves: Vec<crate::sequence::SequenceId>,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    ) -> Result<(), crate::engine::script::ScriptDriverError> {
-        for sequence_id in launched_moves {
-            let action = self
-                .orders
-                .sequence_manager
-                .take_deferred_owner_action(owner, sequence_id, 0)
-                .unwrap_or_else(|detail| {
-                    panic!(
-                        "condolation owner {} Move dispatch failed: {detail}",
-                        owner.index()
-                    )
-                });
-            if let Some(action) = action {
-                self.dispatch_script_synchronous_action(sim, assets, action, active_scripts)?;
-            }
-        }
-        Ok(())
     }
 
     /// Dispatch a single removal notification to the owner entity.
@@ -2030,7 +1926,7 @@ mod tests {
     use crate::sequence::SequenceElementData;
 
     #[test]
-    fn collected_condolation_move_is_instructed_before_callback_returns() {
+    fn condolations_leave_registered_normal_move_for_manager_update() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
@@ -2071,26 +1967,28 @@ mod tests {
         ));
         let sequence_id = engine.orders.sequence_manager.launch_element(movement);
 
-        engine
-            .dispatch_synchronous_owner_move_sequences(
-                &sim,
-                &assets,
-                owner,
-                vec![sequence_id],
-                &mut Vec::new(),
-            )
-            .expect("collected callback move instructs synchronously");
-
-        let (selected_sequence, _, order) = engine
-            .orders
-            .sequence_manager
-            .current_order_for_actor(owner)
-            .expect("callback move is selected before the boundary returns");
-        assert_eq!(selected_sequence, sequence_id);
-        assert_eq!(
-            order.order_type,
-            crate::order::OrderType::TransitionWaitingUprightRunningUpright
+        engine.dispatch_condolations(&sim, &assets);
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(owner)
+                .is_none()
         );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::Todo
+        );
+        assert!(matches!(
+            engine.orders.sequence_manager.pop_next_hourglass_action(),
+            Some(crate::sequence::SequenceAction::InstructOwner { sequence_id: next, .. })
+                if next == sequence_id
+        ));
     }
 
     fn door_fight_route_fixture(triggers_fired: u8) -> (EngineInner, EntityId, Position) {

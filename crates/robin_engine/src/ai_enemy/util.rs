@@ -317,7 +317,7 @@ pub(crate) fn detects_position_180_raw(
 /// Planar outcome of a 180° detection test once the squared distance has
 /// passed the view-radius gate.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) enum HalfPlane180 {
+pub(crate) enum HalfPlane180 {
     /// Within 50 units and beside the viewer (perpendicular component at
     /// least the forward length): detected without any further test.
     Beside,
@@ -331,7 +331,7 @@ pub(super) enum HalfPlane180 {
 /// The shared "beside me" / forward half-plane geometry of every 180°
 /// detection variant. `(dx, dy)` is the stretched-Y offset from the viewer's
 /// eye to the target and `sq_distance` its squared length.
-pub(super) fn half_plane_180(dx: f32, dy: f32, sq_distance: f32, direction: u16) -> HalfPlane180 {
+pub(crate) fn half_plane_180(dx: f32, dy: f32, sq_distance: f32, direction: u16) -> HalfPlane180 {
     // The direction vector is built by compressing the sector table's Y by
     // ASPECT_RATIO and then stretching it back by INVERSE_ASPECT_RATIO. The
     // shared Rust table already holds the resulting uncompressed unit vector,

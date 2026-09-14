@@ -3,8 +3,6 @@
 //! PC Listen performs its captured-length mixed reveal/Heard scan in the
 //! selected PC owner slot; object discovery remains with its object owner.
 
-use super::snapshots::HumanDetectionInput;
-
 /// Record-only snapshot taken right after a Listen `ActivatedByListenable`
 /// callback returned.
 #[cfg(test)]
@@ -155,59 +153,6 @@ impl EngineInner {
     }
 }
 
-/// `[universal frame, owner creation order]`.
-#[inline(never)]
-fn trace_them_detection_latches(
-    [universal_frame, original_creation_order]: [u32; 2],
-    npc_id: EntityId,
-    committed: bool,
-    enemy_stimuli: &[crate::ai::Stimulus],
-    detectables: &[Detectable],
-    entities: &crate::entities::Entities,
-) {
-    eprintln!(
-        "[THEM frame={} co={} me={} phase=detection_latches committed={} stimuli={:?}]",
-        universal_frame,
-        original_creation_order,
-        npc_id.index(),
-        committed,
-        enemy_stimuli
-            .iter()
-            .map(|stimulus| (stimulus.stimulus_type, stimulus.info))
-            .collect::<Vec<_>>(),
-    );
-    for det in detectables {
-        let target_id = det.element.unwrap_or_else(|| {
-            panic!(
-                "Enemy detectable for NPC {} has no target in THEM diagnostic",
-                npc_id.index()
-            )
-        });
-        let target = entities.get(target_id).unwrap_or_else(|| {
-            panic!(
-                "Enemy target {} for NPC {} missing in THEM diagnostic",
-                target_id.index(),
-                npc_id.index()
-            )
-        });
-        eprintln!(
-            "[THEM frame={} co={} me={} phase=detection_entry target={} seen_now={} seen_last={} visibility={} dead={} unconscious={}]",
-            universal_frame,
-            original_creation_order,
-            npc_id.index(),
-            target_id.index(),
-            det.seen_now,
-            det.seen_last_frame,
-            det.last_visibility,
-            target.is_dead(),
-            target
-                .human_data()
-                .expect("Enemy diagnostic human")
-                .unconscious,
-        );
-    }
-}
-
 #[inline(never)]
 fn trace_hearing_gate_target_outside_box(
     frame_and_creation_order: [u32; 2],
@@ -317,81 +262,6 @@ fn trace_hearing_gate_target(
 }
 
 /// `[universal frame, viewer creation order]`.
-#[inline(never)]
-fn trace_visibility_stage_human_result(
-    [universal_frame, original_creation_order]: [u32; 2],
-    npc_id: EntityId,
-    target: &EnemyOpticalTarget,
-    q: &ai_vision::VisibilityQuery<'_>,
-    effective_view_radius: Option<f32>,
-    visibility: f32,
-) {
-    let dx = q.target_world.x - q.viewer_world.x;
-    let dy = q.target_world.y - q.viewer_world.y;
-    let stretched_y = dy * crate::position_interface::INVERSE_ASPECT_RATIO;
-    let dz = q.target_world.z - q.viewer_world.z;
-    let square_distance = dx * dx + stretched_y * stretched_y;
-    let square_distance_3d = square_distance + dz * dz;
-    let view_dot = dx * q.view_forward.0 + stretched_y * q.view_forward.1;
-    eprintln!(
-        "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"human_result\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"viewer_world_bits\":[{},{},{}],\"target_world_bits\":[{},{},{}],\"viewer_direction\":{},\"view_forward_bits\":[{},{}],\"real_half_aperture_bits\":{},\"eye_status\":{},\"viewer_in_building\":{},\"target_same_building\":{},\"target_active_outside\":{},\"target_dead\":{},\"target_unconscious\":{},\"target_passing_door\":{},\"target_posture\":{},\"target_action_state\":{},\"dx_bits\":{},\"dy_bits\":{},\"stretched_y_bits\":{},\"dz_bits\":{},\"square_distance_bits\":{},\"square_distance_3d_bits\":{},\"view_dot_bits\":{},\"view_radius\":{},\"effective_radius_bits\":{},\"visibility_bits\":{}}}",
-        npc_id.index(),
-        target.id.index(),
-        q.viewer_world.x.to_bits(),
-        q.viewer_world.y.to_bits(),
-        q.viewer_world.z.to_bits(),
-        q.target_world.x.to_bits(),
-        q.target_world.y.to_bits(),
-        q.target_world.z.to_bits(),
-        q.viewer_direction,
-        q.view_forward.0.to_bits(),
-        q.view_forward.1.to_bits(),
-        q.real_half_aperture.to_bits(),
-        q.viewer_eye_status as u8,
-        q.viewer_in_building,
-        q.target_in_same_building,
-        q.target_is_active_and_outside_building,
-        target.dead,
-        q.target_unconscious,
-        q.target_passing_door,
-        q.target_posture as u8,
-        q.target_action_state as u8,
-        dx.to_bits(),
-        dy.to_bits(),
-        stretched_y.to_bits(),
-        dz.to_bits(),
-        square_distance.to_bits(),
-        square_distance_3d.to_bits(),
-        view_dot.to_bits(),
-        q.view_radius,
-        effective_view_radius.map_or(-1, |radius| i64::from(radius.to_bits())),
-        visibility.to_bits(),
-    );
-}
-
-#[inline(never)]
-fn trace_visibility_stage_outer_gate(
-    det: &Detectable,
-    target: &EnemyOpticalTarget,
-    npc_id: EntityId,
-    view: &ViewContext<'_>,
-    scan_decision: bool,
-) {
-    let universal_frame = view.universal_frame;
-    let original_creation_order = view.original_creation_order;
-    let viewer_inside_building = view.viewer_inside_building;
-    let view_radius = view.view_radius;
-    eprintln!(
-        "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"outer_gate\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"last_visibility_bits\":{},\"viewer_inside_building\":{viewer_inside_building},\"viewer_ground_bits\":[{},{}],\"target_ground_bits\":[{},{}],\"view_radius\":{view_radius},\"scan_decision\":{scan_decision}}}",
-        npc_id.index(),
-        target.id.index(),
-        det.last_visibility.to_bits(),
-        view.ground_position.x.to_bits(),
-        view.ground_position.y.to_bits(),
-        target.ground_position.x.to_bits(),
-        target.ground_position.y.to_bits(),
-    );
-}
 
 #[inline(never)]
 fn debug_detectable_list_entries(
@@ -580,69 +450,6 @@ pub(crate) fn debug_detectable_mutation_load_snapshot(
     );
 }
 
-/// `[frame, viewer creation order, target slot]`, all optional.
-fn visibility_stage_debug_gate() -> &'static ParityGate<3> {
-    static GATE: OnceLock<ParityGate<3>> = OnceLock::new();
-    GATE.get_or_init(|| {
-        ParityGate::from_env(
-            "PARITY_DEBUG_VISIBILITY_STAGE",
-            [
-                "PARITY_DEBUG_VISIBILITY_STAGE_FRAME",
-                "PARITY_DEBUG_VISIBILITY_STAGE_VIEWER_CREATION_ORDER",
-                "PARITY_DEBUG_VISIBILITY_STAGE_TARGET_SLOT",
-            ],
-        )
-    })
-}
-
-fn visibility_stage_debug_enabled(
-    frame: u32,
-    viewer_creation_order: u32,
-    target: EntityId,
-) -> bool {
-    visibility_stage_debug_gate().matches([
-        Some(frame),
-        Some(viewer_creation_order),
-        Some(target.index()),
-    ])
-}
-
-/// Scalar input for one live PC/soldier read, consumed before the next entry.
-struct EnemyOpticalTarget {
-    id: EntityId,
-    position: MapPoint,
-    ground_position: GroundPoint,
-    sector: Option<crate::position_interface::SectorHandle>,
-    layer: u16,
-    posture: crate::element::Posture,
-    action_state: crate::element::ActionState,
-    building_sector: Option<crate::position_interface::SectorHandle>,
-    /// Detection point in world space. Absent for a dead target
-    /// awaiting live-list cleanup.
-    detection_point: Option<crate::coordinates::WorldPoint3D>,
-    /// 16-sector facing.  Only used for `LeaningOut`: the detection
-    /// point projects `direction × 40` forward.
-    direction: i16,
-    active: bool,
-    unconscious: bool,
-    /// Whether the target is currently passing through a door — used
-    /// by the same-building visibility short-circuit.
-    passing_door: bool,
-    /// The projection obstacle this NPC target is currently standing
-    /// on.  Used by the per-target `compute_view_radius` re-call.
-    obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
-    is_pc: bool,
-    is_soldier: bool,
-    dead: bool,
-    hollow_man: bool,
-    guarded: bool,
-    detection_speed_in_forest: u16,
-    detection_speed_in_city: u16,
-    order_type: crate::order::OrderType,
-    blipped: bool,
-    camp: Camp,
-}
-
 /// Eye point of a human, in both spaces the visibility code needs: the
 /// projected map point used by the cone / spatial LOS tests, and the
 /// world-space eye point the 3D opaque-reachability query
@@ -664,12 +471,6 @@ pub(super) fn human_eye_point_for_visibility(
     // height remains exclusively in the returned Z component. Projecting
     // with `eye.z` would fold eye height into Y and then count it again in
     // `VisibilityQuery`'s 3D distance.
-    //
-    // TODO(coord-parity): `VisibilityQuery` still uses one `MapPoint` for
-    // both projected-map LOS and the original game's world-XY distance vector.
-    // Those spaces diverge when viewer and target ground elevations differ;
-    // split the query into LOS points and world-horizontal points before
-    // changing this established projection invariant.
     (visibility_eye_xy(eye, ground_z), eye)
 }
 
@@ -739,33 +540,6 @@ fn difficulty_hearing_factor(
     }
 }
 
-struct SoldierSightContext {
-    eye: MapPoint,
-    /// World-space eye point, used verbatim as the origin of
-    /// opaque-reachability queries.
-    eye_world: crate::coordinates::WorldPoint3D,
-    dir: i16,
-    layer: u16,
-    view_radius: u16,
-    eye_status: crate::element::EyeStatus,
-    current_state: crate::ai::AiState,
-    view_forward: (f32, f32),
-    real_half_aperture: f32,
-    /// Persisted lean-out view parameter. The original game uses this flag, not the
-    /// actor's live posture, to select the detection sharpness multiplier.
-    view_lean_out: bool,
-    sector: Option<crate::position_interface::SectorHandle>,
-    alert_status: crate::ai::AlertLevel,
-    blipped: bool,
-    ground_position: GroundPoint,
-    camp: Camp,
-    ignore_bodies: bool,
-    /// Original enemy-memory handles which keep a revealed reusable cloak
-    /// revealed until the ordinary AI forgets the target after LOS loss.
-    remembered_targets: Vec<u32>,
-    primary_target: Option<crate::ai::AiEntityHandle>,
-}
-
 fn lacklandist_visibility_refresh_always(
     eye_status: crate::element::EyeStatus,
     view_alert_status: crate::ai::AlertLevel,
@@ -776,16 +550,7 @@ fn lacklandist_visibility_refresh_always(
     ) || view_alert_status != crate::ai::AlertLevel::Green
 }
 
-/// Original-game door-passing state is defined by the selected
-/// sequence command, not by the sprite's transient active-door pointer.
-fn optical_target_is_passing_door(
-    sequence_manager: &crate::sequence::SequenceManager,
-    target: EntityId,
-) -> bool {
-    selected_actor_is_passing_door(sequence_manager, target)
-}
-
-fn forest_180_degree_view_enabled_with_relationship(
+pub(super) fn forest_180_degree_view_enabled_with_relationship(
     is_forest_level: bool,
     viewer_player_aligned: bool,
 ) -> bool {
@@ -797,105 +562,6 @@ fn forest_180_degree_view_enabled_with_relationship(
 fn finalize_detection_summary(npc: &mut crate::element::AiActorData) {
     if npc.maximal_detection_suspect == 0 {
         npc.worst_detected_type = DetectableType::None;
-    }
-}
-
-impl SoldierSightContext {
-    fn from_npc_viewer(
-        npc_id: EntityId,
-        entity: &Entity,
-        viewer_building_sector: Option<crate::position_interface::SectorHandle>,
-    ) -> Option<Self> {
-        let npc = entity.ai_actor_data()?;
-        let camp = entity.camp();
-        // Detection refresh's optical gate is narrower than its entry gate:
-        // an inactive NPC in a BUILDING sector still scans, while an
-        // inactive NPC merely passing a door stops after acoustics.
-        if (!entity.is_active() && viewer_building_sector.is_none())
-            || entity.is_dead()
-            || entity.is_unconscious()
-            || entity.element_data().posture() == crate::element::Posture::Tied
-        {
-            return None;
-        }
-
-        // The original game fixes the concrete AI behavior in the actor
-        // hierarchy: soldiers inherit hostile AI and civilians
-        // inherit friendly AI. Autonomous PCs are a Rust extension
-        // which deliberately reuse the malignity lifecycle. Do not accept an
-        // arbitrary base controller here: corrupt actor/brain combinations
-        // would otherwise enter detection and fail later in type-specific AI.
-        let ai = match entity {
-            Entity::Pc(_) => {
-                &npc.ai_brain
-                    .enemy()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "eligible autonomous PC {} has no EnemyAi brain during detection",
-                            npc_id.index()
-                        )
-                    })
-                    .base
-            }
-            Entity::Soldier(_) => {
-                &npc.ai_brain
-                    .enemy()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "eligible soldier NPC {} has no EnemyAi brain during detection",
-                            npc_id.index()
-                        )
-                    })
-                    .base
-            }
-            Entity::Civilian(_) => {
-                &npc.ai_brain
-                    .friendly()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "eligible civilian NPC {} has no FriendlyAi brain during detection",
-                            npc_id.index()
-                        )
-                    })
-                    .base
-            }
-            _ => unreachable!("non-AI entity passed the AI viewer kind gate"),
-        };
-        let current_substate = ai.current_substate;
-        let ignore_bodies = matches!(
-            current_substate,
-            crate::ai::Substate::SeekingOfficerWaitForAlertingSoldier
-                | crate::ai::Substate::SeekingOfficerGetAlertingReportFromSoldier
-        );
-        let ground_position = entity.ground_position();
-        let (eye, eye_world) = human_eye_point_for_visibility(entity);
-
-        Some(Self {
-            eye,
-            eye_world,
-            dir: entity.element_data().direction(),
-            layer: entity.element_data().layer(),
-            view_radius: npc.view_radius,
-            eye_status: npc.eye_status,
-            current_state: npc.ai_state(),
-            view_forward: (npc.view_direction[0], npc.view_direction[1]),
-            real_half_aperture: npc.real_half_aperture,
-            view_lean_out: npc.view_lean_out,
-            sector: entity.element_data().sector(),
-            // Visibility calculation's refresh-always gate reads the view
-            // parameters, not the independently tracked music alert. Shadow
-            // sightings deliberately raise only the latter.
-            alert_status: ai.view_alert_status,
-            blipped: entity.element_data().blipped,
-            ground_position,
-            camp,
-            ignore_bodies,
-            remembered_targets: entity
-                .enemy_ai()
-                .map(|enemy| enemy.list_them.clone())
-                .unwrap_or_default(),
-            primary_target: ai.primary_target,
-        })
     }
 }
 
@@ -1360,38 +1026,45 @@ impl EngineInner {
         let bonus_position = bonus.element.position();
         let radius = self.ai.standard_view_polygon_radius as f32;
         let square_standard_view_radius = radius * radius;
-        let pc_ids = self.world.original_pc_registry().to_vec();
         let sight_obstacles = self.sight_obstacles(assets);
-        let discovered = pc_ids.into_iter().any(|pc_id| {
-            let entity = self.world.entities.expect_entity(
-                pc_id,
-                format_args!("bonus {bonus_id:?} discovery refresh PC registry id"),
-            );
-            let Entity::Pc(pc) = entity else {
-                panic!("bonus {bonus_id:?} discovery refresh found non-PC registry id {pc_id:?}")
-            };
-            if pc.pc.life_points <= 0 || pc.human.unconscious || !pc.element.active {
-                return false;
-            }
-            let eyes = entity.compute_eyes_point(None).unwrap_or_else(|| {
-                panic!("bonus {bonus_id:?} could not compute eyes for required PC {pc_id:?}")
+        let discovered = self
+            .world
+            .original_pc_registry()
+            .iter()
+            .copied()
+            .any(|pc_id| {
+                let entity = self.world.entities.expect_entity(
+                    pc_id,
+                    format_args!("bonus {bonus_id:?} discovery refresh PC registry id"),
+                );
+                let Entity::Pc(pc) = entity else {
+                    panic!(
+                        "bonus {bonus_id:?} discovery refresh found non-PC registry id {pc_id:?}"
+                    )
+                };
+                if pc.pc.life_points <= 0 || pc.human.unconscious || !pc.element.active {
+                    return false;
+                }
+                let eyes = entity.compute_eyes_point(None).unwrap_or_else(|| {
+                    panic!("bonus {bonus_id:?} could not compute eyes for required PC {pc_id:?}")
+                });
+                let dx = eyes.x - bonus_position.x;
+                let dy =
+                    (eyes.y - bonus_position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+                let dz = eyes.z - bonus_position.z;
+                let threshold = if pc.element.posture() == crate::element::Posture::OnShoulders {
+                    1.3
+                } else {
+                    1.0
+                } * square_standard_view_radius;
+                dx * dx + dy * dy + dz * dz < threshold
+                    && crate::sight_obstacle::is_reachable_3d(
+                        sight_obstacles,
+                        [bonus_position.x, bonus_position.y, bonus_position.z],
+                        [eyes.x, eyes.y, eyes.z],
+                        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+                    )
             });
-            let dx = eyes.x - bonus_position.x;
-            let dy = (eyes.y - bonus_position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-            let dz = eyes.z - bonus_position.z;
-            let threshold = if pc.element.posture() == crate::element::Posture::OnShoulders {
-                1.3
-            } else {
-                1.0
-            } * square_standard_view_radius;
-            dx * dx + dy * dy + dz * dz < threshold
-                && crate::sight_obstacle::is_reachable_3d(
-                    sight_obstacles,
-                    [bonus_position.x, bonus_position.y, bonus_position.z],
-                    [eyes.x, eyes.y, eyes.z],
-                    crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
-                )
-        });
         if discovered {
             self.world
                 .entities
@@ -1460,8 +1133,7 @@ impl EngineInner {
         };
 
         let mut detecting_pc = None;
-        let pc_ids = self.world.original_pc_registry().to_vec();
-        for pc_id in pc_ids {
+        for &pc_id in self.world.original_pc_registry() {
             let pc_entity =
                 self.expect_entity(pc_id, "PC from the live PC list during NPC blip detection");
             let Entity::Pc(pc) = pc_entity else {
@@ -1835,11 +1507,6 @@ impl EngineInner {
             super::super::tick::EntitySystemDetail::RefreshDetection,
         );
         let universal_frame = self.control.frame_counter;
-        let golden_eye = self.ai.global.golden_eye_mode;
-        // Forest-level flag — selects between forest and city
-        // detection-speed parameters when scaling a PC's visual
-        // detection speed in the per-target visibility pass below.
-        let is_forest_level = self.world.weather.is_forest_level;
 
         self.tick_enemy_ai_npc_blip_detection_for_npc(sim, npc_id, assets);
 
@@ -1916,52 +1583,54 @@ impl EngineInner {
             );
         }
 
-        // Original caches the view radius for this viewer/frame: one
-        // ground entry plus one entry on each projection obstacle. Enemy
-        // and the later detectable-type buckets share the same cache
-        // during this contiguous detection refresh.
-        let view_radius_cache = OwnerViewRadiusCache::from_persistent(
-            &self.ai.view_radius_cache,
-            npc_id,
-            universal_frame,
-            "refresh_detection",
-        );
-        let think_input = self.tick_enemy_ai_refresh_detection_for_npc(
-            npc_id,
-            assets,
-            universal_frame,
-            golden_eye,
-            is_forest_level,
-            &view_radius_cache,
-        );
-        // Enemy predetection may already have queued shadows. Append
-        // the ordered Enemy VIEW / OUTOFVIEW block now, before later
-        // detectable types, preserving the original
-        // SHADOW → (VIEW|OUTOFVIEW)* → BODY → OBJECT → FRIEND →
-        // MISSED_FRIEND → BEGGAR FIFO.
-        if let Some(stimuli) = think_input {
-            self.world
+        if self.optical_viewer_is_eligible(npc_id) {
+            // The broad-phase box belongs to optical entry, while each
+            // target's position and visibility parameters are queried live.
+            let owner = self
+                .world
                 .entities
-                .expect_ai_controller_mut(
-                    npc_id,
-                    format_args!("detected NPC before its same-phase stimulus queue"),
-                )
-                .outbox
-                .detection
-                .stimuli
-                .extend(stimuli);
+                .expect_entity(npc_id, format_args!("optical entry"));
+            let ground = owner.ground_position();
+            let radius = owner
+                .ai_actor_data()
+                .expect("optical entry requires NPC data")
+                .view_radius;
+            let think_input = self.tick_enemy_ai_refresh_detection_for_npc(
+                npc_id,
+                assets,
+                universal_frame,
+                ground,
+                radius,
+            );
+            // Enemy predetection may already have queued shadows. Append
+            // the ordered Enemy VIEW / OUTOFVIEW block now, before later
+            // detectable types, preserving the original
+            // SHADOW → (VIEW|OUTOFVIEW)* → BODY → OBJECT → FRIEND →
+            // MISSED_FRIEND → BEGGAR FIFO.
+            if let Some(stimuli) = think_input {
+                self.world
+                    .entities
+                    .expect_ai_controller_mut(
+                        npc_id,
+                        format_args!("detected NPC before its same-phase stimulus queue"),
+                    )
+                    .outbox
+                    .detection
+                    .stimuli
+                    .extend(stimuli);
+            }
+            // The original NPC update completes this NPC's entire
+            // detection-refresh scan before flushing its FIFO stimulus list.
+            // Each per-type entry queries its current target before updating the
+            // observer's latches. Think starts only after all buckets finish.
+            self.tick_enemy_ai_refresh_per_type_for_npc(
+                npc_id,
+                assets,
+                universal_frame,
+                ground,
+                radius,
+            );
         }
-        // The original NPC update completes this NPC's entire
-        // detection-refresh scan before flushing its FIFO stimulus list.
-        // Each per-type entry queries its current target before updating the
-        // observer's latches. Think starts only after all buckets finish.
-        self.tick_enemy_ai_refresh_per_type_for_npc(
-            npc_id,
-            assets,
-            universal_frame,
-            golden_eye,
-            &view_radius_cache,
-        );
         if let Some(creation_order) = detectable_list_debug_creation_order
             && let Some(npc) = self
                 .world
@@ -1977,10 +1646,6 @@ impl EngineInner {
                 creation_order,
             );
         }
-        // No other viewer can run inside this contiguous
-        // detection-refresh scan. Commit at its boundary before the first
-        // queued decision tick, where synchronous detection may consume it.
-        view_radius_cache.commit_to(&mut self.ai.view_radius_cache, npc_id, universal_frame);
 
         let has_pending_stimuli = self
             .world
@@ -2012,982 +1677,452 @@ impl EngineInner {
 
     #[cfg(test)]
     pub(crate) fn enemy_optical_viewer_context_for_test(&self, npc_id: EntityId) -> bool {
-        let entity = self
-            .world
-            .entities
-            .get(npc_id)
-            .expect("test Enemy optical viewer should exist");
-        let building_sector = self.entity_building_sector(entity.element_data().sector());
-        SoldierSightContext::from_npc_viewer(npc_id, entity, building_sector).is_some()
+        self.optical_viewer_is_eligible(npc_id)
     }
 
-    /// P3 inner — per-NPC body of [`Self::tick_enemy_ai_refresh_detection`].
-    /// Carries the per-NPC tracing span so all events emitted inside the
-    /// detection pass automatically include `npc=<id>` in their span context.
+    fn optical_viewer_is_eligible(&self, npc_id: EntityId) -> bool {
+        let Some(entity) = self.world.entities.get(npc_id) else {
+            return false;
+        };
+        let Some(npc) = entity.ai_actor_data() else {
+            return false;
+        };
+        if (!entity.is_active()
+            && self
+                .entity_building_sector(entity.element_data().sector())
+                .is_none())
+            || entity.is_dead()
+            || entity.is_unconscious()
+            || entity.element_data().posture() == Posture::Tied
+        {
+            return false;
+        }
+        match entity {
+            Entity::Pc(_) => {
+                npc.ai_brain.enemy().unwrap_or_else(|| {
+                    panic!(
+                        "eligible autonomous PC {} has no EnemyAi brain during detection",
+                        npc_id.index()
+                    )
+                });
+            }
+            Entity::Soldier(_) => {
+                npc.ai_brain.enemy().unwrap_or_else(|| {
+                    panic!(
+                        "eligible soldier NPC {} has no EnemyAi brain during detection",
+                        npc_id.index()
+                    )
+                });
+            }
+            Entity::Civilian(_) => {
+                npc.ai_brain.friendly().unwrap_or_else(|| {
+                    panic!(
+                        "eligible civilian NPC {} has no FriendlyAi brain during detection",
+                        npc_id.index()
+                    )
+                });
+            }
+            _ => unreachable!("non-AI entity passed optical viewer gate"),
+        }
+        true
+    }
+
+    /// Scan Enemy entries in place. Optical stimuli remain queued until every
+    /// detectable bucket has finished, because Think can change those lists.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     fn tick_enemy_ai_refresh_detection_for_npc(
         &mut self,
         npc_id: EntityId,
         assets: &LevelAssets,
         universal_frame: u32,
-        golden_eye: bool,
-        is_forest_level: bool,
-        view_radius_cache: &OwnerViewRadiusCache,
+        ground: GroundPoint,
+        radius: u16,
     ) -> Option<Vec<crate::ai::Stimulus>> {
-        use crate::ai::AiState;
+        let creation_order = self.original_static_creation_order(npc_id);
+        let modified_frame = refresh_detection_modified_frame(universal_frame, creation_order);
+        let bucket = DetectableType::Enemy as usize;
 
-        // -- Read NPC state in a scoped borrow --
-        let (viewer, viewer_inside_building) = {
-            let entity = self.world.entities.get(npc_id)?;
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let inside_building = self.entity_data_inside_building(entity.element_data());
-            (
-                SoldierSightContext::from_npc_viewer(npc_id, entity, building_sector)?,
-                inside_building,
-            )
-        };
-        let eye = viewer.eye;
-        let eye_world = viewer.eye_world;
-        let dir = viewer.dir;
-        let layer = viewer.layer;
-        let view_radius = viewer.view_radius;
-        let eye_status = viewer.eye_status;
-        let current_state = viewer.current_state;
-        let view_forward = viewer.view_forward;
-        let real_half_aperture = viewer.real_half_aperture;
-        let view_lean_out = viewer.view_lean_out;
-        let entity_sector = viewer.sector;
-        let me_ground_position = viewer.ground_position;
-
-        // Resolve the viewer's building sector from the entity's
-        // cached sector (set during door-pass transitions).  Used by
-        // detection refresh / detection queries to short-circuit visibility
-        // when the viewer is indoors.
-        let viewer_building_sector = self.entity_building_sector(entity_sector);
-
-        let is_night_or_fog = matches!(
-            self.world.weather.ambiance,
-            crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
-        );
-        // Per-NPC frame-counter phase offset so not every NPC re-runs
-        // detection on the same tick. The Original keys this with the
-        // entity's creation order, not its current element-collection slot.
-        let original_creation_order = self.original_static_creation_order(npc_id);
-        let mutation_debug_enemy_targets =
-            if detectable_mutation_debug_owner_matches(npc_id.index(), original_creation_order) {
-                self.world
-                    .entities
-                    .humans()
-                    .filter_map(|(id, _)| {
-                        let target_id = EntityId::from(id);
-                        if !detectable_mutation_debug_target_slot_matches(target_id.index()) {
-                            return None;
-                        }
-                        let target_creation_order = self.original_static_creation_order(target_id);
-                        detectable_mutation_debug_target_matches(
-                            target_id.index(),
-                            target_creation_order,
-                        )
-                        .then_some((target_id, target_creation_order))
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
-        let modified_frame =
-            refresh_detection_modified_frame(universal_frame, original_creation_order);
-        let alert_status = viewer.alert_status;
-        // Lacklandist visibility calculation lets Stare / Follow and non-Green
-        // alert status bypass the per-entry cadence. The original game's Royalist arm
-        // never consults this flag and remains strictly modulo-16.
-        let lacklandist_refresh_always =
-            lacklandist_visibility_refresh_always(eye_status, alert_status);
-        // InstantDetection is camp-wide in the Original: Royalists always
-        // commit Enemy sightings, while Lacklandists accumulate in the
-        // sleeping/default/wondering states.
-        let diplomacy = &self.mission_domain.diplomacy;
-        let viewer_player_aligned = diplomacy.is_player_aligned(viewer.camp);
-        let viewer_hostile_to_player = diplomacy.is_hostile_to_player(viewer.camp);
-        let instant_detection = viewer_player_aligned
-            || !matches!(
-                current_state,
-                AiState::Sleeping | AiState::Default | AiState::Wondering
-            );
-
-        // -- Mutating pass: update detectable list + suspects --
-        // `&self.sight_obstacles` and `self.world.entities.get_mut(...)`
-        // are disjoint fields on `self`, so the split borrow is
-        // valid.
-        let mut enemy_stimuli: Vec<crate::ai::Stimulus> = Vec::new();
-        let mut reveal_targets: Vec<EntityId> = Vec::new();
-        let mut achievement_observed_pcs: Vec<EntityId> = Vec::new();
-        {
-            // Build the obstacle view from individual disjoint
-            // fields so the borrow checker can split it from the
-            // mut borrows of `ai_global` / `entities` below. Going
-            // through `engine.sight_obstacles(assets)` would be a
-            // method-level borrow of `self`, not field-level.
-            let sight_obstacles = crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                static_active: &self.world.static_sight_obstacle_active,
-            };
-            let target_for = |entities: &crate::entities::Entities, target_id| {
-                Self::enemy_optical_input(entities, &self.orders.sequence_manager, &self.world.fast_grid, assets, target_id)
-                    .unwrap_or_else(|| panic!("Enemy detectable target {target_id:?} for NPC {npc_id:?} is missing or is not a PC/soldier"))
-            };
-            let npc = self.world.entities.expect_ai_actor_data(
-                npc_id,
-                format_args!("Enemy optical observer during its Enemy optical scan"),
-            );
-
-            // Beggar-trick learning.  Capture the AI's current
-            // `got_the_beggar_trick` flag before taking a mut borrow
-            // on `detectable_lists` (both fields live under
-            // `soldier.npc`).  We mutate a local during the loop and
-            // write back after the borrow on `detectables` releases.
-            let mut got_beggar_trick = npc
-                .ai_brain
-                .base()
-                .map(|ai| ai.got_the_beggar_trick)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Enemy optical observer {} has no required AI controller",
-                        npc_id.index()
-                    )
-                });
-
-            let enemy_idx = DetectableType::Enemy as usize;
-            let detectables = &npc.detectable_lists[enemy_idx];
-
-            // The original game removes only dead enemies during detectable cleanup. The
-            // Detectable-admission policy governs new entries, but an existing entry
-            // can outlive a later camp/role change and remains authoritative.
-            // Missing or non-human targets still indicate corrupted NPC
-            // state and must fail with observer/target context.
-            let before = detectables.len();
-            let mutation_presence_before = mutation_debug_enemy_targets
-                .iter()
-                .map(|(target_id, target_creation_order)| {
-                    (
-                        *target_id,
-                        *target_creation_order,
-                        detectables
-                            .iter()
-                            .any(|detectable| detectable.element == Some(*target_id)),
-                    )
-                })
-                .collect::<Vec<_>>();
-            let mut index = 0;
-            loop {
-                let entries = &self
-                    .world
-                    .entities
-                    .expect_ai_actor_data(npc_id, format_args!("Enemy cleanup"))
-                    .detectable_lists[enemy_idx];
-                let Some(entry) = entries.get(index) else {
-                    break;
-                };
-                let target_id = entry.element.expect("Enemy cleanup entry has no target");
-                if target_for(&self.world.entities, target_id).dead {
-                    self.world
-                        .entities
-                        .expect_ai_actor_data_mut(npc_id, format_args!("Enemy cleanup"))
-                        .detectable_lists[enemy_idx]
-                        .remove(index);
-                } else {
-                    index += 1;
-                }
-            }
-            let detectables = &self
+        // Cleanup removes dead enemies only. Admission policy does not
+        // retroactively remove an existing entry after a camp change.
+        let mut index = 0;
+        while index
+            < self
                 .world
                 .entities
-                .expect_ai_actor_data(npc_id, format_args!("Enemy cleaned list"))
-                .detectable_lists[enemy_idx];
-            for (target_id, target_creation_order, present_before) in mutation_presence_before {
-                let present_after = detectables
-                    .iter()
-                    .any(|detectable| detectable.element == Some(target_id));
-                if present_before || present_after {
-                    debug_detectable_mutation_event(
-                        "cleanup",
-                        "enemy detectable cleanup",
-                        universal_frame,
-                        npc_id.index(),
-                        original_creation_order,
-                        enemy_idx,
-                        target_id.index(),
-                        target_creation_order,
-                        present_before,
-                        present_after,
-                        before,
-                        detectables.len(),
-                    );
-                }
-            }
-            debug_detectable_list_entries(
-                "post_cleanup",
-                enemy_idx,
-                npc_id,
-                detectables,
-                universal_frame,
-                original_creation_order,
+                .expect_ai_actor_data(npc_id, format_args!("Enemy cleanup"))
+                .detectable_lists[bucket]
+                .len()
+        {
+            let target = self
+                .world
+                .entities
+                .expect_ai_actor_data(npc_id, format_args!("Enemy cleanup"))
+                .detectable_lists[bucket][index]
+                .element
+                .expect("Enemy detectable has no target");
+            let entity = self.world.entities.expect_entity(
+                target,
+                format_args!("Enemy cleanup target for NPC {npc_id:?}"),
             );
-            if before != detectables.len() {
-                tracing::trace!(
-                    npc = ?npc_id,
-                    before,
-                    after = detectables.len(),
-                    "detectable cleanup removed dead enemy entries"
-                );
-            }
-            tracing::trace!(
-                npc = ?npc_id,
-                camp = ?viewer.camp,
-                ?alert_status,
-                ?eye_status,
-                lacklandist_refresh_always,
-                entries = ?detectables.iter().map(|d| d.element).collect::<Vec<_>>(),
-                "Enemy detectable list"
+            assert!(
+                matches!(entity, Entity::Pc(_) | Entity::Soldier(_)),
+                "Enemy detectable requires a PC or soldier"
             );
+            if entity.is_dead() {
+                self.world
+                    .entities
+                    .expect_ai_actor_data_mut(npc_id, format_args!("Enemy cleanup"))
+                    .detectable_lists[bucket]
+                    .remove(index);
+            } else {
+                index += 1;
+            }
+        }
+        let npc = self
+            .world
+            .entities
+            .expect_ai_actor_data(npc_id, format_args!("Enemy scan"));
+        debug_detectable_list_entries(
+            "post_cleanup",
+            bucket,
+            npc_id,
+            &npc.detectable_lists[bucket],
+            universal_frame,
+            creation_order,
+        );
+        let count = npc.detectable_lists[bucket].len();
+        let mut sum = 0u16;
+        let mut observed_pcs = Vec::new();
+        for index in 0..count {
+            let entry = &self
+                .world
+                .entities
+                .expect_ai_actor_data(npc_id, format_args!("Enemy scan"))
+                .detectable_lists[bucket][index];
+            let target = entry.element.expect("Enemy scan target");
+            let owner = self
+                .world
+                .entities
+                .expect_entity(npc_id, format_args!("Enemy scan owner"));
+            let inside = self.entity_data_inside_building(owner.element_data());
+            let target_ground = self
+                .world
+                .entities
+                .expect_entity(target, format_args!("Enemy scan target"))
+                .ground_position();
+            if !refresh_detection_scans_target(
+                entry.last_visibility,
+                inside,
+                ground,
+                radius,
+                target_ground,
+            ) {
+                let entry = &mut self
+                    .world
+                    .entities
+                    .expect_ai_actor_data_mut(npc_id, format_args!("Enemy outer gate"))
+                    .detectable_lists[bucket][index];
+                entry.seen_now = false;
+                entry.last_visibility = 0.0;
+                continue;
+            }
 
-            let mut sum_sharpness_new: u16 = 0;
-            let mut max_sharpness: u32 = 0;
-            // The original game handles predetection only from inside the same
-            // outer detection-box arm that computes visibility. Keep the
-            // membership transient: entries rejected by that arm still have
-            // seen/visibility cleared, but their shadow latch is untouched.
-            let mut entered_outer_scan = Vec::with_capacity(detectables.len());
-            let viewer_in_building = viewer_building_sector.is_some();
-            // Original reads the persisted view-parameter flag here. It can
-            // remain true for one or more frames after posture has changed
-            // when another path already replaced EYES_LOOK_DOWNWARDS.
-            let view_speed = if view_lean_out {
+            let visibility = self.enemy_detectable_visibility(
+                assets,
+                npc_id,
+                index,
+                universal_frame,
+                modified_frame,
+            );
+            let entity = self
+                .world
+                .entities
+                .expect_entity(target, format_args!("Enemy predetection target"));
+            let is_pc = matches!(entity, Entity::Pc(_));
+            let guarded = matches!(entity, Entity::Pc(pc) if pc.pc.guard.is_some());
+            let position = entity.element_data().position_map();
+            let shadow_position = crate::ai::Position {
+                x: position.x,
+                y: position.y,
+                sector: entity.element_data().sector(),
+                level: entity.element_data().layer(),
+            };
+            let hostile = self.is_hostile_to_player_camp(
+                self.world
+                    .entities
+                    .expect_entity(npc_id, format_args!("Enemy observer camp"))
+                    .camp(),
+            );
+            let npc = self
+                .world
+                .entities
+                .expect_ai_actor_data_mut(npc_id, format_args!("Enemy sharpness"));
+            let speed = if npc.view_lean_out {
                 ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
             } else {
                 ai_vision::BASE_VIEW_SPEED
             };
-
-            let view = ViewContext {
-                ground_position: me_ground_position,
-                viewer_inside_building,
-                hostile_to_player: viewer_hostile_to_player,
-                eye,
-                eye_world,
-                dir,
-                layer,
-                view_forward,
-                view_radius,
-                real_half_aperture,
-                viewer_in_building,
-                viewer_building_sector,
-                is_night_or_fog,
-                view_radius_cache,
-                eye_status,
-                view_speed,
-                modified_frame,
-                universal_frame,
-                original_creation_order,
-                golden_eye,
-                sight_obstacles: &sight_obstacles,
-                fast_grid: &self.world.fast_grid,
-            };
-
-            for index in 0..detectables.len() {
-                let target_id = self
-                    .world
-                    .entities
-                    .expect_ai_actor_data(npc_id, format_args!("Enemy visibility target"))
-                    .detectable_lists[enemy_idx][index]
-                    .element
-                    .expect("Enemy detectable survived cleanup without a target");
-                let target = target_for(&self.world.entities, target_id);
-                let det = &mut self
-                    .world
-                    .entities
-                    .expect_ai_actor_data_mut(npc_id, format_args!("Enemy visibility latch"))
-                    .detectable_lists[enemy_idx][index];
-                let scan_decision = refresh_detection_scans_target(
-                    det.last_visibility,
-                    viewer_inside_building,
-                    me_ground_position,
-                    view_radius,
-                    target.ground_position,
-                );
-                entered_outer_scan.push(scan_decision);
-                let Some(sharpness) = scan_enemy_detectable(
-                    det,
-                    &target,
-                    &viewer,
-                    &view,
-                    npc_id,
-                    scan_decision,
-                    viewer_player_aligned,
-                    is_forest_level,
-                    &mut got_beggar_trick,
-                ) else {
-                    continue;
-                };
-                let is_visible = sharpness > 0;
-                if achievement_observation_sample(
-                    is_visible,
-                    target.is_pc,
-                    viewer_hostile_to_player,
-                ) {
-                    achievement_observed_pcs.push(target_id);
-                }
-                // Accumulate sharpness until EVENT_VIEW has been
-                // dispatched for this detectable.  `seen_last_frame`
-                // is a separate latch that only flips true inside
-                // the commit block below.  So long as the target
-                // stays visible but hasn't been committed yet,
-                // sharpness keeps growing every frame, driving the
-                // suspect counter (and the growing question-mark
-                // emoticon) toward DETECTION_SUSPECT_THRESHOLD.
-                if is_visible && !det.seen_last_frame {
-                    sum_sharpness_new =
-                        accumulate_detection_sharpness(sum_sharpness_new, sharpness);
-                }
-
-                // The original game updates maximal visibility from the integer
-                // sharpness returned after visibility calculation has reused a
-                // detectable's cached visibility on closed-cadence frames.
-                // Using `visibility_raw` here would falsely report zero every
-                // other frame and can end a shadow investigation early.
-                max_sharpness = max_sharpness.max(u32::from(sharpness));
-            }
-
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(npc_id, format_args!("Enemy scan accumulation"));
-            // Write back the beggar-trick flag if a mid-transition
-            // sighting flipped it during the loop.
-            if got_beggar_trick
-                && let Some(ai) = npc.ai_brain.base_mut()
-                && !ai.got_the_beggar_trick
-            {
-                ai.got_the_beggar_trick = true;
-                tracing::trace!(
-                    npc = ?npc_id,
-                    "got_the_beggar_trick → true (mid-transition sighting)"
-                );
-            }
-
-            // Acoustic detection moved out of this loop — the
-            // shared acoustic-detection pass earlier in
-            // `tick_enemy_ai` runs the hearing check for every
-            // NPC (civilians + Lacklandist soldiers) instead of
-            // just the ones that pass this soldier-visual loop's
-            // filter.  Hearing is a shared NPC behaviour, not an
-            // enemy-specific one.
-
-            // Maximal visibility belongs to the NPC actor, not to
-            // malignity AI. Every NPC observer, including civilians backed by
-            // FriendlyAi, publishes the Enemy-bucket maximum before the later
-            // detectable-type buckets fold in their own sharpness.
-            if let Some(ai) = npc.ai_brain.base_mut() {
-                ai.max_visibility = max_sharpness;
-            }
-
-            // Running worst-detected-type (smallest enum value
-            // wins).  We only drive Enemy detection here right now,
-            // so the guard collapses to "promote from None / higher
-            // to Enemy on any fresh sharpness this frame".  Body /
-            // Object arms apply the same check when they are
-            // implemented.
-            if sum_sharpness_new > 0
-                && (npc.worst_detected_type as u32) > (DetectableType::Enemy as u32)
-            {
-                npc.worst_detected_type = DetectableType::Enemy;
-            }
-
-            // ── Pre-detection shadow event ────────────────────
-            // Per-detectable edge-triggered EVENT_SEES_SHADOW on the
-            // rising edge of
-            //   shadow_is_seen = (sharpness > 0)
-            //                 && suspects_before_scan[type]
-            //                    >= SHADOW_DETECTION_THRESHOLD
-            // No outer `instant_detection` / upper-bound guards.
-            // Each detectable dispatches its own event on its own
-            // rising edge, so no `break` after the first one.
-            //
-            // Predetection runs before this frame's sharpness is added
-            // to the suspect accumulator. It also returns without touching
-            // the latch for non-PC and guarded-PC targets.
-            let suspects_before_scan = npc.detection_suspects[enemy_idx];
-            assert_eq!(
-                entered_outer_scan.len(),
-                npc.detectable_lists[enemy_idx].len(),
-                "Enemy outer-scan membership lost detectable-list alignment"
+            let sharpness = detection_sharpness(speed, visibility);
+            let entry = &mut npc.detectable_lists[bucket][index];
+            let shadow = update_predetection_shadow_latch(
+                sharpness > 0,
+                npc.detection_suspects[bucket],
+                is_pc,
+                guarded,
+                &mut entry.shadow_seen_last_frame,
             );
-            for (index, entered_outer_scan) in entered_outer_scan.into_iter().enumerate() {
-                if !entered_outer_scan {
-                    continue;
-                }
-                let target_id = self
-                    .world
-                    .entities
-                    .expect_ai_actor_data(npc_id, format_args!("Enemy shadow target"))
-                    .detectable_lists[enemy_idx][index]
-                    .element;
-                if let Some(target_id) = target_id {
-                    let target = target_for(&self.world.entities, target_id);
-                    let npc = self
-                        .world
-                        .entities
-                        .expect_ai_actor_data_mut(npc_id, format_args!("Enemy shadow latch"));
-                    let det = &mut npc.detectable_lists[enemy_idx][index];
-                    let shadow_seen_before = det.shadow_seen_last_frame;
-                    let queued = update_predetection_shadow_latch(
-                        det.seen_now,
-                        suspects_before_scan,
-                        target.is_pc,
-                        target.guarded,
-                        &mut det.shadow_seen_last_frame,
-                    );
-                    tracing::trace!(
-                        target: "shadow_predetection",
-                        frame = universal_frame,
-                        observer = ?npc_id,
-                        observer_index = npc_id.index(),
-                        detectable_type = ?DetectableType::Enemy,
-                        detectable_target = ?target_id,
-                        detectable_target_index = target_id.index(),
-                        sharpness = u32::from(detection_sharpness(
-                            view_speed,
-                            det.last_visibility,
-                        )),
-                        suspects_before = suspects_before_scan,
-                        is_pc = target.is_pc,
-                        guarded = target.guarded,
-                        seen_now = det.seen_now,
-                        seen_last_frame = det.seen_last_frame,
-                        shadow_seen_now = det.shadow_seen_now,
-                        shadow_seen_before,
-                        shadow_seen_after = det.shadow_seen_last_frame,
-                        last_visibility = det.last_visibility,
-                        queued,
-                        "evaluated Enemy shadow predetection edge"
-                    );
-                    if !queued {
-                        continue;
-                    }
-                    // Queue EVENT_SEES_SHADOW for this NPC's post-detection
-                    // FIFO drain, ahead of its Enemy VIEW / OUTOFVIEW block.
-                    let shadow_pos = crate::ai::Position {
-                        x: target.position.x,
-                        y: target.position.y,
-                        sector: target.sector,
-                        level: target.layer,
-                    };
-                    let stimulus = crate::ai::Stimulus::with_position(
+            if !entry.seen_last_frame {
+                sum = accumulate_detection_sharpness(sum, sharpness);
+            }
+            entry.seen_now = sharpness > 0;
+            entry.last_visibility = visibility;
+            let ai = npc
+                .ai_brain
+                .base_mut()
+                .expect("optical owner requires controller");
+            ai.max_visibility = ai.max_visibility.max(u32::from(sharpness));
+            if shadow {
+                ai.outbox
+                    .detection
+                    .stimuli
+                    .push(crate::ai::Stimulus::with_position(
                         crate::ai::StimulusType::EventSeesShadow,
-                        shadow_pos,
-                    );
-                    if let Some(ai) = npc.ai_brain.base_mut() {
-                        ai.outbox.detection.stimuli.push(stimulus);
-                    }
-                }
+                        shadow_position,
+                    ));
             }
+            if achievement_observation_sample(sharpness > 0, is_pc, hostile) {
+                observed_pcs.push(target);
+            }
+        }
 
-            // Original adds the current scan only after every detectable has
-            // run predetection against the prior accumulator.
-            let npc = self
+        let entity = self
+            .world
+            .entities
+            .expect_entity(npc_id, format_args!("Enemy instant detection"));
+        let aligned = self
+            .mission_domain
+            .diplomacy
+            .is_player_aligned(entity.camp());
+        let state = entity
+            .ai_actor_data()
+            .expect("optical owner requires NPC data")
+            .ai_state();
+        let instant = aligned
+            || !matches!(
+                state,
+                crate::ai::AiState::Sleeping
+                    | crate::ai::AiState::Default
+                    | crate::ai::AiState::Wondering
+            );
+        let npc = self
+            .world
+            .entities
+            .expect_ai_actor_data_mut(npc_id, format_args!("Enemy suspect"));
+        npc.detection_suspects[bucket] = npc.detection_suspects[bucket].wrapping_add(sum);
+        if sum > 0 && (npc.worst_detected_type as usize) > bucket {
+            npc.worst_detected_type = DetectableType::Enemy;
+        }
+        let committed = u32::from(npc.detection_suspects[bucket])
+            >= ai_vision::DETECTION_SUSPECT_THRESHOLD
+            || (instant && sum > 0);
+        npc.detection_suspects[bucket] = if committed {
+            0
+        } else {
+            cool_detection_suspect(sum, npc.detection_suspects[bucket], universal_frame)
+        };
+        npc.maximal_detection_suspect = npc.detection_suspects[bucket];
+
+        let mut stimuli = Vec::new();
+        for index in 0..count {
+            let entry = &self
                 .world
                 .entities
-                .expect_ai_actor_data_mut(npc_id, format_args!("Enemy suspect commit"));
-            let suspects = &mut npc.detection_suspects[enemy_idx];
-            *suspects = suspects.wrapping_add(sum_sharpness_new);
-
-            // Commit condition.
-            let threshold_hit = *suspects as u32 >= ai_vision::DETECTION_SUSPECT_THRESHOLD;
-            let instant_hit = instant_detection && sum_sharpness_new > 0;
-
-            if threshold_hit || instant_hit {
-                // Reset suspects on commit.
-                *suspects = 0;
-            } else {
-                *suspects = cool_detection_suspect(sum_sharpness_new, *suspects, universal_frame);
-            }
-
-            // Seed the frame maximum from Enemy. Body and Object fold their
-            // persistent suspects into it below; only after every type has
-            // run may the remembered worst type be cleared.
-            npc.maximal_detection_suspect = npc.detection_suspects[enemy_idx];
-
-            // Walk every detectable and edge-detect `seen_last_frame`.
-            //   - Rising edge (detected && !latched) fires EVENT_VIEW for
-            //     every Enemy detectable in list order.
-            //   - Falling edge (!detected && latched) fires
-            //     EVENT_OUTOFVIEW and clears the latch.
-            // On commit frames both edges run; on non-commit frames
-            // we still run the falling-edge check so NPCs react to
-            // lost sight the instant it happens.
-            let committed = threshold_hit || instant_hit;
-            let count = npc.detectable_lists[enemy_idx].len();
-            for index in 0..count {
-                let entry = &self
+                .expect_ai_actor_data(npc_id, format_args!("Enemy detection"))
+                .detectable_lists[bucket][index];
+            let target = entry.element.expect("Enemy detection target");
+            let rising = committed && entry.seen_now && !entry.seen_last_frame;
+            let falling = !entry.seen_now && entry.seen_last_frame;
+            if rising {
+                stimuli.push(crate::ai::Stimulus::with_human(
+                    crate::ai::StimulusType::EventView,
+                    target.index(),
+                ));
+                let entity = self
                     .world
                     .entities
-                    .expect_ai_actor_data(npc_id, format_args!("Enemy sighting target"))
-                    .detectable_lists[enemy_idx][index];
-                let rising_target =
-                    (committed && entry.seen_now && !entry.seen_last_frame).then(|| {
-                        target_for(
-                            &self.world.entities,
-                            entry.element.expect("rising Enemy entry has no target"),
-                        )
-                    });
-                let det = &mut self
-                    .world
-                    .entities
-                    .expect_ai_actor_data_mut(npc_id, format_args!("Enemy sighting latch"))
-                    .detectable_lists[enemy_idx][index];
-                let was_seen = det.seen_last_frame;
-                let is_seen = det.seen_now;
-                let falling_edge = !is_seen && was_seen;
-                // Detection's second pass intersperses rising VIEW and
-                // falling OUTOFVIEW by detectable-list order.
-                if committed && is_seen && !was_seen {
-                    let target_id = det.element.unwrap_or_else(|| {
-                        panic!(
-                            "rising Enemy detectable for NPC {} has no target",
-                            npc_id.index()
-                        )
-                    });
-                    let target = rising_target.expect("rising Enemy target was not read");
-
-                    // Enemy-bucket detection always emits EVENT_VIEW. A
-                    // disguised PC that has not been seen through has zero
-                    // visibility earlier in the scan; EVENT_SEES_BEGGAR is
-                    // exclusive to the separate Beggar detectable bucket.
-                    enemy_stimuli.push(crate::ai::Stimulus::with_human(
-                        crate::ai::StimulusType::EventView,
-                        target_id.index(),
-                    ));
-                    if viewer_player_aligned && target.is_soldier && target.blipped {
-                        reveal_targets.push(target_id);
-                    }
-                }
-                if falling_edge && let Some(target_id) = det.element {
-                    enemy_stimuli.push(crate::ai::Stimulus::with_human(
-                        crate::ai::StimulusType::EventOutOfView,
-                        target_id.index(),
-                    ));
-                }
-                if committed {
-                    det.seen_last_frame = is_seen;
-                } else if falling_edge {
-                    det.seen_last_frame = false;
-                }
-                tracing::trace!(
-                    npc = ?npc_id,
-                    target = ?det.element,
-                    committed,
-                    threshold_hit,
-                    instant_hit,
-                    was_seen,
-                    is_seen,
-                    after_seen_last_frame = det.seen_last_frame,
-                    "latch update"
-                );
-            }
-
-            let debug_them = {
-                use crate::engine::diagnostics::ParityGate;
-                static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
-                GATE.get_or_init(|| {
-                    ParityGate::from_env(
-                        "PARITY_DEBUG_THEM_LIFECYCLE",
-                        [
-                            "PARITY_DEBUG_THEM_FRAME",
-                            "PARITY_DEBUG_THEM_CREATION_ORDER",
-                        ],
-                    )
-                })
-                .matches([Some(universal_frame), Some(original_creation_order)])
-            };
-            if debug_them {
-                trace_them_detection_latches(
-                    [universal_frame, original_creation_order],
-                    npc_id,
-                    committed,
-                    &enemy_stimuli,
-                    &self
-                        .world
+                    .expect_entity(target, format_args!("Enemy reveal target"));
+                if aligned && matches!(entity, Entity::Soldier(_)) && entity.element_data().blipped
+                {
+                    self.world
                         .entities
-                        .expect_ai_actor_data(npc_id, format_args!("Enemy detection diagnostic"))
-                        .detectable_lists[enemy_idx],
-                    &self.world.entities,
-                );
+                        .expect_entity_mut(target, format_args!("Enemy reveal target"))
+                        .reveal_blip();
+                }
+            }
+            if falling {
+                stimuli.push(crate::ai::Stimulus::with_human(
+                    crate::ai::StimulusType::EventOutOfView,
+                    target.index(),
+                ));
+            }
+            let entry = &mut self
+                .world
+                .entities
+                .expect_ai_actor_data_mut(npc_id, format_args!("Enemy detection latch"))
+                .detectable_lists[bucket][index];
+            if committed {
+                entry.seen_last_frame = entry.seen_now;
+            } else if falling {
+                entry.seen_last_frame = false;
             }
         }
-
-        // SoldierSightContext rejected dead, unconscious and tied viewers at
-        // entry. Record exact positive optical samples only after the mutable
-        // NPC-list borrow is released.
-        for pc in achievement_observed_pcs {
-            self.record_achievement_hostile_observation(npc_id, pc);
+        for target in observed_pcs {
+            self.record_achievement_hostile_observation(npc_id, target);
         }
-
-        // Detection reveals newly seen blipped NPCs inline, after the
-        // complete scan has built its FIFO but before the first queued Think.
-        for target_id in reveal_targets {
-            let target = self.world.entities.expect_entity_mut(
-                target_id,
-                format_args!(
-                    "newly seen enemy target for NPC {} before blip reveal",
-                    npc_id.index()
-                ),
-            );
-            target.reveal_blip();
-        }
-
-        (!enemy_stimuli.is_empty()).then_some(enemy_stimuli)
+        (!stimuli.is_empty()).then_some(stimuli)
     }
 
-    /// Read one Enemy target at its detectable-list evaluation point.
-    fn enemy_optical_input(
-        entities: &crate::entities::Entities,
-        sequences: &crate::sequence::SequenceManager,
-        grid: &crate::fast_find_grid::FastFindGrid,
+    fn enemy_detectable_visibility(
+        &mut self,
         assets: &LevelAssets,
-        id: EntityId,
-    ) -> Option<EnemyOpticalTarget> {
-        let entity = entities.get(id)?;
-        let building_sector = entity.element_data().sector().filter(|&sector| {
-            let Some(grid_sector) =
-                crate::engine::movement::grid_sector_for_position_handle(&grid.level, sector)
-            else {
-                return false;
-            };
-            assert_eq!(
-                grid_sector.sector_number,
-                crate::sector::SectorNumber::new(i16::from(sector)),
-                "exact sector arena identity disagrees with its public number",
+        owner: EntityId,
+        index: usize,
+        universal_frame: u32,
+        modified_frame: u32,
+    ) -> f32 {
+        let viewer = self
+            .world
+            .entities
+            .expect_entity(owner, format_args!("Enemy visibility owner"));
+        let npc = viewer
+            .ai_actor_data()
+            .expect("Enemy visibility requires NPC data");
+        let ai = npc
+            .ai_brain
+            .base()
+            .expect("Enemy visibility requires controller");
+        if npc.eye_status.is_blind() {
+            return 0.0;
+        }
+        let entry = &npc.detectable_lists[DetectableType::Enemy as usize][index];
+        let target_id = entry.element.expect("Enemy visibility target");
+        let seen_last = entry.seen_last_frame;
+        let cached = entry.last_visibility;
+        let target = self
+            .world
+            .entities
+            .expect_entity(target_id, format_args!("Enemy visibility target"));
+        let hostile = self.is_hostile_to_player_camp(viewer.camp());
+        let aligned = self
+            .mission_domain
+            .diplomacy
+            .is_player_aligned(viewer.camp());
+        let is_pc = matches!(target, Entity::Pc(_));
+        if target.is_dead()
+            || (hostile
+                && target
+                    .human_data()
+                    .expect("Enemy target must be human")
+                    .hollow_man)
+        {
+            return 0.0;
+        }
+        if hostile && is_pc {
+            if matches!(target, Entity::Pc(pc) if !seen_last && pc.pc.guard.is_some()) {
+                return 0.0;
+            }
+            if viewer.element_data().blipped
+                && !self.entity_data_inside_building(viewer.element_data())
+            {
+                return 0.0;
+            }
+        }
+        let frequency = if matches!(target, Entity::Soldier(_)) || aligned {
+            ai_vision::DETECTION_FREQUENCY_ENEMY_NPC
+        } else {
+            ai_vision::DETECTION_FREQUENCY_ENEMY_PC
+        };
+        let refresh = modified_frame.is_multiple_of(frequency)
+            || (hostile
+                && lacklandist_visibility_refresh_always(npc.eye_status, ai.view_alert_status));
+        let mut visibility = if refresh {
+            let raw = self.live_human_visibility_for_detection(
+                assets,
+                owner,
+                target_id,
+                universal_frame,
+                seen_last,
             );
-            grid_sector.sector_type.is_building()
-        });
-        match entity {
-            Entity::Pc(pc) => {
-                let entity_id: EntityId = id.into();
-                let dead = entity.is_dead();
-                let character = assets
+            let speed = if hostile && is_pc {
+                let Entity::Pc(pc) = self
+                    .world
+                    .entities
+                    .expect_entity(target_id, format_args!("Enemy PC detection speed"))
+                else {
+                    unreachable!()
+                };
+                let profile = assets
                     .profile_manager
                     .get_character(pc.pc.profile_index)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "optical PC {} requires missing character profile {}",
-                            entity_id.index(),
-                            u32::from(pc.pc.profile_index),
-                        )
-                    });
-                let detection_speed_in_forest = character.detection_speed_in_forest;
-                let detection_speed_in_city = character.detection_speed_in_city;
-                let posture = pc.element.posture();
-                let ground_z = pc.element.position().z;
-                let stored_map = (&pc.element).position_map();
-                let stored_world = (&pc.element).position();
-                // A selected command may have no queued order.
-                let selected_element = sequences.current_element_for_actor(entity_id).and_then(
-                    |(sequence_id, element_index)| {
-                        sequences.get_element(sequence_id, element_index)
-                    },
-                );
-                let order_type = selected_element
-                    .and_then(|element| element.current_order())
-                    .map(|order| order.order_type)
-                    .unwrap_or(crate::order::OrderType::Invalid);
-                Some(EnemyOpticalTarget {
-                    id: entity_id,
-                    position: stored_map,
-                    ground_position: GroundPoint::from_map_and_z(stored_map, ground_z),
-                    sector: pc.element.sector(),
-                    layer: pc.element.layer(),
-                    posture,
-                    action_state: pc.actor.action_state,
-                    building_sector,
-                    // An undefined posture retains the stored position
-                    // as a valid zero-offset detection point.
-                    detection_point: (!dead).then(|| {
-                        crate::stealth::detection_point_world(
-                            stored_world,
-                            posture,
-                            pc.element.direction(),
-                            false,
-                        )
-                    }),
-                    direction: pc.element.direction(),
-                    active: pc.element.active,
-                    unconscious: pc.human.unconscious,
-                    // The selected command remains authoritative after
-                    // the sprite-side active door pointer is cleared.
-                    passing_door: selected_element.is_some_and(|element| {
-                        element.command == crate::element::Command::PassDoor
-                    }),
-                    obstacle_idx: pc.element.obstacle_index(),
-                    is_pc: true,
-                    is_soldier: false,
-                    dead,
-                    hollow_man: pc.human.hollow_man,
-                    guarded: pc.pc.guard.is_some(),
-                    detection_speed_in_forest,
-                    detection_speed_in_city,
-                    order_type,
-                    blipped: pc.element.blipped,
-                    camp: pc.pc.cached_camp,
+                    .expect("optical PC requires character profile");
+                0.01 * if self.world.weather.is_forest_level {
+                    profile.detection_speed_in_forest
+                } else {
+                    profile.detection_speed_in_city
+                } as f32
+            } else {
+                1.0
+            };
+            frequency as f32 * raw * speed
+        } else {
+            cached
+        };
+        // The learning flag is persistent controller state, updated at the
+        // animation check before the next detectable is scanned.
+        if hostile && is_pc {
+            let order = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(target_id)
+                .and_then(|(sequence, index)| {
+                    self.orders.sequence_manager.get_element(sequence, index)
                 })
-            }
-            Entity::Soldier(soldier) => {
-                let entity_id: EntityId = id.into();
-                let posture = soldier.element.posture();
-                let is_rider = soldier.soldier.rider;
-                let dead = entity.is_dead();
-                let stored_map = (&soldier.element).position_map();
-                let stored_world = (&soldier.element).position();
-                let position = stored_map;
-                Some(EnemyOpticalTarget {
-                    id: entity_id,
-                    position,
-                    ground_position: GroundPoint::from_map_and_z(
-                        position,
-                        soldier.element.position().z,
-                    ),
-                    sector: soldier.element.sector(),
-                    layer: soldier.element.layer(),
-                    posture,
-                    action_state: soldier.actor.action_state,
-                    building_sector,
-                    detection_point: (!dead).then(|| {
-                        crate::stealth::detection_point_world(
-                            stored_world,
-                            posture,
-                            soldier.element.direction(),
-                            is_rider,
-                        )
-                    }),
-                    direction: soldier.element.direction(),
-                    active: soldier.element.active,
-                    unconscious: soldier.human.unconscious,
-                    passing_door: optical_target_is_passing_door(sequences, entity_id),
-                    obstacle_idx: soldier.element.obstacle_index(),
-                    is_pc: false,
-                    is_soldier: true,
-                    dead,
-                    hollow_man: soldier.human.hollow_man,
-                    guarded: false,
-                    detection_speed_in_forest: 100,
-                    detection_speed_in_city: 100,
-                    order_type: crate::order::OrderType::WaitingUpright,
-                    blipped: soldier.element.blipped,
-                    camp: soldier.soldier.cached_camp,
-                })
-            }
-            Entity::Civilian(_) => None,
-            _ => None,
+                .and_then(|element| element.current_order())
+                .map_or(crate::order::OrderType::Invalid, |order| order.order_type);
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("Enemy disguise learning"));
+            visibility = apply_enemy_beggar_disguise_with_relationship(
+                hostile,
+                true,
+                &mut ai.got_the_beggar_trick,
+                order,
+                visibility,
+            );
         }
+        visibility
     }
 
     #[cfg(test)]
     pub(crate) fn enemy_optical_geometry_for_test(
         &mut self,
-        assets: &LevelAssets,
+        _assets: &LevelAssets,
         target: EntityId,
     ) -> (crate::ai::Position, crate::coordinates::WorldPoint3D) {
-        let optical = Self::enemy_optical_input(
-            &self.world.entities,
-            &self.orders.sequence_manager,
-            &self.world.fast_grid,
-            assets,
-            target,
-        )
-        .unwrap_or_else(|| panic!("test optical target {target:?} is missing"));
-        (
-            self.live_ai_position(target),
-            optical
-                .detection_point
-                .expect("test optical target must be alive"),
-        )
-    }
-
-    /// Live positive visibility for one NPC viewer and one human
-    /// target, issued outside the batched per-frame detection pass.
-    ///
-    /// Engine code that asks "does this NPC see that human *right now*" must
-    /// go through here rather than reading a `Detectable::seen_now` flag: the
-    /// flag is a snapshot taken at the viewer's own detection cadence, so
-    /// reusing it both answers a stale question and suppresses the LOS ray the
-    /// Original issues at the asking site.
-    ///
-    /// Only the view-radius memo is shared with the batched pass — that memo
-    /// is keyed by viewer, surface, and frame in the Original too, so a
-    /// same-frame call legitimately reuses it and, like the Original, still
-    /// re-runs the cone test and the opaque-reachability ray.
-    pub(crate) fn npc_is_detecting_human(
-        &mut self,
-        assets: &LevelAssets,
-        viewer_id: EntityId,
-        target_id: EntityId,
-        universal_frame: u32,
-    ) -> bool {
-        let viewer_building_sector = {
-            let Some(entity) = self.world.entities.get(viewer_id) else {
-                tracing::warn!(
-                    viewer = ?viewer_id,
-                    target = ?target_id,
-                    "Live detection query skipped: viewer entity missing"
-                );
-                return false;
-            };
-            self.entity_building_sector(entity.element_data().sector())
-        };
-        let Some(viewer) = self.world.entities.get(viewer_id).and_then(|entity| {
-            SoldierSightContext::from_npc_viewer(viewer_id, entity, viewer_building_sector)
-        }) else {
-            // Blind, tied, unconscious, dead, or simply not an NPC: no view
-            // parameters exist, which is the same answer the Original's
-            // eye-status and posture gates produce.
-            tracing::trace!(
-                viewer = ?viewer_id,
-                target = ?target_id,
-                "Live detection query: viewer has no active NPC view state"
-            );
-            return false;
-        };
-
-        let Some(target) = self.world.entities.get(target_id) else {
-            tracing::warn!(
-                viewer = ?viewer_id,
-                target = ?target_id,
-                "Live detection query skipped: target entity missing"
-            );
-            return false;
-        };
-        let Some(target_human) = target.human_data() else {
-            tracing::warn!(
-                viewer = ?viewer_id,
-                target = ?target_id,
-                "Live detection query skipped: target is not a human"
-            );
-            return false;
-        };
-        let target_element = target.element_data();
-        let target_posture = target_element.posture();
-        let target_is_rider = matches!(target, Entity::Soldier(soldier) if soldier.soldier.rider);
-        let target_position = target_element.position_map();
-        let target_direction = target_element.direction();
-        let target_los =
-            crate::stealth::detection_point_xy(target_position, target_posture, target_direction);
-        let target_detection = crate::stealth::detection_point_world(
-            target_element.position(),
-            target_posture,
-            target_direction,
-            target_is_rider,
+        let entity = self
+            .world
+            .entities
+            .expect_entity(target, format_args!("test optical target"));
+        assert!(!entity.is_dead(), "test optical target must be alive");
+        let element = entity.element_data();
+        let point = crate::stealth::detection_point_world(
+            element.position(),
+            element.posture(),
+            element.direction(),
+            entity.soldier_data().is_some_and(|soldier| soldier.rider),
         );
-        let target_obstacle_handle = target_element.obstacle_index();
-        let target_building_sector = self.entity_building_sector(target_element.sector());
-        let target_active = target_element.active;
-        let target_is_pc = matches!(target, Entity::Pc(_));
-        let target_action_state = target
-            .actor_data()
-            .map(|actor| actor.action_state)
-            .unwrap_or(crate::element::ActionState::Waiting);
-        let target_passing_door = target
-            .actor_data()
-            .is_some_and(|actor| actor.active_door_pass.is_some());
-        let target_unconscious = target_human.unconscious;
-
-        let viewer_in_building = self.entity_building_sector(viewer.sector).is_some();
-        let target_in_same_building = viewer_in_building
-            && self.entity_building_sector(viewer.sector) == target_building_sector;
-        let is_night_or_fog = matches!(
-            self.world.weather.ambiance,
-            crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
-        );
-        let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
-        let target_obstacle = target_obstacle_handle.map(|handle| {
-            sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
-                panic!(
-                    "Live detection target {} requires missing sight obstacle {}",
-                    target_id.index(),
-                    handle
-                )
-            })
-        });
-
-        let q = ai_vision::VisibilityQuery {
-            viewer_los: viewer.eye,
-            viewer_world: viewer.eye_world,
-            viewer_direction: viewer.dir,
-            view_forward: viewer.view_forward,
-            view_radius: viewer.view_radius,
-            viewer_eye_status: viewer.eye_status,
-            real_half_aperture: viewer.real_half_aperture,
-            viewer_in_building,
-            target_in_same_building,
-            forest_180_degree_view: forest_180_degree_view_enabled_with_relationship(
-                self.world.weather.is_forest_level,
-                self.is_player_aligned_camp(viewer.camp),
-            ),
-            golden_eye_mode: self.ai.global.golden_eye_mode,
-            effective_view_radius: viewer.view_radius as f32,
-            target_is_active_and_outside_building: target_active
-                && target_building_sector.is_none(),
-            target_los,
-            target_world: target_detection,
-            target_posture,
-            target_action_state,
-            target_is_pc,
-            cloak_deception_applies: target_posture == crate::element::Posture::Cloaked
-                && viewer.camp.is_hostile_to(target.camp()),
-            cloak_remembers_target: viewer.primary_target
-                == Some(crate::ai::AiEntityHandle::new(target_id.index()))
-                || viewer.remembered_targets.contains(&target_id.index()),
-            // TODO(cloak-authoring): connect this only when an explicit
-            // modded profile schema supplies detector data.
-            cloak_authored_detector: crate::cloak::SHIPPED_AUTHORED_DETECTOR,
-            sight_obstacles,
-            fast_grid: &self.world.fast_grid,
-            layer: viewer.layer,
-            target_dead: target.is_dead(),
-            target_unconscious,
-            target_passing_door,
-        };
-
-        let view_radius_cache = OwnerViewRadiusCache::from_persistent(
-            &self.ai.view_radius_cache,
-            viewer_id,
-            universal_frame,
-            "live_detection",
-        );
-        let visibility = ai_vision::compute_visibility_with_effective_radius(&q, || {
-            view_radius_cache.get_or_compute(target_obstacle_handle, || {
-                ai_vision::compute_view_radius(
-                    q.viewer_world,
-                    viewer.view_radius,
-                    viewer.view_forward,
-                    viewer.real_half_aperture,
-                    is_night_or_fog,
-                    &self.world.fast_grid,
-                    sight_obstacles,
-                    target_obstacle,
-                )
-            })
-        });
-        view_radius_cache.commit_to(&mut self.ai.view_radius_cache, viewer_id, universal_frame);
-
-        tracing::trace!(
-            viewer = ?viewer_id,
-            target = ?target_id,
-            visibility,
-            "Live detection query"
-        );
-        visibility > 0.0
+        (self.live_ai_position(target), point)
     }
 
     // ── P3c. Per-NPC non-Enemy detection (Body / Object /
@@ -3052,746 +2187,269 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
         universal_frame: u32,
-        golden_eye: bool,
-        view_radius_cache: &OwnerViewRadiusCache,
+        ground: GroundPoint,
+        radius: u16,
     ) {
-        use crate::ai::AiState;
-
-        // -- Read NPC view-state in a scoped read borrow --
-        let (viewer, viewer_inside_building) = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            // Detection refresh runs the per-type loop for both camps.
-            // Royalist wrappers return zero for every non-Enemy type, but
-            // cleanup, outer scan bookkeeping, latches, and suspect decay
-            // still execute.
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let Some(viewer) =
-                SoldierSightContext::from_npc_viewer(npc_id, entity, building_sector)
-            else {
-                return;
-            };
+        use crate::ai::{AiState, StimulusType, Substate as AiSubstate};
+        use crate::element::Human as _;
+        let creation_order = self.original_static_creation_order(npc_id);
+        let modified_frame = refresh_detection_modified_frame(universal_frame, creation_order);
+        for (kind, frequency, factor, event) in [
             (
-                viewer,
-                self.entity_data_inside_building(entity.element_data()),
-            )
-        };
-        let eye = viewer.eye;
-        let eye_world = viewer.eye_world;
-        let dir = viewer.dir;
-        let layer = viewer.layer;
-        let view_radius = viewer.view_radius;
-        let eye_status = viewer.eye_status;
-        let current_state = viewer.current_state;
-        let viewer_hostile_to_player = self.is_hostile_to_player_camp(viewer.camp);
-        let view_forward = viewer.view_forward;
-        let real_half_aperture = viewer.real_half_aperture;
-        let view_lean_out = viewer.view_lean_out;
-        let ignore_bodies = viewer.ignore_bodies;
-
-        let viewer_building_sector = self.entity_building_sector(viewer.sector);
-        let viewer_in_building = viewer_building_sector.is_some();
-
-        let is_night_or_fog = matches!(
-            self.world.weather.ambiance,
-            crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
-        );
-        // Per-NPC frame phase offset.
-        let original_creation_order = self.original_static_creation_order(npc_id);
-        let mutation_debug_human_targets =
-            if detectable_mutation_debug_owner_matches(npc_id.index(), original_creation_order) {
-                self.world
-                    .entities
-                    .humans()
-                    .map(|(id, _)| EntityId::from(id))
-                    .filter_map(|target_id| {
-                        if !detectable_mutation_debug_target_slot_matches(target_id.index()) {
-                            return None;
-                        }
-                        let target_creation_order = self.original_static_creation_order(target_id);
-                        detectable_mutation_debug_target_matches(
-                            target_id.index(),
-                            target_creation_order,
-                        )
-                        .then_some((target_id, target_creation_order))
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
-        let modified_frame =
-            refresh_detection_modified_frame(universal_frame, original_creation_order);
-
-        const BODY_DETECTION_FACTOR: f32 = 3.0;
-
-        // Reusable view-speed for `sharpness = view_speed * visibility`.
-        let view_speed = if view_lean_out {
-            ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
-        } else {
-            ai_vision::BASE_VIEW_SPEED
-        };
-
-        // Obstacles remain borrowed across the pass; each target query finishes
-        // before the observer is borrowed to update that entry's latches.
-        let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
-        let view = ViewContext {
-            ground_position: viewer.ground_position,
-            viewer_inside_building,
-            hostile_to_player: viewer_hostile_to_player,
-            eye,
-            eye_world,
-            dir,
-            layer,
-            view_forward,
-            view_radius,
-            real_half_aperture,
-            viewer_in_building,
-            viewer_building_sector,
-            is_night_or_fog,
-            view_radius_cache,
-            eye_status,
-            view_speed,
-            modified_frame,
-            universal_frame,
-            original_creation_order,
-            golden_eye,
-            sight_obstacles: &sight_obstacles,
-            fast_grid: &self.world.fast_grid,
-        };
-
-        let entities = &mut self.world.entities;
-
-        // ── BODY pass ───────────────────────────────────────
-        debug_detectable_list_bucket(
-            "post_cleanup",
-            DetectableType::Body as usize,
-            npc_id,
-            entities.expect_ai_actor_data(npc_id, format_args!("detection bucket diagnostics")),
-            universal_frame,
-            original_creation_order,
-        );
-        Self::run_human_detectable_pass(
-            entities,
-            npc_id,
-            DetectableType::Body,
-            ai_vision::DETECTION_FREQUENCY_BODY,
-            BODY_DETECTION_FACTOR * ai_vision::DETECTION_FREQUENCY_BODY as f32,
-            // InstantDetection for Body (Lacklandists):
-            // `!matches!(state, Sleeping|Default|Wondering)`.
-            !matches!(
-                current_state,
-                AiState::Sleeping | AiState::Default | AiState::Wondering
+                DetectableType::Body,
+                ai_vision::DETECTION_FREQUENCY_BODY,
+                3.0,
+                StimulusType::EventSeesBody,
             ),
-            crate::ai::StimulusType::EventSeesBody,
-            // Body counts toward `maximal_detection_suspect`
-            // (`type < FRIEND`).
-            true,
-            // Body fires predetection shadow events for PC
-            // bodies (the PC gate).
-            true,
-            // Body's per-pass extra gate combines IgnoreBodies +
-            // viewer_in_building.
-            ignore_bodies,
-            // Per-target pre-filter — Body has no extra check. Original
-            // compares the full 3D eye/detection points across layers.
-            |_t| true,
-            view,
-        );
-
-        // ── OBJECT pass ─────────────────────────────────────
-        // The original game's detectable order is enemy, body, object,
-        // Friend, MissedFriend, Beggar. Keep stimulus queue order aligned
-        // with that scan order before the per-NPC FIFO Think drain.
-        Self::run_object_detectable_pass(
-            entities,
-            npc_id,
-            ai_vision::DETECTION_FREQUENCY_OBJECT,
-            // InstantDetection for OBJECT (Lacklandists) is
-            // `!matches!(state, Sleeping|Default)` — Wondering IS
-            // instant for Objects.
-            !matches!(current_state, AiState::Sleeping | AiState::Default),
-            view,
-        );
-
-        // ── FRIEND pass ─────────────────────────────────────
-        debug_detectable_list_bucket(
-            "post_cleanup",
-            DetectableType::Friend as usize,
-            npc_id,
-            entities.expect_ai_actor_data(npc_id, format_args!("detection bucket diagnostics")),
-            universal_frame,
-            original_creation_order,
-        );
-        Self::run_human_detectable_pass(
-            entities,
-            npc_id,
-            DetectableType::Friend,
-            ai_vision::DETECTION_FREQUENCY_FRIEND,
-            ai_vision::DETECTION_FREQUENCY_FRIEND as f32,
-            // InstantDetection for Friend always true.
-            true,
-            crate::ai::StimulusType::EventSeesSoldier,
-            // `type < FRIEND` — Friend itself does NOT contribute to
-            // `maximal_detection_suspect`.
-            false,
-            // No shadow events (early return for Friend).
-            false,
-            // Per-pass extra gate: Friend uses viewer_in_building
-            // alone, no IgnoreBodies override.
-            false,
-            // Per-target pre-filter: target must be able to help.
-            |t| t.able_to_help,
-            view,
-        );
-
-        // ── MISSED_FRIEND pass ──────────────────────────────
-        debug_detectable_list_bucket(
-            "post_cleanup",
-            DetectableType::MissedFriend as usize,
-            npc_id,
-            entities.expect_ai_actor_data(npc_id, format_args!("detection bucket diagnostics")),
-            universal_frame,
-            original_creation_order,
-        );
-        Self::run_human_detectable_pass(
-            entities,
-            npc_id,
-            DetectableType::MissedFriend,
-            ai_vision::DETECTION_FREQUENCY_MISSED_FRIEND,
-            ai_vision::DETECTION_FREQUENCY_MISSED_FRIEND as f32,
-            // Always-true InstantDetection.
-            true,
-            crate::ai::StimulusType::EventSeesCharly,
-            // Does not contribute to `maximal_detection_suspect`.
-            false,
-            // No shadow events (early return for MissedFriend).
-            false,
-            false,
-            // Per-target pre-filter: skip dead / unconscious targets.
-            |t| !missed_friend_or_beggar_target_blocked(t.dead, t.unconscious),
-            view,
-        );
-
-        // ── BEGGAR pass ─────────────────────────────────────
-        // Beggar detectable cleanup drops entries whose target
-        // is no longer a genuine or disguised beggar. Run that prune
-        // ahead of the visibility loop so the helper doesn't
-        // compute visibility for stale entries.
-        {
-            let beggar_idx = DetectableType::Beggar as usize;
-            let npc =
-                entities.expect_ai_actor_data(npc_id, format_args!("beggar cleanup diagnostics"));
-            let (mutation_length_before, mutation_presence_before) =
-                if mutation_debug_human_targets.is_empty() {
-                    (0, Vec::new())
-                } else {
-                    (
-                        npc.detectable_lists[beggar_idx].len(),
-                        mutation_debug_human_targets
-                            .iter()
-                            .map(|(target_id, target_creation_order)| {
-                                (
-                                    *target_id,
-                                    *target_creation_order,
-                                    npc.detectable_lists[beggar_idx]
-                                        .iter()
-                                        .any(|detectable| detectable.element == Some(*target_id)),
-                                )
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                };
-            Self::cleanup_live_detectables(
-                entities,
-                npc_id,
+            (
+                DetectableType::Object,
+                ai_vision::DETECTION_FREQUENCY_OBJECT,
+                1.0,
+                StimulusType::EventSeesObject,
+            ),
+            (
+                DetectableType::Friend,
+                ai_vision::DETECTION_FREQUENCY_FRIEND,
+                1.0,
+                StimulusType::EventSeesSoldier,
+            ),
+            (
+                DetectableType::MissedFriend,
+                ai_vision::DETECTION_FREQUENCY_MISSED_FRIEND,
+                1.0,
+                StimulusType::EventSeesCharly,
+            ),
+            (
                 DetectableType::Beggar,
-                super::snapshots::is_live_beggar,
-            );
-            let npc =
-                entities.expect_ai_actor_data(npc_id, format_args!("beggar cleanup diagnostics"));
-            for (target_id, target_creation_order, present_before) in mutation_presence_before {
-                let present_after = npc.detectable_lists[beggar_idx]
-                    .iter()
-                    .any(|detectable| detectable.element == Some(target_id));
-                if present_before || present_after {
-                    debug_detectable_mutation_event(
-                        "cleanup",
-                        "beggar detectable cleanup",
-                        universal_frame,
-                        npc_id.index(),
-                        original_creation_order,
-                        beggar_idx,
-                        target_id.index(),
-                        target_creation_order,
-                        present_before,
-                        present_after,
-                        mutation_length_before,
-                        npc.detectable_lists[beggar_idx].len(),
-                    );
-                }
+                ai_vision::DETECTION_FREQUENCY_BEGGAR,
+                1.0,
+                StimulusType::EventSeesBeggar,
+            ),
+        ] {
+            if kind == DetectableType::Object {
+                Self::cleanup_live_detectables(&mut self.world.entities, npc_id, kind, |entity| {
+                    entity.is_active()
+                });
+            } else if kind == DetectableType::Beggar {
+                Self::cleanup_live_detectables(
+                    &mut self.world.entities,
+                    npc_id,
+                    kind,
+                    super::snapshots::is_live_beggar,
+                );
             }
+            let bucket = kind as usize;
+            let npc = self
+                .world
+                .entities
+                .expect_ai_actor_data(npc_id, format_args!("optical bucket"));
             debug_detectable_list_bucket(
                 "post_cleanup",
-                beggar_idx,
+                bucket,
                 npc_id,
-                entities.expect_ai_actor_data(npc_id, format_args!("detection bucket diagnostics")),
+                npc,
                 universal_frame,
-                original_creation_order,
+                creation_order,
             );
-        }
-        Self::run_human_detectable_pass(
-            entities,
-            npc_id,
-            DetectableType::Beggar,
-            ai_vision::DETECTION_FREQUENCY_BEGGAR,
-            ai_vision::DETECTION_FREQUENCY_BEGGAR as f32,
-            true,
-            crate::ai::StimulusType::EventSeesBeggar,
-            false,
-            false,
-            false,
-            // Per-target pre-filter: skip dead / unconscious targets.
-            |t| !missed_friend_or_beggar_target_blocked(t.dead, t.unconscious),
-            view,
-        );
-
-        // Original performs this reset after the complete detectable-type
-        // loop. A Body/Object suspect retained across a closed cadence must
-        // keep its earlier worst type even when Enemy is currently zero.
-        finalize_detection_summary(
-            entities.expect_ai_actor_data_mut(npc_id, format_args!("detection summary")),
-        );
-    }
-
-    /// Per-NPC per-type detection helper for the four
-    /// human-targeting buckets — `Body`, `Friend`, `MissedFriend`,
-    /// `Beggar`.  One full iteration of the per-type loop body:
-    /// per-detectable visibility (`compute_visibility` scaled by
-    /// `factor`), suspect accumulation, threshold-or-instant commit,
-    /// rising-edge `event_type` dispatch with drop-on-commit removal,
-    /// suspect cooldown, `maximal_detection_suspect` /
-    /// `worst_detected_type` contribution.
-    ///
-    /// `extra_gate_blocks_visibility` is the per-kind boolean
-    /// short-circuit checked before computing visibility (e.g.
-    /// body-ignore state for Body). `viewer_in_building` is always
-    /// applied on top.  `target_pre_filter` runs per target
-    /// (able to help for friends, alive and conscious
-    /// for MissedFriend / Beggar — Body has no per-target filter
-    /// beyond the layer match).
-    ///
-    /// `fire_shadow_for_pc_targets`: when true, runs
-    /// predetection inline — only Body satisfies this
-    /// (the Enemy arm has its own dedicated shadow-event block
-    /// earlier in the tick; FRIEND / MISSED_FRIEND / BEGGAR are
-    /// skipped at the early-return; OBJECT is skipped via the
-    /// PC gate).
-    ///
-    /// `contribute_to_maximal`: matches `type < FRIEND` — only Body
-    /// and Object contribute to `maximal_detection_suspect`; the
-    /// three FRIEND-and-after buckets do not.
-    fn run_human_detectable_pass<F>(
-        entities: &mut crate::entities::Entities,
-        npc_id: EntityId,
-        kind: DetectableType,
-        frequency: u32,
-        factor: f32,
-        instant_detection: bool,
-        event_type: crate::ai::StimulusType,
-        contribute_to_maximal: bool,
-        fire_shadow_for_pc_targets: bool,
-        extra_gate_blocks_visibility: bool,
-        target_pre_filter: F,
-        ctx: ViewContext<'_>,
-    ) where
-        F: Fn(&HumanDetectionInput) -> bool,
-    {
-        let kind_idx = kind as usize;
-        // Original-game detectable visibility only applies
-        // always-refresh behavior to Lacklandist enemy entries. Body, Friend,
-        // MissedFriend and Beggar always retain their cached visibility until
-        // their own modulo cadence opens, even at Yellow/Red alert or while
-        // staring/following.
-        let gate_open = ctx.modified_frame.is_multiple_of(frequency);
-
-        let mut sum_of_sharpnesses: u16 = 0;
-        let mut max_sharpness: u32 = 0;
-
-        // (1) Per-detectable visibility pass.
-        let count = entities
-            .expect_ai_actor_data(npc_id, format_args!("human detection owner"))
-            .detectable_lists[kind_idx]
-            .len();
-        for list_index in 0..count {
-            let target_id = entities
-                .expect_ai_actor_data(npc_id, format_args!("human detection entry"))
-                .detectable_lists[kind_idx][list_index]
-                .element;
-            let target = target_id.and_then(|id| {
-                super::snapshots::human_detection_input(entities, id, ctx.fast_grid)
-            });
-            let npc =
-                entities.expect_ai_actor_data_mut(npc_id, format_args!("human detection latch"));
-            let det = &mut npc.detectable_lists[kind_idx][list_index];
-            let Some(target_id) = det.element else {
-                det.seen_now = false;
-                det.last_visibility = 0.0;
-                continue;
-            };
-            let Some(target) = target else {
-                det.seen_now = false;
-                det.last_visibility = 0.0;
-                continue;
-            };
-            let scan_decision = refresh_detection_scans_target(
-                det.last_visibility,
-                ctx.viewer_inside_building,
-                ctx.ground_position,
-                ctx.view_radius,
-                target.ground_position,
-            );
-            ai_vision::debug_view_radius_target_event(
-                "scan",
-                ctx.universal_frame,
-                npc_id,
-                kind_idx,
-                list_index,
-                target_id,
-                det.last_visibility,
-                ctx.viewer_inside_building,
-                ctx.ground_position,
-                target.ground_position,
-                ctx.view_radius,
-                scan_decision,
-                gate_open,
-                None,
-                None,
-                None,
-                None,
-            );
-            if !scan_decision {
-                det.seen_now = false;
-                det.last_visibility = 0.0;
-                continue;
-            }
-            tracing::trace!(
-                observer = ?npc_id,
-                target = ?target_id,
-                ?kind,
-                frequency,
-                modified_frame = ctx.modified_frame,
-                gate_open,
-                viewer_x = ctx.ground_position.x,
-                viewer_y = ctx.ground_position.y,
-                "non-Enemy detectable inside detection-refresh box"
-            );
-            // Preserve the original short circuit: the target-type predicate
-            // is not evaluated when either preceding building gate is true.
-            let target_pre_filter_passed = if extra_gate_blocks_visibility || ctx.viewer_in_building
-            {
-                None
-            } else {
-                Some(target_pre_filter(&target))
-            };
-            let visibility_blocked = non_enemy_visibility_blocked_with_relationship(
-                ctx.eye_status,
-                ctx.hostile_to_player,
-                extra_gate_blocks_visibility
-                    || ctx.viewer_in_building
-                    || target_pre_filter_passed == Some(false),
-            );
-            ai_vision::debug_view_radius_target_event(
-                "visibility_gate",
-                ctx.universal_frame,
-                npc_id,
-                kind_idx,
-                list_index,
-                target_id,
-                det.last_visibility,
-                ctx.viewer_inside_building,
-                ctx.ground_position,
-                target.ground_position,
-                ctx.view_radius,
-                scan_decision,
-                gate_open,
-                target_pre_filter_passed,
-                Some(visibility_blocked),
-                None,
-                None,
-            );
-            let visibility: f32 = if visibility_blocked {
-                0.0
-            } else if gate_open {
-                let target_in_same_building = ctx.viewer_in_building
-                    && ctx.viewer_building_sector == target.building_sector
-                    && !target.unconscious;
-                let target_obstacle_handle = target.obstacle_idx;
-                let target_obstacle = target_obstacle_handle.map(|handle| {
-                    ctx.sight_obstacles
-                        .get(usize::from(handle))
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "{:?} visibility target {} requires missing obstacle {}",
-                                kind,
-                                target_id.index(),
-                                handle
-                            )
-                        })
-                });
-                ai_vision::debug_view_radius_target_event(
-                    "compute_entry",
-                    ctx.universal_frame,
-                    npc_id,
-                    kind_idx,
-                    list_index,
-                    target_id,
-                    det.last_visibility,
-                    ctx.viewer_inside_building,
-                    ctx.ground_position,
-                    target.ground_position,
-                    ctx.view_radius,
-                    scan_decision,
-                    gate_open,
-                    target_pre_filter_passed,
-                    Some(visibility_blocked),
-                    target_obstacle_handle,
-                    target_obstacle,
-                );
-                let q = ai_vision::VisibilityQuery {
-                    viewer_los: ctx.eye,
-                    viewer_world: ctx.eye_world,
-                    viewer_direction: ctx.dir,
-                    view_forward: ctx.view_forward,
-                    view_radius: ctx.view_radius,
-                    viewer_eye_status: ctx.eye_status,
-                    real_half_aperture: ctx.real_half_aperture,
-                    viewer_in_building: ctx.viewer_in_building,
-                    target_in_same_building,
-                    forest_180_degree_view: false,
-                    golden_eye_mode: ctx.golden_eye,
-                    effective_view_radius: ctx.view_radius as f32,
-                    target_is_active_and_outside_building: target.active
-                        && target.building_sector.is_none(),
-                    target_los: crate::stealth::detection_point_xy(
-                        target.position,
-                        target.posture,
-                        target.direction,
-                    ),
-                    target_world: target.detection_point,
-                    target_posture: target.posture,
-                    target_action_state: target.action_state,
-                    target_is_pc: target.is_pc,
-                    cloak_deception_applies: false,
-                    cloak_remembers_target: false,
-                    cloak_authored_detector: false,
-                    sight_obstacles: *ctx.sight_obstacles,
-                    fast_grid: ctx.fast_grid,
-                    layer: ctx.layer,
-                    target_dead: target.dead,
-                    target_unconscious: target.unconscious,
-                    target_passing_door: target.passing_door,
-                };
-                factor
-                    * ai_vision::compute_visibility_with_effective_radius(&q, || {
-                        ctx.view_radius_cache
-                            .get_or_compute(target_obstacle_handle, || {
-                                ai_vision::compute_view_radius(
-                                    q.viewer_world,
-                                    ctx.view_radius,
-                                    ctx.view_forward,
-                                    ctx.real_half_aperture,
-                                    ctx.is_night_or_fog,
-                                    ctx.fast_grid,
-                                    *ctx.sight_obstacles,
-                                    target_obstacle,
-                                )
-                            })
-                    })
-            } else {
-                det.last_visibility
-            };
-
-            let sharpness = detection_sharpness(ctx.view_speed, visibility);
-            let is_visible = sharpness > 0;
-            max_sharpness = max_sharpness.max(u32::from(sharpness));
-
-            if !det.seen_last_frame {
-                sum_of_sharpnesses = accumulate_detection_sharpness(sum_of_sharpnesses, sharpness);
-            }
-
-            det.seen_now = is_visible;
-            // The outer detection-refresh loop writes the wrapper result on
-            // every scanned entry. Closed cadence reuses the same value;
-            // blind/type/camp rejections must overwrite a stale sample with 0.
-            det.last_visibility = visibility;
-        }
-
-        // Maximal visibility spans the complete outer detectable-type
-        // loop, not only Enemy entries. Preserve the Enemy maximum installed
-        // by the preceding pass and fold this type's post-cache sharpness in.
-        let suspects_before = {
-            let npc = entities
-                .expect_ai_actor_data_mut(npc_id, format_args!("human detection aggregate"));
-            if let Some(ai) = npc.ai_brain.base_mut() {
-                ai.max_visibility = ai.max_visibility.max(max_sharpness);
-            }
-            npc.detection_suspects[kind_idx]
-        };
-
-        // (3) Predetection shadow events for PC-typed targets.
-        // Body is the only kind that fires; the helper is gated on
-        // `fire_shadow_for_pc_targets` so the Friend / MissedFriend
-        // / Beggar pre-empt and the Object skip fall out naturally.
-        // Per-detectable rising edge of
-        //   shadow_is_seen = (sharpness > 0)
-        //                && (suspects_before_scan[type]
-        //                    >= SHADOW_DETECTION_THRESHOLD)
-        //
-        // Skip PCs already in custody (guarded) — once a soldier is
-        // guarding a hero, no further shadow events fire for that hero, and
-        // Predetection leaves its shadow latch unchanged.
-        let mut shadow_dispatches: Vec<crate::ai::Position> = Vec::new();
-        if fire_shadow_for_pc_targets {
+            let count = npc.detectable_lists[bucket].len();
+            let suspects_before = npc.detection_suspects[bucket];
+            let gate_open = modified_frame.is_multiple_of(frequency);
+            let mut sum = 0u16;
+            let mut maximum = 0u32;
+            let mut shadows = Vec::new();
             for index in 0..count {
-                let target_id = entities
-                    .expect_ai_actor_data(npc_id, format_args!("predetection entry"))
-                    .detectable_lists[kind_idx][index]
-                    .element;
-                let target = target_id.and_then(|id| {
-                    super::snapshots::human_detection_input(entities, id, ctx.fast_grid)
+                let npc = self
+                    .world
+                    .entities
+                    .expect_ai_actor_data(npc_id, format_args!("optical entry"));
+                let det = &npc.detectable_lists[bucket][index];
+                let target_id = det.element.expect("optical detectable requires a target");
+                let previous = det.last_visibility;
+                let seen_last_frame = det.seen_last_frame;
+                let owner = self
+                    .world
+                    .entities
+                    .expect_entity(npc_id, format_args!("optical viewer"));
+                let target = self
+                    .world
+                    .entities
+                    .expect_entity(target_id, format_args!("optical target"));
+                let npc = owner
+                    .ai_actor_data()
+                    .expect("optical viewer requires NPC data");
+                let inside = self.entity_data_inside_building(owner.element_data());
+                let in_building = self.entity_data_in_building_sector(owner.element_data());
+                let scan = refresh_detection_scans_target(
+                    previous,
+                    inside,
+                    ground,
+                    radius,
+                    target.ground_position(),
+                );
+                ai_vision::debug_view_radius_target_event(
+                    "scan",
+                    universal_frame,
+                    npc_id,
+                    bucket,
+                    index,
+                    target_id,
+                    previous,
+                    inside,
+                    ground,
+                    target.ground_position(),
+                    radius,
+                    scan,
+                    gate_open,
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+                let target_blocked = match kind {
+                    DetectableType::Body => matches!(
+                        npc.ai_substate(),
+                        AiSubstate::SeekingOfficerWaitForAlertingSoldier
+                            | AiSubstate::SeekingOfficerGetAlertingReportFromSoldier
+                    ),
+                    DetectableType::Friend => {
+                        !matches!(target, Entity::Soldier(soldier) if soldier.is_able_to_help())
+                    }
+                    DetectableType::MissedFriend | DetectableType::Beggar => {
+                        target.is_dead() || target.is_unconscious()
+                    }
+                    _ => false,
+                };
+                let blocked = non_enemy_visibility_blocked_with_relationship(
+                    npc.eye_status,
+                    self.is_hostile_to_player_camp(owner.camp()),
+                    in_building || target_blocked,
+                );
+                let speed = if npc.view_lean_out {
+                    ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
+                } else {
+                    ai_vision::BASE_VIEW_SPEED
+                };
+                let visibility = if !scan || blocked {
+                    0.0
+                } else if !gate_open {
+                    previous
+                } else if kind == DetectableType::Object {
+                    frequency as f32
+                        * self.live_object_visibility_for_detection(assets, npc_id, target_id)
+                } else {
+                    factor
+                        * frequency as f32
+                        * self.live_human_visibility_for_detection(
+                            assets,
+                            npc_id,
+                            target_id,
+                            universal_frame,
+                            seen_last_frame,
+                        )
+                };
+                let sharpness = detection_sharpness(speed, visibility);
+                maximum = maximum.max(u32::from(sharpness));
+                if !seen_last_frame {
+                    sum = accumulate_detection_sharpness(sum, sharpness);
+                }
+                let target = self
+                    .world
+                    .entities
+                    .expect_entity(target_id, format_args!("optical predetection target"));
+                let pc = matches!(target, Entity::Pc(_));
+                let guarded = matches!(target, Entity::Pc(pc) if pc.pc.guard.is_some());
+                let raw = target.element_data();
+                let position = crate::ai::Position {
+                    x: raw.position_map().x,
+                    y: raw.position_map().y,
+                    sector: raw.sector(),
+                    level: raw.layer(),
+                };
+                let npc = self
+                    .world
+                    .entities
+                    .expect_ai_actor_data_mut(npc_id, format_args!("optical latches"));
+                let det = &mut npc.detectable_lists[bucket][index];
+                if scan
+                    && kind == DetectableType::Body
+                    && update_predetection_shadow_latch(
+                        sharpness > 0,
+                        suspects_before,
+                        pc,
+                        guarded,
+                        &mut det.shadow_seen_last_frame,
+                    )
+                {
+                    shadows.push(position);
+                }
+                det.seen_now = sharpness > 0;
+                det.last_visibility = visibility;
+            }
+            let npc = self
+                .world
+                .entities
+                .expect_ai_actor_data_mut(npc_id, format_args!("optical commit"));
+            let state = npc
+                .ai_brain
+                .base()
+                .expect("optical owner requires AI")
+                .current_state;
+            let instant = match kind {
+                DetectableType::Body => !matches!(
+                    state,
+                    AiState::Sleeping | AiState::Default | AiState::Wondering
+                ),
+                DetectableType::Object => !matches!(state, AiState::Sleeping | AiState::Default),
+                _ => true,
+            };
+            npc.detection_suspects[bucket] = suspects_before.wrapping_add(sum);
+            if sum > 0 && npc.worst_detected_type as u8 > kind as u8 {
+                npc.worst_detected_type = kind;
+            }
+            let mut rising = Vec::new();
+            if npc.detection_suspects[bucket] >= ai_vision::DETECTION_SUSPECT_THRESHOLD as u16
+                || (instant && sum > 0)
+            {
+                npc.detection_suspects[bucket] = 0;
+                npc.detectable_lists[bucket].retain_mut(|det| {
+                    let id = det.element.expect("optical commit requires target");
+                    if det.seen_now && !det.seen_last_frame {
+                        rising.push(id);
+                        false
+                    } else {
+                        true
+                    }
                 });
-                let npc =
-                    entities.expect_ai_actor_data_mut(npc_id, format_args!("predetection latch"));
-                let det = &mut npc.detectable_lists[kind_idx][index];
-                // Only PCs are seen as shadows.
-                let Some(target_id) = det.element else {
-                    continue;
-                };
-                let Some(target) = target else {
-                    continue;
-                };
-                let shadow_seen_before = det.shadow_seen_last_frame;
-                let queued = update_predetection_shadow_latch(
-                    det.seen_now,
-                    suspects_before,
-                    target.is_pc,
-                    target.guarded,
-                    &mut det.shadow_seen_last_frame,
-                );
-                tracing::trace!(
-                    target: "shadow_predetection",
-                    frame = ctx.universal_frame,
-                    observer = ?npc_id,
-                    observer_index = npc_id.index(),
-                    detectable_type = ?kind,
-                    detectable_target = ?target_id,
-                    detectable_target_index = target_id.index(),
-                    sharpness = u32::from(detection_sharpness(
-                        ctx.view_speed,
-                        det.last_visibility,
-                    )),
-                    suspects_before,
-                    is_pc = target.is_pc,
-                    guarded = target.guarded,
-                    seen_now = det.seen_now,
-                    seen_last_frame = det.seen_last_frame,
-                    shadow_seen_now = det.shadow_seen_now,
-                    shadow_seen_before,
-                    shadow_seen_after = det.shadow_seen_last_frame,
-                    last_visibility = det.last_visibility,
-                    queued,
-                    "evaluated non-Enemy shadow predetection edge"
-                );
-                if queued {
-                    shadow_dispatches.push(crate::ai::Position {
-                        x: target.position.x,
-                        y: target.position.y,
-                        sector: target.sector,
-                        level: target.layer,
-                    });
+            }
+            npc.detection_suspects[bucket] =
+                cool_detection_suspect(sum, npc.detection_suspects[bucket], universal_frame);
+            if (kind as u8) < DetectableType::Friend as u8 {
+                npc.maximal_detection_suspect = npc
+                    .maximal_detection_suspect
+                    .max(npc.detection_suspects[bucket]);
+            }
+            let ai = npc.ai_brain.base_mut().expect("optical commit requires AI");
+            ai.max_visibility = ai.max_visibility.max(maximum);
+            if kind == DetectableType::Object {
+                for target in rising {
+                    let mut stimulus = crate::ai::Stimulus::new(event);
+                    stimulus.info = crate::ai::StimulusInfo::Object(
+                        crate::ai::AiEntityHandle::new(target.index()),
+                    );
+                    ai.outbox.detection.stimuli.push(stimulus);
                 }
+            } else {
+                ai.outbox
+                    .detection
+                    .stimuli
+                    .extend(queued_human_detection_stimuli(event, shadows, rising));
             }
         }
-
-        // (4) Accumulate and determine whether the full detection commits.
-        let npc = entities.expect_ai_actor_data_mut(npc_id, format_args!("human detection commit"));
-        let suspects_after = suspects_before.wrapping_add(sum_of_sharpnesses);
-        npc.detection_suspects[kind_idx] = suspects_after;
-        let commit_threshold = suspects_after >= ai_vision::DETECTION_SUSPECT_THRESHOLD as u16
-            || (instant_detection && sum_of_sharpnesses > 0);
-
-        // worst_detected_type bookkeeping — only on visibility
-        // frames where new sharpness was added.
-        if sum_of_sharpnesses > 0 && (npc.worst_detected_type as u8) > (kind as u8) {
-            npc.worst_detected_type = kind;
-        }
-
-        // (5) Rising-edge dispatch + drop-on-commit.  When the threshold
-        // or instant-detection commits, drop every detectable that
-        // crossed the rising edge this frame and queue its event.
-        let mut rising_dispatches: Vec<EntityId> = Vec::new();
-        if commit_threshold {
-            npc.detection_suspects[kind_idx] = 0;
-            npc.detectable_lists[kind_idx].retain_mut(|det| {
-                let Some(target_id) = det.element else {
-                    return false;
-                };
-                if det.seen_now && !det.seen_last_frame {
-                    rising_dispatches.push(target_id);
-                    return false; // drop on commit
-                }
-                true
-            });
-        }
-
-        // (6) Suspect cooldown when this scan added no fresh sharpness.
-        npc.detection_suspects[kind_idx] = cool_detection_suspect(
-            sum_of_sharpnesses,
-            npc.detection_suspects[kind_idx],
-            ctx.universal_frame,
+        finalize_detection_summary(
+            self.world
+                .entities
+                .expect_ai_actor_data_mut(npc_id, format_args!("optical summary")),
         );
-
-        // (7) maximal_detection_suspect contribution
-        // (`type < FRIEND` only).
-        if contribute_to_maximal && npc.maximal_detection_suspect < npc.detection_suspects[kind_idx]
-        {
-            npc.maximal_detection_suspect = npc.detection_suspects[kind_idx];
-        }
-
-        // (8) Drain the queued stimuli onto pending_stimuli.
-        if (!rising_dispatches.is_empty() || !shadow_dispatches.is_empty())
-            && let Some(ai) = npc.ai_brain.base_mut()
-        {
-            for _shadow_pos in &shadow_dispatches {
-                tracing::trace!(
-                    npc = ?npc_id,
-                    ?kind,
-                    "EventSeesShadow (rising edge)"
-                );
-            }
-            for target_id in &rising_dispatches {
-                tracing::trace!(
-                    npc = ?npc_id,
-                    target = ?target_id,
-                    ?kind,
-                    ?event_type,
-                    "non-Enemy detectable rising edge"
-                );
-            }
-            ai.outbox
-                .detection
-                .stimuli
-                .extend(queued_human_detection_stimuli(
-                    event_type,
-                    shadow_dispatches,
-                    rising_dispatches,
-                ));
-        }
     }
 
     fn cleanup_live_detectables(
@@ -3824,363 +2482,52 @@ impl EngineInner {
         }
     }
 
-    /// Per-NPC OBJECT detection — sibling of
-    /// `run_human_detectable_pass` that calls
-    /// `ai_vision::compute_object_visibility` instead of
-    /// `compute_visibility`.  Same surrounding per-type loop
-    /// machinery; no shadow events because the PC gate skips
-    /// objects.
-    fn run_object_detectable_pass(
-        entities: &mut crate::entities::Entities,
-        npc_id: EntityId,
-        frequency: u32,
-        instant_detection: bool,
-        ctx: ViewContext<'_>,
-    ) {
-        let obj_idx = DetectableType::Object as usize;
-        // Like the human non-enemy buckets above, OBJECT deliberately ignores
-        // the enemy-only always-refresh shortcut in the original game.
-        let gate_open = ctx.modified_frame.is_multiple_of(frequency);
-
-        // Object detectable cleanup: drop entries whose target
-        // is no longer active.  Run before the visibility loop so
-        // dead entries don't waste a tick of accumulator decay.
-        Self::cleanup_live_detectables(entities, npc_id, DetectableType::Object, |entity| {
-            entity.element_data().active
-        });
-        let npc = entities.expect_ai_actor_data(npc_id, format_args!("object detection cleanup"));
-        debug_detectable_list_entries(
-            "post_cleanup",
-            obj_idx,
-            npc_id,
-            &npc.detectable_lists[obj_idx],
-            ctx.universal_frame,
-            ctx.original_creation_order,
-        );
-
-        let mut sum_of_sharpnesses: u16 = 0;
-        let mut max_sharpness: u32 = 0;
-
-        let count = npc.detectable_lists[obj_idx].len();
-        for index in 0..count {
-            let target_id = entities
-                .expect_ai_actor_data(npc_id, format_args!("object detection entry"))
-                .detectable_lists[obj_idx][index]
-                .element;
-            let target =
-                target_id.and_then(|id| super::snapshots::object_detection_input(entities, id));
-            let npc =
-                entities.expect_ai_actor_data_mut(npc_id, format_args!("object detection latch"));
-            let det = &mut npc.detectable_lists[obj_idx][index];
-            let Some(object) = target else {
-                det.seen_now = false;
-                det.last_visibility = 0.0;
-                continue;
-            };
-            if !refresh_detection_scans_target(
-                det.last_visibility,
-                ctx.viewer_inside_building,
-                ctx.ground_position,
-                ctx.view_radius,
-                object.ground_position,
-            ) {
-                det.seen_now = false;
-                det.last_visibility = 0.0;
-                continue;
-            }
-            let visibility: f32 = if non_enemy_visibility_blocked_with_relationship(
-                ctx.eye_status,
-                ctx.hostile_to_player,
-                ctx.viewer_in_building,
-            ) {
-                0.0
-            } else if gate_open {
-                let q = ai_vision::ObjectVisibilityQuery {
-                    viewer_los: ctx.eye,
-                    viewer_world: ctx.eye_world,
-                    viewer_direction: ctx.dir,
-                    view_forward: ctx.view_forward,
-                    view_radius: ctx.view_radius,
-                    viewer_eye_status: ctx.eye_status,
-                    real_half_aperture: ctx.real_half_aperture,
-                    viewer_in_building: ctx.viewer_in_building,
-                    object_belongs_to_beggar: object.belongs_to_beggar,
-                    target_los: object.position,
-                    target_world: object.world_position,
-                    sight_obstacles: *ctx.sight_obstacles,
-                    fast_grid: ctx.fast_grid,
-                    layer: ctx.layer,
-                };
-                frequency as f32 * ai_vision::compute_object_visibility(&q)
-            } else {
-                det.last_visibility
-            };
-
-            let sharpness = detection_sharpness(ctx.view_speed, visibility);
-            let is_visible = sharpness > 0;
-            max_sharpness = max_sharpness.max(u32::from(sharpness));
-            if !det.seen_last_frame {
-                sum_of_sharpnesses = accumulate_detection_sharpness(sum_of_sharpnesses, sharpness);
-            }
-            det.seen_now = is_visible;
-            // Match the unconditional outer-loop last-visibility write.
-            det.last_visibility = visibility;
-        }
-
-        let npc =
-            entities.expect_ai_actor_data_mut(npc_id, format_args!("object detection commit"));
-        if let Some(ai) = npc.ai_brain.base_mut() {
-            ai.max_visibility = ai.max_visibility.max(max_sharpness);
-        }
-
-        let suspects_after = npc.detection_suspects[obj_idx].wrapping_add(sum_of_sharpnesses);
-        npc.detection_suspects[obj_idx] = suspects_after;
-        let commit_threshold = suspects_after >= ai_vision::DETECTION_SUSPECT_THRESHOLD as u16
-            || (instant_detection && sum_of_sharpnesses > 0);
-
-        if sum_of_sharpnesses > 0
-            && (npc.worst_detected_type as u8) > (DetectableType::Object as u8)
-        {
-            npc.worst_detected_type = DetectableType::Object;
-        }
-
-        let mut rising_dispatches: Vec<EntityId> = Vec::new();
-        if commit_threshold {
-            npc.detection_suspects[obj_idx] = 0;
-            npc.detectable_lists[obj_idx].retain_mut(|det| {
-                let Some(target_id) = det.element else {
-                    return false;
-                };
-                if det.seen_now && !det.seen_last_frame {
-                    rising_dispatches.push(target_id);
-                    return false;
-                }
-                true
-            });
-        }
-
-        if sum_of_sharpnesses == 0
-            && npc.detection_suspects[obj_idx] > 0
-            && ctx
-                .universal_frame
-                .is_multiple_of(ai_vision::UNSUSPECT_FREQUENCY)
-        {
-            npc.detection_suspects[obj_idx] = npc.detection_suspects[obj_idx].saturating_sub(1);
-        }
-
-        if npc.maximal_detection_suspect < npc.detection_suspects[obj_idx] {
-            npc.maximal_detection_suspect = npc.detection_suspects[obj_idx];
-        }
-
-        if !rising_dispatches.is_empty()
-            && let Some(ai) = npc.ai_brain.base_mut()
-        {
-            for target_id in rising_dispatches {
-                let mut stimulus =
-                    crate::ai::Stimulus::new(crate::ai::StimulusType::EventSeesObject);
-                stimulus.info = crate::ai::StimulusInfo::Object(crate::ai::AiEntityHandle::new(
-                    target_id.index(),
-                ));
-                ai.outbox.detection.stimuli.push(stimulus);
-                tracing::trace!(
-                    npc = ?npc_id,
-                    object = ?target_id,
-                    "EventSeesObject (rising edge)"
-                );
-            }
-        }
-    }
-}
-
-struct OwnerViewRadiusCache {
-    values: std::cell::RefCell<
-        std::collections::HashMap<Option<crate::position_interface::ObstacleHandle>, f32>,
-    >,
-    diagnostic_viewer: Option<EntityId>,
-    diagnostic_frame: u32,
-    diagnostic_source: &'static str,
-}
-
-impl Default for OwnerViewRadiusCache {
-    fn default() -> Self {
-        Self {
-            values: std::cell::RefCell::default(),
-            diagnostic_viewer: None,
-            diagnostic_frame: 0,
-            diagnostic_source: "test",
-        }
-    }
-}
-
-impl OwnerViewRadiusCache {
-    fn from_persistent(
-        persistent: &crate::ai_vision::ViewRadiusCache,
-        viewer: EntityId,
-        frame: u32,
-        diagnostic_source: &'static str,
-    ) -> Self {
-        let cache = Self {
-            diagnostic_viewer: Some(viewer),
-            diagnostic_frame: frame,
-            diagnostic_source,
-            ..Self::default()
-        };
-        if let Some(radius) = persistent.get(None, viewer, frame) {
-            cache.values.borrow_mut().insert(None, radius);
-        }
-        for (index, entry) in persistent.obstacles.iter().enumerate() {
-            // Most entries belong to an earlier viewer or frame. Reject them
-            // before handle conversion and the instrumented cache lookup.
-            if !entry.is_some_and(|entry| {
-                entry.viewer == viewer && entry.frame == frame && entry.radius != 0.0
-            }) {
-                continue;
-            }
-            let Some(handle) = u32::try_from(index)
-                .ok()
-                .and_then(crate::position_interface::ObstacleHandle::new)
-            else {
-                continue;
-            };
-            if let Some(radius) = persistent.get(Some(handle), viewer, frame) {
-                cache.values.borrow_mut().insert(Some(handle), radius);
-            }
-        }
-        cache
-    }
-
-    fn commit_to(
+    fn live_object_visibility_for_detection(
         &self,
-        persistent: &mut crate::ai_vision::ViewRadiusCache,
-        viewer: EntityId,
-        frame: u32,
-    ) {
-        for (&surface, &radius) in self.values.borrow().iter() {
-            crate::ai_vision::debug_view_radius_cache_event(
-                "owner_commit",
-                self.diagnostic_source,
-                surface,
-                viewer,
-                frame,
-                Some(crate::ai_vision::ViewRadiusCacheEntry {
-                    viewer,
-                    frame,
-                    radius,
-                }),
-                Some(radius),
-                std::panic::Location::caller(),
-            );
-            persistent.set(surface, viewer, frame, radius);
-        }
-    }
-
-    #[track_caller]
-    fn get_or_compute(
-        &self,
-        obstacle: Option<crate::position_interface::ObstacleHandle>,
-        compute: impl FnOnce() -> f32,
+        assets: &LevelAssets,
+        owner: EntityId,
+        target: EntityId,
     ) -> f32 {
-        if let Some(radius) = self.values.borrow().get(&obstacle).copied()
-            && radius != 0.0
-        {
-            if let Some(viewer) = self.diagnostic_viewer {
-                crate::ai_vision::debug_view_radius_cache_event(
-                    "owner_hit",
-                    self.diagnostic_source,
-                    obstacle,
-                    viewer,
-                    self.diagnostic_frame,
-                    Some(crate::ai_vision::ViewRadiusCacheEntry {
-                        viewer,
-                        frame: self.diagnostic_frame,
-                        radius,
-                    }),
-                    Some(radius),
-                    std::panic::Location::caller(),
-                );
-            }
-            return radius;
-        }
-        if let Some(viewer) = self.diagnostic_viewer {
-            crate::ai_vision::debug_view_radius_cache_event(
-                "owner_miss",
-                self.diagnostic_source,
-                obstacle,
-                viewer,
-                self.diagnostic_frame,
-                None,
-                None,
-                std::panic::Location::caller(),
-            );
-        }
-        let radius = if let Some(viewer) = self.diagnostic_viewer {
-            crate::ai_vision::with_view_radius_sector_debug_context(
-                viewer,
-                self.diagnostic_frame,
-                obstacle,
-                compute,
-            )
-        } else {
-            compute()
+        let viewer = self
+            .world
+            .entities
+            .expect_entity(owner, format_args!("object visibility viewer"));
+        let npc = viewer
+            .ai_actor_data()
+            .expect("object visibility requires NPC data");
+        let target = self
+            .world
+            .entities
+            .expect_entity(target, format_args!("object visibility target"));
+        let element = target.element_data();
+        let (eye, eye_world) = human_eye_point_for_visibility(viewer);
+        let mut target_world = element.position();
+        target_world.z += 1.0;
+        let obstacles = crate::sight_obstacle::ObstacleList {
+            static_obstacles: &assets.environment.static_sight_obstacles,
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
         };
-        // Zero remains a miss, but must be published as this owner's write
-        // so a prior viewer cannot reuse its radius after this pass.
-        self.values.borrow_mut().insert(obstacle, radius);
-        if let Some(viewer) = self.diagnostic_viewer {
-            crate::ai_vision::debug_view_radius_cache_event(
-                if radius == 0.0 {
-                    "owner_compute_zero"
-                } else {
-                    "owner_store"
-                },
-                self.diagnostic_source,
-                obstacle,
-                viewer,
-                self.diagnostic_frame,
-                Some(crate::ai_vision::ViewRadiusCacheEntry {
-                    viewer,
-                    frame: self.diagnostic_frame,
-                    radius,
-                }),
-                Some(radius),
-                std::panic::Location::caller(),
-            );
-        }
-        radius
+        ai_vision::compute_object_visibility(&ai_vision::ObjectVisibilityQuery {
+            viewer_los: eye,
+            viewer_world: eye_world,
+            viewer_direction: viewer.element_data().direction(),
+            view_forward: (npc.view_direction[0], npc.view_direction[1]),
+            view_radius: npc.view_radius,
+            viewer_eye_status: npc.eye_status,
+            real_half_aperture: npc.real_half_aperture,
+            viewer_in_building: self.entity_data_in_building_sector(viewer.element_data()),
+            object_belongs_to_beggar: target
+                .object_data()
+                .expect("object detectable requires object data")
+                .belongs_to_beggar,
+            target_los: element.position_map(),
+            target_world,
+            sight_obstacles: obstacles,
+            fast_grid: &self.world.fast_grid,
+            layer: viewer.element_data().layer(),
+        })
     }
-}
-
-/// Read-only NPC view-state bundled for one tick of the per-type
-/// detection passes (Body / Friend / MissedFriend / Beggar / Object).
-/// Avoids passing 18+ args to each helper.  All fields are derived
-/// from the soldier's npc/element state at the start of the per-NPC
-/// pass; nothing here mutates.
-#[derive(Clone, Copy)]
-struct ViewContext<'a> {
-    ground_position: GroundPoint,
-    /// Original-game inside-building test: building sector or active door transit.
-    /// Used only by detection refresh's outer scan-entry alternative.
-    viewer_inside_building: bool,
-    hostile_to_player: bool,
-    eye: MapPoint,
-    eye_world: crate::coordinates::WorldPoint3D,
-    dir: i16,
-    layer: u16,
-    view_forward: (f32, f32),
-    view_radius: u16,
-    real_half_aperture: f32,
-    viewer_in_building: bool,
-    viewer_building_sector: Option<crate::position_interface::SectorHandle>,
-    is_night_or_fog: bool,
-    view_radius_cache: &'a OwnerViewRadiusCache,
-    eye_status: crate::element::EyeStatus,
-    view_speed: u16,
-    modified_frame: u32,
-    universal_frame: u32,
-    original_creation_order: u32,
-    golden_eye: bool,
-    sight_obstacles: &'a crate::sight_obstacle::ObstacleList<'a>,
-    fast_grid: &'a crate::fast_find_grid::FastFindGrid,
 }
 
 #[cfg(test)]
@@ -4221,7 +2568,7 @@ mod tests {
     fn optical_passing_door_follows_selected_command_without_runtime_door_state() {
         let target = EntityId::Pc(crate::entity_id::PcId(0));
         let mut sequences = crate::sequence::SequenceManager::new();
-        assert!(!optical_target_is_passing_door(&sequences, target));
+        assert!(!selected_actor_is_passing_door(&sequences, target));
 
         let sequence = sequences.launch_element(crate::sequence::SequenceElement::new(
             1,
@@ -4230,7 +2577,7 @@ mod tests {
         ));
         sequences.element_in_progress(sequence, 0);
 
-        assert!(optical_target_is_passing_door(&sequences, target));
+        assert!(selected_actor_is_passing_door(&sequences, target));
     }
 
     #[test]
@@ -4388,64 +2735,23 @@ mod tests {
     }
 
     #[test]
-    fn owner_view_radius_cache_computes_once_per_ground_or_obstacle_key() {
-        let cache = OwnerViewRadiusCache::default();
-        let calls = std::cell::Cell::new(0_u32);
-        let compute = || {
-            calls.set(calls.get() + 1);
-            321.0
-        };
-
-        assert_eq!(cache.get_or_compute(None, compute), 321.0);
-        assert_eq!(cache.get_or_compute(None, compute), 321.0);
-        assert_eq!(calls.get(), 1);
-
-        let obstacle = crate::position_interface::ObstacleHandle::new(1)
-            .expect("test obstacle handle should be representable");
-        assert_eq!(cache.get_or_compute(Some(obstacle), compute), 321.0);
-        assert_eq!(cache.get_or_compute(Some(obstacle), compute), 321.0);
-        assert_eq!(calls.get(), 2);
-    }
-
-    #[test]
-    fn owner_view_radius_cache_publishes_zero_over_another_viewer() {
+    fn persistent_view_radius_distinguishes_owner_frame_and_surface_and_zero_is_a_miss() {
         let first = EntityId::from(crate::entity_id::SoldierId(7));
         let second = EntityId::from(crate::entity_id::SoldierId(9));
-        let mut persistent = crate::ai_vision::ViewRadiusCache::default();
-        let surfaces = [None, crate::position_interface::ObstacleHandle::new(3)];
-        for surface in surfaces {
-            persistent.set(surface, first, 40, 125.0);
-        }
-        let cache = OwnerViewRadiusCache::from_persistent(&persistent, second, 40, "test");
-        for surface in surfaces {
-            assert_eq!(cache.get_or_compute(surface, || 0.0), 0.0);
-            assert_eq!(cache.get_or_compute(surface, || 0.0), 0.0);
-        }
-        cache.commit_to(&mut persistent, second, 40);
-        let next = OwnerViewRadiusCache::from_persistent(&persistent, first, 40, "test");
-        for surface in surfaces {
-            assert_eq!(persistent.get(surface, first, 40), None);
-            assert_eq!(persistent.get(surface, second, 40), None);
-            assert_eq!(next.get_or_compute(surface, || 90.0), 90.0);
-        }
-        next.commit_to(&mut persistent, first, 40);
-        for surface in surfaces {
-            assert_eq!(persistent.get(surface, first, 40), Some(90.0));
-        }
-    }
-
-    #[test]
-    fn owner_view_radius_cache_does_not_reuse_original_zero_sentinel() {
-        let cache = OwnerViewRadiusCache::default();
-        let calls = std::cell::Cell::new(0_u32);
-        let compute_zero = || {
-            calls.set(calls.get() + 1);
-            0.0
-        };
-
-        assert_eq!(cache.get_or_compute(None, compute_zero), 0.0);
-        assert_eq!(cache.get_or_compute(None, compute_zero), 0.0);
-        assert_eq!(calls.get(), 2);
+        let mut cache = crate::ai_vision::ViewRadiusCache::default();
+        let surface = crate::position_interface::ObstacleHandle::new(3);
+        cache.set(None, first, 40, 125.0);
+        cache.set(surface, first, 40, 321.0);
+        assert_eq!(cache.get(None, first, 40), Some(125.0));
+        assert_eq!(cache.get(surface, first, 40), Some(321.0));
+        assert_eq!(cache.get(surface, first, 41), None);
+        assert_eq!(cache.get(surface, second, 40), None);
+        cache.set(surface, second, 40, 0.0);
+        assert_eq!(cache.get(surface, first, 40), None);
+        assert_eq!(cache.get(surface, second, 40), None);
+        assert_eq!(cache.get(None, first, 40), Some(125.0));
+        cache.set(surface, second, 40, 90.0);
+        assert_eq!(cache.get(surface, second, 40), Some(90.0));
     }
 
     #[test]
@@ -4732,344 +3038,4 @@ mod tests {
             assert_eq!(npc.worst_detected_type, DetectableType::None);
         }
     }
-}
-
-/// One Enemy-bucket optical sample, preserving the exact outer gate, camp
-/// cadence, cache and disguise order. Aggregation remains in detectable order
-/// in the caller; None means an early gate cleared this sample.
-fn scan_enemy_detectable(
-    det: &mut Detectable,
-    target: &EnemyOpticalTarget,
-    viewer: &SoldierSightContext,
-    view: &ViewContext<'_>,
-    npc_id: EntityId,
-    scan_decision: bool,
-    viewer_player_aligned: bool,
-    is_forest_level: bool,
-    got_beggar_trick: &mut bool,
-) -> Option<u16> {
-    let target_id = target.id;
-    let viewer_blipped = viewer.blipped;
-    let lacklandist_refresh_always =
-        lacklandist_visibility_refresh_always(viewer.eye_status, viewer.alert_status);
-    let ViewContext {
-        ground_position: me_ground_position,
-        viewer_inside_building,
-        hostile_to_player: viewer_hostile_to_player,
-        eye,
-        eye_world,
-        dir,
-        layer,
-        view_forward,
-        view_radius,
-        real_half_aperture,
-        viewer_in_building,
-        viewer_building_sector,
-        is_night_or_fog,
-        view_radius_cache,
-        eye_status,
-        view_speed,
-        modified_frame,
-        universal_frame,
-        original_creation_order,
-        golden_eye,
-        sight_obstacles,
-        fast_grid,
-    } = *view;
-    let sight_obstacles = *sight_obstacles;
-    // Original's outer detection-refresh box gate precedes
-    // visibility calculation and its cadence. A previously visible
-    // target and every target while indoors still enter; all
-    // others must lie in the ground-position world-X/Y
-    // radius/aspect bounding box.
-    let debug_visibility_stage =
-        visibility_stage_debug_enabled(universal_frame, original_creation_order, target_id);
-    if debug_visibility_stage {
-        trace_visibility_stage_outer_gate(det, target, npc_id, view, scan_decision);
-    }
-    if !scan_decision {
-        tracing::trace!(
-            observer = ?npc_id,
-            target = ?target_id,
-            view_radius,
-            viewer_x = me_ground_position.x,
-            viewer_y = me_ground_position.y,
-            target_x = target.ground_position.x,
-            target_y = target.ground_position.y,
-            "Enemy detectable outside detection-refresh box"
-        );
-        det.seen_now = false;
-        det.last_visibility = 0.0;
-        return None;
-    }
-
-    // Visibility calculation returns zero for blind eyes before either
-    // camp's cadence branch. Clear the cached sample too so a
-    // closed cadence cannot resurrect a formerly visible target.
-    if eye_status.is_blind() {
-        det.seen_now = false;
-        det.last_visibility = 0.0;
-        return None;
-    }
-    // Do not reject a target merely because its logical movement
-    // layer differs. The original game's human-visibility check compares
-    // the full 3D eye/detection points and lets detection queries
-    // decide line of sight; actors on visible stairs, roofs, and
-    // adjoining elevations can therefore be seen cross-layer.
-    // The original game's Lacklandist visibility calculation rejects HollowMan
-    // targets before its PC-vs-soldier cadence branch. Keep the
-    // detectable (cleanup only removes dead enemies),
-    // but clear both live visibility and the cached sample.
-    if viewer_hostile_to_player && target.hollow_man {
-        det.seen_now = false;
-        det.last_visibility = 0.0;
-        return None;
-    }
-
-    // The original game's Lacklandist player-only blip and guard gates run
-    // before the PC cadence decision. They invalidate the cached
-    // sample even when this frame would otherwise reuse it.
-    if viewer_hostile_to_player && target.is_pc && viewer_blipped && !viewer_inside_building {
-        det.seen_now = false;
-        det.last_visibility = 0.0;
-        return None;
-    }
-    if viewer_hostile_to_player && target.is_pc && !det.seen_last_frame && target.guarded {
-        det.seen_now = false;
-        det.last_visibility = 0.0;
-        return None;
-    }
-
-    let frequency = if target.is_soldier || viewer_player_aligned {
-        ai_vision::DETECTION_FREQUENCY_ENEMY_NPC
-    } else {
-        ai_vision::DETECTION_FREQUENCY_ENEMY_PC
-    };
-    let gate_open = modified_frame.is_multiple_of(frequency)
-        || (viewer_hostile_to_player && lacklandist_refresh_always);
-    tracing::trace!(
-        observer = ?npc_id,
-        target = ?target_id,
-        modified_frame,
-        frequency,
-        gate_open,
-        camp = ?viewer.camp,
-        lacklandist_refresh_always,
-        "Enemy detection cadence gate"
-    );
-
-    // Only compute visibility when the
-    // detection-frequency gate is open.  On closed-gate
-    // frames the cached post-multiplied value from the
-    // most recent gate-open frame is reused, so the
-    // sharpness accumulator decays smoothly instead of
-    // dropping to 0 every non-gate tick.  The gate-open
-    // branch stores the post-multiplied value into
-    // `det.last_visibility` (see the assignment after
-    // the multiplications below), and the closed-gate
-    // branch just reuses it.
-    let visibility_raw = if gate_open {
-        // Same-building rule:
-        //   if viewer in building:
-        //     if target in same building AND target
-        //       alive / conscious / NOT passing door → 0.5
-        //     else → 0.0
-        let target_in_same_building =
-            viewer_in_building && viewer_building_sector == target.building_sector;
-        // Posture-based Z offsets for the 3D close-range
-        // distance check (see
-        // `ai_vision::compute_visibility`).  The LOS
-        // raycast itself is still 2D until sight-obstacle
-        // data carries Z.
-        //
-        let target_obstacle_handle = target.obstacle_idx;
-        let target_obstacle = target_obstacle_handle.map(|handle| {
-            sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
-                panic!(
-                    "Enemy visibility target {} requires missing obstacle {}",
-                    target_id.index(),
-                    handle
-                )
-            })
-        });
-        let q = ai_vision::VisibilityQuery {
-            viewer_los: eye,
-            viewer_world: eye_world,
-            viewer_direction: dir,
-            view_forward,
-            view_radius,
-            viewer_eye_status: eye_status,
-            real_half_aperture,
-            viewer_in_building,
-            target_in_same_building,
-            forest_180_degree_view: forest_180_degree_view_enabled_with_relationship(
-                is_forest_level,
-                viewer_player_aligned,
-            ),
-            golden_eye_mode: golden_eye,
-            // Resolved lazily below at Original's
-            // view-radius calculation boundary.
-            effective_view_radius: view_radius as f32,
-            target_is_active_and_outside_building: target.active
-                && target.building_sector.is_none(),
-            target_los: crate::stealth::detection_point_xy(
-                target.position,
-                target.posture,
-                target.direction,
-            ),
-            target_world: target.detection_point.unwrap_or_else(|| {
-                panic!(
-                    "live Enemy target {} for NPC {} has no detection point",
-                    target_id.index(),
-                    npc_id.index()
-                )
-            }),
-            target_posture: target.posture,
-            target_action_state: target.action_state,
-            target_is_pc: target.is_pc,
-            cloak_deception_applies: target.posture == crate::element::Posture::Cloaked
-                && viewer.camp.is_hostile_to(target.camp),
-            cloak_remembers_target: det.seen_last_frame
-                || viewer.primary_target == Some(crate::ai::AiEntityHandle::new(target_id.index()))
-                || viewer.remembered_targets.contains(&target_id.index()),
-            // TODO(cloak-authoring): connect this only when an
-            // explicit modded profile schema supplies detector data.
-            cloak_authored_detector: crate::cloak::SHIPPED_AUTHORED_DETECTOR,
-            sight_obstacles,
-            fast_grid: fast_grid,
-            layer,
-            target_dead: target.dead,
-            target_unconscious: target.unconscious,
-            target_passing_door: target.passing_door,
-        };
-        let effective_view_radius = std::cell::Cell::new(None);
-        let visibility = ai_vision::compute_visibility_with_effective_radius(&q, || {
-            let radius = view_radius_cache.get_or_compute(target_obstacle_handle, || {
-                ai_vision::compute_view_radius(
-                    q.viewer_world,
-                    view_radius,
-                    view_forward,
-                    real_half_aperture,
-                    is_night_or_fog,
-                    fast_grid,
-                    sight_obstacles,
-                    target_obstacle,
-                )
-            });
-            effective_view_radius.set(Some(radius));
-            radius
-        });
-        if debug_visibility_stage {
-            trace_visibility_stage_human_result(
-                [universal_frame, original_creation_order],
-                npc_id,
-                target,
-                &q,
-                effective_view_radius.get(),
-                visibility,
-            );
-        }
-        tracing::trace!(
-            observer = ?npc_id,
-            target = ?target_id,
-            modified_frame,
-            effective_view_radius = ?effective_view_radius.get(),
-            visibility,
-            viewer_x = q.viewer_world.x,
-            viewer_y = q.viewer_world.y,
-            viewer_z = q.viewer_world.z,
-            target_x = q.target_world.x,
-            target_y = q.target_world.y,
-            target_z = q.target_world.z,
-            "Enemy optical visibility refresh"
-        );
-        visibility
-    } else {
-        0.0
-    };
-    // Multiply by the frequency so that the averaged
-    // sharpness over time matches a per-frame call.
-    //
-    // For PC targets (non-soldier), scale further by the
-    // PC's profile-level forest/city detection-speed
-    // percentage.  A stealthy hero (e.g. a scout profile
-    // with a low detection speed) is slower to spot; a
-    // loud hero is faster.  Only apply this inside the
-    // refresh gate — the cached `last_visibility` value
-    // already has it baked in.
-    let mut visibility = if gate_open {
-        let detection_speed_factor = if target.is_pc && viewer_hostile_to_player {
-            let detection_speed_pct = if is_forest_level {
-                target.detection_speed_in_forest
-            } else {
-                target.detection_speed_in_city
-            };
-            0.01 * detection_speed_pct as f32
-        } else {
-            1.0
-        };
-        frequency as f32 * visibility_raw * detection_speed_factor
-    } else {
-        // Closed-gate frame — reuse the cached post-
-        // multiplied value from the last refresh so the
-        // sharpness accumulator decays smoothly instead
-        // of dropping to 0 every non-gate tick.
-        det.last_visibility
-    };
-
-    // "Did you know that a certain Stuteley sometimes
-    // dresses up as beggar?"  When the NPC has not yet
-    // learned the beggar trick and the PC is currently
-    // visible, gate on the PC's running animation:
-    //   * SimulatingBeggar (resting beggar pose) → return 0;
-    //     the NPC just sees an old beggar, not the disguised
-    //     hero.
-    //   * Transition WaitingUpright↔SimulatingBeggar (mid-
-    //     change) → the NPC catches the swap and learns the
-    //     trick (`got_the_beggar_trick = true`).  Visibility
-    //     stays > 0 so the sighting still commits this frame.
-    // Once the flag is true the NPC sees through future
-    // beggar disguises permanently (per-NPC, not global).
-    visibility = apply_enemy_beggar_disguise_with_relationship(
-        viewer_hostile_to_player,
-        target.is_pc,
-        got_beggar_trick,
-        target.order_type,
-        visibility,
-    );
-
-    // Sharpness depends on posture.  Leaning out uses
-    // 10x faster detection (200 vs 20).
-    let sharpness = detection_sharpness(view_speed, visibility);
-    let is_visible = sharpness > 0;
-    tracing::trace!(
-        npc = ?npc_id,
-        target = ?target_id,
-        gate_open,
-        visibility_raw,
-        visibility,
-        sharpness,
-        is_visible,
-        prev_seen_last_frame = det.seen_last_frame,
-        npc_dir = dir,
-        view_forward_x = view_forward.0,
-        view_forward_y = view_forward.1,
-        real_half_aperture,
-        viewer_x = eye.x,
-        viewer_y = eye.y,
-        target_x = target.position.x,
-        target_y = target.position.y,
-        "visibility check"
-    );
-
-    // Single-field update.  Next frame's edge-trigger
-    // reads this value directly.
-    det.seen_now = is_visible;
-    // Original's outer detection-refresh loop writes the final
-    // wrapper result on every scanned entry. Eligible closed
-    // cadence reuses the same value, while the beggar-disguise
-    // post-filter must be able to replace that cached value by 0.
-    det.last_visibility = visibility;
-
-    Some(sharpness)
 }

@@ -33,9 +33,9 @@ pub use macro_patrol::{
 mod model;
 pub use model::{
     AMBUSH_BOX_HALF_SIZE, AiState, AlertLevel, AlertSoldiersFailureContinuation, AmbushPoint,
-    Attitude, CombatInfo, CrossNpcAction, Curiosity, Decision, Detection, DoorCombatInfo,
-    DoorSeekInfo, EmoticonType, ForbiddenRemark, Hint, LogLine, LogLineType, LookDirection, Noise,
-    NoiseOrigin, NoiseType, OriginalEnumWord, PanicRequest, PatrolAssignment, PointArchery,
+    Attitude, CombatInfo, Curiosity, Decision, Detection, DoorCombatInfo, DoorSeekInfo,
+    EmoticonType, ForbiddenRemark, Hint, LogLine, LogLineType, LookDirection, Noise, NoiseOrigin,
+    NoiseType, OriginalEnumWord, PanicRequest, PatrolAssignment, PointArchery,
     ProbabilityDistribution, Question, ReconnaissanceReport, Remark, ReportType, RepulsivePoint,
     ScreenRemark, ScriptSeekAreaRequest, SectorArchery, SeekPoint, SeekPointDirection, Stimulus,
     StimulusCategory, StimulusInfo, StimulusType, StolenObject, StoredEnumWord, Substate,

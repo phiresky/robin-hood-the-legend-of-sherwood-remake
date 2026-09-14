@@ -75,8 +75,7 @@ impl EngineInner {
             AiState::Default,
             Substate::DefaultOnPostLookingSidewards,
         );
-        self.default_ai_mut(owner).stop_all();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.stop_ai_owner(sim, assets, owner);
         let direction =
             match crate::sim_rng::u32(sim, crate::sim_rng::RngSite::DefaultPostLook, 0..4) {
                 0 => LookDirection::Left,

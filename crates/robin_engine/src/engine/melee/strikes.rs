@@ -3643,17 +3643,10 @@ impl EngineInner {
             // immediate stop-all side effect stays engine-side so it
             // runs before the new strike sequence is queued.
             self.begin_ai_special_strike(sim, assets, attack.soldier_id);
-            let ai = self.world.entities.expect_enemy_ai_mut(
-                attack.soldier_id,
-                format_args!("special-strike owner before begin"),
-            );
-            ai.base.stop_all();
+            self.stop_ai_owner(sim, assets, attack.soldier_id);
             if special_debug {
                 self.trace_special_strike_state(current_frame, attack.soldier_id, "after_begin");
             }
-            self.drain_ai_owner_work_for(sim, assets, attack.soldier_id);
-            self.apply_pending_ai_halt(attack.soldier_id);
-            self.dispatch_condolations_for_owner_boundary(sim, attack.soldier_id, assets);
             if special_debug {
                 self.trace_special_strike_state(
                     current_frame,

@@ -1567,48 +1567,6 @@ pub fn is_detecting_target(
 
 // ─── refresh_view ───────────────────────────────────────────────
 
-/// Read-only context gathered from the entity each frame, passed to
-/// [`refresh_view`] alongside the mutable [`NpcData`].
-#[derive(Debug, Clone)]
-pub struct RefreshViewContext {
-    /// Current body direction sector (0-15).
-    pub body_direction: i16,
-    /// Current posture.
-    pub posture: Posture,
-    /// Current animation (order type), for look-left/right validation.
-    pub animation: Option<OrderType>,
-    /// Whether the NPC is unconscious.
-    pub is_unconscious: bool,
-    /// Whether the NPC is tied up.
-    pub is_tied: bool,
-    /// Whether the NPC is dead.
-    pub is_dead: bool,
-    /// Whether the NPC is active and outside any building sector.
-    pub is_active_and_outside_building: bool,
-    /// Whether this NPC is mounted on a horse.
-    pub is_rider: bool,
-    /// Deterministic difficulty scaling for hostile-soldier view distance.
-    /// Retail presets and non-hostile/non-soldier NPCs pass 100.
-    pub hostile_soldier_view_distance_percent: u16,
-    /// Deterministic difficulty scaling for hostile-soldier cone width.
-    /// Retail presets and non-hostile/non-soldier NPCs pass 100.
-    pub hostile_soldier_view_angle_percent: u16,
-    /// Current blood-alcohol level (0-255), sourced from the AI brain
-    /// each frame.  Drives the drunken vision-cone wobble.  Passed
-    /// through the context (rather than read from `NpcData`) because
-    /// the canonical value lives on `AiController` and mutates at
-    /// runtime via script natives and the swordfight drunk-roll path
-    /// — a cached copy on `NpcData` would go stale.
-    pub blood_alcohol: u8,
-    /// NPC's own projected map position (for stare/follow vector).
-    /// Original-game ground position: world-space `(position.x, position.y)`.
-    pub own_position: GroundPoint,
-    /// Projected map position of the follow target, if [`EyeStatus::Follow`]
-    /// and the target is alive.
-    /// The original game followed the element's ground position.
-    pub follow_target_position: Option<GroundPoint>,
-}
-
 /// Per-frame view parameter update.
 ///
 /// Mutates the NPC's view state fields (direction, radius, aperture,
@@ -1628,17 +1586,54 @@ pub struct RefreshViewContext {
 /// defensive reset inside the `LookToTheLeft` / `LookToTheRight` arm
 /// of [`refresh_view_look`] still clears a stale look-status the
 /// moment the animation is no longer playing.
-pub fn refresh_view(npc: &mut AiActorData, ctx: &RefreshViewContext) {
+pub fn refresh_view(
+    entity: &mut crate::element::Entity,
+    animation: Option<OrderType>,
+    follow_target_position: Option<GroundPoint>,
+    difficulty: &crate::player_profile::DifficultyRules,
+    is_building_sector: impl FnOnce(Option<crate::position_interface::SectorHandle>) -> bool,
+) {
+    use crate::element::Entity;
+    let (element, human, life_points, npc, soldier) = match entity {
+        Entity::Soldier(actor) => (
+            &actor.element,
+            &actor.human,
+            &actor.npc.life_points,
+            &mut actor.npc.ai,
+            Some(&actor.soldier),
+        ),
+        Entity::Civilian(actor) => (
+            &actor.element,
+            &actor.human,
+            &actor.npc.life_points,
+            &mut actor.npc.ai,
+            None,
+        ),
+        Entity::Pc(actor) => {
+            let Some(npc) = actor.pc.ai.as_deref_mut() else {
+                return;
+            };
+            (
+                &actor.element,
+                &actor.human,
+                &actor.pc.life_points,
+                npc,
+                None,
+            )
+        }
+        _ => return,
+    };
+
     // Symptom therapy: unconscious/tied/dead NPCs that somehow have
     // a non-closed status get forced to Closed.
     if npc.eye_status != EyeStatus::DieOrGetUnconscious
-        && (ctx.is_unconscious || ctx.is_tied || ctx.is_dead)
+        && (human.unconscious || element.posture() == Posture::Tied || *life_points <= 0)
     {
         npc.eye_status = EyeStatus::Closed;
     }
 
     // Body direction as a unit vector.
-    let body_dir = ctx.body_direction;
+    let body_dir = element.direction();
     let (vdx, vdy) = sector_to_forward(body_dir);
 
     // Direction-change tracking.  When the body rotates, compensate
@@ -1669,7 +1664,7 @@ pub fn refresh_view(npc: &mut AiActorData, ctx: &RefreshViewContext) {
     }
 
     // Lean-out posture.
-    if ctx.posture == Posture::LeaningOut {
+    if element.posture() == Posture::LeaningOut {
         set_view_status(npc, EyeStatus::LookDownwards);
         npc.view_lean_out = true;
     } else if npc.eye_status == EyeStatus::LookDownwards {
@@ -1679,7 +1674,10 @@ pub fn refresh_view(npc: &mut AiActorData, ctx: &RefreshViewContext) {
 
     // Main per-status logic (only when not closed AND active outside
     // a building).
-    if npc.eye_status != EyeStatus::Closed && ctx.is_active_and_outside_building {
+    if npc.eye_status != EyeStatus::Closed
+        && element.active
+        && !is_building_sector(element.sector())
+    {
         match npc.eye_status {
             EyeStatus::ViewconeGrow => {
                 // Grow radius by 8 per frame.
@@ -1689,11 +1687,11 @@ pub fn refresh_view(npc: &mut AiActorData, ctx: &RefreshViewContext) {
                     npc.eye_status = EyeStatus::LookForward;
                 }
                 // Fall through to LookForward.
-                refresh_view_look(npc, ctx, vdx, vdy);
+                refresh_view_look(npc, animation, vdx, vdy);
             }
 
             EyeStatus::LookForward | EyeStatus::LookToTheLeft | EyeStatus::LookToTheRight => {
-                refresh_view_look(npc, ctx, vdx, vdy);
+                refresh_view_look(npc, animation, vdx, vdy);
             }
 
             EyeStatus::LookDownwards => {
@@ -1721,7 +1719,7 @@ pub fn refresh_view(npc: &mut AiActorData, ctx: &RefreshViewContext) {
 
             EyeStatus::Follow => {
                 // Update stare point from target.
-                if let Some(pos) = ctx.follow_target_position {
+                if let Some(pos) = follow_target_position {
                     npc.stare_point = pos;
                 } else {
                     tracing::warn!(
@@ -1736,11 +1734,21 @@ pub fn refresh_view(npc: &mut AiActorData, ctx: &RefreshViewContext) {
                     "refresh_view: follow stare point"
                 );
                 // Fall through to Stare.
-                refresh_view_stare(npc, vdx, vdy, &ctx.own_position);
+                refresh_view_stare(
+                    npc,
+                    vdx,
+                    vdy,
+                    &GroundPoint::new(element.position().x, element.position().y),
+                );
             }
 
             EyeStatus::Stare => {
-                refresh_view_stare(npc, vdx, vdy, &ctx.own_position);
+                refresh_view_stare(
+                    npc,
+                    vdx,
+                    vdy,
+                    &GroundPoint::new(element.position().x, element.position().y),
+                );
             }
 
             EyeStatus::Closed => {}
@@ -1757,12 +1765,13 @@ pub fn refresh_view(npc: &mut AiActorData, ctx: &RefreshViewContext) {
         }
 
         // Rider modifier.
-        if ctx.is_rider {
+        if soldier.is_some_and(|soldier| soldier.rider) {
             npc.view_radius = (npc.view_radius as f32 * RIDER_VIEW_RADIUS_FACTOR) as u16;
         }
 
         // Drunken cone wobble.
-        if ctx.blood_alcohol > 0 {
+        let blood_alcohol = npc.ai_brain.enemy().map_or(0, |ai| ai.base.blood_alcohol);
+        if blood_alcohol > 0 {
             const DRUNKEN_SPEEDS: [f32; 4] = [0.1000, 0.07634, 0.12321, 0.04546];
             for (iter, &speed) in npc.drunken_cone_iterators.iter_mut().zip(&DRUNKEN_SPEEDS) {
                 *iter += speed;
@@ -1771,7 +1780,7 @@ pub fn refresh_view(npc: &mut AiActorData, ctx: &RefreshViewContext) {
                 }
             }
 
-            let drunk_factor = 0.01 * ctx.blood_alcohol as f32;
+            let drunk_factor = 0.01 * blood_alcohol as f32;
             let radius_factor = 1.0
                 - drunk_factor
                     * (0.6
@@ -1797,13 +1806,22 @@ pub fn refresh_view(npc: &mut AiActorData, ctx: &RefreshViewContext) {
         // Integer distance scaling is deterministic across platforms; angle
         // scaling is capped just below a 180-degree cone to retain a blind
         // rear hemisphere outside the Original forest exception.
-        npc.view_radius = (u32::from(npc.view_radius)
-            * u32::from(ctx.hostile_soldier_view_distance_percent)
-            / 100)
+        let (view_distance_percent, view_angle_percent) = if soldier.is_some_and(|soldier| {
+            soldier
+                .cached_camp
+                .is_hostile_to(crate::element::Camp::Royalists)
+        }) {
+            (
+                difficulty.hostile_soldier_view_distance_percent,
+                difficulty.hostile_soldier_view_angle_percent,
+            )
+        } else {
+            (100, 100)
+        };
+        npc.view_radius = (u32::from(npc.view_radius) * u32::from(view_distance_percent) / 100)
             .min(u32::from(u16::MAX)) as u16;
-        npc.real_half_aperture =
-            (npc.real_half_aperture * ctx.hostile_soldier_view_angle_percent as f32 / 100.0)
-                .min(std::f32::consts::FRAC_PI_2 - 0.01);
+        npc.real_half_aperture = (npc.real_half_aperture * view_angle_percent as f32 / 100.0)
+            .min(std::f32::consts::FRAC_PI_2 - 0.01);
 
         let (left_x, mut left_y) = rotate_unit(
             npc.view_direction[0],
@@ -1848,13 +1866,13 @@ pub fn unfocus(npc: &mut AiActorData) {
 
 /// Common handler for `LookForward`, `LookToTheLeft`, `LookToTheRight`,
 /// and `ViewconeGrow` (after the grow step).
-fn refresh_view_look(npc: &mut AiActorData, ctx: &RefreshViewContext, vdx: f32, vdy: f32) {
+fn refresh_view_look(npc: &mut AiActorData, animation: Option<OrderType>, vdx: f32, vdy: f32) {
     // Per-status angle goal + animation validation.
     let angle_goal = match npc.eye_status {
         EyeStatus::LookForward | EyeStatus::ViewconeGrow => 0.0f32,
 
         EyeStatus::LookToTheLeft => {
-            match ctx.animation {
+            match animation {
                 Some(OrderType::LookingLeft | OrderType::LookingLeftAlerted) => {}
                 _ => set_view_status(npc, EyeStatus::LookForward),
             }
@@ -1862,7 +1880,7 @@ fn refresh_view_look(npc: &mut AiActorData, ctx: &RefreshViewContext, vdx: f32, 
         }
 
         EyeStatus::LookToTheRight => {
-            match ctx.animation {
+            match animation {
                 Some(
                     OrderType::LookingRight
                     | OrderType::WaitingUprightBoredRandom
@@ -2810,30 +2828,65 @@ mod tests {
 
     // ─── refresh_view behavioural tests ──────────────────────────
 
-    fn default_npc() -> AiActorData {
-        AiActorData {
-            eye_status: EyeStatus::LookForward,
-            view_direction: [1.0, 0.0], // facing east (sector 4)
-            direction_old: 4,
-            ..Default::default()
+    #[derive(Clone)]
+    struct ViewActor {
+        entity: crate::element::Entity,
+        target: Option<crate::element::Entity>,
+        difficulty: crate::player_profile::DifficultyRules,
+    }
+
+    impl std::ops::Deref for ViewActor {
+        type Target = AiActorData;
+        fn deref(&self) -> &AiActorData {
+            self.entity.ai_actor_data().unwrap()
         }
     }
 
-    fn ctx(animation: Option<OrderType>, posture: Posture) -> RefreshViewContext {
-        RefreshViewContext {
-            body_direction: 4,
-            posture,
-            animation,
-            is_unconscious: false,
-            is_tied: false,
-            is_dead: false,
-            is_active_and_outside_building: true,
-            is_rider: false,
-            hostile_soldier_view_distance_percent: 100,
-            hostile_soldier_view_angle_percent: 100,
-            blood_alcohol: 0,
-            own_position: GroundPoint::new(0.0, 0.0),
-            follow_target_position: None,
+    impl std::ops::DerefMut for ViewActor {
+        fn deref_mut(&mut self) -> &mut AiActorData {
+            self.entity.ai_actor_data_mut().unwrap()
+        }
+    }
+
+    impl ViewActor {
+        fn refresh(&mut self, animation: Option<OrderType>) {
+            let follow = self.target.as_ref().map(|target| {
+                let position = target.element_data().position();
+                GroundPoint::new(position.x, position.y)
+            });
+            refresh_view(
+                &mut self.entity,
+                animation,
+                follow,
+                &self.difficulty,
+                |_| false,
+            );
+        }
+        fn set_follow_position(&mut self, position: GroundPoint) {
+            let target = self.target.get_or_insert_with(|| {
+                crate::engine::test_support::actors::make_test_pc(Posture::Upright)
+            });
+            target
+                .element_data_mut()
+                .set_position(crate::coordinates::WorldPoint3D::new(
+                    position.x, position.y, 0.0,
+                ));
+        }
+    }
+
+    fn default_npc() -> ViewActor {
+        let mut entity = crate::engine::test_support::actors::make_test_ai_soldier(
+            crate::element::Camp::Lacklandists,
+        );
+        entity.element_data_mut().set_direction_instantly(4);
+        let npc = entity.ai_actor_data_mut().unwrap();
+        npc.eye_status = EyeStatus::LookForward;
+        npc.view_direction = [1.0, 0.0];
+        npc.direction_old = 4;
+        ViewActor {
+            entity,
+            target: None,
+            difficulty: crate::player_profile::DifficultyLevel::Medium.rules(),
         }
     }
 
@@ -2842,11 +2895,11 @@ mod tests {
         let mut npc = default_npc();
         npc.view_radius_base = 400;
         npc.view_radius_goal = 400;
-        let mut c = ctx(None, Posture::Upright);
-        c.hostile_soldier_view_distance_percent = 135;
-        c.hostile_soldier_view_angle_percent = 125;
+        let c = None;
+        npc.difficulty.hostile_soldier_view_distance_percent = 135;
+        npc.difficulty.hostile_soldier_view_angle_percent = 125;
 
-        refresh_view(&mut npc, &c);
+        npc.refresh(c);
 
         assert_eq!(npc.view_radius, 540);
         assert!(
@@ -2866,12 +2919,12 @@ mod tests {
         // angle toward its goal.
         let mut npc = default_npc();
         set_view_status(&mut npc, EyeStatus::LookToTheLeft);
-        let c = ctx(Some(OrderType::LookingLeft), Posture::Upright);
+        let c = Some(OrderType::LookingLeft);
 
         // Drive the transition over several frames so the view angle
         // walks toward its -π/4 goal.
         for _ in 0..20 {
-            refresh_view(&mut npc, &c);
+            npc.refresh(c);
         }
         assert_eq!(npc.eye_status, EyeStatus::LookToTheLeft);
         // View angle should have settled at -π/4 (head turned left).
@@ -2890,9 +2943,9 @@ mod tests {
         // cone.
         let mut npc = default_npc();
         set_view_status(&mut npc, EyeStatus::LookToTheRight);
-        let c = ctx(Some(OrderType::LookingRight), Posture::Upright);
+        let c = Some(OrderType::LookingRight);
         for _ in 0..20 {
-            refresh_view(&mut npc, &c);
+            npc.refresh(c);
         }
         assert_eq!(npc.eye_status, EyeStatus::LookToTheRight);
         assert!(
@@ -2910,9 +2963,9 @@ mod tests {
         // back to 0 — not leave it stuck at -π/4.
         let mut npc = default_npc();
         set_view_status(&mut npc, EyeStatus::LookToTheLeft);
-        let c_hold = ctx(Some(OrderType::LookingLeft), Posture::Upright);
+        let c_hold = Some(OrderType::LookingLeft);
         for _ in 0..20 {
-            refresh_view(&mut npc, &c_hold);
+            npc.refresh(c_hold);
         }
         assert_eq!(npc.eye_status, EyeStatus::LookToTheLeft);
         assert!((npc.view_angle + std::f32::consts::FRAC_PI_4).abs() < 1e-4);
@@ -2920,15 +2973,15 @@ mod tests {
         // Simulate the MS::Done event edge.
         set_view_status(&mut npc, EyeStatus::LookForward);
         // Animation ticks keep flowing until the sprite advances;
-        // `ctx.animation` can still briefly be LookingLeft on the
+        // the current animation can still briefly be LookingLeft on the
         // same frame as the DONE event, and `refresh_view` must not
         // reassert LookToTheLeft.
-        refresh_view(&mut npc, &c_hold);
+        npc.refresh(c_hold);
         assert_eq!(npc.eye_status, EyeStatus::LookForward);
         // Subsequent frames drive the cone back to center.
-        let c_after = ctx(Some(OrderType::WaitingUpright), Posture::Upright);
+        let c_after = Some(OrderType::WaitingUpright);
         for _ in 0..20 {
-            refresh_view(&mut npc, &c_after);
+            npc.refresh(c_after);
         }
         assert!(
             npc.view_angle.abs() < 1e-4,
@@ -2949,14 +3002,14 @@ mod tests {
         // preserves it while the animation keeps playing.
         let mut officer = default_npc();
         set_view_status(&mut officer, EyeStatus::LookToTheRight);
-        let c = ctx(Some(OrderType::WaitingUprightBoredRandom), Posture::Upright);
-        refresh_view(&mut officer, &c);
+        let c = Some(OrderType::WaitingUprightBoredRandom);
+        officer.refresh(c);
         assert_eq!(officer.eye_status, EyeStatus::LookToTheRight);
 
         // A grunt that never received the START event stays on
         // LookForward across the same animation.
         let mut grunt = default_npc();
-        refresh_view(&mut grunt, &c);
+        grunt.refresh(c);
         assert_eq!(grunt.eye_status, EyeStatus::LookForward);
     }
 
@@ -2969,8 +3022,8 @@ mod tests {
         npc.view_angle = -std::f32::consts::FRAC_PI_4;
         // Next frame the NPC is playing a waiting animation, not
         // LookingLeft.  `refresh_view` must clear the look state.
-        let c = ctx(Some(OrderType::WaitingUpright), Posture::Upright);
-        refresh_view(&mut npc, &c);
+        let c = Some(OrderType::WaitingUpright);
+        npc.refresh(c);
         assert_eq!(npc.eye_status, EyeStatus::LookForward);
     }
 
@@ -2981,11 +3034,11 @@ mod tests {
         let mut sober = default_npc();
         sober.view_radius_base = 400;
         let mut drunk = sober.clone();
-        refresh_view(&mut sober, &ctx(None, Posture::Upright));
+        sober.refresh(None);
 
-        let mut c = ctx(None, Posture::Upright);
-        c.blood_alcohol = 80;
-        refresh_view(&mut drunk, &c);
+        let c = None;
+        drunk.entity.enemy_ai_mut().unwrap().base.blood_alcohol = 80;
+        drunk.refresh(c);
 
         // Drunken NPC sees a shorter distance through a narrower
         // aperture, and the phase iterators have advanced.
@@ -2999,7 +3052,10 @@ mod tests {
         // LeaningOut posture forces LookDownwards with a π/2-wide
         // aperture and no view-angle offset.
         let mut npc = default_npc();
-        refresh_view(&mut npc, &ctx(None, Posture::LeaningOut));
+        npc.entity
+            .element_data_mut()
+            .set_posture(Posture::LeaningOut);
+        npc.refresh(None);
         assert_eq!(npc.eye_status, EyeStatus::LookDownwards);
         assert!(npc.view_lean_out);
         // Half-aperture close to π/2 (minus the 0.05 safety margin).
@@ -3008,7 +3064,8 @@ mod tests {
         assert_eq!(npc.view_angle, 0.0);
 
         // Dropping the posture restores LookForward and NORMAL_HALF_APERTURE.
-        refresh_view(&mut npc, &ctx(None, Posture::Upright));
+        npc.entity.element_data_mut().set_posture(Posture::Upright);
+        npc.refresh(None);
         assert_eq!(npc.eye_status, EyeStatus::LookForward);
         assert!(!npc.view_lean_out);
         assert!((npc.real_half_aperture - NORMAL_HALF_APERTURE).abs() < 1e-4);
@@ -3027,7 +3084,7 @@ mod tests {
 
         // Original-game NPC actors start the radius step at 10. One tick consumes
         // that initial step, then accelerates it from 10 → 15.
-        refresh_view(&mut npc, &ctx(None, Posture::Upright));
+        npc.refresh(None);
         assert_eq!(npc.view_alpha_start, initial_alpha - 5);
         assert_eq!(npc.view_radius_goal, 390);
         assert_eq!(npc.view_radius_step, 15);
@@ -3035,12 +3092,12 @@ mod tests {
         // With the original game's initial 400-radius state, the cone remains
         // in the dying state through refresh 11 and closes on refresh 12.
         for _ in 1..11 {
-            refresh_view(&mut npc, &ctx(None, Posture::Upright));
+            npc.refresh(None);
         }
         assert_eq!(npc.eye_status, EyeStatus::DieOrGetUnconscious);
         assert_eq!(npc.view_radius_goal, 15);
 
-        refresh_view(&mut npc, &ctx(None, Posture::Upright));
+        npc.refresh(None);
         assert_eq!(npc.eye_status, EyeStatus::Closed);
         assert_eq!(npc.view_radius_goal, 0);
     }
@@ -3055,11 +3112,11 @@ mod tests {
         assert_eq!(npc.eye_status, EyeStatus::Follow);
 
         // Target off to the NPC's right (body facing east, target south-east).
-        let mut c = ctx(None, Posture::Upright);
-        c.follow_target_position = Some(GroundPoint::new(200.0, 200.0));
+        let c = None;
+        npc.set_follow_position(GroundPoint::new(200.0, 200.0));
 
         for _ in 0..30 {
-            refresh_view(&mut npc, &c);
+            npc.refresh(c);
         }
         // View angle should have rotated to a positive value (toward target).
         assert!(
@@ -3081,11 +3138,14 @@ mod tests {
         npc.view_direction = [-0.323_616_98, -0.207_519_53];
         npc.view_angle = 0.177_500_71;
 
-        let mut c = ctx(None, Posture::Upright);
-        c.body_direction = 13;
-        c.own_position = GroundPoint::new(716.0, 2_300.449);
-        c.follow_target_position = Some(c.own_position);
-        refresh_view(&mut npc, &c);
+        let c = None;
+        npc.entity.element_data_mut().set_direction_instantly(13);
+        npc.entity
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(716.0, 2_300.449, 0.0));
+        let position = npc.entity.element_data().position();
+        npc.set_follow_position(GroundPoint::new(position.x, position.y));
+        npc.refresh(c);
 
         let (body_x, body_y) = sector_to_forward(13);
         let aspect = crate::position_interface::ASPECT_RATIO;
@@ -3114,11 +3174,14 @@ mod tests {
         npc.view_direction = [-1.103_042_4, -4.615_387];
         npc.view_angle = 0.158_107_16;
 
-        let mut c = ctx(None, Posture::Upright);
-        c.body_direction = 15;
-        c.own_position = GroundPoint::new(1347.0, 488.0);
-        c.follow_target_position = Some(c.own_position);
-        refresh_view(&mut npc, &c);
+        let c = None;
+        npc.entity.element_data_mut().set_direction_instantly(15);
+        npc.entity
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(1347.0, 488.0, 0.0));
+        let position = npc.entity.element_data().position();
+        npc.set_follow_position(GroundPoint::new(position.x, position.y));
+        npc.refresh(c);
 
         let (body_x, body_y) = sector_to_forward(15);
         let aspect = crate::position_interface::ASPECT_RATIO;
@@ -3159,9 +3222,9 @@ mod tests {
         // Symptom therapy forces Closed on unconscious/tied/dead
         // NPCs (unless already in the DIE fade path).
         let mut npc = default_npc();
-        let mut c = ctx(None, Posture::Upright);
-        c.is_dead = true;
-        refresh_view(&mut npc, &c);
+        let c = None;
+        npc.entity.npc_data_mut().unwrap().life_points = 0;
+        npc.refresh(c);
         assert_eq!(npc.eye_status, EyeStatus::Closed);
     }
 

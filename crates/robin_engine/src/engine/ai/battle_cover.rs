@@ -386,11 +386,7 @@ impl EngineInner {
                 .expect_ai_controller_mut(owner, format_args!("archer observing timer"))
                 .launch_timer(50, self.control.frame_counter);
         } else {
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("archer observer stop"))
-                .stop_all();
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.stop_ai_owner(sim, assets, owner);
             let ai = self
                 .world
                 .entities

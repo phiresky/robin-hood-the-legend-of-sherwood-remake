@@ -298,7 +298,6 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
     assert!(ai.outbox.actor.orders.is_empty());
     assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     assert!(ai.outbox.reentrant.owner_work.is_empty());
-    assert!(!ai.has_pending_synchronous_cross_npc_actions());
     assert_eq!(ai.current_substate, Substate::DefaultGotoRoute);
     assert!(!ai.macro_timer_is_running);
     assert!(

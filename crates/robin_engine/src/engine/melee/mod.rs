@@ -247,7 +247,6 @@ impl EngineInner {
                     (
                         ai.outbox.reentrant.owner_work.len(),
                         ai.outbox.reentrant.self_stimuli.len(),
-                        ai.outbox.reentrant.cross_npc_actions.len(),
                     )
                 })
         };

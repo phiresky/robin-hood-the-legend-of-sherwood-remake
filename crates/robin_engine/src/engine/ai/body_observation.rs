@@ -82,8 +82,7 @@ impl EngineInner {
         let hint = self.live_ai_position(body_id);
         self.execute_ai_look_there(sim, assets, owner, hint, 100);
         self.seek_enemy_mut(owner).seen_dead_body = false;
-        self.seek_enemy_mut(owner).base.stop_all();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.stop_ai_owner(sim, assets, owner);
         let body_position = self.live_ai_position(body_id);
         let ai = self.seek_enemy_mut(owner);
         ai.base.seek_position = body_position;

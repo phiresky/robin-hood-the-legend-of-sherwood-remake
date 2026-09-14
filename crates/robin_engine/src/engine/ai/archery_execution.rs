@@ -294,11 +294,7 @@ impl EngineInner {
                 if distance >= 100.0 {
                     self.execute_ai_seek_next_point(sim, assets, owner);
                 } else {
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("beggar inspection stop"))
-                        .stop_all();
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                    self.stop_ai_owner(sim, assets, owner);
                     self.duty_set_state(
                         sim,
                         assets,
@@ -429,11 +425,7 @@ impl EngineInner {
                             target.get(),
                             "false beggar shot target",
                         );
-                        self.world
-                            .entities
-                            .expect_ai_controller_mut(owner, format_args!("false beggar shot stop"))
-                            .stop_all();
-                        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                        self.stop_ai_owner(sim, assets, owner);
                         self.shoot_bow_at(assets, owner, target);
                     } else {
                         self.execute_ai_begin_swordfight(sim, assets, owner);
@@ -518,11 +510,7 @@ impl EngineInner {
                         .expect("shooting requires target");
                     let target =
                         self.expect_human_id_for_ai_handle(target.get(), "aimed shot target");
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("aimed shot stop"))
-                        .stop_all();
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                    self.stop_ai_owner(sim, assets, owner);
                     self.shoot_bow_at(assets, owner, target);
                 } else {
                     self.world
@@ -548,11 +536,7 @@ impl EngineInner {
                 {
                     self.reinitialize_live_ai_enemies(owner);
                 } else {
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("bow callback stop"))
-                        .stop_all();
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                    self.stop_ai_owner(sim, assets, owner);
                 }
                 self.execute_battle_decisions(sim, assets, owner);
             }

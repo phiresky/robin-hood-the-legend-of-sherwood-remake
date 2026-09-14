@@ -252,12 +252,7 @@ impl EngineInner {
             AiState::Attacking,
             Substate::AttackingOverviewLookLeft,
         );
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("overview stop"))
-            .base
-            .stop_all();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.stop_ai_owner(sim, assets, owner);
         self.world
             .entities
             .expect_enemy_ai_mut(owner, format_args!("overview look"))

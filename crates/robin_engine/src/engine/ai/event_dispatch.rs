@@ -945,91 +945,57 @@ impl EngineInner {
         if self.actors_frozen() {
             return;
         }
-
-        // ── Phase 1: read-only — gather context ──
-        let ctx = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            let Some(npc) = entity.ai_actor_data() else {
-                return;
-            };
-
-            let edata = entity.element_data();
-            let own_world = entity.position_iface().get_position();
-            let pos = crate::coordinates::GroundPoint::new(own_world.x, own_world.y);
-
-            // Active-and-outside-building is deliberately narrower
-            // than general building containment: it only inspects the current sector's
-            // BUILDING flag. A sprite door pointer implies building containment
-            // while traversing an outdoor approach rail, but view refresh
-            // must still follow the actor's turning body on that rail.
-            let is_active_and_outside_building =
-                edata.active && self.entity_building_sector(edata.sector()).is_none();
-
-            let animation = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(npc_id)
-                .map(|(_, _, o)| o.order_type);
-
-            let is_unconscious = entity.is_unconscious();
-
-            let follow_target_position = npc.follow_target.and_then(|target_id| {
-                self.world.entities.get(target_id).map(|target| {
-                    // Earlier actors and their callbacks have run; later
-                    // movement has not. Read the live stored world point.
-                    let stored_world = target.element_data().position();
-                    crate::coordinates::GroundPoint::new(stored_world.x, stored_world.y)
-                })
-            });
-
-            let blood_alcohol = entity
-                .enemy_ai()
-                .map(|enemy| enemy.base.blood_alcohol)
-                .unwrap_or(0);
-            let hostile_soldier = matches!(entity, Entity::Soldier(_))
-                && entity.camp().is_hostile_to(crate::element::Camp::Royalists);
-            let difficulty_rules = self.control.sim_config.difficulty.rules();
-            let (view_distance_percent, view_angle_percent) = if hostile_soldier {
-                (
-                    difficulty_rules.hostile_soldier_view_distance_percent,
-                    difficulty_rules.hostile_soldier_view_angle_percent,
-                )
-            } else {
-                (100, 100)
-            };
-
-            ai_vision::RefreshViewContext {
-                body_direction: edata.direction(),
-                posture: edata.posture(),
-                animation,
-                is_unconscious,
-                is_tied: edata.posture() == crate::element::Posture::Tied,
-                is_dead: entity.is_dead(),
-                is_active_and_outside_building,
-                is_rider: matches!(entity, Entity::Soldier(s) if s.soldier.rider),
-                hostile_soldier_view_distance_percent: view_distance_percent,
-                hostile_soldier_view_angle_percent: view_angle_percent,
-                blood_alcohol,
-                own_position: pos,
-                follow_target_position,
-            }
+        let Some(npc) = self
+            .world
+            .entities
+            .get(npc_id)
+            .and_then(Entity::ai_actor_data)
+        else {
+            return;
         };
-        // shared borrow dropped ──
-
-        // ── Phase 2: mutable — apply view refresh ──
+        // Resolve the other actor at this owner's turn, after earlier actors'
+        // synchronous callbacks and before later actors move.
+        let follow_target_position = npc.follow_target.and_then(|target_id| {
+            self.world.entities.get(target_id).map(|target| {
+                let position = target.element_data().position();
+                crate::coordinates::GroundPoint::new(position.x, position.y)
+            })
+        });
+        let animation = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(npc_id)
+            .map(|(_, _, order)| order.order_type);
+        let difficulty = self.control.sim_config.difficulty.rules();
         self.debug_refresh_view_lifecycle("refresh_view_before", npc_id, None);
-        {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            if let Some(npc) = entity.ai_actor_data_mut() {
-                let span = tracing::trace_span!("refresh_npc_view", npc = npc_id.index());
-                let _guard = span.enter();
-                ai_vision::refresh_view(npc, &ctx);
-            }
-        }
+        let level = &self.world.fast_grid.level;
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(npc_id, format_args!("view refresh owner"));
+        let span = tracing::trace_span!("refresh_npc_view", npc = npc_id.index());
+        let _guard = span.enter();
+        ai_vision::refresh_view(
+            entity,
+            animation,
+            follow_target_position,
+            &difficulty,
+            |handle| {
+                handle.is_some_and(|handle| {
+                    let Some(sector) =
+                        crate::engine::movement::grid_sector_for_position_handle(level, handle)
+                    else {
+                        return false;
+                    };
+                    assert_eq!(
+                        sector.sector_number,
+                        crate::sector::SectorNumber::new(i16::from(handle)),
+                        "exact sector arena identity disagrees with its public number"
+                    );
+                    sector.sector_type.is_building()
+                })
+            },
+        );
         self.debug_refresh_view_lifecycle("refresh_view_after", npc_id, None);
     }
 

@@ -92,7 +92,6 @@ fn owner_walk_observes_live_geometry_in_original_creation_order() {
 
 #[test]
 fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
-    use crate::ai::AttentiveModeEffect;
     use crate::element::{AiBrain, Command, Posture};
     use crate::order::{AiOrderIntent, OrderType};
 
@@ -108,17 +107,19 @@ fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
     let enemy = soldier.npc.ai_brain.enemy_mut().expect("Enemy test AI");
     enemy.attentive = true;
     enemy.will_be_attentive = true;
-    enemy
-        .base
-        .outbox
-        .actor
-        .queue_set_attentive_mode(AttentiveModeEffect::new(false, false));
-    let mut movement = AiOrderIntent::new(OrderType::WalkingUpright, 100.0, 90.0);
-    movement.after_attentive_mode = true;
-    enemy.base.outbox.actor.orders.push(movement);
     let owner = engine.add_test_entity(soldier_entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
+    engine.set_soldier_attentive_mode(owner, false, false);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .outbox
+        .actor
+        .orders
+        .push(AiOrderIntent::new(OrderType::WalkingUpright, 100.0, 90.0));
     engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
     let commands = engine

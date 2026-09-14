@@ -319,14 +319,8 @@ fn enemy_ai_missing_defaulted_fields_decode_to_type_defaults() {
 }
 
 #[test]
-fn reentrant_outbox_requires_work_and_allows_an_absent_optional_waypoint() {
+fn reentrant_outbox_allows_an_absent_optional_waypoint() {
     let json = include_str!("goldens/ai_reentrant_outbox.json");
-    for required in ["cross_npc_actions"] {
-        assert!(
-            decode_without::<AiReentrantOutbox>(json, &[required]).is_err(),
-            "AiReentrantOutbox.{required} must stay required"
-        );
-    }
     // serde's derive treats an absent plain `Option` field as `None` (no
     // `with` adapter involved), so this historical leniency is pinned too.
     let decoded: AiReentrantOutbox =

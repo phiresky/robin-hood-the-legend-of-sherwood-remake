@@ -93,8 +93,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        self.observation_ai_mut(owner).base.stop_all();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.stop_ai_owner(sim, assets, owner);
     }
     pub(super) fn observation_say(
         &mut self,

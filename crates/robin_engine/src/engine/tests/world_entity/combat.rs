@@ -430,8 +430,7 @@ fn soldier_death_detaches_both_combat_neighbours_without_touching_another_line()
 }
 
 #[test]
-fn soldier_death_applies_queued_reciprocal_combat_neighbour_clears() {
-    use crate::ai::CrossNpcAction;
+fn soldier_death_clears_live_reciprocal_combat_neighbours() {
     use crate::entity_id::SoldierId;
 
     let mut engine = EngineInner::new();
@@ -476,23 +475,8 @@ fn soldier_death_applies_queued_reciprocal_combat_neighbour_clears() {
         .ai_brain
         .enemy_mut()
         .expect("test victim has enemy AI");
-    assert_eq!(victim_enemy.left_combat_neighbour, None);
-    assert_eq!(victim_enemy.right_combat_neighbour, None);
-    victim_enemy
-        .base
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .extend([
-            CrossNpcAction::SetRightCombatNeighbour {
-                target: old_left_handle,
-                neighbour: None,
-            },
-            CrossNpcAction::SetLeftCombatNeighbour {
-                target: old_right_handle,
-                neighbour: None,
-            },
-        ]);
+    victim_enemy.left_combat_neighbour = Some(crate::ai::AiEntityHandle::new(old_left_handle));
+    victim_enemy.right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(old_right_handle));
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
@@ -520,7 +504,6 @@ fn soldier_death_applies_queued_reciprocal_combat_neighbour_clears() {
 
 #[test]
 fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
-    use crate::ai::CrossNpcAction;
     use crate::element::{AiActorData, AiBrain};
 
     let mut engine = EngineInner::new();
@@ -552,25 +535,12 @@ fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
             .base
             .me = id.index();
     }
-    engine
-        .get_entity_mut(owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("AI-controlled hero has AI controller")
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::UpdateLeftCombatNeighbour {
-            target: owner.index(),
-            old_left: None,
-            new_left: Some(crate::ai::AiEntityHandle::new(left.index())),
-        });
-
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.process_synchronous_reentrant_actions_for(
-        &crate::sim_rng::test_context(),
-        owner,
-        &assets,
+    engine.apply_update_left_combat_neighbour(
+        owner.index(),
+        None,
+        Some(crate::ai::AiEntityHandle::new(left.index())),
     );
 
     let owner_enemy = engine
@@ -871,16 +841,6 @@ fn final_review_combat_alert_requires_recipient_360_detection() {
             ..Default::default()
         }
     ));
-    assert!(
-        engine
-            .get_entity(officer_id)
-            .and_then(Entity::ai_controller)
-            .expect("360-degree caller retains AI")
-            .outbox
-            .reentrant
-            .cross_npc_actions
-            .is_empty()
-    );
 }
 
 #[test]

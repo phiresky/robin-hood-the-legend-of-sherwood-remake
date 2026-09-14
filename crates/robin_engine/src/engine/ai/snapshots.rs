@@ -1,76 +1,12 @@
-//! Per-entry live optical inputs and archer/shield-link reconciliation.
+//! Archer/shield-link reconciliation and live actor classification.
 
 use super::*;
-use crate::coordinates::{GroundPoint, MapPoint};
 use crate::element::{Entity, EntityId};
-use serde::{Deserialize, Serialize};
 
 /// Enemy archer detection is exactly whether a bow is present.
 /// A loaded bow remains a bow even when its normal-shot range is zero.
 pub(super) fn is_archer_from_bow(bow: Option<&crate::profiles::BowProfile>) -> bool {
     bow.is_some()
-}
-
-/// Geometry and gates for one live human lookup, consumed before the next entry.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub(super) struct HumanDetectionInput {
-    pub(super) position: MapPoint,
-    /// Original-game ground position, i.e. stored world-space X/Y. This is
-    /// distinct from projected map position whenever ground Z is non-zero.
-    pub(super) ground_position: GroundPoint,
-    pub(super) sector: Option<crate::position_interface::SectorHandle>,
-    pub(super) layer: u16,
-    /// Detection point in world space, taken verbatim as the endpoint
-    /// of opaque-reachability queries.
-    pub(super) detection_point: crate::coordinates::WorldPoint3D,
-    pub(super) posture: crate::element::Posture,
-    /// 16-sector facing.  Used for the `LeaningOut` arm of
-    /// `compute_detection_point`: the detection point projects
-    /// `direction × 40` forward.
-    pub(super) direction: i16,
-    pub(super) action_state: crate::element::ActionState,
-    pub(super) building_sector: Option<crate::position_interface::SectorHandle>,
-    /// Canonical human death state. MissedFriend and
-    /// Beggar reject dead targets before their per-type cadence decision.
-    pub(super) dead: bool,
-    pub(super) unconscious: bool,
-    pub(super) active: bool,
-    pub(super) is_pc: bool,
-    /// `is_able_to_help`: alive, conscious, not in a few
-    /// state-machine arms that mean "busy with current task".
-    /// Used to gate the Friend pass.
-    pub(super) able_to_help: bool,
-    /// Whether the target is mid-door-pass.  Used by the
-    /// same-building visibility short-circuit.
-    pub(super) passing_door: bool,
-    /// `pc.guard.is_some()`.  Only meaningful for PCs (false for
-    /// soldiers / civilians / non-PC entities).  Used by
-    /// predetection handling to suppress shadow events for
-    /// already-guarded PCs.
-    pub(super) guarded: bool,
-    /// The projection-obstacle this human is currently standing
-    /// on (e.g. a roof, ledge, balcony, or tree platform).
-    /// Threaded into the per-target `compute_view_radius` re-call
-    /// inside `run_human_detectable_pass` so detection radius
-    /// accounts for the target's elevation in night/fog.
-    pub(super) obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
-}
-
-/// Geometry for one live object lookup, consumed by its visibility calculation.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub(super) struct ObjectDetectionInput {
-    pub(super) position: MapPoint,
-    /// Original-game ground position used by the outer detection-refresh box.
-    pub(super) ground_position: GroundPoint,
-    /// Original-game object point after the detection path raises Z by one.
-    pub(super) world_position: crate::coordinates::WorldPoint3D,
-    pub(super) belongs_to_beggar: bool,
-}
-
-fn object_detection_world_position(
-    position: crate::coordinates::WorldPoint3D,
-) -> crate::coordinates::WorldPoint3D {
-    crate::coordinates::WorldPoint3D::new(position.x, position.y, position.z + 1.0)
 }
 
 impl EngineInner {
@@ -141,73 +77,6 @@ impl EngineInner {
     }
 }
 
-/// Read the current entry's geometry before borrowing the observer to update
-/// its detection latches. No target data survives this entry.
-pub(super) fn human_detection_input(
-    entities: &crate::entities::Entities,
-    id: EntityId,
-    grid: &crate::fast_find_grid::FastFindGrid,
-) -> Option<HumanDetectionInput> {
-    let entity = entities.get(id)?;
-    let element = entity.element_data();
-    let human = entity
-        .human_data()
-        .unwrap_or_else(|| panic!("human detectable target {id:?} has no human data"));
-    let actor = entity
-        .actor_data()
-        .unwrap_or_else(|| panic!("human detectable target {id:?} has no actor data"));
-    let position = element.position_map();
-    let stored_world = element.position();
-    let posture = element.posture();
-    let direction = element.direction();
-    let is_rider = matches!(entity, Entity::Soldier(s) if s.soldier.rider);
-    let building_sector = element.sector().filter(|&sector| {
-        let Some(grid_sector) =
-            crate::engine::movement::grid_sector_for_position_handle(&grid.level, sector)
-        else {
-            return false;
-        };
-        assert_eq!(
-            grid_sector.sector_number,
-            crate::sector::SectorNumber::new(i16::from(sector)),
-            "exact sector arena identity disagrees with its public number",
-        );
-        grid_sector.sector_type.is_building()
-    });
-    // A carried body's stored point retains its own obstacle elevation.
-    let able_to_help = matches!(entity, Entity::Soldier(s) if
-        crate::ai_enemy::soldier_is_able_to_help_state(
-            element.active && !s.human.unconscious && s.npc.life_points > 0,
-            s.npc.ai_state(),
-            s.npc.ai_substate(),
-        )
-    );
-    Some(HumanDetectionInput {
-        position,
-        ground_position: GroundPoint::from_map_and_z(position, stored_world.z),
-        sector: element.sector(),
-        layer: element.layer(),
-        detection_point: crate::stealth::detection_point_world(
-            stored_world,
-            posture,
-            direction,
-            is_rider,
-        ),
-        posture,
-        direction,
-        action_state: actor.action_state,
-        building_sector,
-        dead: entity.is_dead(),
-        unconscious: human.unconscious,
-        active: element.active,
-        is_pc: matches!(entity, Entity::Pc(_)),
-        able_to_help,
-        passing_door: actor.active_door_pass.is_some(),
-        guarded: matches!(entity, Entity::Pc(pc) if pc.pc.guard.is_some()),
-        obstacle_idx: element.obstacle_index(),
-    })
-}
-
 pub(super) fn is_live_beggar(entity: &Entity) -> bool {
     match entity {
         Entity::Civilian(c) => {
@@ -217,28 +86,9 @@ pub(super) fn is_live_beggar(entity: &Entity) -> bool {
     }
 }
 
-/// Read only the object currently being scanned.
-pub(super) fn object_detection_input(
-    entities: &crate::entities::Entities,
-    id: EntityId,
-) -> Option<ObjectDetectionInput> {
-    let entity = entities.get(id)?;
-    let element = entity.element_data();
-    let world_position = object_detection_world_position(element.position());
-    Some(ObjectDetectionInput {
-        position: element.position_map(),
-        ground_position: GroundPoint::new(world_position.x, world_position.y),
-        world_position,
-        belongs_to_beggar: entity
-            .object_data()
-            .unwrap_or_else(|| panic!("object detectable target {id:?} has no object data"))
-            .belongs_to_beggar,
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{is_archer_from_bow, object_detection_world_position};
+    use super::is_archer_from_bow;
 
     #[test]
     fn shield_link_refresh_preserves_claim_order_and_inactive_reciprocity() {
@@ -424,14 +274,6 @@ mod tests {
         assert_eq!(bow.normal_shoot.range, 0);
         assert!(is_archer_from_bow(Some(&bow)));
         assert!(!is_archer_from_bow(None));
-    }
-
-    #[test]
-    fn object_detection_raises_the_ray_above_the_stored_position() {
-        assert_eq!(
-            object_detection_world_position(crate::coordinates::WorldPoint3D::new(10.0, 25.0, 7.0)),
-            crate::coordinates::WorldPoint3D::new(10.0, 25.0, 8.0)
-        );
     }
 }
 

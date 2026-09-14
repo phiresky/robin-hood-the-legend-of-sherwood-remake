@@ -449,14 +449,6 @@ mod tests {
             engine.friend_check_owner_mut(target).synchronizing_actors,
             vec![owner.index()]
         );
-        assert!(
-            engine
-                .friend_check_owner_mut(owner)
-                .outbox
-                .reentrant
-                .cross_npc_actions
-                .is_empty()
-        );
     }
 
     #[test]

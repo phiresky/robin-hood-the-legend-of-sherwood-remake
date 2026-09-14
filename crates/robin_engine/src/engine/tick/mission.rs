@@ -751,13 +751,10 @@ impl EngineInner {
         // the queue here, call `ReachPoint(actor)` on the waypoint's
         // VM, and push `EventAfterScriptGoOn` as a self-stimulus
         // unless the script pulled the NPC into `DefaultScriptDriven`.
-        // Runs before `process_pending_cross_npc_actions` so the
-        // self-stimulus drain at the end of that pass picks up the
-        // `EventAfterScriptGoOn` in the same tick.
+        // Deliver `EventAfterScriptGoOn` in this same tick.
         self.dispatch_pending_waypoint_scripts(sim, assets);
 
-        // ── Process cross-NPC actions (phalanx coordination) ────
-        self.process_pending_cross_npc_actions(sim, assets);
+        self.drain_pending_self_stimuli(sim, assets);
 
         // TODO(original-parity): determine which queued NPC-order effects must
         // remain inside an individual NPC's creation-ordered update.

@@ -11,13 +11,11 @@ pub(crate) use battle::{
     BattleDecisionInputs, battle_friend_is_nearer, battle_owner_target_square_distance,
 };
 mod combat_positions;
-mod detection;
 pub(crate) use combat_positions::{SwordfightLists, is_facing_swordfight_target};
 pub(crate) use combat_positions::{combat_neighbour_distance_ulong, drunk_combat_freezes};
 pub(crate) use map_vec_ext::AiMapVec;
 pub(crate) use util::{CombatFighterAccess, evaluate_combat_position_full};
 mod event_handlers;
-pub(crate) use detection::{Target180, Viewer180, detects_180_degrees_live};
 mod map_vec_ext;
 mod parity_trace;
 mod seek;
@@ -392,33 +390,6 @@ impl EnemyAi {
     #[track_caller]
     fn required<T>(&self, value: Option<T>, what: &'static str, context: &'static str) -> T {
         value.unwrap_or_else(|| panic!("enemy AI {} requires {what} while {context}", self.base.me))
-    }
-
-    /// Clear both combat-neighbour links and synchronously request the two
-    /// reciprocal clears performed by soldier-actor state changes.
-    ///
-    /// Keeping this as one operation matters: a one-sided stale link can be
-    /// consumed by a later phalanx insertion and detach an otherwise valid
-    /// formation chain.
-    pub(crate) fn clear_combat_neighbours(&mut self) {
-        if let Some(left) = self.left_combat_neighbour {
-            self.base.outbox.reentrant.cross_npc_actions.push(
-                CrossNpcAction::SetRightCombatNeighbour {
-                    target: left.get(),
-                    neighbour: None,
-                },
-            );
-        }
-        if let Some(right) = self.right_combat_neighbour {
-            self.base.outbox.reentrant.cross_npc_actions.push(
-                CrossNpcAction::SetLeftCombatNeighbour {
-                    target: right.get(),
-                    neighbour: None,
-                },
-            );
-        }
-        self.left_combat_neighbour = None;
-        self.right_combat_neighbour = None;
     }
 
     pub fn new(owner: NpcHandle) -> Self {

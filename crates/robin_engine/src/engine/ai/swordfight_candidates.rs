@@ -324,28 +324,18 @@ impl EngineInner {
                 .sword_range_maximal(owner.index()) as f32,
             );
         }
-        let ai = self
+        let old_left = self
             .world
             .entities
-            .expect_enemy_ai_mut(owner, format_args!("combat proposal neighbours"));
-        let old_left = ai.left_combat_neighbour;
-        let old_right = ai.right_combat_neighbour;
-        ai.left_combat_neighbour = best.left_neighbour;
-        ai.right_combat_neighbour = best.right_neighbour;
-        ai.base.outbox.reentrant.cross_npc_actions.push(
-            crate::ai::CrossNpcAction::UpdateLeftCombatNeighbour {
-                target: owner.index(),
-                old_left,
-                new_left: best.left_neighbour,
-            },
-        );
-        ai.base.outbox.reentrant.cross_npc_actions.push(
-            crate::ai::CrossNpcAction::UpdateRightCombatNeighbour {
-                target: owner.index(),
-                old_right,
-                new_right: best.right_neighbour,
-            },
-        );
+            .expect_enemy_ai(owner, format_args!("combat proposal left neighbour"))
+            .left_combat_neighbour;
+        self.apply_update_left_combat_neighbour(owner.index(), old_left, best.left_neighbour);
+        let old_right = self
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("combat proposal right neighbour"))
+            .right_combat_neighbour;
+        self.apply_update_right_combat_neighbour(owner.index(), old_right, best.right_neighbour);
         best
     }
 

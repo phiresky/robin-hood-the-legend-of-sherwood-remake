@@ -1102,7 +1102,7 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
 
 #[test]
 #[should_panic(
-    expected = "Enemy detectable target Soldier(SoldierId(999999)) for NPC Soldier(SoldierId(0)) is missing or is not a PC/soldier"
+    expected = "Enemy cleanup target for NPC Soldier(SoldierId(0)): entity Soldier(SoldierId(999999)) disappeared"
 )]
 fn mixed_enemy_walk_rejects_missing_detectable_target_with_context() {
     use crate::element::{DetectableType, Entity};

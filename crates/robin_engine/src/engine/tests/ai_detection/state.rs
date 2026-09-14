@@ -573,9 +573,7 @@ fn panic_generated_reachpoint_precedes_retained_panic_sibling_and_draws_twice() 
 
 #[test]
 fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
-    use crate::ai::{
-        AiState, CrossNpcAction, Hint, Position, StimulusInfo, StimulusType, Substate,
-    };
+    use crate::ai::{AiState, Hint, Position, StimulusInfo, StimulusType, Substate};
     use crate::element::{Camp, Entity, EyeStatus};
 
     fn observe(receiver_before_source: bool) -> (f32, f32, EyeStatus) {
@@ -624,27 +622,15 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
             seek_flags: 0,
             who_tells_me: crate::ai::AiEntityHandle::new(source_id.index()),
         };
-        engine
-            .get_entity_mut(source_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap()
-            .outbox
-            .reentrant
-            .cross_npc_actions
-            .push(CrossNpcAction::SendStimulus {
-                target: receiver_id.index(),
-                stimulus_type: StimulusType::CallLookThere,
-                info: StimulusInfo::Hint(hint),
-                fallback_to_sender: None,
-                to_whole_patrol: false,
-            });
+        let mut stimulus = crate::ai::Stimulus::new(StimulusType::CallLookThere);
+        stimulus.info = StimulusInfo::Hint(hint);
 
         crate::sim_rng::with_seed(0xA013_1007, |sim| {
             if receiver_before_source {
                 engine.refresh_npc_view_for_npc(receiver_id);
-                engine.process_synchronous_reentrant_actions_for(sim, source_id, &assets);
+                engine.dispatch_think_with_drain(sim, receiver_id, &stimulus, None, &assets);
             } else {
-                engine.process_synchronous_reentrant_actions_for(sim, source_id, &assets);
+                engine.dispatch_think_with_drain(sim, receiver_id, &stimulus, None, &assets);
                 engine.refresh_npc_view_for_npc(receiver_id);
             }
         });

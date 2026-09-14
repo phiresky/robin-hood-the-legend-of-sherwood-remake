@@ -32,14 +32,21 @@ impl EngineInner {
         assets: &LevelAssets,
         chief: EntityId,
     ) {
-        let members = self
+        let member_count = self
             .world
             .entities
             .expect_ai_controller(chief, format_args!("RemoveAllSubordinates chief"))
             .theoretical_patrol
-            .clone();
+            .len();
 
-        for member in members.iter().copied() {
+        for index in 0..member_count {
+            let member = *self
+                .world
+                .entities
+                .expect_ai_controller(chief, format_args!("RemoveAllSubordinates chief"))
+                .theoretical_patrol
+                .get(index)
+                .expect("RemoveAllSubordinates callback shortened the captured patrol prefix");
             let should_return = {
                 let ai = self.world.entities.expect_ai_controller_mut(
                     member,
@@ -264,14 +271,7 @@ impl EngineInner {
         self.display_one_shot_noise(noise);
     }
 
-    // ── Cross-NPC action processing (phalanx coordination) ──────────
-    //
-    // After all AI think() calls, drain each NPC's pending cross-NPC
-    // actions and apply them to the target NPCs. This covers:
-    // - SendStimulus (e.g. CALL_COORDINATE to archers)
-    // - left/right combat-neighbor assignment for phalanx linking
-
-    pub(super) fn apply_update_left_combat_neighbour(
+    pub(in crate::engine) fn apply_update_left_combat_neighbour(
         &mut self,
         target: u32,
         old_left: Option<crate::ai::AiEntityHandle>,
@@ -299,7 +299,7 @@ impl EngineInner {
         }
     }
 
-    pub(super) fn apply_update_right_combat_neighbour(
+    pub(in crate::engine) fn apply_update_right_combat_neighbour(
         &mut self,
         target: u32,
         old_right: Option<crate::ai::AiEntityHandle>,
@@ -325,181 +325,6 @@ impl EngineInner {
             self.required_cross_npc_enemy_mut(new_right.get(), "link-new-right-neighbour")
                 .left_combat_neighbour = Some(crate::ai::AiEntityHandle::new(target));
         }
-    }
-
-    fn register_synchronizing_actor(&mut self, target: u32, actor: u32) {
-        let target_id = self.expect_human_id_for_ai_handle(target, "register-synchronizing-actor");
-        let ai = self.world.entities.expect_ai_controller_mut(
-            target_id,
-            format_args!("synchronization target human {target}"),
-        );
-        // Registering a synchronizing AI actor is a direct,
-        // unconditional append. In particular, the target can reach its
-        // waypoint in a later element update slot in this same frame and
-        // must observe this registration before dispatching EVENT_SYNC_CHARLY.
-        ai.synchronizing_actors.push(actor);
-    }
-
-    pub(in crate::engine) fn process_pending_cross_npc_actions(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        // Close any direct Think calls left by a global owner-work/self-
-        // stimulus fixed point before collecting genuinely deferred actions.
-        // Iterate live owner slots in their stable order (PA-013).
-        let ai_owner_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
-        for owner_id in ai_owner_ids {
-            self.process_synchronous_reentrant_actions_for(sim, owner_id, assets);
-        }
-        // Collect all pending actions first to avoid borrow issues.
-        // Both enemy (soldier) and friendly (civilian) AIs can push
-        // cross-NPC actions — e.g. civilians send `CALL_ALERT` /
-        // `CALL_REPORT` to soldiers via `AiController` on their base.
-        let mut all_actions: Vec<crate::ai::CrossNpcAction> = Vec::new();
-        let ai_owner_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
-        for owner_id in ai_owner_ids {
-            if let Some(ai) = self
-                .world
-                .entities
-                .get_mut(owner_id)
-                .and_then(Entity::ai_controller_mut)
-            {
-                all_actions.extend(ai.take_pending_cross_npc_actions());
-            }
-        }
-
-        if all_actions.is_empty() {
-            // No cross-NPC actions to process, but still deliver any
-            // self-stimuli queued last tick (EventDone from
-            // removal notifications, MYTALK callbacks, etc.). This
-            // drain used to live at the tail of this function, which
-            // meant it was skipped entirely on ticks with no cross-NPC
-            // actions — the common case — stranding queued stimuli
-            // forever and hanging states like
-            // `DefaultOnPostLookingSidewards` that wait on `EventDone`
-            // to exit.
-            self.drain_pending_self_stimuli(sim, assets);
-            return;
-        }
-
-        for action in all_actions {
-            match action {
-                crate::ai::CrossNpcAction::SendStimulus {
-                    target,
-                    stimulus_type,
-                    info,
-                    fallback_to_sender,
-                    to_whole_patrol,
-                } => {
-                    let target_id = self.entity_id_for_index(target);
-                    let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
-                    stimulus.info = info;
-                    stimulus.to_whole_patrol = to_whole_patrol;
-
-                    let handled = target_id
-                        .filter(|id| {
-                            self.world
-                                .entities
-                                .get(*id)
-                                .and_then(Entity::ai_controller)
-                                .is_some()
-                        })
-                        .is_some_and(|id| {
-                            self.dispatch_filtered_stimulus(sim, assets, id, &stimulus, None)
-                        });
-                    // Fallback: if target couldn't handle the stimulus,
-                    // redeliver to the sender (e.g. conversation chains).
-                    if !handled && let Some(sender) = fallback_to_sender {
-                        let Some(sender_id) = self.entity_id_for_index(sender) else {
-                            continue;
-                        };
-                        if self
-                            .world
-                            .entities
-                            .get(sender_id)
-                            .and_then(Entity::ai_controller)
-                            .is_some()
-                        {
-                            self.dispatch_filtered_stimulus(
-                                sim, assets, sender_id, &stimulus, None,
-                            );
-                        }
-                    }
-                }
-
-                crate::ai::CrossNpcAction::SetLeftCombatNeighbour { target, neighbour } => {
-                    self.required_cross_npc_enemy_mut(target, "set-left-combat-neighbour")
-                        .left_combat_neighbour = neighbour;
-                }
-
-                crate::ai::CrossNpcAction::SetRightCombatNeighbour { target, neighbour } => {
-                    self.required_cross_npc_enemy_mut(target, "set-right-combat-neighbour")
-                        .right_combat_neighbour = neighbour;
-                }
-
-                crate::ai::CrossNpcAction::SetArcherBehindMe { target, archer } => {
-                    self.required_cross_npc_enemy_mut(target, "set-archer-behind")
-                        .archer_behind_me = archer;
-                }
-
-                crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
-                    target,
-                    shield_bearer,
-                } => {
-                    self.required_cross_npc_enemy_mut(target, "set-shield-bearer")
-                        .shield_bearer_before_me = shield_bearer;
-                }
-
-                // Full reciprocal update.  Four steps:
-                //   1. clear old_left's right pointer
-                //   2. store new_left on target's left pointer (caller
-                //      may also have written it eagerly for immediate
-                //      visibility)
-                //   3. pre-clean new_left's existing right (recursive
-                //      clearing the right combat neighbour) — clear
-                //      that-right's left pointer
-                //   4. wire new_left's right back to target
-                crate::ai::CrossNpcAction::UpdateLeftCombatNeighbour {
-                    target,
-                    old_left,
-                    new_left,
-                } => self.apply_update_left_combat_neighbour(target, old_left, new_left),
-
-                // Same shape as `update_left_combat_neighbour`, for
-                // the right side.
-                crate::ai::CrossNpcAction::UpdateRightCombatNeighbour {
-                    target,
-                    old_right,
-                    new_right,
-                } => self.apply_update_right_combat_neighbour(target, old_right, new_right),
-
-                crate::ai::CrossNpcAction::Say { target, remark } => {
-                    let target_id =
-                        self.expect_human_id_for_ai_handle(target, "cross-NPC speech target");
-                    self.required_cross_npc_enemy_mut(target, "cross-NPC speech target")
-                        .base
-                        .say(remark);
-                    self.drain_ai_owner_work_for(sim, assets, target_id);
-                }
-
-                crate::ai::CrossNpcAction::SetLootedAfterMoneyFight { target, looted } => {
-                    self.required_cross_npc_enemy_mut(target, "set-money-fight-looted")
-                        .base
-                        .looted_after_money_fight = looted;
-                }
-
-                crate::ai::CrossNpcAction::ConsiderReport { target, .. } => {
-                    panic!("report transfer to {target} escaped its owner boundary");
-                }
-
-                crate::ai::CrossNpcAction::RegisterSynchronizingActor { target, actor } => {
-                    self.register_synchronizing_actor(target, actor);
-                }
-            }
-        }
-
-        self.drain_pending_self_stimuli(sim, assets);
     }
 
     /// Dispatch `stimulus` to `npc_id` via
@@ -588,8 +413,6 @@ impl EngineInner {
             // into a global batch or strand in the outbox.
             self.launch_pending_orders_for_npc(sim, assets, npc_id);
 
-            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
-
             // Any condolations the drain above queued (sequences that
             // got preempted by the side effects) fire here — which may
             // push EventDone / EventImpossible into pending_self_stimuli.
@@ -608,12 +431,6 @@ impl EngineInner {
                 self.drain_self_stimuli_for_npc(sim, npc_id, assets);
             }
 
-            // A re-entrant self stimulus can itself call another NPC. Close
-            // those direct original-game call boundaries before deciding this owner has
-            // stabilised; otherwise the result-bearing request can escape to
-            // the global cross-action batch.
-            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
-
             let still_pending = {
                 let ai = self.world.entities.expect_ai_controller(
                     npc_id,
@@ -622,7 +439,6 @@ impl EngineInner {
                 ai.outbox.actor.has_boundary_work()
                     || !ai.outbox.reentrant.self_stimuli.is_empty()
                     || !ai.outbox.reentrant.owner_work.is_empty()
-                    || ai.has_pending_synchronous_cross_npc_actions()
             };
             if !still_pending {
                 break;
@@ -635,143 +451,6 @@ impl EngineInner {
         }
 
         handled
-    }
-
-    pub(in crate::engine) fn process_synchronous_reentrant_actions_for(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        source_id: crate::element::EntityId,
-        assets: &LevelAssets,
-    ) {
-        loop {
-            let actions = self
-                .world
-                .entities
-                .expect_ai_controller_mut(source_id, format_args!("synchronous action source"))
-                .take_pending_synchronous_cross_npc_actions();
-            if actions.is_empty() {
-                break;
-            }
-
-            let deferred = {
-                let ai = self.world.entities.expect_ai_controller_mut(
-                    source_id,
-                    format_args!(
-                        "synchronous action source {} lost its AI controller",
-                        source_id.index()
-                    ),
-                );
-                std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions)
-            };
-            let mut deferred = deferred;
-            for action in actions {
-                match action {
-                    crate::ai::CrossNpcAction::ConsiderReport { target, flags } => {
-                        let target_id =
-                            self.expect_human_id_for_ai_handle(target, "report transfer target");
-                        self.consider_live_ai_report(sim, assets, target_id, source_id, flags);
-                    }
-                    crate::ai::CrossNpcAction::UpdateLeftCombatNeighbour {
-                        target,
-                        old_left,
-                        new_left,
-                    } => self.apply_update_left_combat_neighbour(target, old_left, new_left),
-                    crate::ai::CrossNpcAction::UpdateRightCombatNeighbour {
-                        target,
-                        old_right,
-                        new_right,
-                    } => self.apply_update_right_combat_neighbour(target, old_right, new_right),
-                    crate::ai::CrossNpcAction::SetLeftCombatNeighbour { target, neighbour } => {
-                        self.required_cross_npc_enemy_mut(
-                            target,
-                            "synchronous left-neighbour setter",
-                        )
-                        .left_combat_neighbour = neighbour;
-                    }
-                    crate::ai::CrossNpcAction::SetRightCombatNeighbour { target, neighbour } => {
-                        self.required_cross_npc_enemy_mut(
-                            target,
-                            "synchronous right-neighbour setter",
-                        )
-                        .right_combat_neighbour = neighbour;
-                    }
-                    crate::ai::CrossNpcAction::SetArcherBehindMe { target, archer } => {
-                        self.required_cross_npc_enemy_mut(
-                            target,
-                            "synchronous archer-behind setter",
-                        )
-                        .archer_behind_me = archer;
-                    }
-                    crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
-                        target,
-                        shield_bearer,
-                    } => {
-                        self.required_cross_npc_enemy_mut(
-                            target,
-                            "synchronous shield-bearer setter",
-                        )
-                        .shield_bearer_before_me = shield_bearer;
-                    }
-                    crate::ai::CrossNpcAction::RegisterSynchronizingActor { target, actor } => {
-                        self.register_synchronizing_actor(target, actor);
-                    }
-                    crate::ai::CrossNpcAction::SendStimulus { .. } => {
-                        self.requeue_isolated_synchronous_action(source_id, action.clone());
-                        self.process_synchronous_stimuli_for(sim, source_id, assets)
-                    }
-                    crate::ai::CrossNpcAction::Say { target, remark } => {
-                        let target_id =
-                            self.expect_human_id_for_ai_handle(target, "cross-NPC speech target");
-                        self.required_cross_npc_enemy_mut(target, "cross-NPC speech target")
-                            .base
-                            .say(remark);
-                        self.drain_ai_owner_work_for(sim, assets, target_id);
-                    }
-                    _ => unreachable!("ordered synchronous drain received deferred action"),
-                }
-
-                // Direct original-game calls are depth-first: if A emits C while B was
-                // already queued, C closes before B. Isolate A's generated
-                // work, recursively drain it, then continue the saved batch.
-                self.process_synchronous_reentrant_actions_for(sim, source_id, assets);
-                let ai = self.world.entities.expect_ai_controller_mut(
-                    source_id,
-                    format_args!(
-                        "synchronous action source {} lost its AI controller",
-                        source_id.index()
-                    ),
-                );
-                deferred.extend(std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions));
-            }
-            let ai = self.world.entities.expect_ai_controller_mut(
-                source_id,
-                format_args!(
-                    "synchronous action source {} lost its AI controller",
-                    source_id.index()
-                ),
-            );
-            ai.outbox.reentrant.cross_npc_actions = deferred;
-        }
-    }
-
-    fn requeue_isolated_synchronous_action(
-        &mut self,
-        source_id: crate::element::EntityId,
-        action: crate::ai::CrossNpcAction,
-    ) {
-        self.world
-            .entities
-            .expect_ai_controller_mut(
-                source_id,
-                format_args!(
-                    "synchronous action source {} lost its AI controller",
-                    source_id.index()
-                ),
-            )
-            .outbox
-            .reentrant
-            .cross_npc_actions
-            .push(action);
     }
 
     pub(in crate::engine) fn execute_ai_look_there(
@@ -833,63 +512,6 @@ impl EngineInner {
             let dz = target.z - caller.z;
             if look_there_target_is_inside_radius(dx * dx + dy * dy + dz * dz, radius_squared) {
                 self.execute_ai_callback(sim, assets, target_id, &stimulus);
-            }
-        }
-    }
-
-    fn process_synchronous_stimuli_for(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        source_id: crate::element::EntityId,
-        assets: &LevelAssets,
-    ) {
-        let actions = self
-            .world
-            .entities
-            .expect_ai_controller_mut(source_id, format_args!("synchronous stimulus source"))
-            .take_pending_synchronous_stimuli();
-
-        for action in actions {
-            let crate::ai::CrossNpcAction::SendStimulus {
-                target,
-                stimulus_type,
-                info,
-                fallback_to_sender,
-                to_whole_patrol,
-            } = action
-            else {
-                unreachable!("synchronous-stimulus drain returned a different cross-NPC action")
-            };
-            let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
-                panic!(
-                    "synchronous {stimulus_type:?} from NPC {} references missing target {target}",
-                    source_id.index()
-                )
-            });
-            assert!(
-                matches!(self.world.entities.get(target_id), Some(Entity::Soldier(_))),
-                "synchronous {stimulus_type:?} target {target} is not a soldier"
-            );
-
-            let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
-            stimulus.info = info;
-            stimulus.to_whole_patrol = to_whole_patrol;
-            tracing::trace!(
-                target: "patrol_relay",
-                source = source_id.index(),
-                target,
-                ?stimulus_type,
-                to_whole_patrol,
-                "synchronous SendStimulus drain"
-            );
-            let handled = self.dispatch_think_with_drain(sim, target_id, &stimulus, None, assets);
-            if !handled && let Some(sender) = fallback_to_sender {
-                let sender_id = self.entity_id_for_index(sender).unwrap_or_else(|| {
-                    panic!(
-                        "synchronous {stimulus_type:?} fallback references missing sender {sender}"
-                    )
-                });
-                self.dispatch_think_with_drain(sim, sender_id, &stimulus, None, assets);
             }
         }
     }

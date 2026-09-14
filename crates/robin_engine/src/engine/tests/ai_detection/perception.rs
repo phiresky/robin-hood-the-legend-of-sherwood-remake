@@ -71,7 +71,7 @@ fn periodic_smalltalk_commands_advance_watchdog_but_unrelated_commands_preserve_
         engine
             .orders
             .sequence_manager
-            .take_deferred_owner_action(owner, sequence, 0)
+            .pop_next_hourglass_action()
             .expect("fixture command is registered for its owner");
         engine
             .orders
@@ -922,7 +922,7 @@ fn npc_recovery_requires_an_ai_controller() {
 
 #[test]
 fn subordinate_handles_shadow_locally_when_detected_chief_has_empty_patrol() {
-    use crate::ai::{AiState, CrossNpcAction, Position, StimulusInfo, StimulusType, Substate};
+    use crate::ai::{AiState, Position, StimulusInfo, StimulusType, Substate};
     use crate::element::{Camp, Entity};
 
     let mut engine = EngineInner::new();
@@ -960,27 +960,15 @@ fn subordinate_handles_shadow_locally_when_detected_chief_has_empty_patrol() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine
-        .get_entity_mut(source_id)
-        .and_then(Entity::ai_controller_mut)
-        .unwrap()
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::SendStimulus {
-            target: subordinate_id.index(),
-            stimulus_type: StimulusType::EventSeesShadow,
-            info: StimulusInfo::Position(Position {
-                x: 100.0,
-                y: 0.0,
-                ..Position::default()
-            }),
-            fallback_to_sender: None,
-            to_whole_patrol: false,
-        });
+    let mut stimulus = crate::ai::Stimulus::new(StimulusType::EventSeesShadow);
+    stimulus.info = StimulusInfo::Position(Position {
+        x: 100.0,
+        y: 0.0,
+        ..Position::default()
+    });
 
     crate::sim_rng::with_seed(0xA013_2600, |sim| {
-        engine.process_synchronous_reentrant_actions_for(sim, source_id, &assets);
+        engine.dispatch_think_with_drain(sim, subordinate_id, &stimulus, None, &assets);
     });
 
     let chief = engine.get_entity(chief_id).unwrap().enemy_ai().unwrap();

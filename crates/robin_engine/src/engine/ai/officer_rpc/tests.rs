@@ -507,15 +507,6 @@ fn lecture_defence_relays_to_live_officer_and_ignores_unrelated_timer() {
         owner,
         &Stimulus::new(StimulusType::EventMyTalk1),
     );
-    assert!(
-        engine
-            .observation_ai(owner)
-            .base
-            .outbox
-            .reentrant
-            .cross_npc_actions
-            .is_empty()
-    );
     // The recipient's speech executes before the caller returns, including a rejected line.
     assert!(
         engine

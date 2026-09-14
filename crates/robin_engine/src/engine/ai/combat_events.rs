@@ -211,8 +211,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        self.combat_event_ai_mut(owner).base.stop_all();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.stop_ai_owner(sim, assets, owner);
     }
     fn combat_event_say(
         &mut self,

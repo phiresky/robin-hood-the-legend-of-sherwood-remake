@@ -790,9 +790,7 @@ fn released_cross_postponed_action_keeps_owner_fifo_behind_ready_successor() {
     mgr.element_terminated(old_id, 0);
     finish_test_condolations(&mut mgr);
 
-    let actions = mgr
-        .take_deferred_owner_actions_through(owner, replacement_id, 0)
-        .unwrap();
+    let actions: Vec<_> = std::iter::from_fn(|| mgr.pop_next_hourglass_action()).collect();
     assert!(matches!(
         actions.as_slice(),
         [

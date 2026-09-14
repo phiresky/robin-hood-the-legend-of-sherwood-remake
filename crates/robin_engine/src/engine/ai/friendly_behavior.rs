@@ -337,8 +337,7 @@ impl EngineInner {
     }
 
     fn civilian_stop(&mut self, sim: &SimulationContext, assets: &LevelAssets, owner: EntityId) {
-        self.reporting_civilian_mut(owner).base.stop_all();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.stop_ai_owner(sim, assets, owner);
     }
 
     fn civilian_chaser(&self, owner: EntityId) -> EntityId {

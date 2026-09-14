@@ -106,7 +106,6 @@ fn unconscious_script_driven_actor_refuses_look_there() {
     let ai = engine.observation_ai(owner);
     assert_eq!(ai.base.current_state, AiState::Default);
     assert_eq!(ai.base.current_substate, Substate::DefaultScriptDriven);
-    assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
     assert!(
         ai.base
             .ai_log

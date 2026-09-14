@@ -3120,25 +3120,9 @@ impl EngineInner {
         }
     }
 
-    /// Apply the reciprocal/global relationship work that the original
-    /// entering the permanently sleeping state performs synchronously.
-    ///
-    /// Normal AI transitions defer these writes through the actor outbox,
-    /// but death clears that entire outbox to prevent pre-death work from
-    /// reaching the corpse.  Extract both the current relationship and any
-    /// already-queued old relationship before that reset so teardown cannot
-    /// leave a PC, combat neighbour, or archery reservation pointing at the
-    /// dead AI-controlled human.
+    /// Release live relationships before death discards pending actor work.
     fn detach_npc_death_relationships(&mut self, victim_id: EntityId) {
-        let (
-            guarded_pcs,
-            shooting_points,
-            archery_sector,
-            left_neighbours,
-            right_neighbours,
-            shield_bearers,
-            archers,
-        ) = {
+        let (guarded_pcs, shooting_points, archery_sector, shield_bearers, archers) = {
             let Some(enemy) = self
                 .world
                 .entities
@@ -3166,95 +3150,22 @@ impl EngineInner {
             let shooting_points = enemy.my_shooting_point.take();
 
             let archery_sector = enemy.my_archery_sector.take();
-            // Entering the sleeping-forever enemy state leaves every
-            // combat-line mode and therefore calls both reciprocal neighbour
-            // updates synchronously.  The lethal-damage path writes the
-            // terminal AI state directly, so it must perform the same teardown
-            // here before `clear_all_pending` discards the victim's outbox.
-            let mut left_neighbours = Vec::new();
-            let mut right_neighbours = Vec::new();
-            let left_neighbour = std::mem::take(&mut enemy.left_combat_neighbour);
-            if let Some(left_neighbour) = left_neighbour {
-                left_neighbours.push(left_neighbour.get());
-            }
-            let right_neighbour = std::mem::take(&mut enemy.right_combat_neighbour);
-            if let Some(right_neighbour) = right_neighbour {
-                right_neighbours.push(right_neighbour.get());
-            }
-            // `EnemyAi::set_state` zeroes the victim's local fields eagerly,
-            // but queues the reciprocal zero writes. Death clears that queue
-            // below, so preserve every old neighbour target first.
-            for action in &enemy.base.outbox.reentrant.cross_npc_actions {
-                match *action {
-                    crate::ai::CrossNpcAction::SetRightCombatNeighbour {
-                        target,
-                        neighbour: None,
-                    } => {
-                        if target != 0 && !left_neighbours.contains(&target) {
-                            left_neighbours.push(target);
-                        }
-                    }
-                    crate::ai::CrossNpcAction::SetLeftCombatNeighbour {
-                        target,
-                        neighbour: None,
-                    } if target != 0 && !right_neighbours.contains(&target) => {
-                        right_neighbours.push(target);
-                    }
-                    _ => {}
-                }
-            }
-            // SUBSTATE_SLEEPING_FOREVER is neither a bow substate nor a
-            // shield-protect/phalanx substate, so the same
-            // The enemy state constraint block also runs
-            // clearing the rear archer and
-            // clearing the forward shield bearer
-            // each of which clears the
-            // partner's reciprocal pointer
-            // as well. Tear the
-            // archer/shield-bearer pairing down here for the same reason the
-            // combat neighbours are handled above.
-            let mut shield_bearers = Vec::new();
-            let mut archers = Vec::new();
-            let shield_bearer = std::mem::take(&mut enemy.shield_bearer_before_me);
-            if let Some(shield_bearer) = shield_bearer {
-                shield_bearers.push(shield_bearer.get());
-            }
-            let archer = std::mem::take(&mut enemy.archer_behind_me);
-            if let Some(archer) = archer {
-                archers.push(archer.get());
-            }
-            for action in &enemy.base.outbox.reentrant.cross_npc_actions {
-                match *action {
-                    crate::ai::CrossNpcAction::SetArcherBehindMe {
-                        target,
-                        archer: None,
-                    } => {
-                        if target != 0 && !shield_bearers.contains(&target) {
-                            shield_bearers.push(target);
-                        }
-                    }
-                    crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
-                        target,
-                        shield_bearer: None,
-                    } if target != 0 && !archers.contains(&target) => {
-                        archers.push(target);
-                    }
-                    _ => {}
-                }
-            }
+            let shield_bearers = enemy
+                .shield_bearer_before_me
+                .take()
+                .map(|bearer| bearer.get());
+            let archers = enemy.archer_behind_me.take().map(|archer| archer.get());
 
             (
                 guarded_pcs,
                 shooting_points,
                 archery_sector,
-                left_neighbours,
-                right_neighbours,
                 shield_bearers,
                 archers,
             )
         };
 
-        for shield_bearer in shield_bearers {
+        if let Some(shield_bearer) = shield_bearers {
             let shield_bearer_id =
                 self.expect_human_id_for_ai_handle(shield_bearer, "dead AI owner's shield bearer");
             let enemy = self.world.entities.expect_enemy_ai_mut(
@@ -3265,7 +3176,7 @@ impl EngineInner {
             );
             enemy.archer_behind_me = None;
         }
-        for archer in archers {
+        if let Some(archer) = archers {
             let archer_id = self.expect_human_id_for_ai_handle(archer, "dead AI owner's archer");
             let enemy = self.world.entities.expect_enemy_ai_mut(
                 archer_id,
@@ -3274,34 +3185,7 @@ impl EngineInner {
             enemy.shield_bearer_before_me = None;
         }
 
-        for left_neighbour in left_neighbours {
-            let left_id = self.expect_human_id_for_ai_handle(
-                left_neighbour,
-                "dead AI owner's left combat neighbour",
-            );
-            let enemy = self.world.entities.expect_enemy_ai_mut(
-                left_id,
-                format_args!(
-                    "dead AI owner {victim_id:?}'s left combat neighbour {left_neighbour} has \
-                         no EnemyAi"
-                ),
-            );
-            enemy.right_combat_neighbour = None;
-        }
-        for right_neighbour in right_neighbours {
-            let right_id = self.expect_human_id_for_ai_handle(
-                right_neighbour,
-                "dead AI owner's right combat neighbour",
-            );
-            let enemy = self.world.entities.expect_enemy_ai_mut(
-                right_id,
-                format_args!(
-                    "dead AI owner {victim_id:?}'s right combat neighbour {right_neighbour} has \
-                         no EnemyAi"
-                ),
-            );
-            enemy.left_combat_neighbour = None;
-        }
+        self.clear_live_combat_neighbours(victim_id);
 
         for guarded_pc in guarded_pcs {
             let guarded_pc_id = EntityId::Pc(guarded_pc);

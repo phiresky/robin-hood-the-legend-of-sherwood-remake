@@ -790,10 +790,6 @@ pub struct AiOrderIntent {
     /// then immediately halts it because path computation is pending, which
     /// removes the just-registered movement before manager instruction.
     pub halt_after_launch_for_path_waiter: bool,
-    /// This facing request was authored after a same-call state change changed attentive
-    /// mode. The engine must apply that attentive transition before
-    /// instructing the Turn.
-    pub after_attentive_mode: bool,
     /// `Face(..., true)` requests the same turn geometry with a
     /// fast-turn sequence command.
     pub fast_turn: bool,
@@ -881,7 +877,6 @@ impl AiOrderIntent {
             target_actor: None,
             compute_direction: true,
             halt_after_launch_for_path_waiter: false,
-            after_attentive_mode: false,
             fast_turn: false,
             explicit_direction: None,
             tolerance: 0.0,

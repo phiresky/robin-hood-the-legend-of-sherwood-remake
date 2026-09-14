@@ -48,41 +48,40 @@ impl EngineInner {
         let forest = self.world.weather.is_forest_level
             && self.is_player_aligned_camp(entity.camp())
             && !entity.soldier_data().is_some_and(|soldier| soldier.rider);
-        let (bow, _) = self
-            .bow_profile_and_ability(assets, owner)
-            .expect("shot selection requires a bow");
-        let bow = assets
-            .profile_manager
-            .get_bow(bow)
-            .expect("shot selection bow profile");
-        let range = f32::from(if bow.has_long_shoot {
-            bow.long_shoot.range
-        } else {
-            bow.normal_shoot.range
-        });
-        let enemies = self
+        let enemy_count = self
             .world
             .entities
             .expect_enemy_ai(owner, format_args!("shot enemies"))
             .list_them
-            .clone();
-        for &enemy in &enemies {
+            .len();
+        for index in 0..enemy_count {
+            let enemy = self
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("shot multiplicity reset"))
+                .list_them[index];
             self.ai
                 .global
                 .primary_target_multiplicity_scratch
                 .insert(enemy, 0);
         }
-        let friends = self
+        let friend_count = self
             .world
             .entities
             .expect_ai_controller(owner, format_args!("shot friends"))
             .list_us
-            .clone();
+            .len();
         // Angles are private to this selection; distance keys are shared with
         // nested alert, patrol, and money-victim operations.
-        let mut angles = Vec::with_capacity(friends.len());
-        for &friend in &friends {
+        let mut angles = Vec::with_capacity(friend_count);
+        for index in 0..friend_count {
+            let friend = self
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("shot friend angle"))
+                .list_us[index];
             if friend == owner.index() {
+                angles.push(0.0);
                 continue;
             }
             let id = self.expect_human_id_for_ai_handle(friend, "shot friend");
@@ -95,7 +94,7 @@ impl EngineInner {
                 .human_data_mut()
                 .expect("shot friend human data")
                 .sorting_distance = dx * dx + dy * dy;
-            angles.push((id, vector_angle(nose[0], nose[1], dx, dy)));
+            angles.push(vector_angle(nose[0], nose[1], dx, dy));
             if let Some(Entity::Soldier(soldier)) = self.world.entities.get(id) {
                 let ai = soldier.npc.ai_brain.enemy().expect("shot friend brain");
                 if matches!(
@@ -114,14 +113,38 @@ impl EngineInner {
                 }
             }
         }
+        let enemy_count = self
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("shot candidate count"))
+            .list_them
+            .len();
+        let (bow, _) = self
+            .bow_profile_and_ability(assets, owner)
+            .expect("shot selection requires a bow");
+        let bow = assets
+            .profile_manager
+            .get_bow(bow)
+            .expect("shot selection bow profile");
+        let range = f32::from(if bow.has_long_shoot {
+            bow.long_shoot.range
+        } else {
+            bow.normal_shoot.range
+        });
         let mut best = None;
         let mut minimum = u32::MAX as f32;
-        for enemy in enemies {
+        for index in 0..enemy_count {
+            let enemy = self
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("shot candidate"))
+                .list_them[index];
             let id = self.expect_human_id_for_ai_handle(enemy, "shot enemy");
             let point = self.live_ai_position(id);
             let dx = point.x - position.x;
             let dy = (point.y - position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
             let mut distance = dx * dx + dy * dy;
+            let angle = vector_angle(nose[0], nose[1], dx, dy);
             if !(distance <= range * range && self.sleeping_enemy_attack_allowed(owner, id)) {
                 continue;
             }
@@ -141,8 +164,17 @@ impl EngineInner {
             if !(distance <= minimum && self.sleeping_enemy_attack_allowed(owner, id)) {
                 continue;
             }
-            let angle = vector_angle(nose[0], nose[1], dx, dy);
-            let blocked = angles.iter().any(|&(friend, friend_angle)| {
+            let blocked = (0..friend_count).any(|index| {
+                let friend = self
+                    .world
+                    .entities
+                    .expect_ai_controller(owner, format_args!("shot blocking friend index"))
+                    .list_us[index];
+                if friend == owner.index() {
+                    return false;
+                }
+                let friend = self.expect_human_id_for_ai_handle(friend, "shot blocking friend");
+                let friend_angle = angles[index];
                 let entity = self.expect_entity(friend, "shot blocking friend");
                 if !(entity
                     .human_data()
@@ -224,11 +256,7 @@ impl EngineInner {
                     .expect_ai_controller(owner, format_args!("shot target after state callback"))
                     .primary_target
                     .expect("shooting requires target");
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("shoot stop"))
-                    .stop_all();
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.stop_ai_owner(sim, assets, owner);
                 let target = self.expect_human_id_for_ai_handle(target.get(), "shot target");
                 self.shoot_bow_at(assets, owner, target);
             } else {
@@ -250,11 +278,7 @@ impl EngineInner {
                     .launch_timer(time, frame);
             }
         } else {
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("equip bow stop"))
-                .stop_all();
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.stop_ai_owner(sim, assets, owner);
             self.duty_set_state(
                 sim,
                 assets,

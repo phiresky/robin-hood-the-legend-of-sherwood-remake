@@ -513,6 +513,86 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
 }
 
 #[test]
+#[should_panic(expected = "RemoveAllSubordinates callback shortened the captured patrol prefix")]
+fn remove_all_subordinates_rereads_roster_after_member_state_callback() {
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let chief = engine.add_test_entity(make_scripted_soldier(""));
+    let first = engine.add_test_entity(make_scripted_civilian("ClearChiefAgain"));
+    let second = engine.add_test_entity(make_scripted_soldier(""));
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(chief)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .theoretical_patrol = vec![first, second];
+    for owner in [first, second] {
+        let ai = engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .ai_controller_mut()
+            .unwrap();
+        ai.patrol_chief = Some(chief);
+        ai.special_action = true;
+    }
+    let second_ai = engine
+        .get_entity_mut(second)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap();
+    second_ai.current_state = crate::ai::AiState::Seeking;
+    second_ai.current_substate = crate::ai::Substate::SeekingJustWatching;
+
+    // A one-shot state callback recursively clears the same roster. The
+    // outer call must reread index one and reject the missing member instead
+    // of continuing through a retained copy of the old roster.
+    let class = ClassEntry {
+        source_file: "clear_patrol_callback.scs".into(),
+        class_name: "ClearChiefAgain".into(),
+        size_of_member_variables: 4,
+        member_variables: Vec::new(),
+        functions: vec![Function {
+            name: "FilterAIEvent".into(),
+            address: 0,
+            num_parameters: 3,
+            size_of_return_value: 4,
+            size_of_parameters: 12,
+            size_of_volatile: 0,
+            size_of_temporary: 4,
+        }],
+        quads: vec![
+            q_begin_function(0, 1),
+            q_if_not_zero_goto(0x4000, 6),
+            q_aff0_iconstant(0x4000, 1),
+            q_aff0_iconstant(TMP0, crate::natives::ScriptHandleCodec::actor_handle(chief)),
+            q_native_param(TMP0),
+            q_native_call(crate::natives::NativeFn::RemoveAllSubordinates as u32),
+            q_aff0_iconstant(TMP0, 1),
+            q_return_val(TMP0),
+            q_end_function(),
+        ],
+    };
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![
+                empty_startup_class("clear_patrol_callback.scs".into()),
+                class,
+            ],
+        })
+        .unwrap(),
+    );
+    engine.attach_script_bindings(&assets);
+    engine.scripts.mission.as_mut().unwrap().bind_actor(
+        crate::natives::ScriptHandleCodec::actor_handle(first),
+        "ClearChiefAgain",
+    );
+    engine.script_remove_all_subordinates(&sim, &assets, chief);
+}
+
+#[test]
 fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate() {
     let sim = crate::sim_rng::test_context();
     let mut assets = LevelAssets::new();

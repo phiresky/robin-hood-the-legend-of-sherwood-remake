@@ -67,6 +67,7 @@ mod seek_execution;
 mod seeking_event_execution;
 mod seeking_remaining;
 mod shot_selection;
+mod stop_execution;
 mod swordfight_candidates;
 mod swordfight_execution;
 mod wondering_execution;
@@ -287,27 +288,26 @@ fn doorway_battle_source_side_flees(
     source_id < opposing_id
 }
 
-fn authoritative_house_occupants(
+fn authoritative_house_occupants<'a>(
     building_sector: u32,
-    canonical_handles: Option<&[i32]>,
-    mirrored: &[EntityId],
-    mut resolve: impl FnMut(i32) -> Option<EntityId>,
-) -> Vec<EntityId> {
-    canonical_handles.map_or_else(
-        || mirrored.to_vec(),
-        |handles| {
-            handles
+    canonical_handles: Option<&'a [i32]>,
+    mirrored: &'a [EntityId],
+    mut resolve: impl FnMut(i32) -> Option<EntityId> + 'a,
+) -> impl Iterator<Item = EntityId> + 'a {
+    canonical_handles
+        .into_iter()
+        .flatten()
+        .map(move |&handle| {
+            resolve(handle).unwrap_or_else(|| {
+                panic!("building {building_sector} occupant handle {handle} has no live actor")
+            })
+        })
+        .chain(
+            mirrored
                 .iter()
-                .map(|&handle| {
-                    resolve(handle).unwrap_or_else(|| {
-                        panic!(
-                            "building {building_sector} occupant handle {handle} has no live actor"
-                        )
-                    })
-                })
-                .collect()
-        },
-    )
+                .copied()
+                .filter(move |_| canonical_handles.is_none()),
+        )
 }
 
 #[cfg(test)]
@@ -353,7 +353,7 @@ mod doorway_battle_side_tests {
                 },
             );
 
-        assert_eq!(occupants, [civilian, pc, soldier]);
+        assert_eq!(occupants.collect::<Vec<_>>(), [civilian, pc, soldier]);
     }
 }
 
@@ -2889,34 +2889,30 @@ impl EngineInner {
         };
         let door_indices = house.door_indices.clone();
         let building_index = house.building_index;
-        let mirrored_occupant_ids = house.occupant_ids.clone();
         // The building occupant list is the authority read by the original
         // game here. The Rust `House` mirror can temporarily lag it when
         // legacy adoption restores the serialized building list before a
         // later entity/topology phase rebuilds the AI houses. Resolve the
         // canonical actor-handle list at the call boundary so civilians are
         // not silently omitted from the alert and its synchronous Panic.
-        let canonical_handles = building_index
-            .and_then(|index| {
-                self.script_domains
-                    .buildings
-                    .occupants
-                    .get(usize::from(index))
-            })
-            .cloned();
-        let occupant_ids = authoritative_house_occupants(
-            building_sector_num,
-            canonical_handles.as_deref(),
-            &mirrored_occupant_ids,
-            |handle| self.entity_id_for_actor_handle(handle),
-        );
+        let canonical_handles = building_index.and_then(|index| {
+            self.script_domains
+                .buildings
+                .occupants
+                .get(usize::from(index))
+        });
 
         // Group live fighters by allegiance. Original used two fixed lists;
         // custom missions may have any number of groups in one building.
         let mut fighter_ids: std::collections::BTreeMap<crate::element::Camp, Vec<EntityId>> =
             std::collections::BTreeMap::new();
         let mut civilian_ids: Vec<EntityId> = Vec::new();
-        for &eid in &occupant_ids {
+        for eid in authoritative_house_occupants(
+            building_sector_num,
+            canonical_handles.map(Vec::as_slice),
+            &house.occupant_ids,
+            |handle| self.entity_id_for_actor_handle(handle),
+        ) {
             let Some(entity) = self.world.entities.get(eid) else {
                 continue;
             };
@@ -2946,6 +2942,13 @@ impl EngineInner {
         }
 
         if building_exit_wait_owner_debug_enabled() {
+            let occupant_ids: Vec<_> = authoritative_house_occupants(
+                building_sector_num,
+                canonical_handles.map(Vec::as_slice),
+                &house.occupant_ids,
+                |handle| self.entity_id_for_actor_handle(handle),
+            )
+            .collect();
             self.trace_enemy_in_house_alert(
                 source,
                 building_sector_num,

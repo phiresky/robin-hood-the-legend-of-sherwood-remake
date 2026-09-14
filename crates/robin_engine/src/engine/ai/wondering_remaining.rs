@@ -311,11 +311,7 @@ impl EngineInner {
                     AiState::Wondering,
                     WonderingAwakenBrawlVictim,
                 );
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("brawl victim wake stop"))
-                    .stop_all();
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.stop_ai_owner(sim, assets, owner);
                 let body = self
                     .world
                     .entities

@@ -131,11 +131,7 @@ impl EngineInner {
             | Substate::DefaultOnPost
             | Substate::DefaultGotoChief
             | Substate::DefaultOnPostLookingSidewards => {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("patrol stop owner"))
-                    .stop_all();
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.stop_ai_owner(sim, assets, owner);
             }
             Substate::DefaultPatrolEnroute
             | Substate::DefaultPatrolEnrouteRunning
@@ -269,8 +265,7 @@ impl EngineInner {
             return;
         }
         if ai.needs_patrol_reinit {
-            let theoretical = ai.theoretical_patrol.clone();
-            self.assemble_patrol_for_npc(assets, owner, &theoretical);
+            self.initialize_patrol_for_npc(assets, owner);
         }
 
         let ai = self

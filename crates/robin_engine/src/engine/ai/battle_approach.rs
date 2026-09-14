@@ -11,6 +11,21 @@ use crate::sim_rng::SimulationContext;
 use crate::weapons::WeaponDistance;
 
 impl EngineInner {
+    pub(in crate::engine) fn clear_live_combat_neighbours(&mut self, owner: EntityId) {
+        let left = self
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("clear left combat neighbour"))
+            .left_combat_neighbour;
+        self.apply_update_left_combat_neighbour(owner.index(), left, None);
+        let right = self
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("clear right combat neighbour"))
+            .right_combat_neighbour;
+        self.apply_update_right_combat_neighbour(owner.index(), right, None);
+    }
+
     fn approach_primary(&self, owner: EntityId) -> EntityId {
         let handle = self
             .world
@@ -64,11 +79,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("swordfight stop"))
-            .stop_all();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.stop_ai_owner(sim, assets, owner);
         self.world
             .entities
             .expect_ai_controller_mut(owner, format_args!("swordfight panic"))
@@ -94,11 +105,7 @@ impl EngineInner {
         ));
         ai.base.outbox.actor.enter_swordfight_jump_line = ai.my_line_jump;
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("swordfight neighbours"))
-            .clear_combat_neighbours();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.clear_live_combat_neighbours(owner);
         self.approach_focus(sim, assets, owner, None);
         let vip = self.expect_entity(owner, "swordfight speech").is_vip();
         self.owner_work_speech(

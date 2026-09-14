@@ -670,11 +670,7 @@ impl EngineInner {
             );
             self.duty_go_to(sim, assets, owner, position, GotoFlags::RUN);
         } else {
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("shield stop"))
-                .stop_all();
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.stop_ai_owner(sim, assets, owner);
             let target = self
                 .world
                 .entities

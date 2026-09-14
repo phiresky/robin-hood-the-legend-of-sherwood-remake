@@ -2,24 +2,6 @@ use super::*;
 
 impl EngineInner {
     #[inline(never)]
-    fn trace_primary_swap_friend_apply(
-        frame: u32,
-        npc_id: EntityId,
-        friend_id: EntityId,
-        old_target: impl std::fmt::Debug,
-        new_target: impl std::fmt::Display,
-    ) {
-        eprintln!(
-            "[PRIMARY_SWAP frame={} owner={} phase=friend_swap_apply friend={:?} old_target={:?} new_target={}]",
-            frame,
-            npc_id.index(),
-            friend_id,
-            old_target,
-            new_target,
-        );
-    }
-
-    #[inline(never)]
     fn trace_consider_report_drain_start(
         frame: u32,
         npc_id: EntityId,
@@ -605,48 +587,6 @@ impl EngineInner {
             self.set_as_new_principal_opponent(assets, npc_id, opponent_id);
         }
 
-        // Process friend primary-target swaps. The original game performs
-        // `friend.set_primary_target(primary_target)` directly on the
-        // other soldier when the swap heuristic fires — for every
-        // improving friend in the pass, not just the last one — so we
-        // apply the whole queue here after the owner's AI tick ran.
-        let debug_primary_swap = crate::ai_enemy::primary_swap_debug_enabled();
-        for (friend_id, new_target) in std::mem::take(&mut effects.friend_primary_target_swaps) {
-            let friend = self.world.entities.expect_entity_mut(
-                friend_id,
-                format_args!("pending-drain NPC {} primary-target friend", npc_id.index()),
-            );
-            let Entity::Soldier(friend) = friend else {
-                panic!(
-                    "pending-drain NPC {} primary-target friend {} is not a soldier",
-                    npc_id.index(),
-                    friend_id.index()
-                );
-            };
-            let friend_ai = friend.npc.ai_brain.base_mut().unwrap_or_else(|| {
-                panic!(
-                    "pending-drain NPC {} primary-target friend {} has no AI",
-                    npc_id.index(),
-                    friend_id.index()
-                )
-            });
-            if debug_primary_swap
-                && crate::ai_enemy::primary_swap_debug_matches(
-                    self.control.frame_counter,
-                    npc_id.index(),
-                )
-            {
-                Self::trace_primary_swap_friend_apply(
-                    self.control.frame_counter,
-                    npc_id,
-                    friend_id,
-                    friend_ai.primary_target,
-                    new_target.get(),
-                );
-            }
-            friend_ai.primary_target = Some(new_target);
-        }
-
         // Process pending focus / focus_point / unfocus — the
         // focus by primary target, position, or no target
         // calls.  Each explicit channel "consumes" the primary_target
@@ -734,43 +674,7 @@ impl EngineInner {
             );
         }
 
-        // Preserve the authored boundary on either side of the state change's
-        // attentive-mode call. Face normally launches before attentive mode;
-        // Facing authored after the state change is held until that transition has
-        // launched, matching the two distinct original-game orders.
-        let orders_after_attentive = {
-            let ai = self.world.entities.expect_ai_controller_mut(
-                npc_id,
-                format_args!(
-                    "pending-drain owner {} lost AI before Face split",
-                    npc_id.index()
-                ),
-            );
-            let orders = std::mem::take(&mut ai.outbox.actor.orders);
-            let (before, after) = orders
-                .into_iter()
-                .partition(|intent| !intent.after_attentive_mode);
-            ai.outbox.actor.orders = before;
-            after
-        };
         self.launch_pending_orders_for_npc_after_halt(sim, assets, npc_id, halt_count != 0);
-
-        if !orders_after_attentive.is_empty() {
-            let ai = self.world.entities.expect_ai_controller_mut(
-                npc_id,
-                format_args!(
-                    "pending-drain owner {} lost AI after attentive mode",
-                    npc_id.index()
-                ),
-            );
-            ai.outbox.actor.orders.extend(orders_after_attentive);
-            // EnterAttentiveMode is registered but remains Todo until the
-            // sequence-manager instruction phase. Register following Turns
-            // behind it as well so that phase arbitrates the two elements in
-            // authored FIFO order instead of eagerly instructing the Turn
-            // past the still-Todo attentive barrier.
-            self.launch_pending_orders_for_npc_after_halt(sim, assets, npc_id, true);
-        }
     }
 
     /// Guarded-PC reciprocity, deactivation, reported-to-officer writes,

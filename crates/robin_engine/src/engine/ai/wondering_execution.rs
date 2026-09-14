@@ -469,8 +469,7 @@ impl EngineInner {
         if let Some(object) = ai.base.object_of_desire.take() {
             ai.base.forgotten_objects.push(object.get());
         }
-        ai.base.stop_all();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.stop_ai_owner(sim, assets, owner);
         self.duty_set_state(
             sim,
             assets,

@@ -1082,7 +1082,6 @@ mod tests {
             Substate::SeekingCivilianGiveAlertingReportToSoldierStart
         );
         assert!(ai.base.timer_is_running);
-        assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
     }
 
     #[test]

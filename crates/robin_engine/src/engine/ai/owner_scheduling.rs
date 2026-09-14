@@ -36,26 +36,16 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        self.drain_self_stimuli_for_npc_collect_moves(sim, npc_id, assets);
-    }
-
-    pub(in crate::engine) fn drain_self_stimuli_for_npc_collect_moves(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: crate::element::EntityId,
-        assets: &LevelAssets,
-    ) -> Vec<crate::sequence::SequenceId> {
         const MAX_REENTRANT_STIMULI: usize = 111;
         let mut dispatched = 0usize;
-        let mut launched_moves = Vec::new();
 
         loop {
             let queued_stimulus = {
                 let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                    return launched_moves;
+                    return;
                 };
                 let Some(ai) = entity.ai_controller_mut() else {
-                    return launched_moves;
+                    return;
                 };
                 if ai.outbox.reentrant.self_stimuli.is_empty() {
                     break;
@@ -108,13 +98,10 @@ impl EngineInner {
             // stimulus so a newly launched sequence participates in
             // arbitration before the next sibling stimulus is delivered.
             self.drain_pending_for_npc(sim, npc_id, assets);
-            launched_moves.extend(self.launch_pending_orders_for_npc(sim, assets, npc_id));
+            self.launch_pending_orders_for_npc(sim, assets, npc_id);
 
-            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             self.dispatch_condolations(sim, assets);
         }
-
-        launched_moves
     }
 
     // ── Per-waypoint ReachPoint dispatch ──────────────────────────
@@ -184,7 +171,6 @@ impl EngineInner {
         wp_idx: u8,
     ) {
         let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
-        let move_boundary = self.orders.sequence_manager.sequence_launch_boundary();
         tracing::trace!(
             frame = self.control.frame_counter,
             owner = npc_id.index(),
@@ -221,13 +207,6 @@ impl EngineInner {
         }
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterScriptGoOn);
         self.dispatch_think_with_drain(sim, npc_id, &stimulus, None, assets);
-        self.dispatch_synchronous_owner_moves(sim, assets, npc_id, move_boundary, &mut Vec::new())
-            .unwrap_or_else(|error| {
-                panic!(
-                    "waypoint-script owner {} synchronous Move dispatch failed: {error:?}",
-                    npc_id.index()
-                )
-            });
     }
 
     /// Execute Original's route-arrival call stack without detaching the handler.
@@ -328,19 +307,13 @@ impl EngineInner {
         false
     }
 
-    /// Run the original game's patrol initialization at a captured owner boundary.
-    ///
-    /// All fields are resolved from the live world after `FilterAIEvent`.
-    /// Original's inline call observes earlier legacy slots after their actor
-    /// tick and later slots before theirs; Rust's entity table is at that same
-    /// owner boundary. The views captured when the stimulus was queued can be
-    /// older than that boundary and must not drive patrol ordering.
+    /// Initialize the current theoretical patrol at this owner boundary.
     pub(in crate::engine) fn initialize_patrol_for_npc(
         &mut self,
         assets: &LevelAssets,
         chief_id: EntityId,
     ) {
-        let theoretical = self
+        let member_count = self
             .world
             .entities
             .expect_ai_controller(
@@ -348,29 +321,17 @@ impl EngineInner {
                 format_args!("synchronous patrol initialization owner"),
             )
             .theoretical_patrol
-            .clone();
-        self.initialize_patrol_for_npc_over_members(assets, chief_id, &theoretical);
+            .len();
+        self.initialize_patrol_for_npc_prefix(assets, chief_id, member_count);
     }
 
-    /// Patrol initialization restricted to an explicit slice of theoretical
-    /// members. Patrol-member addition runs one initialization per appended
-    /// member, so each of its passes sees only the prefix of the theoretical
-    /// list that existed at that point.
-    pub(in crate::engine) fn initialize_patrol_for_npc_over_members(
-        &mut self,
-        assets: &LevelAssets,
-        chief_id: EntityId,
-        theoretical: &[EntityId],
-    ) {
-        self.assemble_patrol_for_npc(assets, chief_id, theoretical);
-    }
-
+    /// Initialize the captured prefix, reading each member from the live roster.
     /// Sort by raw world distance and arrange pairs using AI positions.
-    pub(super) fn assemble_patrol_for_npc(
+    pub(in crate::engine) fn initialize_patrol_for_npc_prefix(
         &mut self,
         assets: &LevelAssets,
         chief_id: EntityId,
-        theoretical: &[EntityId],
+        member_count: usize,
     ) {
         let chief_position = self.live_ai_position(chief_id);
         let chief_world = self
@@ -379,7 +340,14 @@ impl EngineInner {
             .position();
         let mut patrol = Vec::new();
         let mut missed = Vec::new();
-        for &id in theoretical {
+        for index in 0..member_count {
+            let id = *self
+                .world
+                .entities
+                .expect_ai_controller(chief_id, format_args!("patrol assembly chief"))
+                .theoretical_patrol
+                .get(index)
+                .expect("patrol assembly lost a member from its captured prefix");
             if id == chief_id {
                 continue;
             }
@@ -508,7 +476,6 @@ impl EngineInner {
         for iter in 0..MAX_ITERS {
             self.drain_pending_for_npc(sim, npc_id, assets);
             self.launch_pending_orders_for_npc(sim, assets, npc_id);
-            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             // All foreign cards that predated this direct boundary are held
             // aside above. Any foreign-owner card visible here was therefore
             // produced causally on this call stack and must close now.
@@ -521,7 +488,7 @@ impl EngineInner {
                 !ai.outbox.reentrant.self_stimuli.is_empty()
             };
             if has_self_stimuli {
-                self.drain_self_stimuli_for_npc_collect_moves(sim, npc_id, assets);
+                self.drain_self_stimuli_for_npc(sim, npc_id, assets);
             }
 
             let still_pending = {
@@ -532,7 +499,6 @@ impl EngineInner {
                 ai.outbox.actor.has_boundary_work()
                     || !ai.outbox.reentrant.self_stimuli.is_empty()
                     || !ai.outbox.reentrant.owner_work.is_empty()
-                    || ai.has_pending_synchronous_cross_npc_actions()
             };
             if !still_pending {
                 break;
@@ -543,35 +509,6 @@ impl EngineInner {
                 npc_id.index()
             );
         }
-
-        self.orders
-            .sequence_manager
-            .restore_pending_condolations(foreign_backlog);
-    }
-
-    /// Apply one AI stop-all prefix as a synchronous owner boundary.
-    ///
-    /// Existing cards for unrelated owners belong to their established
-    /// update slots. Cards produced while draining this owner's queued
-    /// state-change/stop work are causal, including cross-owner callbacks, and
-    /// remain visible to the ordinary global condolence drain.
-    pub(in crate::engine) fn drain_ai_owner_halt_boundary(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        npc_id: EntityId,
-    ) {
-        let pending = self.orders.sequence_manager.drain_pending_condolations();
-        let (owner_roots, foreign_backlog): (Vec<_>, Vec<_>) = pending
-            .into_iter()
-            .partition(|dispatch| dispatch.card.owner == npc_id);
-        self.orders
-            .sequence_manager
-            .restore_pending_condolations(owner_roots);
-
-        self.drain_ai_owner_work_for(sim, assets, npc_id);
-        self.apply_pending_ai_halt(npc_id);
-        self.dispatch_condolations(sim, assets);
 
         self.orders
             .sequence_manager

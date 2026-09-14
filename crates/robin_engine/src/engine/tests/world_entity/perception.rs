@@ -141,57 +141,6 @@ fn mytalk_uses_concrete_sound_manager_resolution_duration() {
 }
 
 #[test]
-fn actor_effect_prefix_does_not_consume_caller_tail_self_stimulus() {
-    use crate::ai::{AiActorOutbox, AiOwnerWork, StimulusType};
-    use crate::element::AiBrain;
-
-    let mut engine = EngineInner::new();
-    let mut soldier_entity = make_test_soldier(crate::element::Posture::Upright);
-    let Entity::Soldier(soldier) = &mut soldier_entity else {
-        unreachable!();
-    };
-    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
-    let ai = soldier.npc.ai_brain.base_mut().expect("test soldier AI");
-    let prefix = AiActorOutbox {
-        unfocus: true,
-        ..Default::default()
-    };
-    ai.outbox
-        .reentrant
-        .owner_work
-        .push(AiOwnerWork::ActorEffects(prefix));
-    let mut halt_before_callback = AiActorOutbox::default();
-    halt_before_callback.queue_halt();
-    ai.outbox
-        .reentrant
-        .owner_work
-        .push(AiOwnerWork::ActorEffects(halt_before_callback));
-    ai.outbox
-        .reentrant
-        .self_stimuli
-        .push(StimulusType::EventTimer.into());
-    let soldier_id = engine.add_test_entity(soldier_entity);
-
-    engine.drain_ai_owner_work_for(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        soldier_id,
-    );
-
-    let ai = engine
-        .get_entity(soldier_id)
-        .and_then(Entity::ai_controller)
-        .expect("test soldier AI survives prefix drain");
-    assert_eq!(
-        ai.outbox.reentrant.self_stimuli,
-        [StimulusType::EventTimer],
-        "clearing focus at the recursive actor-effects boundary must leave the caller-tail event behind the older halt"
-    );
-    assert!(ai.outbox.reentrant.owner_work.is_empty());
-    assert!(!ai.outbox.actor.halt);
-}
-
-#[test]
 fn stop_exclamation_cancels_unresolved_request_before_fifo_resolution() {
     use crate::ai::Remark;
 
@@ -1358,10 +1307,6 @@ fn review_direct_owner_self_stimulus_closes_nested_alert_request() {
         civilian.base.current_substate,
         Substate::SeekingCivilianGiveAlertingReportToSoldierStart
     );
-    assert!(
-        !civilian.base.has_pending_synchronous_cross_npc_actions(),
-        "nested alert callback must finish before returning to the caller"
-    );
 }
 
 #[test]
@@ -1516,7 +1461,7 @@ fn review_officer_sees_soldier_accepts_officer_rank_target() {
 }
 
 #[test]
-fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
+fn review_soldier_alert_records_sender_even_when_later_call_is_refused() {
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::profiles::ProfileRank;
 
@@ -1559,7 +1504,7 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
 
     for (id, x, rank) in [
         (reporter_id, 100.0, ProfileRank::Soldier),
-        (officer_id, 140.0, ProfileRank::Officer),
+        (officer_id, 400.0, ProfileRank::Officer),
         (callback_officer_id, 900.0, ProfileRank::Officer),
     ] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("alert soldier exists")
@@ -1588,24 +1533,6 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
         }
     }
 
-    engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("accepting officer has EnemyAi")
-        .base
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(crate::ai::CrossNpcAction::SendStimulus {
-            target: reporter_id.index(),
-            stimulus_type: StimulusType::CallAlert,
-            info: crate::ai::StimulusInfo::Human(crate::ai::AiEntityHandle::new(
-                callback_officer_id.index(),
-            )),
-            fallback_to_sender: None,
-            to_whole_patrol: false,
-        });
-
     engine.dispatch_think_with_drain(
         sim,
         reporter_id,
@@ -1613,6 +1540,23 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
         None,
         &assets,
     );
+
+    assert_eq!(
+        engine
+            .get_entity(reporter_id)
+            .and_then(Entity::ai_controller)
+            .unwrap()
+            .current_substate,
+        Substate::SeekingRunningToOfficerSeen,
+        "the reporter must still be outside talking distance before the later call"
+    );
+    assert!(!engine.dispatch_think_with_drain(
+        sim,
+        reporter_id,
+        &Stimulus::with_human(StimulusType::CallAlert, callback_officer_id.index()),
+        None,
+        &assets
+    ));
 
     let reporter = engine
         .get_entity(reporter_id)
@@ -1625,11 +1569,11 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
     assert_eq!(
         reporter.base.antagonist,
         Some(crate::ai::AiEntityHandle::new(callback_officer_id.index())),
-        "recipient callback must be allowed to mutate the suspended caller"
+        "the sender is recorded before the running soldier declines the call"
     );
     assert_eq!(
-        reporter.base.last_goto_destination.x, 900.0,
-        "outer continuation must resume from the caller's live antagonist"
+        reporter.base.last_goto_destination.x, 400.0,
+        "a refused call must not replace the ongoing destination"
     );
     let officer = engine
         .get_entity(officer_id)
@@ -1719,7 +1663,6 @@ fn blipped_report_speech_callback_precedes_give_report_state_and_timer() {
         line.line_type == LogLineType::Event && line.info == StimulusType::CallYourTalk1 as u16
     }));
     assert!(reporter.base.outbox.reentrant.owner_work.is_empty());
-    assert!(reporter.base.outbox.reentrant.cross_npc_actions.is_empty());
 }
 
 #[test]
@@ -2473,8 +2416,8 @@ fn closure_review_final_alert_report_boundary_precedes_formation() {
 }
 
 #[test]
-fn review2_alert_result_and_report_finish_before_next_soldier_call() {
-    use crate::ai::{CrossNpcAction, Position, ReconnaissanceReport, ReportType};
+fn review2_alerted_soldier_accepts_a_later_live_reconnaissance_report() {
+    use crate::ai::{Position, ReconnaissanceReport, ReportType};
     use crate::profiles::ProfileRank;
 
     let sim = crate::sim_rng::test_context();
@@ -2513,6 +2456,16 @@ fn review2_alert_result_and_report_finish_before_next_soldier_call() {
     officer.alerted_us.clear();
     officer.base.my_reconnaissance_report.report_type = ReportType::Enemy;
     officer.base.my_reconnaissance_report.seek_position = first_position;
+    assert!(engine.execute_ai_alert_soldiers(&sim, &assets, officer_id, Position::default(), 0));
+    assert_eq!(
+        engine
+            .get_entity(soldier_id)
+            .and_then(Entity::ai_controller)
+            .unwrap()
+            .my_reconnaissance_report
+            .seek_position,
+        first_position
+    );
     let second = engine
         .get_entity_mut(second_id)
         .and_then(Entity::ai_controller_mut)
@@ -2522,16 +2475,13 @@ fn review2_alert_result_and_report_finish_before_next_soldier_call() {
         seek_position: sibling_position,
         ..Default::default()
     };
-    second
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::ConsiderReport {
-            target: soldier_id.index(),
-            flags: crate::ai_enemy::ReportUpdateFlags::UPDATE_TYPE.bits(),
-        });
-
-    assert!(engine.execute_ai_alert_soldiers(&sim, &assets, officer_id, Position::default(), 0));
+    engine.consider_live_ai_report(
+        &sim,
+        &assets,
+        soldier_id,
+        second_id,
+        crate::ai_enemy::ReportUpdateFlags::UPDATE_TYPE.bits(),
+    );
     let report = &engine
         .get_entity(soldier_id)
         .and_then(Entity::enemy_ai)

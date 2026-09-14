@@ -161,6 +161,46 @@ fn detection_180_projects_ground_radius_before_los() {
 }
 
 #[test]
+fn live_visibility_reuses_surface_radius_until_the_next_frame_but_never_caches_zero() {
+    let (mut engine, assets, viewer, target) = fixture(100);
+    place(&mut engine, target, WorldPoint3D::new(80.0, 0.0, 0.0));
+    assert!(engine.npc_is_detecting_human(&assets, viewer, target, 100));
+
+    // The current radius now admits this actor, but the ground projection
+    // calculated earlier in this frame still limits visibility.
+    engine
+        .get_entity_mut(viewer)
+        .unwrap()
+        .ai_actor_data_mut()
+        .unwrap()
+        .view_radius = 400;
+    place(&mut engine, target, WorldPoint3D::new(200.0, 0.0, 0.0));
+    crate::sight_obstacle::begin_parity_visibility_capture();
+    assert!(!engine.npc_is_detecting_human(&assets, viewer, target, 100));
+    assert!(crate::sight_obstacle::take_parity_visibility_capture().is_empty());
+    engine.control.frame_counter = 101;
+    crate::sight_obstacle::begin_parity_visibility_capture();
+    assert!(engine.npc_is_detecting_human(&assets, viewer, target, 101));
+    assert_eq!(
+        crate::sight_obstacle::take_parity_visibility_capture().len(),
+        1
+    );
+
+    // At an eye height equal to the view radius, the ground sphere projects
+    // to zero. A changed radius must therefore be recomputed even this frame.
+    let (mut engine, assets, viewer, target) = fixture(45);
+    place(&mut engine, target, WorldPoint3D::new(30.0, 0.0, 0.0));
+    assert!(!engine.npc_is_detecting_human(&assets, viewer, target, 100));
+    engine
+        .get_entity_mut(viewer)
+        .unwrap()
+        .ai_actor_data_mut()
+        .unwrap()
+        .view_radius = 400;
+    assert!(engine.npc_is_detecting_human(&assets, viewer, target, 100));
+}
+
+#[test]
 fn detection_180_rereads_active_unconscious_target() {
     let (mut engine, assets, viewer, target) = fixture(400);
     engine
@@ -261,7 +301,7 @@ fn normal_detection_uses_raw_pass_door_geometry_and_current_active_flag() {
 
 #[test]
 fn normal_detection_same_building_uses_current_body_and_door_gates() {
-    for gate in 0..4 {
+    for gate in 0..5 {
         let (mut engine, assets, viewer, target) = fixture(400);
         let building = building_sector(&mut engine);
         for id in [viewer, target] {
@@ -294,6 +334,10 @@ fn normal_detection_same_building_uses_current_body_and_door_gates() {
                     .unconscious = true
             }
             3 => {
+                door_position(&mut engine, target, MapPoint::new(200.0, 0.0));
+            }
+            4 => {
+                // Physical choreography alone does not select a PassDoor command.
                 engine
                     .get_entity_mut(target)
                     .unwrap()
@@ -315,7 +359,7 @@ fn normal_detection_same_building_uses_current_body_and_door_gates() {
         }
         assert_eq!(
             engine.npc_is_detecting_human(&assets, viewer, target, 100),
-            gate == 0,
+            gate == 0 || gate == 4,
             "gate {gate}"
         );
     }

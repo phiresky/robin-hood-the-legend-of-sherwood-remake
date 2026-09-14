@@ -2087,33 +2087,7 @@ impl EngineInner {
                         // it stood at that append, so a chunk adding several
                         // members runs growing passes instead of repeating the
                         // final roster once per member.
-                        let theoretical = self
-                            .world
-                            .entities
-                            .get(chief_id)
-                            .and_then(crate::element::Entity::ai_controller)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "AddAsSubordinate chief {} lost its AI at the script barrier",
-                                    chief_id.index()
-                                )
-                            })
-                            .theoretical_patrol
-                            .clone();
-                        if member_count > theoretical.len() {
-                            tracing::warn!(
-                                "AddAsSubordinate barrier for chief {} expected at least {} theoretical members but found {}; the patrol was rewritten before the barrier drained",
-                                chief_id.index(),
-                                member_count,
-                                theoretical.len()
-                            );
-                        }
-                        let end = member_count.min(theoretical.len());
-                        self.initialize_patrol_for_npc_over_members(
-                            assets,
-                            chief_id,
-                            &theoretical[..end],
-                        );
+                        self.initialize_patrol_for_npc_prefix(assets, chief_id, member_count);
                     }
                     crate::natives::DeferredCommand::RemoveAllSubordinates { actor } => {
                         if let Some(chief) = self.entity_id_for_actor_handle(actor) {
@@ -3854,10 +3828,6 @@ impl EngineInner {
             };
 
             match work {
-                crate::ai::AiOwnerWork::ActorEffects(prefix) => {
-                    self.owner_work_actor_effects(sim, assets, owner, prefix);
-                    continue;
-                }
                 crate::ai::AiOwnerWork::NearbyCiviliansPanic => {
                     tracing::trace!(
                         target: "parity_nearby_panic",
@@ -3922,71 +3892,6 @@ impl EngineInner {
             "AI owner {} exceeded recursive FIFO bound {MAX_OWNER_WORK}",
             owner.index()
         );
-    }
-
-    fn owner_work_actor_effects(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        prefix: crate::ai::AiActorOutbox,
-    ) {
-        // This prefix was authored before the next synchronous
-        // owner statement (currently stop-all). Detach its later
-        // tail, settle it through the ordinary actor fixed point,
-        // then restore the tail. In particular, a movement prefix
-        // must launch before the following Halt can select and
-        // cancel its new sequence.
-        let (later_work, later_actor_effects, later_self_stimuli, later_cross_npc_actions) = {
-            let ai = self
-                .world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "actor-effect owner {} vanished before settlement",
-                        owner.index()
-                    )
-                });
-            (
-                std::mem::take(&mut ai.outbox.reentrant.owner_work),
-                std::mem::replace(&mut ai.outbox.actor, prefix),
-                std::mem::take(&mut ai.outbox.reentrant.self_stimuli),
-                std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions),
-            )
-        };
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
-        let ai = self
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "actor-effect owner {} vanished after settlement",
-                    owner.index()
-                )
-            });
-        debug_assert!(
-            !ai.outbox.actor.has_boundary_work(),
-            "owner-local actor prefix left undrained effects"
-        );
-        debug_assert!(
-            ai.outbox.reentrant.owner_work.is_empty(),
-            "owner-local actor prefix left undrained owner work"
-        );
-        debug_assert!(
-            ai.outbox.reentrant.self_stimuli.is_empty(),
-            "owner-local actor prefix left undrained self stimuli"
-        );
-        let mut prefix_cross_npc_actions =
-            std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions);
-        prefix_cross_npc_actions.extend(later_cross_npc_actions);
-        ai.outbox.actor = later_actor_effects;
-        ai.outbox.reentrant.owner_work = later_work;
-        ai.outbox.reentrant.self_stimuli = later_self_stimuli;
-        ai.outbox.reentrant.cross_npc_actions = prefix_cross_npc_actions;
     }
 
     fn owner_work_consider_to_begin_parade(

@@ -224,8 +224,7 @@ impl EngineInner {
                 AiState::Seeking,
                 Substate::SeekingBodyAwakeningSleeperr,
             );
-            self.seek_enemy_mut(owner).base.stop_all();
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.stop_ai_owner(sim, assets, owner);
             let body = self.body_target(owner);
             let mut sequence = crate::sequence::Sequence::new();
             sequence.append_element(crate::sequence::SequenceElement::new_interaction(

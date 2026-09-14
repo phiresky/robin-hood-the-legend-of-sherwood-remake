@@ -69,8 +69,7 @@ impl EngineInner {
     ) {
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let center = self.resolve_live_seek_center(owner, center);
-        self.seek_enemy_mut(owner).base.stop_all();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.stop_ai_owner(sim, assets, owner);
         self.seek_enemy_mut(owner).base.outbox.actor.set_unfocus();
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
         if self.is_player_aligned_camp(self.expect_entity(owner, "seek camp").camp())

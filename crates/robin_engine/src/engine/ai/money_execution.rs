@@ -112,7 +112,8 @@ mod tests {
                 .sorting_distance,
             10_000.0
         );
-        engine.assemble_patrol_for_npc(&assets, ids[2], &[ids[1]]);
+        engine.money_ai_mut(ids[2]).base.theoretical_patrol = vec![ids[1]];
+        engine.initialize_patrol_for_npc(&assets, ids[2]);
         assert_eq!(
             engine
                 .expect_entity(ids[1], "nested patrol key")

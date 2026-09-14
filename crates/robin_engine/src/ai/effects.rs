@@ -83,7 +83,6 @@ pub struct AiReentrantOutbox {
     #[state_hash(skip)]
     #[bitcode(skip)]
     pub engine_drains_after_script_go_on: bool,
-    pub cross_npc_actions: Vec<CrossNpcAction>,
     pub self_stimuli: Vec<QueuedSelfStimulus>,
     /// Synchronous work produced while the AI owns its call stack.
     ///
@@ -106,15 +105,6 @@ pub struct AiReentrantOutbox {
     bitcode::Decode,
 )]
 pub enum AiOwnerWork {
-    /// Actor calls completed before a later synchronous owner statement.
-    ///
-    /// Most actor effects can share the post-Think outbox because their
-    /// drain order is fixed. A trailing stop-all request, however, must see a
-    /// movement issued earlier in the same update: the original game launches the move
-    /// immediately and then stops that newly launched sequence.  Keeping
-    /// both in one actor outbox would apply the halt-first drain policy and
-    /// incorrectly launch the older move afterward.
-    ActorEffects(AiActorOutbox),
     /// Synchronous nearby-civilian panic callback. It shares the
     /// owner FIFO because callers can speak or change state immediately
     /// before/after it and those operations are observably ordered.
@@ -321,7 +311,6 @@ pub struct AiActorOutbox {
     pub enter_swordfight_jump_line: Option<u32>,
     pub stop_target: Option<AiEntityHandle>,
     pub set_principal: Option<AiEntityHandle>,
-    pub friend_primary_target_swaps: Vec<(EntityId, AiEntityHandle)>,
     /// Nominal element-table handle passed to original-game focus handling.
     /// Unlike combat targets, this may name an object (for example an ale
     /// bottle that an NPC is considering picking up).
@@ -480,7 +469,6 @@ pub(crate) struct AiActorCoreEffects {
     pub enter_swordfight_jump_line: Option<u32>,
     pub stop_target: Option<AiEntityHandle>,
     pub set_principal: Option<AiEntityHandle>,
-    pub friend_primary_target_swaps: Vec<(EntityId, AiEntityHandle)>,
     pub focus: Option<AiEntityHandle>,
     pub focus_point: Option<Position>,
     pub unfocus: bool,
@@ -518,7 +506,6 @@ impl AiActorOutbox {
             || self.enter_swordfight_jump_line.is_some()
             || self.stop_target.is_some()
             || self.set_principal.is_some()
-            || !self.friend_primary_target_swaps.is_empty()
             || self.focus.is_some()
             || !self.set_reported_to_officer.is_empty()
             || self.unfocus
@@ -576,7 +563,6 @@ impl AiActorOutbox {
             enter_swordfight_jump_line: self.enter_swordfight_jump_line.take(),
             stop_target: self.stop_target.take(),
             set_principal: self.set_principal.take(),
-            friend_primary_target_swaps: std::mem::take(&mut self.friend_primary_target_swaps),
             focus: self.focus.take(),
             focus_point: self.focus_point.take(),
             unfocus: std::mem::take(&mut self.unfocus),

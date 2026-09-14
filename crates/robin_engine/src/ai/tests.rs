@@ -929,13 +929,6 @@ fn clear_all_pending_clears_every_outbox_barrier() {
     ai.outbox.detection.mark_alerted = true;
     ai.outbox
         .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::Say {
-            target: 8,
-            remark: Remark::FoundCharly,
-        });
-    ai.outbox
-        .reentrant
         .self_stimuli
         .push(StimulusType::EventDone.into());
 

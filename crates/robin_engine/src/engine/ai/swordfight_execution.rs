@@ -503,11 +503,7 @@ impl EngineInner {
                 .actor
                 .quit_swordfight = true;
             self.drain_direct_ai_owner_boundary(sim, owner, assets);
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("swordfight neighbours"))
-                .clear_combat_neighbours();
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.clear_live_combat_neighbours(owner);
             self.duty_set_state(
                 sim,
                 assets,
@@ -1154,11 +1150,7 @@ impl EngineInner {
             .set_direction_goal(direction);
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
         self.focus_live_combat_target(sim, assets, owner);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("observer stop"))
-            .stop_all();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.stop_ai_owner(sim, assets, owner);
         self.duty_set_state(
             sim,
             assets,

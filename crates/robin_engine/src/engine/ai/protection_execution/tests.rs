@@ -900,7 +900,7 @@ fn periodic_phalanx_fixture(
     engine
         .orders
         .sequence_manager
-        .take_deferred_owner_action(owner, selected, 0)
+        .pop_next_hourglass_action()
         .unwrap();
     engine
         .orders

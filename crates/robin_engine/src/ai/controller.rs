@@ -1013,81 +1013,6 @@ impl AiController {
         !self.outbox.actor.orders.is_empty()
     }
 
-    // -- Cross-NPC action access --
-
-    /// Drain all pending cross-NPC actions produced by phalanx logic.
-    /// Called by the engine after each think() to dispatch them.
-    pub fn take_pending_cross_npc_actions(&mut self) -> Vec<CrossNpcAction> {
-        std::mem::take(&mut self.outbox.reentrant.cross_npc_actions)
-    }
-
-    /// Drain direct/re-entrant `Think` calls in the exact order the owner
-    /// emitted them, leaving genuinely deferred coordination mutations for
-    /// the global PA-013 owner-slot batch.
-    pub fn take_pending_synchronous_cross_npc_actions(&mut self) -> Vec<CrossNpcAction> {
-        let mut synchronous = Vec::new();
-        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
-        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
-            if matches!(
-                action,
-                CrossNpcAction::SendStimulus { .. }
-                    | CrossNpcAction::RegisterSynchronizingActor { .. }
-                    | CrossNpcAction::ConsiderReport { .. }
-                    | CrossNpcAction::UpdateLeftCombatNeighbour { .. }
-                    | CrossNpcAction::UpdateRightCombatNeighbour { .. }
-                    | CrossNpcAction::SetLeftCombatNeighbour { .. }
-                    | CrossNpcAction::SetRightCombatNeighbour { .. }
-                    | CrossNpcAction::SetArcherBehindMe { .. }
-                    | CrossNpcAction::SetShieldBearerBeforeMe { .. }
-                    | CrossNpcAction::Say { .. }
-            ) {
-                synchronous.push(action);
-            } else {
-                deferred.push(action);
-            }
-        }
-        self.outbox.reentrant.cross_npc_actions = deferred;
-        synchronous
-    }
-
-    pub fn has_pending_synchronous_cross_npc_actions(&self) -> bool {
-        self.outbox
-            .reentrant
-            .cross_npc_actions
-            .iter()
-            .any(|action| {
-                matches!(
-                    action,
-                    CrossNpcAction::SendStimulus { .. }
-                        | CrossNpcAction::RegisterSynchronizingActor { .. }
-                        | CrossNpcAction::ConsiderReport { .. }
-                        | CrossNpcAction::UpdateLeftCombatNeighbour { .. }
-                        | CrossNpcAction::UpdateRightCombatNeighbour { .. }
-                        | CrossNpcAction::SetLeftCombatNeighbour { .. }
-                        | CrossNpcAction::SetRightCombatNeighbour { .. }
-                        | CrossNpcAction::SetArcherBehindMe { .. }
-                        | CrossNpcAction::SetShieldBearerBeforeMe { .. }
-                        | CrossNpcAction::Say { .. }
-                )
-            })
-    }
-
-    /// Drain direct recipient `Think` calls while leaving non-stimulus
-    /// formation/coordination work for the ordinary cross-NPC batch.
-    pub fn take_pending_synchronous_stimuli(&mut self) -> Vec<CrossNpcAction> {
-        let mut synchronous = Vec::new();
-        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
-        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
-            if matches!(&action, CrossNpcAction::SendStimulus { .. }) {
-                synchronous.push(action);
-            } else {
-                deferred.push(action);
-            }
-        }
-        self.outbox.reentrant.cross_npc_actions = deferred;
-        synchronous
-    }
-
     /// Drain self-directed stimuli queued by `say()`.
     /// The engine re-dispatches these as think() calls to the same NPC.
     pub fn take_pending_self_stimuli(&mut self) -> Vec<StimulusType> {
@@ -1833,48 +1758,6 @@ impl AiController {
             self.macro_command[off],
             self.macro_command[off + 1],
         ]))
-    }
-
-    // -- Stop all --
-
-    /// Halts the actor's current active sequence element via the engine
-    /// (equivalent to `Stop(PREFERENCE)`), breaks the macro, and clears
-    /// the AI-side timers. The actual halt happens in the engine
-    /// post-think drain where it can borrow `&mut Engine`; see
-    /// [`AiController::outbox`] actor-preemption barrier.
-    pub fn stop_all(&mut self) {
-        // When in a friend-check look-around, clear the checkpoint
-        // *before* the halt so the missed-friend detectable list and
-        // `sorrow_level` reset side-effects fire.
-        let in_charly_look = matches!(
-            self.current_substate,
-            Substate::DefaultLookingForCharly | Substate::DefaultLookingSidewardsForCharly
-        );
-        if in_charly_look {
-            self.set_checkpoint_charly(None);
-        }
-        // Actor effects preceding stop-all are synchronous in Original. Close
-        // that prefix before queuing Halt so same-handler movement followed
-        // by stop-all launches its sequence first and the halt cancels it.
-        // The normal actor drain intentionally applies Halt before sibling
-        // orders, which is correct only for work authored after stop-all.
-        if self.outbox.actor.has_boundary_work() {
-            self.outbox
-                .reentrant
-                .owner_work
-                .push(AiOwnerWork::ActorEffects(std::mem::take(
-                    &mut self.outbox.actor,
-                )));
-        }
-        self.outbox.actor.queue_halt();
-        // Skip macro interruption when we're in a friend-check look or being
-        // instructed by an officer — these substates need the
-        // in-flight macro to survive the halt.
-        let skip_break_macro =
-            in_charly_look || self.current_substate == Substate::SeekingGroupGetInstructedByOfficer;
-        if !skip_break_macro {
-            self.break_macro();
-        }
     }
 
     /// Drop every queued `pending_*` intent that a prior `think()` set

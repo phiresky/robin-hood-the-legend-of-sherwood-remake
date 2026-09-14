@@ -111,7 +111,7 @@ impl EngineInner {
                 SeekingSeekpointPassedAmbushPointLeft | SeekingSeekpointPassedAmbushPointRight,
                 EventTimer,
             ) => {
-                self.seek_enemy_mut(owner).base.stop_all();
+                self.stop_ai_owner(sim, assets, owner);
                 self.duty_set_state(
                     sim,
                     assets,
@@ -361,8 +361,7 @@ impl EngineInner {
                     .get_entity(net)
                     .is_some_and(|entity| entity.is_active())
             {
-                self.seek_enemy_mut(owner).base.stop_all();
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.stop_ai_owner(sim, assets, owner);
                 let mut sequence = crate::sequence::Sequence::new();
                 for step in 1..=4 {
                     sequence.append_element(crate::sequence::SequenceElement::new_interaction(
