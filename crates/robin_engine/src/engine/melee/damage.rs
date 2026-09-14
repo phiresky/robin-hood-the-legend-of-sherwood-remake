@@ -3737,6 +3737,100 @@ impl EngineInner {
 }
 
 #[cfg(test)]
+mod net_publication_tests {
+    use super::*;
+    use crate::coordinates::WorldPoint3D;
+    use crate::engine::test_support::actors::TestActor;
+
+    #[test]
+    fn net_body_publication_includes_self_and_nearby_money_fighters() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        let victim = engine.add_test_entity(
+            TestActor::soldier(Posture::Upright)
+                .at(WorldPoint3D::new(100.0, 100.0, 0.0))
+                .life_points(50)
+                .enemy_ai(crate::ai_enemy::EnemyAi::default())
+                .camp(crate::element::Camp::Lacklandists)
+                .build(),
+        );
+        let friend = engine.add_test_entity(
+            TestActor::soldier(Posture::Upright)
+                .at(WorldPoint3D::new(105.0, 100.0, 0.0))
+                .life_points(50)
+                .enemy_ai(crate::ai_enemy::EnemyAi::default())
+                .camp(crate::element::Camp::Lacklandists)
+                .build(),
+        );
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .ai_controller_mut()
+            .unwrap()
+            .knocked_out_in_money_fight = true;
+        engine
+            .get_entity_mut(friend)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .money_fight_enemies
+            .push(victim.index());
+
+        engine.apply_net(&sim, &assets, victim);
+
+        assert!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .already_detectable_body
+        );
+        for owner in [victim, friend] {
+            let list = &engine
+                .get_entity(owner)
+                .unwrap()
+                .npc_data()
+                .unwrap()
+                .detectable_lists[crate::element::DetectableType::Body as usize];
+            assert_eq!(
+                list.iter()
+                    .filter(|entry| entry.element == Some(victim))
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(
+            engine
+                .get_entity(friend)
+                .unwrap()
+                .enemy_ai()
+                .unwrap()
+                .money_fight_enemies,
+            vec![victim.index()]
+        );
+        // Once published, another announcement preserves the existing entries.
+        engine.add_detectable_for_all_npc(victim, crate::element::DetectableType::Body);
+        for owner in [victim, friend] {
+            let list = &engine
+                .get_entity(owner)
+                .unwrap()
+                .npc_data()
+                .unwrap()
+                .detectable_lists[crate::element::DetectableType::Body as usize];
+            assert_eq!(
+                list.iter()
+                    .filter(|entry| entry.element == Some(victim))
+                    .count(),
+                1
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod provoke_tests {
     use super::provoke_roll_succeeds;
 

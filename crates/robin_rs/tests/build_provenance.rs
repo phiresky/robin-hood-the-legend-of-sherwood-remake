@@ -10,7 +10,11 @@ fn provenance_probe() {
     }
 }
 
-fn probe(manifest: &std::path::Path, strict: bool) -> std::process::Output {
+fn probe(
+    manifest: &std::path::Path,
+    strict: bool,
+    git_ceiling: Option<&std::path::Path>,
+) -> std::process::Output {
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
     command
         .args(["--exact", "provenance_probe", "--nocapture"])
@@ -19,7 +23,11 @@ fn probe(manifest: &std::path::Path, strict: bool) -> std::process::Output {
         .env("TARGET", "test-target")
         .env("PROFILE", "debug")
         .env("GIT_DIR", "/not-the-build-checkout")
+        .env_remove("GIT_CEILING_DIRECTORIES")
         .env_remove("ROBIN_REQUIRE_BUILD_IDENTITY");
+    if let Some(ceiling) = git_ceiling {
+        command.env("GIT_CEILING_DIRECTORIES", ceiling);
+    }
     if strict {
         command.env("ROBIN_REQUIRE_BUILD_IDENTITY", "1");
     }
@@ -32,18 +40,24 @@ fn source_archives_warn_for_development_and_fail_for_release() {
     let manifest = archive.path().join("crates/client");
     std::fs::create_dir_all(&manifest).unwrap();
     std::fs::write(archive.path().join("Cargo.lock"), "lock bytes").unwrap();
-    let developer = probe(&manifest, false);
+    // TMPDIR may live inside a checkout. Git must treat this fixture as an
+    // independent source archive instead of discovering the containing repo.
+    let developer = probe(&manifest, false, Some(archive.path()));
     assert!(developer.status.success());
     let stdout = String::from_utf8(developer.stdout).unwrap();
     assert!(stdout.contains("cargo:warning=Incomplete developer build provenance"));
     assert!(stdout.contains("cargo:rustc-env=ROBIN_GIT_COMMIT=unknown"));
-    assert!(!probe(&manifest, true).status.success());
+    assert!(
+        !probe(&manifest, true, Some(archive.path()))
+            .status
+            .success()
+    );
 }
 
 #[test]
 fn checkout_or_linked_worktree_emits_current_git_identity_and_watches_head() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let output = probe(manifest, true);
+    let output = probe(manifest, true, None);
     assert!(
         output.status.success(),
         "{}",
