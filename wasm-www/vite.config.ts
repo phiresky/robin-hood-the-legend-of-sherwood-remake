@@ -23,9 +23,10 @@ function contentType(path: string): string {
     return 'application/octet-stream';
 }
 
-// Single-threaded wasm-bindgen build — no pthreads, SharedArrayBuffer, or
-// cross-origin-isolation requirement. Production uses Cloudflare Static
-// Assets; this development server mirrors its `/wasm` and `/datadirs` paths.
+// The development server sends no COOP/COEP, so a threaded runtime served here
+// is not cross-origin isolated and decodes sprites serially. Production uses
+// Cloudflare Static Assets, whose deploy/public-headers.txt isolates the game
+// page; this development server mirrors its `/wasm` and `/datadirs` paths.
 export default defineConfig({
     base: '/',
     publicDir: 'public',

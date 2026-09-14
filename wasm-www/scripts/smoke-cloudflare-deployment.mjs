@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { DEPLOYMENT } from './verify-cloudflare-deployment.mjs';
+import {
+    DEPLOYMENT,
+    PUBLIC_ISOLATION,
+    SAME_ORIGIN_RESOURCE,
+    SIGNER_ISOLATION,
+} from './verify-cloudflare-deployment.mjs';
 import { DEMO_PATH, RETAINED_DEMO_GENERATIONS } from './verify-datadir-corpus.mjs';
 
 const ATTACKER_ORIGIN = 'https://attacker.invalid';
@@ -32,6 +37,17 @@ function requireNoHeader(response, name, label) {
     if (response.headers.has(name)) {
         throw new Error(`${label} unexpectedly exposes ${name}`);
     }
+}
+
+function requireExactHeader(response, name, expected, label) {
+    const value = response.headers.get(name);
+    if (value === null || value.trim().toLowerCase() !== expected) {
+        throw new Error(`${label} must set ${name}: ${expected}`);
+    }
+}
+
+function requireSameOriginResource(response, label) {
+    requireExactHeader(response, 'cross-origin-resource-policy', SAME_ORIGIN_RESOURCE, label);
 }
 
 function requireNoCors(response, label) {
@@ -137,7 +153,7 @@ async function smokeHtml(fetchImpl, url, marker, frameAncestor) {
     if (assetReference === undefined) throw new Error(`${url} has no fingerprinted asset reference`);
     const asset = await request(fetchImpl, new URL(assetReference, url));
     requireHeader(asset, 'cache-control', 'immutable');
-    return response;
+    return { response, asset };
 }
 
 export async function smokeCloudflareDeployment(fetchImpl = fetch) {
@@ -152,27 +168,45 @@ export async function smokeCloudflareDeployment(fetchImpl = fetch) {
     if ((acmeProbe.headers.get('cf-cache-status') ?? '').trim().toUpperCase() === 'HIT') {
         throw new Error('the permanent ACME challenge 404 was cached');
     }
-    await smokeHtml(fetchImpl, `${DEPLOYMENT.publicOrigin}/`, 'public-v1', "frame-ancestors 'none'");
-    await smokeHtml(
+    // The game document must be cross-origin isolated so the threaded runtime
+    // can share wasm memory with its decode workers. Its bundled worker
+    // scripts are ordinary /assets/* responses and need the same COEP.
+    const game = await smokeHtml(fetchImpl, `${DEPLOYMENT.publicOrigin}/`, 'public-v1', "frame-ancestors 'none'");
+    for (const [name, value] of Object.entries(PUBLIC_ISOLATION)) {
+        requireExactHeader(game.response, name, value, 'game document');
+        requireExactHeader(game.asset, name, value, 'game worker-capable asset');
+    }
+    requireSameOriginResource(game.response, 'game document');
+    requireSameOriginResource(game.asset, 'game asset');
+    const leaderboard = await smokeHtml(
         fetchImpl,
         `${DEPLOYMENT.publicOrigin}/leaderboards/?run=deployment-smoke`,
         'public-v1',
         "frame-ancestors 'none'",
     );
+    for (const name of Object.keys(PUBLIC_ISOLATION)) {
+        requireNoHeader(leaderboard.response, name, 'leaderboard document');
+    }
     const signer = await smokeHtml(
         fetchImpl,
         `${DEPLOYMENT.signerOrigin}/identity-signer/`,
         'signer-v1',
         `frame-ancestors ${DEPLOYMENT.publicOrigin}`,
     );
-    if (signer.headers.has('x-frame-options')) {
+    if (signer.response.headers.has('x-frame-options')) {
         throw new Error('identity signer response unexpectedly sets X-Frame-Options');
+    }
+    // The isolated game page can only frame a COEP document that its CORP
+    // admits; without these the signer frame is blocked and identity fails.
+    for (const [name, value] of Object.entries(SIGNER_ISOLATION)) {
+        requireExactHeader(signer.response, name, value, 'identity signer document');
     }
 
     const latestResponse = await request(fetchImpl, `${DEPLOYMENT.publicOrigin}/wasm/latest.json`);
     requireHeader(latestResponse, 'content-type', 'application/json');
     requireHeader(latestResponse, 'x-robinhood-static-origin', 'runtime-v1');
     requireHeader(latestResponse, 'cache-control', 'must-revalidate');
+    requireSameOriginResource(latestResponse, 'runtime pointer');
     const latestText = await latestResponse.text();
     const latest = JSON.parse(latestText);
     if (!/^[0-9a-f]{12}$/u.test(latest?.short)
@@ -198,9 +232,11 @@ export async function smokeCloudflareDeployment(fetchImpl = fetch) {
     );
     requireHeader(engine, 'x-robinhood-static-origin', 'runtime-v1');
     requireHeader(engine, 'cache-control', 'immutable');
+    requireSameOriginResource(engine, 'runtime engine');
     const demo = await request(fetchImpl, latest.multiplayerContent.demo.url);
     requireHeader(demo, 'x-robinhood-static-origin', 'datadir-v1');
     requireHeader(demo, 'cache-control', 'immutable');
+    requireSameOriginResource(demo, 'live Demo object');
     await requireBodyIdentity(
         demo,
         latest.multiplayerContent.demo,

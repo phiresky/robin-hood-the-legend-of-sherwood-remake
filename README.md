@@ -148,10 +148,18 @@ builds enable the `simd128` target feature (`.cargo/config.toml`).  The
 two custom profiles force the LLVM codegen backend — cranelift doesn't
 target wasm.
 
-The browser build can use the threaded sprite decoder when the production
-origin supplies cross-origin-isolation headers. Every decode path retains its
-serial fallback. The deployment does not install a service worker to rewrite
-response headers.
+Production runtimes are the threaded build (`node wasm-www/scripts/build-runtime.mjs
+--threads`, which `stage-runtime-addition.mjs` always uses): shared wasm memory
+plus a wasm-bindgen-rayon pool of up to four sprite-decode workers. The pool
+starts only when the page is `crossOriginIsolated`, which the game document
+gets from `Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp` in `wasm-www/deploy/public-headers.txt`.
+`/leaderboards/` detaches both (it needs no shared memory). Runtime and datadir
+assets are `Cross-Origin-Resource-Policy: same-origin`; the identity signer
+document sends COEP `require-corp` and CORP `same-site` so the isolated game can
+still frame it. Where a page is not isolated, the runtime logs that and every
+decode path keeps its serial fallback. The deployment does not install a
+service worker to rewrite response headers.
 
 Run `wasm-bindgen --target web` on the produced `.wasm` into
 `wasm-www/pkg/`, then build the web package from `wasm-www/`:

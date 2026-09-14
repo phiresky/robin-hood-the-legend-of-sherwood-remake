@@ -4,9 +4,14 @@ import { mkdir, readFile, writeFile, rm, copyFile } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { buildRuntime, buildReplayAdmission, run } from './build-runtime.mjs';
+import { buildRuntime, buildReplayAdmission, requireSharedMemoryImport, run } from './build-runtime.mjs';
 import { DEMO_PATH } from './verify-datadir-corpus.mjs';
 import { verifyRuntimeSourceContract } from './verify-runtime-source-contract.mjs';
+
+// Production runtimes are the threaded (shared-memory, rayon decode pool) build.
+// The page is cross-origin isolated by deploy/public-headers.txt; where it is
+// not, the runtime detects that and keeps sprite decode on its serial path.
+export const RUNTIME_ADDITION_BUILD = Object.freeze({ threads: true, optimize: false, requireIdentity: true });
 
 export function validateContentIdentity({ demoSha, nativeDemoSha, demoBytes, fullSha }) {
     const digest = /^[0-9a-f]{64}$/u;
@@ -45,7 +50,7 @@ export async function stageRuntimeAddition({ root = 'target/static-runtime-addit
         { env: { ...process.env, ROBIN_REQUIRE_BUILD_IDENTITY: '1' } });
     run(resolve('target/debug/examples/export_runtime_contract'),
         ['--check', 'wasm-www/runtime-contract.json']);
-    buildRuntime({ outDir: artifact, bindgen, optimize: false, requireIdentity: true });
+    buildRuntime({ outDir: artifact, bindgen, ...RUNTIME_ADDITION_BUILD });
     await rm(join(artifact, 'robin.d.ts'));
     await rm(join(artifact, 'robin_bg.wasm.d.ts'));
     run(process.execPath, ['wasm-www/scripts/stage-browser-identity-origin.mjs', 'engine', artifact, 'robin.js']);
@@ -55,6 +60,9 @@ export async function stageRuntimeAddition({ root = 'target/static-runtime-addit
     await copyFile(optimized, join(artifact, 'robin_bg.wasm'));
     await rm(optimized);
     run('wasm-strip', [join(artifact, 'robin_bg.wasm')]);
+    // The published engine, not only Cargo's output, must keep the shared
+    // memory contract its decode workers instantiate against.
+    requireSharedMemoryImport(join(artifact, 'robin_bg.wasm'));
     run('gzip', ['-9', '-n', '-k', join(artifact, 'robin.js'), join(artifact, 'robin_bg.wasm')]);
     await writeBrotliWasm(join(artifact, 'robin_bg.wasm'));
     buildReplayAdmission({ outDir: artifact, bindgen, requireIdentity: true });

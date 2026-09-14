@@ -28,7 +28,14 @@ function fixtureFetch({
     demoManifestByteLength = DEMO_BYTES.byteLength,
     demoManifestSha256 = DEMO_SHA256,
     retainedDemoStatus = 200,
+    gameIsolation = { 'cross-origin-embedder-policy': 'require-corp', 'cross-origin-opener-policy': 'same-origin' },
+    leaderboardIsolation = {},
+    signerIsolation = { 'cross-origin-embedder-policy': 'require-corp', 'cross-origin-resource-policy': 'same-site' },
+    runtimeResourcePolicy = 'same-origin',
+    demoResourcePolicy = 'same-origin',
 } = {}) {
+    // `null` omits the header; `undefined` would select the default above.
+    const corp = value => (value === null ? {} : { 'cross-origin-resource-policy': value });
     const paths = [];
     const requests = [];
     let metadataProbes = 0;
@@ -114,7 +121,12 @@ function fixtureFetch({
         if (url.pathname.startsWith('/assets/')) {
             return new Response('export {};', {
                 status: 200,
-                headers: { 'cache-control': 'public, max-age=31536000, immutable' },
+                headers: {
+                    'cache-control': 'public, max-age=31536000, immutable',
+                    ...(url.origin === DEPLOYMENT.publicOrigin
+                        ? { ...gameIsolation, 'cross-origin-resource-policy': 'same-origin' }
+                        : signerIsolation),
+                },
             });
         }
         if (url.pathname === '/wasm/latest.json'
@@ -127,6 +139,7 @@ function fixtureFetch({
                         ? 'public, max-age=0, must-revalidate'
                         : 'public, max-age=31536000, immutable',
                     'x-robinhood-static-origin': 'runtime-v1',
+                    ...corp(runtimeResourcePolicy),
                 },
             });
         }
@@ -136,6 +149,7 @@ function fixtureFetch({
                 headers: {
                     'cache-control': 'public, max-age=31536000, immutable',
                     'x-robinhood-static-origin': 'runtime-v1',
+                    ...corp(runtimeResourcePolicy),
                 },
             });
         }
@@ -159,6 +173,7 @@ function fixtureFetch({
                         ? {}
                         : { 'content-length': demoContentLength }),
                     'x-robinhood-static-origin': 'datadir-v1',
+                    ...corp(demoResourcePolicy),
                 },
             });
         }
@@ -170,12 +185,12 @@ function fixtureFetch({
                     'x-content-type-options': 'nosniff',
                     'x-robinhood-static-origin': 'signer-v1',
                     'content-security-policy': `default-src 'none'; frame-ancestors ${DEPLOYMENT.publicOrigin}`,
+                    ...signerIsolation,
                 },
             });
         }
-        const assetPath = url.pathname.startsWith('/leaderboards/')
-            ? '../assets/public.js'
-            : './assets/public.js';
+        const leaderboard = url.pathname.startsWith('/leaderboards/');
+        const assetPath = leaderboard ? '../assets/public.js' : './assets/public.js';
         return new Response(`<script type="module" src="${assetPath}"></script>`, {
             status: 200,
             headers: {
@@ -183,6 +198,8 @@ function fixtureFetch({
                 'x-content-type-options': 'nosniff',
                 'x-robinhood-static-origin': 'public-v1',
                 'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+                'cross-origin-resource-policy': 'same-origin',
+                ...(leaderboard ? leaderboardIsolation : gameIsolation),
             },
         });
     };
@@ -217,6 +234,22 @@ test('deployment smoke covers both static origins, a deep link, assets, and API 
     assert(fixture.paths.includes(
         `GET ${DEPLOYMENT.publicOrigin}/api/v1/ruleset-manifests/${'1234567890abcdef'.repeat(4)}`,
     ));
+});
+
+test('deployment smoke requires game isolation, an isolation-compatible signer, and same-origin static resources', async () => {
+    const hostile = [
+        [{ gameIsolation: { 'cross-origin-opener-policy': 'same-origin' } }, /Cross-Origin-Embedder-Policy: require-corp/u],
+        [{ gameIsolation: { 'cross-origin-embedder-policy': 'credentialless', 'cross-origin-opener-policy': 'same-origin' } }, /Cross-Origin-Embedder-Policy: require-corp/u],
+        [{ gameIsolation: { 'cross-origin-embedder-policy': 'require-corp' } }, /Cross-Origin-Opener-Policy: same-origin/u],
+        [{ leaderboardIsolation: { 'cross-origin-opener-policy': 'same-origin' } }, /leaderboard document unexpectedly exposes Cross-Origin-Opener-Policy/u],
+        [{ signerIsolation: { 'cross-origin-resource-policy': 'same-site' } }, /identity signer document must set Cross-Origin-Embedder-Policy/u],
+        [{ signerIsolation: { 'cross-origin-embedder-policy': 'require-corp' } }, /identity signer document must set Cross-Origin-Resource-Policy: same-site/u],
+        [{ runtimeResourcePolicy: null }, /runtime pointer must set cross-origin-resource-policy/u],
+        [{ demoResourcePolicy: 'cross-origin' }, /live Demo object must set cross-origin-resource-policy/u],
+    ];
+    for (const [options, message] of hostile) {
+        await assert.rejects(smokeCloudflareDeployment(fixtureFetch(options).fetchImpl), message);
+    }
 });
 
 test('deployment smoke rejects a Demo object with a false Content-Length', async () => {

@@ -69,6 +69,29 @@ test('header policies fail closed on clickjacking and cache weakening', async ()
     }
 });
 
+test('game isolation and signer frame compatibility fail closed', async () => {
+    const snapshot = await loadDeploymentSnapshot();
+    const hostile = [
+        candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('  Cross-Origin-Embedder-Policy: require-corp\n', ''); },
+        candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('Cross-Origin-Embedder-Policy: require-corp', 'Cross-Origin-Embedder-Policy: unsafe-none'); },
+        candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('Cross-Origin-Opener-Policy: same-origin', 'Cross-Origin-Opener-Policy: same-origin-allow-popups'); },
+        candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('Cross-Origin-Resource-Policy: same-origin', 'Cross-Origin-Resource-Policy: cross-origin'); },
+        candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('  ! Cross-Origin-Opener-Policy\n', ''); },
+        candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('/assets/*\n', '/assets/*\n  ! Cross-Origin-Embedder-Policy\n'); },
+        candidate => { candidate.signerHeaders = candidate.signerHeaders.replace('  Cross-Origin-Embedder-Policy: require-corp\n', ''); },
+        candidate => { candidate.signerHeaders = candidate.signerHeaders.replace('Cross-Origin-Resource-Policy: same-site', 'Cross-Origin-Resource-Policy: same-origin'); },
+        candidate => { candidate.signerHeaders = candidate.signerHeaders.replace('  Cross-Origin-Resource-Policy: same-site\n', '  Cross-Origin-Resource-Policy: same-site\n  Cross-Origin-Opener-Policy: same-origin\n'); },
+        candidate => { candidate.runtimeHeaders = candidate.runtimeHeaders.replace('  Cross-Origin-Resource-Policy: same-origin\n', ''); },
+        candidate => { candidate.datadirHeaders = candidate.datadirHeaders.replace('Cross-Origin-Resource-Policy: same-origin', 'Cross-Origin-Resource-Policy: cross-origin'); },
+    ];
+    for (const mutate of hostile) {
+        const candidate = clone(snapshot);
+        mutate(candidate);
+        assert.notEqual(JSON.stringify(candidate), JSON.stringify(snapshot), 'mutation must change the snapshot');
+        assert.throws(() => validateDeploymentSnapshot(candidate), /Cross-Origin|isolation|opener policy|cross-origin policy/u);
+    }
+});
+
 test('Wrangler is an exact lockfile-controlled tool, not a moving range', async () => {
     const snapshot = await loadDeploymentSnapshot();
     snapshot.packageJson.devDependencies.wrangler = '^4.131.1';
