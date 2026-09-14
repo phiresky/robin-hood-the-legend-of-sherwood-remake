@@ -4139,3 +4139,64 @@ and explicit animation names; existing soldier profiles remain unchanged.
 The rebuilt native game also applied this patch directly from the ZIP and
 advanced the gallery through 100 simulation ticks with full-game data; the
 smoke process was then stopped intentionally.
+
+## Match-gated VQ coding: shipping datadir v17 (2026-09-14)
+
+Decode profiles of the v16 VQ codec put ~80% of serial wasm mission install
+in the PPM model (context lookups, symbol search, count updates). The v17
+stream adds a cheap *match gate* in front of the standalone/aux chain:
+
+- Every standalone tile has a predictor: the aligned aux-reference tile,
+  else the tile above.
+- The gate bit is coded only in likely-flat spots: the previous tile in the
+  row was a predictor hit, or the predictor equals the left tile.
+- One adaptive 11-bit probability (contexts: aux present, above == left,
+  predictor == left) says whether the tile IS the predictor. A hit skips the
+  whole PPM chain: no context lookups and no learning.
+- Family (base-coded) tiles are not gated (see below).
+
+Magics: `RHDDNA17` / `RHMISN09`; custom mod archives `RHMODVQ3` / `RHMODVF4`.
+Decoded grids are unchanged; only the encoding differs.
+
+### Variant choice (lab prototypes on v16 grids)
+
+Per-round decode instructions, same lab binary, relative to the v16 stream
+(`examples/vq_codec_lab` on branch `sprite-decode-investigation`, full-game
+sample from the Sep-8 native shipping v16 corpus). The lab variants are
+byte-exact with the production encoder (verified on all four missions).
+
+| Mission (family tiles) | wide | ctx | wide + family |
+|---|---|---|---|
+| Dem_Lei_MP (0%) | +0.43% / −11.4% native, −9.4% wasm | +0.81% / −13.0%, −10.1% | = wide |
+| Emb01_FoA_EC (8%) | +0.39% / −17.0% | +0.48% / −15.8% | +0.80% / −17.6% |
+| Tac01_FoA_MP (41%) | +0.29% / −10.9% | +0.41% / −10.0% | +2.71% |
+| H01_Lin_VL (58%) | +0.26% / −6.8% | +0.49% / −6.2% | +3.95% / −14.0% |
+
+`ctx` (extra 2-D flag contexts and gating) is larger and not faster than
+`wide` on every full-game mission. Gating family tiles on the base tile
+buys about 7 more points of decode work on H01 for 3.7% more bytes (about 2
+points per percent, versus about 22 per percent for `wide` on Demo), so
+production uses `wide` without family gating.
+
+### Verification and results
+
+- v16-decoded grids of Dem_Lei_MP (FNV `610be863cf215057`), H01_Lin_VL,
+  Tac01_FoA_MP and Emb01_FoA_EC were dumped (`vq_grid_dump`) and round-tripped
+  through the v17 encoder/decoder (`examples/vq_dump_roundtrip`): every grid
+  identical. VQ bytes: Demo 12,030,383 → 12,081,515 (+0.43%), Emb01
+  13,591,294 → 13,644,258 (+0.39%), Tac01 19,686,390 → 19,743,312 (+0.29%),
+  H01 22,595,628 → 22,653,352 (+0.26%).
+- Full Demo conversion with `scripts/build_web_shipping_datadir.sh`: decoded
+  grids FNV `610be863cf215057` (identical to v16r2), all 45 chunks re-encode
+  byte-identically (`examples/vq_codec_verify`), VQ blobs 12,081,515 B;
+  `datadir.bin` 3,698,062 B, `rhs/` 18,281,482 B (v16r2: 18,202,392 B).
+- Native decode-only (v17 vs v16r2, both with the flat context tables, loaded
+  host, two interleaved pairs): instructions 53.26 G → 46.43 G (−12.8%),
+  cycles −9%.
+- Serial wasm (node, whole bench run including part decode and RLE-JXL,
+  three interleaved rounds): instructions 46.44 G → 43.22 G (−6.9%), VQ
+  materialize median 5,882 → 5,496 ms (−6.6%).
+
+The canonical conversion's `audio/` closure (7,655,624 B) matches the first
+v16 build, not the published v16r2 closure (7,168,560 B); that difference
+predates this change and is unrelated to VQ coding.
