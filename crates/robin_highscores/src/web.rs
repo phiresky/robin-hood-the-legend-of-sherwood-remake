@@ -313,6 +313,12 @@ pub fn router(state: AppState) -> Result<Router, ApiError> {
     let body_limit = submission_body_limit(&state.config)?;
     let upload_router = Router::new()
         .route("/api/v1/submissions", post(submit))
+        .route(
+            "/api/v1/diagnostics",
+            post(submit_diagnostic).layer(DefaultBodyLimit::max(
+                robin_run_protocol::diagnostics::MAX_DIAGNOSTIC_BODY_BYTES,
+            )),
+        )
         .layer(DefaultBodyLimit::max(body_limit))
         .layer(RequestBodyTimeoutLayer::new(Duration::from_secs(
             state.config.upload_timeout_seconds,
@@ -380,6 +386,11 @@ pub fn router(state: AppState) -> Result<Router, ApiError> {
     if state.config.moderation_bearer_token.is_some() {
         sensitive_router = sensitive_router
             .route("/api/v1/operator/reports", get(operator_reports))
+            .route("/api/v1/operator/diagnostics", get(operator_diagnostics))
+            .route(
+                "/api/v1/operator/diagnostics/{report_id}",
+                get(operator_diagnostic).delete(operator_delete_diagnostic),
+            )
             .route(
                 "/api/v1/operator/reports/{report_id}/actions",
                 post(operator_report_action),
@@ -6369,5 +6380,320 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+async fn submit_diagnostic(
+    State(state): State<AppState>,
+    client: ClientIp,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<
+    (
+        StatusCode,
+        Json<robin_run_protocol::diagnostics::DiagnosticReceiptV1>,
+    ),
+    ApiError,
+> {
+    let encoding = match headers
+        .get(axum::http::header::CONTENT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+    {
+        Some("zstd") => "zstd",
+        Some("gzip") => "gzip",
+        _ => {
+            return Err(ApiError::BadRequest(
+                "diagnostic uploads require Content-Encoding: zstd or gzip".into(),
+            ));
+        }
+    };
+    let address = client.resolve(&state.config)?;
+    let ip_hash =
+        crate::authentication::sign(&state.cursor_hmac_key, address.to_string().as_bytes());
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(
+            state
+                .database
+                .insert_diagnostic(
+                    body.to_vec(),
+                    encoding,
+                    headers
+                        .get("x-diagnostic-kind")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or(""),
+                    headers
+                        .get("x-diagnostic-engine-commit")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or(""),
+                    ip_hash,
+                )
+                .await
+                .map_err(|error| match error {
+                    crate::db::DbError::ResultInvariant(message) => ApiError::BadRequest(message),
+                    other => ApiError::from(other),
+                })?,
+        ),
+    ))
+}
+async fn operator_diagnostics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::db::DiagnosticSummary>>, ApiError> {
+    authorize_operator(&state, &headers)?;
+    Ok(Json(state.database.diagnostic_reports().await?))
+}
+async fn operator_diagnostic(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    authorize_operator(&state, &headers)?;
+    let payload = state.database.diagnostic_report(&id).await?;
+    let extension = match payload.encoding.as_str() {
+        "zstd" => "json.zst",
+        "gzip" => "json.gz",
+        "identity" => "json",
+        _ => return Err(ApiError::Internal),
+    };
+    // No Content-Encoding: downloads preserve compressed bytes even in browsers.
+    Ok((
+        [
+            ("content-type", "application/octet-stream".to_owned()),
+            (
+                "content-disposition",
+                format!("attachment; filename=\"report.{extension}\""),
+            ),
+            ("x-diagnostic-encoding", payload.encoding),
+        ],
+        payload.bytes,
+    )
+        .into_response())
+}
+async fn operator_delete_diagnostic(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    authorize_operator(&state, &headers)?;
+    state.database.delete_diagnostic_report(&id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    use axum::extract::ConnectInfo;
+    use robin_run_protocol::diagnostics::{
+        DiagnosticKindV1, DiagnosticReceiptV1, DiagnosticReportV1,
+    };
+    use std::net::SocketAddr;
+    use tower::ServiceExt as _;
+    #[tokio::test]
+    async fn diagnostics_accept_retry_limit_and_protect_operator_access() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            replay_directory: directory.path().join("replays"),
+            moderation_bearer_token: Some(Arc::new(b"0123456789abcdef0123456789abcdef".to_vec())),
+            moderation_bearer_token_path: Some(directory.path().join("token")),
+            ..Default::default()
+        };
+        let database = Database::migrate(&config).await.unwrap();
+        let state = AppState {
+            config: config.clone(),
+            database: database.clone(),
+            replay_store: ReplayStore::create(config.replay_directory.clone(), 1024)
+                .await
+                .unwrap(),
+            campaign_store: CampaignStore::create(directory.path().join("campaigns"), 1024)
+                .await
+                .unwrap(),
+            cursor_hmac_key: [9; 32],
+            competition_run_grant_secret_key: None,
+            run_preflight_grant_secret_key: None,
+            challenge_rate_limiter: ChallengeRateLimiter::new(10),
+        };
+        let application = router(state).unwrap();
+        let mut report = DiagnosticReportV1 {
+            schema_version: 1,
+            kind: DiagnosticKindV1::Bug,
+            description: "stuck".into(),
+            engine_commit: "test".into(),
+            platform: "test".into(),
+            occurred_at_unix_ms: 0,
+            backtrace: None,
+            recent_log: "private log".into(),
+            attachments: vec![],
+            warnings: vec![],
+        };
+        let mut first_id = String::new();
+        for index in 0_u64..12 {
+            // The first request is retried byte-for-byte and must not consume quota.
+            report.occurred_at_unix_ms = index.saturating_sub(1);
+            let response = application
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/diagnostics")
+                        .header("content-type", "application/json")
+                        .header("content-encoding", "zstd")
+                        .header("x-diagnostic-kind", "bug")
+                        .header("x-diagnostic-engine-commit", "test")
+                        .extension(ConnectInfo("127.0.0.1:1234".parse::<SocketAddr>().unwrap()))
+                        .body(Body::from(
+                            robin_run_protocol::diagnostics::compress_report(
+                                &serde_json::to_vec(&report).unwrap(),
+                            )
+                            .unwrap(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if index == 11 {
+                assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+                break;
+            }
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let receipt: DiagnosticReceiptV1 = serde_json::from_slice(&bytes).unwrap();
+            if index == 0 {
+                first_id = receipt.report_id.clone();
+            }
+            if index == 1 {
+                assert_eq!(receipt.report_id, first_id);
+            }
+        }
+        for uri in [
+            "/api/v1/operator/diagnostics".to_owned(),
+            format!("/api/v1/operator/diagnostics/{first_id}"),
+        ] {
+            let response = application
+                .clone()
+                .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            let response = application
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(&uri)
+                        .header("authorization", "Bearer 0123456789abcdef0123456789abcdef")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+        }
+        // Both formats remain byte-identical through storage and download.
+        report.recent_log = "x".repeat(24 * 1024 * 1024);
+        report.occurred_at_unix_ms = 100;
+        let json = serde_json::to_vec(&report).unwrap();
+        let mut large_id = None;
+        for encoding in ["gzip", "zstd"] {
+            let compressed = if encoding == "zstd" {
+                robin_run_protocol::diagnostics::compress_report(&json).unwrap()
+            } else {
+                use std::io::Write as _;
+                let mut encoder =
+                    flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                encoder.write_all(&json).unwrap();
+                encoder.finish().unwrap()
+            };
+            let response = application
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/diagnostics")
+                        .header("content-type", "application/json")
+                        .header("content-encoding", encoding)
+                        .header("x-diagnostic-kind", "bug")
+                        .header("x-diagnostic-engine-commit", "test")
+                        .extension(ConnectInfo("127.0.0.2:1234".parse::<SocketAddr>().unwrap()))
+                        .body(Body::from(compressed.clone()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let receipt: DiagnosticReceiptV1 = serde_json::from_slice(&bytes).unwrap();
+            if let Some(id) = &large_id {
+                assert_ne!(&receipt.report_id, id);
+            }
+            let downloaded = application
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!(
+                            "/api/v1/operator/diagnostics/{}",
+                            receipt.report_id
+                        ))
+                        .header("authorization", "Bearer 0123456789abcdef0123456789abcdef")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(downloaded.status(), StatusCode::OK);
+            assert!(downloaded.headers().get("content-encoding").is_none());
+            assert!(
+                downloaded.headers()["content-disposition"]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("attachment;")
+            );
+            assert_eq!(
+                axum::body::to_bytes(downloaded.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .as_ref(),
+                compressed
+            );
+            large_id = Some(receipt.report_id);
+        }
+        let response = application
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/diagnostics")
+                    .header("content-type", "application/json")
+                    .header("content-encoding", "zstd")
+                    .extension(ConnectInfo("127.0.0.1:1234".parse::<SocketAddr>().unwrap()))
+                    .body(Body::from("x".repeat(
+                        robin_run_protocol::diagnostics::MAX_DIAGNOSTIC_BODY_BYTES + 1,
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let response = application
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/v1/operator/diagnostics/{first_id}"))
+                    .header("authorization", "Bearer 0123456789abcdef0123456789abcdef")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(matches!(
+            database.diagnostic_report(&first_id).await,
+            Err(crate::db::DbError::NotFound)
+        ));
     }
 }

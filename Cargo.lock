@@ -5943,6 +5943,7 @@ dependencies = [
  "clap",
  "command-fds",
  "ed25519-dalek",
+ "flate2",
  "futures-util",
  "hex",
  "hmac",
@@ -6285,6 +6286,7 @@ dependencies = [
  "serde_urlencoded",
  "sha2 0.11.0",
  "thiserror 2.0.20",
+ "zstd",
 ]
 
 [[package]]

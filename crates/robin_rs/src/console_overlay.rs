@@ -90,6 +90,7 @@ const COMPLETION_KEYWORDS_DEV: &[&str] = &[
     "GOLDENEYE",
     "HADES",
     "HELP",
+    "BUGREPORT",
     "HIGHLANDER",
     "HIGHLANDER2",
     "HONOLULU",
@@ -429,6 +430,10 @@ impl ConsoleOverlay {
     /// `submit` so multi-line cheat output (STATUS PC, STATUS HARDWARE)
     /// lands interleaved with the user's echo line.
     fn drain_engine_output(&mut self, dev: &mut DevState) {
+        #[cfg(not(target_arch = "wasm32"))]
+        for message in crate::bug_report::take_messages() {
+            self.push_output(OutputLine::Response(message));
+        }
         for line in dev.console.drain_output() {
             self.push_output(OutputLine::Response(line));
         }
@@ -458,6 +463,36 @@ impl ConsoleOverlay {
         }
         // Push to UI history and dispatch.
         self.push_output(OutputLine::Echo(line.clone()));
+
+        if trimmed
+            .split_whitespace()
+            .next()
+            .is_some_and(|token| token.eq_ignore_ascii_case("BUGREPORT"))
+        {
+            #[cfg(not(target_arch = "wasm32"))]
+            let message = {
+                let description = trimmed["BUGREPORT".len()..].trim();
+                if description.is_empty() {
+                    "Usage: BUGREPORT description of the problem".to_owned()
+                } else {
+                    match crate::bug_report::capture(
+                        robin_run_protocol::diagnostics::DiagnosticKindV1::Bug,
+                        description,
+                        None,
+                    ) {
+                        Ok(_) => {
+                            crate::bug_report::submit_pending();
+                            "Report queued for submission to the leaderboard service.".to_owned()
+                        }
+                        Err(error) => format!("Report failed: {error:#}"),
+                    }
+                }
+            };
+            #[cfg(target_arch = "wasm32")]
+            let message = "Use the Report bug button below the game.".to_owned();
+            self.push_output(OutputLine::Response(message));
+            return;
+        }
         let response = if dev.console.use_final
             && trimmed
                 .split_whitespace()

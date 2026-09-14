@@ -861,3 +861,10 @@ pnpm verify:runtime-source
 pnpm verify:runtime
 pnpm verify:deployment-config
 ```
+
+## Diagnostic reports
+
+Crash and bug reports use `/api/v1/diagnostics` and the private operator endpoints.
+See [Crash and bug reporting](../../docs/NEW_FEATURES.md#crash-and-bug-reporting)
+for payload limits, retention, client behavior and migration requirements.
+Diagnostics are included in the normal SQLite backup and maintenance fencing.

@@ -41,6 +41,7 @@
     "@types/jsdom": "^30.0.0",
     "@types/node": "^26.5.1",
     "es-module-lexer": "3.0.2",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^30.0.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
