@@ -37,9 +37,11 @@ mod resumed_instruction_tests {
             .element_data_mut()
             .set_position(crate::coordinates::WorldPoint3D::new(100.0, 100.0, 0.0));
         entity.element_data_mut().set_sector(Some(sector));
-        entity.position_iface_mut().set_move_box(
-            crate::coordinates::MoveBox::from_coords(-4.0, -4.0, 4.0, 4.0),
-        );
+        entity
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
         entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
