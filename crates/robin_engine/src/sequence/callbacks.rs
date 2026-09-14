@@ -987,12 +987,16 @@ impl crate::engine::EngineInner {
                 .expect("impossible sequence disappeared")
                 .complete_impossible_notification(index);
             if let Some(card) = effects.condolation.as_mut() {
+                // Translation keeps its selected identity until the owner
+                // callback clears it; only a different successor supersedes it.
                 card.was_selected = impossible_was_selected
                     && self
                         .orders
                         .sequence_manager
                         .current_element_for_actor(card.owner)
-                        .is_none();
+                        .is_none_or(|selected| {
+                            selected == (card.seq_id, usize::from(card.elem_idx))
+                        });
                 effects.notify_owner = Some(card.owner);
             }
         }

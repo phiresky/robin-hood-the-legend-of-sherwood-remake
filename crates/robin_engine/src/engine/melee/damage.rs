@@ -2810,7 +2810,7 @@ impl EngineInner {
             .expect_entity(victim_id, "apply_net victim after posture")
             .is_npc();
         if victim_is_npc {
-            self.broadcast_body_detectable(victim_id);
+            self.add_detectable_for_all_npc(victim_id, crate::element::DetectableType::Body);
             self.execute_ai_callback(
                 sim,
                 assets,

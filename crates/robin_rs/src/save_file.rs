@@ -1362,7 +1362,10 @@ mod tests {
 
     #[test]
     fn replay_save_projection_matches_disk_and_preserves_live_ai_state() {
-        let (mut engine, assets) = fresh_engine();
+        let (mut engine, mut assets) = fresh_engine();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .soldiers
+            .push(robin_engine::profiles::SoldierProfile::default());
         let mut ai = robin_engine::ai_enemy::EnemyAi::new(0);
         ai.base.blood_alcohol = 23;
         ai.base.frame_when_enemy_detected = 41;
@@ -1583,7 +1586,10 @@ mod tests {
 
     #[test]
     fn save_apply_round_trips_live_ai_slot_zero_without_null_collapse() {
-        let (mut engine, assets) = fresh_engine();
+        let (mut engine, mut assets) = fresh_engine();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .soldiers
+            .push(robin_engine::profiles::SoldierProfile::default());
         let mut ai = robin_engine::ai_enemy::EnemyAi::new(0);
         ai.base.primary_target = Some(robin_engine::ai::AiEntityHandle::new(0));
         let owner = engine.test_add_entity(robin_engine::element::Entity::Soldier(
@@ -1623,7 +1629,8 @@ mod tests {
             serde_json::json!({"kind": "soldier", "index": 0})
         );
 
-        let (mut restored, restored_assets) = fresh_engine();
+        let (mut restored, _) = fresh_engine();
+        let restored_assets = assets;
         let mut restored_host = Host::scratch(800.0, 600.0);
         decoded
             .apply_to(&mut restored, &mut restored_host, &restored_assets)

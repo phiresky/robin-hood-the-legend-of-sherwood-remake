@@ -5,6 +5,65 @@ use crate::element::{
 use crate::engine::EngineInner;
 
 #[test]
+fn failed_movement_translation_clears_the_previous_installed_idle_order() {
+    use crate::sequence::{SequenceElement, SequenceElementRef};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
+        Posture::AnonymousArcher,
+    ));
+    let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
+    wait.orders.push_back(crate::order::Order::new(
+        OrderType::WaitingCapeAnonymousArcher,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    ));
+    let wait_id = engine.launch_element(wait);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), wait_id, 0);
+    engine.publish_selected_order_as_installed(owner);
+
+    let movement = engine.launch_element(SequenceElement::new_movement(
+        1,
+        Command::Move,
+        Some(owner),
+        OrderType::WalkingUpright,
+    ));
+    engine
+        .orders
+        .sequence_manager
+        .set_translating_element(Some((owner, SequenceElementRef::new(movement, 0))));
+    engine.element_interrupted_after_replacement_selected(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        wait_id,
+        0,
+        crate::sequence::CascadeFlags::NEXT_LEVEL,
+    );
+    assert_eq!(
+        engine.live_actor_animation(owner),
+        Some(OrderType::WaitingCapeAnonymousArcher)
+    );
+
+    engine.element_impossible(&sim, &assets, &mut Vec::new(), movement, 0);
+
+    assert_eq!(
+        engine.live_actor_animation(owner),
+        Some(OrderType::NonanimationEnd)
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
+        None
+    );
+}
+
+#[test]
 fn execute_result_retains_entry_identity_and_consumes_only_loop_arms() {
     let sim = crate::sim_rng::test_context();
     let sequence_manager = crate::sequence::SequenceManager::new();

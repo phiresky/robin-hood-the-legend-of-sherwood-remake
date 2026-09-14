@@ -2041,6 +2041,70 @@ fn manager_friday_evening_cleanup() {
 }
 
 #[test]
+fn cleanup_severs_inbound_links_only_when_their_target_is_deleted() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let sim = test_context();
+    let blocker = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    let target = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(2, Command::Generic, None));
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(blocker, 0)
+        .unwrap();
+    element.cross_postponed = Some((target, 0));
+    element.legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(target, 0))));
+    engine.element_interrupted(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        target,
+        0,
+        CascadeFlags::empty(),
+    );
+
+    engine
+        .orders
+        .sequence_manager
+        .friday_evening_cleanup_preserving(&BTreeSet::from([target]));
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(blocker, 0)
+        .unwrap();
+    assert_eq!(element.cross_postponed, Some((target, 0)));
+    assert_eq!(
+        element.legacy_v48.as_ref().unwrap().next,
+        Some(SequenceElementRef::new(target, 0))
+    );
+
+    engine.orders.sequence_manager.friday_evening_cleanup();
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .get_sequence(target)
+            .is_none()
+    );
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(blocker, 0)
+        .unwrap();
+    assert_eq!(element.cross_postponed, None);
+    assert_eq!(element.legacy_v48.as_ref().unwrap().next, None);
+    assert!(element.next_link_severed);
+
+    // Finishing the blocker must not try to restart the destroyed successor.
+    engine.element_terminated(&sim, &assets, &mut Vec::new(), blocker, 0);
+}
+
+#[test]
 fn manager_terminate_sequence() {
     let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();

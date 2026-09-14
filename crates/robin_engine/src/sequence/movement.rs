@@ -17,20 +17,40 @@ impl SequenceManager {
         &mut self,
         retained_sequences: &std::collections::BTreeSet<SequenceId>,
     ) {
-        // `BTreeMap::retain` preserves keys, so every `SequenceId`
-        // stored elsewhere (`elements_to_go`, `actor_live`,
-        // `actor_in_progress`,
-        // `cross_postponed`, `post_seek_sequence`, …) stays valid. Any
-        // InProgress element in a removed sequence should already be
-        // gone via the normal state-transition path, but scrub
-        // `actor_in_progress` defensively in case a sequence is torn
-        // down without a terminal state change. `elements_to_go`
-        // entries for removed ids are dropped lazily by `hourglass`'s
-        // existence check.
-        let sequence_count_before = self.sequences.len();
-        self.sequences
-            .retain(|seq_id, seq| retained_sequences.contains(seq_id) || !seq.is_to_be_deleted());
-        if self.sequences.len() != sequence_count_before {
+        let deleted: BTreeSet<_> = self
+            .sequences
+            .iter()
+            .filter_map(|(id, sequence)| {
+                (!retained_sequences.contains(id) && sequence.is_to_be_deleted()).then_some(*id)
+            })
+            .collect();
+        if !deleted.is_empty() {
+            // Clear incoming pointers before destroying their target elements.
+            // Terminal state alone does not sever a link: retained sequences
+            // remain addressable until their actual deletion boundary.
+            for (id, sequence) in self.sequences.iter_mut() {
+                if deleted.contains(id) {
+                    continue;
+                }
+                for element in &mut sequence.elements {
+                    if let Some(legacy) = &mut element.legacy_v48 {
+                        if legacy
+                            .next
+                            .is_some_and(|next| deleted.contains(&next.sequence_id))
+                        {
+                            legacy.next = None;
+                            element.next_link_severed = true;
+                        }
+                    }
+                    if element
+                        .cross_postponed
+                        .is_some_and(|(target, _)| deleted.contains(&target))
+                    {
+                        element.cross_postponed = None;
+                    }
+                }
+            }
+            self.sequences.retain(|id, _| !deleted.contains(id));
             self.postpone_tail_cache.clear();
         }
 

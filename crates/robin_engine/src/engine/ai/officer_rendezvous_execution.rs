@@ -582,11 +582,22 @@ impl Rendezvous<'_> {
                         let body = self
                             .engine
                             .expect_human_id_for_ai_handle(body.get(), "instructed body");
-                        self.engine.execute_ai_add_detectable(
-                            self.owner,
-                            body,
-                            crate::element::DetectableType::Body,
-                        );
+                        let already_detectable = self
+                            .engine
+                            .world
+                            .entities
+                            .expect_ai_actor_data(self.owner, format_args!("instructed soldier"))
+                            .detectable_lists
+                            [crate::element::DetectableType::Body as usize]
+                            .iter()
+                            .any(|entry| entry.element == Some(body));
+                        if !already_detectable {
+                            self.engine.execute_ai_add_detectable(
+                                self.owner,
+                                body,
+                                crate::element::DetectableType::Body,
+                            );
+                        }
                     }
                     self.enemy_mut().current_task_priority = task_priority::SEEKING;
                     let point = self

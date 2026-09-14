@@ -851,6 +851,15 @@ fn ale_eligibility_requires_outdoor_beer_preference_or_enabled_reliable_rule() {
 
 #[test]
 fn instructed_soldier_reads_officers_selected_body_on_speech_completion() {
+    check_instructed_soldier_body_registration(false);
+}
+
+#[test]
+fn instructed_soldier_retains_existing_body_registration_on_speech_completion() {
+    check_instructed_soldier_body_registration(true);
+}
+
+fn check_instructed_soldier_body_registration(already_registered: bool) {
     let (mut engine, mut assets, owner, body) =
         fixture(Substate::SeekingSoldierGetInstructedByOfficer);
     let officer = soldier(
@@ -874,11 +883,14 @@ fn instructed_soldier_reads_officers_selected_body_on_speech_completion() {
         .unwrap()
         .base
         .antagonist = Some(AiEntityHandle::new(officer.index()));
+    if already_registered {
+        engine.execute_ai_add_detectable(owner, body, crate::element::DetectableType::Body);
+    }
     event(&mut engine, &assets, owner, StimulusType::EventMyTalk2);
     let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
     assert_eq!(ai.base.alert_soldiers_point, position);
     assert_eq!(ai.officers_position, position);
-    assert!(
+    assert_eq!(
         engine
             .get_entity(owner)
             .unwrap()
@@ -886,7 +898,9 @@ fn instructed_soldier_reads_officers_selected_body_on_speech_completion() {
             .unwrap()
             .detectable_lists[crate::element::DetectableType::Body as usize]
             .iter()
-            .any(|d| d.element == Some(body))
+            .filter(|d| d.element == Some(body))
+            .count(),
+        1
     );
 }
 

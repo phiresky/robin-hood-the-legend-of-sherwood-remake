@@ -216,7 +216,7 @@ fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
         "test_set_frame_counter",
         "test_set_mission_flags",
         "test_set_mission_stat",
-        "test_with_mission_script_effects_and_rng",
+        "test_with_mission_script_and_rng",
     ];
     allowed.sort();
 
