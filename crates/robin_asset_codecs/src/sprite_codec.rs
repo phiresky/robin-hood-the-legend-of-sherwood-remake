@@ -26,6 +26,16 @@
 //! and each context halves its counts when they saturate, which keeps the
 //! model adaptive and the range-coder totals well inside precision.
 //!
+//! Match gating (shipping datadir v17): standalone tiles have a predictor —
+//! the aligned aux-reference tile, else the tile above. In likely-flat spots
+//! (the previous tile in the row equalled its own predictor, or the predictor
+//! equals the left tile) one adaptive bit first says whether the tile IS the
+//! predictor; a hit skips the PPM chain entirely (no context lookups, no
+//! learning). Family (base-coded) tiles are deliberately not gated (see
+//! [`TilePredictor::at`]). Measured on Dem_Lei_MP: +0.43% bytes for -9.4%
+//! serial-wasm decode instructions; see `docs/COMPRESSION.md` for the
+//! full-game sample.
+//!
 //! The entropy stage is a carry-aware LZMA-style range coder rather than
 //! rANS: rANS emits symbols last-in-first-out, which fights adaptive
 //! context models (the decoder must see updates in encode order), while a
@@ -43,9 +53,115 @@
 use anyhow::{Result, anyhow};
 use smallvec::SmallVec;
 
-/// Context maps are on the per-tile hot path; foldhash beats SipHash by a
-/// wide margin here and lookup-only use never depends on iteration order.
-type HashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomState>;
+/// Order-2 context map on the per-tile hot path: 32-bit key -> [`Ctx`].
+///
+/// Open addressing with linear probing over compact 8-byte `(key, index)`
+/// slots (load factor <= 1/2), pointing into an append-only context arena.
+/// Compared with the previous foldhash `HashMap<u32, Ctx>`:
+/// - a probe touches one small slot instead of a ~64-byte bucket, and the
+///   hash is a single multiply (wasm has no SSE group probing to lean on);
+/// - growth rehashes only the slots — contexts never move, so there is no
+///   `reserve_rehash` churn over large `Ctx` values;
+/// - there is no per-lookup `entry` machinery.
+///
+/// Measured negative result: holding `(key, Ctx)` entries inline in the
+/// probe array (load <= 5/8, one cache line per hit) was slower on both
+/// targets on Dem_Lei_MP — native +6% instructions / +27-45% cache misses,
+/// wasm +2.6% instructions / +3-7% cycles — so the slot + arena split stays.
+///
+/// Iteration order is never observed and contexts are addressed only by
+/// key, so the coded bitstream is independent of the table layout.
+struct CtxTable {
+    slots: Vec<CtxSlot>,
+    ctxs: Vec<Ctx>,
+}
+
+#[derive(Clone, Copy)]
+struct CtxSlot {
+    key: u32,
+    /// Arena index, or [`CtxSlot::EMPTY`].
+    index: u32,
+}
+
+impl CtxSlot {
+    const EMPTY: u32 = u32::MAX;
+}
+
+impl CtxTable {
+    fn with_capacity(contexts: usize) -> Self {
+        let slots = (contexts.max(8) * 2).next_power_of_two();
+        Self {
+            slots: vec![
+                CtxSlot {
+                    key: 0,
+                    index: CtxSlot::EMPTY,
+                };
+                slots
+            ],
+            ctxs: Vec::with_capacity(contexts),
+        }
+    }
+
+    #[inline(always)]
+    fn home(key: u32, mask: usize) -> usize {
+        // Fibonacci hashing: the high half of a 64-bit multiply mixes both
+        // key halves (primary << 16 | second) into the probed bits.
+        ((u64::from(key).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize) & mask
+    }
+
+    /// The context for `key`, inserting an empty one on first use.
+    #[inline(always)]
+    fn get_or_insert(&mut self, key: u32) -> &mut Ctx {
+        let mask = self.slots.len() - 1;
+        let mut i = Self::home(key, mask);
+        let index = loop {
+            let slot = self.slots[i];
+            if slot.index == CtxSlot::EMPTY {
+                break self.insert_at(i, key);
+            }
+            if slot.key == key {
+                break slot.index as usize;
+            }
+            i = (i + 1) & mask;
+        };
+        &mut self.ctxs[index]
+    }
+
+    #[inline(never)]
+    fn insert_at(&mut self, slot: usize, key: u32) -> usize {
+        let index = self.ctxs.len();
+        assert!(index < CtxSlot::EMPTY as usize, "context arena overflow");
+        self.ctxs.push(Ctx::default());
+        self.slots[slot] = CtxSlot {
+            key,
+            index: index as u32,
+        };
+        if self.ctxs.len() * 2 > self.slots.len() {
+            self.grow();
+        }
+        index
+    }
+
+    fn grow(&mut self) {
+        let new_len = self.slots.len() * 2;
+        let mask = new_len - 1;
+        let mut slots = vec![
+            CtxSlot {
+                key: 0,
+                index: CtxSlot::EMPTY,
+            };
+            new_len
+        ];
+        for slot in self.slots.iter().filter(|s| s.index != CtxSlot::EMPTY) {
+            let mut i = Self::home(slot.key, mask);
+            while slots[i].index != CtxSlot::EMPTY {
+                i = (i + 1) & mask;
+            }
+            slots[i] = *slot;
+        }
+        self.slots = slots;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Range coder (LZMA-style, 32-bit range, byte renormalisation)
@@ -292,6 +408,8 @@ const PROMOTE_MAX_ALPHABET: u32 = 4096;
 /// promotion happens at the same deterministic point on both coder sides.
 enum Ctx {
     Small {
+        // Inline capacity 4 is deliberate: 8 measured -2.6% instructions but
+        // +8-9% cycles (larger Ctx -> more cache misses) on Dem_Lei_MP.
         syms: SmallVec<[SymbolCount; 4]>,
         sum: u32,
         /// Lazily-allocated alphabet-sized count mirror, kept in exact sync
@@ -301,13 +419,21 @@ enum Ctx {
         /// [`Ctx::excl_stats`] can subtract the excluded mass by iterating
         /// the (small) exclusion list with O(1) count lookups instead of
         /// walking the whole symbol list.
-        dense: Option<Box<[u16]>>,
+        ///
+        /// Thin (double-boxed) pointer on purpose: the mirror only exists on
+        /// the native exclusion-research path, while every context pays for
+        /// this field. 8 instead of 16 bytes keeps `Ctx` at 40 bytes.
+        dense: Option<Box<Box<[u16]>>>,
     },
+    // Thin (double-boxed) pointers: `Big` is never constructed while
+    // promotion is disabled (`PROMOTE_AT`), but its fat boxes would set the
+    // size of every context. With them thin, `Small` (36 bytes) determines
+    // the 40-byte `Ctx`.
     Big {
-        counts: Box<[u16]>,
+        counts: Box<Box<[u16]>>,
         /// Fenwick tree over `counts` (1-based): prefix sums, point updates
         /// and target descent in O(log alphabet).
-        tree: Box<[u32]>,
+        tree: Box<Box<[u32]>>,
         sum: u32,
         distinct: u32,
     },
@@ -730,6 +856,10 @@ impl Ctx {
     }
 
     /// Append this context's symbols to the exclusion list.
+    ///
+    /// Inlined cap check with an outlined insertion loop: shipping streams
+    /// run with cap 0, so every escape pays one compare instead of a call.
+    #[inline(always)]
     fn exclude_into(&self, excl: &mut Excl) {
         // Capped exclusion: a large escaped context would flood the
         // exclusion set and force full filtered scans at every fallback
@@ -740,6 +870,11 @@ impl Ctx {
         if cap == 0 || self.distinct() > cap {
             return;
         }
+        self.exclude_into_uncapped(excl);
+    }
+
+    #[inline(never)]
+    fn exclude_into_uncapped(&self, excl: &mut Excl) {
         match self {
             Ctx::Small { syms, .. } => {
                 for &SymbolCount(s, _) in syms {
@@ -817,7 +952,7 @@ impl Ctx {
                     for &SymbolCount(s, c) in syms.iter() {
                         mirror[s as usize] = c;
                     }
-                    *dense = Some(mirror);
+                    *dense = Some(Box::new(mirror));
                 }
                 small_settle(syms, sum, dense);
                 if syms.len() >= PROMOTE_AT && alphabet <= PROMOTE_MAX_ALPHABET {
@@ -830,8 +965,8 @@ impl Ctx {
                     let distinct = syms.len() as u32;
                     let tree = rebuild_fenwick(&counts);
                     *self = Ctx::Big {
-                        counts,
-                        tree,
+                        counts: Box::new(counts),
+                        tree: Box::new(tree),
                         sum: new_sum,
                         distinct,
                     };
@@ -863,7 +998,7 @@ impl Ctx {
                             *sum += *c as u32;
                         }
                     }
-                    *tree = rebuild_fenwick(counts);
+                    **tree = rebuild_fenwick(counts);
                 }
             }
             Ctx::Small { .. } => unreachable!("bump_big on a Small context"),
@@ -962,7 +1097,7 @@ fn decode_level_excluded(
 /// counts at the adaptation limit (with the dense mirror refreshed to
 /// match — symbols never leave the list, so refilling from `syms` covers
 /// every nonzero mirror slot).
-fn small_settle(syms: &mut [SymbolCount], sum: &mut u32, dense: &mut Option<Box<[u16]>>) {
+fn small_settle(syms: &mut [SymbolCount], sum: &mut u32, dense: &mut Option<Box<Box<[u16]>>>) {
     *sum += BUMP as u32;
     if *sum + escape_weight(syms.len() as u32) >= CTX_HALVE_LIMIT {
         *sum = 0;
@@ -1093,16 +1228,16 @@ struct Model {
     /// diagonal / the variant's left) was measured a wash: ±1% per
     /// character, extra memory and time — PPMC escape costs cancel the
     /// sharper predictions.
-    c2: HashMap<u32, Ctx>,
+    c2: CtxTable,
     /// Two-predecessor level for family members with two already-decoded
     /// siblings: (base1-tile, base2-tile). Its See statistics live at index
     /// 4 so the established levels keep their indices (and single-base
     /// bitstreams stay byte-identical).
-    c2pair: HashMap<u32, Ctx>,
+    c2pair: CtxTable,
     /// Auxiliary-reference level for standalone sprites with an aligned
     /// previously-decoded reference (temporal predecessor or adjacent
     /// direction): (aux-tile, above). See slot [`SEE_LEVEL_AUX`].
-    c2aux: HashMap<u32, Ctx>,
+    c2aux: CtxTable,
     /// primary alone (the stronger single predictor).
     c1: Vec<Ctx>,
     /// second alone.
@@ -1111,26 +1246,34 @@ struct Model {
     alphabet: u32,
     excl: Excl,
     see: See,
+    /// Match-gate probabilities (P(tile == predictor), 11-bit), see
+    /// [`Model::match_prob`].
+    match_flag: [u16; 8],
 }
 
 impl Model {
+    /// The adaptive "tile == predictor" probability for a gated tile.
+    /// Contexts: an aux-reference tile is present, above == left, and
+    /// predictor == left.
+    #[inline(always)]
+    fn match_prob(&mut self, tile: &TilePredictor, above: u16, left: u16) -> &mut u16 {
+        let index = usize::from(tile.reference)
+            | usize::from(above == left) << 1
+            | usize::from(tile.pred == left) << 2;
+        &mut self.match_flag[index]
+    }
+
     fn new(alphabet: u16, has_pair: bool, has_aux: bool) -> Self {
         Self {
             // Pre-size the context maps: models routinely end with tens of
             // thousands of order-2 contexts, and growing there from empty
             // shows up as rehash churn in decode profiles.
-            c2: HashMap::with_capacity_and_hasher(1 << 15, Default::default()),
+            c2: CtxTable::with_capacity(1 << 15),
             // Reserve only model levels this stream can visit. An unused
             // order-2 map otherwise allocates thousands of empty contexts
             // for every chunk, including chunks decoding concurrently.
-            c2pair: HashMap::with_capacity_and_hasher(
-                if has_pair { 1 << 14 } else { 0 },
-                Default::default(),
-            ),
-            c2aux: HashMap::with_capacity_and_hasher(
-                if has_aux { 1 << 14 } else { 0 },
-                Default::default(),
-            ),
+            c2pair: CtxTable::with_capacity(if has_pair { 1 << 14 } else { 0 }),
+            c2aux: CtxTable::with_capacity(if has_aux { 1 << 14 } else { 0 }),
             // Order-1 contexts are direct-indexed by symbol (last slot =
             // EDGE): no hashing on the per-tile hot path.
             c1: (0..=alphabet as usize).map(|_| Ctx::default()).collect(),
@@ -1139,6 +1282,7 @@ impl Model {
             alphabet: alphabet as u32,
             excl: Excl::new(alphabet),
             see: See::new(),
+            match_flag: [PROB_INIT; 8],
         }
     }
 
@@ -1153,7 +1297,7 @@ impl Model {
         // to the escape material that actually reaches them, and the update
         // cost drops from four context touches per tile to ~1.3.
         for (level, ctx) in [
-            self.c2.entry(key2).or_default(),
+            self.c2.get_or_insert(key2),
             &mut self.c1[(primary as usize).min(alphabet as usize)],
             &mut self.c1b[(second as usize).min(alphabet as usize)],
             &mut self.c0,
@@ -1194,8 +1338,8 @@ impl Model {
         let excl = &mut self.excl;
         let see = &mut self.see;
         for (level, ctx) in [
-            (SEE_LEVEL_PAIR2, self.c2pair.entry(key_pair).or_default()),
-            (0, self.c2.entry(key2).or_default()),
+            (SEE_LEVEL_PAIR2, self.c2pair.get_or_insert(key_pair)),
+            (0, self.c2.get_or_insert(key2)),
             (1, &mut self.c1[(b1 as usize).min(alphabet as usize)]),
             (2, &mut self.c1b[(above as usize).min(alphabet as usize)]),
             (3, &mut self.c0),
@@ -1236,12 +1380,8 @@ impl Model {
         // reference is strong exactly where it exists (43-68% identity), and
         // ordering it after (above,left) measured worse (Knight01 +2.3%).
         for (skip, level, ctx) in [
-            (
-                skip_aux,
-                SEE_LEVEL_AUX,
-                self.c2aux.entry(key_aux).or_default(),
-            ),
-            (false, 0, self.c2.entry(key2).or_default()),
+            (skip_aux, SEE_LEVEL_AUX, self.c2aux.get_or_insert(key_aux)),
+            (false, 0, self.c2.get_or_insert(key2)),
             (
                 false,
                 1,
@@ -1292,7 +1432,7 @@ impl Model {
         let mut aux_ctx: Option<&mut Ctx> = if skip_aux {
             None
         } else {
-            Some(self.c2aux.entry(key_aux).or_default())
+            Some(self.c2aux.get_or_insert(key_aux))
         };
         if let Some(ctx) = aux_ctx.as_deref_mut()
             && let LevelCode::Hit(i, s) = decode_level(ctx, SEE_LEVEL_AUX, dec, see, excl)
@@ -1303,7 +1443,7 @@ impl Model {
             return s;
         }
         let mut chain: [&mut Ctx; 4] = [
-            self.c2.entry(key2).or_default(),
+            self.c2.get_or_insert(key2),
             &mut self.c1[(above as usize).min(alphabet as usize)],
             &mut self.c1b[(left as usize).min(alphabet as usize)],
             &mut self.c0,
@@ -1343,7 +1483,7 @@ impl Model {
         self.excl.begin();
         let excl = &mut self.excl;
         let see = &mut self.see;
-        let pair_ctx = self.c2pair.entry(key_pair).or_default();
+        let pair_ctx = self.c2pair.get_or_insert(key_pair);
         if let LevelCode::Hit(i, s) = decode_level(pair_ctx, SEE_LEVEL_PAIR2, dec, see, excl) {
             // Hot exit: the (b1, b2) level resolves most pair-coded tiles
             // without touching the rest of the chain or its hash entry.
@@ -1351,7 +1491,7 @@ impl Model {
             return s;
         }
         let mut chain: [&mut Ctx; 4] = [
-            self.c2.entry(key2).or_default(),
+            self.c2.get_or_insert(key2),
             &mut self.c1[(b1 as usize).min(alphabet as usize)],
             &mut self.c1b[(above as usize).min(alphabet as usize)],
             &mut self.c0,
@@ -1395,7 +1535,7 @@ impl Model {
         // and a miss proves absence (see [`LevelCode`]), so no learning
         // step ever rescans a symbol list.
         let mut chain: [&mut Ctx; 4] = [
-            self.c2.entry(key2).or_default(),
+            self.c2.get_or_insert(key2),
             &mut self.c1[(primary as usize).min(alphabet as usize)],
             &mut self.c1b[(second as usize).min(alphabet as usize)],
             &mut self.c0,
@@ -1504,21 +1644,7 @@ pub fn encode_grids_multi(
                 return Err(anyhow!("grid {gi}: {label} length mismatch"));
             }
         }
-        for (i, &x) in g.indices.iter().enumerate() {
-            if x as u32 >= alphabet as u32 {
-                return Err(anyhow!("grid {gi}: index {x} >= alphabet {alphabet}"));
-            }
-            let above = if i >= cols { g.indices[i - cols] } else { EDGE };
-            let left = if i % cols > 0 { g.indices[i - 1] } else { EDGE };
-            // The chain falls back specific -> primary -> second, so put the
-            // stronger single predictor first: the base tile for variants,
-            // the above tile standalone (see COMPRESSION.md entropy table).
-            match (b, b2) {
-                (Some(b), Some(b2)) => model.encode_sym3(&mut enc, b[i], b2[i], above, x),
-                (Some(b), None) => model.encode_sym(&mut enc, b[i], above, x),
-                _ => model.encode_sym(&mut enc, above, left, x),
-            }
-        }
+        encode_grid(&mut model, &mut enc, gi, g, b, b2, &None)?;
     }
     Ok(enc.finish())
 }
@@ -1581,15 +1707,7 @@ pub fn encode_grids_auxref(
         {
             return Err(anyhow!("grid {gi}: aux reference dims mismatch"));
         }
-        for (i, &x) in g.indices.iter().enumerate() {
-            if x as u32 >= alphabet as u32 {
-                return Err(anyhow!("grid {gi}: index {x} >= alphabet {alphabet}"));
-            }
-            let above = if i >= cols { g.indices[i - cols] } else { EDGE };
-            let left = if i % cols > 0 { g.indices[i - 1] } else { EDGE };
-            let a = aux_tile(&aux[gi], i, cols);
-            model.encode_sym_aux(&mut enc, a, above, left, x);
-        }
+        encode_grid(&mut model, &mut enc, gi, g, None, None, &aux[gi])?;
     }
     Ok(enc.finish())
 }
@@ -1619,14 +1737,8 @@ pub fn decode_grids_auxref(
         {
             return Err(anyhow!("grid {gi}: aux reference dims mismatch"));
         }
-        let mut g: Vec<u16> = Vec::with_capacity(n);
-        for i in 0..n {
-            let above = if i >= cols { g[i - cols] } else { EDGE };
-            let left = if i % cols > 0 { g[i - 1] } else { EDGE };
-            let a = aux_tile(&aux[gi], i, cols);
-            g.push(model.decode_sym_aux(&mut dec, a, above, left));
-            dec.check()?;
-        }
+        let g = decode_grid(&mut model, &mut dec, cols, rows, None, None, &aux[gi])?;
+        debug_assert_eq!(g.len(), n);
         out.push(g);
     }
     dec.finish()?;
@@ -1725,21 +1837,7 @@ pub fn encode_grids_shipping(
             }
             None => None,
         };
-        for (i, &x) in g.indices.iter().enumerate() {
-            if x as u32 >= alphabet as u32 {
-                return Err(anyhow!("grid {gi}: index {x} >= alphabet {alphabet}"));
-            }
-            let above = if i >= cols { g.indices[i - cols] } else { EDGE };
-            let left = if i % cols > 0 { g.indices[i - 1] } else { EDGE };
-            match (b, b2) {
-                (Some(b), Some(b2)) => model.encode_sym3(&mut enc, b[i], b2[i], above, x),
-                (Some(b), None) => model.encode_sym(&mut enc, b[i], above, x),
-                _ => {
-                    let a = aux_tile(&aux, i, cols);
-                    model.encode_sym_aux(&mut enc, a, above, left, x);
-                }
-            }
-        }
+        encode_grid(&mut model, &mut enc, gi, g, b, b2, &aux)?;
     }
     Ok(enc.finish())
 }
@@ -1819,36 +1917,147 @@ pub fn decode_grids_shipping(
             }
             None => None,
         };
-        let mut g: Vec<u16> = Vec::with_capacity(n);
-        // Walk rows directly: the old flat loop divided by the sprite's
-        // variable width for left/above and again for the shifted reference
-        // at every tile. Row-major order and context updates stay identical.
-        for row in 0..rows as usize {
-            for col in 0..cols {
-                let i = row * cols + col;
-                let above = if row > 0 { g[i - cols] } else { EDGE };
-                let left = if col > 0 { g[i - 1] } else { EDGE };
-                let x = match (b, b2) {
-                    (Some(b), Some(b2)) => model.decode_sym3(&mut dec, b[i], b2[i], above),
-                    (Some(b), None) => model.decode_sym(&mut dec, b[i], above),
-                    _ => model.decode_sym_aux(&mut dec, aux_tile_at(&aux, col, row), above, left),
-                };
-                g.push(x);
-                dec.check()?;
-            }
-        }
+        let g = decode_grid(&mut model, &mut dec, cols, rows, b, b2, &aux)?;
         out.push(g);
     }
     dec.finish()?;
     Ok(out)
 }
 
-/// The reference tile for grid position `i`, or EDGE when absent.
-fn aux_tile(aux: &Option<AuxRef>, i: usize, cols: usize) -> u16 {
-    if aux.is_none() {
-        return EDGE;
+/// One tile's match-gate predictor and its flag context.
+#[derive(Clone, Copy)]
+struct TilePredictor {
+    /// The tile the gate bit predicts (EDGE: no predictor, never gated).
+    pred: u16,
+    /// Aligned aux-reference tile for the standalone chain (EDGE if none).
+    aux: u16,
+    /// Flag context: an aux-reference tile is present.
+    reference: bool,
+}
+
+impl TilePredictor {
+    /// Family (base-coded) tiles have no predictor: gating them on the base
+    /// tile was measured on full-game missions (v16 grids, byte-exact lab
+    /// prototype) at +2.4..3.7% extra VQ bytes on family-heavy missions
+    /// (H01_Lin_VL +3.95% total vs +0.26% ungated; Tac01_FoA_MP +2.71% vs
+    /// +0.29%) for little extra decode saving — their (base, above) PPM
+    /// contexts already resolve hits cheaply.
+    #[inline(always)]
+    fn at(base: Option<&[u16]>, aux: &Option<AuxRef>, col: usize, row: usize, above: u16) -> Self {
+        if base.is_some() {
+            return Self {
+                pred: EDGE,
+                aux: EDGE,
+                reference: false,
+            };
+        }
+        let aux = aux_tile_at(aux, col, row);
+        Self {
+            pred: if aux != EDGE { aux } else { above },
+            aux,
+            reference: aux != EDGE,
+        }
     }
-    aux_tile_at(aux, i % cols, i / cols)
+
+    /// Code the gate bit only in likely-flat spots: the previous tile in the
+    /// row was a predictor hit, or the predictor continues the left tile.
+    #[inline(always)]
+    fn gated(&self, prev_hit: bool, left: u16) -> bool {
+        self.pred != EDGE && (prev_hit || self.pred == left)
+    }
+}
+
+/// Encode one grid's tiles in row-major order (see the module docs for the
+/// match gate). `base`/`base2` select the family chains; otherwise `aux`
+/// supplies the standalone chain's aligned reference. Lengths are validated
+/// by the callers.
+fn encode_grid(
+    model: &mut Model,
+    enc: &mut RangeEncoder,
+    gi: usize,
+    grid: &SpriteGrid,
+    base: Option<&[u16]>,
+    base2: Option<&[u16]>,
+    aux: &Option<AuxRef>,
+) -> Result<()> {
+    let cols = usize::from(grid.cols);
+    for row in 0..usize::from(grid.rows) {
+        let mut prev_hit = false;
+        for col in 0..cols {
+            let i = row * cols + col;
+            let x = grid.indices[i];
+            if u32::from(x) >= model.alphabet {
+                return Err(anyhow!(
+                    "grid {gi}: index {x} >= alphabet {}",
+                    model.alphabet
+                ));
+            }
+            let above = if row > 0 {
+                grid.indices[i - cols]
+            } else {
+                EDGE
+            };
+            let left = if col > 0 { grid.indices[i - 1] } else { EDGE };
+            let tile = TilePredictor::at(base, aux, col, row, above);
+            let hit = x == tile.pred;
+            if tile.gated(prev_hit, left) {
+                // `encode_bit` codes P(false): false = predictor hit.
+                enc.encode_bit(model.match_prob(&tile, above, left), !hit);
+                if hit {
+                    prev_hit = true;
+                    continue;
+                }
+            }
+            prev_hit = hit;
+            // The chain falls back specific -> primary -> second, so put the
+            // stronger single predictor first: the base tile for variants,
+            // the above tile standalone (see COMPRESSION.md entropy table).
+            match (base, base2) {
+                (Some(b), Some(b2)) => model.encode_sym3(enc, b[i], b2[i], above, x),
+                (Some(b), None) => model.encode_sym(enc, b[i], above, x),
+                _ => model.encode_sym_aux(enc, tile.aux, above, left, x),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Decoder mirror of [`encode_grid`]. Walks rows directly so left/above and
+/// the shifted reference need no per-tile division.
+fn decode_grid(
+    model: &mut Model,
+    dec: &mut RangeDecoder,
+    cols: usize,
+    rows: u16,
+    base: Option<&[u16]>,
+    base2: Option<&[u16]>,
+    aux: &Option<AuxRef>,
+) -> Result<Vec<u16>> {
+    let mut g: Vec<u16> = Vec::with_capacity(cols * usize::from(rows));
+    for row in 0..usize::from(rows) {
+        let mut prev_hit = false;
+        for col in 0..cols {
+            let i = row * cols + col;
+            let above = if row > 0 { g[i - cols] } else { EDGE };
+            let left = if col > 0 { g[i - 1] } else { EDGE };
+            let tile = TilePredictor::at(base, aux, col, row, above);
+            let x = if tile.gated(prev_hit, left)
+                && !dec.decode_bit(model.match_prob(&tile, above, left))
+            {
+                tile.pred
+            } else {
+                match (base, base2) {
+                    (Some(b), Some(b2)) => model.decode_sym3(dec, b[i], b2[i], above),
+                    (Some(b), None) => model.decode_sym(dec, b[i], above),
+                    _ => model.decode_sym_aux(dec, tile.aux, above, left),
+                }
+            };
+            prev_hit = x == tile.pred;
+            g.push(x);
+            dec.check()?;
+        }
+    }
+    Ok(g)
 }
 
 #[inline]
@@ -1907,18 +2116,7 @@ pub fn decode_grids_multi(
                 return Err(anyhow!("grid {gi}: {label} length mismatch"));
             }
         }
-        let mut g: Vec<u16> = Vec::with_capacity(n);
-        for i in 0..n {
-            let above = if i >= cols { g[i - cols] } else { EDGE };
-            let left = if i % cols > 0 { g[i - 1] } else { EDGE };
-            let x = match (b, b2) {
-                (Some(b), Some(b2)) => model.decode_sym3(&mut dec, b[i], b2[i], above),
-                (Some(b), None) => model.decode_sym(&mut dec, b[i], above),
-                _ => model.decode_sym(&mut dec, above, left),
-            };
-            g.push(x);
-            dec.check()?;
-        }
+        let g = decode_grid(&mut model, &mut dec, cols, rows, b, b2, &None)?;
         out.push(g);
     }
     dec.finish()?;
@@ -2165,6 +2363,19 @@ mod tests {
     }
 
     #[test]
+    fn context_layout_stays_cache_dense() {
+        // Decode time is dominated by memory stalls over the context arrays
+        // and arenas: 48 -> 40 byte contexts cut cache misses ~6% on
+        // Dem_Lei_MP, and +16 bytes (SmallVec inline 8) cost 8-9% cycles.
+        assert!(
+            std::mem::size_of::<Ctx>() <= 40,
+            "Ctx grew to {} bytes",
+            std::mem::size_of::<Ctx>()
+        );
+        assert_eq!(std::mem::size_of::<CtxSlot>(), 8);
+    }
+
+    #[test]
     fn see_quartiles_match_wire_formula_at_every_context_boundary() {
         // Check both sides of every quartile for every reachable context
         // total, plus extremes used by the defensive clamping in See::key.
@@ -2178,6 +2389,76 @@ mod tests {
                     assert_eq!(See::key(0, sum, 1, top).3, expected, "sum={sum} top={top}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn match_gate_roundtrips_flat_runs_in_every_mode() {
+        // Long flat runs, stripes and sporadic breaks drive the gate through
+        // hits, misses after hits, and `predictor == left` entries in the
+        // standalone and aux self-reference chains, interleaved with the
+        // ungated single-base and two-base chains in one model.
+        let (cols, rows) = (13u16, 11u16);
+        let tiles = usize::from(cols) * usize::from(rows);
+        let flat: Vec<u16> = (0..tiles)
+            .map(|i| match i % 37 {
+                0 => 9,
+                5 | 6 => 3,
+                _ => 1,
+            })
+            .collect();
+        let striped: Vec<u16> = (0..tiles)
+            .map(|i| ((i / usize::from(cols)) % 3) as u16 + u16::from(i % 29 == 0))
+            .collect();
+        let family: Vec<u16> = flat
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| if i % 17 == 0 { (v + 2) % 12 } else { v })
+            .collect();
+        let family2: Vec<u16> = striped
+            .iter()
+            .zip(&flat)
+            .map(|(&s, &f)| if s == 0 { f } else { s })
+            .collect();
+        let grid = |indices| SpriteGrid {
+            cols,
+            rows,
+            indices,
+        };
+        let grids = [grid(&flat), grid(&striped), grid(&family), grid(&family2)];
+        let base: Vec<Option<&[u16]>> = vec![None, None, Some(&flat), Some(&flat)];
+        let base2: Vec<Option<&[u16]>> = vec![None, None, None, Some(&striped)];
+        let selfref = vec![
+            None,
+            Some(SelfRef {
+                grid: 0,
+                dtx: 1,
+                dy: 0,
+            }),
+            None,
+            None,
+        ];
+        let dims = vec![(cols, rows); grids.len()];
+        let blob = encode_grids_shipping(12, &grids, Some(&base), Some(&base2), &selfref).unwrap();
+        let decoded =
+            decode_grids_shipping(12, &dims, Some(&base), Some(&base2), &selfref, &blob).unwrap();
+        for (g, d) in grids.iter().zip(&decoded) {
+            assert_eq!(g.indices, d.as_slice());
+        }
+        // A uniform standalone grid is almost free once its rows gate in.
+        let uniform = vec![4u16; tiles];
+        let uniform_blob = encode_grids(12, &[grid(&uniform)], None).unwrap();
+        assert!(uniform_blob.len() < 32, "{} bytes", uniform_blob.len());
+        assert_eq!(
+            decode_grids(12, &[(cols, rows)], None, &uniform_blob).unwrap(),
+            [uniform.clone()]
+        );
+        for len in 0..blob.len() {
+            assert!(
+                decode_grids_shipping(12, &dims, Some(&base), Some(&base2), &selfref, &blob[..len])
+                    .is_err(),
+                "prefix {len}"
+            );
         }
     }
 
@@ -2467,15 +2748,15 @@ mod tests {
         let blob =
             encode_grids_shipping(4096, &grids, Some(&base), Some(&base2), &selfref).unwrap();
         use sha2::{Digest, Sha256};
-        // Freeze the shipping stream produced before exclusion specialization
-        // and conditional model allocation. Roundtrips alone would not catch
-        // an encoder/decoder pair that accidentally changes the format.
+        // Freeze the shipping stream (schema v17: match-gated coding).
+        // Roundtrips alone would not catch an encoder/decoder pair that
+        // accidentally changes the format.
         if excl_source_cap() == 0 {
             assert_eq!(
                 Sha256::digest(&blob).as_slice(),
                 &[
-                    38, 62, 236, 102, 222, 253, 119, 108, 131, 62, 110, 69, 95, 191, 198, 154, 88,
-                    108, 6, 164, 149, 150, 87, 0, 142, 116, 36, 27, 22, 76, 59, 76
+                    71, 231, 60, 226, 179, 13, 83, 181, 139, 224, 131, 67, 23, 191, 123, 140, 178,
+                    241, 7, 4, 45, 155, 124, 24, 234, 189, 133, 244, 167, 36, 223, 192
                 ],
             );
         }

@@ -1,8 +1,10 @@
-//! Frozen v16 descriptor with exported engine picture metadata. Do not update when rearranging runtime
+//! Frozen v17 descriptor with exported engine picture metadata. Do not update when rearranging runtime
 //! representations; a deliberate format change must introduce a new version.
+//! v17 keeps the v16 container layout; it changes only the VQ sprite blob
+//! coding (match-gated), which the magic and version below pin.
 use super::*;
 #[derive(Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-struct FrozenShippingV16 {
+struct FrozenShippingV17 {
     pub profiles: Option<ProfileManager>,
     pub res_files: std::collections::BTreeMap<String, ResourceManager>,
     pub pak_files: std::collections::BTreeMap<String, Vec<EncodedPicture>>,
@@ -54,7 +56,7 @@ struct FrozenShippingV16 {
 }
 
 #[test]
-fn v16_wire_and_json_match_frozen_descriptor_with_runtime_state() {
+fn v17_wire_and_json_match_frozen_descriptor_with_runtime_state() {
     let mut datadir = ShippingDatadir::from_payload(ShippingDatadirPayload {
         profiles: Some(ProfileManager::default()),
         ..Default::default()
@@ -79,12 +81,12 @@ fn v16_wire_and_json_match_frozen_descriptor_with_runtime_state() {
     datadir
         .locales
         .insert("en-US".into(), ShippingLocale::default());
-    let frozen: FrozenShippingV16 =
+    let frozen: FrozenShippingV17 =
         serde_json::from_value(serde_json::to_value(&datadir).unwrap()).unwrap();
     let expected = bitcode::encode(&frozen);
     let before = encode_native(&datadir);
-    assert_eq!(&before[..8], b"RHDDNA16");
-    assert_eq!(&before[8..12], &16u32.to_le_bytes());
+    assert_eq!(&before[..8], b"RHDDNA17");
+    assert_eq!(&before[8..12], &17u32.to_le_bytes());
     assert_eq!(&before[12..], expected);
     datadir.set_remote_base_url("https://invalid.example/assets".into());
     datadir.runtime.source_dir = Some(PathBuf::from("/example"));

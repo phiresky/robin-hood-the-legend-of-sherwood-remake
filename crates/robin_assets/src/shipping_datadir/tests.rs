@@ -894,7 +894,7 @@ fn native_shipping_format_roundtrips_and_rejects_legacy_payloads() {
     datadir.locales.insert("de-DE".into(), german);
 
     let encoded = encode_native(&datadir);
-    assert_eq!(&encoded[..8], b"RHDDNA16");
+    assert_eq!(&encoded[..8], b"RHDDNA17");
     assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
     let decoded = decode_native(&encoded).expect("decode native shipping datadir");
     assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
@@ -942,7 +942,7 @@ fn native_shipping_format_roundtrips_and_rejects_legacy_payloads() {
     );
 
     let mut previous_schema = encoded.clone();
-    previous_schema[..8].copy_from_slice(b"RHDDNA13");
+    previous_schema[..8].copy_from_slice(b"RHDDNA16");
     let error = decode_native(&previous_schema).unwrap_err();
     assert!(error.to_string().contains("regenerate datadir.bin"));
 
@@ -1035,7 +1035,7 @@ fn mission_payload_roundtrips_independently() {
         .audio_durations_ms
         .insert("sounds/arrow.opus".into(), 1_234);
     let encoded = encode_mission_native(&mission);
-    assert_eq!(&encoded[..8], b"RHMISN08");
+    assert_eq!(&encoded[..8], b"RHMISN09");
     let compressed = zstd_compress_with_window(&encoded, 30).unwrap();
     let decoded = decode_mission_compressed(&compressed).unwrap();
     assert_eq!(decoded.raw.get("levels/day/map.min"), Some(&vec![9, 8, 7]));

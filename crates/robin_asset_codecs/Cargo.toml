@@ -8,7 +8,6 @@ publish.workspace = true
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 bytemuck = { workspace = true, features = ["derive"] }
-foldhash = "0.2"
 smallvec = { workspace = true, features = ["union"] }
 
 [dev-dependencies]

@@ -44,10 +44,16 @@ use super::*;
 // locale data is confined to the boot datadir manifest.
 // Datadir v16 adds ResourceData::picture_opacity for pixel-free engine setup.
 // Mission payloads remain v8: they contain no ResourceManager values.
-pub(super) const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA16";
-pub(super) const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN08";
-pub const SHIPPING_DATADIR_VERSION: u32 = 16;
-pub const SHIPPING_MISSION_VERSION: u32 = 8;
+// Datadir v17 / mission v9: VQ sprite blobs use match-gated coding (an
+// adaptive "tile == predictor" bit in likely-flat spots skips the PPM chain;
+// see `sprite_codec`). Container layouts are unchanged, but every VQ blob's
+// bytes are: mission parts carry the VQ chunks and the boot datadir carries
+// the sprite bank they materialize into, and a datadir must never be paired
+// with mission parts of the other codec generation, so both magics advance.
+pub(super) const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA17";
+pub(super) const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN09";
+pub const SHIPPING_DATADIR_VERSION: u32 = 17;
+pub const SHIPPING_MISSION_VERSION: u32 = 9;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
 pub fn encode_native(datadir: &ShippingDatadir) -> Vec<u8> {

@@ -7,7 +7,8 @@ use assets_frame_holder::{RuntimeSprite, TRANSPARENT_COLOR_16};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path};
 
-const MAGIC: &[u8] = b"RHMODVQ2";
+// v3: VQ blobs use the match-gated sprite codec (shipping datadir v17).
+const MAGIC: &[u8] = b"RHMODVQ3";
 // Bound dictionaries below the u16 alphabet limit without lossy quantization.
 const GROUP_TILES: usize = 60_000;
 
@@ -354,7 +355,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sprites.vq.zst");
         assert!(read(&path).is_err());
-        let old = zstd::stream::encode_all(&b"RHMODVQ1"[..], 1).unwrap();
+        let old = zstd::stream::encode_all(&b"RHMODVQ2"[..], 1).unwrap();
         assert!(
             read_bytes(&old, "old")
                 .unwrap_err()
@@ -362,8 +363,8 @@ mod tests {
                 .contains("encode_mod_sprites")
         );
         for malformed in [
-            &b"RHMODVQ2{"[..],
-            &b"RHMODVQ2{\"groups\":18446744073709551615}"[..],
+            &b"RHMODVQ3{"[..],
+            &b"RHMODVQ3{\"groups\":18446744073709551615}"[..],
         ] {
             let compressed = zstd::stream::encode_all(malformed, 1).unwrap();
             assert!(read_bytes(&compressed, "malformed").is_err());
