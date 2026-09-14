@@ -152,3 +152,132 @@ fn officer_group_path_advances_waypoint_on_refusal() {
         );
     }
 }
+
+#[test]
+fn officer_group_path_reassignment_uses_live_waypoints_with_initial_stride() {
+    use crate::engine::test_support::asm::*;
+    use crate::engine::types::MissionScript;
+    use crate::natives::{NativeFn, ScriptHandleCodec};
+    use crate::scb::{ClassEntry, Function, ScbFile};
+    let (mut engine, mut assets, [owner, refused, second, third]) = group_fixture();
+    let sector = engine.live_ai_position(owner).sector.unwrap();
+    assets.navigation.hiking_paths = std::sync::Arc::new(
+        [(5, 500, 100), (7, 1000, 200)]
+            .into_iter()
+            .map(|(count, start, step)| crate::level_data::RawHikingPath {
+                waypoints: (0..count)
+                    .map(|index| crate::level_data::RawWaypoint {
+                        x: start + index * step,
+                        y: 200,
+                        sector: 1,
+                        level: 0,
+                        command: crate::level_data::WaypointCommand::None,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    );
+    assets.navigation.hiking_waypoint_sectors =
+        Some(std::sync::Arc::new(vec![vec![sector; 5], vec![sector; 7]]));
+    let checkpoint = engine
+        .world
+        .entities
+        .expect_ai_controller_mut(refused, format_args!("checkpoint"));
+    checkpoint.has_patrol_path = true;
+    checkpoint.patrol_path =
+        PatrolPath::new(PathId::new(0).unwrap(), &assets.navigation.hiking_paths);
+    let officer = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("checkpoint report"));
+    officer.base.my_reconnaissance_report.report_type = ReportType::MissedCharly;
+    officer.base.my_reconnaissance_report.charly = Some(AiEntityHandle::new(refused.index()));
+    let handle = ScriptHandleCodec::actor_handle(refused);
+    engine
+        .world
+        .entities
+        .expect_entity_mut(refused, format_args!("scripted checkpoint"))
+        .actor_data_mut()
+        .unwrap()
+        .script_class = "ChangePath".into();
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![
+                ClassEntry {
+                    source_file: "path.scs".into(),
+                    class_name: "StartUp".into(),
+                    size_of_member_variables: 0,
+                    member_variables: vec![],
+                    functions: vec![],
+                    quads: vec![],
+                },
+                ClassEntry {
+                    source_file: "path.scs".into(),
+                    class_name: "ChangePath".into(),
+                    size_of_member_variables: 0,
+                    member_variables: vec![],
+                    functions: vec![Function {
+                        name: "FilterAIEvent".into(),
+                        address: 0,
+                        num_parameters: 3,
+                        size_of_return_value: 4,
+                        size_of_parameters: 12,
+                        size_of_volatile: 0,
+                        size_of_temporary: 8,
+                    }],
+                    quads: vec![
+                        q_begin_function(0, 2),
+                        q_aff0_iconstant(0xC000, handle),
+                        q_aff0_iconstant(0xC004, 1),
+                        q_native_param(0xC000),
+                        q_native_param(0xC004),
+                        q_native_call(NativeFn::AssignPath as u32),
+                        q_aff0_iconstant(0xC000, 0),
+                        q_return_val(0xC000),
+                        q_end_function(),
+                    ],
+                },
+            ],
+        })
+        .expect("path reassignment script compiles"),
+    );
+    engine.attach_script_bindings(&assets);
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .unwrap()
+        .bind_actor(handle, "ChangePath");
+    engine.execute_ai_officer_instruct_group(&crate::sim_rng::test_context(), &assets, owner);
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .expect_ai_controller(refused, format_args!("reassigned checkpoint"))
+            .patrol_path
+            .as_ref()
+            .unwrap()
+            .hiking_path_index,
+        PathId::new(1).unwrap()
+    );
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("officer"))
+            .alerted_us,
+        vec![second.index(), third.index()]
+    );
+    for (member, expected_x) in [(second, 1400.0), (third, 1800.0)] {
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai(member, format_args!("path recipient"));
+        assert_eq!(
+            ai.base.alert_soldiers_point.x, expected_x,
+            "later instructions read reassigned path at the stride captured before callbacks"
+        );
+        assert_eq!(ai.base.alert_soldiers_point.sector, Some(sector));
+    }
+}

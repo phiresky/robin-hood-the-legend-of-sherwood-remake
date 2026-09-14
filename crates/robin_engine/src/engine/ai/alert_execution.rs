@@ -62,7 +62,7 @@ impl EngineInner {
             instruction.seek_flags |= SeekFlags::LOCATION_FIRST.bits();
         }
         let mut count = enemy.alerted_us.len();
-        let path = if enemy.base.my_reconnaissance_report.report_type == ReportType::MissedCharly {
+        let path_owner = if enemy.base.my_reconnaissance_report.report_type == ReportType::MissedCharly {
             instruction.seek_flags |= SeekFlags::CHARLY_SEEK.bits();
             let charly = enemy
                 .base
@@ -76,29 +76,31 @@ impl EngineInner {
                 .expect_ai_controller(charly, format_args!("group checkpoint path"));
             if ai.has_patrol_path && count > 0 {
                 instruction.seek_flags |= SeekFlags::LOCATION_FIRST.bits();
-                Some(
-                    ai.patrol_path
-                        .as_ref()
-                        .map(|path| path.hiking_path_index)
-                        .or(ai.detached_patrol_path_status.hiking_path_index)
-                        .expect("checkpoint with a path requires its authored path"),
-                )
+                Some(charly)
             } else {
                 None
             }
         } else {
             None
         };
-        let path_size = path.map_or(0, |path| {
-            assets.navigation.hiking_paths[path.get() as usize]
+        let path_index = |engine: &EngineInner, charly| {
+            let ai = engine.world.entities
+                .expect_ai_controller(charly, format_args!("group checkpoint path"));
+            ai.patrol_path.as_ref().map(|path| path.hiking_path_index)
+                .or(ai.detached_patrol_path_status.hiking_path_index)
+                .expect("checkpoint with a path requires its authored path")
+                .get() as usize
+        };
+        let path_size = path_owner.map_or(0, |charly| {
+            assets.navigation.hiking_paths[path_index(self, charly)]
                 .waypoints
                 .len()
         });
         assert!(
-            path.is_none() || path_size > 0,
+            path_owner.is_none() || path_size > 0,
             "group checkpoint path is empty"
         );
-        let waypoint_step = if path.is_some() && count > 1 {
+        let waypoint_step = if path_owner.is_some() && count > 1 {
             (path_size - 1) / (count - 1)
         } else {
             0
@@ -106,14 +108,17 @@ impl EngineInner {
         let mut waypoint_index = 0;
         let mut index = 0;
         while index < count {
-            if let Some(path) = path {
+            if let Some(charly) = path_owner {
+                // Assignment replaces the checkpoint's path contents during
+                // recipient callbacks; the cursor and stride remain local.
+                let path = path_index(self, charly);
                 let waypoint =
-                    &assets.navigation.hiking_paths[path.get() as usize].waypoints[waypoint_index];
+                    &assets.navigation.hiking_paths[path].waypoints[waypoint_index];
                 instruction.seek_point = Position {
                     x: waypoint.x as f32,
                     y: waypoint.y as f32,
                     sector: assets.navigation.hiking_waypoint_sector(
-                        path.get() as usize,
+                        path,
                         waypoint_index,
                         waypoint.sector,
                     ),

@@ -343,7 +343,7 @@ mod tests {
                     .any(|sequence| {
                         sequence.elements.iter().any(|element| {
                             element.owner == Some(owner)
-                                && element.command == Command::QuitSwordfight
+                                && element.command == crate::element::Command::QuitSwordfight
                         })
                     })
             );
