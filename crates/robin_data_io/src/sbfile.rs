@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use std::fs;
 
-use robin_util::asset_fs::AssetBytes;
+use robin_util::asset_fs::{AssetBytes, LocaleLayer, locale_resolution_order};
 
 #[cfg(not(target_arch = "wasm32"))]
 #[path = "sbfile/native.rs"]
@@ -114,41 +114,42 @@ impl MountState {
     }
 
     fn ranked_confined_candidates(&self, root: &Path, normalised: &str) -> Vec<PathBuf> {
-        let mut candidates = Vec::with_capacity(2);
-        if is_locale_overlay_path(normalised)
-            && let Some(locale) = self.locale_paths().0
-        {
-            candidates.push(root.join(locale).join(normalised));
-            if is_required_locale_path(normalised) {
-                return candidates;
-            }
-        }
-        candidates.push(root.join(normalised));
-        candidates
+        // The verifier lock admits exactly one selected locale and no fallback.
+        let selected = self.locale_paths.selected.as_deref();
+        locale_order_for_path(normalised, selected.is_some(), false)
+            .iter()
+            .map(|layer| match (layer, selected) {
+                (LocaleLayer::Selected, Some(locale)) => root.join(locale).join(normalised),
+                (LocaleLayer::Shared, _) => root.join(normalised),
+                (layer, _) => unreachable!("ranked lookup produced locale layer {layer:?}"),
+            })
+            .collect()
     }
 
+    /// The selected root and the fallback root, with a fallback naming the
+    /// selected root suppressed.
+    fn distinct_locale_roots(&self) -> (Option<&str>, Option<&str>) {
+        let selected = self.locale_paths.selected.as_deref();
+        let fallback = self
+            .locale_paths
+            .fallback
+            .as_deref()
+            .filter(|fallback| !selected.is_some_and(|s| s.eq_ignore_ascii_case(fallback)));
+        (selected, fallback)
+    }
+
+    /// Locale roots searched for `path`, in [`locale_resolution_order`].
     fn locale_path_snapshot_for(&self, path: &str) -> Vec<String> {
-        // A language pack is presentation data. Never allow an installed
-        // locale directory to replace levels, scripts, gameplay profiles, or
-        // any other simulation input merely because it contains a matching
-        // Data/ subtree.
-        if !is_locale_overlay_path(path) {
-            return Vec::new();
-        }
-        let (selected, fallback) = self.locale_paths();
-        let mut paths = Vec::with_capacity(2);
-        if let Some(selected) = selected {
-            paths.push(selected);
-        }
-        if let Some(fallback) = fallback
-            && is_optional_english_fallback_path(path)
-            && !paths
-                .iter()
-                .any(|selected| selected.eq_ignore_ascii_case(&fallback))
-        {
-            paths.push(fallback);
-        }
-        paths
+        let (selected, fallback) = self.distinct_locale_roots();
+        locale_order_for_path(path, selected.is_some(), fallback.is_some())
+            .iter()
+            .filter_map(|layer| match layer {
+                LocaleLayer::Selected => selected,
+                LocaleLayer::EnglishFallback => fallback,
+                LocaleLayer::Shared => None,
+            })
+            .map(str::to_owned)
+            .collect()
     }
 
     fn locale_paths(&self) -> (Option<String>, Option<String>) {
@@ -209,37 +210,48 @@ impl MountState {
             .map(Layer::Overlay)
             .collect();
         let primary = self.primary_path.as_deref();
-        for locale_root in self.locale_path_snapshot_for(requested) {
-            if !Path::new(&locale_root).is_absolute()
+        let (selected, fallback) = self.distinct_locale_roots();
+        let order = locale_order_for_path(requested, selected.is_some(), fallback.is_some());
+        for locale_layer in order {
+            let locale_root = match locale_layer {
+                LocaleLayer::Selected => selected,
+                LocaleLayer::EnglishFallback => fallback,
+                LocaleLayer::Shared => {
+                    // The shared layer of a loose install is the primary
+                    // datadir, the direct path, and then ordinary alternates.
+                    if let Some(root) = primary {
+                        layers.push(Layer::Primary { root, prefix: None });
+                    }
+                    layers.push(Layer::Direct);
+                    for alternate in &self.alternate_paths {
+                        if let Some(root) = primary {
+                            layers.push(Layer::Primary {
+                                root,
+                                prefix: Some(LayerPrefix::Alternate(alternate)),
+                            });
+                        }
+                        if !strict {
+                            layers.push(Layer::Host(LayerPrefix::Alternate(alternate)));
+                        }
+                    }
+                    continue;
+                }
+            }
+            .expect("locale resolution only yields layers whose roots are present");
+            if !Path::new(locale_root).is_absolute()
                 && let Some(root) = primary
             {
                 layers.push(Layer::Primary {
                     root,
-                    prefix: Some(LayerPrefix::Locale(locale_root.clone())),
+                    prefix: Some(LayerPrefix::Locale(locale_root.to_owned())),
                 });
             }
             if !strict {
-                layers.push(Layer::Host(LayerPrefix::Locale(locale_root)));
+                layers.push(Layer::Host(LayerPrefix::Locale(locale_root.to_owned())));
             }
         }
-        if self.locale_paths.selected.is_some() && is_required_locale_path(requested) {
+        if !order.contains(&LocaleLayer::Shared) {
             layers.push(Layer::RequiredLocaleMissing);
-            return Ok(layers);
-        }
-        if let Some(root) = primary {
-            layers.push(Layer::Primary { root, prefix: None });
-        }
-        layers.push(Layer::Direct);
-        for alternate in &self.alternate_paths {
-            if let Some(root) = primary {
-                layers.push(Layer::Primary {
-                    root,
-                    prefix: Some(LayerPrefix::Alternate(alternate)),
-                });
-            }
-            if !strict {
-                layers.push(Layer::Host(LayerPrefix::Alternate(alternate)));
-            }
         }
         Ok(layers)
     }
@@ -1910,22 +1922,17 @@ fn locale_key(path: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn is_optional_english_fallback_path(path: &str) -> bool {
-    locale_key(path)
-        .as_deref()
-        .is_some_and(robin_util::asset_fs::is_optional_english_fallback_key)
-}
-
-fn is_required_locale_path(path: &str) -> bool {
-    locale_key(path)
-        .as_deref()
-        .is_some_and(robin_util::asset_fs::is_required_locale_key)
-}
-
-fn is_locale_overlay_path(path: &str) -> bool {
-    locale_key(path)
-        .as_deref()
-        .is_some_and(robin_util::asset_fs::is_locale_overlay_key)
+/// [`locale_resolution_order`] for a requested `Data/...` path. Paths outside
+/// `Data/` are never locale assets and resolve from the shared layer only.
+fn locale_order_for_path(
+    path: &str,
+    has_selected: bool,
+    has_fallback: bool,
+) -> &'static [LocaleLayer] {
+    match locale_key(path) {
+        Some(key) => locale_resolution_order(&key, has_selected, has_fallback),
+        None => &[LocaleLayer::Shared],
+    }
 }
 
 fn normalise_locale_root(root: &str) -> Result<String, SbFileError> {

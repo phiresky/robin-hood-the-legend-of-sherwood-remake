@@ -1390,8 +1390,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     let (cpf, character_exclamation_ids) =
         shipping_phases::load_profile_index(&mut beggar_ids, &in_path)?;
 
-    let mut mission_builds =
-        mission_planning::plan_missions(&mut dd, &cpf, &locale_dirs, &beggar_ids, &in_path)?;
+    let mut mission_builds = mission_planning::plan_missions(&mut dd, &cpf, &beggar_ids, &in_path)?;
 
     let character_rhs_requirements = shipping_phases::character_rhs_requirements(&cpf, &in_path)?;
 
@@ -1637,6 +1636,36 @@ fn walk_and_bundle_small(
     Ok(())
 }
 
+/// Parse one `.res`/SRES archive into a manager serialized in a shipping
+/// payload. Every serialized manager must come from here: interface pictures
+/// are transcoded, and the converter host's archive path is dropped with
+/// recovery disabled, so no runtime ever tries to reopen `/home/...` paths.
+fn shipping_resource_manager(
+    path: &Path,
+    key: &str,
+    interface_image_format: InterfaceImageFormat,
+) -> Result<ResourceManager> {
+    let mut resources = ResourceManager::legacy_tool();
+    resources
+        .attach_resource_file(&path.to_string_lossy())
+        .with_context(|| format!("parse shipping resource {}", path.display()))?;
+    if is_interface_path(key)
+        && let Some(quality) = interface_image_format.jxl_quality()
+    {
+        let encoded = resources.encode_pictures_for_shipping(|picture| {
+            Ok(EncodedPicture::jxl_rgba565_keyed(
+                transcode_picture_to_jxl_rgba_keyed(picture, quality)?,
+            ))
+        })?;
+        tracing::info!(
+            "interface res {key}: encoded {encoded} pictures as JXL {}",
+            jxl_quality_label(quality)
+        );
+    }
+    resources.disable_recovery_for_shipping();
+    Ok(resources)
+}
+
 /// Recursively preserve one complete locale overlay. Unlike the top-level
 /// boot bundle this intentionally includes large speech/cinematic assets: a
 /// browser or Android build cannot reach loose host files after switching.
@@ -1682,19 +1711,7 @@ fn walk_and_bundle_locale(
         let is_resource_container = extension.as_deref() == Some("res")
             || (extension.as_deref() == Some("sxt") && sxt_is_sres(&path)?);
         if is_resource_container && !locale.res_files.contains_key(&key) {
-            let mut resources = ResourceManager::legacy_tool();
-            resources
-                .attach_resource_file(&path.to_string_lossy())
-                .with_context(|| format!("parse locale resource {}", path.display()))?;
-            if is_interface_path(&key)
-                && let Some(quality) = interface_image_format.jxl_quality()
-            {
-                resources.encode_pictures_for_shipping(|picture| {
-                    Ok(EncodedPicture::jxl_rgba565_keyed(
-                        transcode_picture_to_jxl_rgba_keyed(picture, quality)?,
-                    ))
-                })?;
-            }
+            let resources = shipping_resource_manager(&path, &key, interface_image_format)?;
             locale.res_files.insert(key.clone(), resources);
         }
         if extension.as_deref() == Some("red") {

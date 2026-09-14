@@ -474,55 +474,31 @@ impl ResourceManager {
                         ))
                     })?;
             }
-            if crate::shipping_datadir::is_locale_overlay_key(path)
-                && let Some(locale) = locale.as_deref()
-                && let Some(src) = dd
-                    .locale_resource(locale, path)
-                    .with_context(|| format!("resource file '{path}': selected locale {locale:?}"))
-                    .map_err(ResourceAttachmentError::Unavailable)?
-            {
-                let rel = crate::shipping_datadir::canonical_shipping_asset_key(path);
-                tracing::info!(
-                    locale,
-                    "Resource file {rel}: loaded from active shipping locale"
-                );
-                self.extend_from(src);
-                return Ok(Some(()));
-            }
-            if let Some(locale) = locale.as_deref()
-                && crate::shipping_datadir::is_optional_english_fallback_key(path)
-                && let Some(src) = dd
-                    .locale_resource("en-US", path)
-                    .with_context(|| format!("resource file '{path}': English fallback"))
-                    .map_err(ResourceAttachmentError::Unavailable)?
-            {
-                let rel = crate::shipping_datadir::canonical_shipping_asset_key(path);
-                tracing::info!(
-                    locale,
-                    "Resource file {rel}: using optional English fallback"
-                );
-                self.extend_from(src);
-                return Ok(Some(()));
-            }
-            if locale.is_some() && crate::shipping_datadir::is_required_locale_key(path) {
-                // The active raw locale bundle is authoritative here. This
-                // deliberately errors on an incomplete pack rather than
-                // silently mixing its UI with the top-level/default language.
-                return self
-                    .try_attach_resource_file(path)?
-                    .map(Some)
-                    .ok_or_else(|| {
-                        ResourceAttachmentError::Unavailable(anyhow!(
-                            "required selected-locale archive '{path}': file not found"
-                        ))
-                    });
-            }
-            // Keys in shipping.res_files omit any `Data/` prefix.
-            let rel = path.strip_prefix("Data/").unwrap_or(path);
-            if let Some(src) = dd.res_files.get(rel) {
-                tracing::info!("Resource file {rel}: loaded from shipping datadir");
-                self.extend_from(src);
-                return Ok(Some(()));
+            match dd.resource(path) {
+                crate::shipping_datadir::ShippingLookup::Found { layer, value } => {
+                    let rel = crate::shipping_datadir::canonical_shipping_asset_key(path);
+                    tracing::info!(
+                        ?layer,
+                        ?locale,
+                        "Resource file {rel}: loaded from shipping datadir"
+                    );
+                    self.extend_from(value);
+                    return Ok(Some(()));
+                }
+                crate::shipping_datadir::ShippingLookup::RequiredLocaleMissing => {
+                    // The active raw locale bundle is authoritative here. This
+                    // deliberately errors on an incomplete pack rather than
+                    // silently mixing its UI with the shared/default language.
+                    return self
+                        .try_attach_resource_file(path)?
+                        .map(Some)
+                        .ok_or_else(|| {
+                            ResourceAttachmentError::Unavailable(anyhow!(
+                                "required selected-locale archive '{path}': file not found"
+                            ))
+                        });
+                }
+                crate::shipping_datadir::ShippingLookup::NotFound => {}
             }
         }
         self.try_attach_resource_file(path)
@@ -1029,6 +1005,29 @@ impl ResourceManager {
             || self.data.mouse_entries.contains_key(&id)
             || self.data.strings.contains_key(&id)
             || self.data.waves.contains_key(&id)
+    }
+
+    /// True if `id` is a string table: resident strings or a registered
+    /// `TEXT` archive entry. Unlike [`Self::has_resource`], an ID of another
+    /// type (e.g. a demo `PIC ` sharing a retail menu-table ID) is not text.
+    pub fn has_string_resource(&self, id: ResourceId) -> bool {
+        self.data.strings.contains_key(&id)
+            || self
+                .lifetime
+                .file_entries
+                .get(&id)
+                .is_some_and(|entry| &entry.resource_type == b"TEXT")
+    }
+
+    /// Whether this manager carries legacy archive locations (host paths) for
+    /// dismissed-resource recovery. Shipping managers must not.
+    pub fn has_recovery_file_entries(&self) -> bool {
+        !self.lifetime.file_entries.is_empty()
+    }
+
+    /// Whether dismissed resources may be reloaded from their source archive.
+    pub fn recovery_enabled(&self) -> bool {
+        !self.lifetime.recovery_disabled
     }
 
     /// Sorted IDs of resident or encoded picture collections, independent of

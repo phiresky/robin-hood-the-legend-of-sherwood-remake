@@ -46,8 +46,278 @@ fn install_fixture(datadir: ShippingDatadir) -> ShippingDatadir {
     Arc::try_unwrap(datadir).unwrap()
 }
 
+/// One SRES archive of TEXT/WAVE string tables, parsed through a VFS path so
+/// the manager records `path` as its legacy recovery origin.
+fn parsed_string_archive(path: &str, entries: &[(&[u8; 4], i32, &[&str])]) -> ResourceManager {
+    let mut bytes = b"SRES".to_vec();
+    bytes.extend_from_slice(&0x0100u32.to_le_bytes());
+    bytes.extend_from_slice(&u32::try_from(entries.len()).unwrap().to_le_bytes());
+    for (tag, id, strings) in entries {
+        bytes.extend_from_slice(*tag);
+        bytes.extend_from_slice(&id.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+        bytes.extend_from_slice(&u16::try_from(strings.len()).unwrap().to_le_bytes());
+        for text in *strings {
+            let units: Vec<u16> = text.encode_utf16().collect();
+            bytes.extend_from_slice(&u16::try_from(units.len()).unwrap().to_le_bytes());
+            for unit in units {
+                bytes.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+    }
+    let vfs = Arc::new(AssetVfs::new());
+    vfs.install_preloaded_asset(path, bytes).unwrap();
+    let mut manager =
+        ResourceManager::with_files(Arc::new(robin_data_io::sbfile::SbFileSystem::new(vfs)));
+    manager.attach_resource_file(path).unwrap();
+    manager
+}
+
 #[test]
-fn captured_locale_keeps_pak_and_descriptor_policy_after_selection_changes() {
+fn decoded_manifests_never_recover_resources_from_converter_host_paths() {
+    use crate::original_text::{MENU_TEXT_TABLE_ID_DEMO, MENU_TEXT_TABLE_ID_DEMO2};
+    // Models the published demo: the locale Level.res was serialized with the
+    // converter's archive path, and a menu-table ID of another edition names
+    // a non-string resource (a PIC in the real demo; a WAVE here).
+    let host_path = "home/converter/datadirs/demo/1033/data/Text/Level.res";
+    let entries: &[(&[u8; 4], i32, &[&str])] = &[
+        (b"TEXT", MENU_TEXT_TABLE_ID_DEMO, &["Play", "Quit"][..]),
+        (b"WAVE", MENU_TEXT_TABLE_ID_DEMO2, &[][..]),
+    ];
+    let leaked = parsed_string_archive(host_path, entries);
+    assert!(leaked.has_recovery_file_entries() && leaked.recovery_enabled());
+
+    let mut datadir = ShippingDatadir::default();
+    datadir.res_files.insert(
+        "text/level.res".into(),
+        parsed_string_archive(host_path, entries),
+    );
+    let mut pack = ShippingLocale::default();
+    pack.res_files.insert("text/level.res".into(), leaked);
+    datadir.locales.insert("en-US".into(), pack);
+
+    let decoded = decode_native(&encode_native(&datadir)).unwrap();
+    for manager in [
+        &decoded.res_files["text/level.res"],
+        &decoded.locales["en-US"].res_files["text/level.res"],
+    ] {
+        assert!(!manager.has_recovery_file_entries());
+        assert!(!manager.recovery_enabled());
+        // Decoded managers have no bound reader and recovery is disabled, so
+        // any attempted recovery I/O would surface as an error here.
+        let mut manager = manager.clone();
+        assert_eq!(
+            crate::original_text::load_menu_strings(&mut manager).unwrap(),
+            ["Play", "Quit"]
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MatrixKind {
+    Raw,
+    Res,
+    Pak,
+    Red,
+}
+
+/// Layer name and the marker each layer's typed value carries.
+const MATRIX_LAYERS: [(&str, i32); 3] = [("selected", 3), ("english", 2), ("shared", 1)];
+
+fn matrix_layer_name(marker: i32) -> String {
+    MATRIX_LAYERS
+        .iter()
+        .find(|(_, candidate)| *candidate == marker)
+        .unwrap_or_else(|| panic!("unknown layer marker {marker}"))
+        .0
+        .to_owned()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn loose_matrix_lookup(path: &str, present: [bool; 3]) -> Option<String> {
+    use robin_data_io::sbfile::{SbFileError, SbFileSystem};
+    let root = tempfile::tempdir().unwrap();
+    for ((name, _), (present, prefix)) in MATRIX_LAYERS
+        .iter()
+        .zip(present.into_iter().zip(["de", "en", ""]))
+    {
+        if present {
+            let file = root.path().join(prefix).join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, name).unwrap();
+        }
+    }
+    let files = SbFileSystem::new(Arc::new(AssetVfs::new()));
+    files
+        .set_primary_path(root.path().to_str().unwrap())
+        .unwrap();
+    files.set_locale_paths(Some("de"), Some("en")).unwrap();
+    match files.open(path) {
+        Ok(file) => Some(String::from_utf8(file.into_bytes()).unwrap()),
+        Err(SbFileError::NotFound) => None,
+        Err(error) => panic!("loose lookup {path}: {error:?}"),
+    }
+}
+
+fn shipping_matrix_lookup(path: &str, kind: MatrixKind, present: [bool; 3]) -> Option<String> {
+    let key = canonical_shipping_asset_key(path);
+    let spelled_filename = path.rsplit('/').next().unwrap();
+    let mut datadir = ShippingDatadir::default();
+    datadir
+        .locales
+        .insert("de-DE".into(), ShippingLocale::default());
+    datadir
+        .locales
+        .insert("en-US".into(), ShippingLocale::default());
+    for (&(name, marker), present) in MATRIX_LAYERS.iter().zip(present) {
+        if !present {
+            continue;
+        }
+        let payload = datadir.payload_mut();
+        let (res, pak, red, raw, filename) = match name {
+            "selected" | "english" => {
+                let pack = payload
+                    .locales
+                    .get_mut(if name == "selected" { "de-DE" } else { "en-US" })
+                    .unwrap();
+                (
+                    &mut pack.res_files,
+                    &mut pack.pak_files,
+                    &mut pack.red_files,
+                    &mut pack.raw,
+                    spelled_filename.to_ascii_lowercase(),
+                )
+            }
+            // Shared maps written by older producers keep original spelling.
+            _ => (
+                &mut payload.res_files,
+                &mut payload.pak_files,
+                &mut payload.red_files,
+                &mut payload.raw,
+                spelled_filename.to_owned(),
+            ),
+        };
+        match kind {
+            MatrixKind::Raw => {
+                raw.insert(key.clone(), name.as_bytes().to_vec());
+            }
+            MatrixKind::Res => {
+                let strings = vec!["marker"; usize::try_from(marker).unwrap()];
+                let mut manager = parsed_string_archive(
+                    &format!("{name}.res"),
+                    &[(b"TEXT", 1, strings.as_slice())],
+                );
+                manager.disable_recovery_for_shipping();
+                res.insert(key.clone(), manager);
+            }
+            MatrixKind::Pak => {
+                let pictures = (0..marker)
+                    .map(|_| EncodedPicture::jxl_rgba565_keyed(Vec::new()))
+                    .collect();
+                pak.insert(key.clone(), pictures);
+            }
+            MatrixKind::Red => {
+                let mut descriptor = LevelDescriptors::default();
+                descriptor.mission_description.text_table_id = marker;
+                red.insert(filename, descriptor);
+            }
+        }
+    }
+    let installed = ShippingAssets::install(Arc::new(datadir), Arc::new(AssetVfs::new())).unwrap();
+    let datadir = installed.datadir();
+    datadir.set_active_locale(Some("de-DE")).unwrap();
+    match kind {
+        MatrixKind::Raw => match installed.vfs().read_shared(path) {
+            Ok(bytes) => Some(String::from_utf8(bytes.into_vec()).unwrap()),
+            Err(robin_util::asset_fs::AssetError::NotFound(_)) => None,
+            Err(error) => panic!("shipping raw lookup {path}: {error}"),
+        },
+        MatrixKind::Res => datadir.resource(path).found().map(|manager| {
+            matrix_layer_name(i32::try_from(manager.resident_string_count(1).unwrap()).unwrap())
+        }),
+        MatrixKind::Pak => datadir
+            .localized_pak(path)
+            .map(|pictures| matrix_layer_name(i32::try_from(pictures.len()).unwrap())),
+        MatrixKind::Red => datadir
+            .localized_level_descriptors(path)
+            .map(|descriptor| matrix_layer_name(descriptor.mission_description.text_table_id)),
+    }
+}
+
+/// Loose files (`SbFileSystem`) and every shipping lookup (parsed maps and
+/// the raw VFS) must pick the same layer, because both consult
+/// `robin_util::asset_fs::locale_resolution_order`.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn loose_and_shipping_locale_resolution_agree() {
+    use MatrixKind::{Pak, Raw, Red, Res};
+    // Presence in (selected de-DE, English en-US fallback, shared).
+    let scenarios = [
+        ("all layers", [true, true, true]),
+        ("english+shared", [false, true, true]),
+        ("shared only", [false, false, true]),
+        ("selected only", [true, false, false]),
+        ("english only", [false, true, false]),
+    ];
+    let sel = Some("selected");
+    let eng = Some("english");
+    let shr = Some("shared");
+    let cases = [
+        // Required locale text: never substituted.
+        ("Data/Text/Level.res", Res, [sel, None, None, sel, None]),
+        ("Data/Text/Credits.txt", Raw, [sel, None, None, sel, None]),
+        (
+            "Data/Interface/Start.sxt",
+            Raw,
+            [sel, None, None, sel, None],
+        ),
+        // Language-neutral descriptors in Text/ fall back to shared.
+        ("Data/Text/RHLevelSB.red", Red, [sel, shr, shr, sel, None]),
+        // Ordinary interface assets fall back to shared; this includes the
+        // demo Loading.pak that only exists in the shared Data dir.
+        (
+            "Data/Interface/Loading.pak",
+            Pak,
+            [sel, shr, shr, sel, None],
+        ),
+        ("Data/Interface/Menu.res", Res, [sel, shr, shr, sel, None]),
+        // Optional recorded media: selected, English, shared.
+        (
+            "Data/Sounds/Exclamations/actors.res",
+            Res,
+            [sel, eng, shr, sel, eng],
+        ),
+        ("Data/Cinematics/Intro.avi", Raw, [sel, eng, shr, sel, eng]),
+        // Simulation inputs: a locale can never replace them.
+        (
+            "Data/Levels/Dem_Lei_MP.rhm",
+            Raw,
+            [shr, shr, shr, None, None],
+        ),
+        (
+            "Data/Levels/Dem_Lei_MP.scb",
+            Raw,
+            [shr, shr, shr, None, None],
+        ),
+    ];
+    for (path, kind, expected) in cases {
+        for ((scenario, present), expected) in scenarios.iter().zip(expected) {
+            assert_eq!(
+                loose_matrix_lookup(path, *present).as_deref(),
+                expected,
+                "loose {path} [{scenario}]"
+            );
+            assert_eq!(
+                shipping_matrix_lookup(path, kind, *present).as_deref(),
+                expected,
+                "shipping {kind:?} {path} [{scenario}]"
+            );
+        }
+    }
+}
+
+#[test]
+fn captured_locale_view_keeps_pak_and_descriptor_policy_after_selection_changes() {
     let mut datadir = ShippingDatadir::default();
     datadir
         .pak_files
@@ -66,24 +336,30 @@ fn captured_locale_keeps_pak_and_descriptor_policy_after_selection_changes() {
     datadir.locales.insert("de-DE".into(), locale);
     let datadir = install_fixture(datadir);
     datadir.set_active_locale(Some("de-DE")).unwrap();
-    let captured = datadir.active_locale();
+    let captured = datadir.active_locale_view();
     datadir.set_active_locale(None).unwrap();
 
     assert_eq!(
         datadir
-            .localized_pak_for_locale("Data/Interface/Title.pak", captured)
+            .pak_for("Data/Interface/Title.pak", captured)
+            .found()
             .unwrap()
             .len(),
         1
     );
-    assert!(
+    // A pak the selected pack omits falls back to the shared copy, exactly
+    // like a loose `Data/Interface/*.pak` (previously this returned None).
+    assert_eq!(
         datadir
-            .localized_pak_for_locale("Data/Interface/Missing.pak", captured)
-            .is_none()
+            .pak_for("Data/Interface/Missing.pak", captured)
+            .found()
+            .unwrap()
+            .len(),
+        0
     );
     assert!(
         datadir
-            .localized_level_descriptors_for_locale("RHLevelSB.red", captured)
+            .level_descriptors_for("RHLevelSB.red", captured)
             .is_none()
     );
     // Subsequent independent lookups see the newly selected base assets.
@@ -109,10 +385,20 @@ fn valid_selected_locale_keeps_missing_assets_optional() {
         .insert("de-DE".into(), ShippingLocale::default());
     let datadir = install_fixture(datadir);
     datadir.set_active_locale(Some("de-DE")).unwrap();
-    assert!(datadir.active_resource("Data/Text/Level.res").is_none());
-    assert!(datadir.active_pak("Data/Interface/Missing.pak").is_none());
-    assert!(datadir.active_level_descriptors("missing.red").is_none());
-    assert!(datadir.active_profiles().is_none());
+    assert!(matches!(
+        datadir.resource("Data/Text/Level.res"),
+        ShippingLookup::RequiredLocaleMissing
+    ));
+    assert!(matches!(
+        datadir.resource("Data/Interface/Missing.res"),
+        ShippingLookup::NotFound
+    ));
+    assert!(
+        datadir
+            .localized_pak("Data/Interface/Missing.pak")
+            .is_none()
+    );
+    assert!(datadir.localized_level_descriptors("missing.red").is_none());
 }
 
 #[test]
@@ -125,7 +411,7 @@ fn invalid_active_locale_cannot_masquerade_as_missing_resource() {
         .asset_vfs()
         .select_locale(Some("@bad@".into()), None)
         .unwrap();
-    datadir.active_resource("Data/Text/Level.res");
+    datadir.resource("Data/Text/Level.res");
 }
 
 #[test]
@@ -147,12 +433,18 @@ fn retained_demo_descriptor_resolves_actual_localized_popup_and_briefing() {
     let datadir = ShippingDatadir::load_from_file(Path::new(&path)).unwrap();
     let datadir = install_fixture(datadir);
     datadir.set_active_locale(Some("1033")).unwrap();
-    assert!(datadir.active_level_descriptors("RHLevelSB.red").is_none());
+    assert!(
+        datadir
+            .locale_level_descriptors("1033", "RHLevelSB.red")
+            .unwrap()
+            .is_none()
+    );
     let descriptor = datadir
         .localized_level_descriptors("RHLevelSB.red")
         .unwrap();
     let mut text = datadir
-        .active_resource("Data/Text/Level.res")
+        .resource("Data/Text/Level.res")
+        .found()
         .unwrap()
         .clone();
     assert!(
@@ -164,6 +456,47 @@ fn retained_demo_descriptor_resolves_actual_localized_popup_and_briefing() {
     assert!(
         !text
             .get_string(descriptor.short_briefing.text_table_id, 0)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+#[ignore = "requires ROBIN_BROWSER_CONTENT_FIXTURE pointing to a v16 Demo shipping blob"]
+fn retained_demo_resolves_shared_loading_pak_and_menu_text_without_host_io() {
+    let path = std::env::var("ROBIN_BROWSER_CONTENT_FIXTURE")
+        .expect("set ROBIN_BROWSER_CONTENT_FIXTURE to a v16 Demo shipping blob");
+    let datadir = ShippingDatadir::load_from_file(Path::new(&path)).unwrap();
+    for manager in datadir.res_files.values().chain(
+        datadir
+            .locales
+            .values()
+            .flat_map(|pack| pack.res_files.values()),
+    ) {
+        assert!(!manager.has_recovery_file_entries() && !manager.recovery_enabled());
+    }
+    let datadir = install_fixture(datadir);
+    datadir.set_active_locale(Some("1033")).unwrap();
+    // The stock demo ships Interface/Loading.pak only in the shared Data dir.
+    assert!(
+        datadir
+            .locale_pak("1033", "Data/Interface/Loading.pak")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !datadir
+            .localized_pak("Data/Interface/Loading.pak")
+            .unwrap()
+            .is_empty()
+    );
+    let mut text = datadir
+        .resource("Data/Text/Level.res")
+        .found()
+        .unwrap()
+        .clone();
+    assert!(
+        !crate::original_text::load_menu_strings(&mut text)
             .unwrap()
             .is_empty()
     );
@@ -199,7 +532,10 @@ fn shared_descriptor_indices_work_with_demo_locale_overlay() {
             .localized_level_descriptors("rhlevelsb.red")
             .is_some()
     );
-    assert!(datadir.active_resource("Data/Text/Level.res").is_none());
+    assert!(matches!(
+        datadir.resource("Data/Text/Level.res"),
+        ShippingLookup::RequiredLocaleMissing
+    ));
     assert!(datadir.localized_level_descriptors("missing.red").is_none());
 }
 

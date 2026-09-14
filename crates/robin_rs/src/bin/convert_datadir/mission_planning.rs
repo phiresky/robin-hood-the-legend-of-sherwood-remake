@@ -233,7 +233,6 @@ fn add_npc_dependencies(
 pub(super) fn plan_missions(
     dd: &mut ShippingDatadir,
     cpf: &ProfileManager,
-    locale_dirs: &[LocaleSource],
     beggar_ids: &BTreeSet<u32>,
     in_path: &dyn Fn(&str) -> Option<PathBuf>,
 ) -> Result<std::collections::BTreeMap<String, ShippingMissionBuild>> {
@@ -246,6 +245,11 @@ pub(super) fn plan_missions(
     for mp in &cpf.missions {
         let filename = res_descr::red_filename(mp.id);
         let red_rel = format!("Text/{filename}");
+        // TODO: `in_path` searches the shared tree and then every locale tree,
+        // so a descriptor present only in a locale still lands in the shared
+        // map. Dialogue planning below needs one language-independent
+        // descriptor per mission; split that need from the shared layer.
+        // Per-locale descriptors are converted by `walk_and_bundle_locale`.
         if let Some(red_path) = in_path(&red_rel) {
             dd.red_files.insert(
                 filename.clone(),
@@ -258,17 +262,6 @@ pub(super) fn plan_missions(
                 profile_id = mp.id,
                 "source mission descriptor is absent: {red_rel}"
             );
-        }
-        for source in locale_dirs {
-            let Some(path) = resolve_data_file(&source.data_dir, &red_rel) else {
-                continue;
-            };
-            let descriptors = res_descr::load(&path.to_string_lossy())?;
-            dd.locales
-                .get_mut(source.iso)
-                .expect("detected shipping locale was initialized")
-                .red_files
-                .insert(canonical_shipping_asset_key(&filename), descriptors);
         }
     }
 

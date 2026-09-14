@@ -76,9 +76,10 @@ pub(super) fn decode_native(encoded: &[u8]) -> Result<ShippingDatadir> {
             "unsupported shipping datadir version {version}; expected {SHIPPING_DATADIR_VERSION}"
         ));
     }
-    bitcode::decode(payload)
-        .map(ShippingDatadir::from_payload)
-        .map_err(|error| anyhow!("native bitcode decode: {error:?}"))
+    let mut payload: super::ShippingDatadirPayload =
+        bitcode::decode(payload).map_err(|error| anyhow!("native bitcode decode: {error:?}"))?;
+    payload.disable_persisted_resource_recovery();
+    Ok(ShippingDatadir::from_payload(payload))
 }
 
 pub fn encode_mission_native(mission: &ShippingMission) -> Vec<u8> {

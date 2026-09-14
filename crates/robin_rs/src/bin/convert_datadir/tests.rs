@@ -578,6 +578,37 @@ fn authentic_demo_start_sxt_is_a_sixteen_picture() {
 }
 
 #[test]
+fn locale_resource_archives_never_serialize_converter_host_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let text = temp.path().join("Text");
+    fs::create_dir(&text).unwrap();
+    let mut archive = b"SRES".to_vec();
+    archive.extend_from_slice(&0x0100u32.to_le_bytes());
+    archive.extend_from_slice(&1u32.to_le_bytes());
+    archive.extend_from_slice(b"TEXT");
+    archive.extend_from_slice(&7u32.to_le_bytes());
+    archive.extend_from_slice(&0u32.to_le_bytes()); // flags
+    archive.extend_from_slice(&1u16.to_le_bytes()); // string count
+    archive.extend_from_slice(&1u16.to_le_bytes()); // UTF-16 length
+    archive.extend_from_slice(&u16::from(b'X').to_le_bytes());
+    fs::write(text.join("Level.res"), archive).unwrap();
+
+    let mut locale = ShippingLocale::default();
+    walk_and_bundle_locale(
+        &mut locale,
+        temp.path(),
+        temp.path(),
+        InterfaceImageFormat::Raw,
+    )
+    .unwrap();
+
+    let manager = &locale.res_files["text/level.res"];
+    assert!(!manager.has_recovery_file_entries());
+    assert!(!manager.recovery_enabled());
+    assert_eq!(manager.resident_string_count(7), Some(1));
+}
+
+#[test]
 fn locale_start_sxt_is_bundled_as_a_standalone_picture() {
     let temp = tempfile::tempdir().unwrap();
     let interface = temp.path().join("Interface");

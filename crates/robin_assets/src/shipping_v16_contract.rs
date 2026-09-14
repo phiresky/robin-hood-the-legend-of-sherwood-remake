@@ -96,8 +96,10 @@ fn v16_wire_and_json_match_frozen_descriptor_with_runtime_state() {
         .insert("staged".into(), Arc::new(vec![9]));
     assert_eq!(encode_native(&datadir), before);
     let decoded = decode_native(&before).unwrap();
-    assert_eq!(
-        serde_json::to_value(decoded).unwrap(),
-        serde_json::to_value(frozen).unwrap()
-    );
+    // Decoding enforces the shipping resource invariant (no persisted
+    // recovery), so a manager serialized with recovery enabled decodes with it
+    // disabled. The wire bytes above are unchanged.
+    let mut expected_json = serde_json::to_value(frozen).unwrap();
+    expected_json["res_files"]["fixture.res"]["recovery_disabled"] = true.into();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), expected_json);
 }
