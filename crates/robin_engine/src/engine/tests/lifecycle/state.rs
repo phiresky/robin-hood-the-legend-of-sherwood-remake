@@ -517,7 +517,7 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
     use crate::coordinates::MapPoint;
     use crate::element::{ActionState, Command, Posture};
     use crate::movement::ActiveMovement;
-    use crate::order::{AiOrderIntent, Order, OrderType};
+    use crate::order::{Order, OrderType};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
     use std::num::NonZeroU32;
 
@@ -529,6 +529,8 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
         unreachable!("make_test_soldier returned a non-soldier")
     };
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    let sector = crate::position_interface::SectorHandle::new(1);
+    soldier.element_data_mut().set_sector(sector);
     let owner = engine.add_test_entity(soldier);
     let old_goal = MapPoint::new(1004.836, 1774.2802);
 
@@ -552,15 +554,20 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
         entity.actor_data_mut().unwrap().active_movement =
             ActiveMovement::new(movement_sequence, 0);
         entity.position_iface_mut().set_map_goal(old_goal);
-        let ai = entity.ai_controller_mut().unwrap();
-        ai.outbox.actor.halt = true;
-        ai.outbox
-            .actor
-            .orders
-            .push(AiOrderIntent::new(OrderType::RunningUpright, 900.0, 1700.0));
     }
-
-    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
+    engine.halt_actor(owner);
+    engine.duty_go_to(
+        &sim,
+        &assets,
+        owner,
+        crate::ai::Position {
+            x: 900.0,
+            y: 1700.0,
+            sector,
+            level: 0,
+        },
+        crate::ai::GotoFlags::RUN,
+    );
 
     let old = engine
         .orders

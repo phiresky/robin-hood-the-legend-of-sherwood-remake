@@ -112,7 +112,10 @@ fn soldier_geometry_references_match_golden() {
         actor: Default::default(),
         human,
         npc,
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
     let engine = Engine {
         inner,

@@ -209,7 +209,6 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
 
     let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
     let sim = crate::sim_rng::test_context();
-    engine.drain_ai_owner_work_for(&sim, &assets, soldier_id);
     assert_eq!(engine.feedback.sound_sim.pending_exclamations.len(), 1);
     engine.queue_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
         actor_id: soldier_id.index(),
@@ -251,7 +250,7 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
 fn replay_host_resolution_without_logical_request_keeps_authoritative_completion_timing() {
     use crate::ai::Remark;
 
-    let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
+    let (mut engine, soldier_id, assets) = build_speech_timing_actor();
     let sim = crate::sim_rng::test_context();
     assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
     assert_eq!(
@@ -289,7 +288,7 @@ fn replay_host_resolution_preserves_an_unrelated_reconstructed_pending_request()
     use crate::ai::Remark;
     use crate::sound::{ExclamationGroup, PendingExclamation};
 
-    let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
+    let (mut engine, soldier_id, assets) = build_speech_timing_actor();
     let sim = crate::sim_rng::test_context();
     let unrelated = PendingExclamation {
         actor_id: 45,
@@ -346,7 +345,7 @@ fn replay_host_resolution_preserves_an_unrelated_reconstructed_pending_request()
 fn live_host_resolution_without_logical_request_remains_an_invariant_failure() {
     use crate::ai::Remark;
 
-    let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
+    let (mut engine, soldier_id, assets) = build_speech_timing_actor();
     engine.queue_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
         actor_id: soldier_id.index(),
         identifier: (SPEECH_TIMING_PROFILE_ID & 0xFFFF_0000) | u32::from(Remark::Arrow as u16),
@@ -362,7 +361,6 @@ fn zero_duration_resolution_completes_mytalk_at_current_boundary() {
 
     let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
     let sim = crate::sim_rng::test_context();
-    engine.drain_ai_owner_work_for(&sim, &assets, soldier_id);
     engine.queue_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
         actor_id: soldier_id.index(),
         identifier: (SPEECH_TIMING_PROFILE_ID & 0xFFFF_0000) | u32::from(Remark::Arrow as u16),
@@ -647,7 +645,6 @@ fn matured_mytalk_completion_precedes_deferred_hades_replacement() {
 
     let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
     let sim = crate::sim_rng::test_context();
-    engine.drain_ai_owner_work_for(&sim, &assets, soldier_id);
     engine.queue_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
         actor_id: soldier_id.index(),
         identifier: (SPEECH_TIMING_PROFILE_ID & 0xFFFF_0000) | u32::from(Remark::Arrow as u16),
@@ -1177,7 +1174,6 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
         "ReturnToDuty's Beggar deletion must settle on the resumed caller stack"
     );
     assert!(!ai.base.outbox.actor.has_boundary_work());
-    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
     assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
 
     let commands: Vec<_> = engine
@@ -1451,7 +1447,6 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
         1
     );
     assert!(!ai.base.outbox.actor.has_boundary_work());
-    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
     assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
     assert!(
         !engine

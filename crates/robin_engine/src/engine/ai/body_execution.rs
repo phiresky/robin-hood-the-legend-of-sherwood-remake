@@ -49,8 +49,15 @@ impl EngineInner {
                     if !self.seek_enemy(owner).seen_dead_body {
                         let ai = self.seek_enemy_mut(owner);
                         ai.seen_dead_body = true;
-                        ai.base.say(Remark::BahIlBougePus);
-                        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                        self.execute_ai_speech(
+                            sim,
+                            assets,
+                            owner,
+                            crate::ai::AiSpeechAttempt {
+                                remark: Remark::BahIlBougePus,
+                                flags: 0,
+                            },
+                        );
                     }
                     if self.execute_seek_other_bodies(sim, assets, owner) {
                         let center = self.live_ai_position(owner);
@@ -216,7 +223,15 @@ impl EngineInner {
                 .ai_controller()
                 .is_some_and(|ai| ai.current_substate == Substate::SleepingUnconscious)
         {
-            self.seek_enemy_mut(owner).base.say(Remark::AwakensSleeperr);
+            self.execute_ai_speech(
+                sim,
+                assets,
+                owner,
+                crate::ai::AiSpeechAttempt {
+                    remark: Remark::AwakensSleeperr,
+                    flags: 0,
+                },
+            );
             self.duty_set_state(
                 sim,
                 assets,

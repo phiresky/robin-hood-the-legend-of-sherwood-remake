@@ -308,12 +308,11 @@ impl EngineInner {
 
     fn protection_camp_soldiers(&self, owner: EntityId) -> impl Iterator<Item = EntityId> + '_ {
         let camp = self.expect_entity(owner, "protection camp").camp();
-        self.ai
-            .global
-            .all_soldier_handles
+        self.world
+            .soldier_registry
+            .camp(camp)
             .iter()
             .map(|&handle| EntityId::Soldier(crate::entity_id::SoldierId(handle)))
-            .filter(move |&id| self.expect_entity(id, "protection soldier registry").camp() == camp)
     }
 
     pub(super) fn protection_square_distance(&self, owner: EntityId, target: EntityId) -> f32 {
@@ -634,11 +633,15 @@ impl EngineInner {
         ai.base.outbox.actor.set_focus(Some(handle));
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
         if let Some((position, direction, left, right)) = self.live_phalanx_place(assets, owner) {
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("formation speech"))
-                .say(Remark::ShieldBearersLineFormation);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_speech(
+                sim,
+                assets,
+                owner,
+                crate::ai::AiSpeechAttempt {
+                    remark: Remark::ShieldBearersLineFormation,
+                    flags: 0,
+                },
+            );
             let ai = self
                 .world
                 .entities
@@ -696,7 +699,15 @@ impl EngineInner {
                 ai.clear_emoticon();
             } else {
                 ai.set_transient_emoticon(EmoticonType::XMark, 30, self.control.frame_counter);
-                ai.say(Remark::ShieldBearerCovers);
+                self.execute_ai_speech(
+                    sim,
+                    assets,
+                    owner,
+                    crate::ai::AiSpeechAttempt {
+                        remark: Remark::ShieldBearerCovers,
+                        flags: 0,
+                    },
+                );
             }
             self.drain_direct_ai_owner_boundary(sim, owner, assets);
             self.duty_set_state(

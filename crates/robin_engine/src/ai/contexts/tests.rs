@@ -39,7 +39,6 @@ fn ai_global_state_default_starts_repulsive_ids_at_one_and_green() {
     assert_eq!(global.overall_villain_alert_status, AlertLevel::Green);
     assert_eq!(global.green_alert_soldiers, 0);
     assert!(global.repulsive_points.is_empty());
-    assert!(global.all_soldier_handles.is_empty());
     assert!(!global.primary_target_multiplicity_initialized);
 }
 

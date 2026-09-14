@@ -8,47 +8,57 @@ use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
 fn alert_camp_roster_preserves_load_order_and_reads_live_membership() {
     use crate::element::Camp;
 
-    let (mut engine, assets, [owner, first, second, third]) = group_fixture();
+    let (mut engine, _assets, [owner, first, second, third]) = group_fixture();
     let foreign = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
-    engine.ai.global.all_soldier_handles = std::sync::Arc::new(vec![
-        third.index(),
-        foreign.index(),
-        owner.index(),
-        first.index(),
-        second.index(),
-    ]);
-    let sim = crate::sim_rng::test_context();
-    let execution = AlertExecution {
-        engine: &mut engine,
-        sim: &sim,
-        assets: &assets,
-        owner,
-    };
-    let count = execution.camp_members(Camp::Lacklandists).count();
+    engine.world.soldier_registry.rebuild_from_order(
+        &engine.world.entities,
+        [third, foreign, owner, first, second],
+    );
+    let count = engine.world.soldier_registry.camp(Camp::Lacklandists).len();
     assert_eq!(count, 4);
     assert_eq!(
-        execution.camp_members(Camp::Lacklandists).next(),
-        Some(third)
+        engine
+            .world
+            .soldier_registry
+            .camp(Camp::Lacklandists)
+            .first(),
+        Some(&third.index())
     );
     // Removing another camp cannot consume a position in this camp's traversal.
-    execution.engine.world.entities.remove(foreign);
+    engine.remove_entity(foreign);
     assert_eq!(
-        execution.camp_members(Camp::Lacklandists).nth(1),
-        Some(owner)
+        engine
+            .world
+            .soldier_registry
+            .camp(Camp::Lacklandists)
+            .get(1),
+        Some(&owner.index())
     );
     // A recipient callback may remove a member already visited; later indices
     // address the compacted live camp roster, while the loop keeps its count.
-    execution.engine.world.entities.remove(third);
+    engine.remove_entity(third);
     assert_eq!(
-        execution.camp_members(Camp::Lacklandists).nth(1),
-        Some(first)
+        engine
+            .world
+            .soldier_registry
+            .camp(Camp::Lacklandists)
+            .get(1),
+        Some(&first.index())
     );
     assert_eq!(
-        execution.camp_members(Camp::Lacklandists).nth(2),
-        Some(second)
+        engine
+            .world
+            .soldier_registry
+            .camp(Camp::Lacklandists)
+            .get(2),
+        Some(&second.index())
     );
     assert_eq!(
-        execution.camp_members(Camp::Lacklandists).nth(count - 1),
+        engine
+            .world
+            .soldier_registry
+            .camp(Camp::Lacklandists)
+            .get(count - 1),
         None
     );
 }

@@ -1,7 +1,5 @@
 //! Combat remark bookkeeping shared with live execution.
 
-mod attacking;
-
 use super::EnemyAi;
 use crate::ai::*;
 

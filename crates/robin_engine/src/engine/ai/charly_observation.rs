@@ -151,7 +151,7 @@ impl EngineInner {
                             Substate::SeekingSendCharlyToOfficer,
                         );
                         self.unalert_live_charly_seekers(sim, assets, owner, charly);
-                        self.owner_work_speech(
+                        self.execute_ai_speech(
                             sim,
                             assets,
                             owner,

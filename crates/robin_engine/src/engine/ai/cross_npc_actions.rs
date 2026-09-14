@@ -371,14 +371,6 @@ impl EngineInner {
         // any other pending/re-entrant work can observe stale NPC state.
         self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
 
-        // AI waypoint-script execution invokes the
-        // waypoint VM directly from the active Think handler. Close that
-        // authored callback before the generic post-Think effect drain:
-        // script natives such as AssignPath recursively enter
-        // EVENT_RETURN_TO_DUTY before later orders or condolations from the
-        // outer handler can settle.
-        self.dispatch_pending_waypoint_script_for_owner(sim, npc_id, assets);
-
         // Enemy-sighting processing explicitly marks an accepted VIEW after
         // all decision-tick admission and handler guards. Mirror that one-shot onto the
         // engine-owned AI actor record before draining its other synchronous
@@ -411,7 +403,6 @@ impl EngineInner {
             // order outbox. Owner-local state-change notifications are also part
             // of this fixed point, so late script-seek callbacks cannot leak
             // into a global batch or strand in the outbox.
-            self.launch_pending_orders_for_npc(sim, assets, npc_id);
 
             // Any condolations the drain above queued (sequences that
             // got preempted by the side effects) fire here — which may
@@ -436,9 +427,7 @@ impl EngineInner {
                     npc_id,
                     format_args!("handled Think recipient before fixed-point recheck"),
                 );
-                ai.outbox.actor.has_boundary_work()
-                    || !ai.outbox.reentrant.self_stimuli.is_empty()
-                    || !ai.outbox.reentrant.owner_work.is_empty()
+                ai.outbox.actor.has_boundary_work() || !ai.outbox.reentrant.self_stimuli.is_empty()
             };
             if !still_pending {
                 break;
@@ -462,7 +451,7 @@ impl EngineInner {
         radius: u16,
     ) {
         let camp = self.expect_entity(source_id, "look-there caller").camp();
-        let count = self.ai.global.all_soldier_handles.len();
+        let count = self.world.soldier_registry.all().len();
         let radius_squared = f32::from(radius).powi(2);
         let stimulus = crate::ai::Stimulus {
             info: crate::ai::StimulusInfo::Hint(crate::ai::Hint {
@@ -474,9 +463,9 @@ impl EngineInner {
         };
         for index in 0..count {
             let handle = *self
-                .ai
-                .global
-                .all_soldier_handles
+                .world
+                .soldier_registry
+                .all()
                 .get(index)
                 .expect("look-there soldier registry shortened during callback");
             let target_id = EntityId::Soldier(crate::entity_id::SoldierId(handle));

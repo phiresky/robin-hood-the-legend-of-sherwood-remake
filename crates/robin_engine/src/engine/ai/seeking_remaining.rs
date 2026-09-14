@@ -42,7 +42,7 @@ impl EngineInner {
                 );
             }
             (SeekingArrowReactiontime, EventTimer) => {
-                self.owner_work_speech(
+                self.execute_ai_speech(
                     sim,
                     assets,
                     owner,
@@ -88,7 +88,7 @@ impl EngineInner {
                     UNDEFINED_DIRECTION,
                 );
             }
-            (SeekingArrowJustWatching, EventTimer) => self.owner_work_speech(
+            (SeekingArrowJustWatching, EventTimer) => self.execute_ai_speech(
                 sim,
                 assets,
                 owner,

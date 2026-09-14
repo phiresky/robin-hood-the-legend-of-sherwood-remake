@@ -333,9 +333,7 @@ impl EngineInner {
             }
             crate::level_data::WaypointCommand::Script(_) => {
                 let (path, waypoint) = script_waypoint;
-                self.default_ai_mut(owner)
-                    .execute_waypoint_script(path, waypoint);
-                self.dispatch_pending_waypoint_script_for_owner(sim, owner, assets);
+                self.execute_ai_waypoint_script(sim, owner, assets, path, waypoint);
             }
             crate::level_data::WaypointCommand::Macro(_) => {
                 // Macro data is fetched again after synchronization, like the path pointer.

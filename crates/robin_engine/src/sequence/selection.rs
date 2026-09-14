@@ -457,7 +457,7 @@ impl SequenceManager {
     /// `InProgress` so consumers (animation driver, AI peek-current)
     /// see it this frame rather than waiting for the next
     /// `hourglass` dispatch. Used by swordfight entry /
-    /// `QuitSwordfight` / `process_pending_ai_orders` to build a
+    /// `QuitSwordfight` to build a
     /// generic element, push the order onto its `orders` queue, then
     /// launch with priority resolution firing synchronously.  Keeping
     /// every in-flight `Order` attached to an `InProgress` element

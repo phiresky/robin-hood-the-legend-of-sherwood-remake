@@ -23,7 +23,7 @@ impl EngineInner {
                 .seek_flags
                 .intersects(SeekFlags::REPORT_OFFICER_AFTER | SeekFlags::LOOK_FOR_HELP_AFTER)
         {
-            self.owner_work_speech(
+            self.execute_ai_speech(
                 sim,
                 assets,
                 owner,
@@ -287,7 +287,6 @@ mod tests {
             Some(AiEntityHandle::new(targets[0].index()))
         );
         assert_eq!(enemy.list_them, targets.map(|id| id.index()));
-        assert!(enemy.base.outbox.reentrant.owner_work.is_empty());
     }
 
     #[test]

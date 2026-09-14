@@ -336,16 +336,6 @@ fn populated_outbox() -> AiOutbox {
             SelfStimulusOrigin::EngineCompletion,
         ),
     ];
-    value.reentrant.waypoint_script_reach_point = Some((PathId::new(7).unwrap(), 2));
-    value.reentrant.owner_work = vec![
-        AiOwnerWork::SetEyeStatus(crate::element::EyeStatus::LookForward),
-        AiOwnerWork::LaunchTimer {
-            frames: 17,
-            current_frame: 198,
-        },
-        AiOwnerWork::NearbyCiviliansPanic,
-    ];
-    value.actor.orders = Vec::new();
     value.actor.set_direction = Some(-127);
     value.actor.focus = Some(AiEntityHandle::new(0));
     value.actor.additional_halts = 3;
@@ -376,7 +366,6 @@ fn global_projection_reconstructs_nonpersisted_scratch_without_changing_hash() {
         saved_random_seed: i64::MIN + 31,
         green_alert_soldiers: 17,
         freeze: true,
-        all_soldier_handles: std::sync::Arc::new(vec![19, 0, 7]),
         ..Default::default()
     };
     raw.primary_target_multiplicity_scratch.insert(7, 19);
@@ -422,17 +411,6 @@ fn outbox_projection_preserves_fifo_and_only_reconstructs_runtime_provenance() {
         restored.detection.stimuli[0].self_origin,
         SelfStimulusOrigin::Ordinary
     );
-    assert!(matches!(
-        restored.reentrant.owner_work[0],
-        AiOwnerWork::SetEyeStatus(crate::element::EyeStatus::LookForward)
-    ));
-    assert!(matches!(
-        restored.reentrant.owner_work[1],
-        AiOwnerWork::LaunchTimer {
-            frames: 17,
-            current_frame: 198
-        }
-    ));
 }
 
 #[test]

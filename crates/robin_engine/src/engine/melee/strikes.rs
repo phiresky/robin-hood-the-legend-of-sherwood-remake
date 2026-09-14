@@ -3205,13 +3205,6 @@ impl EngineInner {
                         cmd.is_swordstrike() || cmd == crate::element::Command::WaitTimer
                     });
                 self.reconcile_ai_special_strike(sim, assets, npc_id, has_active);
-                // `reconcile_special_strike` stands in for cancellation paths
-                // whose Original sequence teardown synchronously reaches
-                // completion-event decision tick. Any resulting state change therefore also
-                // has to run its FilterAIEvent callback before this boundary
-                // returns; otherwise owner-local work survives the later
-                // global melee pass and is observed a frame late.
-                self.drain_ai_owner_work_for(sim, assets, npc_id);
             }
         }
 
@@ -3663,16 +3656,19 @@ impl EngineInner {
             ) {
                 let owner = self.expect_entity(attack.soldier_id, "warcry owner");
                 let is_vip = is_vip_from_profile(owner, &assets.profile_manager);
-                let ai = self
-                    .world
-                    .entities
-                    .expect_enemy_ai_mut(attack.soldier_id, format_args!("warcry owner"));
-                ai.base.say(if is_vip {
-                    crate::ai::Remark::VipWarcry
-                } else {
-                    crate::ai::Remark::Warcry
-                });
-                self.drain_ai_owner_work_for(sim, assets, attack.soldier_id);
+                self.execute_ai_speech(
+                    sim,
+                    assets,
+                    attack.soldier_id,
+                    crate::ai::AiSpeechAttempt {
+                        remark: if is_vip {
+                            crate::ai::Remark::VipWarcry
+                        } else {
+                            crate::ai::Remark::Warcry
+                        },
+                        flags: 0,
+                    },
+                );
             }
 
             // Build sequence: level-1 wait timer (preparation delay),
@@ -3731,7 +3727,15 @@ impl EngineInner {
                 && ai.base.current_substate == crate::ai::Substate::AttackingSwordfight
                 && !ai.pending_special_strike
             {
-                ai.base.say(crate::ai::Remark::CombatInsult);
+                self.execute_ai_speech(
+                    sim,
+                    assets,
+                    owner,
+                    crate::ai::AiSpeechAttempt {
+                        remark: crate::ai::Remark::CombatInsult,
+                        flags: 0,
+                    },
+                );
             }
         }
     }

@@ -475,7 +475,10 @@ mod tests {
             actor: ActorData::default(),
             human: corpse_human,
             npc: NpcData::default(),
-            soldier: SoldierData::default(),
+            soldier: SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         }));
 
         let mut pc_element = {

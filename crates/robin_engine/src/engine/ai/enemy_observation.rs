@@ -102,7 +102,7 @@ impl EngineInner {
         owner: EntityId,
         remark: Remark,
     ) {
-        self.owner_work_speech(
+        self.execute_ai_speech(
             sim,
             assets,
             owner,

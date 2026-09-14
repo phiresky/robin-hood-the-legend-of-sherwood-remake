@@ -59,6 +59,41 @@ fn event(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId, kind: 
 }
 
 #[test]
+fn repeated_view_during_battle_preserves_first_enemy_insertion_order() {
+    for substate in [
+        Substate::AttackingReactiontimeTurning,
+        Substate::AttackingReactiontime,
+        Substate::AttackingReactiontimeRunning,
+        Substate::AttackingOverviewLookLeft,
+        Substate::AttackingOverviewLookRight,
+        Substate::AttackingTooProudToAttackOverview,
+    ] {
+        let (mut engine, assets, owner, first) = fixture(substate);
+        let second = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
+            Posture::Upright,
+        ));
+        for target in [first, first, second, first, second] {
+            let mut stimulus = Stimulus::new(StimulusType::EventView);
+            stimulus.info = crate::ai::StimulusInfo::Human(AiEntityHandle::new(target.index()));
+            engine.execute_ai_handler_body(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                &stimulus,
+                None,
+            );
+        }
+        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        assert_eq!(
+            ai.list_them,
+            vec![first.index(), second.index()],
+            "{substate:?}"
+        );
+        assert_eq!(ai.base.current_substate, substate);
+    }
+}
+
+#[test]
 fn misses_charly_notification_does_not_start_a_search() {
     for substate in [Substate::DefaultOnPost, Substate::DefaultLookingForCharly] {
         let (mut engine, assets, owner, _) = fixture(substate);

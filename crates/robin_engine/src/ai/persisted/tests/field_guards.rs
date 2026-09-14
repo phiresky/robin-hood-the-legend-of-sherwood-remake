@@ -177,7 +177,6 @@ fn classify_ai_global_state(value: &AiGlobalState) {
                 reinforcement_doors,
                 houses,
                 door_rally_points,
-                all_soldier_handles,
             ],
             skipped: [
                 primary_target_multiplicity_scratch,
@@ -235,8 +234,6 @@ fn classify_ai_reentrant_outbox(value: &AiReentrantOutbox) {
             persisted: [
                 // Persisted; nested `QueuedSelfStimulus::origin` is skipped.
                 self_stimuli,
-                owner_work,
-                waypoint_script_reach_point,
             ],
             skipped: [engine_drains_after_script_go_on],
         }

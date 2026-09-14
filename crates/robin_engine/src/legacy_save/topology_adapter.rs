@@ -1209,7 +1209,10 @@ mod tests {
                 },
                 ..Default::default()
             },
-            soldier: SoldierData::default(),
+            soldier: SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         })
     }
 

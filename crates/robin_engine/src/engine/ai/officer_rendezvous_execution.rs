@@ -263,9 +263,15 @@ impl Rendezvous<'_> {
         );
     }
     fn say(&mut self, remark: Remark, flags: SpeechFlags) {
-        self.enemy_mut().base.say_with_flags(remark, flags);
-        self.engine
-            .drain_direct_ai_owner_boundary(self.sim, self.owner, self.assets);
+        self.engine.execute_ai_speech(
+            self.sim,
+            self.assets,
+            self.owner,
+            crate::ai::AiSpeechAttempt {
+                remark,
+                flags: flags.bits(),
+            },
+        );
     }
     fn call(&mut self, target: EntityId, kind: StimulusType, human: bool) {
         let mut stimulus = Stimulus::new(kind);

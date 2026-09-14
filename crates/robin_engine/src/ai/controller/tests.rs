@@ -145,8 +145,4 @@ fn lower_shield_requests_the_explicit_command() {
     ai.lower_shield();
 
     assert!(ai.outbox.actor.lower_shield);
-    assert!(
-        ai.outbox.actor.orders.is_empty(),
-        "LowerShield must not be flattened into a Generic animation order"
-    );
 }

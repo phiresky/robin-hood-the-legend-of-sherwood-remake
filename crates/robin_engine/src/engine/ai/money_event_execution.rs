@@ -248,8 +248,12 @@ impl EngineInner {
         owner: EntityId,
         remark: Remark,
     ) {
-        self.seek_enemy_mut(owner).base.say(remark);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_speech(
+            sim,
+            assets,
+            owner,
+            crate::ai::AiSpeechAttempt { remark, flags: 0 },
+        );
     }
     fn money_object(&self, owner: EntityId) -> EntityId {
         let handle = self
@@ -275,13 +279,10 @@ impl EngineInner {
             .expect("looting requires body");
         self.expect_human_id_for_ai_handle(handle.get(), "looting body")
     }
-    fn money_soldier_at(&self, camp: crate::element::Camp, index: usize) -> Option<EntityId> {
-        let id = EntityId::Soldier(crate::entity_id::SoldierId(
-            self.ai.global.all_soldier_handles[index],
-        ));
-        self.get_entity(id)
-            .filter(|actor| actor.camp() == camp)
-            .map(|_| id)
+    fn money_soldier_at(&self, camp: crate::element::Camp, index: usize) -> EntityId {
+        EntityId::Soldier(crate::entity_id::SoldierId(
+            self.world.soldier_registry.camp(camp)[index],
+        ))
     }
     fn money_reaction_live(
         &mut self,
@@ -298,10 +299,8 @@ impl EngineInner {
         let angry = if wants {
             let position = self.live_ai_position(self.money_object(owner));
             let camp = actor.camp();
-            (0..self.ai.global.all_soldier_handles.len()).any(|index| {
-                let Some(officer) = self.money_soldier_at(camp, index) else {
-                    return false;
-                };
+            (0..self.world.soldier_registry.camp(camp).len()).any(|index| {
+                let officer = self.money_soldier_at(camp, index);
                 if !matches!(
                     self.seek_enemy(officer).base.current_substate,
                     Substate::WonderingOfficerSeeingBrawl
@@ -376,10 +375,8 @@ impl EngineInner {
     }
     fn money_race_live(&mut self, sim: &SimulationContext, assets: &LevelAssets, owner: EntityId) {
         let camp = self.expect_entity(owner, "money race camp").camp();
-        let racing = (0..self.ai.global.all_soldier_handles.len()).any(|index| {
-            let Some(other) = self.money_soldier_at(camp, index) else {
-                return false;
-            };
+        let racing = (0..self.world.soldier_registry.camp(camp).len()).any(|index| {
+            let other = self.money_soldier_at(camp, index);
             let state = self.seek_enemy(other).base.current_substate;
             other != owner
                 && (state.is_take_money() || state.is_fight_for_money())
@@ -483,11 +480,9 @@ impl EngineInner {
                     .expect("taken coin"),
                 thief: AiEntityHandle::new(owner.index()),
             };
-            let count = self.ai.global.all_soldier_handles.len();
+            let count = self.world.soldier_registry.camp(camp).len();
             for index in 0..count {
-                let Some(other) = self.money_soldier_at(camp, index) else {
-                    continue;
-                };
+                let other = self.money_soldier_at(camp, index);
                 let state = self.seek_enemy(other).base.current_substate;
                 if other != owner && (state.is_take_money() || state.is_fight_for_money()) {
                     let mut event = Stimulus::new(StimulusType::EventObjectAway);

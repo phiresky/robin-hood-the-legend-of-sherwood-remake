@@ -95,20 +95,6 @@ pub(crate) fn consider_report_debug_matches(frame: u32, owner: u32) -> bool {
     config.matches_required([Some(frame), Some(owner)])
 }
 
-/// Action-state teardown/setup elements inserted by AI movement into the
-/// movement's own sequence ahead of the movement element
-/// in the original game. Each flag is
-/// carried on the resulting [`crate::order::AiOrderIntent`] so the deferred
-/// engine drain rebuilds one ordered sequence rather than several competing
-/// ones.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct GotoActionStateTeardown {
-    pub quit_swordfight_before_move: bool,
-    pub enter_swordfight_before_move: bool,
-    pub stop_menace_before_move: bool,
-    pub lower_shield_before_move: bool,
-}
-
 /// The per-NPC AI controller state. Enemy and friendly AI extend this
 /// with additional fields.
 ///
@@ -613,7 +599,6 @@ impl AiController {
         // those AI actions are deferred through pending_* queues; once the
         // script lock lands, no pre-lock deferred return-to-duty work may
         // survive and interrupt the scripted sequence that follows.
-        self.outbox.actor.orders.clear();
         self.outbox.reentrant.self_stimuli.clear();
         if !from_lockai_command {
             // Cancel the NPC's current order. The engine drains
@@ -966,8 +951,6 @@ impl AiController {
                 timer_running: &(self.timer_is_running),
                 timer_deadline: &(self.when_does_timer_ring),
                 self_stimuli: &(self.outbox.reentrant.self_stimuli.len()),
-                owner_work: &(self.outbox.reentrant.owner_work.len()),
-                orders: &(self.outbox.actor.orders.len()),
             }
             .emit();
         }
@@ -983,14 +966,6 @@ impl AiController {
 
     // -- Retrograde amnesia --
 
-    // -- Pending order access --
-
-    /// Drain all pending orders produced by AI decisions.
-    /// Called by the engine each tick to dispatch them.
-    pub fn take_pending_orders(&mut self) -> Vec<AiOrderIntent> {
-        std::mem::take(&mut self.outbox.actor.orders)
-    }
-
     /// Cancel queued inputs requiring the removed live target. Provenance
     /// (`Stimulus::owner`), perception history, and callback continuations are
     /// not live ownership: keep those for their existing dispatch policies.
@@ -1003,15 +978,9 @@ impl AiController {
         };
         self.stimulus_queue.retain(keep);
         self.outbox.detection.stimuli.retain(keep);
-        self.outbox.actor.orders.retain(|intent| {
-            intent.antagonist != Some(id) && intent.target_actor != Some(id.index())
-        });
     }
 
     /// Whether the AI has produced any orders this tick.
-    pub fn has_pending_orders(&self) -> bool {
-        !self.outbox.actor.orders.is_empty()
-    }
 
     /// Drain self-directed stimuli queued by `say()`.
     /// The engine re-dispatches these as think() calls to the same NPC.
@@ -1090,7 +1059,6 @@ impl AiController {
             command_offset: &(self.macro_command_offset),
             remaining_bytes: &(self.number_of_remaining_macro_bytes),
             waypoint: &(self.macro_command_waypoint),
-            owner_work_len: &(self.outbox.reentrant.owner_work.len()),
             self_stimuli_len: &(self.outbox.reentrant.self_stimuli.len()),
             phase: &(phase),
             reason: &(reason),
@@ -1509,27 +1477,6 @@ impl AiController {
         self.outbox.patrol.direction_broadcast = Some(direction);
     }
 
-    // -- Waypoint-script launch --
-
-    /// Kick off a script-driven waypoint.
-    ///
-    /// Calls the waypoint's bound script class (`ReachPoint(actor)`)
-    /// and, if the script didn't lock the AI into
-    /// `Substate::DefaultScriptDriven`, fires `EventAfterScriptGoOn` so
-    /// the stimulus queue can drain.
-    ///
-    /// The per-waypoint VM instance lives on `MissionScript` (keyed by
-    /// `(path_idx, wp_idx)`), so we can't dispatch from the AI layer
-    /// directly. Instead we record the intent on
-    /// `pending_waypoint_script_reach_point`; the engine closes it
-    /// immediately after the raw handler releases its borrow, before the
-    /// generic post-Think drain. It calls `ReachPoint(actor)` on the bound
-    /// instance, then fires `EventAfterScriptGoOn` unless the script put us
-    /// into `DefaultScriptDriven`.
-    pub fn execute_waypoint_script(&mut self, path_idx: PathId, wp_idx: u8) {
-        self.outbox.reentrant.waypoint_script_reach_point = Some((path_idx, wp_idx));
-    }
-
     // -- Waypoint-macro launch --
 
     /// Parse the macro data block attached to a waypoint, roll a
@@ -1779,75 +1726,6 @@ impl AiController {
         self.outbox = AiOutbox::default();
     }
 
-    // -- Movement commands --
-    // These record intent and produce an Order for the engine to dispatch.
-
-    /// Build a movement order from destination + flags.
-    ///
-    /// Maps `GotoFlags` to the appropriate `OrderType` and `MoveFlags`:
-    /// - `RIDER_CHARGE_HIT` → `OrderType::RiderCharging` (charge with hit zone)
-    /// - `RIDER_CHARGE` → `MoveFlags::RIDER_CHARGE` (running, fires galopp events)
-    ///
-    pub(crate) fn make_move_order(destination: &Position, flags: GotoFlags) -> AiOrderIntent {
-        use crate::order::OrderType;
-        use crate::sequence::MoveFlags;
-
-        // Determine movement action.
-        let order_type = if flags.contains(GotoFlags::RIDER_CHARGE_HIT) {
-            OrderType::RiderCharging
-        } else if flags.contains(GotoFlags::RUN) {
-            OrderType::RunningUpright
-        } else {
-            OrderType::WalkingUpright
-        };
-
-        let mut order = AiOrderIntent::new(order_type, destination.x, destination.y);
-        order.target_sector = destination.sector;
-        order.target_sector_index = destination.sector.and_then(|sector| sector.arena_index());
-        order.target_layer = Some(destination.level);
-        order.reverse = flags.contains(GotoFlags::BACK);
-        order.compute_direction = !flags.contains(GotoFlags::STRAIGHT);
-        // Preserve the authored flag in the intent. The original game's movement
-        // pre-launch Halt gate is accidentally dead because of operator
-        // precedence (`flags & GOTO_NOHALT == 0`), so movement dispatch does
-        // not act on this value; other intent families still use `no_halt`.
-        order.no_halt = flags.contains(GotoFlags::NO_HALT);
-
-        // Set movement-sequence flags derived from movement-request flags.
-        // `GOTO_SWORD` always adds `FORCE_SWORD_MOVEMENT`, even when
-        // the actor was already in a sword action-state; this keeps
-        // combat spacing and step-back dodges out of ordinary walk/run
-        // animation.
-        if flags.contains(GotoFlags::RIDER_CHARGE) {
-            order.move_flags = MoveFlags::RIDER_CHARGE.bits() as u16;
-        }
-        if flags.contains(GotoFlags::SWORD) {
-            order.move_flags |= MoveFlags::FORCE_SWORD_MOVEMENT.bits() as u16;
-        }
-        if flags.contains(GotoFlags::STRAIGHT) {
-            order.move_flags |= MoveFlags::STRAIGHT.bits() as u16;
-        }
-        // AI movement maps GOTO_DONTSTOP to
-        // disabled movement transitions. Route legs that flow through their next
-        // waypoint must not splice in a walk/run-to-wait end transition;
-        // doing so delays EventReachPoint and advances the patrol AI one
-        // frame late.
-        if flags.contains(GotoFlags::DONT_STOP) {
-            order.move_flags |= MoveFlags::NO_TRANSITIONS.bits() as u16;
-        }
-        order.append_special_action_tail = flags.contains(GotoFlags::SPECIAL_ACTION);
-
-        // Forward `GOTO_FINDACCESSIBLE` and `GOTO_ASKOBSTACLE` to the
-        // engine drain. The drain has the FastFindGrid in hand and
-        // runs position / straight-movement authorization,
-        // then either rewrites the destination, sets
-        // `couldnt_reachpoint`, or both.
-        order.find_accessible = flags.contains(GotoFlags::FIND_ACCESSIBLE);
-        order.ask_obstacle = flags.contains(GotoFlags::ASK_OBSTACLE);
-
-        order
-    }
-
     /// Preserve movement's split close-point callback boundary. Inside AI decisions the
     /// original game defers EVENT_REACHPOINT through the already-on-point flag until
     /// decision-tick completion; callers outside a tick dispatch the reach-point event
@@ -1933,98 +1811,6 @@ impl AiController {
         Some(flags)
     }
 
-    pub(crate) fn queue_prepared_move(
-        &mut self,
-        destination: Position,
-        flags: GotoFlags,
-        speed: f32,
-        action_state: crate::element::ActionState,
-    ) {
-        let tolerance = if flags.contains(GotoFlags::NEAR) {
-            self.stop_before_end_of_path_distance as f32
-        } else {
-            0.0
-        };
-        let GotoActionStateTeardown {
-            quit_swordfight_before_move,
-            enter_swordfight_before_move,
-            stop_menace_before_move,
-            lower_shield_before_move,
-        } = self.apply_goto_action_state_teardown(flags, action_state);
-        let mut order = Self::make_move_order(&destination, flags);
-        order.speed_factor = speed;
-        order.tolerance = tolerance;
-        order.quit_swordfight_before_move = quit_swordfight_before_move;
-        order.enter_swordfight_before_move = enter_swordfight_before_move;
-        order.stop_menace_before_move = stop_menace_before_move;
-        order.lower_shield_before_move = lower_shield_before_move;
-        self.outbox.actor.orders.push(order);
-    }
-
-    /// Prepend the action-state teardown for a launching movement / approach /
-    /// Direct-movement speed:
-    ///
-    ///   * `GOTO_SWORD` set, not currently in a sword action-state →
-    ///     prepend `ENTER_SWORDFIGHT` (raise-sword pose, no opponent).
-    ///   * `GOTO_SWORD` not set, currently in a sword action-state →
-    ///     prepend `QUIT_SWORDFIGHT` (sheath sword + clear opponents).
-    ///   * `GOTO_SWORD` not set, currently `Menacing` → prepend
-    ///     `STOP_MENACE` (menacing → waiting-sword → sword-down).
-    ///
-    /// Shield is also handled here: an actor in a shield action state
-    /// that receives a movement request gets a `LowerShield` element ahead of the
-    /// movement, inside the movement's own sequence.
-    ///
-    /// Every element lands in the movement's own sequence, as
-    /// The original game's movement setup inserts them
-    /// into `plistSequence` ahead of the movement element.
-    fn apply_goto_action_state_teardown(
-        &mut self,
-        flags: GotoFlags,
-        action_state: crate::element::ActionState,
-    ) -> GotoActionStateTeardown {
-        let mut quit_swordfight_before_move = false;
-        let mut enter_swordfight_before_move = false;
-        let mut stop_menace_before_move = false;
-        if flags.contains(GotoFlags::SWORD) {
-            // GOTO_SWORD branch — already-in-sword is a no-op,
-            // otherwise prepend ENTER_SWORDFIGHT without an opponent.
-            if !action_state.is_sword() {
-                enter_swordfight_before_move = true;
-            }
-        } else if action_state.is_sword() {
-            // Leaving a sword fight to walk somewhere without GOTO_SWORD:
-            // the engine must put QuitSwordfight and Move in one ordered
-            // sequence. A standalone outbox effect would clear relationships
-            // and then let the independent movement preempt the lowering
-            // animation in the same drain.
-            quit_swordfight_before_move = true;
-        } else if action_state == crate::element::ActionState::Menacing {
-            // Drop the menace pose before walking.
-            stop_menace_before_move = true;
-        }
-
-        // Orthogonal to the sword/menace switch above — the shield
-        // branch fires whenever the actor is in any shield action-state,
-        // regardless of GOTO_SWORD. The `LowerShield` element belongs to
-        // the movement's own sequence, ahead of the move, so that the
-        // move displacing it is an ordinary hand-off within one sequence
-        // rather than a finished action worth telling the AI about.
-        let lower_shield_before_move = action_state.is_shield();
-        GotoActionStateTeardown {
-            quit_swordfight_before_move,
-            enter_swordfight_before_move,
-            stop_menace_before_move,
-            lower_shield_before_move,
-        }
-    }
-
-    /// Queue the direct map-exit movement used by
-    /// `SUBSTATE_FLEEING_MERRY_MAN_RUN_TO_LEAVE_MAP` after the NPC
-    /// reaches the reinforcement door. The original game launches a
-    /// a movement sequence element using the running-upright animation,
-    /// output point, no target, zero radius, map movement) rather than regular movement.
-
     pub(crate) fn prepare_approach(&mut self, distance: i32, flags: GotoFlags, depth: u8) {
         let effective_distance = if depth < 10 {
             distance
@@ -2066,62 +1852,6 @@ impl AiController {
             .reentrant
             .self_stimuli
             .push(stimulus_type.into());
-    }
-
-    pub(crate) fn face_direction_from_actor(
-        &mut self,
-        direction: u16,
-        current_direction: u16,
-        action_state: crate::element::ActionState,
-    ) {
-        if direction == current_direction
-            && matches!(
-                action_state,
-                crate::element::ActionState::Waiting | crate::element::ActionState::Bored
-            )
-        {
-            self.already_turned = true;
-            return;
-        }
-        self.launch_turn_direction_unconditionally(direction);
-    }
-
-    fn launch_turn_direction_unconditionally(&mut self, direction: u16) {
-        // The original game's sector-facing path stores the authored sector directly in
-        // direction field. Keep it discrete rather than round-tripping it
-        // through a synthetic point and a later vector-to-sector conversion.
-        self.outbox
-            .actor
-            .orders
-            .push(AiOrderIntent::face_direction(direction as i16));
-    }
-
-    // -- Speech commands --
-
-    /// Say a remark (no flags).
-    pub fn say(&mut self, remark: Remark) {
-        self.say_impl(remark, SpeechFlags::empty());
-    }
-
-    /// Say a remark with special flags.
-    pub fn say_with_flags(&mut self, remark: Remark, flags: SpeechFlags) {
-        self.say_impl(remark, flags);
-    }
-
-    /// Record one ordered AI speech attempt.
-    ///
-    /// The engine settles every attempt at the current owner return boundary,
-    /// where entity/profile/global-forbid state is available. Do not collapse
-    /// this into `current_remark`: the Original observes and rejects every
-    /// invocation in statement order, including multiple calls in one Think.
-    fn say_impl(&mut self, remark: Remark, flags: SpeechFlags) {
-        self.outbox
-            .reentrant
-            .owner_work
-            .push(AiOwnerWork::Speech(AiSpeechAttempt {
-                remark,
-                flags: flags.bits(),
-            }));
     }
 
     // -- Pointing command --
@@ -2402,19 +2132,6 @@ impl AiController {
             }
         }
         false
-    }
-
-    /// Receive a facing direction from the patrol chief.
-    pub fn set_instructed_patrol_direction(
-        &mut self,
-        direction: u16,
-        current_direction: u16,
-        action_state: crate::element::ActionState,
-    ) {
-        self.patrol_direction = direction;
-        if self.current_substate == Substate::DefaultPatrolEnrouteWaiting {
-            self.face_direction_from_actor(direction, current_direction, action_state);
-        }
     }
 
     /// Resolve the turn authored by route arrival using the post-callback path.

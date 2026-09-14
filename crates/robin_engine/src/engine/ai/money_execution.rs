@@ -46,8 +46,10 @@ mod tests {
                 id
             })
             .collect();
-        engine.ai.global.all_soldier_handles =
-            std::sync::Arc::new(ids.iter().map(|id| id.index()).collect());
+        engine
+            .world
+            .soldier_registry
+            .rebuild_from_order(&engine.world.entities, ids.iter().copied());
         (engine, LevelAssets::new(), ids)
     }
 
@@ -184,15 +186,10 @@ impl EngineInner {
             .expect_enemy_ai_mut(owner, format_args!("money-fight owner"))
     }
 
-    fn money_camp_soldier(&self, camp: Camp, index: usize) -> Option<EntityId> {
-        let id = EntityId::Soldier(crate::entity_id::SoldierId(
-            self.ai.global.all_soldier_handles[index],
-        ));
-        self.world
-            .entities
-            .get(id)
-            .filter(|entity| entity.soldier_data().is_some() && entity.camp() == camp)
-            .map(|_| id)
+    fn money_camp_soldier(&self, camp: Camp, index: usize) -> EntityId {
+        EntityId::Soldier(crate::entity_id::SoldierId(
+            self.world.soldier_registry.camp(camp)[index],
+        ))
     }
 
     pub(in crate::engine) fn can_call_ai_soldier(&self, owner: EntityId, target: EntityId) -> bool {
@@ -288,10 +285,8 @@ impl EngineInner {
         self.money_ai_mut(owner).money_fight_victims.clear();
         // Distances are captured before each visibility query. Equal distances
         // insert before earlier candidates, including the owner when eligible.
-        for index in 0..self.ai.global.all_soldier_handles.len() {
-            let Some(target) = self.money_camp_soldier(camp, index) else {
-                continue;
-            };
+        for index in 0..self.world.soldier_registry.camp(camp).len() {
+            let target = self.money_camp_soldier(camp, index);
             let entity = self.expect_entity(target, "money-fight victim");
             if !entity.is_unconscious()
                 || entity.is_dead()
@@ -346,10 +341,8 @@ impl EngineInner {
         }
         let mut upright = 1_u16;
         let mut sleeping = 0_u16;
-        for index in 0..self.ai.global.all_soldier_handles.len() {
-            let Some(target) = self.money_camp_soldier(camp, index) else {
-                continue;
-            };
+        for index in 0..self.world.soldier_registry.camp(camp).len() {
+            let target = self.money_camp_soldier(camp, index);
             if target == owner
                 || self
                     .expect_entity(target, "money-fight morale candidate")
@@ -376,10 +369,8 @@ impl EngineInner {
     fn create_live_money_fight_enemies(&mut self, assets: &LevelAssets, owner: EntityId) {
         let camp = self.expect_entity(owner, "money enemy scan camp").camp();
         self.money_ai_mut(owner).money_fight_enemies.clear();
-        for index in 0..self.ai.global.all_soldier_handles.len() {
-            let Some(target) = self.money_camp_soldier(camp, index) else {
-                continue;
-            };
+        for index in 0..self.world.soldier_registry.camp(camp).len() {
+            let target = self.money_camp_soldier(camp, index);
             let entity = self.expect_entity(target, "money-fight enemy candidate");
             if target == owner
                 || entity.is_unconscious()
@@ -546,10 +537,8 @@ impl EngineInner {
         );
         self.money_ai_mut(owner).base.antagonist = None;
         self.money_ai_mut(owner).base.list_us.clear();
-        for index in 0..self.ai.global.all_soldier_handles.len() {
-            let Some(target) = self.money_camp_soldier(camp, index) else {
-                continue;
-            };
+        for index in 0..self.world.soldier_registry.camp(camp).len() {
+            let target = self.money_camp_soldier(camp, index);
             let ai = self.money_ai(target);
             if ai.get_rank() != crate::profiles::ProfileRank::Soldier
                 || !(ai.base.current_substate.is_take_money()
@@ -572,7 +561,7 @@ impl EngineInner {
         }
         if let Some(target) = self.money_ai(owner).base.antagonist {
             self.face_money_human(sim, assets, owner, target);
-            self.owner_work_speech(
+            self.execute_ai_speech(
                 sim,
                 assets,
                 owner,

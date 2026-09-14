@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::coordinates::MapPoint;
 use crate::element::EntityId;
-use crate::order::AiOrderIntent;
 
 pub(crate) mod parity_gate;
 pub(crate) mod parity_trace;
@@ -59,9 +58,8 @@ pub(crate) use duty::{
 };
 pub(crate) use effects::{AiActorCoreEffects, AiActorPreemptionEffects};
 pub use effects::{
-    AiActorOutbox, AiDetectionOutbox, AiMusicOutbox, AiOutbox, AiOwnerWork, AiPatrolOutbox,
-    AiRecoveryOutbox, AiReentrantOutbox, AiSpeechAttempt, AttentiveModeEffect, DetectableMutation,
-    GuardedPcEffect,
+    AiActorOutbox, AiDetectionOutbox, AiMusicOutbox, AiOutbox, AiPatrolOutbox, AiRecoveryOutbox,
+    AiReentrantOutbox, AiSpeechAttempt, AttentiveModeEffect, DetectableMutation, GuardedPcEffect,
 };
 
 mod controller;

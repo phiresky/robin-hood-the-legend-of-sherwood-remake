@@ -1228,16 +1228,6 @@ fn assert_failed_strangle_cleanup(
         !victim_entity.ai_controller().unwrap().ai_is_locked(),
         "owner-boundary condolation must unlock the failed victim before returning"
     );
-    assert!(
-        victim_entity
-            .ai_controller()
-            .expect("soldier fixture requires an AI controller")
-            .outbox
-            .reentrant
-            .owner_work
-            .is_empty(),
-        "failed authorization must not enqueue emergency speech owner work"
-    );
     let victim_ai = victim_entity.ai_controller().unwrap();
     assert!(
         victim_ai.outbox.detection.stimuli.is_empty(),

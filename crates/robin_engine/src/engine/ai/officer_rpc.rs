@@ -200,7 +200,7 @@ impl OfficerRpc<'_> {
         self.settle();
     }
     fn say(&mut self, remark: Remark, flags: SpeechFlags) {
-        self.engine.owner_work_speech(
+        self.engine.execute_ai_speech(
             self.sim,
             self.assets,
             self.owner,

@@ -1268,6 +1268,9 @@ impl EngineInner {
     pub(crate) fn add_entity(&mut self, mut entity: Entity) -> EntityId {
         let id = entity_id_for_occupied_slot(self.world.entities.len() as u32, &entity);
         self.initialize_entity_for_publication(id, &mut entity);
+        if matches!(entity, Entity::Soldier(_)) {
+            self.world.soldier_registry.register(id, entity.camp());
+        }
         self.world.entities.push(Some(entity));
         self.world.assign_next_original_creation_order(id);
         id
@@ -1291,6 +1294,9 @@ impl EngineInner {
     ) -> EntityId {
         let id = entity_id_for_occupied_slot(self.world.entities.len() as u32, &entity);
         self.initialize_entity_for_publication(id, &mut entity);
+        if matches!(entity, Entity::Soldier(_)) {
+            self.world.soldier_registry.register(id, entity.camp());
+        }
         self.world.entities.push(Some(entity));
         self.world
             .assign_reserved_original_creation_order(id, creation_order);
@@ -2189,8 +2195,7 @@ impl EngineInner {
     /// this wrapper, making it obvious in review when a future change
     /// bypasses the stamp / arbitration.
     ///
-    /// The standard pattern for swordfight entry / swordfight exit /
-    /// `process_pending_ai_orders` where the order must be visible to
+    /// Used for swordfight entry and exit when the order must be visible to
     /// same-frame consumers (animation driver,
     /// `current_order_for_actor`).  If arbitration rejects the element
     /// (Abandon / Postpone), the `InProgress` promotion is skipped —
@@ -2962,9 +2967,7 @@ impl EngineInner {
     /// `Think(EVENT_IMPOSSIBLE)` / `Think(EVENT_COULDNT_REACHPOINT)`
     /// dispatches that should not fire from a halt.
     ///
-    /// Called from the AI-order drain in
-    /// [`EngineInner::process_pending_ai_orders`] whenever a movement
-    /// order arrives without `GotoFlags::NO_HALT`.
+    /// Movement calls halt here unless `GotoFlags::NO_HALT` is set.
     pub(crate) fn halt_actor(&mut self, owner: EntityId) {
         // Snapshot the actor-base selected element before Stop tears down the
         // sequence-manager identity. The original game clears the
@@ -3425,14 +3428,6 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     // routines deliberately scan inactive or unconscious soldiers through
     // soldier counting rather than the active-NPC registry.
     assets.entities.soldier_entity_ids = engine.world.entities.soldier_ids().collect();
-    engine.ai.global.all_soldier_handles = std::sync::Arc::new(
-        assets
-            .entities
-            .soldier_entity_ids
-            .iter()
-            .map(|id| id.index())
-            .collect(),
-    );
 
     // Profiles are static level data: production actors carry them whatever
     // their live state, and a fixture actor that starts dead, inactive or
@@ -3565,4 +3560,8 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
             .push(crate::profiles::HtHWeaponProfile::default());
     }
     assets.profile_manager = std::sync::Arc::new(profiles);
+    engine.world.soldier_registry.rebuild_from_order(
+        &engine.world.entities,
+        assets.entities.soldier_entity_ids.iter().copied(),
+    );
 }

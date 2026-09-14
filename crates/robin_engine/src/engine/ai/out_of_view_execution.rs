@@ -216,7 +216,7 @@ impl EngineInner {
                 && !self.entity_data_in_building_sector(entity.element_data()))
                 || (!ai.combat_trainer && ai.company_number != 100));
         if self.expect_entity(missed, "lost pursuit target").is_pc() && follow {
-            self.owner_work_speech(
+            self.execute_ai_speech(
                 sim,
                 assets,
                 owner,

@@ -183,13 +183,4 @@ fn directed_panic_request_does_not_add_flee_speech() {
 
     assert_eq!(request.center, Some(enemy_pos));
     assert_eq!(request.runs, parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
-    assert!(
-        ai.base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .all(|work| !matches!(work, AiOwnerWork::Speech(_))),
-        "Original's Panic fallback does not call Flee's Say(REMARK_PANIC)"
-    );
 }

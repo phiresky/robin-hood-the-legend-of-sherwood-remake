@@ -99,14 +99,6 @@ impl EngineInner {
         );
     }
 
-    // ─── Turn order processing ──────────────────────────────────
-
-    /// Process pending turn orders from NPC order queues.
-    ///
-    /// `face_direction` / `face_position` produce `Turning` orders that
-    /// `process_pending_ai_orders` routes to `actor.order_queue`.
-    /// These become `Turn` sequence elements that complete in one
-    /// frame and fire `EventDone`.  We replicate that here: set the
     // ─── EventGaloppLoopEnd dispatch ────────────────────────────
 
     /// Run `f` and return the gallop dispatches (and test markers) it recorded.

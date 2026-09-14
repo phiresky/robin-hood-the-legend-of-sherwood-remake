@@ -3468,7 +3468,7 @@ fn transition_resumed_pass_door_reach_event_obeys_real_action_followers() {
             });
         assert_eq!(
             reentrant_order,
-            ["waypoint", "self_stimuli"],
+            ["self_stimuli"],
             "ReachPoint stays inside route-arrival Think: its script-side Halt must run before a recursively surfaced ReturnToDuty can launch the next Move"
         );
         stimuli
@@ -5024,26 +5024,26 @@ fn waypoint_driver_dispatches_and_distinguishes_missing_vm() {
     assert_eq!(ret_no_fn, 0);
 }
 
-/// AI: `execute_waypoint_script(path, wp)` sets the pending dispatch
-/// slot; the old unconditional `EventAfterScriptGoOn` fire-and-forget
-/// behaviour was replaced by the engine-side drain.
 #[test]
-fn execute_waypoint_script_queues_pending_dispatch() {
-    let mut ai = crate::ai::AiController::default();
-    assert!(ai.outbox.reentrant.waypoint_script_reach_point.is_none());
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
-
-    let pid = crate::ai::PathId::new(5).unwrap();
-    ai.execute_waypoint_script(pid, 2);
-
-    assert_eq!(
-        ai.outbox.reentrant.waypoint_script_reach_point,
-        Some((pid, 2))
+fn disabled_waypoint_scripts_do_not_enter_vm_or_continue_route() {
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut config = crate::engine::SimConfig::default();
+    config.script_enabled = false;
+    let sim = crate::sim_rng::SimulationContext::with_seed_and_config(1, config);
+    engine.execute_ai_waypoint_script(
+        &sim,
+        owner,
+        &LevelAssets::new(),
+        crate::ai::PathId::new(5).unwrap(),
+        2,
     );
-    // AI must NOT pre-emptively queue `EventAfterScriptGoOn` — that
-    // happens only after the engine dispatches `ReachPoint` and
-    // confirms the script didn't transition into `DefaultScriptDriven`.
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("disabled waypoint owner"));
+    assert!(ai.ai_log.is_empty());
+    assert_eq!(engine.ai_think_depth(), 0);
 }
 
 /// `initialize_mission_script_with` walks the supplied hiking paths,

@@ -3,8 +3,8 @@
 use super::swordfight_candidates::LiveCombatFighters;
 use super::*;
 use crate::ai::{
-    AiEntityHandle, AiOwnerWork, AiSpeechAttempt, AiState, EnterSwordfightRequest, GotoFlags,
-    Position, Remark, Substate,
+    AiEntityHandle, AiSpeechAttempt, AiState, EnterSwordfightRequest, GotoFlags, Position, Remark,
+    Substate,
 };
 use crate::ai_enemy::{AiMapVec, CombatFighterAccess, rider_charge_goal_geometry};
 use crate::sim_rng::SimulationContext;
@@ -80,13 +80,7 @@ impl EngineInner {
         owner: EntityId,
     ) {
         self.stop_ai_owner(sim, assets, owner);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("swordfight panic"))
-            .outbox
-            .reentrant
-            .owner_work
-            .push(AiOwnerWork::NearbyCiviliansPanic);
+        self.nearby_civilians_panic(sim, assets, owner);
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let target = self.approach_primary(owner);
         self.world
@@ -108,7 +102,7 @@ impl EngineInner {
         self.clear_live_combat_neighbours(owner);
         self.approach_focus(sim, assets, owner, None);
         let vip = self.expect_entity(owner, "swordfight speech").is_vip();
-        self.owner_work_speech(
+        self.execute_ai_speech(
             sim,
             assets,
             owner,
@@ -320,7 +314,7 @@ impl EngineInner {
             _ => (false, true),
         };
         if charge && first {
-            self.owner_work_speech(
+            self.execute_ai_speech(
                 sim,
                 assets,
                 owner,
@@ -571,7 +565,7 @@ impl EngineInner {
         let mut flags = GotoFlags::RUN | GotoFlags::RIDER_CHARGE;
         let state = if hit {
             self.approach_focus(sim, assets, owner, None);
-            self.owner_work_speech(
+            self.execute_ai_speech(
                 sim,
                 assets,
                 owner,

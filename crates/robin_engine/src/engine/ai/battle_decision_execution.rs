@@ -194,7 +194,7 @@ impl EngineInner {
         } else {
             Remark::Panic
         };
-        self.owner_work_speech(sim, assets, owner, AiSpeechAttempt { remark, flags: 0 });
+        self.execute_ai_speech(sim, assets, owner, AiSpeechAttempt { remark, flags: 0 });
     }
 
     fn battle_forest_merry_man(&self, owner: EntityId) -> bool {
@@ -291,7 +291,7 @@ impl EngineInner {
             })
             && self.battle_should_follow_lost_enemy(owner)
         {
-            self.owner_work_speech(
+            self.execute_ai_speech(
                 sim,
                 assets,
                 owner,
@@ -656,7 +656,7 @@ impl EngineInner {
                             .friends_are_alerted = true;
                         let center = self.live_ai_position(target);
                         if self.execute_ai_command_soldiers_to_attack(sim, assets, owner, center) {
-                            self.owner_work_speech(
+                            self.execute_ai_speech(
                                 sim,
                                 assets,
                                 owner,

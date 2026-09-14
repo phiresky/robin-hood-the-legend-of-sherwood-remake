@@ -743,16 +743,6 @@ impl EngineInner {
         // ── Process pending AI orders ─────────────────────────────
         //
         // Register AI orders before the frame-paced path-request phase.
-        self.process_pending_ai_orders(sim, assets);
-
-        // ── Dispatch per-waypoint ReachPoint scripts ─────────────
-        // When the AI reaches a scripted waypoint it queues the
-        // dispatch on `pending_waypoint_script_reach_point`; we drain
-        // the queue here, call `ReachPoint(actor)` on the waypoint's
-        // VM, and push `EventAfterScriptGoOn` as a self-stimulus
-        // unless the script pulled the NPC into `DefaultScriptDriven`.
-        // Deliver `EventAfterScriptGoOn` in this same tick.
-        self.dispatch_pending_waypoint_scripts(sim, assets);
 
         self.drain_pending_self_stimuli(sim, assets);
 

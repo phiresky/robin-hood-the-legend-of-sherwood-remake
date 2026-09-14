@@ -202,8 +202,12 @@ fn pass_door_change_layer_and_sector_follows_pc_carried_actor() {
                 .sector(source_sector)
                 .build(),
         );
-        let carried =
-            engine.add_test_entity(TestActor::soldier(Posture::Upright).sector(99).build());
+        let carried = engine.add_test_entity(
+            TestActor::soldier(Posture::Upright)
+                .camp(crate::element::Camp::Lacklandists)
+                .sector(99)
+                .build(),
+        );
         {
             let owner_entity = engine.world.entities.get_mut(owner).unwrap();
             owner_entity.element_data_mut().set_layer(source_layer);
@@ -252,7 +256,12 @@ fn pass_door_change_layer_and_sector_does_not_rewrite_unrelated_actor() {
         .unwrap()
         .element_data_mut()
         .set_layer(2);
-    let unrelated = engine.add_test_entity(TestActor::soldier(Posture::Upright).sector(99).build());
+    let unrelated = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .camp(crate::element::Camp::Lacklandists)
+            .sector(99)
+            .build(),
+    );
     engine
         .world
         .entities
@@ -491,6 +500,7 @@ fn launch_context_resolves_direction_and_installs_first_order_before_splice() {
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(
             TestActor::soldier(Posture::Upright)
+                .camp(crate::element::Camp::Lacklandists)
                 .sector(actor_sector)
                 .build(),
         );
@@ -1458,7 +1468,12 @@ fn denied_door_disables_anti_collision_before_marking_impossible() {
 #[test]
 fn wall_lift_rejects_soldier_before_installing_an_order() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(TestActor::soldier(Posture::Upright).sector(7).build());
+    let owner = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .camp(crate::element::Camp::Lacklandists)
+            .sector(7)
+            .build(),
+    );
     let lift_sector = crate::sector::SectorNumber::new(42);
     install_lift_sector(&mut engine, LiftType::Wall);
     let door = crate::gate::Door {
@@ -1491,7 +1506,12 @@ fn wall_lift_rejects_soldier_before_installing_an_order() {
 #[test]
 fn ladder_lift_uses_ladder_translation_and_reaches_splice() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(TestActor::soldier(Posture::Upright).sector(7).build());
+    let owner = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .camp(crate::element::Camp::Lacklandists)
+            .sector(7)
+            .build(),
+    );
     let lift_sector = crate::sector::SectorNumber::new(42);
     install_lift_sector(&mut engine, LiftType::Ladder);
     let door = crate::gate::Door {
@@ -1534,7 +1554,12 @@ fn ladder_lift_uses_ladder_translation_and_reaches_splice() {
 #[test]
 fn building_trap_exact_target_decorative_ladder_uses_release_compatibility_state() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(TestActor::soldier(Posture::Upright).sector(7).build());
+    let owner = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .camp(crate::element::Camp::Lacklandists)
+            .sector(7)
+            .build(),
+    );
     let door = crate::gate::Door {
         door_type: DoorType::BuildingTrap,
         ..default_door()
@@ -1637,7 +1662,12 @@ fn building_trap_exact_target_decorative_ladder_uses_release_compatibility_state
 fn real_ladder_nonzero_climb_keeps_lift_facing_and_posture() {
     let mut engine = EngineInner::new();
     install_lift_sector(&mut engine, LiftType::Ladder);
-    let owner = engine.add_test_entity(TestActor::soldier(Posture::Upright).sector(42).build());
+    let owner = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .camp(crate::element::Camp::Lacklandists)
+            .sector(42)
+            .build(),
+    );
     let door = crate::gate::Door {
         door_type: DoorType::LiftLow,
         sector_in: crate::sector::SectorNumber::new(42),
@@ -1708,7 +1738,11 @@ fn real_ladder_nonzero_climb_keeps_lift_facing_and_posture() {
 #[should_panic(expected = "has no sector for door 0 direction resolution")]
 fn missing_actor_sector_is_an_invariant_failure() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(TestActor::soldier(Posture::Upright).build());
+    let owner = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .camp(crate::element::Camp::Lacklandists)
+            .build(),
+    );
 
     let _ = dispatch_pass(&mut engine, &[default_door()], owner);
 }
@@ -1721,7 +1755,12 @@ fn missing_actor_sector_is_an_invariant_failure() {
 #[test]
 fn actor_sector_outside_both_door_sides_passes_directly() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(TestActor::soldier(Posture::Upright).sector(99).build());
+    let owner = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .camp(crate::element::Camp::Lacklandists)
+            .sector(99)
+            .build(),
+    );
 
     let (barrier, _seq_id) = dispatch_pass(&mut engine, &[default_door()], owner);
 
@@ -1741,7 +1780,12 @@ fn actor_sector_outside_both_door_sides_passes_directly() {
 #[should_panic(expected = "is a lift door but sector 8 has no lift type")]
 fn lift_door_requires_canonical_lift_type() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(TestActor::soldier(Posture::Upright).sector(7).build());
+    let owner = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .camp(crate::element::Camp::Lacklandists)
+            .sector(7)
+            .build(),
+    );
     let door = crate::gate::Door {
         door_type: DoorType::LiftHigh,
         ..default_door()
@@ -1771,12 +1815,20 @@ fn production_lift_callbacks_and_transition_turn_without_snapping_in_swapped_cre
             let owner = if owner_is_earlier {
                 let owner =
                     engine.add_test_entity(TestActor::pc(Posture::Upright).sector(7).build());
-                let _observer =
-                    engine.add_test_entity(TestActor::soldier(Posture::Upright).sector(7).build());
+                let _observer = engine.add_test_entity(
+                    TestActor::soldier(Posture::Upright)
+                        .camp(crate::element::Camp::Lacklandists)
+                        .sector(7)
+                        .build(),
+                );
                 owner
             } else {
-                let _observer =
-                    engine.add_test_entity(TestActor::soldier(Posture::Upright).sector(7).build());
+                let _observer = engine.add_test_entity(
+                    TestActor::soldier(Posture::Upright)
+                        .camp(crate::element::Camp::Lacklandists)
+                        .sector(7)
+                        .build(),
+                );
                 engine.add_test_entity(TestActor::pc(Posture::Upright).sector(7).build())
             };
             engine
@@ -2086,7 +2138,12 @@ fn fast_climb_first_iteration_termination_prevents_second_turn_in_swapped_creati
 #[should_panic(expected = "is not movement data")]
 fn non_movement_pass_door_is_an_invariant_failure() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(TestActor::soldier(Posture::Upright).sector(7).build());
+    let owner = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .camp(crate::element::Camp::Lacklandists)
+            .sector(7)
+            .build(),
+    );
     let seq_id = engine
         .orders
         .sequence_manager

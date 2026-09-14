@@ -308,7 +308,7 @@ impl EngineInner {
                     event == StimulusType::EventAdversaryWeak,
                 );
                 if event == StimulusType::EventAfterCombatInjury {
-                    self.observation_ai_mut(owner).finish_after_combat_injury();
+                    self.combat_insult_after_reconsider(sim, assets, owner);
                 }
             }
             StimulusType::EventSwordStrike
@@ -323,14 +323,7 @@ impl EngineInner {
                 let StimulusInfo::Human(attacker) = stimulus.info else {
                     panic!("sword strike requires attacker");
                 };
-                self.observation_ai_mut(owner)
-                    .base
-                    .outbox
-                    .reentrant
-                    .owner_work
-                    .push(crate::ai::AiOwnerWork::ConsiderToBeginParade {
-                        attacker: attacker.get(),
-                    });
+                self.execute_ai_consider_to_begin_parade(sim, assets, owner, attacker.get());
                 self.drain_direct_ai_owner_boundary(sim, owner, assets);
             }
             StimulusType::EventGoodStrike | StimulusType::EventLethalStrike
@@ -404,7 +397,10 @@ impl EngineInner {
                 | Substate::AttackingOverviewLookLeft
                 | Substate::AttackingOverviewLookRight
                 | Substate::AttackingTooProudToAttackOverview => {
-                    self.observation_ai_mut(owner).list_them.push(target.get());
+                    let enemies = &mut self.observation_ai_mut(owner).list_them;
+                    if !enemies.contains(&target.get()) {
+                        enemies.push(target.get());
+                    }
                 }
                 Substate::AttackingArcherWaitOnArcheryPath
                 | Substate::AttackingArcherWaitOnBendPoint

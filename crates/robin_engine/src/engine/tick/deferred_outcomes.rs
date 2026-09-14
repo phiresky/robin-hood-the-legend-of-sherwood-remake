@@ -1403,18 +1403,27 @@ impl EngineInner {
         wasp_sting_remark: Vec<EntityId>,
     ) {
         // GETTING_FREE_FROM_WASP START — `Say(REMARK_WASP_STING)`.
-        // Plain `say` on the AI base.
         for speaker in wasp_sting_remark {
             self.mission_domain
                 .achievements
                 .complete_wasp_sting(speaker);
-            if let Some(entity) = self.world.entities.get_mut(speaker)
-                && let Some(npc) = entity.npc_data_mut()
-                && let Some(base) = npc.ai_brain.base_mut()
+            if self
+                .world
+                .entities
+                .get(speaker)
+                .and_then(Entity::ai_controller)
+                .is_some()
             {
-                base.say(crate::ai::Remark::WaspSting);
+                self.execute_ai_speech(
+                    sim,
+                    assets,
+                    speaker,
+                    crate::ai::AiSpeechAttempt {
+                        remark: crate::ai::Remark::WaspSting,
+                        flags: 0,
+                    },
+                );
             }
-            self.drain_ai_owner_work_for(sim, assets, speaker);
         }
     }
 
@@ -1424,45 +1433,44 @@ impl EngineInner {
         assets: &LevelAssets,
         special_remark: Vec<EntityId>,
     ) {
-        // SPECIAL START — `make_special_action_remark`.
-        // Shield-bearers always speak,
-        // everyone else only speaks at 1-in-3 odds and only when
-        // currently silent. A shield-bearer's sword is a shield
-        // weapon AND the sprite has the `WaitingShield` animation.
+        // Shield bearers speak unconditionally. Other soldiers draw only
+        // while silent, before entering the synchronous speech operation.
         for speaker in special_remark {
-            // Two-step: read weapon/sprite info immutably, then
-            // dispatch the remark mutably.  Splitting avoids holding
-            // an immutable borrow on `self.world.entities` across the
-            // mutable `npc.ai_brain.enemy_mut()` call.
-            let is_shield_bearer = self
+            if self
                 .world
                 .entities
                 .get(speaker)
-                .map(|entity| {
-                    let hth_weapon_id = entity
-                        .npc_data()
-                        .and_then(|npc| npc.ai_brain.enemy())
-                        .map(|e| e.hth_weapon_id)
-                        .unwrap_or(0);
-                    let weapon_is_shield = assets
-                        .profile_manager
-                        .get_hth_weapon(hth_weapon_id)
-                        .map(|w| w.shield)
-                        .unwrap_or(false);
-                    let has_shield_anim = entity
-                        .element_data()
-                        .sprite
-                        .has_animation(crate::order::OrderType::WaitingShield);
-                    weapon_is_shield && has_shield_anim
-                })
-                .unwrap_or(false);
-            if let Some(entity) = self.world.entities.get_mut(speaker)
-                && let Some(npc) = entity.npc_data_mut()
-                && let Some(enemy) = npc.ai_brain.enemy_mut()
+                .and_then(Entity::enemy_ai)
+                .is_none()
             {
-                enemy.make_special_action_remark(sim, is_shield_bearer);
+                continue;
             }
-            self.drain_ai_owner_work_for(sim, assets, speaker);
+            let flags = if self.live_ai_is_shield_bearer(assets, speaker) {
+                crate::ai::SpeechFlags::ALWAYS.bits()
+            } else {
+                let silent = self
+                    .world
+                    .entities
+                    .expect_ai_controller(speaker, format_args!("special action speaker"))
+                    .current_remark
+                    == crate::ai::Remark::TheSoundOfSilence;
+                if !silent
+                    || crate::sim_rng::u32(sim, crate::sim_rng::RngSite::SpecialActionRemark, 0..3)
+                        != 0
+                {
+                    continue;
+                }
+                0
+            };
+            self.execute_ai_speech(
+                sim,
+                assets,
+                speaker,
+                crate::ai::AiSpeechAttempt {
+                    remark: crate::ai::Remark::SpecialAction,
+                    flags,
+                },
+            );
         }
     }
 
@@ -1477,7 +1485,7 @@ impl EngineInner {
         // HEEELP noise at the entity's 2D position (volume
         // `NOISE_VOLUME_HEEELP`, = 200).
         for speaker in cry_for_help_under_net {
-            let (remark, origin, layer, elevation) = {
+            let (remark, origin, layer) = {
                 let Some(entity) = self.world.entities.get(speaker) else {
                     continue;
                 };
@@ -1488,21 +1496,32 @@ impl EngineInner {
                     crate::ai::Remark::CivUnderNet
                 };
                 let elem = entity.element_data();
-                let pos3d = elem.position();
-                (
-                    remark,
-                    elem.position_map(),
-                    elem.layer(),
-                    pos3d.z.max(0.0) as u16,
-                )
+                (remark, elem.position_map(), elem.layer())
             };
-            if let Some(entity) = self.world.entities.get_mut(speaker)
-                && let Some(npc) = entity.npc_data_mut()
-                && let Some(base) = npc.ai_brain.base_mut()
+            if self
+                .world
+                .entities
+                .get(speaker)
+                .and_then(Entity::ai_controller)
+                .is_some()
             {
-                base.say(remark);
+                self.execute_ai_speech(
+                    sim,
+                    assets,
+                    speaker,
+                    crate::ai::AiSpeechAttempt { remark, flags: 0 },
+                );
             }
-            self.drain_ai_owner_work_for(sim, assets, speaker);
+            // The origin is captured before speaking; elevation is read
+            // after speech, which can synchronously run a rejection callback.
+            let elevation = self
+                .world
+                .entities
+                .expect_entity(speaker, format_args!("under-net noise speaker"))
+                .element_data()
+                .position()
+                .z
+                .max(0.0) as u16;
             self.broadcast_noise_synchronously(
                 sim,
                 assets,
@@ -1535,7 +1554,10 @@ mod tests {
             actor: Default::default(),
             human: Default::default(),
             npc: Default::default(),
-            soldier: Default::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         })
     }
 
@@ -1581,6 +1603,7 @@ mod tests {
         };
         actor.soldier = SoldierData {
             soldier_profile_index: crate::profiles::SoldierProfileIdx(0),
+            cached_camp: crate::element::Camp::Lacklandists,
             ..Default::default()
         };
         actor.npc.ai.ai_brain =

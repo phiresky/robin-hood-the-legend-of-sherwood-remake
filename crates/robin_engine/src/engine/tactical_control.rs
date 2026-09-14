@@ -407,7 +407,6 @@ impl EngineInner {
             .and_then(Entity::enemy_ai_mut)
             .unwrap_or_else(|| panic!("selected tactical unit {soldier:?} has no enemy AI"));
         ai.pending_sword_strike_consideration = false;
-        ai.base.outbox.actor.orders.clear();
     }
 
     pub fn find_tactically_controllable_unit(
@@ -1536,26 +1535,15 @@ mod tests {
     }
 
     #[test]
-    fn direct_control_lock_discards_a_pending_bored_order() {
+    fn direct_control_lock_remembers_events_without_delayed_halt() {
         let mut engine = EngineInner::new();
-        let mut npc = crate::element::NpcData {
+        let npc = crate::element::NpcData {
             life_points: 100,
             ai: crate::element::AiActorData {
                 ai_brain: crate::element::AiBrain::Enemy(Box::default()),
                 ..Default::default()
             },
         };
-        npc.ai_brain
-            .base_mut()
-            .expect("test soldier has enemy AI")
-            .outbox
-            .actor
-            .orders
-            .push(crate::order::AiOrderIntent::new(
-                crate::order::OrderType::WaitingUprightBored,
-                0.0,
-                0.0,
-            ));
         let soldier = engine.add_test_entity(Entity::Soldier(crate::element::ActorSoldier {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
@@ -1583,7 +1571,6 @@ mod tests {
             .expect("controlled test soldier retains AI");
         assert!(ai.script_locked);
         assert!(ai.remember_events);
-        assert!(ai.outbox.actor.orders.is_empty());
         assert!(
             !ai.outbox.actor.halt,
             "direct-control lock must not queue a halt behind the new movement"
@@ -1655,15 +1642,6 @@ mod tests {
         };
         let ai = npc.ai_brain.enemy_mut().expect("test soldier has enemy AI");
         ai.pending_sword_strike_consideration = true;
-        ai.base
-            .outbox
-            .actor
-            .orders
-            .push(crate::order::AiOrderIntent::new(
-                crate::order::OrderType::RunningUpright,
-                100.0,
-                100.0,
-            ));
 
         let mut engine = EngineInner::new();
         let soldier = engine.add_test_entity(Entity::Soldier(crate::element::ActorSoldier {
@@ -1690,7 +1668,6 @@ mod tests {
             .and_then(Entity::enemy_ai)
             .expect("test soldier retains enemy AI");
         assert!(!ai.pending_sword_strike_consideration);
-        assert!(ai.base.outbox.actor.orders.is_empty());
     }
 
     #[test]

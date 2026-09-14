@@ -82,7 +82,7 @@ impl EngineInner {
                             officer,
                             &Stimulus::with_human(StimulusType::CallReport, owner.index()),
                         );
-                        self.owner_work_speech(
+                        self.execute_ai_speech(
                             sim,
                             assets,
                             owner,
@@ -124,7 +124,7 @@ impl EngineInner {
                 _ => {}
             },
             Substate::SeekingOfficerGetReportFromSoldier => match kind {
-                StimulusType::CallYourTalk1 => self.owner_work_speech(
+                StimulusType::CallYourTalk1 => self.execute_ai_speech(
                     sim,
                     assets,
                     owner,
@@ -187,7 +187,7 @@ impl EngineInner {
                             ReportType::MissedCharly => Remark::TellsOfficerCharlyAway,
                             _ => Remark::TellsOfficerOther,
                         };
-                        self.owner_work_speech(
+                        self.execute_ai_speech(
                             sim,
                             assets,
                             owner,
@@ -270,7 +270,7 @@ impl EngineInner {
             }
             Substate::SeekingSoldierGiveAlertingReportToOfficerPoint => match kind {
                 StimulusType::CallYourTalk1 | StimulusType::EventTimer => {
-                    self.owner_work_speech(
+                    self.execute_ai_speech(
                         sim,
                         assets,
                         owner,
@@ -315,7 +315,7 @@ impl EngineInner {
                 ) =>
             {
                 if kind == StimulusType::CallYourTalk1 {
-                    self.owner_work_speech(
+                    self.execute_ai_speech(
                         sim,
                         assets,
                         owner,
@@ -764,8 +764,6 @@ mod tests {
         );
         assert!(ai.base.timer_is_running);
         assert_eq!(ai.base.when_does_timer_ring, 14_768);
-        assert!(ai.base.outbox.actor.orders.is_empty());
-        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
         assert_eq!(
             engine.execute_enemy_report_callback(
                 &sim,

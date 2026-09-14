@@ -438,8 +438,15 @@ impl EngineInner {
         let ai = self.seek_enemy_mut(owner);
         ai.base.lasting_panic_runs = (ai.soldier_profile_apple / 2) as u8;
         ai.base.set_emoticon(EmoticonType::Thunderstorm);
-        ai.base
-            .say_with_flags(Remark::ChasesChild, SpeechFlags::MYTALK_1);
+        self.execute_ai_speech(
+            sim,
+            assets,
+            owner,
+            crate::ai::AiSpeechAttempt {
+                remark: Remark::ChasesChild,
+                flags: SpeechFlags::MYTALK_1.bits(),
+            },
+        );
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
         self.duty_set_state(
             sim,
@@ -477,13 +484,17 @@ impl EngineInner {
             AiState::Wondering,
             Substate::WonderingAppleReactiontime,
         );
-        let ai = self.seek_enemy_mut(owner);
-        ai.base.say(if ai.is_vip {
+        let remark = if self.seek_enemy(owner).is_vip {
             Remark::VipAppleNo
         } else {
             Remark::HitByApple
-        });
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        };
+        self.execute_ai_speech(
+            sim,
+            assets,
+            owner,
+            crate::ai::AiSpeechAttempt { remark, flags: 0 },
+        );
         let position = self.seek_enemy(owner).base.seek_position;
         self.wondering_face_position(sim, assets, owner, position);
         self.seek_enemy_mut(owner)
@@ -552,7 +563,7 @@ impl EngineInner {
     fn live_whistle_officer(&self, assets: &LevelAssets, owner: EntityId) -> Option<EntityId> {
         let viewer = self.expect_entity(owner, "whistle advice viewer");
         let seek = self.seek_enemy(owner).base.seek_position;
-        for &handle in self.ai.global.all_soldier_handles.iter() {
+        for &handle in self.world.soldier_registry.camp(viewer.camp()) {
             let target = EntityId::Soldier(crate::entity_id::SoldierId(handle));
             let Entity::Soldier(soldier) = self.expect_entity(target, "whistle officer registry")
             else {

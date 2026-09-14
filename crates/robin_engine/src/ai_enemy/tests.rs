@@ -41,10 +41,6 @@ fn repeated_directed_panic_preserves_existing_red_alert_until_engine_boundary() 
         ai.base.current_music_alert_status,
         crate::ai::AlertLevel::Red
     );
-    assert!(
-        ai.base.outbox.reentrant.owner_work.is_empty(),
-        "Original skips state change when panic begins from fleeing panic"
-    );
     let request = ai
         .base
         .outbox

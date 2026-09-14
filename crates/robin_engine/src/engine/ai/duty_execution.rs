@@ -118,19 +118,11 @@ impl DutyExecution<'_> {
             .expect_entity(self.owner, format_args!("duty camp owner"))
             .camp();
         self.engine
-            .ai
-            .global
-            .all_soldier_handles
+            .world
+            .soldier_registry
+            .camp(camp)
             .iter()
-            .filter_map(move |&handle| {
-                let id = EntityId::Soldier(crate::entity_id::SoldierId(handle));
-                self.engine
-                    .world
-                    .entities
-                    .get(id)
-                    .filter(|entity| entity.soldier_data().is_some() && entity.camp() == camp)
-                    .map(|_| id)
-            })
+            .map(|&handle| EntityId::Soldier(crate::entity_id::SoldierId(handle)))
     }
 
     fn enemy_duty(&mut self, flags: DutyFlags) {

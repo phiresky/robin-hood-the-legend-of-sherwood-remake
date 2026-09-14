@@ -433,7 +433,10 @@ fn typed_sentinel_snapshot_fixture() -> (Engine, EntityId) {
                     ..Default::default()
                 }
             },
-            soldier: Default::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         },
     ));
     assert_eq!(id.index(), 0, "fixture must occupy live arena slot zero");

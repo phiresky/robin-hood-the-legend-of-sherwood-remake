@@ -59,6 +59,30 @@ mod tests {
     }
 
     #[test]
+    fn goto_flags_reach_registered_movement() {
+        use crate::sequence::{MoveFlags, SequenceElementData};
+        for (goto, expected) in [
+            (GotoFlags::SWORD, MoveFlags::FORCE_SWORD_MOVEMENT),
+            (GotoFlags::DONT_STOP, MoveFlags::NO_TRANSITIONS),
+        ] {
+            let (mut engine, assets, ids) = fixture(1);
+            let owner = ids[0];
+            let mut destination = engine.live_ai_position(owner);
+            destination.x += 300.0;
+            engine.duty_go_to(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                destination,
+                goto,
+            );
+            assert!(engine.orders.sequence_manager.sequences_iter().any(|sequence|
+                sequence.elements.iter().any(|element| element.owner == Some(owner)
+                    && matches!(element.data, SequenceElementData::Movement { flags, .. } if flags.contains(expected)))));
+        }
+    }
+
+    #[test]
     fn duty_clears_reciprocal_pc_guard() {
         let (mut engine, mut assets, ids) = fixture(1);
         let owner = ids[0];
@@ -91,20 +115,10 @@ mod tests {
             let ai = enemy_mut(&mut engine, owner);
             ai.attentive = attentive;
             ai.will_be_attentive = attentive;
-            ai.base
-                .outbox
-                .actor
-                .orders
-                .push(crate::order::AiOrderIntent::new(
-                    crate::order::OrderType::Turning,
-                    10.0,
-                    0.0,
-                ));
             duty(&mut engine, &assets, owner);
             let ai = enemy(&engine, owner);
             assert_eq!(ai.attentive, attentive);
             assert!(!ai.will_be_attentive);
-            assert!(ai.base.outbox.actor.orders.is_empty());
             assert_eq!(ai.base.last_goto_destination.x, 400.0);
             let commands: Vec<_> = engine
                 .orders
@@ -519,7 +533,6 @@ mod tests {
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.current_task_priority, task_priority::NONE);
         assert!(!ai.base.needs_patrol_reinit);
-        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
         assert!(!ai.base.outbox.actor.has_boundary_work());
         assert!(
             engine
@@ -872,10 +885,19 @@ impl EngineInner {
             .actor_data()
             .expect("facing requires actor")
             .action_state;
-        entity
-            .ai_controller_mut()
-            .expect("facing requires controller")
-            .face_direction_from_actor(direction, current_direction, action_state);
+        if current_direction == direction
+            && matches!(
+                action_state,
+                crate::element::ActionState::Waiting | crate::element::ActionState::Bored
+            )
+        {
+            entity
+                .ai_controller_mut()
+                .expect("facing requires controller")
+                .already_turned = true;
+        } else {
+            self.launch_live_ai_turn(owner, direction as i16, false);
+        }
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
@@ -995,19 +1017,7 @@ impl EngineInner {
             ) {
                 return;
             }
-            let entity = self
-                .world
-                .entities
-                .expect_entity_mut(owner, format_args!("admitted movement owner"));
-            let action_state = entity
-                .actor_data()
-                .expect("movement requires actor")
-                .action_state;
-            entity
-                .ai_controller_mut()
-                .expect("movement requires controller")
-                .queue_prepared_move(destination, flags, speed, action_state);
-            self.launch_preflighted_ai_move(sim, assets, owner);
+            self.launch_ai_move(sim, owner, destination, flags, speed);
         }
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }

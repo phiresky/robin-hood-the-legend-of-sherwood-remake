@@ -62,7 +62,10 @@ fn make_bow_soldier(posture: Posture, action_state: ActionState) -> Entity {
         },
         human: HumanData::default(),
         npc: NpcData::default(),
-        soldier: SoldierData::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     })
 }
 

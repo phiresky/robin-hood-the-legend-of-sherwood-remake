@@ -125,7 +125,6 @@ fn golden_global() -> AiGlobalState {
         remarks_forbidden_till_frame: vec![0, 9, u32::MAX],
         current_speech_variant: 3,
         next_repulsive_point_id: -4,
-        all_soldier_handles: std::sync::Arc::new(vec![19, 0, 7]),
         ..Default::default()
     };
     value.primary_target_multiplicity_scratch.insert(7, 19);
@@ -316,16 +315,6 @@ fn enemy_ai_missing_defaulted_fields_decode_to_type_defaults() {
             "EnemyAi.{required} must stay required"
         );
     }
-}
-
-#[test]
-fn reentrant_outbox_allows_an_absent_optional_waypoint() {
-    let json = include_str!("goldens/ai_reentrant_outbox.json");
-    // serde's derive treats an absent plain `Option` field as `None` (no
-    // `with` adapter involved), so this historical leniency is pinned too.
-    let decoded: AiReentrantOutbox =
-        decode_without(json, &["waypoint_script_reach_point"]).unwrap();
-    assert_eq!(decoded.waypoint_script_reach_point, None);
 }
 
 #[test]

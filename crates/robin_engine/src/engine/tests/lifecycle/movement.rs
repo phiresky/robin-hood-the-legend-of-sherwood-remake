@@ -293,7 +293,6 @@ fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
 fn positional_face_to_captures_direction_before_deferred_manager_instruction() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};
-    use crate::order::AiOrderIntent;
     use crate::sequence::{Field, FieldValue, SequenceState};
 
     let sim = crate::sim_rng::test_context();
@@ -312,17 +311,18 @@ fn positional_face_to_captures_direction_before_deferred_manager_instruction() {
     let target = MapPoint::new(200.0, 100.0);
     let expected_direction =
         crate::position_interface::vector_to_sector_0_to_15_iso(target.x - 100.0, target.y - 100.0);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .outbox
-        .actor
-        .orders
-        .push(AiOrderIntent::face_toward(target.x, target.y));
-
-    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
+    engine.duty_face_position_at_elevation(
+        &sim,
+        &assets,
+        owner,
+        crate::ai::Position {
+            x: target.x,
+            y: target.y,
+            sector: None,
+            level: 0,
+        },
+        0.0,
+    );
 
     let turn_sequence = engine
         .orders
@@ -450,7 +450,7 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
 #[test]
 fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
     use crate::element::{Command, Posture};
-    use crate::order::{AiOrderIntent, OrderType};
+    use crate::order::OrderType;
     use crate::position_interface::SectorHandle;
     use crate::sequence::{SequenceElement, SequencePriority};
 
@@ -482,20 +482,18 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
         .sequence_manager
         .element_in_progress(waiting_sequence, 0);
 
-    let mut intent = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
-    intent.target_sector = SectorHandle::new(119);
-    intent.target_layer = Some(8);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .outbox
-        .actor
-        .orders
-        .push(intent);
-
-    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
+    engine.duty_go_to(
+        &sim,
+        &assets,
+        owner,
+        crate::ai::Position {
+            x: 100.0,
+            y: 200.0,
+            sector: SectorHandle::new(119),
+            level: 8,
+        },
+        crate::ai::GotoFlags::RUN,
+    );
 
     let ai = engine.get_entity(owner).unwrap().ai_controller().unwrap();
     assert!(
@@ -508,7 +506,7 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
 #[test]
 fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
     use crate::element::{Command, Posture};
-    use crate::order::{AiOrderIntent, OrderType};
+    use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequencePriority};
 
     let sim = crate::sim_rng::test_context();
@@ -519,6 +517,8 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
         unreachable!("make_test_soldier returned a non-soldier")
     };
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    let sector = crate::position_interface::SectorHandle::new(1);
+    soldier.element_data_mut().set_sector(sector);
     let owner = engine.add_test_entity(soldier);
 
     let mut waiting = SequenceElement::new_movement(
@@ -534,19 +534,19 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
         .sequence_manager
         .element_in_progress(waiting_sequence, 0);
 
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .outbox
-        .actor
-        .orders
-        .push(AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0));
-
     let sequence_count_before_drain = engine.orders.sequence_manager.sequence_count();
-    let launched = engine.launch_pending_orders_for_npc(&sim, &assets, owner);
-    assert!(launched.is_empty());
+    engine.duty_go_to(
+        &sim,
+        &assets,
+        owner,
+        crate::ai::Position {
+            x: 100.0,
+            y: 200.0,
+            sector,
+            level: 0,
+        },
+        crate::ai::GotoFlags::RUN,
+    );
     assert!(
         engine.orders.sequence_manager.sequence_count() > sequence_count_before_drain,
         "the replacement sequence must be constructed before movement applies its tail halt"
@@ -565,7 +565,6 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
 #[test]
 fn ai_move_constructs_at_owner_boundary_and_waits_for_manager_instruction() {
     use crate::element::Posture;
-    use crate::order::{AiOrderIntent, OrderType};
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
@@ -576,10 +575,34 @@ fn ai_move_constructs_at_owner_boundary_and_waits_for_manager_instruction() {
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
     let owner = engine.add_test_entity(soldier);
 
-    let mut first = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
-    let first_sequence = engine.launch_ai_move(&sim, owner, &mut first).unwrap();
-    let mut second = AiOrderIntent::new(OrderType::RunningUpright, 300.0, 400.0);
-    let second_sequence = engine.launch_ai_move(&sim, owner, &mut second).unwrap();
+    let first_sequence = engine
+        .launch_ai_move(
+            &sim,
+            owner,
+            crate::ai::Position {
+                x: 100.0,
+                y: 200.0,
+                sector: None,
+                level: 0,
+            },
+            crate::ai::GotoFlags::RUN,
+            1.0,
+        )
+        .unwrap();
+    let second_sequence = engine
+        .launch_ai_move(
+            &sim,
+            owner,
+            crate::ai::Position {
+                x: 300.0,
+                y: 400.0,
+                sector: None,
+                level: 0,
+            },
+            crate::ai::GotoFlags::RUN,
+            1.0,
+        )
+        .unwrap();
     assert_ne!(first_sequence, second_sequence);
     assert_eq!(
         engine.orders.sequence_manager.deferred_elements_to_go(),
@@ -601,82 +624,10 @@ fn ai_move_constructs_at_owner_boundary_and_waits_for_manager_instruction() {
 }
 
 #[test]
-fn path_waiter_tail_halts_registered_roof_move_before_instruction() {
-    use crate::element::{Command, Posture};
-    use crate::order::{AiOrderIntent, OrderType};
-
-    let sim = crate::sim_rng::test_context();
-    let mut engine = EngineInner::new();
-    let mut soldier = make_test_soldier(Posture::Upright);
-    let Entity::Soldier(soldier_data) = &mut soldier else {
-        unreachable!("make_test_soldier returned a non-soldier")
-    };
-    soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-    let owner = engine.add_test_entity(soldier);
-
-    let mut intent = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
-    intent.halt_after_launch_for_path_waiter = true;
-    let launched = engine.launch_ai_move(&sim, owner, &mut intent);
-    assert!(
-        launched.is_none(),
-        "the path-waiter tail must not expose the interrupted sequence for instruction"
-    );
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .pending_elements_for_owner(owner)
-            .is_empty(),
-        "movement's post-launch halt removes the roof Move from the manager FIFO"
-    );
-    assert_eq!(engine.actor_command(owner), Command::Wait);
-}
-
-#[test]
-fn fallback_construction_applies_authored_path_waiter_tail_after_waiter_is_gone() {
-    use crate::element::Posture;
-    use crate::order::{AiOrderIntent, OrderType};
-
-    let sim = crate::sim_rng::test_context();
-    let assets = LevelAssets::new();
-    let mut engine = EngineInner::new();
-    let mut soldier = make_test_soldier(Posture::Upright);
-    let Entity::Soldier(soldier_data) = &mut soldier else {
-        unreachable!("make_test_soldier returned a non-soldier")
-    };
-    soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-    let owner = engine.add_test_entity(soldier);
-
-    let mut fallback = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
-    fallback.halt_after_launch_for_path_waiter = true;
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .outbox
-        .actor
-        .orders
-        .push(fallback);
-
-    let launched = engine.launch_pending_orders_for_npc(&sim, &assets, owner);
-    assert!(launched.is_empty());
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .pending_elements_for_owner(owner)
-            .is_empty()
-    );
-}
-
-#[test]
 fn ordinary_move_construction_does_not_invent_path_waiter_tail() {
     use crate::element::Posture;
-    use crate::order::{AiOrderIntent, OrderType};
 
     let sim = crate::sim_rng::test_context();
-    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let mut soldier = make_test_soldier(Posture::Upright);
     let Entity::Soldier(soldier_data) = &mut soldier else {
@@ -685,24 +636,26 @@ fn ordinary_move_construction_does_not_invent_path_waiter_tail() {
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
     let owner = engine.add_test_entity(soldier);
 
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .outbox
-        .actor
-        .orders
-        .push(AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0));
-
-    let launched = engine.launch_pending_orders_for_npc(&sim, &assets, owner);
-    assert_eq!(launched.len(), 1);
+    let launched = engine
+        .launch_ai_move(
+            &sim,
+            owner,
+            crate::ai::Position {
+                x: 100.0,
+                y: 200.0,
+                sector: None,
+                level: 0,
+            },
+            crate::ai::GotoFlags::RUN,
+            1.0,
+        )
+        .expect("ordinary movement registers its sequence");
     assert!(
         engine
             .orders
             .sequence_manager
             .deferred_elements_to_go()
-            .contains(&(launched[0], 0))
+            .contains(&(launched, 0))
     );
 }
 

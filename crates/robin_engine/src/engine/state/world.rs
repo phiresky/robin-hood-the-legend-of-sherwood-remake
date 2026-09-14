@@ -54,6 +54,7 @@ mod entity_creation_order_pairs {
 )]
 pub(crate) struct WorldState {
     pub(crate) entities: Entities,
+    pub(crate) soldier_registry: SoldierRegistry,
     /// Portrait/UI order, sorted by character-profile priority after loading.
     pub(crate) pc_ids: Vec<EntityId>,
     /// Exact original-game player-character insertion order.
@@ -101,6 +102,7 @@ pub(crate) struct WorldState {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PersistedWorldState {
     entities: Entities,
+    soldier_registry: SoldierRegistry,
 
     pc_ids: Vec<EntityId>,
 
@@ -131,6 +133,7 @@ impl PersistedWorldState {
     pub(crate) fn capture(value: &WorldState) -> Self {
         let WorldState {
             entities: _,
+            soldier_registry: _,
             pc_ids: _,
             original_pc_registry_ids: _,
             fast_grid: _,
@@ -146,6 +149,7 @@ impl PersistedWorldState {
         } = value;
         Self {
             entities: value.entities.persisted_projection(),
+            soldier_registry: value.soldier_registry.clone(),
             pc_ids: value.pc_ids.clone(),
             original_pc_registry_ids: value.original_pc_registry_ids.clone(),
             fast_grid: crate::fast_find_grid::FastFindGridSnapshot::capture(&value.fast_grid),
@@ -164,6 +168,7 @@ impl PersistedWorldState {
     pub(crate) fn into_runtime(self) -> WorldState {
         WorldState {
             entities: self.entities,
+            soldier_registry: self.soldier_registry,
             pc_ids: self.pc_ids,
             original_pc_registry_ids: self.original_pc_registry_ids,
             fast_grid: std::sync::Arc::new(self.fast_grid.into_runtime()),
@@ -176,6 +181,115 @@ impl PersistedWorldState {
             original_creation_order_by_entity: self.original_creation_order_by_entity,
             next_original_creation_order: self.next_original_creation_order,
             original_repulsive_point_counter: self.original_repulsive_point_counter,
+        }
+    }
+}
+
+/// Ordered membership maintained at soldier publication and removal boundaries.
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub(crate) struct SoldierRegistry {
+    all: Vec<u32>,
+    camps: BTreeMap<u16, Vec<u32>>,
+}
+
+impl SoldierRegistry {
+    pub(crate) fn all(&self) -> &[u32] {
+        &self.all
+    }
+
+    pub(crate) fn camp(&self, camp: crate::element::Camp) -> &[u32] {
+        let camp = camp
+            .allegiance_id()
+            .expect("soldier roster requires a valid camp");
+        self.camps.get(&camp).map_or(&[], Vec::as_slice)
+    }
+
+    pub(crate) fn register(&mut self, id: EntityId, camp: crate::element::Camp) {
+        assert!(
+            matches!(id, EntityId::Soldier(_)),
+            "soldier roster requires a soldier ID"
+        );
+        assert!(!self.all.contains(&id.index()), "soldier registered twice");
+        let camp = camp
+            .allegiance_id()
+            .expect("soldier publication requires a valid camp");
+        self.all.push(id.index());
+        self.camps.entry(camp).or_default().push(id.index());
+    }
+
+    pub(crate) fn remove(&mut self, id: EntityId) {
+        if !matches!(id, EntityId::Soldier(_)) {
+            return;
+        }
+        self.all.retain(|&handle| handle != id.index());
+        self.camps.retain(|_, members| {
+            members.retain(|&handle| handle != id.index());
+            !members.is_empty()
+        });
+    }
+
+    fn validate(&self, entities: &Entities) -> Result<(), String> {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut camp_positions = BTreeMap::<u16, usize>::new();
+        for &handle in &self.all {
+            if !seen.insert(handle) {
+                return Err(format!("soldier registry contains duplicate {handle}"));
+            }
+            let id = crate::entity_id::SoldierId(handle);
+            let soldier = entities
+                .get_soldier(id)
+                .ok_or_else(|| format!("soldier registry references missing soldier {handle}"))?;
+            let camp = soldier
+                .soldier
+                .cached_camp
+                .allegiance_id()
+                .ok_or_else(|| format!("registered soldier {handle} has an invalid camp"))?;
+            let index = camp_positions.entry(camp).or_default();
+            if self
+                .camps
+                .get(&camp)
+                .and_then(|members| members.get(*index))
+                != Some(&handle)
+            {
+                return Err(format!(
+                    "soldier {handle} has inconsistent camp registration order"
+                ));
+            }
+            *index += 1;
+        }
+        if entities.soldiers().count() != self.all.len()
+            || self.camps.iter().any(|(camp, members)| {
+                members.is_empty() || camp_positions.get(camp).copied() != Some(members.len())
+            })
+        {
+            return Err("soldier registry membership does not match the world".into());
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rebuild_from_order(
+        &mut self,
+        entities: &Entities,
+        order: impl IntoIterator<Item = EntityId>,
+    ) {
+        *self = Self::default();
+        for id in order {
+            self.register(
+                id,
+                entities
+                    .expect_entity(id, format_args!("soldier roster fixture"))
+                    .camp(),
+            );
         }
     }
 }
@@ -195,6 +309,7 @@ impl WorldState {
     pub(crate) fn new() -> Self {
         Self {
             entities: Entities::new(),
+            soldier_registry: SoldierRegistry::default(),
             pc_ids: Vec::new(),
             original_pc_registry_ids: Vec::new(),
             fast_grid: std::sync::Arc::new(FastFindGrid::default()),
@@ -378,6 +493,7 @@ impl WorldState {
         script_zone_count: usize,
     ) -> Result<(), String> {
         self.validate_pc_index_inner()?;
+        self.soldier_registry.validate(&self.entities)?;
 
         if script_zone_count != assets.scripts.zone_grid_indices.len() {
             return Err(format!(
@@ -574,13 +690,103 @@ impl WorldState {
 mod tests {
     use super::*;
 
+    #[test]
+    fn soldier_registry_preserves_publication_order_deactivation_and_restore() {
+        // Full actor decoding needs more stack than the default test thread.
+        // Keep the codec matrix on its own stack, like other world roundtrips.
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(check_soldier_registry_lifecycle_and_restore)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    fn check_soldier_registry_lifecycle_and_restore() {
+        use crate::element::Camp;
+        use crate::engine::test_support::actors::make_test_ai_soldier;
+
+        let mut engine = crate::engine::EngineInner::new();
+        let first = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+        let foreign = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+        let second = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+        assert_eq!(
+            engine.world.soldier_registry.all(),
+            &[first.index(), foreign.index(), second.index()]
+        );
+        assert_eq!(
+            engine.world.soldier_registry.camp(Camp::Lacklandists),
+            &[first.index(), second.index()]
+        );
+
+        engine
+            .world
+            .entities
+            .get_mut(first)
+            .unwrap()
+            .element_data_mut()
+            .active = false;
+        engine.remove_entity(foreign);
+        let third = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+        assert_eq!(
+            engine.world.soldier_registry.all(),
+            &[first.index(), second.index(), third.index()]
+        );
+        assert!(
+            engine
+                .world
+                .soldier_registry
+                .camp(Camp::Royalists)
+                .is_empty()
+        );
+
+        // Explicit load adoption can differ from entity-table order. Both
+        // persistence paths must retain that order and inactive membership.
+        engine
+            .world
+            .soldier_registry
+            .rebuild_from_order(&engine.world.entities, [third, first, second]);
+        let wire = serde_json::to_vec(&PersistedWorldState::capture(&engine.world)).unwrap();
+        let saved: PersistedWorldState = serde_json::from_slice(&wire).unwrap();
+        let restored = saved.into_runtime();
+        let rollback: WorldState = bitcode::decode(&bitcode::encode(&engine.world)).unwrap();
+        for world in [&restored, &rollback] {
+            assert_eq!(
+                world.soldier_registry.all(),
+                &[third.index(), first.index(), second.index()]
+            );
+            assert_eq!(
+                world.soldier_registry.camp(Camp::Lacklandists),
+                world.soldier_registry.all()
+            );
+            assert!(!world.entities.get(first).unwrap().element_data().active);
+            assert_eq!(
+                robin_util::state_hash::compute(&world.soldier_registry),
+                robin_util::state_hash::compute(&engine.world.soldier_registry)
+            );
+        }
+
+        engine.remove_entity(first);
+        assert_eq!(
+            engine.world.soldier_registry.all(),
+            &[third.index(), second.index()]
+        );
+        assert_eq!(
+            restored.soldier_registry.all(),
+            &[third.index(), first.index(), second.index()]
+        );
+    }
+
     fn registry_test_soldier() -> Entity {
         Entity::Soldier(crate::element::ActorSoldier {
             element: Default::default(),
             actor: Default::default(),
             human: Default::default(),
             npc: Default::default(),
-            soldier: Default::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         })
     }
 

@@ -93,13 +93,27 @@ fn owner_walk_observes_live_geometry_in_original_creation_order() {
 #[test]
 fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
     use crate::element::{AiBrain, Command, Posture};
-    use crate::order::{AiOrderIntent, OrderType};
 
     let sim = crate::sim_rng::test_context();
     let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = crate::coordinates::MapSize::new(500.0, 500.0);
+    engine.world.fast_grid_mut().size_map(32, 32);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    let index = engine.world.fast_grid_mut().add_sector(
+        crate::engine::test_support::square_sector(
+            1,
+            0,
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(500.0, 500.0),
+        ),
+        0,
+    );
+    let sector = crate::position_interface::SectorHandle::new(1)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
     let mut soldier_entity = make_test_soldier(Posture::Upright);
+    soldier_entity.element_data_mut().set_sector(Some(sector));
     let Entity::Soldier(soldier) = &mut soldier_entity else {
         unreachable!();
     };
@@ -111,15 +125,16 @@ fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine.set_soldier_attentive_mode(owner, false, false);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .outbox
-        .actor
-        .orders
-        .push(AiOrderIntent::new(OrderType::WalkingUpright, 100.0, 90.0));
+    let mut destination = engine.live_ai_position(owner);
+    destination.x = 100.0;
+    destination.y = 90.0;
+    engine.duty_go_to(
+        &sim,
+        &assets,
+        owner,
+        destination,
+        crate::ai::GotoFlags::empty(),
+    );
     engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
     let commands = engine

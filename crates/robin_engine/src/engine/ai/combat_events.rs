@@ -168,14 +168,7 @@ impl EngineInner {
         {
             self.combat_event_ai_mut(owner).base.already_turned = true;
         } else {
-            let mut order = crate::order::AiOrderIntent::face_direction(direction);
-            order.fast_turn = true;
-            self.combat_event_ai_mut(owner)
-                .base
-                .outbox
-                .actor
-                .orders
-                .push(order);
+            self.launch_live_ai_turn(owner, direction, true);
             self.drain_direct_ai_owner_boundary(sim, owner, assets);
         }
     }
@@ -220,7 +213,7 @@ impl EngineInner {
         owner: EntityId,
         remark: Remark,
     ) {
-        self.owner_work_speech(
+        self.execute_ai_speech(
             sim,
             assets,
             owner,
@@ -316,8 +309,7 @@ impl EngineInner {
                         .set_emoticon(EmoticonType::None);
                     self.drain_direct_ai_owner_boundary(sim, owner, assets);
                     self.execute_reconsider_swordfight(sim, assets, owner, false);
-                    self.combat_event_ai_mut(owner)
-                        .swordfight_insult_after_reconsider();
+                    self.combat_insult_after_reconsider(sim, assets, owner);
                     self.drain_direct_ai_owner_boundary(sim, owner, assets);
                 }
             }

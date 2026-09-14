@@ -449,7 +449,7 @@ fn direct_ai_owner_boundary_preserves_preexisting_foreign_condolation() {
 
 #[test]
 fn resumed_return_to_duty_uses_live_position_and_translates_its_goto() {
-    use crate::ai::{AiOwnerWork, AiState, DutyFlags, Substate};
+    use crate::ai::{AiState, DutyFlags, Substate};
     use crate::coordinates::MapPoint;
     use crate::element::Command;
 
@@ -492,7 +492,6 @@ fn resumed_return_to_duty_uses_live_position_and_translates_its_goto() {
         !ai.base.outbox.actor.has_boundary_work(),
         "common return-to-duty movement must be translated before the resumed owner work returns"
     );
-    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
     assert!(
         engine
             .orders

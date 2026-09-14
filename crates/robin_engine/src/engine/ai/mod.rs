@@ -805,7 +805,6 @@ mod panic_boundary_tests {
             friendly.base.current_substate,
             crate::ai::Substate::DefaultOnPost
         );
-        assert!(friendly.base.outbox.reentrant.owner_work.is_empty());
         assert!(friendly.base.outbox.actor.unfocus);
         assert!(friendly.base.outbox.actor.begin_panic.unwrap().is_new_panic);
     }
@@ -910,7 +909,6 @@ mod panic_boundary_tests {
         assert_eq!(ai.view_alert_status, crate::ai::AlertLevel::Red);
         assert_eq!(ai.current_music_alert_status, crate::ai::AlertLevel::Red);
         assert_eq!(ai.lasting_panic_runs, 11);
-        assert!(ai.outbox.reentrant.owner_work.is_empty());
         assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     }
 
@@ -3282,11 +3280,15 @@ impl EngineInner {
         }
         if let Some(door) = door {
             if is_civilian {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(npc_id, format_args!("panic speech"))
-                    .say(crate::ai::Remark::CivPanic);
-                self.drain_ai_owner_work_for(sim, assets, npc_id);
+                self.execute_ai_speech(
+                    sim,
+                    assets,
+                    npc_id,
+                    crate::ai::AiSpeechAttempt {
+                        remark: crate::ai::Remark::CivPanic,
+                        flags: 0,
+                    },
+                );
             }
             self.duty_set_state(
                 sim,
@@ -3540,18 +3542,19 @@ impl EngineInner {
                 crate::ai::AiState::Fleeing,
                 crate::ai::Substate::FleeingPanic,
             );
-            self.world
-                .entities
-                .expect_ai_controller_mut(
-                    npc_id,
-                    format_args!("panic owner {} has no AI", npc_id.index()),
-                )
-                .say(if is_civilian {
-                    crate::ai::Remark::CivPanic
-                } else {
-                    crate::ai::Remark::Panic
-                });
-            self.drain_ai_owner_work_for(sim, assets, npc_id);
+            self.execute_ai_speech(
+                sim,
+                assets,
+                npc_id,
+                crate::ai::AiSpeechAttempt {
+                    remark: if is_civilian {
+                        crate::ai::Remark::CivPanic
+                    } else {
+                        crate::ai::Remark::Panic
+                    },
+                    flags: 0,
+                },
+            );
             {
                 let ai = self
                     .world
@@ -3692,7 +3695,6 @@ impl EngineInner {
         // Area seeking's typed state-change callback is inside the decision-tick
         // scope and must finish before its later movement/order tail is
         // exposed to the enclosing native barrier.
-        self.drain_ai_owner_work_for(sim, assets, npc_id);
     }
 
     #[inline(never)]

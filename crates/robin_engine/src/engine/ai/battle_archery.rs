@@ -200,7 +200,7 @@ impl EngineInner {
                 }
             }
         }
-        self.owner_work_speech(
+        self.execute_ai_speech(
             sim,
             assets,
             owner,
@@ -389,13 +389,19 @@ mod tests {
         ));
         assert!(
             engine
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("archery result"))
-                .outbox
-                .actor
                 .orders
-                .is_empty()
+                .sequence_manager
+                .sequences_iter()
+                .all(
+                    |sequence| sequence
+                        .elements
+                        .iter()
+                        .all(|element| element.owner != Some(owner)
+                            || !matches!(
+                                element.data,
+                                crate::sequence::SequenceElementData::Movement { .. }
+                            ))
+                )
         );
     }
 

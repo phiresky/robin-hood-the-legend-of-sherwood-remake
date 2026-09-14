@@ -615,11 +615,11 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
 }
 
 #[test]
-fn face_to_waits_for_manager_regardless_of_owner_drain_mode() {
+fn face_to_waits_for_manager_after_live_halt() {
     use crate::coordinates::MapPoint;
     use crate::element::{ActionState, Command, Posture};
     use crate::movement::ActiveMovement;
-    use crate::order::{AiOrderIntent, Order, OrderType};
+    use crate::order::{Order, OrderType};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
     use std::num::NonZeroU32;
 
@@ -656,25 +656,8 @@ fn face_to_waits_for_manager_regardless_of_owner_drain_mode() {
             .position_iface_mut()
             .set_map_goal(MapPoint::new(70.0, 80.0));
     }
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .outbox
-        .actor
-        .halt = true;
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .outbox
-        .actor
-        .orders
-        .push(AiOrderIntent::face_direction(9));
-
-    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
+    engine.halt_actor(owner);
+    engine.duty_face_direction(&sim, &assets, owner, 9);
 
     let turn_sequence = engine
         .orders

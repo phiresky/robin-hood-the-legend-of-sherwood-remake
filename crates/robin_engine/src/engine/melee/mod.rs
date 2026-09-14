@@ -240,18 +240,13 @@ impl EngineInner {
                 )
             })
         });
-        let owner_work = |owner: EntityId| {
+        let self_stimuli_count = |owner: EntityId| {
             self.get_entity(owner)
                 .and_then(Entity::ai_controller)
-                .map(|ai| {
-                    (
-                        ai.outbox.reentrant.owner_work.len(),
-                        ai.outbox.reentrant.self_stimuli.len(),
-                    )
-                })
+                .map(|ai| ai.outbox.reentrant.self_stimuli.len())
         };
-        let victim_owner_work = owner_work(victim);
-        let attacker_owner_work = attacker.and_then(owner_work);
+        let victim_self_stimuli_count = self_stimuli_count(victim);
+        let attacker_self_stimuli_count = attacker.and_then(self_stimuli_count);
         let rng_cursor = self.control.rng.original_replay_cursor();
         tracing::trace!(
             target: "parity_sword_damage_lifecycle",
@@ -268,8 +263,8 @@ impl EngineInner {
             ?damage_orders,
             ?actor_state,
             ?rng_cursor,
-            ?victim_owner_work,
-            ?attacker_owner_work,
+            ?victim_self_stimuli_count,
+            ?attacker_self_stimuli_count,
             "sword-damage lifecycle"
         );
     }

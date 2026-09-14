@@ -9,7 +9,7 @@
 //! - Actor and engine dispatch invoke message processing and only
 //!   then set the element to `RHSEQ_TERMINATED` in the same frame.
 
-use crate::element::{Entity, SoldierData};
+use crate::element::{Camp, Entity};
 use crate::engine::EngineInner;
 use crate::engine::test_support::asm;
 pub(super) use crate::engine::test_support::asm::{
@@ -52,9 +52,7 @@ pub(super) fn scripted_receiver() -> Entity {
 }
 
 pub(super) fn scripted_soldier(script_class: &str) -> Entity {
-    let mut entity = crate::engine::test_support::actors::make_test_ai_soldier(
-        SoldierData::default().cached_camp,
-    );
+    let mut entity = crate::engine::test_support::actors::make_test_ai_soldier(Camp::Lacklandists);
     entity.position_iface_mut().clear_pathfinder_index();
     entity.element_data_mut().active = true;
     entity

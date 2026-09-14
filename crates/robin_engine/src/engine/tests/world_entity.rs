@@ -2,8 +2,7 @@ use super::*;
 
 const SPEECH_TIMING_PROFILE_ID: u32 = 0x1234_0000;
 
-fn build_mytalk_timing_test() -> (EngineInner, EntityId, LevelAssets) {
-    use crate::ai::{Remark, SpeechFlags};
+fn build_speech_timing_actor() -> (EngineInner, EntityId, LevelAssets) {
     use crate::element::AiBrain;
     use crate::profiles::SoldierProfile;
 
@@ -21,8 +20,6 @@ fn build_mytalk_timing_test() -> (EngineInner, EntityId, LevelAssets) {
         .enemy_mut()
         .expect("timing-test soldier has EnemyAi")
         .hth_weapon_id = 1;
-    let ai = soldier.npc.ai_brain.base_mut().unwrap();
-    ai.say_with_flags(Remark::Arrow, SpeechFlags::MYTALK_1 | SpeechFlags::ALWAYS);
     let soldier_id = engine.add_test_entity(soldier_entity);
 
     let mut assets = LevelAssets::new();
@@ -37,6 +34,22 @@ fn build_mytalk_timing_test() -> (EngineInner, EntityId, LevelAssets) {
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .hth_weapons
         .push(Default::default());
+    (engine, soldier_id, assets)
+}
+
+fn build_mytalk_timing_test() -> (EngineInner, EntityId, LevelAssets) {
+    use crate::ai::{Remark, SpeechFlags};
+
+    let (mut engine, soldier_id, assets) = build_speech_timing_actor();
+    engine.execute_ai_speech(
+        &crate::sim_rng::test_context(),
+        &assets,
+        soldier_id,
+        crate::ai::AiSpeechAttempt {
+            remark: Remark::Arrow,
+            flags: (SpeechFlags::MYTALK_1 | SpeechFlags::ALWAYS).bits(),
+        },
+    );
     (engine, soldier_id, assets)
 }
 
@@ -124,12 +137,15 @@ fn queue_and_settle_speech(
     remark: crate::ai::Remark,
     flags: crate::ai::SpeechFlags,
 ) {
-    engine
-        .get_entity_mut(owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("speech test owner has AI")
-        .say_with_flags(remark, flags);
-    engine.drain_ai_owner_work_for(&crate::sim_rng::test_context(), assets, owner);
+    engine.execute_ai_speech(
+        &crate::sim_rng::test_context(),
+        assets,
+        owner,
+        crate::ai::AiSpeechAttempt {
+            remark,
+            flags: flags.bits(),
+        },
+    );
 }
 
 fn speech_log(engine: &EngineInner, owner: EntityId) -> Vec<(crate::ai::LogLineType, u16)> {

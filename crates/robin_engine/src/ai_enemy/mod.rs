@@ -15,7 +15,6 @@ pub(crate) use combat_positions::{SwordfightLists, is_facing_swordfight_target};
 pub(crate) use combat_positions::{combat_neighbour_distance_ulong, drunk_combat_freezes};
 pub(crate) use map_vec_ext::AiMapVec;
 pub(crate) use util::{CombatFighterAccess, evaluate_combat_position_full};
-mod event_handlers;
 mod map_vec_ext;
 mod parity_trace;
 mod seek;
@@ -29,7 +28,6 @@ use crate::ai::*;
 use crate::entity_id::PcId;
 #[cfg(test)]
 use crate::parameters_ai;
-use crate::sim_rng::SimulationContext;
 
 /// Master switch for the opt-in AI decision/path diagnostic used by the
 /// Save020/Save055 substate-only parity cohort. Keep this check separate so
@@ -479,29 +477,6 @@ impl EnemyAi {
         self.known_enemy_strike_1 = None;
         self.known_enemy_strike_2 = None;
         self.known_enemy_strike_3 = None;
-    }
-
-    /// Fired when a special action animation begins (helbardman frame
-    /// 40 or non-helbardman start-of-anim).  Two-way branch:
-    ///
-    ///   * Shield-bearers always speak via `SpeechFlags::ALWAYS`,
-    ///     which is meant to bypass `is_remark_forbidden`.  The Rust
-    ///     speech pipeline doesn't yet enforce a forbidden-list
-    ///     gate, so `ALWAYS` is currently a no-op there — we set it
-    ///     anyway so the wiring lands when the gate is implemented.
-    ///   * Everyone else only speaks at 1-in-3 odds and only when
-    ///     currently silent (the `current_remark == TheSoundOfSilence`
-    ///     guard).  The silence guard is also enforced by `say_impl`
-    ///     itself, but we keep the explicit check for clarity.
-    pub fn make_special_action_remark(&mut self, sim: &SimulationContext, is_shield_bearer: bool) {
-        if is_shield_bearer {
-            self.base
-                .say_with_flags(Remark::SpecialAction, crate::ai::SpeechFlags::ALWAYS);
-        } else if self.base.current_remark == Remark::TheSoundOfSilence
-            && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::SpecialActionRemark, 0..3) == 0
-        {
-            self.base.say(Remark::SpecialAction);
-        }
     }
 
     /// Kick off a directed panic — the NPC flees away from `center`.

@@ -57,7 +57,7 @@ impl EngineInner {
             format_args!("BORED_BOUNDARY owner {owner} during {phase}"),
         );
         eprintln!(
-            "BORED_BOUNDARY frame={} owner={} phase={} command={:?} state={:?} substate={:?} timer_running={} timer_deadline={} self_stimuli={} owner_work={} orders={}",
+            "BORED_BOUNDARY frame={} owner={} phase={} command={:?} state={:?} substate={:?} timer_running={} timer_deadline={} self_stimuli={}",
             frame,
             owner,
             phase,
@@ -67,8 +67,6 @@ impl EngineInner {
             ai.timer_is_running,
             ai.when_does_timer_ring,
             ai.outbox.reentrant.self_stimuli.len(),
-            ai.outbox.reentrant.owner_work.len(),
-            ai.outbox.actor.orders.len(),
         );
     }
 }

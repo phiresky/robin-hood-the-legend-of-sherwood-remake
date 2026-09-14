@@ -473,7 +473,10 @@ fn sprite_serialization_surface_matches_v2_contract() {
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
 
     let json = serde_json::to_string(&engine).expect("serialize");
@@ -600,7 +603,10 @@ fn measure_engine_size() {
             actor: Default::default(),
             human: Default::default(),
             npc: Default::default(),
-            soldier: Default::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         });
         engine.add_test_entity(entity);
     }

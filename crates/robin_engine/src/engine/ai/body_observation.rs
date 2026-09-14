@@ -73,12 +73,19 @@ impl EngineInner {
             .expect("body must remain human")
             .stuck_under_nets_counter
             > 0;
-        self.seek_enemy_mut(owner).base.say(if stuck {
-            Remark::SeesFriendUnderNet
-        } else {
-            Remark::SeesBody
-        });
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_speech(
+            sim,
+            assets,
+            owner,
+            crate::ai::AiSpeechAttempt {
+                remark: if stuck {
+                    Remark::SeesFriendUnderNet
+                } else {
+                    Remark::SeesBody
+                },
+                flags: 0,
+            },
+        );
         let hint = self.live_ai_position(body_id);
         self.execute_ai_look_there(sim, assets, owner, hint, 100);
         self.seek_enemy_mut(owner).seen_dead_body = false;
@@ -176,7 +183,7 @@ impl EngineInner {
     ) -> Option<EntityId> {
         let viewer = self.expect_entity(owner, "body advice viewer");
         let camp = viewer.camp();
-        for &handle in self.ai.global.all_soldier_handles.iter() {
+        for &handle in self.world.soldier_registry.all().iter() {
             let id = EntityId::Soldier(crate::entity_id::SoldierId(handle));
             let Entity::Soldier(soldier) = self.expect_entity(id, "body advice officer") else {
                 unreachable!()

@@ -815,7 +815,10 @@ fn sort_for_minimap_priority_order() {
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
 
     let mut pc_elem = {
@@ -885,7 +888,10 @@ fn swordfight_los_ignores_crossing_motion_line() {
             actor: Default::default(),
             human: Default::default(),
             npc: Default::default(),
-            soldier: Default::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         })
     };
     let left_id = engine.add_test_entity(make_fighter(100.0));
@@ -1135,7 +1141,10 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
 
     let mut defender_element = {
@@ -1154,7 +1163,10 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
 
     if let Some(attacker) = engine.world.entities.get_mut(attacker_id) {
@@ -1269,7 +1281,10 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
                 actor: Default::default(),
                 human: Default::default(),
                 npc: Default::default(),
-                soldier: Default::default(),
+                soldier: crate::element::SoldierData {
+                    cached_camp: crate::element::Camp::Lacklandists,
+                    ..Default::default()
+                },
             })
         };
         let attacker = engine.add_test_entity(make_fighter(100.0));
@@ -1441,7 +1456,10 @@ fn waiting_sword_near_gate_uses_three_dimensional_square_norm() {
             actor: Default::default(),
             human: Default::default(),
             npc: Default::default(),
-            soldier: Default::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         })
     };
     let attacker = engine.add_test_entity(make_fighter(WorldPoint3D {
@@ -1516,7 +1534,10 @@ fn waiting_sword_requires_real_combat_profiles_contextually() {
             actor: Default::default(),
             human: Default::default(),
             npc: Default::default(),
-            soldier: Default::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         })
     };
     let owner = engine.add_test_entity(make_fighter());
@@ -1588,7 +1609,10 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
 
     if let Some(pc) = engine.world.entities.get_mut(pc_id) {
@@ -1637,7 +1661,10 @@ fn smalltalk_hint_missing_required_opponent_fails_contextually() {
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
     let stale = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: {
@@ -1648,7 +1675,10 @@ fn smalltalk_hint_missing_required_opponent_fails_contextually() {
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
     engine.remove_entity(stale);
     let human = engine
@@ -1693,7 +1723,10 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
 
     let mut hinted_opponent_element = {
@@ -1711,7 +1744,10 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
 
     let mut free_attacker_element = {
@@ -1730,7 +1766,10 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
 
     let mut free_defender_element = {
@@ -1749,7 +1788,10 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
 
     if let Some(hinted) = engine.world.entities.get_mut(hinted_id) {
@@ -1848,7 +1890,10 @@ fn sword_movement_start_transfers_smalltalk_initiative() {
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
     let defender_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: {
@@ -1859,7 +1904,10 @@ fn sword_movement_start_transfers_smalltalk_initiative() {
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
 
     if let Some(attacker) = engine.world.entities.get_mut(attacker_id) {
@@ -1912,7 +1960,10 @@ fn sort_for_minimap_display_then_creation_tiebreak() {
             actor: Default::default(),
             human: Default::default(),
             npc: Default::default(),
-            soldier: Default::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         })
     };
 

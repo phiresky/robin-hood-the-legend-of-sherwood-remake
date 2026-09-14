@@ -104,9 +104,15 @@ impl EngineInner {
                 if event == StimulusType::EventTimer
                     && !self.civilian_alert_soldier(sim, assets, owner, false)
                 {
-                    self.reporting_civilian_mut(owner)
-                        .base
-                        .say(Remark::CivPanic);
+                    self.execute_ai_speech(
+                        sim,
+                        assets,
+                        owner,
+                        crate::ai::AiSpeechAttempt {
+                            remark: Remark::CivPanic,
+                            flags: 0,
+                        },
+                    );
                     self.drain_direct_ai_owner_boundary(sim, owner, assets);
                     let center = self.reporting_civilian_mut(owner).base.seek_position;
                     self.reporting_civilian_mut(owner)
@@ -194,9 +200,15 @@ impl EngineInner {
                         target,
                         &Stimulus::with_human(StimulusType::CallReport, owner.index()),
                     );
-                    self.reporting_civilian_mut(owner)
-                        .base
-                        .say(Remark::CivDenunciates);
+                    self.execute_ai_speech(
+                        sim,
+                        assets,
+                        owner,
+                        crate::ai::AiSpeechAttempt {
+                            remark: Remark::CivDenunciates,
+                            flags: 0,
+                        },
+                    );
                     self.drain_direct_ai_owner_boundary(sim, owner, assets);
                     let position = self.reporting_civilian_mut(owner).base.seek_position;
                     self.duty_point_to(sim, assets, owner, position);
@@ -336,9 +348,15 @@ impl EngineInner {
             self.clear_civilian_alert_friends(owner);
             return false;
         }
-        self.reporting_civilian_mut(owner)
-            .base
-            .say(Remark::CivPanic);
+        self.execute_ai_speech(
+            sim,
+            assets,
+            owner,
+            crate::ai::AiSpeechAttempt {
+                remark: Remark::CivPanic,
+                flags: 0,
+            },
+        );
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
         true
     }
@@ -350,10 +368,11 @@ impl EngineInner {
         check_door_path: bool,
     ) -> Option<EntityId> {
         let camp = self.expect_entity(owner, "civilian alert owner").camp();
-        let registry = std::sync::Arc::clone(&self.ai.global.all_soldier_handles);
+        let count = self.world.soldier_registry.camp(camp).len();
         let mut best = None;
         let mut best_distance = u32::MAX;
-        for &handle in registry.iter() {
+        for index in 0..count {
+            let handle = self.world.soldier_registry.camp(camp)[index];
             let target = EntityId::Soldier(crate::entity_id::SoldierId(handle));
             let Entity::Soldier(soldier) = self.expect_entity(target, "civilian alert registry")
             else {
@@ -573,9 +592,15 @@ impl EngineInner {
                 &Stimulus::new(StimulusType::EventReachPoint),
             );
         } else {
-            self.reporting_civilian_mut(owner)
-                .base
-                .say(Remark::CivCallsSoldier);
+            self.execute_ai_speech(
+                sim,
+                assets,
+                owner,
+                crate::ai::AiSpeechAttempt {
+                    remark: Remark::CivCallsSoldier,
+                    flags: 0,
+                },
+            );
             self.drain_direct_ai_owner_boundary(sim, owner, assets);
             self.approach_reporting_soldier(sim, assets, owner);
             self.reporting_civilian_mut(owner)
@@ -690,7 +715,6 @@ mod tests {
         );
         assert_eq!(ai.base.current_remark, Remark::CivPanic);
         assert!(!ai.base.couldnt_reachpoint);
-        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
         assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
     }
 
@@ -752,7 +776,6 @@ mod tests {
         assert_eq!(ai.base.current_state, AiState::Fleeing);
         assert_eq!(ai.base.current_remark, Remark::CivPanic);
         assert!(!ai.base.couldnt_reachpoint);
-        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
         assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
     }
 
@@ -807,8 +830,10 @@ mod tests {
             .unwrap()
             .element_data_mut()
             .set_position(position);
-        engine.ai.global.all_soldier_handles =
-            std::sync::Arc::new(vec![second.index(), first.index()]);
+        engine
+            .world
+            .soldier_registry
+            .rebuild_from_order(&engine.world.entities, [second, first]);
         for _ in 0..2 {
             assert_eq!(
                 engine.select_civilian_alert_soldier(&assets, owner, false),
@@ -852,6 +877,10 @@ mod tests {
             unreachable!()
         };
         soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+        engine
+            .world
+            .soldier_registry
+            .rebuild_from_order(&engine.world.entities, [first, second]);
         assert_eq!(
             engine.select_civilian_alert_soldier(&assets, owner, false),
             Some(second)
@@ -1002,7 +1031,20 @@ mod tests {
                         && matches!(element.data, crate::sequence::SequenceElementData::Movement { action, .. } if action == order))));
             } else {
                 assert!(!ai.base.already_on_point);
-                assert!(ai.base.outbox.actor.orders.is_empty());
+                assert!(
+                    engine
+                        .orders
+                        .sequence_manager
+                        .sequences_iter()
+                        .all(
+                            |sequence| sequence.elements.iter().all(|element| element.owner
+                                != Some(owner)
+                                || !matches!(
+                                    element.data,
+                                    crate::sequence::SequenceElementData::Movement { .. }
+                                ))
+                        )
+                );
             }
         }
     }

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn rebuilt_live_enemies_preserve_detectable_order_duplicates_and_liveness() {
+fn rebuilt_live_enemies_preserve_first_seen_order_and_liveness() {
     use crate::element::{Detectable, DetectableType};
     let (mut engine, mut assets, owner, target) = fixture();
     let dead = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
@@ -59,10 +59,7 @@ fn rebuilt_live_enemies_preserve_detectable_order_duplicates_and_liveness() {
     ai.base.primary_target = Some(AiEntityHandle::new(dead.index()));
     engine.reinitialize_live_ai_enemies(owner);
     let ai = engine.observation_ai(owner);
-    assert_eq!(
-        ai.list_them,
-        [target.index(), owner.index(), target.index()]
-    );
+    assert_eq!(ai.list_them, [target.index(), owner.index()]);
     assert_eq!(
         ai.base.primary_target,
         Some(AiEntityHandle::new(dead.index()))
@@ -512,9 +509,9 @@ fn lecture_defence_relays_to_live_officer_and_ignores_unrelated_timer() {
         engine
             .observation_ai(officer)
             .base
-            .outbox
-            .reentrant
-            .owner_work
-            .is_empty()
+            .ai_log
+            .iter()
+            .any(|line| line.line_type == crate::ai::LogLineType::Speak
+                && line.info == crate::ai::Remark::OfficerRebukesCharlyEnd as u16)
     );
 }

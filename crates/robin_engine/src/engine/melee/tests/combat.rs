@@ -915,19 +915,6 @@ fn deferred_combat_insult_depends_on_inline_strike_result() {
         .get_entity(rejected_attacker)
         .and_then(Entity::enemy_ai)
         .unwrap();
-    assert!(
-        rejected_ai
-            .base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .any(|work| matches!(
-                work,
-                crate::ai::AiOwnerWork::Speech(attempt)
-                    if attempt.remark == crate::ai::Remark::CombatInsult
-            ))
-    );
 
     // A successful proposal changes Original to SpecialStrike before the
     // same following statement tests the substate, suppressing the bark.
@@ -948,19 +935,6 @@ fn deferred_combat_insult_depends_on_inline_strike_result() {
         .and_then(Entity::enemy_ai)
         .unwrap();
     assert!(accepted_ai.pending_special_strike);
-    assert!(
-        !accepted_ai
-            .base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .any(|work| matches!(
-                work,
-                crate::ai::AiOwnerWork::Speech(attempt)
-                    if attempt.remark == crate::ai::Remark::CombatInsult
-            ))
-    );
 }
 
 #[test]

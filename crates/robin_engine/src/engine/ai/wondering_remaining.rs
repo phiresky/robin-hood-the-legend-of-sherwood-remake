@@ -154,7 +154,7 @@ impl EngineInner {
                     self.execute_ai_callback(sim, assets, owner, &Stimulus::new(call));
                 }
             }
-            (WonderingOfficerFinishingBrawl, CallYourTalk3) => self.owner_work_speech(
+            (WonderingOfficerFinishingBrawl, CallYourTalk3) => self.execute_ai_speech(
                 sim,
                 assets,
                 owner,
@@ -263,7 +263,7 @@ impl EngineInner {
                         CallYourTalk2 => SpeechFlags::MYTALK_2,
                         _ => SpeechFlags::MYTALK_3,
                     };
-                self.owner_work_speech(
+                self.execute_ai_speech(
                     sim,
                     assets,
                     owner,

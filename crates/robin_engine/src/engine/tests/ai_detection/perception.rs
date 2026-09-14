@@ -1013,7 +1013,7 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
     let wrong_camp = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
     let victim_middle = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let ordinary_ko = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let stale_soldier_slot = engine.add_test_entity(make_test_civilian(Posture::Upright));
+    engine.add_test_entity(make_test_civilian(Posture::Upright));
 
     let fixtures = [
         (owner_id, MapPoint::new(0.0, 0.0), true, 100, false, false),
@@ -1111,18 +1111,20 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
     engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
         "money_victims.scs",
     ));
-    engine.ai.global.all_soldier_handles = std::sync::Arc::new(vec![
-        victim_middle.index(),
-        stale_soldier_slot.index(),
-        owner_id.index(),
-        inactive.index(),
-        victim_far.index(),
-        dead.index(),
-        wrong_camp.index(),
-        victim_near.index(),
-        conscious.index(),
-        ordinary_ko.index(),
-    ]);
+    engine.world.soldier_registry.rebuild_from_order(
+        &engine.world.entities,
+        [
+            victim_middle,
+            owner_id,
+            inactive,
+            victim_far,
+            dead,
+            wrong_camp,
+            victim_near,
+            conscious,
+            ordinary_ko,
+        ],
+    );
     engine.ai.standard_view_polygon_radius = 400;
 
     crate::sight_obstacle::begin_parity_visibility_capture();
@@ -2279,7 +2281,7 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
 }
 
 #[test]
-fn npc_detection_queues_every_rising_enemy_in_detectable_order() {
+fn npc_detection_delivers_each_rising_view_and_keeps_ordered_unique_enemies() {
     use crate::ai::{AiState, Substate};
     use crate::ai_enemy::task_priority;
     use crate::element::{Camp, Detectable, DetectableType, ElementData, ElementKind, Entity};
@@ -2418,13 +2420,9 @@ fn npc_detection_queues_every_rising_enemy_in_detectable_order() {
     assert_eq!(far_then_near_latches, vec![true, true]);
     assert_eq!(near_then_far_latches, vec![true, true]);
     // The first VIEW rebuilds from every newly seen detectable. The second
-    // VIEW then appends its actor during reaction time, retaining duplicates.
-    let expected_list = |mut order: Vec<u32>| {
-        order.push(order[1]);
-        order
-    };
-    assert_eq!(far_then_near, expected_list(far_then_near_expected));
-    assert_eq!(near_then_far, expected_list(near_then_far_expected));
+    // VIEW still executes, but its already-listed actor keeps its first position.
+    assert_eq!(far_then_near, far_then_near_expected);
+    assert_eq!(near_then_far, near_then_far_expected);
 }
 
 #[test]

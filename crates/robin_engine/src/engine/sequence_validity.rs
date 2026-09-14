@@ -1957,7 +1957,10 @@ mod tests {
             actor: Default::default(),
             human: Default::default(),
             npc: Default::default(),
-            soldier: Default::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         }))
     }
 

@@ -1311,7 +1311,10 @@ mod suite {
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData::default(),
-            soldier: SoldierData::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         });
         let target_position = MapPoint::new(200.0, 200.0);
         target_entity

@@ -33,10 +33,9 @@ pub(crate) fn unbound_pc(posture: crate::element::Posture) -> crate::element::Ac
 
 /// Explicit actor fixture builder over [`unbound_soldier`] / [`unbound_pc`].
 ///
-/// Every deviation from the unbound defaults is spelled out at the call site
-/// (`TestActor::soldier(Posture::Upright).at(pos).life_points(50).build()`),
-/// so suites cannot silently construct subtly different actors. The builder
-/// supplies no pathfinder, profile or allegiance of its own.
+/// Soldiers start with the enemy allegiance and allow an explicit `.camp(...)`
+/// override. Other scenario properties are specified at the call site; this
+/// builder supplies no pathfinder or profile binding.
 pub(crate) struct TestActor {
     entity: Entity,
 }
@@ -44,7 +43,13 @@ pub(crate) struct TestActor {
 impl TestActor {
     pub(crate) fn soldier(posture: crate::element::Posture) -> Self {
         Self {
-            entity: Entity::Soldier(unbound_soldier(posture)),
+            entity: Entity::Soldier(crate::element::ActorSoldier {
+                soldier: crate::element::SoldierData {
+                    cached_camp: crate::element::Camp::Lacklandists,
+                    ..Default::default()
+                },
+                ..unbound_soldier(posture)
+            }),
         }
     }
 
@@ -235,6 +240,33 @@ pub(crate) fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
     soldier.soldier.cached_camp = camp;
     soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
     entity
+}
+
+#[test]
+fn soldier_builder_publishes_into_its_selected_camp() {
+    use crate::element::{Camp, Posture};
+
+    let mut engine = crate::engine::EngineInner::new();
+    let enemy = engine.add_test_entity(TestActor::soldier(Posture::Upright).build());
+    let friendly = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .camp(Camp::Royalists)
+            .build(),
+    );
+    assert_eq!(
+        engine.world.soldier_registry.camp(Camp::Lacklandists),
+        &[enemy.index()]
+    );
+    assert_eq!(
+        engine.world.soldier_registry.camp(Camp::Royalists),
+        &[friendly.index()]
+    );
+
+    let invalid = TestActor::soldier(Posture::Upright)
+        .camp(Camp::Error)
+        .build();
+    assert_eq!(invalid.camp(), Camp::Error);
+    assert!(invalid.position_iface().get_pathfinder_index().is_none());
 }
 
 #[test]

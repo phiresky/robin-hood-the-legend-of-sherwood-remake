@@ -88,81 +88,18 @@ impl EngineInner {
             // self-stimulus work continues.
             self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
 
-            // A recursive decision can itself reach an authored waypoint. The
-            // original game handles reaching the point synchronously before the
-            // recursive decision's generic effects are allowed to escape.
-            self.dispatch_pending_waypoint_script_for_owner(sim, npc_id, assets);
-
             // The original game's decision ticks execute their engine-facing side effects
             // before returning.  Close that window after every recursive
             // stimulus so a newly launched sequence participates in
             // arbitration before the next sibling stimulus is delivered.
             self.drain_pending_for_npc(sim, npc_id, assets);
-            self.launch_pending_orders_for_npc(sim, assets, npc_id);
 
             self.dispatch_condolations(sim, assets);
         }
     }
 
-    // ── Per-waypoint ReachPoint dispatch ──────────────────────────
-    //
-    // Drain `pending_waypoint_script_reach_point` on every NPC:
-    // dispatch `ReachPoint(actor)` on the waypoint's bound VM, then
-    // synchronously re-enter `think(EventAfterScriptGoOn)` unless the
-    // script transitioned the NPC into `DefaultScriptDriven`.  Runs
-    // `execute_waypoint_script`, including the `script_enabled` gate
-    // and the recursive `think()` call.  If no script is bound for
-    // the waypoint (class missing), the recursive `think` still fires
-    // — the "script was a no-op" branch when the bound class doesn't
-    // transition state.
-    pub(in crate::engine) fn dispatch_pending_waypoint_scripts(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        let owners: Vec<_> = self
-            .world
-            .entities
-            .npcs()
-            .filter_map(|(npc_id, entity)| {
-                entity
-                    .ai_controller()
-                    .and_then(|ai| ai.outbox.reentrant.waypoint_script_reach_point)
-                    .map(|_| EntityId::from(npc_id))
-            })
-            .collect();
-        for owner in owners {
-            self.dispatch_pending_waypoint_script_for_owner(sim, owner, assets);
-        }
-    }
-
-    /// Close one NPC's authored waypoint callback on the same owner-local
-    /// stack that selected it. The original game's waypoint-script execution calls
-    /// the reach-point callback and then resumes decision processing directly.
-    pub(in crate::engine) fn dispatch_pending_waypoint_script_for_owner(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
-        let request = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(|entity| entity.ai_controller_mut())
-            .and_then(|ai| ai.outbox.reentrant.waypoint_script_reach_point.take());
-        let Some((path_idx, wp_idx)) = request else {
-            return;
-        };
-        if !sim.config().script_enabled {
-            return;
-        }
-
-        self.dispatch_waypoint_script_on_suspended_think(sim, npc_id, assets, path_idx, wp_idx);
-    }
-
     /// Run the waypoint VM inside the caller's existing decision frame.
-    fn dispatch_waypoint_script_on_suspended_think(
+    pub(in crate::engine) fn execute_ai_waypoint_script(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
@@ -170,6 +107,9 @@ impl EngineInner {
         path_idx: crate::ai::PathId,
         wp_idx: u8,
     ) {
+        if !sim.config().script_enabled {
+            return;
+        }
         let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
         tracing::trace!(
             frame = self.control.frame_counter,
@@ -475,7 +415,7 @@ impl EngineInner {
         const MAX_ITERS: u32 = 8;
         for iter in 0..MAX_ITERS {
             self.drain_pending_for_npc(sim, npc_id, assets);
-            self.launch_pending_orders_for_npc(sim, assets, npc_id);
+
             // All foreign cards that predated this direct boundary are held
             // aside above. Any foreign-owner card visible here was therefore
             // produced causally on this call stack and must close now.
@@ -496,9 +436,7 @@ impl EngineInner {
                     .world
                     .entities
                     .expect_ai_controller(npc_id, format_args!("direct-drain NPC"));
-                ai.outbox.actor.has_boundary_work()
-                    || !ai.outbox.reentrant.self_stimuli.is_empty()
-                    || !ai.outbox.reentrant.owner_work.is_empty()
+                ai.outbox.actor.has_boundary_work() || !ai.outbox.reentrant.self_stimuli.is_empty()
             };
             if !still_pending {
                 break;
@@ -618,11 +556,21 @@ impl EngineInner {
             let ai = self
                 .world
                 .entities
-                .expect_enemy_ai_mut(npc_id, format_args!("periodic remark owner"));
-            if ai.get_rank() == crate::profiles::ProfileRank::Officer {
-                ai.base.say(crate::ai::Remark::OfficerComplains);
+                .expect_enemy_ai(npc_id, format_args!("periodic remark owner"));
+            let remark = if ai.get_rank() == crate::profiles::ProfileRank::Officer {
+                Some(crate::ai::Remark::OfficerComplains)
             } else if ai.is_vip {
-                ai.base.say(crate::ai::Remark::VipSpeaksToHimself);
+                Some(crate::ai::Remark::VipSpeaksToHimself)
+            } else {
+                None
+            };
+            if let Some(remark) = remark {
+                self.execute_ai_speech(
+                    sim,
+                    assets,
+                    npc_id,
+                    crate::ai::AiSpeechAttempt { remark, flags: 0 },
+                );
             }
             self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
         }
@@ -792,7 +740,15 @@ impl EngineInner {
                     && ai.current_state != AiState::Sleeping
                     && ai.blood_alcohol > 20
                 {
-                    ai.say(Remark::Drunken);
+                    self.execute_ai_speech(
+                        sim,
+                        assets,
+                        npc_id,
+                        crate::ai::AiSpeechAttempt {
+                            remark: Remark::Drunken,
+                            flags: 0,
+                        },
+                    );
                     self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
                 }
                 self.world
@@ -859,19 +815,47 @@ impl EngineInner {
                 animation,
             );
         }
-        {
-            entity
-                .friendly_ai_mut()
-                .unwrap_or_else(|| panic!("civilian {} has no friendly AI", npc_id.index()))
-                .random_speech_for_owner(sim, is_beggar, animation);
+        if is_beggar {
+            let ai = self.reporting_civilian_mut(npc_id);
+            if ai.beggar_dont_talk_counter > 0 {
+                ai.beggar_dont_talk_counter -= 1;
+            } else if ai.base.current_remark == crate::ai::Remark::TheSoundOfSilence
+                && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CivilianBeggarSpeechGate, 0..3)
+                    == 0
+            {
+                let remark = match crate::sim_rng::u32(
+                    sim,
+                    crate::sim_rng::RngSite::CivilianBeggarSpeechChoice,
+                    0..5,
+                ) {
+                    0..=2 => crate::ai::Remark::CivBeggarBegging,
+                    3 => crate::ai::Remark::CivUnderNet,
+                    4 => crate::ai::Remark::CivCries,
+                    _ => unreachable!(),
+                };
+                self.execute_ai_speech(
+                    sim,
+                    assets,
+                    npc_id,
+                    crate::ai::AiSpeechAttempt { remark, flags: 0 },
+                );
+            }
+        }
+        if self.live_actor_animation(npc_id) == Some(crate::order::OrderType::Weeping) {
+            self.execute_ai_speech(
+                sim,
+                assets,
+                npc_id,
+                crate::ai::AiSpeechAttempt {
+                    remark: crate::ai::Remark::CivCries,
+                    flags: 0,
+                },
+            );
         }
         if let Some(creation_order) = debug_creation_order {
             self.trace_civilian_random_speech_after_call(current_frame, creation_order, npc_id);
         }
-        // The original game's random speech runs synchronously before the following
-        // NPC lock gate. Rust's AI borrow records Say in owner_work, so close
-        // that same owner-local boundary here even when the lock gate will
-        // short-circuit the remainder of the actor update.
+        // Complete actor effects before the following NPC lock gate.
         self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
         if let Some(creation_order) = debug_creation_order {
             self.trace_civilian_random_speech_after_drain(current_frame, creation_order, npc_id);
@@ -934,12 +918,11 @@ impl EngineInner {
             panic!("random-speech civilian {} changed AI kind", npc_id.index())
         };
         eprintln!(
-            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=before_call source_animation={source_animation:?} source_is_weeping={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=before_call source_animation={source_animation:?} source_is_weeping={} live_animation={:?} current_remark={:?}]",
             npc_id.index(),
             source_animation == Some(crate::order::OrderType::Weeping),
             civilian.element.sprite.last_action,
-            ai.base.outbox.reentrant.owner_work.len(),
-            ai.base.outbox.reentrant.owner_work,
+            ai.base.current_remark,
         );
     }
 
@@ -961,14 +944,12 @@ impl EngineInner {
             panic!("random-speech civilian {} changed AI kind", npc_id.index())
         };
         eprintln!(
-            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_call_before_drain dont_talk={} current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_call_before_drain dont_talk={} current_remark={:?} remark_flags={} live_animation={:?}]",
             npc_id.index(),
             ai.beggar_dont_talk_counter,
             ai.base.current_remark,
             ai.base.current_remark_flags,
             civilian.element.sprite.last_action,
-            ai.base.outbox.reentrant.owner_work.len(),
-            ai.base.outbox.reentrant.owner_work,
         );
     }
 
@@ -991,13 +972,11 @@ impl EngineInner {
             panic!("random-speech civilian {} changed AI kind", npc_id.index())
         };
         eprintln!(
-            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_drain current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_drain current_remark={:?} remark_flags={} live_animation={:?}]",
             npc_id.index(),
             ai.base.current_remark,
             ai.base.current_remark_flags,
             civilian.element.sprite.last_action,
-            ai.base.outbox.reentrant.owner_work.len(),
-            ai.base.outbox.reentrant.owner_work,
         );
     }
 

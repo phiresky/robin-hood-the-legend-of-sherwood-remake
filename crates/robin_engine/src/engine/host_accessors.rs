@@ -767,6 +767,7 @@ impl EngineInner {
     pub(crate) fn remove_entity<I: Into<EntityId>>(&mut self, id: I) {
         let id = id.into();
         self.world.entities.remove(id);
+        self.world.soldier_registry.remove(id);
         // Remove from index lists
         self.world.pc_ids.retain(|&i| i != id);
         self.world.original_pc_registry_ids.retain(|&i| i != id);

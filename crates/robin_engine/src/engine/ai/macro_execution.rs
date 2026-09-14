@@ -45,15 +45,12 @@ impl EngineInner {
         owner: EntityId,
     ) {
         // Pre-existing siblings resume after this synchronous invocation.
-        let (later_work, later_stimuli) = {
+        let later_stimuli = {
             let ai = self
                 .world
                 .entities
                 .expect_ai_controller_mut(owner, format_args!("macro entry"));
-            (
-                std::mem::take(&mut ai.outbox.reentrant.owner_work),
-                std::mem::take(&mut ai.outbox.reentrant.self_stimuli),
-            )
+            std::mem::take(&mut ai.outbox.reentrant.self_stimuli)
         };
         MacroExecution {
             engine: self,
@@ -66,7 +63,6 @@ impl EngineInner {
             .world
             .entities
             .expect_ai_controller_mut(owner, format_args!("macro return"));
-        ai.outbox.reentrant.owner_work.extend(later_work);
         ai.outbox.reentrant.self_stimuli.extend(later_stimuli);
     }
 }
@@ -127,7 +123,7 @@ impl MacroExecution<'_> {
     }
 
     fn speak(&mut self, remark: Remark) {
-        self.engine.owner_work_speech(
+        self.engine.execute_ai_speech(
             self.sim,
             self.assets,
             self.owner,

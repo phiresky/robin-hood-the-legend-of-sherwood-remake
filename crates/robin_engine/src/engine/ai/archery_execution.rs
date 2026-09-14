@@ -302,7 +302,7 @@ impl EngineInner {
                         AiState::Seeking,
                         Substate::SeekingSeekpointIdentifyingBeggar1,
                     );
-                    self.owner_work_speech(
+                    self.execute_ai_speech(
                         sim,
                         assets,
                         owner,
@@ -373,7 +373,7 @@ impl EngineInner {
                         Some(beggar),
                     ));
                     let beggar = self.live_beggar_to_examine(owner);
-                    self.owner_work_speech(
+                    self.execute_ai_speech(
                         sim,
                         assets,
                         beggar,

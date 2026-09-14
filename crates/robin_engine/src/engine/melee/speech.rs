@@ -6,6 +6,34 @@ use super::*;
 use crate::element::{Command, Entity, EntityId};
 
 impl EngineInner {
+    pub(in crate::engine) fn combat_insult_after_reconsider(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        let ai = self
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("combat insult owner"));
+        if ai.base.current_substate != crate::ai::Substate::AttackingSwordfight {
+            return;
+        }
+        if ai.pending_sword_strike_consideration {
+            ai.pending_combat_insult_after_strike_consideration = true;
+        } else {
+            self.execute_ai_speech(
+                sim,
+                assets,
+                owner,
+                crate::ai::AiSpeechAttempt {
+                    remark: crate::ai::Remark::CombatInsult,
+                    flags: 0,
+                },
+            );
+        }
+    }
+
     // ─── Speech / sound effects ─────────────────────────────────────
 
     /// Reproduce the player-character life-point speech edge.
@@ -217,14 +245,15 @@ impl EngineInner {
         } else {
             crate::ai::Remark::Wounded
         };
-        self.world
-            .entities
-            .expect_ai_controller_mut(
-                entity_id,
-                format_args!("hurt-speech owner {} has no AI", entity_id.index()),
-            )
-            .say_with_flags(remark, crate::ai::SpeechFlags::EMERGENCY);
-        self.drain_ai_owner_work_for(sim, assets, entity_id);
+        self.execute_ai_speech(
+            sim,
+            assets,
+            entity_id,
+            crate::ai::AiSpeechAttempt {
+                remark,
+                flags: crate::ai::SpeechFlags::EMERGENCY.bits(),
+            },
+        );
 
         // Broadcast the AAARGH so nearby NPCs notice the cry.
         let (layer, elevation) = self
@@ -584,12 +613,17 @@ impl EngineInner {
         sequence_id: crate::sequence::SequenceId,
         element_index: usize,
     ) {
-        if let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(ai) = entity.ai_controller_mut()
-        {
-            ai.say(crate::ai::Remark::ProvokesCombat);
+        if self.expect_entity(owner, "provoke owner").is_soldier() {
+            self.execute_ai_speech(
+                sim,
+                assets,
+                owner,
+                crate::ai::AiSpeechAttempt {
+                    remark: crate::ai::Remark::ProvokesCombat,
+                    flags: 0,
+                },
+            );
         }
-        self.drain_ai_owner_work_for(sim, assets, owner);
         let mut order = crate::order::Order::new(
             crate::order::OrderType::Provoking,
             0.0,

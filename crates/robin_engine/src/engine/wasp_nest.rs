@@ -416,7 +416,6 @@ impl EngineInner {
         // candidate sticks).
         let mut smelling: Vec<(u32, EntityId)> = Vec::new();
         let mut clean: Vec<(u32, EntityId)> = Vec::new();
-        let mut vip_remarks: Vec<EntityId> = Vec::new();
 
         let soldier_ids: Vec<EntityId> = self
             .world
@@ -469,7 +468,15 @@ impl EngineInner {
             // VIP filter — VIPs get the VipWaspsNo remark instead of
             // becoming a victim.
             if super::melee::is_vip_from_profile(entity, &assets.profile_manager) {
-                vip_remarks.push(soldier_id);
+                self.execute_ai_speech(
+                    sim,
+                    assets,
+                    soldier_id,
+                    crate::ai::AiSpeechAttempt {
+                        remark: crate::ai::Remark::VipWaspsNo,
+                        flags: 0,
+                    },
+                );
                 continue;
             }
 
@@ -478,18 +485,6 @@ impl EngineInner {
             } else {
                 clean.push((dist, soldier_id));
             }
-        }
-
-        // VIPs say `VipWaspsNo` instead of being targeted.
-        for vid in vip_remarks {
-            self.world
-                .entities
-                .get_mut(vid)
-                .unwrap_or_else(|| panic!("wasp speech owner {} disappeared", vid.index()))
-                .ai_controller_mut()
-                .unwrap_or_else(|| panic!("wasp speech owner {} has no AI", vid.index()))
-                .say(crate::ai::Remark::VipWaspsNo);
-            self.drain_ai_owner_work_for(sim, assets, vid);
         }
 
         // Priority: smelling-apple first, nearest within that group.

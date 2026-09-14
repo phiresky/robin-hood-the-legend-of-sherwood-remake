@@ -4147,17 +4147,13 @@ fn civilian_random_speech_closes_its_owner_boundary_before_the_lock_gate() {
         engine.tick_civilian_random_speech_for_npc(sim, beggar, &assets);
     });
 
-    let owner_work = &engine
-        .get_entity(beggar)
-        .unwrap()
-        .ai_controller()
-        .unwrap()
-        .outbox
-        .reentrant
-        .owner_work;
+    let ai = engine.get_entity(beggar).unwrap().ai_controller().unwrap();
     assert!(
-        owner_work.is_empty(),
-        "RandomSpeech's synchronous Original Say call must settle before the following lock gate"
+        ai.ai_log
+            .iter()
+            .any(|line| line.line_type == crate::ai::LogLineType::Speak
+                && line.info == crate::ai::Remark::CivBeggarBegging as u16),
+        "the speech attempt runs before the following lock gate"
     );
     assert_eq!(engine.control.rng.original_replay_cursor(), Some(2));
 }
@@ -5870,11 +5866,6 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
         crate::ai::AiState::Seeking,
         crate::ai::Substate::SeekingJustWatching,
     );
-    engine.drain_ai_state_change_notifications_for(
-        &crate::sim_rng::test_context(),
-        &assets,
-        default,
-    );
     engine
         .world
         .entities
@@ -6009,9 +6000,18 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
 #[test]
 fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_move() {
     let (mut engine, assets, actor) = setup_ai_state_native_probe("MoveSentinelProbe", 3);
-    let mut pending =
-        crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 333.0, 444.0);
-    engine.launch_ai_move(&crate::sim_rng::test_context(), actor, &mut pending);
+    let destination = crate::ai::Position {
+        x: 333.0,
+        y: 444.0,
+        ..engine.live_ai_position(actor)
+    };
+    engine.launch_ai_move(
+        &crate::sim_rng::test_context(),
+        actor,
+        destination,
+        crate::ai::GotoFlags::empty(),
+        1.0,
+    );
 
     let mut deferred = crate::sequence::SequenceElement::new_movement(
         1,
@@ -6039,7 +6039,7 @@ fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_
     );
     // A registered-but-unlaunched Move that Halt cancels keeps its element in
     // the sequence in a cancelled state; only the to-go registration is
-    // removed. The stale 333/444 intent may therefore survive as a dead
+    // removed. The earlier 333/444 move may therefore survive as a dead
     // element, but must never remain runnable.
     assert!(
         engine
@@ -6498,7 +6498,6 @@ fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero
         "nested decision-entry/completion brackets balance before the outer callback resumes"
     );
     assert!(ai.base.outbox.actor.begin_panic.is_none());
-    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
     let speak = ai
         .base
         .ai_log
@@ -6723,10 +6722,6 @@ fn initialization_binds_scripts_before_draining_init_one_ai_state_callbacks() {
         .unwrap()
         .ai_controller()
         .unwrap();
-    assert!(
-        ai.outbox.reentrant.owner_work.is_empty(),
-        "AI initialization state work must settle before the first update tick"
-    );
     assert_eq!(
         npc_custom_values(&engine, civilian)[4],
         101,
@@ -6962,7 +6957,6 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
         .enemy_ai()
         .unwrap();
     assert!(ai.pending_special_strike);
-    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
     assert_eq!(
         npc_custom_values(&engine, enemy)[9],
         6,
@@ -6994,7 +6988,6 @@ fn unavailable_state_change_callbacks_do_not_block_state_commit() {
             .unwrap()
             .ai_controller()
             .unwrap();
-        assert!(ai.outbox.reentrant.owner_work.is_empty());
         assert_eq!(ai.current_state, crate::ai::AiState::Seeking);
     }
 
@@ -7253,14 +7246,6 @@ fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move(
         .expect_ai_controller(owner, format_args!("arrived owner"));
     assert_eq!(ai.current_substate, Substate::DefaultGotoRouteTurn);
     assert_eq!(engine.ai_think_depth(), 0);
-    assert!(
-        ai.outbox.actor.orders.is_empty(),
-        "Turn is registered at its call site"
-    );
-    assert!(
-        ai.outbox.reentrant.owner_work.is_empty(),
-        "arrival has no suspended tail"
-    );
     let turns: Vec<_> = engine
         .orders
         .sequence_manager
@@ -7403,7 +7388,6 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
         1,
         "caller sibling ran inside arrival"
     );
-    assert!(ai.outbox.reentrant.owner_work.is_empty());
     for code in [3, 5, 101] {
         assert_eq!(
             engine.scripts.globals[code], 1,

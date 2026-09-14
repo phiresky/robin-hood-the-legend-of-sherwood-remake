@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn pc_and_civilian_provoke_translate_without_soldier_speech() {
+    use crate::engine::test_support::actors::{make_test_civilian, make_test_pc};
+
+    for actor in [
+        make_test_pc(crate::element::Posture::Upright),
+        make_test_civilian(crate::element::Posture::Upright),
+    ] {
+        let mut engine = make_engine();
+        let owner = engine.add_test_entity(actor);
+        let assets = LevelAssets::new();
+        let sequence =
+            engine
+                .orders
+                .sequence_manager
+                .launch_element(crate::sequence::SequenceElement::new(
+                    1,
+                    Command::Provoke,
+                    Some(owner),
+                ));
+
+        engine.with_simulation_context(|engine, sim| {
+            engine.dispatch_provoke(sim, &assets, owner, sequence, 0);
+        });
+
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap();
+        assert_eq!(element.orders.len(), 1);
+        let order = element.orders.iter().next().unwrap();
+        assert_eq!(order.order_type, OrderType::Provoking);
+        assert!(!order.compute_direction);
+    }
+}
+
+#[test]
 fn reactive_strike_recognition_uses_command_not_replacement_animation() {
     fn run(remembered: SwordStrike, busy: bool) -> (usize, crate::ai::Substate, usize) {
         let mut engine = make_engine();

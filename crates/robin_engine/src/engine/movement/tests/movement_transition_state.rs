@@ -5,7 +5,7 @@ mod suite {
         ActionState, ActiveDoorPass, ActorData, ActorPc, ActorSoldier, AiBrain, Camp, Command,
         ElementData, ElementKind, Entity, HumanData, NpcData, PcData, Posture, SoldierData,
     };
-    use crate::order::{AiOrderIntent, Order};
+    use crate::order::Order;
     use crate::sequence::{
         MoveFlags, Sequence, SequenceElement, SequenceElementData, SequencePriority, SequenceState,
     };
@@ -42,7 +42,10 @@ mod suite {
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData::default(),
-            soldier: SoldierData::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         }));
 
         let mut post_seek = Sequence::new();
@@ -120,7 +123,10 @@ mod suite {
                 actor: ActorData::default(),
                 human: HumanData::default(),
                 npc,
-                soldier: SoldierData::default(),
+                soldier: crate::element::SoldierData {
+                    cached_camp: crate::element::Camp::Lacklandists,
+                    ..Default::default()
+                },
             }))
         }
 
@@ -183,23 +189,26 @@ mod suite {
             ordinary.feedback.cutscene_camera.level_size =
                 crate::coordinates::MapSize::new(100.0, 100.0);
             let ordinary_owner = make_owner(&mut ordinary);
-            ordinary
-                .get_entity_mut(ordinary_owner)
-                .unwrap()
-                .ai_controller_mut()
-                .unwrap()
-                .outbox
-                .actor
-                .orders
-                .push(AiOrderIntent::new(
-                    OrderType::RunningUpright,
-                    ordinary_destination.x,
-                    ordinary_destination.y,
-                ));
+            let mut destination = ordinary.live_ai_position(ordinary_owner);
+            destination.x = ordinary_destination.x;
+            destination.y = ordinary_destination.y;
+            ordinary.duty_go_to(
+                &sim,
+                &assets,
+                ordinary_owner,
+                destination,
+                crate::ai::GotoFlags::RUN,
+            );
             assert!(
                 ordinary
-                    .launch_pending_orders_for_npc(&sim, &assets, ordinary_owner)
-                    .is_empty(),
+                    .orders
+                    .sequence_manager
+                    .sequences_iter()
+                    .all(|sequence| sequence
+                        .elements
+                        .iter()
+                        .all(|element| element.owner != Some(ordinary_owner)
+                            || !matches!(element.data, SequenceElementData::Movement { .. }))),
                 "ordinary movement at or outside the level must retain the existing rejection"
             );
             assert!(
@@ -766,6 +775,20 @@ mod suite {
         stop_transition: OrderType,
         start_transition: OrderType,
     ) -> crate::element::EntityId {
+        engine.world.fast_grid_mut().size_map(128, 128);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        let index = engine.world.fast_grid_mut().add_sector(
+            crate::engine::test_support::square_sector(
+                1,
+                0,
+                MapPoint::new(1.0, 1.0),
+                MapPoint::new(2000.0, 2000.0),
+            ),
+            0,
+        );
+        let sector = crate::position_interface::SectorHandle::new(1)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
         let script = |action: OrderType| SpriteScript {
             action_id: action as u16,
             action_done: 1,
@@ -821,6 +844,7 @@ mod suite {
             .position_iface
             .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         element.set_position_map(MapPoint::new(300.0, 794.0));
+        element.set_sector(Some(sector));
         let npc = NpcData {
             ai: crate::element::AiActorData {
                 ai_brain: AiBrain::Enemy(Box::default()),
@@ -836,7 +860,10 @@ mod suite {
             },
             human: HumanData::default(),
             npc,
-            soldier: SoldierData::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         }));
         owner
     }
@@ -883,7 +910,7 @@ mod suite {
         old_goal: MapPoint,
         stop_transition: OrderType,
     ) {
-        engine.launch_pending_orders_for_npc(sim, assets, owner);
+        engine.drain_direct_ai_owner_boundary(sim, owner, assets);
 
         assert_eq!(
             engine
@@ -926,17 +953,16 @@ mod suite {
         owner: crate::element::EntityId,
         new_goal: MapPoint,
     ) {
-        {
-            let ai = engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .ai_controller_mut()
-                .unwrap();
-            let mut goto = AiOrderIntent::new(OrderType::RunningUpright, new_goal.x, new_goal.y);
-            goto.move_flags = MoveFlags::STRAIGHT.bits() as u16;
-            ai.outbox.actor.orders.push(goto);
-        }
-        engine.launch_pending_orders_for_npc(sim, assets, owner);
+        let mut destination = engine.live_ai_position(owner);
+        destination.x = new_goal.x;
+        destination.y = new_goal.y;
+        engine.duty_go_to(
+            sim,
+            assets,
+            owner,
+            destination,
+            crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::STRAIGHT,
+        );
     }
 
     fn seed_stale_goal_on_replacement(

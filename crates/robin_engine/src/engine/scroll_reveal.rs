@@ -92,7 +92,7 @@ pub struct PendingScrollAmulet {
 
 /// What remark the beggar should say after a reveal attempt.  Fired
 /// internally by [`EngineInner::reveal_scrolls`] via
-/// `AiController::say_with_flags` on the beggar's AI state — callers
+/// the live speech operation on the beggar — callers
 /// only see this value for telemetry / logging.
 ///
 /// [`EngineInner::reveal_scrolls`]: EngineInner::reveal_scrolls
@@ -126,7 +126,7 @@ impl BeggarRemark {
         }
     }
 
-    /// Speech flags to pass to `say_with_flags`.  The "already
+    /// Speech flags for the remark. The "already
     /// exhausted" branch uses no flags; everything else uses
     /// `EMERGENCY | ALWAYS` so the beggar interrupts whatever they
     /// were saying and ignores the recently-said cooldown.
@@ -476,12 +476,15 @@ impl EngineInner {
         beggar: EntityId,
         remark: BeggarRemark,
     ) {
-        self.get_entity_mut(beggar)
-            .unwrap_or_else(|| panic!("beggar speech owner {} disappeared", beggar.index()))
-            .ai_controller_mut()
-            .unwrap_or_else(|| panic!("beggar speech owner {} has no AI", beggar.index()))
-            .say_with_flags(remark.remark(), remark.speech_flags());
-        self.drain_ai_owner_work_for(sim, assets, beggar);
+        self.execute_ai_speech(
+            sim,
+            assets,
+            beggar,
+            crate::ai::AiSpeechAttempt {
+                remark: remark.remark(),
+                flags: remark.speech_flags().bits(),
+            },
+        );
     }
 
     // ─── Deferred amulet spawn ───────────────────────────────────

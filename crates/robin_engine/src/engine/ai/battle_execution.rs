@@ -148,11 +148,14 @@ impl EngineInner {
             if self.expect_entity(target, "seen enemy").is_dead() {
                 continue;
             }
-            self.world
+            let enemies = &mut self
+                .world
                 .entities
                 .expect_enemy_ai_mut(owner, format_args!("enemy list admission"))
-                .list_them
-                .push(target.index());
+                .list_them;
+            if !enemies.contains(&target.index()) {
+                enemies.push(target.index());
+            }
         }
     }
 

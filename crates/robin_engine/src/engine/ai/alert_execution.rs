@@ -382,9 +382,9 @@ impl EngineInner {
             return;
         }
         let camp = self.expect_entity(owner, "brawl camp").camp();
-        let count = self.ai.global.all_soldier_handles.len();
+        let count = self.world.soldier_registry.camp(camp).len();
         for index in 0..count {
-            let handle = self.ai.global.all_soldier_handles[index];
+            let handle = self.world.soldier_registry.camp(camp)[index];
             let candidate = EntityId::Soldier(crate::entity_id::SoldierId(handle));
             let Some(Entity::Soldier(soldier)) = self.world.entities.get(candidate) else {
                 continue;
@@ -453,7 +453,7 @@ impl EngineInner {
     ) {
         let accepted = self.execute_ai_command_soldiers_to_attack(sim, assets, owner, center);
         if accepted {
-            self.owner_work_speech(
+            self.execute_ai_speech(
                 sim,
                 assets,
                 owner,
@@ -603,25 +603,14 @@ impl AlertExecution<'_> {
                 if soldier.npc.ai_brain.enemy().expect("patrol soldier brain").soldier_profile_rank == ProfileRank::Soldier)
         });
         let camp = self.engine.expect_entity(self.owner, "officer camp").camp();
-        let registry: Vec<_> = self
-            .engine
-            .ai
-            .global
-            .all_soldier_handles
-            .iter()
-            .copied()
-            .map(|handle| EntityId::Soldier(crate::entity_id::SoldierId(handle)))
-            .filter(|id| {
-                self.engine
-                    .expect_entity(*id, "officer camp soldier")
-                    .camp()
-                    == camp
-            })
-            .collect();
+        let count = self.engine.world.soldier_registry.camp(camp).len();
         let mut selected = head;
         if selected.is_none() {
             let mut minimum = 200 * 200;
-            for &id in &registry {
+            for index in 0..count {
+                let id = EntityId::Soldier(crate::entity_id::SoldierId(
+                    self.engine.world.soldier_registry.camp(camp)[index],
+                ));
                 let Entity::Soldier(soldier) =
                     self.engine.expect_entity(id, "officer seeking soldier")
                 else {
@@ -667,7 +656,11 @@ impl AlertExecution<'_> {
                 .add_detectable((id, crate::element::DetectableType::Friend));
             self.settle();
         }
-        for id in registry {
+        let count = self.engine.world.soldier_registry.camp(camp).len();
+        for index in 0..count {
+            let id = EntityId::Soldier(crate::entity_id::SoldierId(
+                self.engine.world.soldier_registry.camp(camp)[index],
+            ));
             if Some(id) == head {
                 continue;
             }
@@ -744,7 +737,7 @@ impl AlertExecution<'_> {
             seek_flags: 0,
             who_tells_me: AiEntityHandle::new(self.owner.index()),
         };
-        self.engine.owner_work_speech(
+        self.engine.execute_ai_speech(
             self.sim,
             self.assets,
             self.owner,
@@ -757,26 +750,15 @@ impl AlertExecution<'_> {
             .engine
             .expect_entity(self.owner, "tower guard camp")
             .camp();
-        let registry: Vec<_> = self
-            .engine
-            .ai
-            .global
-            .all_soldier_handles
-            .iter()
-            .copied()
-            .map(|handle| EntityId::Soldier(crate::entity_id::SoldierId(handle)))
-            .filter(|id| {
-                self.engine
-                    .expect_entity(*id, "tower guard camp member")
-                    .camp()
-                    == camp
-            })
-            .collect();
+        let count = self.engine.world.soldier_registry.camp(camp).len();
         let mut nearest = None;
         let mut far = None;
         let mut officer_distance = u32::MAX;
         let mut hearing_soldiers = 0usize;
-        for &id in &registry {
+        for index in 0..count {
+            let id = EntityId::Soldier(crate::entity_id::SoldierId(
+                self.engine.world.soldier_registry.camp(camp)[index],
+            ));
             let distance = self.square_distance(id, self.owner);
             let Entity::Soldier(soldier) = self.engine.expect_entity(id, "tower guard recipient")
             else {
@@ -829,7 +811,10 @@ impl AlertExecution<'_> {
         let recipient = nearest.or_else(|| {
             far.and_then(|officer| {
                 let mut runner = None;
-                for &id in registry.iter().take(hearing_soldiers) {
+                for index in 0..hearing_soldiers {
+                    let id = EntityId::Soldier(crate::entity_id::SoldierId(
+                        self.engine.world.soldier_registry.camp(camp)[index],
+                    ));
                     if self.square_distance(id, officer) < officer_distance {
                         runner = Some(id);
                     }
@@ -915,9 +900,9 @@ impl AlertExecution<'_> {
         }
         if nearest.is_none() {
             let mut maximum = crate::ai_enemy::combat::MAX_ALERT_OFFICER_RADIUS as u32;
-            let count = self.engine.ai.global.all_soldier_handles.len();
+            let count = self.engine.world.soldier_registry.camp(camp).len();
             for index in 0..count {
-                let handle = self.engine.ai.global.all_soldier_handles[index];
+                let handle = self.engine.world.soldier_registry.camp(camp)[index];
                 let id = EntityId::Soldier(crate::entity_id::SoldierId(handle));
                 let Some(Entity::Soldier(soldier)) = self.engine.world.entities.get(id) else {
                     continue;
@@ -1013,20 +998,6 @@ impl AlertExecution<'_> {
         )
     }
 
-    fn camp_members(&self, camp: crate::element::Camp) -> impl Iterator<Item = EntityId> + '_ {
-        self.engine
-            .ai
-            .global
-            .all_soldier_handles
-            .iter()
-            .copied()
-            .map(|handle| EntityId::Soldier(crate::entity_id::SoldierId(handle)))
-            .filter(move |id| {
-                matches!(self.engine.world.entities.get(*id), Some(Entity::Soldier(soldier))
-                    if soldier.soldier.cached_camp == camp)
-            })
-    }
-
     fn alert_soldiers(&mut self, center: Position, flags: u16) -> bool {
         use crate::ai::Remark;
         use crate::ai_enemy::ReportUpdateFlags;
@@ -1052,14 +1023,11 @@ impl AlertExecution<'_> {
             enemy.base.list_us.clear();
         }
         assert_eq!(self.enemy().soldier_profile_rank, ProfileRank::Officer);
-        let member_count = self.camp_members(camp).count();
+        let member_count = self.engine.world.soldier_registry.camp(camp).len();
         let mut average = crate::coordinates::MapVec::new(0.0, 0.0);
         for member_index in 0..member_count {
-            let target = self
-                .camp_members(camp)
-                .nth(member_index)
-                .expect("alert camp roster shortened during recipient callback");
-            let handle = target.index();
+            let handle = self.engine.world.soldier_registry.camp(camp)[member_index];
+            let target = EntityId::Soldier(crate::entity_id::SoldierId(handle));
             let Entity::Soldier(soldier) = self.engine.expect_entity(target, "alert camp member")
             else {
                 unreachable!("camp roster contains only soldiers");
@@ -1329,7 +1297,7 @@ impl AlertExecution<'_> {
                 .launch_sequences
                 .push(sequence);
             self.settle();
-            self.engine.owner_work_speech(
+            self.engine.execute_ai_speech(
                 self.sim,
                 self.assets,
                 self.owner,

@@ -73,7 +73,10 @@ mod suite {
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData::default(),
-            soldier: SoldierData::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         }));
 
         let mut pass = SequenceElement::new_movement(

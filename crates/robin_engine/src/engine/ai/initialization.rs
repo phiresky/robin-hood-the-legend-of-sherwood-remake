@@ -237,17 +237,6 @@ impl EngineInner {
         // Initialize each NPC's AI.
         let npc_ids: Vec<EntityId> = self.world.entities.ai_owner_ids().collect();
         let hiking_paths = assets.navigation.hiking_paths.clone();
-        // For "get soldier from all by id" in the AI tick: copy the
-        // level's soldier load-order array onto AiGlobalState so
-        // live queries can resolve script-baked friend IDs.
-        self.ai.global.all_soldier_handles = std::sync::Arc::new(
-            assets
-                .entities
-                .soldier_entity_ids
-                .iter()
-                .map(|eid| eid.index())
-                .collect(),
-        );
         let ambush_points_count = self.ai.global.ambush_points.len();
 
         let all_soldier_entity_ids = assets.entities.soldier_entity_ids.clone();

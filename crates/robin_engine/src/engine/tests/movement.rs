@@ -1647,12 +1647,26 @@ fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
         .unwrap()
         .element_data_mut()
         .active = true;
-    let mut intent =
-        crate::order::AiOrderIntent::new(crate::order::OrderType::RunningUpright, 100.0, 200.0);
-    intent.stop_menace_before_move = true;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = crate::element::ActionState::Menacing;
+    let destination = crate::ai::Position {
+        x: 100.0,
+        y: 200.0,
+        ..engine.live_ai_position(owner)
+    };
 
     let sequence_id = engine
-        .launch_ai_move(&crate::sim_rng::test_context(), owner, &mut intent)
+        .launch_ai_move(
+            &crate::sim_rng::test_context(),
+            owner,
+            destination,
+            crate::ai::GotoFlags::RUN,
+            1.0,
+        )
         .expect("same-sector AI move launches");
     let sequence = engine
         .orders
@@ -1682,12 +1696,20 @@ fn ai_move_constructs_route_before_later_owner_topology_changes() {
         entity.element_data_mut().set_layer(0);
     }
 
-    let mut intent =
-        crate::order::AiOrderIntent::new(crate::order::OrderType::RunningUpright, 400.0, 500.0);
-    intent.target_sector = source_sector;
-    intent.target_layer = Some(0);
+    let destination = crate::ai::Position {
+        x: 400.0,
+        y: 500.0,
+        sector: source_sector,
+        level: 0,
+    };
     let sequence_id = engine
-        .launch_ai_move(&crate::sim_rng::test_context(), owner, &mut intent)
+        .launch_ai_move(
+            &crate::sim_rng::test_context(),
+            owner,
+            destination,
+            crate::ai::GotoFlags::RUN,
+            1.0,
+        )
         .expect("same-sector route registers inline");
 
     // A selected non-interruptible door element may commit its far-side

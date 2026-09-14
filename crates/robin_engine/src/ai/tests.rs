@@ -329,57 +329,6 @@ fn ai_controller_defaults() {
 }
 
 #[test]
-fn goto_sword_sets_force_sword_movement_flag() {
-    let order = AiController::make_move_order(
-        &Position {
-            x: 100.0,
-            y: 200.0,
-            sector: None,
-            level: 0,
-        },
-        GotoFlags::SWORD,
-    );
-
-    let flags = crate::sequence::MoveFlags::from_bits_truncate(u32::from(order.move_flags));
-    assert!(flags.contains(crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT));
-}
-
-#[test]
-fn goto_dont_stop_suppresses_movement_transitions() {
-    let order = AiController::make_move_order(
-        &Position {
-            x: 100.0,
-            y: 200.0,
-            sector: None,
-            level: 0,
-        },
-        GotoFlags::DONT_STOP,
-    );
-
-    let flags = crate::sequence::MoveFlags::from_bits_truncate(u32::from(order.move_flags));
-    assert!(flags.contains(crate::sequence::MoveFlags::NO_TRANSITIONS));
-}
-
-#[test]
-fn goto_find_accessible_and_ask_obstacle_survive_order_intent() {
-    let order = AiController::make_move_order(
-        &Position {
-            x: 100.0,
-            y: 200.0,
-            sector: SectorHandle::new(1),
-            level: 0,
-        },
-        GotoFlags::FIND_ACCESSIBLE | GotoFlags::ASK_OBSTACLE | GotoFlags::STRAIGHT,
-    );
-
-    assert!(order.find_accessible);
-    assert!(order.ask_obstacle);
-    assert!(!order.compute_direction);
-    let move_flags = crate::sequence::MoveFlags::from_bits_truncate(u32::from(order.move_flags));
-    assert!(move_flags.contains(crate::sequence::MoveFlags::STRAIGHT));
-}
-
-#[test]
 fn goto_route_arrival_launches_turn_even_when_already_facing_route() {
     use crate::ai::macro_patrol::{PathId, PatrolPath};
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
@@ -849,10 +798,6 @@ fn ai_outbox_drain_barriers_are_independent_and_serializable() {
         .reentrant
         .self_stimuli
         .push(StimulusType::EventDone.into());
-    outbox
-        .reentrant
-        .owner_work
-        .push(AiOwnerWork::NearbyCiviliansPanic);
     outbox.music.instant_change = true;
 
     let encoded = serde_json::to_string(&outbox).expect("serialize AI outbox");
@@ -868,10 +813,6 @@ fn ai_outbox_drain_barriers_are_independent_and_serializable() {
         decoded.reentrant.self_stimuli,
         vec![StimulusType::EventDone]
     );
-    assert!(matches!(
-        decoded.reentrant.owner_work.as_slice(),
-        [AiOwnerWork::NearbyCiviliansPanic]
-    ));
     assert!(decoded.music.instant_change);
 
     let core = decoded.actor.take_core();
@@ -932,21 +873,6 @@ fn clear_all_pending_clears_every_outbox_barrier() {
         .self_stimuli
         .push(StimulusType::EventDone.into());
 
-    ai.outbox
-        .reentrant
-        .owner_work
-        .push(AiOwnerWork::Speech(AiSpeechAttempt {
-            remark: Remark::Arrow,
-            flags: SpeechFlags::MYTALK_1.bits(),
-        }));
-    ai.outbox.reentrant.waypoint_script_reach_point =
-        Some((PathId::new(2).expect("non-sentinel path"), 3));
-
-    ai.outbox.actor.orders.push(AiOrderIntent::new(
-        crate::order::OrderType::WaitingUpright,
-        0.0,
-        0.0,
-    ));
     ai.outbox.actor.blink_all_enemies = true;
     ai.outbox.actor.enemy_in_house_alert = true;
     ai.outbox.actor.set_attentive_mode = Some(AttentiveModeEffect::new(true, false));

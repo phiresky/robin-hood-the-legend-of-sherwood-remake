@@ -86,7 +86,6 @@ fn civilian_panic_from_point() {
     let request = ai.base.outbox.actor.begin_panic.unwrap();
     assert_eq!(request.runs, 8);
     assert!(request.is_new_panic);
-    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
 }
 
 #[test]

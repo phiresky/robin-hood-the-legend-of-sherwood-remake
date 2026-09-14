@@ -84,45 +84,6 @@ pub struct AiReentrantOutbox {
     #[bitcode(skip)]
     pub engine_drains_after_script_go_on: bool,
     pub self_stimuli: Vec<QueuedSelfStimulus>,
-    /// Synchronous work produced while the AI owns its call stack.
-    ///
-    /// AI speech and enemy/friendly state changes are
-    /// immediate calls in the Original. Rust cannot re-enter the engine while
-    /// an AI controller is borrowed, so both calls share this FIFO. Keeping
-    /// them in one queue preserves statement order at the owner return barrier
-    /// instead of rebuilding a frame-global speech batch.
-    pub owner_work: Vec<AiOwnerWork>,
-    pub waypoint_script_reach_point: Option<(PathId, u8)>,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum AiOwnerWork {
-    /// Synchronous nearby-civilian panic callback. It shares the
-    /// owner FIFO because callers can speak or change state immediately
-    /// before/after it and those operations are observably ordered.
-    NearbyCiviliansPanic,
-    Speech(AiSpeechAttempt),
-    LaunchTimer {
-        frames: u32,
-        current_frame: u32,
-    },
-    SetEyeStatus(crate::element::EyeStatus),
-    /// Continue an admitted `EVENT_SWORDSTRIKE` at the engine boundary.
-    /// The Enemy AI owns the tick-admission/filter/lock gates, while the actual
-    /// parade proposal needs live weapon, sprite, and sequence-manager data.
-    ConsiderToBeginParade {
-        attacker: HumanHandle,
-    },
-    /// Enter the engine-owned macro interpreter at this statement boundary.
-    RunMacro,
 }
 
 #[derive(
@@ -282,7 +243,6 @@ impl DetectableMutation {
     bitcode::Decode,
 )]
 pub struct AiActorOutbox {
-    pub orders: Vec<AiOrderIntent>,
     pub quit_swordfight: bool,
     /// Timer-driven retry from `SUBSTATE_ATTACKING_QUITTING_SWORDFIGHT`.
     /// Original suppresses this retry while the actor's selected command is
@@ -490,8 +450,7 @@ impl AiActorOutbox {
     /// `AiReentrantOutbox` queue and the owner fixed-point predicates check
     /// them separately.
     pub(crate) fn has_boundary_work(&self) -> bool {
-        !self.orders.is_empty()
-            || self.quit_swordfight
+        self.quit_swordfight
             || self.retry_quit_swordfight
             || self.stop_menace
             || self.lower_shield

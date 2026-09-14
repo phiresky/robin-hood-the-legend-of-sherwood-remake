@@ -1,1 +1,1 @@
-{"self_stimuli":["EventDone","EventReachPoint"],"owner_work":[{"SetEyeStatus":"LookForward"},{"LaunchTimer":{"frames":17,"current_frame":198}},"NearbyCiviliansPanic"],"waypoint_script_reach_point":[7,2]}
+{"self_stimuli":["EventDone","EventReachPoint"]}

@@ -511,15 +511,6 @@ impl EngineInner {
             // continuations, so do not let its empty callback steal
             // replacement work which the Halt caller queued beforehand.
             if !from_halt {
-                // Waypoint-script execution is part of the route-arrival decision tick
-                // call itself. Its ReachPoint script must finish before a
-                // completion stimulus recursively continues that Think. A
-                // script-side StareActor may Halt here; running the recursive
-                // EventReturnToDuty first would let that Halt cancel the new
-                // patrol Move (interactive session 001, Soldier 87).
-                #[cfg(test)]
-                observe_owner_boundary_reentrant_step("waypoint");
-                self.dispatch_pending_waypoint_script_for_owner(sim, owner, assets);
                 // Removal notification re-enters the decision tick for this owner directly.
                 // Do not resolve unrelated actors' prepared movement forecasts
                 // while closing that native owner-local call stack.
@@ -529,7 +520,6 @@ impl EngineInner {
                 // A script-side state transition can restore the outer Think
                 // tail only after the recursive drain's ordinary order pass.
                 // Original remains inside removal notification here.
-                self.launch_pending_orders_for_npc(sim, assets, owner);
             }
             self.orders
                 .sequence_manager
@@ -630,17 +620,10 @@ impl EngineInner {
         }
         self.send_condolation_card(sim, dispatch.card, assets);
         if !from_halt {
-            // ReachPoint remains inside the route-arrival Think which produced
-            // this card, so its script-side Halt precedes recursively surfaced
-            // completion work such as EventReturnToDuty.
-            #[cfg(test)]
-            observe_owner_boundary_reentrant_step("waypoint");
-            self.dispatch_pending_waypoint_script_for_owner(sim, card_owner, assets);
             #[cfg(test)]
             observe_owner_boundary_reentrant_step("self_stimuli");
             self.drain_self_stimuli_for_npc(sim, card_owner, assets);
             // Register movement produced by the callback for the manager update.
-            self.launch_pending_orders_for_npc(sim, assets, card_owner);
         }
 
         // A state change reached re-entrantly from a removal notification belongs

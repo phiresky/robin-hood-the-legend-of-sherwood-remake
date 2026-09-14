@@ -2944,6 +2944,7 @@ mod sequence_phase_context_tests {
     fn object_interaction_soldier(direction_goal: i16) -> Entity {
         let mut soldier =
             crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
+        soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
         soldier
             .element
             .set_position_map(crate::coordinates::MapPoint::new(863.875, 702.403));
@@ -3211,6 +3212,10 @@ mod sequence_phase_context_tests {
                 life_points: 0,
                 ..Default::default()
             },
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
             ..crate::engine::test_support::actors::unbound_soldier(Posture::Upright)
         }));
         let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
@@ -3295,6 +3300,10 @@ mod sequence_phase_context_tests {
             },
             npc: crate::element::NpcData {
                 life_points: 0,
+                ..Default::default()
+            },
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
                 ..Default::default()
             },
             ..crate::engine::test_support::actors::unbound_soldier(Posture::DeadBack)

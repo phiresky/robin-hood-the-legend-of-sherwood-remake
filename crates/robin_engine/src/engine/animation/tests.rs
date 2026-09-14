@@ -237,7 +237,10 @@ fn weak_soldier_at_action_done(tiredness: u16) -> Entity {
         actor: Default::default(),
         human: Default::default(),
         npc: Default::default(),
-        soldier: Default::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     });
     let sprite = &mut entity.element_data_mut().sprite;
     sprite.current_frame = 4;

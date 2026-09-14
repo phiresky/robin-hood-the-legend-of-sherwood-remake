@@ -429,10 +429,6 @@ fn special_strike_cancellation_closes_its_set_state_callback_boundary() {
         ai.base.current_substate,
         crate::ai::Substate::AttackingSwordfight
     );
-    assert!(
-        ai.base.outbox.reentrant.owner_work.is_empty(),
-        "the cancellation state-change callback must run synchronously"
-    );
 }
 
 #[test]

@@ -123,7 +123,6 @@ fn mytalk_uses_concrete_sound_manager_resolution_duration() {
 
     let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
     let sim = crate::sim_rng::test_context();
-    engine.drain_ai_owner_work_for(&sim, &assets, soldier_id);
     engine.queue_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
         actor_id: soldier_id.index(),
         identifier: (SPEECH_TIMING_PROFILE_ID & 0xFFFF_0000) | u32::from(Remark::Arrow as u16),
@@ -146,7 +145,6 @@ fn stop_exclamation_cancels_unresolved_request_before_fifo_resolution() {
 
     let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
     let sim = crate::sim_rng::test_context();
-    engine.drain_ai_owner_work_for(&sim, &assets, soldier_id);
     assert_eq!(engine.feedback.sound_sim.pending_exclamations.len(), 1);
 
     engine.cancel_exclamation_callbacks(soldier_id.index());
@@ -392,7 +390,7 @@ fn speech_early_filter_order_and_always_bypass_are_exact() {
 }
 
 #[test]
-fn speech_fifo_preserves_rejected_accepted_busy_and_emergency_attempts() {
+fn speech_calls_preserve_rejected_accepted_busy_and_emergency_attempts() {
     use crate::ai::{ForbiddenRemark, LogLineType, Remark, RemarkTargetFlags, SpeechFlags};
 
     let mut engine = EngineInner::new();
@@ -413,24 +411,20 @@ fn speech_fifo_preserves_rejected_accepted_busy_and_emergency_attempts() {
         bad_guy: true,
         forbidden_till_frame: 50,
     });
-    {
-        let ai = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .ai_controller_mut()
-            .unwrap();
-        ai.say_with_flags(Remark::Arrow, SpeechFlags::empty());
-        ai.say_with_flags(Remark::Arrow, SpeechFlags::ALWAYS | SpeechFlags::MYTALK_1);
-        ai.say_with_flags(
+    for (remark, flags) in [
+        (Remark::Arrow, SpeechFlags::empty()),
+        (Remark::Arrow, SpeechFlags::ALWAYS | SpeechFlags::MYTALK_1),
+        (
             Remark::WaspSting,
             SpeechFlags::ALWAYS | SpeechFlags::MYTALK_2,
-        );
-        ai.say_with_flags(
+        ),
+        (
             Remark::Wounded,
             SpeechFlags::ALWAYS | SpeechFlags::EMERGENCY | SpeechFlags::MYTALK_3,
-        );
+        ),
+    ] {
+        queue_and_settle_speech(&mut engine, &assets, owner, remark, flags);
     }
-    engine.drain_ai_owner_work_for(&crate::sim_rng::test_context(), &assets, owner);
 
     assert_eq!(
         speech_log(&engine, owner),
@@ -1662,7 +1656,6 @@ fn blipped_report_speech_callback_precedes_give_report_state_and_timer() {
     assert!(!officer.base.ai_log.iter().any(|line| {
         line.line_type == LogLineType::Event && line.info == StimulusType::CallYourTalk1 as u16
     }));
-    assert!(reporter.base.outbox.reentrant.owner_work.is_empty());
 }
 
 #[test]
@@ -1751,10 +1744,6 @@ fn review2_accepted_group_instruction_closes_officer_state_callback() {
     assert_eq!(
         officer.base.current_substate,
         Substate::SeekingOfficerWaitForInstructedGroup
-    );
-    assert!(
-        officer.base.outbox.reentrant.owner_work.is_empty(),
-        "the continuation's state-change callback escaped the direct decision-tick boundary"
     );
 }
 

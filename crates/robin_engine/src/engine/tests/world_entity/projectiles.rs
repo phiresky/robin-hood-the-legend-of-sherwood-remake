@@ -48,11 +48,8 @@ fn this_guy_forbid_preserves_original_uword_narrowing_and_ulong_comparison() {
 }
 
 #[test]
-fn speech_snapshot_roundtrip_and_hash_cover_fifo_live_identity_and_global_state() {
-    use crate::ai::{
-        AiOwnerWork, AiSpeechAttempt, ForbiddenRemark, Remark, RemarkTargetFlags, ScreenRemark,
-        SpeechFlags,
-    };
+fn speech_state_roundtrip_and_hash_cover_live_identity_and_global_state() {
+    use crate::ai::{ForbiddenRemark, Remark, RemarkTargetFlags, ScreenRemark, SpeechFlags};
 
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
@@ -76,16 +73,6 @@ fn speech_snapshot_roundtrip_and_hash_cover_fifo_live_identity_and_global_state(
         .unwrap();
     ai.current_remark = Remark::Arrow;
     ai.current_remark_flags = SpeechFlags::MYTALK_2.bits();
-    ai.outbox.reentrant.owner_work = vec![
-        AiOwnerWork::Speech(AiSpeechAttempt {
-            remark: Remark::Arrow,
-            flags: 0,
-        }),
-        AiOwnerWork::Speech(AiSpeechAttempt {
-            remark: Remark::WaspSting,
-            flags: SpeechFlags::ALWAYS.bits(),
-        }),
-    ];
     engine
         .feedback
         .sound_sim
@@ -119,21 +106,6 @@ fn speech_snapshot_roundtrip_and_hash_cover_fifo_live_identity_and_global_state(
     assert_eq!(
         serde_json::to_value(&restored).unwrap(),
         serde_json::to_value(&engine).unwrap()
-    );
-
-    let mut reordered = engine.clone();
-    reordered
-        .get_entity_mut(first)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .outbox
-        .reentrant
-        .owner_work
-        .reverse();
-    assert_ne!(
-        robin_util::state_hash::compute(&reordered),
-        robin_util::state_hash::compute(&engine)
     );
 
     let mut retargeted = engine.clone();

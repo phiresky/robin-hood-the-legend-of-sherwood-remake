@@ -418,32 +418,11 @@ impl EngineInner {
 
         observe_npc_hourglass_phase(NpcHourglassPhase::QueuedStimuli);
 
-        // Every engine-entered AI call closes its ordered owner-local
-        // state-change/speech boundary before returning to effects/orders. Nothing
-        // may survive into the obsolete post-NPC speech batch position.
-        let frame_counter = self.control.frame_counter;
-        for (npc_id, entity) in self.world.entities.npcs() {
-            let leaked = entity
-                .ai_controller()
-                .map(|ai| ai.outbox.reentrant.owner_work.as_slice())
-                .unwrap_or_default();
-            assert!(
-                leaked.is_empty(),
-                "NPC {} leaked owner-local AI work past its update slot on frame {}: {leaked:?}",
-                npc_id.index(),
-                frame_counter,
-            );
-        }
-
         // ── HUD speech-log decay ────────────────────────────────
         // Decrement the per-remark display timer and evict expired
         // entries every frame regardless of `speech_display` so the
         // Vec does not grow unbounded when the overlay is off.
         self.tick_screen_remarks();
-
-        // TODO(PA-013): pure-Rust handlers still enqueue until their AI borrow
-        // returns, so arbitrary reads between speech/state-change statements cannot
-        // yet observe the original game's fully synchronous engine/audio order.
     }
 
     /// Advance combat, projectiles, abilities, and other gameplay systems that

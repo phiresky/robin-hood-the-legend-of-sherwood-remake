@@ -562,7 +562,10 @@ fn test_moving_soldier_at(position: crate::coordinates::WorldPoint3D) -> Entity 
         },
         human: HumanData::default(),
         npc: Default::default(),
-        soldier: SoldierData::default(),
+        soldier: SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     };
     soldier.element.set_position(position);
     soldier.npc.ai_brain = AiBrain::Enemy(Box::default());

@@ -156,44 +156,6 @@ impl FriendlyAi {
             is_new_panic: !was_already_fleeing,
         });
     }
-
-    /// Ambient speech only observes its owner; production need not snapshot
-    /// every other entity to supply these two inputs.
-    pub(crate) fn random_speech_for_owner(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        is_beggar: bool,
-        animation: Option<crate::order::OrderType>,
-    ) {
-        // ---- executed only every 256 frames ----
-
-        if is_beggar {
-            if self.beggar_dont_talk_counter > 0 {
-                self.beggar_dont_talk_counter -= 1;
-            } else if self.base.current_remark == Remark::TheSoundOfSilence
-                && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CivilianBeggarSpeechGate, 0..3)
-                    == 0
-            {
-                match crate::sim_rng::u32(
-                    sim,
-                    crate::sim_rng::RngSite::CivilianBeggarSpeechChoice,
-                    0..5,
-                ) {
-                    0..=2 => self.base.say(Remark::CivBeggarBegging),
-                    3 => self.base.say(Remark::CivUnderNet),
-                    4 => self.base.say(Remark::CivCries),
-                    _ => unreachable!(),
-                }
-            }
-        }
-
-        // If our own current animation is Weeping, say "cries".
-        // An owner excluded from the spatial observation has no animation
-        // input, matching the full-context entity_view lookup.
-        if animation == Some(crate::order::OrderType::Weeping) {
-            self.base.say(Remark::CivCries);
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

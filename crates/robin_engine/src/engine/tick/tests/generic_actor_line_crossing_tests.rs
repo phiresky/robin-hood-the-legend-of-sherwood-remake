@@ -89,7 +89,10 @@ fn dying_find_place_increment_after_crossing(
         },
         human: HumanData::default(),
         npc: NpcData::default(),
-        soldier: SoldierData::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
 
     let mut dying = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(owner));
@@ -191,7 +194,10 @@ fn delayed_position_multi_non_elevation_crossing_recomputes_invalid_increment() 
             ..HumanData::default()
         },
         npc: NpcData::default(),
-        soldier: SoldierData::default(),
+        soldier: crate::element::SoldierData {
+            cached_camp: crate::element::Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
 
     let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));

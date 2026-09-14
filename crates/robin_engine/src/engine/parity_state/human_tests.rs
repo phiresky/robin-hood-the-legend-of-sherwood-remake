@@ -47,7 +47,10 @@ fn human_and_pc_records_match_frozen_encoder_with_populated_frontiers() {
             actor: Default::default(),
             human: Default::default(),
             npc: Default::default(),
-            soldier: Default::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         }));
         let mut human = HumanData::default();
         let mut pc = PcData {

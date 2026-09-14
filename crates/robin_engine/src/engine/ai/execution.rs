@@ -327,21 +327,6 @@ impl EngineInner {
         } else {
             self.execute_friendly_remaining_event(sim, assets, owner, stimulus)
         };
-        // Macro entry is a synchronous statement inside Think. Settle its
-        // preceding notifications before execution, retaining completion latches
-        // for the enclosing EndThink below.
-        let has_macro_call = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("Think macro entry"))
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .any(|work| matches!(work, crate::ai::AiOwnerWork::RunMacro));
-        if has_macro_call {
-            self.drain_pending_for_npc(sim, owner, assets);
-        }
         handled
     }
 

@@ -536,14 +536,6 @@ pub struct AiGlobalState {
     /// AI initialization per house gate.
     pub door_rally_points: Vec<DoorRallyPoint>,
 
-    /// Soldier load-order index → entity-handle (slot) mapping. Scripts
-    /// and waypoint commands address NPCs by their soldier register
-    /// index (the position in the all-soldiers list at level load), not
-    /// by their entity slot. Cloned out of
-    /// `LevelAssets::all_soldier_entity_ids` once at level load so the
-    /// AI tick can resolve a friend ID without re-borrowing the engine.
-    pub all_soldier_handles: std::sync::Arc<Vec<u32>>,
-
     /// Owner-ordered mirror of human primary-target multiplicity.
     /// Original-game AI resets and increments these 16-bit counters directly
     /// on target humans, so later owners in the same actor pass observe the

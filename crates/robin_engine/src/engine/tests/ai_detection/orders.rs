@@ -532,19 +532,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
         id
     }
 
-    fn assert_drained(engine: &EngineInner, id: EntityId, boundary: &str) {
-        let ai = engine
-            .get_entity(id)
-            .and_then(Entity::ai_controller)
-            .expect("civilian retains AI");
-        assert!(
-            ai.outbox.actor.orders.is_empty(),
-            "{boundary} must not leave civilian orders for a global batch"
-        );
-    }
-
     fn assert_launched(engine: &EngineInner, id: EntityId, expected: Command, boundary: &str) {
-        assert_drained(engine, id, boundary);
         assert!(
             engine.actor_command(id) == expected
                 || engine
@@ -587,7 +575,6 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     timer_ai.when_does_timer_ring = 0;
     timer_ai.substate_at_last_timer_launch = timer_ai.current_substate;
     engine.tick_ai_normal_timer_for_npc(sim, timer_owner, &assets);
-    assert_drained(&engine, timer_owner, "normal timer");
     assert_eq!(
         engine
             .get_entity(timer_owner)
@@ -640,7 +627,6 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     // (frame & 255) - ((register + 100) & 255) and must be ≡ 0 mod 16.
     engine.control.frame_counter = 100;
     engine.tick_periodic_ai_for_npc(sim, periodic_owner, &assets);
-    assert_drained(&engine, periodic_owner, "civilian The16thFrame");
     assert_eq!(
         engine
             .get_entity(periodic_owner)

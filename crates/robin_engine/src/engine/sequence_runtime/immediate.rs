@@ -235,13 +235,24 @@ impl EngineInner {
                         speak_variant.map(|v| v as i32),
                     );
                 } else if let Ok(remark) = crate::ai::Remark::try_from(speak_id)
-                    && let Some(entity) = self.world.entities.get_mut(owner)
-                    && let Some(ai) = entity.npc_data_mut().and_then(|n| n.ai_brain.base_mut())
+                    && self
+                        .world
+                        .entities
+                        .get(owner)
+                        .and_then(Entity::ai_controller)
+                        .is_some()
                 {
                     let flags_bits = speak_flags.unwrap_or(0) as u16;
                     let flags = crate::ai::SpeechFlags::from_bits_truncate(flags_bits);
-                    ai.say_with_flags(remark, flags);
-                    self.drain_ai_owner_work_for(sim, assets, owner);
+                    self.execute_ai_speech(
+                        sim,
+                        assets,
+                        owner,
+                        crate::ai::AiSpeechAttempt {
+                            remark,
+                            flags: flags.bits(),
+                        },
+                    );
                 } else {
                     tracing::warn!(
                         ?owner,

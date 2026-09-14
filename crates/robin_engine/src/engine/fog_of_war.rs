@@ -2082,11 +2082,13 @@ mod tests {
             )
             .expect("valid neutral relationship");
         let neutral_id = engine.add_test_entity(soldier_at(20.0, 20.0, Camp::Custom(2)));
-        let invalid_id = engine.add_test_entity(soldier_at(30.0, 30.0, Camp::Error));
+        let invalid = soldier_at(30.0, 30.0, Camp::Error);
         let camps = engine.player_camps();
 
-        for id in [neutral_id, invalid_id] {
-            let entity = engine.get_entity(id).expect("classification fixture");
+        for entity in [
+            engine.get_entity(neutral_id).expect("neutral fixture"),
+            &invalid,
+        ] {
             assert!(!engine.is_allied_to_player(entity, &camps));
             assert!(!engine.is_hostile_to_player(entity, &camps));
         }

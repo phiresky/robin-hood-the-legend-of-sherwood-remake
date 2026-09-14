@@ -143,7 +143,7 @@ impl EngineInner {
             }
 
             // Classify: VIP / Rider / Stuteley → crumple; else stick.
-            let (is_vip, is_rider, is_stuteley, is_soldier_vip) = match entity {
+            let (is_vip, is_rider, is_stuteley) = match entity {
                 Entity::Soldier(s) => {
                     let vip = assets
                         .profile_manager
@@ -155,7 +155,7 @@ impl EngineInner {
                             )
                         })
                         .vip;
-                    (vip, s.soldier.rider, false, vip)
+                    (vip, s.soldier.rider, false)
                 }
                 Entity::Civilian(c) => {
                     let vip = assets
@@ -170,7 +170,7 @@ impl EngineInner {
                         })
                         .civilian_type
                         == crate::profiles::CivilianType::Vip;
-                    (vip, false, false, false)
+                    (vip, false, false)
                 }
                 Entity::Pc(pc) => {
                     // In the shipping campaigns only Stuteley has the
@@ -186,23 +186,24 @@ impl EngineInner {
                             )
                         })
                         .has_action(crate::profiles::Action::Net);
-                    (false, false, stuteley, false)
+                    (false, false, stuteley)
                 }
-                _ => (false, false, false, false),
+                _ => (false, false, false),
             };
 
             if is_vip || is_rider || is_stuteley {
-                // VIP soldiers play the VipNetNo remark on the crumple
+                // VIPs play the VipNetNo remark on the crumple
                 // path; this only fires for VIPs, not riders/Stuteley.
-                if is_soldier_vip
-                    && let Some(entity) = self.world.entities.get_mut(actor_id)
-                    && let Some(npc) = entity.npc_data_mut()
-                    && let Some(base) = npc.ai_brain.base_mut()
-                {
-                    base.say(crate::ai::Remark::VipNetNo);
-                }
-                if is_soldier_vip {
-                    self.drain_ai_owner_work_for(sim, assets, actor_id);
+                if is_vip {
+                    self.execute_ai_speech(
+                        sim,
+                        assets,
+                        actor_id,
+                        crate::ai::AiSpeechAttempt {
+                            remark: crate::ai::Remark::VipNetNo,
+                            flags: 0,
+                        },
+                    );
                 }
                 if self.control.sim_config.item_gameplay.net_selective_immunity {
                     // Rebalanced behavior: resistant actors remain immune but

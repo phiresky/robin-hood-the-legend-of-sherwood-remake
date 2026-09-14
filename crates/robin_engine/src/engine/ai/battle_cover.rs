@@ -299,12 +299,17 @@ impl EngineInner {
                 .world
                 .entities
                 .expect_enemy_ai_mut(owner, format_args!("proud remark"));
-            ai.base.say(if ai.is_vip {
+            let remark = if ai.is_vip {
                 Remark::VipProudDontFight
             } else {
                 Remark::ProudDontFight
-            });
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            };
+            self.execute_ai_speech(
+                sim,
+                assets,
+                owner,
+                crate::ai::AiSpeechAttempt { remark, flags: 0 },
+            );
         }
         ControlFlow::Break(true)
     }
@@ -536,11 +541,15 @@ impl EngineInner {
                 return ControlFlow::Continue(Decision::Shoot);
             }
         }
-        self.world
-            .entities
-            .expect_ai_controller_mut(bearer, format_args!("cover formation remark"))
-            .say(Remark::ArchersBehindShieldBearers);
-        self.drain_direct_ai_owner_boundary(sim, bearer, assets);
+        self.execute_ai_speech(
+            sim,
+            assets,
+            bearer,
+            crate::ai::AiSpeechAttempt {
+                remark: Remark::ArchersBehindShieldBearers,
+                flags: 0,
+            },
+        );
         ControlFlow::Break(true)
     }
 }

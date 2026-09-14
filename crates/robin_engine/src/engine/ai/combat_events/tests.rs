@@ -17,12 +17,13 @@ fn enemy_near_retargets_only_the_four_observing_substates() {
         let ai = engine.combat_event_ai_mut(owner);
         ai.base.primary_target = None;
         ai.combat_trainer = true;
-        assert!(engine.execute_ai_combat_unexpected_event(
+        let handled = engine.execute_ai_combat_unexpected_event(
             &crate::sim_rng::test_context(),
             &assets,
             owner,
-            &crate::ai::Stimulus::with_human(StimulusType::EventEnemyNear, target.index())
-        ));
+            &crate::ai::Stimulus::with_human(StimulusType::EventEnemyNear, target.index()),
+        );
+        assert!(handled);
         let ai = engine.combat_event_ai(owner);
         assert_eq!(
             ai.base.primary_target,
@@ -131,12 +132,13 @@ fn place(engine: &mut EngineInner, id: EntityId, x: f32, y: f32, z: f32) {
 }
 
 fn event(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId, event: StimulusType) {
-    assert!(engine.execute_ai_combat_expected_event(
+    let handled = engine.execute_ai_combat_expected_event(
         &crate::sim_rng::test_context(),
         assets,
         owner,
-        event
-    ));
+        event,
+    );
+    assert!(handled);
 }
 
 fn selected_door_position(engine: &mut EngineInner, owner: EntityId, point: MapPoint) {
@@ -369,12 +371,13 @@ fn archer_path_wait_returns_to_duty_only_on_timer() {
         Substate::AttackingArcherWaitOnArcheryPathBending,
     ] {
         let (mut engine, assets, owner, _) = fixture(state);
-        assert!(!engine.execute_ai_combat_expected_event(
+        let handled = engine.execute_ai_combat_expected_event(
             &crate::sim_rng::test_context(),
             &assets,
             owner,
-            StimulusType::EventDone
-        ));
+            StimulusType::EventDone,
+        );
+        assert!(!handled);
         assert_eq!(engine.combat_event_ai(owner).base.current_substate, state);
         event(&mut engine, &assets, owner, StimulusType::EventTimer);
         assert_eq!(
@@ -407,12 +410,13 @@ fn bow_cover_arrival_faces_target_with_truncated_elevation() {
         .actor_data_mut()
         .unwrap()
         .action_state = crate::element::ActionState::Moving;
-    assert!(engine.execute_ai_archery_expected_event(
+    let handled = engine.execute_ai_archery_expected_event(
         &crate::sim_rng::test_context(),
         &assets,
         owner,
-        StimulusType::EventReachPoint
-    ));
+        StimulusType::EventReachPoint,
+    );
+    assert!(handled);
     assert!(
         engine
             .orders

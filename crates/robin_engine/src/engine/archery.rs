@@ -3846,14 +3846,15 @@ impl EngineInner {
             .unwrap_or_else(|| panic!("tie target {target_id:?} vanished at Done"));
         target.set_posture(crate::element::Posture::Tied);
         if target.is_soldier() {
-            target
-                .ai_controller_mut()
-                .expect("tied soldier must have AI")
-                .say(crate::ai::Remark::TiedUp);
-            // The original game invokes speech directly from the tying PC's
-            // owner tick, so expose the request at this same
-            // creation-order boundary.
-            self.drain_ai_owner_work_for(sim, assets, target_id);
+            self.execute_ai_speech(
+                sim,
+                assets,
+                target_id,
+                crate::ai::AiSpeechAttempt {
+                    remark: crate::ai::Remark::TiedUp,
+                    flags: 0,
+                },
+            );
         }
         // Player-character ability execution refreshes the victim
         // with Wait after applying the tied posture and remark.
@@ -4841,11 +4842,15 @@ impl EngineInner {
         } else {
             crate::ai::Remark::Strangled
         };
-        victim
-            .ai_controller_mut()
-            .expect("strangle victim must have AI")
-            .say_with_flags(remark, crate::ai::SpeechFlags::EMERGENCY);
-        self.drain_ai_owner_work_for(sim, assets, target_id);
+        self.execute_ai_speech(
+            sim,
+            assets,
+            target_id,
+            crate::ai::AiSpeechAttempt {
+                remark,
+                flags: crate::ai::SpeechFlags::EMERGENCY.bits(),
+            },
+        );
         if !sprite_frozen {
             self.get_entity_mut(target_id)
                 .expect("strangle victim disappeared after speech")

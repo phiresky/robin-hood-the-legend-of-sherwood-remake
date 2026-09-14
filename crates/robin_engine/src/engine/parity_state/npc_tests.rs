@@ -754,7 +754,10 @@ fn npc_base_and_subclasses_match_frozen_json_encoder() {
             actor: Default::default(),
             human: Default::default(),
             npc,
-            soldier: Default::default(),
+            soldier: crate::element::SoldierData {
+                cached_camp: crate::element::Camp::Lacklandists,
+                ..Default::default()
+            },
         }));
         let handle = crate::ai::AiEntityHandle::new(id.index());
         if let Some(base) = inner

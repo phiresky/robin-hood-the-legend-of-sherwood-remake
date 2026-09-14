@@ -183,9 +183,15 @@ impl EngineInner {
                         {
                             self.reporting_civilian_mut(owner)
                                 .fleeing_seen_enemy_counter += 1;
-                            self.reporting_civilian_mut(owner)
-                                .base
-                                .say_with_flags(Remark::CivPanic, SpeechFlags::HOUSE);
+                            self.execute_ai_speech(
+                                sim,
+                                assets,
+                                owner,
+                                crate::ai::AiSpeechAttempt {
+                                    remark: Remark::CivPanic,
+                                    flags: SpeechFlags::HOUSE.bits(),
+                                },
+                            );
                             self.drain_direct_ai_owner_boundary(sim, owner, assets);
                             self.civilian_panic_from_human(sim, assets, owner, target);
                         }
@@ -435,9 +441,15 @@ impl EngineInner {
             );
             if matches!(self.expect_entity(target, "civilian admired human"), Entity::Pc(pc) if pc.is_robin())
             {
-                self.reporting_civilian_mut(owner)
-                    .base
-                    .say(Remark::CivAdmiresRobin);
+                self.execute_ai_speech(
+                    sim,
+                    assets,
+                    owner,
+                    crate::ai::AiSpeechAttempt {
+                        remark: Remark::CivAdmiresRobin,
+                        flags: 0,
+                    },
+                );
                 self.drain_direct_ai_owner_boundary(sim, owner, assets);
             }
             self.civilian_stop(sim, assets, owner);
@@ -446,9 +458,15 @@ impl EngineInner {
         } else if self.entity_data_in_building_sector(
             self.expect_entity(owner, "civilian viewer").element_data(),
         ) {
-            self.reporting_civilian_mut(owner)
-                .base
-                .say_with_flags(Remark::CivPanic, SpeechFlags::HOUSE);
+            self.execute_ai_speech(
+                sim,
+                assets,
+                owner,
+                crate::ai::AiSpeechAttempt {
+                    remark: Remark::CivPanic,
+                    flags: SpeechFlags::HOUSE.bits(),
+                },
+            );
             self.drain_direct_ai_owner_boundary(sim, owner, assets);
             self.reporting_civilian_mut(owner)
                 .panic_undirected(crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
@@ -493,9 +511,15 @@ impl EngineInner {
             Substate::WonderingCivilianBodyReactiontime,
         );
         self.civilian_stop(sim, assets, owner);
-        self.reporting_civilian_mut(owner)
-            .base
-            .say(Remark::CivSeesBody);
+        self.execute_ai_speech(
+            sim,
+            assets,
+            owner,
+            crate::ai::AiSpeechAttempt {
+                remark: Remark::CivSeesBody,
+                flags: 0,
+            },
+        );
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let position = self.live_ai_position(target);
         self.reporting_civilian_mut(owner)
@@ -547,9 +571,15 @@ impl EngineInner {
             }
             Substate::WonderingWatchingWhistling => {
                 if event == EventTimer {
-                    self.reporting_civilian_mut(owner)
-                        .base
-                        .say(Remark::CivWhistling);
+                    self.execute_ai_speech(
+                        sim,
+                        assets,
+                        owner,
+                        crate::ai::AiSpeechAttempt {
+                            remark: Remark::CivWhistling,
+                            flags: 0,
+                        },
+                    );
                     self.drain_direct_ai_owner_boundary(sim, owner, assets);
                     self.duty_set_state(
                         sim,
@@ -575,10 +605,15 @@ impl EngineInner {
                 }
             }
             Substate::FleeingChildChased => match event {
-                CallYourTalk1 => self
-                    .reporting_civilian_mut(owner)
-                    .base
-                    .say(Remark::CivChildChasedBySoldier),
+                CallYourTalk1 => self.execute_ai_speech(
+                    sim,
+                    assets,
+                    owner,
+                    crate::ai::AiSpeechAttempt {
+                        remark: Remark::CivChildChasedBySoldier,
+                        flags: 0,
+                    },
+                ),
                 EventReachPoint => {
                     if let Some(goal) = self.live_child_flee_destination(sim, owner) {
                         let target = self.civilian_chaser(owner);
@@ -852,7 +887,6 @@ mod tests {
         let ai = engine.reporting_civilian_mut(owner);
         ai.base.outbox.actor.append_detectable((target, Friend));
         ai.base.outbox.actor.delete_detectable_type(Friend);
-        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
         let sim = crate::sim_rng::test_context();
         engine.duty_set_state(
             &sim,

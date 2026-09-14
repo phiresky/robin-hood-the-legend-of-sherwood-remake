@@ -210,7 +210,7 @@ impl EngineInner {
         self.drain_pending_panic_and_search(sim, npc_id, assets);
     }
 
-    /// Owner work, direction goal, halt barrier, and the first post-Think
+    /// Direction goal, halt barrier, and the first post-Think
     /// channel takes. `None` means the owner or its AI controller vanished
     /// before the halt barrier; the drain then stops.
     fn drain_pending_owner_prelude(
@@ -219,9 +219,6 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) -> Option<PendingDrainBarrier> {
-        // Direct engine-owned AI calls also enter this drain. Close the
-        // state-change callback boundary before consuming halt/effect/order work.
-        self.drain_ai_owner_work_for(sim, assets, npc_id);
         self.drain_patrol_direction_broadcast_for(sim, npc_id, assets);
 
         // Direct direction assignments made before stopping must update the goal
@@ -314,7 +311,6 @@ impl EngineInner {
             npc_id.index()
         );
         Some(PendingDrainBarrier {
-            halt_count,
             preemption,
             effects,
         })
@@ -359,12 +355,7 @@ impl EngineInner {
             self.dispatch_condolations(sim, assets);
         }
 
-        // Process stop_menace — the explicit `STOP_MENACE` element
-        // prepend in `go_to`.  Launching a `Command::StopMenace`
-        // element here lets the per-element dispatch in `tick.rs`
-        // queue `TRANSITION_MENACING_WAITING_SWORD` then
-        // `TRANSITION_LOWERING_SWORD` before the move that
-        // `launch_pending_orders_for_npc` is about to launch starts.
+        // Apply an explicit stop-menacing request.
         if preemption.stop_menace {
             let elem = crate::sequence::SequenceElement::new(
                 1,
@@ -374,11 +365,7 @@ impl EngineInner {
             self.launch_element(elem);
         }
 
-        // Process lower_shield — the explicit `LOWER_SHIELD` element
-        // prepend in `go_to`.  Launching a `Command::LowerShield`
-        // element here lets `dispatch_lower_shield` queue the
-        // `LoweringShield` order so the shield arm completes before
-        // `launch_pending_orders_for_npc` runs the move.
+        // Apply an explicit shield-lowering request.
         if preemption.lower_shield {
             let elem = crate::sequence::SequenceElement::new(
                 1,
@@ -563,9 +550,7 @@ impl EngineInner {
         }
     }
 
-    /// Principal opponent, friend primary-target swaps, bow shot, focus,
-    /// eye reopening, instant direction, and the Face split around the
-    /// pending order launch.
+    /// Principal opponent, bow shot, focus, eye reopening, and instant direction.
     fn drain_pending_focus_and_orders(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -573,12 +558,7 @@ impl EngineInner {
         assets: &LevelAssets,
         drain: &mut PendingDrainBarrier,
     ) {
-        let PendingDrainBarrier {
-            halt_count,
-            effects,
-            ..
-        } = drain;
-        let halt_count = *halt_count;
+        let PendingDrainBarrier { effects, .. } = drain;
 
         // Process set_as_new_principal_opponent.
         if let Some(opponent_handle) = effects.set_principal {
@@ -673,8 +653,6 @@ impl EngineInner {
                 crate::position_interface::Direction::from_raw(dir as i32),
             );
         }
-
-        self.launch_pending_orders_for_npc_after_halt(sim, assets, npc_id, halt_count != 0);
     }
 
     /// Guarded-PC reciprocity, deactivation, reported-to-officer writes,
@@ -1217,7 +1195,6 @@ impl EngineInner {
 /// consume. Transient per-drain state (no serde: the effect channels it holds
 /// are runtime-only and never persisted).
 struct PendingDrainBarrier {
-    halt_count: u8,
     preemption: crate::ai::AiActorPreemptionEffects,
     effects: crate::ai::AiActorCoreEffects,
 }

@@ -143,7 +143,10 @@ fn ale_reliability_command_updates_spawned_soldiers_but_not_autonomous_pcs() {
             },
             ..Default::default()
         },
-        soldier: SoldierData::default(),
+        soldier: SoldierData {
+            cached_camp: Camp::Lacklandists,
+            ..Default::default()
+        },
     }));
     let vip_soldier_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: {
@@ -162,6 +165,7 @@ fn ale_reliability_command_updates_spawned_soldiers_but_not_autonomous_pcs() {
         },
         soldier: SoldierData {
             soldier_profile_index: crate::profiles::SoldierProfileIdx(1),
+            cached_camp: Camp::Lacklandists,
             ..Default::default()
         },
     }));

@@ -55,9 +55,9 @@ impl EngineInner {
             return;
         }
         let target_handle = *self
-            .ai
-            .global
-            .all_soldier_handles
+            .world
+            .soldier_registry
+            .all()
             .get(friend_id as usize)
             .expect("friend-check soldier index is out of range");
         let target = self.expect_human_id_for_ai_handle(target_handle, "friend-check partner");
@@ -361,7 +361,10 @@ mod tests {
         }
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-        engine.ai.global.all_soldier_handles = std::sync::Arc::new(vec![target.index()]);
+        engine
+            .world
+            .soldier_registry
+            .rebuild_from_order(&engine.world.entities, [target]);
         assets.navigation.hiking_paths = std::sync::Arc::new(vec![RawHikingPath {
             waypoints: vec![RawWaypoint {
                 x: 20,

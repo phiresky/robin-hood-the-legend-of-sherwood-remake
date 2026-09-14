@@ -780,7 +780,6 @@ fn close_phalanx_slot_with_different_sector_needs_no_movement_order() {
         .entities
         .expect_ai_controller(owner, format_args!("close formation destination"));
     assert!(ai.already_on_point);
-    assert!(ai.outbox.actor.orders.is_empty());
     assert!(
         engine
             .orders

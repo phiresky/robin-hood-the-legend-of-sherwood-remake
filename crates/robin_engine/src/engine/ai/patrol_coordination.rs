@@ -200,10 +200,23 @@ impl EngineInner {
             .actor_data()
             .expect("patrol member has no actor data")
             .action_state;
-        self.world
+        let ai = self
+            .world
             .entities
-            .expect_ai_controller_mut(member, format_args!("patrol direction member"))
-            .set_instructed_patrol_direction(direction, current_direction, action_state);
+            .expect_ai_controller_mut(member, format_args!("patrol direction member"));
+        ai.patrol_direction = direction;
+        if ai.current_substate == crate::ai::Substate::DefaultPatrolEnrouteWaiting {
+            if direction == current_direction
+                && matches!(
+                    action_state,
+                    crate::element::ActionState::Waiting | crate::element::ActionState::Bored
+                )
+            {
+                ai.already_turned = true;
+            } else {
+                self.launch_live_ai_turn(member, direction as i16, false);
+            }
+        }
     }
 
     pub(in crate::engine) fn drain_patrol_direction_broadcast_for(

@@ -3566,7 +3566,7 @@ impl EngineInner {
                     | crate::ai::StimulusType::CallYourTalk3
             );
             eprintln!(
-                "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} event={:?} code={} expected_class={} source={source:?} stimulus_owner={:?} ai_antagonist={:?} state={:?} substate={:?} locks={:?} script_locked={} recursion={} stimulus_queue={:?} self_stimuli={:?} owner_work={:?} begin_panic={} rng_cursor={rng_cursor:?}",
+                "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} event={:?} code={} expected_class={} source={source:?} stimulus_owner={:?} ai_antagonist={:?} state={:?} substate={:?} locks={:?} script_locked={} recursion={} stimulus_queue={:?} self_stimuli={:?} begin_panic={} rng_cursor={rng_cursor:?}",
                 engine.control.frame_counter,
                 entity_id.index(),
                 engine.world.original_creation_order(entity_id),
@@ -3582,7 +3582,6 @@ impl EngineInner {
                 engine.ai_think_depth(),
                 ai.stimulus_queue,
                 ai.outbox.reentrant.self_stimuli,
-                ai.outbox.reentrant.owner_work,
                 ai.outbox.actor.begin_panic.is_some(),
             );
         };
@@ -3779,7 +3778,6 @@ impl EngineInner {
         // State changes call FilterAIEvent before any of the caller's deferred
         // effects. The entity borrow above is the first point at which the
         // engine can safely re-enter the actor VM.
-        self.drain_ai_owner_work_for(sim, assets, entity_id);
         handled
     }
 
@@ -3790,111 +3788,7 @@ impl EngineInner {
         })
     }
 
-    /// Drain one AI owner's effects and reentrant calls in statement order.
-    pub(crate) fn drain_ai_owner_work_for(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: crate::element::EntityId,
-    ) {
-        const MAX_OWNER_WORK: usize = 128;
-
-        for work_index in 0..MAX_OWNER_WORK {
-            let work = {
-                let Some(entity) = self.world.entities.get_mut(owner) else {
-                    if work_index == 0 {
-                        return;
-                    }
-                    panic!(
-                        "AI owner-work recipient {} disappeared before item {}",
-                        owner.index(),
-                        work_index
-                    );
-                };
-                let Some(ai) = entity.ai_controller_mut() else {
-                    if work_index == 0 {
-                        return;
-                    }
-                    panic!(
-                        "AI owner-work recipient {} lost its AI before item {}",
-                        owner.index(),
-                        work_index
-                    );
-                };
-                if ai.outbox.reentrant.owner_work.is_empty() {
-                    return;
-                }
-                ai.outbox.reentrant.owner_work.remove(0)
-            };
-
-            match work {
-                crate::ai::AiOwnerWork::NearbyCiviliansPanic => {
-                    tracing::trace!(
-                        target: "parity_nearby_panic",
-                        owner = owner.index(),
-                        "drain synchronous NearbyCiviliansPanic callback"
-                    );
-                    self.nearby_civilians_panic(sim, assets, owner);
-                    continue;
-                }
-                crate::ai::AiOwnerWork::ConsiderToBeginParade { attacker } => {
-                    self.owner_work_consider_to_begin_parade(sim, assets, owner, attacker);
-                    continue;
-                }
-                crate::ai::AiOwnerWork::RunMacro => {
-                    self.run_ai_macro(sim, assets, owner);
-                    continue;
-                }
-                crate::ai::AiOwnerWork::Speech(attempt) => {
-                    self.owner_work_speech(sim, assets, owner, attempt);
-                    continue;
-                }
-                crate::ai::AiOwnerWork::LaunchTimer {
-                    frames,
-                    current_frame,
-                } => {
-                    self.world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::ai_controller_mut)
-                        .unwrap_or_else(|| {
-                            panic!("timer owner {} vanished before settlement", owner.index())
-                        })
-                        .launch_timer(frames, current_frame);
-                    continue;
-                }
-                crate::ai::AiOwnerWork::SetEyeStatus(status) => {
-                    let ai_actor = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::ai_actor_data_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "eye-status owner {} lost AI actor data before settlement",
-                                owner.index()
-                            )
-                        });
-                    crate::ai_vision::set_view_status(ai_actor, status);
-                    continue;
-                }
-            };
-        }
-
-        let still_pending = self
-            .world
-            .entities
-            .get(owner)
-            .and_then(Entity::ai_controller)
-            .is_some_and(|ai| !ai.outbox.reentrant.owner_work.is_empty());
-        assert!(
-            !still_pending,
-            "AI owner {} exceeded recursive FIFO bound {MAX_OWNER_WORK}",
-            owner.index()
-        );
-    }
-
-    fn owner_work_consider_to_begin_parade(
+    pub(in crate::engine) fn execute_ai_consider_to_begin_parade(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -3957,23 +3851,14 @@ impl EngineInner {
         );
     }
 
-    pub(in crate::engine) fn owner_work_speech(
+    pub(in crate::engine) fn execute_ai_speech(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         attempt: crate::ai::AiSpeechAttempt,
     ) {
-        // A rejected Say invokes MYTALK synchronously before Say
-        // returns. Detach the outer statement tail so recursive
-        // Think work and its logs settle ahead of that tail.
-        let later_work = self
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .map(|ai| std::mem::take(&mut ai.outbox.reentrant.owner_work))
-            .unwrap_or_else(|| panic!("speech owner {} vanished before settlement", owner.index()));
+        // Rejection invokes the finished callback before category cleanup.
         let settlement = self.settle_npc_speech_attempt(assets, owner, attempt);
         if settlement.invoke_finished_callback {
             self.drain_self_stimuli_for_npc(sim, owner, assets);
@@ -3981,15 +3866,6 @@ impl EngineInner {
         if let Some(finalization) = settlement.category_rejection {
             self.finalize_category_speech_rejection(owner, finalization);
         }
-        self.world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| panic!("speech owner {} vanished after settlement", owner.index()))
-            .outbox
-            .reentrant
-            .owner_work
-            .extend(later_work);
     }
 
     /// Settle one synchronous state callback before reattaching its caller tail.
@@ -4092,16 +3968,6 @@ impl EngineInner {
                 "AI state-change FilterAIEvent callback failed"
             );
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn drain_ai_state_change_notifications_for(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: crate::element::EntityId,
-    ) {
-        self.drain_ai_owner_work_for(sim, assets, owner);
     }
 
     /// Initialize the engine for the campaign's current mission.

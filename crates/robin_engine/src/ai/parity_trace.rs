@@ -80,10 +80,8 @@ trace_event! {
         delta: Display,
         timer_running: Display,
         timer_deadline: Display,
-        self_stimuli: Display,
-        owner_work: Display,
-        orders: Display;
-    } => "BORED_BOUNDARY frame={} owner={} phase=get_bored_time state={:?} substate={:?} rank={:?} pride={} min={} delta={} timer_running={} timer_deadline={} self_stimuli={} owner_work={} orders={}"
+        self_stimuli: Display;
+    } => "BORED_BOUNDARY frame={} owner={} phase=get_bored_time state={:?} substate={:?} rank={:?} pride={} min={} delta={} timer_running={} timer_deadline={} self_stimuli={}"
 }
 
 trace_event! {
@@ -100,11 +98,10 @@ trace_event! {
         command_offset: Display,
         remaining_bytes: Display,
         waypoint: Debug,
-        owner_work_len: Display,
         self_stimuli_len: Display;
         phase: Display,
         reason: Debug
-    } => "MACROLIFE frame={} owner={:?} me={} phase={phase} reason={reason:?} state={:?} substate={:?} in_progress={} timer_running={} timer_deadline={} started_this_frame={} command_offset={} remaining_bytes={} waypoint={:?} owner_work_len={} self_stimuli_len={}"
+    } => "MACROLIFE frame={} owner={:?} me={} phase={phase} reason={reason:?} state={:?} substate={:?} in_progress={} timer_running={} timer_deadline={} started_this_frame={} command_offset={} remaining_bytes={} waypoint={:?} self_stimuli_len={}"
 }
 
 trace_event! {
