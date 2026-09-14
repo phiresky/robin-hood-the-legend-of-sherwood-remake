@@ -79,7 +79,10 @@ fn add_soldier(engine: &mut Engine, x: f32, y: f32, life_points: i16) -> EntityI
             life_points,
             ..Default::default()
         },
-        soldier: SoldierData::default(),
+        soldier: SoldierData {
+            cached_camp: robin_engine::element_kinds::Camp::Lacklandists,
+            ..Default::default()
+        },
     }))
 }
 

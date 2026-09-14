@@ -1366,12 +1366,11 @@ mod tests {
     }
 
     #[test]
-    fn replay_save_projection_matches_disk_and_discards_clone_only_ai_continuations() {
+    fn replay_save_projection_matches_disk_and_preserves_live_ai_state() {
         let (mut engine, assets) = fresh_engine();
         let mut ai = robin_engine::ai_enemy::EnemyAi::new(0);
-        ai.base.open_end_think_frames = 2;
-        ai.base.engine_deferred_end_think_frames = 1;
-        ai.base.engine_completion_verdict_resolved = true;
+        ai.base.blood_alcohol = 23;
+        ai.base.frame_when_enemy_detected = 41;
         let owner = engine.test_add_entity(robin_engine::element::Entity::Soldier(
             robin_engine::element::ActorSoldier {
                 element: {
@@ -1390,10 +1389,13 @@ mod tests {
                         ..Default::default()
                     }
                 },
-                soldier: Default::default(),
+                soldier: robin_engine::element::SoldierData {
+                    cached_camp: robin_engine::element::Camp::Royalists,
+                    ..Default::default()
+                },
             },
         ));
-        let continuation = |engine: &Engine| {
+        let live_ai_state = |engine: &Engine| {
             let ai = engine
                 .get_entity(owner)
                 .unwrap()
@@ -1402,11 +1404,7 @@ mod tests {
                 .ai_brain
                 .base()
                 .unwrap();
-            (
-                ai.open_end_think_frames,
-                ai.engine_deferred_end_think_frames,
-                ai.engine_completion_verdict_resolved,
-            )
+            (ai.blood_alcohol, ai.frame_when_enemy_detected)
         };
         let host = Host::scratch(800.0, 600.0);
         let game = crate::game::Game::default();
@@ -1420,14 +1418,14 @@ mod tests {
         let pinned_engine = Engine::from_persisted_state(pinned.engine.clone());
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("QuickSave.json");
-        GameSaveFile::capture(&engine, &host, 7, "continuations".into())
+        GameSaveFile::capture(&engine, &host, 7, "live AI state".into())
             .write_to(&path)
             .expect("write live save");
         let disk = GameSaveFile::read_from(&path).expect("read live save");
-        assert_eq!(continuation(&engine), (2, 1, true), "capture is read-only");
-        assert_eq!(continuation(&clone), (2, 1, true));
-        assert_eq!(continuation(&disk.engine), (0, 0, false));
-        assert_eq!(continuation(&pinned_engine), continuation(&disk.engine));
+        assert_eq!(live_ai_state(&engine), (23, 41), "capture is read-only");
+        assert_eq!(live_ai_state(&clone), (23, 41));
+        assert_eq!(live_ai_state(&disk.engine), (23, 41));
+        assert_eq!(live_ai_state(&pinned_engine), live_ai_state(&disk.engine));
         let mut replay_engine = engine.clone();
         let mut replay_host = Host::scratch(800.0, 600.0);
         let mut replay_game = crate::game::Game::default();
@@ -1447,7 +1445,7 @@ mod tests {
             robin_engine::replay::state_hash(&replay_engine),
             robin_engine::replay::state_hash(&engine)
         );
-        assert_eq!(continuation(&replay_engine), continuation(&engine));
+        assert_eq!(live_ai_state(&replay_engine), live_ai_state(&engine));
     }
 
     #[test]
@@ -1613,7 +1611,10 @@ mod tests {
                         ..Default::default()
                     }
                 },
-                soldier: Default::default(),
+                soldier: robin_engine::element::SoldierData {
+                    cached_camp: robin_engine::element::Camp::Royalists,
+                    ..Default::default()
+                },
             },
         ));
         assert_eq!(owner.index(), 0, "fixture must occupy live arena slot zero");
