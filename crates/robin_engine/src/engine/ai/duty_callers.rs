@@ -132,14 +132,13 @@ impl EngineInner {
             .expect_ai_controller_mut(owner, format_args!("sleeping enemy primary target"))
             .primary_target = nearest.map(|id| AiEntityHandle::new(id.index()));
         if nearest.is_some() {
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("sleeping enemy approach state"))
-                .set_state(
-                    AiState::Attacking,
-                    Substate::AttackingApproachingSleepingEnemy,
-                );
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.duty_set_state(
+                sim,
+                assets,
+                owner,
+                AiState::Attacking,
+                Substate::AttackingApproachingSleepingEnemy,
+            );
             let target = self
                 .world
                 .entities

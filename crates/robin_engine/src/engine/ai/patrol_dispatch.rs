@@ -38,7 +38,7 @@ impl EngineInner {
         self.execute_ai_handler_body(sim, assets, owner, stimulus, target);
     }
 
-    fn dispatch_live_stimulus_to_patrol(
+    pub(in crate::engine) fn dispatch_live_stimulus_to_patrol(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,

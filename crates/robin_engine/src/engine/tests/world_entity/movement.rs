@@ -331,7 +331,7 @@ fn selection_mark_skips_hidden_and_building_pcs() {
 }
 
 #[test]
-fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
+fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
     use crate::coordinates::MapPoint;
     use crate::gate::{Door, DoorIndex};
     use crate::order::OrderType;
@@ -432,40 +432,28 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
         },
     ];
 
-    let candidates = crate::engine::ai::build_friend_swap_candidates(
-        &engine.world.entities,
-        &engine.mission_domain.diplomacy,
-        &engine.script_domains.interactables.doors,
-        &engine.orders.sequence_manager,
-        owner,
-        crate::element::Camp::Lacklandists,
-        |element| crate::engine::ai::ai_view_position_sector(&engine, element),
-    );
-    assert_eq!(candidates.len(), 1);
-    let candidate = &candidates[0];
-    assert_eq!(candidate.friend_id, friend);
-    assert_eq!(candidate.friend_position.x, 101.0);
-    assert_eq!(candidate.friend_position.y, 102.0);
+    let friend_position = crate::engine::ai::lookup_primary_target_position(&engine, friend)
+        .expect("friend position");
+    let target_position = crate::engine::ai::lookup_primary_target_position(&engine, target)
+        .expect("target position");
+    assert_eq!(friend_position.x, 101.0);
+    assert_eq!(friend_position.y, 102.0);
     assert_eq!(
-        candidate.friend_position.sector,
+        friend_position.sector,
         crate::position_interface::SectorHandle::new(11)
     );
-    assert_eq!(candidate.friend_position.level, 3);
+    assert_eq!(friend_position.level, 3);
+    assert_eq!(target_position.x, 201.0);
+    assert_eq!(target_position.y, 202.0);
     assert_eq!(
-        candidate.friend_primary_target,
-        Some(crate::ai::AiEntityHandle::new(target.index()))
-    );
-    assert_eq!(candidate.friend_primary_target_position.x, 201.0);
-    assert_eq!(candidate.friend_primary_target_position.y, 202.0);
-    assert_eq!(
-        candidate.friend_primary_target_position.sector,
+        target_position.sector,
         crate::position_interface::SectorHandle::new(22)
     );
-    assert_eq!(candidate.friend_primary_target_position.level, 4);
+    assert_eq!(target_position.level, 4);
 }
 
 #[test]
-fn friend_swap_candidate_preserves_exact_duplicate_target_sector() {
+fn live_ai_position_preserves_exact_duplicate_target_sector() {
     use crate::coordinates::{MapBBox, MapPoint};
     use crate::fast_find_grid::GridSector;
     use crate::sector::{SectorNumber, SectorType};
@@ -523,18 +511,8 @@ fn friend_swap_candidate_preserves_exact_duplicate_target_sector() {
     target_element.set_layer(2);
     target_element.set_sector(crate::position_interface::SectorHandle::new(88));
 
-    let candidates = crate::engine::ai::build_friend_swap_candidates(
-        &engine.world.entities,
-        &engine.mission_domain.diplomacy,
-        &[],
-        &engine.orders.sequence_manager,
-        owner,
-        crate::element::Camp::Lacklandists,
-        |element| crate::engine::ai::ai_view_position_sector(&engine, element),
-    );
-
-    let target_sector = candidates[0]
-        .friend_primary_target_position
+    let target_sector = engine
+        .live_ai_position(target)
         .sector
         .expect("friend target must retain its sector");
     assert_eq!(u16::from(target_sector), 88);

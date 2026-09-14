@@ -189,38 +189,7 @@ impl EngineInner {
                 1.0,
             )
         };
-        let position = self.live_ai_position(owner);
-        let depth = self.ai_think_depth();
-        let entity = self
-            .world
-            .entities
-            .expect_entity_mut(owner, format_args!("patrol moving owner"));
-        let element = entity.element_data();
-        let layer = element.layer();
-        let sector = element.sector();
-        let actor = entity.actor_data().expect("patrol member requires actor");
-        let animation = actor
-            .installed_order
-            .map(|order| order.order_type)
-            .unwrap_or(crate::order::OrderType::NonanimationEnd);
-        let action_state = actor.action_state;
-        let civilian = entity.is_civilian();
-        entity
-            .ai_controller_mut()
-            .expect("patrol member requires controller")
-            .request_move(
-                target,
-                flags,
-                speed,
-                position,
-                layer,
-                sector,
-                animation,
-                action_state,
-                civilian,
-                depth,
-            );
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.duty_go_to_speed(sim, assets, owner, target, flags, speed);
     }
 
     /// Apply facing from the two actor values it actually reads. In particular,

@@ -10,7 +10,16 @@
 
 mod alert_execution;
 mod battle_approach;
+mod battle_archery;
+mod battle_cover;
+mod battle_decision_execution;
+#[cfg(test)]
+mod battle_decision_observation_tests;
+#[cfg(test)]
+mod battle_decision_panic_tests;
 mod battle_execution;
+mod body_execution;
+mod body_observation;
 mod cross_npc_actions;
 mod detection;
 mod duty_callers;
@@ -2678,34 +2687,12 @@ fn context_original_creation_order(
         .map(|view| view.original_creation_order)
 }
 
-/// Look up the live metadata for an enemy's `primary_target` from the
-/// engine entity table. Returns `(position, posture, current
-/// animation, optional carrier position when the target is on
-/// another entity's shoulders)`. Used by the per-tick caller to
-/// populate [`crate::ai::AiPerTickData::primary_target_position`] and its
-/// siblings so [`EnemyAi::reconsider_enemy_approach`] sees the live
-/// target's position, posture, and current order.
-///
-/// Returns `None` when `target_id` is zero (unassigned target) or the
-/// target slot is vacant. The caller should leave the tick fields
-/// `None`/`false` in that case — `reconsider_enemy_approach` falls
-/// back to the stored `seek_position`.
-type PrimaryTargetMetadata = (
-    crate::ai::Position,
-    crate::element::Posture,
-    Option<crate::order::OrderType>,
-    Option<crate::ai::Position>,
-    Option<crate::ai::AiEntityHandle>,
-);
-
 pub(super) struct AiPositionResolution {
     /// Target's own position after the door-first arm, before an optional
     /// carried-PC substitution.
     pub(super) target: crate::ai::Position,
     /// Final AI position for the entity.
     pub(super) effective: crate::ai::Position,
-    pub(super) carrier: Option<crate::ai::Position>,
-    pub(super) carrier_handle: Option<crate::ai::AiEntityHandle>,
 }
 
 pub(super) fn resolve_ai_position_with(
@@ -2775,8 +2762,6 @@ fn resolve_ai_position_with_selected(
         return AiPositionResolution {
             target: position,
             effective: position,
-            carrier: None,
-            carrier_handle: None,
         };
     }
 
@@ -2793,20 +2778,17 @@ fn resolve_ai_position_with_selected(
     AiPositionResolution {
         target: target_position,
         effective: carrier.unwrap_or(target_position),
-        carrier,
-        carrier_handle: carrier_id.map(|id| crate::ai::AiEntityHandle::new(id.index())),
     }
 }
 
-pub(super) fn lookup_primary_target_metadata(
+pub(super) fn lookup_primary_target_position(
     engine: &EngineInner,
     target_id: crate::element::EntityId,
-) -> Option<PrimaryTargetMetadata> {
+) -> Option<crate::ai::Position> {
     if target_id.index() == 0 {
         return None;
     }
-    let target = engine.world.entities.get(target_id)?;
-    let elem = target.element_data();
+    engine.world.entities.get(target_id)?;
     let resolved = resolve_ai_position_with(
         &engine.world.entities,
         engine.script_domains.interactables.doors.as_slice(),
@@ -2824,107 +2806,7 @@ pub(super) fn lookup_primary_target_metadata(
             }
         },
     );
-    let posture = elem.posture();
-    // Orders live on the target's owning `SequenceElement.orders` —
-    // look up the current in-progress element for the target actor.
-    let animation = engine
-        .orders
-        .sequence_manager
-        .current_order_for_actor(target_id)
-        .map(|(_, _, o)| o.order_type);
-    Some((
-        resolved.target,
-        posture,
-        animation,
-        resolved.carrier,
-        resolved.carrier_handle,
-    ))
-}
-
-/// Build the list of same-camp friend candidates for the target-swap
-/// heuristic in enemy approach reconsideration.
-///
-/// Only soldiers currently in one of the approach substates
-/// (`ATTACKING_RUNNING_TO_ENEMY`, `ATTACKING_WALKING_TO_ENEMY`,
-/// `ATTACKING_CHARGING_ENEMY`) with a live primary target are
-/// eligible.
-pub(super) fn build_friend_swap_candidates(
-    entities: &Entities,
-    diplomacy: &crate::diplomacy::DiplomacyState,
-    doors: &[crate::gate::Door],
-    sequence_manager: &crate::sequence::SequenceManager,
-    me_id: impl Into<crate::element::EntityId>,
-    my_camp: crate::element::Camp,
-    position_sector: impl Fn(
-        &crate::element::ElementData,
-    ) -> Option<crate::position_interface::SectorHandle>,
-) -> Vec<crate::ai::FriendSwapCandidate> {
-    let me_id = me_id.into();
-    let mut out = Vec::new();
-    for (friend_id, s) in entities.soldiers() {
-        if friend_id == me_id {
-            continue;
-        }
-        if !diplomacy.is_allied(s.soldier.cached_camp, my_camp) {
-            continue;
-        }
-        let substate = s.npc.ai_substate();
-        if !matches!(
-            substate,
-            crate::ai::Substate::AttackingRunningToEnemy
-                | crate::ai::Substate::AttackingWalkingToEnemy
-                | crate::ai::Substate::AttackingChargingEnemy
-        ) {
-            continue;
-        }
-        let Some(friend_target_handle) = s.npc.ai_brain.base().and_then(|ai| ai.primary_target)
-        else {
-            continue;
-        };
-        let Some(friend_target_id) = entities.id_at_legacy_slot(friend_target_handle.get()) else {
-            continue;
-        };
-        let Some(_friend_target_entity) = entities.get(friend_target_id) else {
-            continue;
-        };
-        let resolve_position = |position_owner| {
-            resolve_ai_position_with(
-                entities,
-                doors,
-                sequence_manager,
-                position_owner,
-                |position_id| {
-                    let element = entities
-                        .expect_entity(position_id, format_args!("friend-swap position owner"))
-                        .element_data();
-                    crate::ai::Position {
-                        x: element.position_map().x,
-                        y: element.position_map().y,
-                        // The original game copies the exact sector reference from
-                        // Position(element). Preserve the live arena object;
-                        // a duplicate public number cannot route the later
-                        // target swap by itself.
-                        sector: position_sector(element),
-                        level: element.layer(),
-                    }
-                },
-            )
-            .effective
-        };
-        // The original game resolves both the friend's position and
-        // the friend's primary-target position here. Each therefore uses a
-        // committed gate endpoint while passing a door; an on-shoulders PC
-        // target resolves to its carrier after that door-first arm.
-        let friend_pos = resolve_position(friend_id.into());
-        let friend_target_pos = resolve_position(friend_target_id);
-        out.push(crate::ai::FriendSwapCandidate {
-            friend_id: friend_id.into(),
-            friend_position: friend_pos,
-            friend_primary_target: Some(friend_target_handle),
-            friend_primary_target_position: friend_target_pos,
-        });
-    }
-    out
+    Some(resolved.target)
 }
 
 /// Run the "avenger on the roof" wait-position lookup for the
@@ -3056,7 +2938,6 @@ impl EngineInner {
 fn build_one_entity_view(
     engine: &EngineInner,
     doors_ref: &[crate::gate::Door],
-    nets_by_victim: &mut std::collections::HashMap<u32, Vec<ai_entity_view::NetCoverInfo>>,
     entity_id: EntityId,
     entity: &Entity,
 ) -> ai_entity_view::AiEntityView {
@@ -3101,12 +2982,6 @@ fn build_one_entity_view(
             },
         )
         .effective;
-    }
-
-    if view.stuck_under_net
-        && let Some(nets) = nets_by_victim.remove(&entity_id.index())
-    {
-        view.covering_nets = nets;
     }
 
     if matches!(
@@ -3308,9 +3183,8 @@ mod ai_view_position_sector_tests {
             goal_position.sector.and_then(|sector| sector.arena_index()),
             SectorIndex::new(goal)
         );
-        let metadata_position = lookup_primary_target_metadata(&engine, target)
-            .expect("live primary target metadata exists")
-            .0;
+        let metadata_position = lookup_primary_target_position(&engine, target)
+            .expect("live primary target metadata exists");
         assert_eq!(
             metadata_position
                 .sector
@@ -3417,9 +3291,8 @@ mod ai_view_position_sector_tests {
         target_element.set_position_map(MapPoint::new(150.0, 150.0));
         target_element.set_layer(2);
         target_element.set_sector(crate::position_interface::SectorHandle::new(88));
-        let metadata_position = lookup_primary_target_metadata(&engine, target)
-            .expect("compatibility primary target metadata exists")
-            .0;
+        let metadata_position = lookup_primary_target_position(&engine, target)
+            .expect("compatibility primary target metadata exists");
         assert_eq!(
             metadata_position
                 .sector
@@ -3517,33 +3390,6 @@ mod ai_view_position_sector_tests {
     }
 }
 
-fn build_nets_by_victim(
-    engine: &EngineInner,
-) -> std::collections::HashMap<u32, Vec<ai_entity_view::NetCoverInfo>> {
-    let mut nets_by_victim: std::collections::HashMap<u32, Vec<ai_entity_view::NetCoverInfo>> =
-        std::collections::HashMap::new();
-    for (net_id, net) in engine.world.entities.nets() {
-        if !net.element.active || net.net.victims.is_empty() {
-            continue;
-        }
-        let net_pos = net.element.position_map();
-        let info = ai_entity_view::NetCoverInfo {
-            handle: net_id.index(),
-            position: crate::ai::Position {
-                x: net_pos.x,
-                y: net_pos.y,
-                sector: net.element.sector(),
-                level: net.element.layer(),
-            },
-            radius: if net.net.crumpled { 10.0 } else { 40.0 },
-        };
-        for victim in &net.net.victims {
-            nets_by_victim.entry(victim.index()).or_default().push(info);
-        }
-    }
-    nets_by_victim
-}
-
 /// Capture spatial entities for callers that still need a complete observation.
 pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     let _detail =
@@ -3558,21 +3404,12 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
         .map(|_| engine.script_domains.interactables.doors.as_slice())
         .unwrap_or(&[]);
 
-    // Pre-scan nets for `compute_nets_covering_me` reverse index:
-    // victim entity-id → list of covering nets.  Per-victim loop:
-    // iterate every net entity, include those whose `victims` contains
-    // the probed human.  Doing it once up-front amortises the scan
-    // across every stuck-victim view.
-    //
-    // Net radius: 10 when crumpled, else 40.
-    let mut nets_by_victim = build_nets_by_victim(engine);
-
     let mut map = ai_entity_view::take_entity_view_map(engine.world.entities.len());
     for (entity_id, entity) in engine.world.entities.occupied() {
         if !entity_has_ai_view(entity) {
             continue;
         }
-        let view = build_one_entity_view(engine, doors_ref, &mut nets_by_victim, entity_id, entity);
+        let view = build_one_entity_view(engine, doors_ref, entity_id, entity);
 
         // AI handle == entity slot index (see `FighterSnapshot.handle =
         // target_id.index()` elsewhere, and `self.world.entities.get_mut(target as
@@ -4086,102 +3923,50 @@ impl EngineInner {
         assets: &LevelAssets,
         npc_id: EntityId,
     ) {
-        let scratch = self.build_sim_scratch(assets);
-        // Re-check the gate (state may have changed between the
-        // native pushing the deferred command and us draining it).
-        let (has_path, substate) = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            let Some(ai) = entity.ai_controller() else {
-                return;
-            };
-            (ai.has_patrol_path, ai.current_substate)
-        };
-        if !has_path
+        let frame = self.control.frame_counter;
+        let creation_order = self.world.original_creation_order(npc_id);
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(npc_id, format_args!("patrol speed owner"));
+        if !ai.has_patrol_path
             || !matches!(
-                substate,
+                ai.current_substate,
                 crate::ai::Substate::DefaultGotoRoute | crate::ai::Substate::DefaultEnroute
             )
         {
             return;
         }
-
-        // Look up the current waypoint position from the level's
-        // hiking paths.  Bail if the AI has no patrol path or the
-        // waypoint index is out of range — both indicate a desync
-        // that the relaunch can't repair on its own.
-        let waypoint_position = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            let Some(ai) = entity.ai_controller() else {
-                return;
-            };
-            let Some(path) = ai.patrol_path.as_ref() else {
-                return;
-            };
-            let Some(wp) = path.current_waypoint(&assets.navigation.hiking_paths) else {
-                return;
-            };
-            crate::ai::Position {
-                x: wp.x as f32,
-                y: wp.y as f32,
-                sector: assets.navigation.hiking_waypoint_sector(
-                    usize::from(path.hiking_path_index),
-                    usize::from(path.current_waypoint_index),
-                    wp.sector,
-                ),
-                level: wp.level,
-            }
-        };
-
-        // Build the per-tick AiContext for `go_to` (mirrors how the
-        // panic / patrol-coordination paths build it).
-        let mut ctx = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            let entity_sector = entity.element_data().sector();
-            let building_sector = self.entity_building_sector(entity_sector);
-            self.ai_context_from_entity(
-                entity,
-                self.control.frame_counter,
-                building_sector,
-                &scratch,
-                assets,
-            )
-        };
-        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-
-        // Determine whether to stop at the next waypoint and call `go_to`.
-        let Some(entity) = self.world.entities.get_mut(npc_id) else {
-            return;
-        };
-        let Some(ai) = entity.ai_controller_mut() else {
-            return;
-        };
-        let will_stop = ai.will_stop_at_next_waypoint_debug(
+        let will_stop = ai.will_stop_at_next_waypoint_at(
             sim,
             &assets.navigation.hiking_paths,
-            &ctx,
+            frame,
+            Some(creation_order),
             crate::ai::WillStopCaller::SetPathWalkingFlags,
         );
+        let path = ai
+            .patrol_path
+            .as_ref()
+            .expect("patrol speed change requires initialized path");
+        let waypoint = path
+            .current_waypoint(&assets.navigation.hiking_paths)
+            .expect("patrol speed change requires current waypoint");
+        let destination = crate::ai::Position {
+            x: waypoint.x as f32,
+            y: waypoint.y as f32,
+            sector: assets.navigation.hiking_waypoint_sector(
+                usize::from(path.hiking_path_index),
+                usize::from(path.current_waypoint_index),
+                waypoint.sector,
+            ),
+            level: waypoint.level,
+        };
         let mut flags = ai.default_path_walking_flags;
         if !will_stop {
             flags |= crate::ai::GotoFlags::DONT_STOP;
         }
-        ai.go_to(waypoint_position, flags, &ctx);
-
-        // Path-walking flag changes request movement directly inside the script native.
-        // Promote that exact owner's intent now instead of leaving it for the
-        // next frame's global pending-order pass. The enclosing script driver
-        // subsequently drains the resulting deferred InstructOwner action
-        // with the still-active VM stack, so the replacement transition is
-        // constructed from this call frame's position just like Original.
-        self.launch_pending_orders_for_npc(sim, assets, npc_id);
+        self.duty_go_to(sim, assets, npc_id, destination, flags);
     }
-
     /// Drain a queued [`PanicRequest`] on a single NPC.
     ///
     /// Called right after any `FriendlyAi::think` that could have
@@ -4398,11 +4183,12 @@ impl EngineInner {
                     .say(crate::ai::Remark::CivPanic);
                 self.drain_ai_owner_work_for(sim, assets, npc_id);
             }
-            self.set_typed_npc_state(
+            self.duty_set_state(
+                sim,
+                assets,
                 npc_id,
                 crate::ai::AiState::Fleeing,
                 crate::ai::Substate::FleeingRunToDoor,
-                "Panic door entry",
             );
             self.drain_ai_owner_work_for(sim, assets, npc_id);
             {
@@ -4653,11 +4439,12 @@ impl EngineInner {
 
         if is_new_panic {
             // New panic — full side-effect set.
-            self.set_typed_npc_state(
+            self.duty_set_state(
+                sim,
+                assets,
                 npc_id,
                 crate::ai::AiState::Fleeing,
                 crate::ai::Substate::FleeingPanic,
-                "Panic run entry",
             );
             self.world
                 .entities
@@ -4728,6 +4515,7 @@ impl EngineInner {
     /// not its entity kind: custom-mission PCs may own the same [`EnemyAi`] as
     /// soldiers. Required callers must not degrade a missing owner or
     /// mismatched brain into a silent no-op.
+    #[cfg(test)]
     pub(super) fn set_typed_npc_state(
         &mut self,
         npc_id: EntityId,
@@ -4812,17 +4600,13 @@ impl EngineInner {
     /// Drain a pending script-driven area-search request. Consumes
     /// `AiController::outbox.actor.script_seek_area` set by
     /// `script_set_ai_state` when a script fires
-    /// `SetAIState(actor, STATE_SEEKING)`.  Dispatches into
-    /// `EnemyAi::seek_area` (soldier-only — `seek_area` is defined
-    /// only on the soldier subtype).
+    /// `SetAIState(actor, STATE_SEEKING)` into live soldier area search.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(super) fn process_pending_script_seek_area_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         npc_id: EntityId,
-        ctx: &crate::ai::AiContext,
-        tick: &crate::ai::AiPerTickData,
     ) {
         let request = {
             let ai = self.world.entities.expect_ai_controller_mut(
@@ -4837,32 +4621,25 @@ impl EngineInner {
             })
         };
 
-        let enemy_ai = self.world.entities.expect_enemy_ai_mut(
-            npc_id,
-            format_args!(
-                "accepted SetAIState SEEKING owner {} requires Enemy AI",
-                npc_id.index()
-            ),
-        );
+        let frame = self.control.frame_counter;
+        let creation_order = Some(self.world.original_creation_order(npc_id));
         if crate::ai_enemy::EnemyAi::seek_area_phase6_caller_debug_enabled()
             && crate::ai_enemy::EnemyAi::seek_area_phase6_caller_debug_matches(
-                ctx.frame,
-                ctx.original_creation_order,
+                frame,
+                creation_order,
             )
         {
-            Self::trace_seek_area_script_caller(npc_id, ctx);
+            Self::trace_seek_area_script_caller(npc_id, frame, creation_order);
         }
-        let outcome = enemy_ai.seek_area(
-            crate::ai_enemy::ThinkEnv::new(sim, ctx, tick, None),
+        self.execute_ai_seek_area(
+            sim,
+            assets,
+            npc_id,
             request.center,
             request.radius,
             crate::ai_enemy::SeekFlags::empty(),
             crate::ai_enemy::UNDEFINED_DIRECTION,
-            &mut self.ai.global,
         );
-        if let Err(call) = outcome {
-            self.execute_ai_duty_call(sim, assets, npc_id, call);
-        }
         // Area seeking's typed state-change callback is inside the decision-tick
         // scope and must finish before its later movement/order tail is
         // exposed to the enclosing native barrier.
@@ -4870,12 +4647,12 @@ impl EngineInner {
     }
 
     #[inline(never)]
-    fn trace_seek_area_script_caller(npc_id: EntityId, ctx: &crate::ai::AiContext) {
+    fn trace_seek_area_script_caller(npc_id: EntityId, frame: u32, creation_order: Option<u32>) {
         eprintln!(
             "SEEKAREA_CALLER {{\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"caller\":\"script_set_ai_state\",\"stimulus\":\"no_event\"}}",
-            ctx.frame,
+            frame,
             npc_id.index(),
-            ctx.original_creation_order
+            creation_order
                 .expect("phase6 caller diagnostic matched an owner without creation order"),
         );
     }

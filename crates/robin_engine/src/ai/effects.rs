@@ -93,12 +93,6 @@ pub struct AiReentrantOutbox {
     /// them in one queue preserves statement order at the owner return barrier
     /// instead of rebuilding a frame-global speech batch.
     pub owner_work: Vec<AiOwnerWork>,
-    /// `DECISION_OBSERVE` has issued its synchronous approach, but the
-    /// following observation-approach state write and avenger-on-roof fallback
-    /// have not run yet. Retain a deferred route failure for that exact owner
-    /// continuation instead of surfacing an early EventCouldntReachPoint.
-    #[serde(default)]
-    pub battle_observe_completion_pending: bool,
     pub waypoint_script_reach_point: Option<(PathId, u8)>,
     /// `WonderingBrawlHitting::EVENT_DONE` is suspended while the engine
     /// performs its inline civilian sweep and synchronous officer callback.
@@ -131,13 +125,6 @@ pub enum AiOwnerWork {
     /// owner FIFO because callers can speak or change state immediately
     /// before/after it and those operations are observably ordered.
     NearbyCiviliansPanic,
-    /// Continue `DECISION_OBSERVE` after its first approach has synchronously
-    /// succeeded or set the unreachable-point flag. The continuation owns both the
-    /// ordinary battle-decision log and the roof-fallback early return.
-    ResumeBattleObserveAfterGoNear {
-        target: HumanHandle,
-        target_position: Position,
-    },
     Speech(AiSpeechAttempt),
     RestoreDetectableObjects {
         knocked_out_in_money_fight: bool,

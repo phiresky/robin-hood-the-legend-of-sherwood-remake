@@ -862,7 +862,6 @@ pub struct AiPerTickData {
     /// remains the interpolated body position rather than the committed
     /// destination-side forecast carried by [`AiContext::position`].
     pub owner_live_position: Option<Position>,
-    pub patrol_chief_position: Position,
     pub patrol_chief_state: AiState,
     pub primary_target_multiplicity: Vec<(HumanHandle, u32)>,
     /// Complete fighter-registry snapshot for direct pointer dereferences.
@@ -896,10 +895,6 @@ pub struct AiPerTickData {
     /// and creation-slot boundary rewinding. Direct geometry helpers such as
     /// enemy-elevation checks read the element itself.
     pub enemy_detectable_live_world_positions: Vec<(HumanHandle, crate::coordinates::WorldPoint3D)>,
-    /// True when the primary target is a player character.
-    /// Used by lost-sight logic in `reconsider_swordfight` to decide
-    /// whether to chase (PC) or pull a battle overview (NPC).
-    pub primary_target_is_pc: bool,
     /// Pre-computed destination forecast for the missed PC (if any).
     /// Used by `get_battle_overview` to re-predict position before seeking.
     pub missed_pc_forecast: Option<PreparedForecastDestination>,
@@ -908,11 +903,6 @@ pub struct AiPerTickData {
     pub missed_pc_forecast_handle: Option<AiEntityHandle>,
     /// True when `missed_pc` refers to a player character.
     pub missed_pc_is_pc: bool,
-    /// Precomputed jump-line index for table swordfight with the primary
-    /// target. `Some(line_idx)` when the NPC and primary target are in
-    /// different sectors reachable via a jump-line pair. Used during
-    /// enemy approach reconsideration.
-    pub primary_target_jump_line: Option<u32>,
     /// AI position returned for the actor.
     /// During a door pass this is the committed destination-side position,
     /// not the actor's interpolated body position.
@@ -926,23 +916,6 @@ pub struct AiPerTickData {
     /// from [`Self::primary_target_position`] while passing a door and is for
     /// operations that read position / sector directly.
     pub primary_target_live_position: Option<Position>,
-    /// Live posture of `primary_target` this tick.
-    pub primary_target_posture: Option<crate::element::Posture>,
-    /// Live animation (order type) of `primary_target` this tick.
-    pub primary_target_animation: Option<crate::order::OrderType>,
-    /// If `primary_target` is on another entity's shoulders
-    /// (the on-shoulders posture), the live position of the carrier.
-    /// The AI retargets to the carrier in that case.
-    pub primary_target_carrier_position: Option<Position>,
-    /// If `primary_target` is on another entity's shoulders
-    /// (the on-shoulders posture), the carrier's handle. The AI re-points
-    /// `primary_target` to this handle so all downstream
-    /// position / friend-swap / focus / swordfight entry reads target
-    /// the carrier rather than the carried entity.
-    pub primary_target_carrier_handle: Option<AiEntityHandle>,
-    /// Friend target-swap candidates: same-camp soldiers currently
-    /// approaching their own primary target.
-    pub friend_swap_candidates: Vec<FriendSwapCandidate>,
 
     /// Pre-computed fallback positions for the "avenger on the roof"
     /// branch, keyed by target handle. Populated by the engine when
@@ -952,16 +925,6 @@ pub struct AiPerTickData {
     /// blocking gate on the path from that target back to the
     /// evaluating NPC. Empty when the branch doesn't apply.
     pub avenger_on_roof_wait_positions: Vec<(HumanHandle, Position)>,
-}
-
-/// Same-camp soldier that is currently approaching its primary target,
-/// exposed to enemy approach reconsideration for the target-swap heuristic.
-#[derive(Debug, Clone, Copy)]
-pub struct FriendSwapCandidate {
-    pub friend_id: EntityId,
-    pub friend_position: Position,
-    pub friend_primary_target: Option<AiEntityHandle>,
-    pub friend_primary_target_position: Position,
 }
 
 impl AiPerTickData {
@@ -1008,7 +971,6 @@ impl AiPerTickData {
             fix_hard_reaction_times: false,
             profile_manager: None,
             owner_live_position: None,
-            patrol_chief_position: Position::default(),
             patrol_chief_state: AiState::Default,
             primary_target_multiplicity: Vec::new(),
             fighter_registry: Vec::new(),
@@ -1018,19 +980,12 @@ impl AiPerTickData {
             enemy_detectable_forecasts: Vec::new(),
             enemy_detectable_positions: Vec::new(),
             enemy_detectable_live_world_positions: Vec::new(),
-            primary_target_is_pc: false,
             missed_pc_forecast: None,
             missed_pc_forecast_handle: None,
             missed_pc_is_pc: false,
-            primary_target_jump_line: None,
             primary_target_position: None,
             primary_target_snapshot_handle: None,
             primary_target_live_position: None,
-            primary_target_posture: None,
-            primary_target_animation: None,
-            primary_target_carrier_position: None,
-            primary_target_carrier_handle: None,
-            friend_swap_candidates: Vec::new(),
             avenger_on_roof_wait_positions: Vec::new(),
         }
     }

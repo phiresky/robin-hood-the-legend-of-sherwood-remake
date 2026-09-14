@@ -1179,6 +1179,15 @@ impl AiController {
 
     /// Issue a raise-shield order toward a danger point.
     pub fn raise_shield(&mut self, danger_point: Position, danger_elevation: f32) {
+        self.raise_shield_world(crate::coordinates::WorldPoint3D::new(
+            danger_point.x,
+            danger_point.y + danger_elevation,
+            danger_elevation,
+        ));
+    }
+
+    /// Preserve the stored world point without a map-space round trip.
+    pub(crate) fn raise_shield_world(&mut self, danger_point: crate::coordinates::WorldPoint3D) {
         use crate::element::Command;
         use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
 
@@ -1190,10 +1199,8 @@ impl AiController {
             Field::ShieldDangerPoint,
             FieldValue::Point3D {
                 x: danger_point.x,
-                // The original game stores world position, whose Y is
-                // map Y plus ground elevation.
-                y: danger_point.y + danger_elevation,
-                z: danger_elevation,
+                y: danger_point.y,
+                z: danger_point.z,
             },
         );
         let mut sequence = Sequence::new();

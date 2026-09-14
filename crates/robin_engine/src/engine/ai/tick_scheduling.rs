@@ -1637,22 +1637,7 @@ impl EngineInner {
             .and_then(|entity| entity.ai_controller())
             .is_some_and(|ai| ai.outbox.actor.script_seek_area.is_some());
         if has_script_seek {
-            // The panic boundaries above may have synchronously changed the
-            // world. Script-driven area search gets a fresh owner snapshot and tick
-            // data at its own original-game evaluation boundary.
-            let scratch = self.build_sim_scratch(assets);
-            let entity = self.expect_entity(npc_id, "pending-drain NPC");
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = self.ai_context_from_entity(
-                entity,
-                self.control.frame_counter,
-                building_sector,
-                &scratch,
-                assets,
-            );
-            self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-            let tick_for_seek = self.build_npc_tick_data_without_forecasts(sim, npc_id, assets);
-            self.process_pending_script_seek_area_for(sim, assets, npc_id, &ctx, &tick_for_seek);
+            self.process_pending_script_seek_area_for(sim, assets, npc_id);
         }
 
         if finish_lost_enemy_overview {

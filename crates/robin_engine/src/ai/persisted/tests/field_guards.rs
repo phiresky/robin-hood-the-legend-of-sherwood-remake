@@ -237,7 +237,6 @@ fn classify_ai_reentrant_outbox(value: &AiReentrantOutbox) {
                 // Persisted; nested `QueuedSelfStimulus::origin` is skipped.
                 self_stimuli,
                 owner_work,
-                battle_observe_completion_pending,
                 waypoint_script_reach_point,
                 brawl_hitting_completion_pending,
             ],

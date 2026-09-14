@@ -512,9 +512,7 @@ impl EngineInner {
         owner: EntityId,
         substate: Substate,
     ) {
-        self.reporting_civilian_mut(owner)
-            .set_state(AiState::Seeking, substate);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.duty_set_state(sim, assets, owner, AiState::Seeking, substate);
     }
 
     fn clear_reporting_friends(

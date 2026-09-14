@@ -8,12 +8,12 @@ use crate::parameters_ai;
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
-    fn seek_enemy(&self, owner: EntityId) -> &EnemyAi {
+    pub(super) fn seek_enemy(&self, owner: EntityId) -> &EnemyAi {
         self.expect_entity(owner, "area-search owner")
             .enemy_ai()
             .expect("area search requires enemy AI")
     }
-    fn seek_enemy_mut(&mut self, owner: EntityId) -> &mut EnemyAi {
+    pub(super) fn seek_enemy_mut(&mut self, owner: EntityId) -> &mut EnemyAi {
         self.world
             .entities
             .expect_entity_mut(owner, format_args!("area-search owner"))
@@ -381,7 +381,7 @@ impl EngineInner {
         }
     }
 
-    fn execute_seek_other_bodies(
+    pub(super) fn execute_seek_other_bodies(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
@@ -419,13 +419,14 @@ impl EngineInner {
                 );
             self.seek_enemy_mut(owner).other_bodies_to_examine.remove(0);
             if down {
+                self.seek_enemy_mut(owner).base.detected_body = Some(AiEntityHandle::new(body));
                 self.execute_seek_body(sim, assets, owner, id);
                 return true;
             }
         }
     }
 
-    fn execute_seek_body(
+    pub(super) fn execute_seek_body(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,

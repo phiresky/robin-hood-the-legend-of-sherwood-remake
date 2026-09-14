@@ -459,11 +459,7 @@ impl EngineInner {
         owner: EntityId,
         substate: Substate,
     ) {
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("report transition"))
-            .set_state(AiState::Seeking, substate);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.duty_set_state(sim, assets, owner, AiState::Seeking, substate);
     }
 
     fn report_face(

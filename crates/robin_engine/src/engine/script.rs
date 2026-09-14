@@ -1014,11 +1014,12 @@ impl EngineInner {
 
                 match effect {
                     crate::interp::ScriptAiStateNativeEffect::ScriptDriven => {
-                        self.set_typed_npc_state(
+                        self.duty_set_state(
+                            sim,
+                            assets,
                             owner,
                             crate::ai::AiState::Default,
                             crate::ai::Substate::DefaultScriptDriven,
-                            "SetAIState SCRIPT_DRIVEN",
                         );
                     }
                     crate::interp::ScriptAiStateNativeEffect::Default
@@ -3982,18 +3983,6 @@ impl EngineInner {
                     self.run_ai_macro(sim, assets, owner);
                     continue;
                 }
-                crate::ai::AiOwnerWork::ResumeBattleObserveAfterGoNear {
-                    target,
-                    target_position,
-                } => {
-                    self.owner_work_resume_battle_observe_after_go_near(
-                        assets,
-                        owner,
-                        target,
-                        target_position,
-                    );
-                    continue;
-                }
                 crate::ai::AiOwnerWork::Speech(attempt) => {
                     self.owner_work_speech(sim, assets, owner, attempt);
                     continue;
@@ -4238,166 +4227,6 @@ impl EngineInner {
         );
     }
 
-    fn owner_work_resume_battle_observe_after_go_near(
-        &mut self,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: crate::ai::HumanHandle,
-        target_position: crate::ai::Position,
-    ) {
-        let couldnt_reachpoint = self
-            .world
-            .entities
-            .get(owner)
-            .and_then(Entity::enemy_ai)
-            .unwrap_or_else(|| {
-                panic!(
-                    "battle-observe continuation owner {} lost Enemy AI",
-                    owner.index()
-                )
-            })
-            .base
-            .couldnt_reachpoint;
-        let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
-            panic!(
-                "battle-observe continuation owner {} has stale target {}",
-                owner.index(),
-                target
-            )
-        });
-        let avenger_wait_position = if couldnt_reachpoint {
-            assert!(
-                self.scripts.mission.is_some(),
-                "battle-observe roof recovery requires an installed mission script"
-            );
-            crate::engine::ai::precompute_avenger_on_roof_wait_position(
-                &self.world.entities,
-                self.script_domains.interactables.doors.as_slice(),
-                &self.orders.sequence_manager,
-                owner,
-                target_id,
-                |element| crate::engine::ai::ai_view_position_sector(self, element),
-                &|sector| self.building_sector_is_authorized(sector),
-                &|sector| self.get_sector_lift_type(sector),
-            )
-        } else {
-            None
-        };
-        let frame = self.control.frame_counter;
-        let scratch = self.build_sim_scratch(assets);
-        let in_uninterruptible_command = self.is_very_very_busy(owner);
-        let mut ctx = {
-            let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                panic!(
-                    "battle-observe continuation owner {} disappeared",
-                    owner.index()
-                )
-            });
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                entity,
-                frame,
-                building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-                u8::try_from(self.ai.think_call_stack.len())
-                    .expect("think recursion depth overflow"),
-            );
-            ctx.in_uninterruptible_command = in_uninterruptible_command;
-            ctx
-        };
-        self.refresh_selected_default_wait_identity(owner, &mut ctx);
-        let enemy = self
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "battle-observe continuation owner {} lost Enemy AI",
-                    owner.index()
-                )
-            });
-        enemy
-            .base
-            .outbox
-            .reentrant
-            .battle_observe_completion_pending = false;
-        enemy.resume_battle_observe_after_go_near(
-            target,
-            target_position,
-            avenger_wait_position,
-            &ctx,
-        );
-    }
-
-    pub(in crate::engine) fn finish_ai_battle_fight_after_attack(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let frame = self.control.frame_counter;
-        let scratch = self.build_sim_scratch(assets);
-        let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
-        let in_uninterruptible_command = self.is_very_very_busy(owner);
-        let mut ctx = {
-            let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                panic!(
-                    "battle-fight continuation owner {} disappeared",
-                    owner.index()
-                )
-            });
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                entity,
-                frame,
-                building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-                u8::try_from(self.ai.think_call_stack.len())
-                    .expect("think recursion depth overflow"),
-            );
-            ctx.in_uninterruptible_command = in_uninterruptible_command;
-            ctx
-        };
-        self.refresh_selected_default_wait_identity(owner, &mut ctx);
-        let enemy = self
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "battle-fight continuation owner {} lost Enemy AI",
-                    owner.index()
-                )
-            });
-        let outcome = enemy.resume_battle_fight_after_reconsider(
-            crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None),
-            &mut self.ai.global,
-        );
-        if let Err(call) = outcome {
-            self.execute_ai_duty_call(sim, assets, owner, call);
-        }
-    }
-
     pub(in crate::engine) fn owner_work_speech(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -4487,6 +4316,107 @@ impl EngineInner {
     }
 
     /// Settle one synchronous state callback before reattaching its caller tail.
+    pub(in crate::engine) fn call_live_ai_state_change_filter(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        state: crate::ai::AiState,
+        source: crate::ai::AiStateChangeSource,
+    ) {
+        let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
+        let is_scripted = self
+            .world
+            .entities
+            .expect_entity(owner, format_args!("state-change owner"))
+            .actor_data()
+            .is_some_and(|actor| !actor.script_class.is_empty());
+        let source = match source {
+            crate::ai::AiStateChangeSource::SelfActor => handle,
+            crate::ai::AiStateChangeSource::Null => 0,
+            crate::ai::AiStateChangeSource::Human(raw_index) => {
+                crate::natives::ScriptHandleCodec::actor_handle_from_index(raw_index.get() as usize)
+            }
+        };
+        let code = state.state_change_event_code();
+        let should_call = is_scripted
+            && sim.config().script_enabled
+            && self.scripts.mission.as_ref().is_some_and(|script| {
+                script.actor_has_function(handle, "FilterAIEvent")
+                    || (assets.attachments.spellforge_runtime.is_some()
+                        && script.has_script_vm(ScriptVmKey::Actor(handle)))
+            });
+        if !should_call {
+            return;
+        }
+        #[cfg(test)]
+        {
+            let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                panic!(
+                    "AI state-change owner {} vanished before observation",
+                    owner.index()
+                )
+            });
+            let ai_actor = entity.ai_actor_data().unwrap_or_else(|| {
+                panic!(
+                    "AI state-change owner {} lost AI actor data before observation",
+                    owner.index()
+                )
+            });
+            let timer_is_running = entity
+                .ai_controller()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "AI state-change owner {} lost AI before observation",
+                        owner.index()
+                    )
+                })
+                .timer_is_running;
+            let body_references_to_owner = self
+                .world
+                .entities
+                .npcs()
+                .filter(|(_, entity)| {
+                    entity
+                        .npc_data()
+                        .and_then(|npc| {
+                            npc.detectable_lists
+                                .get(crate::element::DetectableType::Body as usize)
+                        })
+                        .is_some_and(|bodies| {
+                            bodies
+                                .iter()
+                                .any(|detectable| detectable.element == Some(owner))
+                        })
+                })
+                .count();
+            AI_STATE_CALLBACK_OBSERVATIONS.with(|observations| {
+                observations.record(AiStateCallbackObservation {
+                    owner,
+                    eye_status: ai_actor.eye_status,
+                    timer_is_running,
+                    body_references_to_owner,
+                });
+            });
+        }
+        if let Err(error) = self.call_script_vm(
+            sim,
+            assets,
+            ScriptVmKey::Actor(handle),
+            "FilterAIEvent",
+            &[source, code],
+            crate::natives::ScriptCallFrame::actor(handle),
+        ) {
+            tracing::warn!(
+                actor_handle = handle,
+                source_handle = source,
+                event_code = code,
+                %error,
+                "AI state-change FilterAIEvent callback failed"
+            );
+        }
+    }
+
     fn settle_ai_owner_state_change(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -4631,14 +4561,6 @@ impl EngineInner {
             ai.already_turned = false;
         }
 
-        let source = match notification.source {
-            crate::ai::AiStateChangeSource::SelfActor => handle,
-            crate::ai::AiStateChangeSource::Null => 0,
-            crate::ai::AiStateChangeSource::Human(raw_index) => {
-                crate::natives::ScriptHandleCodec::actor_handle_from_index(raw_index.get() as usize)
-            }
-        };
-        let code = notification.incoming_state.state_change_event_code();
         let should_call = is_scripted
             && sim.config().script_enabled
             && self.scripts.mission.as_ref().is_some_and(|script| {
@@ -4705,72 +4627,13 @@ impl EngineInner {
             ai.set_ai_state(notification.outgoing_state);
             ai.current_substate = notification.outgoing_substate;
         }
-        #[cfg(test)]
-        {
-            let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                panic!(
-                    "AI state-change owner {} vanished before observation",
-                    owner.index()
-                )
-            });
-            let ai_actor = entity.ai_actor_data().unwrap_or_else(|| {
-                panic!(
-                    "AI state-change owner {} lost AI actor data before observation",
-                    owner.index()
-                )
-            });
-            let timer_is_running = entity
-                .ai_controller()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "AI state-change owner {} lost AI before observation",
-                        owner.index()
-                    )
-                })
-                .timer_is_running;
-            let body_references_to_owner = self
-                .world
-                .entities
-                .npcs()
-                .filter(|(_, entity)| {
-                    entity
-                        .npc_data()
-                        .and_then(|npc| {
-                            npc.detectable_lists
-                                .get(crate::element::DetectableType::Body as usize)
-                        })
-                        .is_some_and(|bodies| {
-                            bodies
-                                .iter()
-                                .any(|detectable| detectable.element == Some(owner))
-                        })
-                })
-                .count();
-            AI_STATE_CALLBACK_OBSERVATIONS.with(|observations| {
-                observations.record(AiStateCallbackObservation {
-                    owner,
-                    eye_status: ai_actor.eye_status,
-                    timer_is_running,
-                    body_references_to_owner,
-                });
-            });
-        }
-        if let Err(error) = self.call_script_vm(
+        self.call_live_ai_state_change_filter(
             sim,
             assets,
-            ScriptVmKey::Actor(handle),
-            "FilterAIEvent",
-            &[source, code],
-            crate::natives::ScriptCallFrame::actor(handle),
-        ) {
-            tracing::warn!(
-                actor_handle = handle,
-                source_handle = source,
-                event_code = code,
-                %error,
-                "AI state-change FilterAIEvent callback failed"
-            );
-        }
+            owner,
+            notification.incoming_state,
+            notification.source,
+        );
         // Native calls made by FilterAIEvent are still inside the state change
         // and therefore observe the outgoing pair. Close callback-local
         // recursive stimuli before committing the incoming pair.

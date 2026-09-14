@@ -208,14 +208,6 @@ pub struct AiEntityView {
     /// "resurrection / keep waiting" and the SEARCH+TAKE sequence.
     pub stuck_under_net: bool,
 
-    /// Nets currently covering this human.  Populated only when
-    /// [`Self::stuck_under_net`] is true (empty list otherwise).
-    /// Computed by iterating every active net and collecting those
-    /// whose victim list contains this human.  Pre-computed here so
-    /// net-victim rescue doesn't need a second borrow on the
-    /// entity store.
-    pub covering_nets: Vec<NetCoverInfo>,
-
     /// Only meaningful for PCs; resolved via the per-PC campaign
     /// status (`PcStatus::in_coma`).  Used by the approach-sleeping-
     /// enemy decision tree to route the "menace PC in coma" branch.
@@ -287,32 +279,6 @@ pub struct AiEntityView {
     /// by the beer availability check to detect friends racing for the
     /// same bottle.
     pub interesting_object: Option<crate::ai::AiEntityHandle>,
-}
-
-/// Per-net info carried on [`AiEntityView::covering_nets`] for humans
-/// stuck under nets. Carries the fields net-victim rescue reads
-/// off each net in the cover list: position (for Chebyshev max-norm
-/// distance ranking and the straight-movement authorisation check),
-/// and radius (for the `radius + 15` goal distance).
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct NetCoverInfo {
-    /// Entity slot index of the covering net.  Stored into
-    /// `AiController::interesting_object` when the NPC commits to this net.
-    pub handle: u32,
-    /// Net's map-space position.
-    pub position: Position,
-    /// Net's radius in map units: 40 when the net is deployed
-    /// normally, 10 when crumpled.
-    pub radius: f32,
 }
 
 /// Entity kind tag carried on [`AiEntityView`].
@@ -684,7 +650,6 @@ pub fn entity_view_from_entity(
         // (`engine::ai::build_entity_views`) which has access to the
         // full entity store.  Leave empty here — the builder
         // overwrites this list for stuck victims.
-        covering_nets: Vec::new(),
         in_coma,
         guard,
         has_patrol_path,

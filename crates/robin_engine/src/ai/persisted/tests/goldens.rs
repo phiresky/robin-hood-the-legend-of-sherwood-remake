@@ -298,10 +298,7 @@ const ENEMY_DEFAULTED_KEYS: &[&str] = &[
     "right_combat_neighbour",
 ];
 
-const REENTRANT_DEFAULTED_KEYS: &[&str] = &[
-    "battle_observe_completion_pending",
-    "brawl_hitting_completion_pending",
-];
+const REENTRANT_DEFAULTED_KEYS: &[&str] = &["brawl_hitting_completion_pending"];
 
 #[test]
 fn enemy_ai_missing_defaulted_fields_decode_to_type_defaults() {
@@ -342,7 +339,6 @@ fn reentrant_outbox_missing_defaulted_fields_decode_to_type_defaults() {
     let decoded: AiReentrantOutbox = decode_without(json, REENTRANT_DEFAULTED_KEYS).unwrap();
     let mut expected = golden_reentrant();
     scrub_reentrant(&mut expected);
-    expected.battle_observe_completion_pending = false;
     expected.brawl_hitting_completion_pending = false;
     assert_eq!(format!("{decoded:?}"), format!("{expected:?}"));
     for required in ["cross_npc_actions"] {

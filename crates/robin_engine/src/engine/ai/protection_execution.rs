@@ -7,34 +7,7 @@ use super::*;
 use crate::ai::{AiEntityHandle, AiState, EmoticonType, GotoFlags, Position, Remark, Substate};
 use crate::ai_enemy::{PrimaryTargetFlags, archer};
 
-fn inherited_position_crosses_sector_identity(current: &Position, anchor: &Position) -> bool {
-    match (current.sector, anchor.sector) {
-        (Some(current_sector), Some(anchor_sector)) => {
-            match (current_sector.arena_index(), anchor_sector.arena_index()) {
-                (Some(current), Some(anchor)) => current != anchor,
-                _ => current_sector != anchor_sector || current.level != anchor.level,
-            }
-        }
-        _ => false,
-    }
-}
-
 impl EngineInner {
-    pub(super) fn live_shield_danger_point(&self, target: EntityId) -> (Position, f32) {
-        let element = self
-            .expect_entity(target, "shield danger position")
-            .element_data();
-        (
-            Position {
-                x: element.position_map().x,
-                y: element.position_map().y,
-                sector: element.sector(),
-                level: element.layer(),
-            },
-            element.position().z,
-        )
-    }
-
     pub(in crate::engine) fn execute_ai_advancing_shield_timer(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -433,7 +406,7 @@ impl EngineInner {
                 AiState::Attacking,
                 Substate::AttackingRunningToPhalanx,
             );
-            self.protection_go_to_phalanx(sim, assets, owner, position);
+            self.duty_go_to(sim, assets, owner, position, GotoFlags::RUN);
         } else {
             self.world
                 .entities
@@ -447,11 +420,14 @@ impl EngineInner {
                 .primary_target
                 .expect("shield raise requires primary target");
             let target = self.expect_entity_id_for_index(target.get(), "shield danger target");
-            let (position, elevation) = self.live_shield_danger_point(target);
+            let point = self
+                .expect_entity(target, "shield danger point")
+                .element_data()
+                .position();
             self.world
                 .entities
                 .expect_ai_controller_mut(owner, format_args!("shield raise"))
-                .raise_shield(position, elevation);
+                .raise_shield_world(point);
             self.drain_direct_ai_owner_boundary(sim, owner, assets);
             let ai = self
                 .world
@@ -478,55 +454,5 @@ impl EngineInner {
                 .launch_timer(10, self.control.frame_counter);
         }
         true
-    }
-
-    fn protection_go_to_phalanx(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        destination: Position,
-    ) {
-        let position = self.live_ai_position(owner);
-        let identity_differs = inherited_position_crosses_sector_identity(&position, &destination);
-        let depth = self.ai_think_depth();
-        let entity = self
-            .world
-            .entities
-            .expect_entity_mut(owner, format_args!("phalanx movement"));
-        let element = entity.element_data();
-        let layer = element.layer();
-        let sector = element.sector();
-        let actor = entity.actor_data().expect("phalanx move requires actor");
-        let animation = actor
-            .installed_order
-            .map(|order| order.order_type)
-            .unwrap_or(crate::order::OrderType::NonanimationEnd);
-        let action_state = actor.action_state;
-        let civilian = entity.is_civilian();
-        let ai = entity
-            .ai_controller_mut()
-            .expect("phalanx move requires controller");
-        ai.request_move(
-            destination,
-            GotoFlags::RUN,
-            1.0,
-            position,
-            layer,
-            sector,
-            animation,
-            action_state,
-            civilian,
-            depth,
-        );
-        if identity_differs {
-            ai.outbox
-                .actor
-                .orders
-                .last_mut()
-                .expect("phalanx movement requires order")
-                .source_target_sector_identity_differs = true;
-        }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 }

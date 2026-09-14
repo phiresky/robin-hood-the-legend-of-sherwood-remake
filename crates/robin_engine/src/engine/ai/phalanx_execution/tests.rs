@@ -3,6 +3,87 @@ use crate::element::{Camp, Detectable, DetectableType, Posture};
 use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
 use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
 
+#[test]
+fn phalanx_shield_reestablish_uses_raw_door_passing_target_position() {
+    let (mut engine, assets, owner, _, target) = fixture();
+    engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+        "phalanx_gate.scs",
+    ));
+    let raw = crate::coordinates::WorldPoint3D::new(1137.7087, 1652.301 + 150.001, 150.001);
+    engine
+        .world
+        .entities
+        .get_mut(target)
+        .unwrap()
+        .element_data_mut()
+        .set_position(raw);
+    let sector = engine
+        .world
+        .entities
+        .get(target)
+        .unwrap()
+        .element_data()
+        .sector()
+        .unwrap();
+    engine
+        .script_domains
+        .interactables
+        .doors
+        .push(crate::gate::Door {
+            point_in: MapPoint::new(1158.0, 1627.0),
+            point_out: MapPoint::new(1158.0, 1627.0),
+            sector_in: crate::sector::SectorNumber::new(1),
+            sector_out: crate::sector::SectorNumber::new(1),
+            sector_in_index: sector.arena_index(),
+            sector_out_index: sector.arena_index(),
+            ..Default::default()
+        });
+    let mut pass = crate::sequence::SequenceElement::new_movement(
+        1,
+        crate::element::Command::PassDoor,
+        Some(target),
+        crate::order::OrderType::WalkingUpright,
+    );
+    let crate::sequence::SequenceElementData::Movement {
+        gate_id, direction, ..
+    } = &mut pass.data
+    else {
+        unreachable!()
+    };
+    *gate_id = Some(crate::gate::DoorIndex::new(0).unwrap());
+    *direction = 1;
+    let sequence = engine.orders.sequence_manager.launch_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    assert_eq!(
+        engine.live_ai_position(target).map_point(),
+        MapPoint::new(1158.0, 1627.0)
+    );
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("phalanx shield fixture"));
+    ai.base.current_state = crate::ai::AiState::Attacking;
+    ai.base.current_substate = Substate::AttackingPhalanx;
+    ai.base.primary_target = Some(AiEntityHandle::new(target.index()));
+    engine.enter_ai_think_frame(owner);
+    engine.execute_ai_phalanx_timer(&crate::sim_rng::test_context(), &assets, owner);
+    let command = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|s| s.elements.iter())
+        .find(|e| e.owner == Some(owner) && e.command == crate::element::Command::RaiseShield)
+        .unwrap();
+    assert!(
+        matches!(command.get_property(crate::sequence::Field::ShieldDangerPoint),
+        Some(crate::sequence::FieldValue::Point3D { x, y, z })
+            if x.to_bits() == raw.x.to_bits() && y.to_bits() == raw.y.to_bits() && z.to_bits() == raw.z.to_bits())
+    );
+}
+
 fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId, EntityId) {
     let mut engine = EngineInner::new();
     engine.world.fast_grid_mut().size_map(40, 40);

@@ -45,7 +45,6 @@ fn charly_view() -> crate::ai_entity_view::AiEntityView {
         is_archer: false,
         is_rider: false,
         stuck_under_net: false,
-        covering_nets: Vec::new(),
         in_coma: false,
         guard: None,
         has_patrol_path: false,
@@ -167,45 +166,6 @@ fn soldier_search_charly_preserves_authored_waypoint_sector() {
             .map(|sector| sector.get()),
         Some(77)
     );
-}
-
-#[test]
-fn dead_body_alert_returns_live_officer_operation_with_body_search_fallback() {
-    for duty in [false, true] {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(40);
-        ai.soldier_profile_duty = duty;
-        ai.base.antagonist = Some(AiEntityHandle::new(99));
-        let center = Position {
-            x: 120.0,
-            y: 240.0,
-            ..Position::default()
-        };
-        let ctx = AiContext::test_fixture();
-        let call = ai
-            .dead_body_alert(
-                ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-                center,
-                SeekFlags::empty(),
-                &mut AiGlobalState::default(),
-            )
-            .expect_err("officer selection belongs to the engine");
-        let expected_radius = if duty {
-            crate::parameters_ai::AI_SOD_DEAD_BODY_SEEK_RADIUS
-        } else {
-            crate::parameters_ai::AI_DEAD_BODY_SEEK_RADIUS
-        } as u16;
-        assert!(matches!(call.tail, crate::ai::DutyTail::AlertOfficer {
-            caller: crate::ai::OfficerAlertCaller::SeekBody { center: requested_center, radius }
-        } if requested_center == center && radius == expected_radius));
-        assert_eq!(
-            ai.base.my_reconnaissance_report.report_type,
-            ReportType::DeadBody
-        );
-        assert!(ai.my_seek_points.is_empty());
-        assert!(ai.base.outbox.actor.orders.is_empty());
-        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
-    }
 }
 
 #[test]

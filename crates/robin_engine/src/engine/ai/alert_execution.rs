@@ -36,54 +36,20 @@ struct AlertExecution<'a> {
 }
 
 impl EngineInner {
-    pub(in crate::engine) fn execute_ai_run_and_alert_soldiers_decision(
+    pub(in crate::engine) fn execute_ai_run_and_alert_soldiers(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         center: Position,
-    ) {
-        let accepted = AlertExecution {
+    ) -> bool {
+        AlertExecution {
             engine: self,
             sim,
             assets,
             owner,
         }
-        .run_and_alert_soldiers(center);
-        if accepted {
-            let remark = if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
-                crate::ai::Remark::Cassos
-            } else {
-                crate::ai::Remark::Panic
-            };
-            self.owner_work_speech(
-                sim,
-                assets,
-                owner,
-                crate::ai::AiSpeechAttempt { remark, flags: 0 },
-            );
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("run alert decision"))
-                .register_log_line(
-                    crate::ai::LogLineType::BattleDecision,
-                    crate::ai::Decision::RunAndAlertSoldiers as u16,
-                );
-        } else {
-            let scratch = self.build_sim_scratch(assets);
-            let mut ctx = self.ai_context_for(owner, self.control.frame_counter, &scratch, assets);
-            ctx.in_uninterruptible_command = self.is_very_very_busy(owner);
-            let tick = self.build_npc_tick_data(sim, owner, assets);
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("run alert fallback"))
-                .finish_battle_look_for_help(
-                    crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, Some(&self.world.fast_grid)),
-                    false,
-                    &mut self.ai.global,
-                );
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
-        }
+        .run_and_alert_soldiers(center)
     }
     pub(in crate::engine) fn execute_ai_officer_look_for_soldier(
         &mut self,
@@ -124,28 +90,7 @@ impl EngineInner {
         caller: crate::ai::OfficerAlertCaller,
     ) {
         use crate::ai::OfficerAlertCaller;
-        let already_reporting = matches!(caller, OfficerAlertCaller::BattleLookForHelp)
-            && self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("help allies"))
-                .list_us
-                .iter()
-                .any(|handle| {
-                    *handle != owner.index()
-                        && self
-                            .world
-                            .entities
-                            .get(EntityId::Soldier(crate::entity_id::SoldierId(*handle)))
-                            .and_then(|entity| match entity {
-                                Entity::Soldier(soldier) => soldier.npc.ai_brain.enemy(),
-                                _ => None,
-                            })
-                            .is_some_and(|enemy| {
-                                enemy.base.current_substate == Substate::SeekingRunningToOfficer
-                            })
-                });
-        let accepted = !already_reporting && self.execute_ai_alert_officer(sim, assets, owner);
+        let accepted = self.execute_ai_alert_officer(sim, assets, owner);
         match caller {
             OfficerAlertCaller::Ignore => return,
             OfficerAlertCaller::TowerGuardCalled => {
@@ -166,32 +111,6 @@ impl EngineInner {
                 }
                 return;
             }
-            OfficerAlertCaller::BattleLookForHelp if accepted => {
-                let remark =
-                    if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
-                        crate::ai::Remark::Cassos
-                    } else {
-                        crate::ai::Remark::Panic
-                    };
-                self.owner_work_speech(
-                    sim,
-                    assets,
-                    owner,
-                    crate::ai::AiSpeechAttempt { remark, flags: 0 },
-                );
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(
-                        owner,
-                        format_args!("successful officer alert decision"),
-                    )
-                    .register_log_line(
-                        crate::ai::LogLineType::BattleDecision,
-                        crate::ai::Decision::LookForHelp as u16,
-                    );
-                return;
-            }
-            OfficerAlertCaller::BattleLookForHelp => {}
             _ if accepted => return,
             _ => {}
         }
@@ -206,10 +125,6 @@ impl EngineInner {
             .entities
             .expect_enemy_ai_mut(owner, format_args!("officer alert caller"));
         let outcome = match caller {
-            OfficerAlertCaller::BattleLookForHelp => {
-                enemy.finish_battle_look_for_help(env, accepted, &mut self.ai.global);
-                Ok(())
-            }
             OfficerAlertCaller::SeekBody { center, radius } => enemy.resume_failed_alert_soldiers(
                 env,
                 crate::ai::AlertSoldiersFailureContinuation::SeekBody { center, radius },

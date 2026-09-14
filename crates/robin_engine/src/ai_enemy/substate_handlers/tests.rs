@@ -1411,73 +1411,6 @@ fn door_fight_wait_timer_starts_battle_overview() {
 }
 
 #[test]
-fn phalanx_shield_reestablish_uses_raw_door_passing_target_position() {
-    // Schema-14 seed 1000000, SuN1Sh1nE Savegame_024 replay-004
-    // frame 1254. Soldier 46 is crossing a door: its AI Position() is
-    // gate point (1158, 1627), while the element position still uses
-    // the live actor point. Those points face different sectors from
-    // Soldier 95, so the shield command must retain the raw one.
-    use crate::sequence::{Field, FieldValue};
-
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(95);
-    ai.base.owner_entity_id = Some(crate::element::EntityId::Soldier(
-        crate::element::SoldierId(95),
-    ));
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingPhalanx;
-    ai.base.primary_target = Some(AiEntityHandle::new(46));
-
-    let raw_target = Position {
-        x: 1_137.708_7,
-        y: 1_652.301,
-        ..Position::default()
-    };
-    let target_elevation = 150.001_f32;
-    let mut tick = AiPerTickData::stub();
-    tick.fighter_registry
-        .push(crate::ai_enemy::FighterSnapshot {
-            handle: 95,
-            action_state: crate::element::ActionState::Waiting,
-            ..crate::ai_enemy::FighterSnapshot::default()
-        });
-    tick.fighter_registry
-        .push(crate::ai_enemy::FighterSnapshot {
-            handle: 46,
-            position: Position {
-                x: 1_158.0,
-                y: 1_627.0,
-                ..Position::default()
-            },
-            raw_position: raw_target,
-            elevation: target_elevation,
-            ..crate::ai_enemy::FighterSnapshot::default()
-        });
-
-    ai.attacking_phalanx(
-        StimulusType::EventTimer,
-        crate::ai_enemy::ThinkEnv {
-            sim: &sim,
-            ctx: &AiContext::test_fixture(),
-            tick: &tick,
-            grid: None,
-        },
-    );
-
-    let element = ai.base.outbox.actor.launch_sequences[0]
-        .elements
-        .first()
-        .expect("RaiseShield sequence contains its command");
-    assert!(matches!(
-        element.get_property(Field::ShieldDangerPoint),
-        Some(FieldValue::Point3D { x, y, z })
-            if *x == raw_target.x
-                && *y == raw_target.y + target_elevation
-                && *z == target_elevation
-    ));
-}
-
-#[test]
 fn officer_wait_missed_soldier_does_not_relaunch_timer() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(1);
@@ -2101,153 +2034,6 @@ fn alert_candidate(handle: u32, position: Position) -> crate::ai_enemy::CampSold
         real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
         eye_blind: false,
     }
-}
-
-#[test]
-fn officer_body_reaction_uses_stretched_max_norm_to_delegate() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(185);
-    ai.base.current_state = AiState::Seeking;
-    ai.base.current_substate = Substate::SeekingBodyReactiontime;
-    ai.base.detected_body = Some(AiEntityHandle::new(179));
-    ai.soldier_profile_rank = ProfileRank::Officer;
-    ai.soldier_profile_initiative = 0;
-
-    let mut body = pc_view(crate::element::Posture::Lying);
-    body.kind = crate::ai_entity_view::EntityKind::Soldier;
-    body.is_pc = false;
-    body.position = Position {
-        x: 50.0,
-        y: 149.5,
-        ..Position::default()
-    };
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(179, body);
-    let mut friend = soldier_view_with_substate(181, Substate::DefaultOnPost);
-    friend.position = Position {
-        x: 20.0,
-        ..Position::default()
-    };
-    views.insert(181, friend);
-    let ctx = AiContext {
-        frame: 1_200,
-        position: Position::default(),
-        direction: 7,
-        self_is_active: true,
-        in_building: false,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    tick.camp_soldiers.push(alert_candidate(
-        181,
-        Position {
-            x: 20.0,
-            ..Position::default()
-        },
-    ));
-
-    let raw_max_norm = 50.0_f32.max(149.5);
-    let stretched_max_norm = ai_max_norm_distance(
-        &ctx.entity_view(179).unwrap().position,
-        0.0,
-        &ctx.position,
-        0.0,
-    );
-    assert!(raw_max_norm < 150.0);
-    assert!(stretched_max_norm > 150.0);
-
-    ai.think_expected_event(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        &Stimulus::new(StimulusType::EventTimer),
-        &mut AiGlobalState::default(),
-    )
-    .unwrap();
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::SeekingOfficerLookingForSoldiers1
-    );
-    assert_eq!(ai.base.when_does_timer_ring, 1_220);
-    assert!(
-        ai.base
-            .outbox
-            .actor
-            .orders
-            .iter()
-            .any(|order| { order.order_type == crate::order::OrderType::Turning })
-    );
-    let friend = (
-        crate::element::EntityId::Soldier(crate::entity_id::SoldierId(181)),
-        crate::element::DetectableType::Friend,
-    );
-    assert!(
-        ai.base.outbox.actor.added_detectables().contains(&friend)
-            || ai.base.outbox.reentrant.owner_work.iter().any(|work| {
-                matches!(work, AiOwnerWork::StateChange(change)
-                if change.actor_effects_before_callback.as_ref().is_some_and(
-                    |effects| effects.added_detectables().contains(&friend)
-                ))
-            })
-    );
-}
-
-#[test]
-fn officer_body_reaction_examines_body_within_stretched_threshold() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(185);
-    ai.base.current_state = AiState::Seeking;
-    ai.base.current_substate = Substate::SeekingBodyReactiontime;
-    ai.base.detected_body = Some(AiEntityHandle::new(179));
-    ai.soldier_profile_rank = ProfileRank::Officer;
-    ai.soldier_profile_initiative = 0;
-
-    let mut body = pc_view(crate::element::Posture::Lying);
-    body.kind = crate::ai_entity_view::EntityKind::Soldier;
-    body.is_pc = false;
-    body.position = Position {
-        x: 50.0,
-        y: 80.0,
-        ..Position::default()
-    };
-    let destination = body.position;
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(179, body);
-    let ctx = AiContext {
-        frame: 1_200,
-        position: Position::default(),
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    assert!(ai_max_norm_distance(&destination, 0.0, &ctx.position, 0.0) <= 150.0);
-    ai.think_expected_event(
-        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-        &Stimulus::new(StimulusType::EventTimer),
-        &mut AiGlobalState::default(),
-    )
-    .unwrap();
-
-    assert_eq!(ai.base.current_substate, Substate::SeekingBody);
-    assert_eq!(ai.base.seek_position, destination);
-    assert!(
-        ai.base.outbox.actor.focus == Some(AiEntityHandle::new(179))
-            || ai.base.outbox.reentrant.owner_work.iter().any(|work| {
-                matches!(work, AiOwnerWork::StateChange(change)
-                if change.actor_effects_before_callback.as_ref().is_some_and(
-                    |effects| effects.focus == Some(AiEntityHandle::new(179))
-                ))
-            })
-    );
-    assert!(
-        ai.base
-            .outbox
-            .actor
-            .orders
-            .iter()
-            .any(|order| { order.order_type == crate::order::OrderType::RunningUpright })
-    );
-    assert!(ai.base.outbox.actor.added_detectables().is_empty());
 }
 
 fn run_approaching_sleeping_enemy(target_live: Position) -> EnemyAi {
@@ -2882,15 +2668,15 @@ fn goto_chief_reach_faces_live_chief_with_elevation() {
         ..AiContext::test_fixture()
     };
     let mut tick = AiPerTickData::stub();
-    tick.patrol_chief_position = ctx.entity_position(47).expect("chief view");
+    let chief_position = ctx.entity_position(47).expect("chief view");
 
     // The old cached-position overload selects the current sector and
     // incorrectly completes synchronously. The original-game entity-facing path
     // adds `signed_16(25.100779) - 27.71125` to Y and selects sector 5.
     assert_eq!(
         crate::position_interface::vector_to_sector_0_to_15_iso(
-            tick.patrol_chief_position.x - ctx.position.x,
-            tick.patrol_chief_position.y - ctx.position.y,
+            chief_position.x - ctx.position.x,
+            chief_position.y - ctx.position.y,
         ),
         6
     );

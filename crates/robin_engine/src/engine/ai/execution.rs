@@ -81,17 +81,8 @@ impl EngineInner {
         call: crate::ai::DutyCall,
     ) -> bool {
         match call.tail {
-            crate::ai::DutyTail::SelectShotTarget {
-                old_substate,
-                cover_shield_bearer,
-            } => {
-                self.execute_ai_select_shot_target(
-                    sim,
-                    assets,
-                    owner,
-                    old_substate,
-                    cover_shield_bearer,
-                );
+            crate::ai::DutyTail::BodyReaction { operation } => {
+                self.execute_ai_body_reaction(sim, assets, owner, operation);
             }
             crate::ai::DutyTail::BattleOverview { flags } => {
                 self.execute_ai_get_battle_overview(sim, assets, owner, flags);
@@ -120,9 +111,6 @@ impl EngineInner {
                         }
                     }
                 }
-            }
-            crate::ai::DutyTail::RunAndAlertSoldiers { center } => {
-                self.execute_ai_run_and_alert_soldiers_decision(sim, assets, owner, center);
             }
             crate::ai::DutyTail::OfficerLookForSoldier { reason } => {
                 self.execute_ai_officer_look_for_soldier(sim, assets, owner, reason);
@@ -199,7 +187,6 @@ impl EngineInner {
             | crate::ai::DutyTail::TooProudOverviewRemark
             | crate::ai::DutyTail::SwordfightInsult
             | crate::ai::DutyTail::GotHitViewStatus
-            | crate::ai::DutyTail::FinishBattleFightAfterAttack
             | crate::ai::DutyTail::AfterCombatInjury => {
                 panic!("caller tail used as a duty operation");
             }
@@ -207,9 +194,6 @@ impl EngineInner {
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
         for tail in call.after {
             match tail {
-                crate::ai::DutyTail::FinishBattleFightAfterAttack => {
-                    self.finish_ai_battle_fight_after_attack(sim, assets, owner);
-                }
                 crate::ai::DutyTail::GotHitViewStatus => {
                     let npc = self
                         .world
@@ -359,7 +343,65 @@ impl EngineInner {
             .expect_entity(owner, format_args!("admitted decision owner"))
             .enemy_ai()
             .is_some();
-        let handled = if stimulus.stimulus_type == StimulusType::EventReturnToDuty {
+        let body_reaction = if enemy_owner {
+            use crate::ai::{BodyReaction, Substate};
+            let substate = self
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("body decision"))
+                .current_substate;
+            match (substate, stimulus.stimulus_type) {
+                (Substate::SeekingBodyReactiontime, StimulusType::EventTimer) => {
+                    Some(BodyReaction::ReactionTimer)
+                }
+                (Substate::SeekingBody, StimulusType::EventTimer) => Some(BodyReaction::BodyTimer),
+                (Substate::SeekingBody, StimulusType::EventReachPoint) => {
+                    Some(BodyReaction::Arrival)
+                }
+                (Substate::SeekingBody, StimulusType::EventCouldntReachPoint) => {
+                    Some(BodyReaction::Unreachable)
+                }
+                (Substate::SeekingBodyLookingDeadBody, StimulusType::EventTimer) => {
+                    Some(BodyReaction::DeadBodyTimer)
+                }
+                (Substate::SeekingBodyAwakeningSleeperr, StimulusType::EventTimer) => {
+                    Some(BodyReaction::SleeperTimer)
+                }
+                (Substate::SeekingTakingNet, StimulusType::EventDone) => {
+                    Some(BodyReaction::NetDone)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let handled = if let Some(operation) = body_reaction {
+            self.execute_ai_body_reaction(sim, assets, owner, operation);
+            Ok(false)
+        } else if enemy_owner && stimulus.stimulus_type == StimulusType::EventSeesBody {
+            let state = self
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("body sighting"))
+                .current_state;
+            if matches!(
+                state,
+                crate::ai::AiState::Sleeping
+                    | crate::ai::AiState::Default
+                    | crate::ai::AiState::Wondering
+                    | crate::ai::AiState::Seeking
+            ) && let crate::ai::StimulusInfo::Human(body) = stimulus.info
+                && !self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus)
+            {
+                self.execute_ai_body_reaction(
+                    sim,
+                    assets,
+                    owner,
+                    crate::ai::BodyReaction::Seen { body: body.get() },
+                );
+            }
+            Ok(false)
+        } else if stimulus.stimulus_type == StimulusType::EventReturnToDuty {
             Err(crate::ai::DutyCall::new(
                 crate::ai::DutyFlags::empty(),
                 false,

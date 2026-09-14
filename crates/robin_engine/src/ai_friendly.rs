@@ -103,7 +103,7 @@ impl FriendlyAi {
     /// Unlike the base-class version, this also sets alert status
     /// (green for default/wondering, yellow for seeking/fleeing) and
     /// notifies the script system.
-    pub fn set_state(&mut self, state: AiState, substate: Substate) {
+    pub(crate) fn begin_state_change(&mut self, state: AiState, substate: Substate) {
         debug_assert_eq!(
             substate.ai_state_family(),
             Some(state),
@@ -126,6 +126,10 @@ impl FriendlyAi {
                 panic!("Civilian AI entered invalid state: {:?}", state);
             }
         }
+    }
+
+    pub fn set_state(&mut self, state: AiState, substate: Substate) {
+        self.begin_state_change(state, substate);
 
         // Fire an `AI_STATE_CHANGE_TO_*` filter event on every
         // `set_state`.  The civilian gate is just "actor is scripted

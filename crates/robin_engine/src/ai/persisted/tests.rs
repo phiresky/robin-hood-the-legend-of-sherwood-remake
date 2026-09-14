@@ -339,7 +339,6 @@ fn populated_outbox() -> AiOutbox {
             SelfStimulusOrigin::EngineCompletion,
         ),
     ];
-    value.reentrant.battle_observe_completion_pending = true;
     value.reentrant.waypoint_script_reach_point = Some((PathId::new(7).unwrap(), 2));
     value.reentrant.owner_work = vec![
         AiOwnerWork::NearbyCiviliansPanic180,
@@ -418,7 +417,6 @@ fn outbox_projection_preserves_fifo_and_only_reconstructs_runtime_provenance() {
         SelfStimulusOrigin::EngineCompletion
     );
     assert!(!restored.reentrant.engine_drains_after_script_go_on);
-    assert!(restored.reentrant.battle_observe_completion_pending);
     assert_eq!(
         restored.reentrant.self_stimuli[0].origin,
         SelfStimulusOrigin::Ordinary

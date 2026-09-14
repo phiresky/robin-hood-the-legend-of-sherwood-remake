@@ -19,6 +19,9 @@ pub(crate) struct DutyCall {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum DutyTail {
     None,
+    BodyReaction {
+        operation: BodyReaction,
+    },
     AlertOfficer {
         caller: OfficerAlertCaller,
     },
@@ -28,16 +31,9 @@ pub(crate) enum DutyTail {
     OfficerLookForSoldier {
         reason: super::ReportType,
     },
-    RunAndAlertSoldiers {
-        center: super::Position,
-    },
     BattleDecisions,
     BattleOverview {
         flags: u16,
-    },
-    SelectShotTarget {
-        old_substate: super::Substate,
-        cover_shield_bearer: super::HumanHandle,
     },
     ReconsiderEnemyApproach {
         reachpoint: bool,
@@ -81,7 +77,6 @@ pub(crate) enum DutyTail {
     TooProudOverviewRemark,
     AfterCombatInjury,
     GotHitViewStatus,
-    FinishBattleFightAfterAttack,
     DispatchPatrol {
         stimulus: super::Stimulus,
     },
@@ -89,6 +84,20 @@ pub(crate) enum DutyTail {
         stimulus: crate::ai::Stimulus,
     },
     SwordfightInsult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum BodyReaction {
+    Seen { body: super::HumanHandle },
+    ReactionTimer,
+    Arrival,
+    BodyTimer,
+    DeadBodyTimer,
+    SleeperTimer,
+    NetDone,
+    Unreachable,
+    Examine { body: super::HumanHandle },
+    DeadBodyAlert { center: super::Position },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,7 +120,6 @@ pub(crate) enum OfficerAlertCaller {
     SeekMissedCharly {
         center: super::Position,
     },
-    BattleLookForHelp,
     TowerGuardCalled,
 }
 

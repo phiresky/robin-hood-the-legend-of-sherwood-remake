@@ -951,10 +951,13 @@ fn enemy_tick_data_populates_live_patrol_chief_without_a_primary_target() {
 
     crate::sim_rng::with_seed(0xA013_0469, |sim| {
         let tick = engine.build_npc_tick_data(sim, minion_id, &assets);
-        assert_eq!(tick.patrol_chief_position.x, 1042.0);
-        assert_eq!(tick.patrol_chief_position.y, 1783.0);
-        assert_eq!(tick.patrol_chief_position.level, 2);
-        assert_eq!(tick.patrol_chief_position.sector, SectorHandle::new(61));
+        assert_eq!(engine.live_ai_position(chief_id).x, 1042.0);
+        assert_eq!(engine.live_ai_position(chief_id).y, 1783.0);
+        assert_eq!(engine.live_ai_position(chief_id).level, 2);
+        assert_eq!(
+            engine.live_ai_position(chief_id).sector,
+            SectorHandle::new(61)
+        );
         assert_eq!(tick.patrol_chief_state, AiState::Wondering);
     });
 }

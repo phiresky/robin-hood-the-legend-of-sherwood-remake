@@ -1,5 +1,5 @@
 use super::*;
-use crate::ai_entity_view::{AiEntityView, AiEntityViewMap, EntityKind, NetCoverInfo};
+use crate::ai_entity_view::{AiEntityView, AiEntityViewMap, EntityKind};
 use crate::coordinates::MapPoint;
 use crate::element::{Camp, DetectableType, EyeStatus, Posture};
 use crate::entity_id::EntityId;
@@ -55,7 +55,6 @@ fn soldier_view(pos: Position) -> AiEntityView {
         is_archer: false,
         is_rider: false,
         stuck_under_net: false,
-        covering_nets: Vec::new(),
         in_coma: false,
         guard: None,
         has_patrol_path: false,
@@ -1456,67 +1455,6 @@ fn update_task_priority_maps_correctly() {
 }
 
 #[test]
-fn run_to_examine_body_uses_stuck_under_net_cover_info() {
-    let mut ai = EnemyAi::new(1);
-    ai.base.me = 1;
-    let me = test_position(0.0, 0.0);
-    let body = test_position(40.0, 0.0);
-    let net = test_position(42.0, 0.0);
-
-    let mut victim = soldier_view(body);
-    victim.is_able_to_fight = false;
-    victim.is_unconscious = true;
-    victim.stuck_under_net = true;
-    victim.covering_nets.push(NetCoverInfo {
-        handle: 77,
-        position: net,
-        radius: 40.0,
-    });
-
-    let mut views = AiEntityViewMap::new();
-    views.insert(1, soldier_view(me));
-    views.insert(2, victim);
-    let ctx = AiContext {
-        position: me,
-        sq_standard_view_radius: 500.0 * 500.0,
-        sq_self_view_radius: 500.0 * 500.0,
-        move_box: crate::coordinates::MoveBox::from_coords(-5.0, -5.0, 5.0, 5.0),
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    ai.run_to_examine_body(
-        2,
-        ThinkEnv::new(
-            &crate::sim_rng::test_context(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        ),
-    );
-
-    assert_eq!(ai.base.detected_body, Some(AiEntityHandle::new(2)));
-    assert_eq!(ai.base.interesting_object, Some(AiEntityHandle::new(77)));
-    assert_eq!(ai.base.current_state, AiState::Seeking);
-    assert_eq!(ai.base.current_substate, Substate::SeekingNet);
-}
-
-#[test]
-#[should_panic(expected = "soldier 1 cannot examine missing body 77")]
-fn run_to_examine_body_rejects_a_missing_required_body() {
-    let mut ai = EnemyAi::new(1);
-    ai.run_to_examine_body(
-        77,
-        ThinkEnv::new(
-            &crate::sim_rng::test_context(),
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
-        ),
-    );
-}
-
-#[test]
 fn make_battle_predecisions_returns_valid() {
     crate::sim_rng::with_seed(1, |sim| {
         let mut ai = EnemyAi::new(1);
@@ -1762,186 +1700,6 @@ fn get_new_primary_target_scores_raw_world_position_not_ai_door_endpoint() {
         ),
         Some(AiEntityHandle::new(169))
     );
-}
-
-#[test]
-fn too_proud_range_gate_uses_isometric_world_distance() {
-    // Task 94 representative geometry: Soldier72 versus PC107 at frame
-    // 815. Raw map max-norm is 41.82 (inside the 50-unit sword range),
-    // while the isometric maximum-norm distance is 83.64 (outside).
-    let me_position = test_position(621.35455, 822.2824);
-    let target_position = test_position(615.2868, 780.4628);
-
-    let mut ai = EnemyAi::new(72);
-    ai.soldier_profile_pride = 1;
-    ai.base.current_substate = Substate::AttackingOfficerGivingOrdersWaiting;
-    ai.list_them = vec![107];
-
-    let mut target_view = soldier_view(target_position);
-    target_view.is_pc = true;
-    target_view.kind = EntityKind::Pc;
-    let mut views = AiEntityViewMap::new();
-    let mut owner_view = soldier_view(me_position);
-    owner_view.camp = Camp::Lacklandists;
-    views.insert(72, owner_view);
-    views.insert(107, target_view);
-    let ctx = AiContext {
-        position: me_position,
-        self_body_position_world: crate::coordinates::WorldPoint3D::new(
-            me_position.x,
-            me_position.y,
-            0.0,
-        ),
-        elevation: 0.0,
-        camp: Camp::Lacklandists,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    let mut tick = AiPerTickData::stub();
-    tick.fighter_registry = vec![
-        FighterSnapshot {
-            handle: 72,
-            position: me_position,
-            raw_position: me_position,
-            sword_range_maximal: 50,
-            ..FighterSnapshot::default()
-        },
-        FighterSnapshot {
-            handle: 107,
-            position: target_position,
-            raw_position: target_position,
-            is_pc: true,
-            ..FighterSnapshot::default()
-        },
-    ];
-
-    assert!(ai.is_too_proud_to_attack(&ctx, &tick, None));
-    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(107)));
-}
-
-#[test]
-fn too_proud_range_gate_uses_raw_target_body_during_door_transit() {
-    // Save067/r005 and Save068/r005: the target's AI Position() is the
-    // committed point inside gate 108, but the original game's maximum-norm distance
-    // reads the raw element position directly. The live body is within
-    // this knight's sword reach, so pride must not suppress the attack.
-    let me_position = test_position(2230.0, 405.0);
-    let raw_target = test_position(2268.0, 393.0);
-    let snapped_door_target = test_position(2301.0, 381.0);
-
-    let mut ai = EnemyAi::new(266);
-    ai.soldier_profile_pride = 80;
-    ai.base.current_substate = Substate::AttackingReactiontime;
-    ai.list_them = vec![320];
-
-    let mut target_view = soldier_view(snapped_door_target);
-    target_view.is_pc = true;
-    target_view.kind = EntityKind::Pc;
-    target_view.detection_position = MapPoint::new(raw_target.x, raw_target.y);
-    target_view.detection_position_world =
-        crate::coordinates::WorldPoint3D::new(raw_target.x, raw_target.y, 0.0);
-    target_view.passing_door = true;
-    let mut owner_view = soldier_view(me_position);
-    owner_view.camp = Camp::Lacklandists;
-    let mut views = AiEntityViewMap::new();
-    views.insert(266, owner_view);
-    views.insert(320, target_view);
-    let ctx = AiContext {
-        position: me_position,
-        self_body_position_world: crate::coordinates::WorldPoint3D::new(
-            me_position.x,
-            me_position.y,
-            0.0,
-        ),
-        camp: Camp::Lacklandists,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    let mut tick = AiPerTickData::stub();
-    tick.fighter_registry = vec![
-        FighterSnapshot {
-            handle: 266,
-            position: me_position,
-            raw_position: me_position,
-            sword_range_maximal: 50,
-            ..FighterSnapshot::default()
-        },
-        FighterSnapshot {
-            handle: 320,
-            position: snapped_door_target,
-            raw_position: raw_target,
-            is_pc: true,
-            ..FighterSnapshot::default()
-        },
-    ];
-
-    assert!(!ai.is_too_proud_to_attack(&ctx, &tick, None));
-    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(320)));
-}
-
-#[test]
-fn too_proud_reselection_observes_live_battle_decision_multiplicity() {
-    // Frame 471 regression: battle planning resets its personal
-    // Them-list, adds the nearby friends' claims, and only then calls
-    // the too-proud-to-attack check. Its strongly-unoccupied re-pick must read those
-    // within-call mutations, not the owner-start tick snapshot.
-    let me_position = test_position(0.0, 0.0);
-    let nearer_position = test_position(300.0, 0.0);
-    let unoccupied_position = test_position(350.0, 0.0);
-
-    let mut ai = EnemyAi::new(114);
-    ai.soldier_profile_pride = 1;
-    ai.base.current_substate = Substate::AttackingObserve;
-    ai.list_them = vec![171, 174];
-
-    let mut nearer_view = soldier_view(nearer_position);
-    nearer_view.is_pc = true;
-    nearer_view.kind = EntityKind::Pc;
-    let mut unoccupied_view = soldier_view(unoccupied_position);
-    unoccupied_view.is_pc = true;
-    unoccupied_view.kind = EntityKind::Pc;
-    let mut views = AiEntityViewMap::new();
-    let mut owner_view = soldier_view(me_position);
-    owner_view.camp = Camp::Lacklandists;
-    views.insert(114, owner_view);
-    views.insert(171, nearer_view);
-    views.insert(174, unoccupied_view);
-    let ctx = AiContext {
-        position: me_position,
-        camp: Camp::Lacklandists,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    let mut tick = AiPerTickData::stub();
-    tick.primary_target_multiplicity = vec![(171, 0), (174, 1)];
-    tick.fighter_registry = vec![
-        FighterSnapshot {
-            handle: 114,
-            position: me_position,
-            sword_range_maximal: 50,
-            ..FighterSnapshot::default()
-        },
-        FighterSnapshot {
-            handle: 171,
-            position: nearer_position,
-            is_pc: true,
-            ..FighterSnapshot::default()
-        },
-        FighterSnapshot {
-            handle: 174,
-            position: unoccupied_position,
-            is_pc: true,
-            ..FighterSnapshot::default()
-        },
-    ];
-
-    let live_decision_multiplicity = std::collections::BTreeMap::from([(171, 1), (174, 0)]);
-    let _ = ai.is_too_proud_to_attack(&ctx, &tick, Some(&live_decision_multiplicity));
-
-    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(174)));
 }
 
 fn perpendicular_out_of_view_context(stare_y: f32) -> AiContext {

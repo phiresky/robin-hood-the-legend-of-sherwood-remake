@@ -305,140 +305,6 @@ impl EnemyAi {
         best
     }
 
-    /// Searches archery sectors for a shooting point that
-    /// contains the primary target
-    /// and isn't full, then finds the nearest free shooting point and
-    /// nearest entry point. Sets up `my_archery_*` fields for the path.
-    /// Returns `true` if a good shooting point was found.
-    pub(super) fn choose_good_shooting_point(
-        &mut self,
-        global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> bool {
-        // (0) Clear the current shooting point. This also
-        // releases the prior point's owner.
-        self.set_my_shooting_point(global, None);
-
-        // The reference implicitly requires a non-null primary target —
-        // it would crash otherwise. Rather than falling back to
-        // ctx.position (which meaninglessly tests "a point inside my own
-        // sector"), bail out cleanly so the caller treats this as "no
-        // good shooting point".
-        let Some(primary) = self.find_fighter(self.base.primary_target, tick) else {
-            tracing::trace!(
-                me = self.base.me,
-                primary_target = ?self.base.primary_target,
-                "choose_good_shooting_point: primary target not visible; bailing"
-            );
-            return false;
-        };
-        let primary_pos = primary.position;
-
-        // (1) Search for an archery sector containing the enemy.
-        // The archery-sector containment test
-        // rejects the sector when its own layer differs from
-        // the enemy position's level—the layer travels with the enemy position the
-        // caller passed in, not with the archer.
-        let mut found_sector: Option<usize> = None;
-        for (i, sector) in global.archery_sectors.iter().enumerate() {
-            if !sector.is_full() && sector.is_inside(&primary_pos, primary_pos.level) {
-                found_sector = Some(i);
-                break;
-            }
-        }
-        let sector_idx = match found_sector {
-            Some(i) => i,
-            None => return false,
-        };
-
-        // (2) Find nearest entry point and nearest free shooting point
-        let my_sector = ctx.position.sector;
-
-        let mut nearest_entry: Option<(usize, f32)> = None; // (index, sq_dist)
-        let mut nearest_shooting: Option<(usize, f32)> = None;
-
-        let sector = &global.archery_sectors[sector_idx];
-        let primary_handle = self.base.primary_target;
-        for (i, pt) in sector.points.iter().enumerate() {
-            // Probe each path point with the full
-            // Archer/enemy proximity predicate (per-enemy, sector- and
-            // action-state-dependent threshold) — if the path passes
-            // dangerously close to the primary target, abandon the
-            // whole search.
-            if self.archer_is_too_near_to_enemy(&pt.position, primary_handle, ctx, tick) {
-                return false;
-            }
-
-            let d_to_me = pt.position.map_point() - ctx.position.map_point();
-            let mut sq_dist = d_to_me.square_norm();
-            // Penalty for sector changes.
-            let pt_sector =
-                crate::position_interface::SectorHandle::new(u16::from(pt.sector_index));
-            if pt_sector != my_sector {
-                sq_dist += 10000.0;
-            }
-
-            if !pt.is_shooting_point {
-                if nearest_entry.is_none_or(|(_, best)| sq_dist < best) {
-                    nearest_entry = Some((i, sq_dist));
-                }
-            } else if pt.owner.is_none() && nearest_shooting.is_none_or(|(_, best)| sq_dist < best)
-            {
-                nearest_shooting = Some((i, sq_dist));
-            }
-        }
-
-        let (shooting_idx, _) = match nearest_shooting {
-            Some(v) => v,
-            None => return false, // no free shooting point
-        };
-
-        // (3) Set up archery path variables
-        self.my_archery_sector_index = sector_idx as u16;
-        // Fall back to the original sentinels when no shooting point
-        // range was recorded, preserving the "always near head"
-        // behavior in that degenerate case.
-        let first_sp = sector
-            .index_first_shooting_point
-            .map_or(u16::MAX, u16::from);
-        let last_sp = sector.index_last_shooting_point.map_or(0, u16::from);
-
-        if let Some((entry_idx, _)) = nearest_entry {
-            if (entry_idx as u16) < first_sp {
-                // Near the head — run forward
-                self.my_archery_point_index = crate::sector::ArcheryPointIdx(entry_idx as u16);
-                self.my_archery_point_increment = 1;
-            } else if (entry_idx as u16) > last_sp {
-                // Near the tail — run backward
-                self.my_archery_point_index = crate::sector::ArcheryPointIdx(entry_idx as u16);
-                self.my_archery_point_increment = -1;
-            } else {
-                // Between head and tail — run directly toward shooting point
-                if entry_idx < shooting_idx {
-                    self.my_archery_point_index =
-                        crate::sector::ArcheryPointIdx(shooting_idx.saturating_sub(1) as u16);
-                    self.my_archery_point_increment = 1;
-                } else {
-                    self.my_archery_point_index = crate::sector::ArcheryPointIdx(
-                        (shooting_idx + 1).min(sector.points.len() - 1) as u16,
-                    );
-                    self.my_archery_point_increment = -1;
-                }
-                // Already reserve this shooting point.
-                self.set_my_shooting_point(global, Some((sector_idx as u16, shooting_idx as u16)));
-            }
-        } else {
-            // No entry point — go directly to shooting point
-            self.my_archery_point_index = crate::sector::ArcheryPointIdx(shooting_idx as u16);
-            self.my_archery_point_increment = 1;
-            self.set_my_shooting_point(global, Some((sector_idx as u16, shooting_idx as u16)));
-        }
-
-        self.set_my_archery_sector(global, Some(sector_idx as u16));
-        true
-    }
-
     /// Set the shooting point. Three-step contract: (1) clear `owner` on the
     /// previously held
     /// shooting point, (2) overwrite `my_shooting_point`, (3) write
@@ -446,7 +312,7 @@ impl EnemyAi {
     /// point_idx)` into `AiGlobalState::archery_sectors`.  The
     /// sector-level `num_owners` counter is independent and is managed
     /// by `set_my_archery_sector`.
-    pub(super) fn set_my_shooting_point(
+    pub(crate) fn set_my_shooting_point(
         &mut self,
         global: &mut AiGlobalState,
         new: Option<(u16, u16)>,
@@ -471,8 +337,12 @@ impl EnemyAi {
     /// Set the archery sector. Updates `my_archery_sector` and keeps the
     /// owner counter on the
     /// old/new archery sector in sync. Counter drives `is_full`, which
-    /// gates sector selection in `choose_good_shooting_point`.
-    fn set_my_archery_sector(&mut self, global: &mut AiGlobalState, new_sector: Option<u16>) {
+    /// gates shooting-sector selection.
+    pub(crate) fn set_my_archery_sector(
+        &mut self,
+        global: &mut AiGlobalState,
+        new_sector: Option<u16>,
+    ) {
         if let Some(old) = self.my_archery_sector
             && let Some(sector) = global.archery_sectors.get_mut(old as usize)
         {

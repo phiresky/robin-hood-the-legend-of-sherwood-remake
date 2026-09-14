@@ -1604,11 +1604,6 @@ pub enum LookThereContinuation {
         enemy: HumanHandle,
         enemy_pos: Position,
     },
-    EventSeesBody {
-        body: HumanHandle,
-        body_pos: Position,
-        is_charly: bool,
-    },
     EventGetArrow,
     SeekingArrowReactiontime,
 }

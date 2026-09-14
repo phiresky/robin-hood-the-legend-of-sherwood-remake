@@ -731,22 +731,6 @@ impl EnemyAi {
                 }
             }
 
-            StimulusType::EventSeesBody => {
-                match self.base.current_state {
-                    AiState::Sleeping
-                    | AiState::Default
-                    | AiState::Wondering
-                    | AiState::Seeking => {
-                        if let StimulusInfo::Human(body) = stimulus.info
-                            && !self.dispatch_stimulus_to_whole_patrol(env, stimulus, global)?
-                        {
-                            self.event_sees_body_standard_procedure(body.get(), env);
-                        }
-                    }
-                    _ => {} // ignore in menacing/fleeing/attacking
-                }
-            }
-
             StimulusType::EventSeesObject => {
                 match self.base.current_state {
                     AiState::Sleeping
@@ -1331,146 +1315,6 @@ impl EnemyAi {
 
             _ => {}
         }
-    }
-
-    /// React to seeing a body.
-    fn event_sees_body_standard_procedure(&mut self, body: HumanHandle, env: ThinkEnv<'_>) {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // A local flag captures whether this body is the soldier we
-        // were tasked to find via a MissedCharly recon report — used
-        // twice below to fire the unalert-cascade on the seeker network.
-        let body_view = ctx.entity_view_logged(body, "seen body");
-        let body_pos = body_view
-            .map(|v| v.position)
-            .unwrap_or(self.base.seek_position);
-        let b_hey_this_is_charly = self.base.current_state == AiState::Seeking
-            && self.base.my_reconnaissance_report.report_type == ReportType::MissedCharly
-            && self.base.my_reconnaissance_report.charly == Some(AiEntityHandle::new(body));
-
-        self.base.my_reconnaissance_report.add_seen_body(body);
-        // Reporting the body must use the body's
-        // position, not the stale `seek_position`.
-        self.base
-            .my_reconnaissance_report
-            .update(ReportType::Body, body_pos);
-
-        // Dead NPC corpse → push onto missed_in_action so officer-report
-        // and recon downstream know a friend died.
-        if let Some(v) = body_view
-            && v.is_dead
-            && (v.kind == crate::ai_entity_view::EntityKind::Soldier
-                || v.kind == crate::ai_entity_view::EntityKind::Civilian)
-        {
-            self.base
-                .missed_in_action
-                .push(body as crate::ai::NpcHandle);
-        }
-
-        if !self.answer_question(Question::HasTheNewTaskPriority, ctx) {
-            return;
-        }
-        self.current_task_priority = self.new_task_priority;
-
-        if let Some(object) = self.base.object_of_desire.take() {
-            self.base.forgotten_objects.push(object.get());
-        }
-
-        // Already on the way to a body? queue for later.
-        match self.base.current_substate {
-            Substate::SeekingBodyReactiontime
-            | Substate::SeekingBody
-            | Substate::SeekingNet
-            | Substate::SeekingBodyLookingDeadBody
-            | Substate::SeekingBodyAwakeningSleeperr => {
-                if Some(AiEntityHandle::new(body)) != self.base.detected_body {
-                    self.other_bodies_to_examine.push(body);
-                }
-                return;
-            }
-            // Mid-seek-of-charly arms (SEEKPOINT / CHARLY /
-            // AMBUSH_LEFT/RIGHT / CHECKING_AMBUSH). If this body *is*
-            // charly, fire the unalert cascade; then detour into the
-            // body-examination flow and return.
-            Substate::SeekingSeekpoint
-            | Substate::SeekingCharly
-            | Substate::SeekingSeekpointPassedAmbushPointLeft
-            | Substate::SeekingSeekpointPassedAmbushPointRight
-            | Substate::SeekingSeekpointCheckingAmbushPoint => {
-                if b_hey_this_is_charly {
-                    // The body we're seeing is charly — broadcast the
-                    // unalert.
-                    self.base.outbox.actor.queue_unalert_near_charly_seekers(
-                        CharlySeekerTarget::Npc(AiEntityHandle::new(body)),
-                        self.base.antagonist,
-                    );
-                }
-                self.run_to_examine_body(body, env);
-                return;
-            }
-            _ => {}
-        }
-
-        // Stuck-under-net → different remark.
-        let stuck = body_view.is_some_and(|v| v.stuck_under_net);
-        if stuck {
-            self.base.say(Remark::SeesFriendUnderNet);
-        } else {
-            self.base.say(Remark::SeesBody);
-        }
-        // Look-there broadcast with default radius.
-        if self.hey_folks_look_there(
-            &body_pos,
-            100,
-            LookThereContinuation::EventSeesBody {
-                body,
-                body_pos,
-                is_charly: b_hey_this_is_charly,
-            },
-            ctx,
-        ) {
-            return;
-        }
-        self.event_sees_body_after_look_there(body, body_pos, b_hey_this_is_charly, ctx, tick);
-    }
-
-    pub(super) fn event_sees_body_after_look_there(
-        &mut self,
-        body: HumanHandle,
-        body_pos: Position,
-        b_hey_this_is_charly: bool,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
-        self.seen_dead_body = false;
-
-        self.base.stop_all();
-        // Remember the body and its position.
-        self.base.seek_position = body_pos;
-        self.base.detected_body = Some(AiEntityHandle::new(body));
-        self.base.outbox.actor.set_focus(body);
-
-        self.set_state(AiState::Seeking, Substate::SeekingBodyReactiontime);
-
-        // Turn to look at the body.
-        // The original game faces a full position: preserve its 3D projection and
-        // its same-direction Waiting/Bored short-circuit.
-        self.base.face_position_3d_with_ctx(body_pos, ctx);
-        self.base.set_emoticon(EmoticonType::QuestionMark);
-
-        // The post-state-change charly check fires the unalert cascade for
-        // non-mid-seek discoveries too. The body we just saw IS charly,
-        // so the sweep target is the body handle.
-        if b_hey_this_is_charly {
-            self.base.outbox.actor.queue_unalert_near_charly_seekers(
-                CharlySeekerTarget::Npc(AiEntityHandle::new(body)),
-                self.base.antagonist,
-            );
-        }
-        self.react(
-            parameters_ai::AI_MAX_DEADBODY_REACTIONTIME as u16,
-            ctx,
-            tick,
-        );
     }
 
     /// React to seeing an arrow impact.
@@ -2076,19 +1920,6 @@ impl EnemyAi {
             // Seek point unreachable → try next.
             Substate::SeekingSeekpoint => {
                 self.seek_next_point(env, global)?;
-            }
-            // Body unreachable → seek area.
-            Substate::SeekingBody => {
-                if !self.examine_other_bodies(env) {
-                    self.seek_area(
-                        env,
-                        ctx.position,
-                        parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
-                        SeekFlags::empty(),
-                        UNDEFINED_DIRECTION,
-                        global,
-                    )?;
-                }
             }
             Substate::AttackingObserve => {
                 // Ignore.

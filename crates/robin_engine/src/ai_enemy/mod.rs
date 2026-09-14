@@ -626,128 +626,6 @@ impl EnemyAi {
         self.is_archer_unit
     }
 
-    /// High-pride soldiers stand back when lower-pride allies are
-    /// already engaging the same target.
-    pub fn is_too_proud_to_attack(
-        &mut self,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        target_multiplicity: Option<&std::collections::BTreeMap<HumanHandle, u32>>,
-    ) -> bool {
-        if self.soldier_profile_pride == 0 {
-            return false;
-        }
-        if self.base.blood_alcohol > 0 {
-            return false; // drunk soldiers fight regardless
-        }
-
-        // Refresh primary target with the unoccupied-strongly-preferred
-        // mode and write it back so downstream battle-planning paths
-        // see the refreshed value.
-        let new_target = self.get_new_primary_target_with_mult_override(
-            PrimaryTargetFlags::UNOCCUPIED_STRONGLY_PREFERRED,
-            ctx,
-            tick,
-            target_multiplicity,
-        );
-        self.base.primary_target = new_target;
-        let Some(new_target) = new_target else {
-            return false;
-        };
-
-        // Distance-vs-sword-range early-out.  When the target is
-        // standing still within our sword reach we attack regardless
-        // of pride.
-        let target_swordfighting = self
-            .find_fighter_logged(
-                new_target.get(),
-                tick,
-                "primary target sword-range early-out",
-            )
-            .is_some_and(|f| f.is_swordfighting);
-        if !target_swordfighting && let Some(target) = self.find_fighter(new_target.get(), tick) {
-            // The original game uses maximum-norm distance:
-            // subtract raw element world positions, stretch Y for the
-            // isometric projection, then take the 3D max norm. AI Position()
-            // may instead snap a door-passing target to the gate endpoint.
-            let target_body = crate::coordinates::WorldPoint3D::new(
-                target.raw_position.x,
-                target.raw_position.y + target.elevation,
-                target.elevation,
-            );
-            let max_norm = ai_max_norm_distance_world(&target_body, &ctx.self_body_position_world);
-            let my_max_range = self
-                .find_fighter(self.base.me, tick)
-                .map(|f| f.sword_range_maximal as f32)
-                .unwrap_or(self.sword_range as f32);
-            if max_norm <= my_max_range {
-                return false;
-            }
-        }
-
-        // In reactiontime substates, refuse even without checking allies
-        if matches!(
-            self.base.current_substate,
-            Substate::AttackingReactiontime | Substate::AttackingOfficerGivingOrdersWaiting
-        ) {
-            return true;
-        }
-
-        // Allies-loop only when target is NOT swordfighting.
-        // Otherwise (target already engaged) the high-pride soldier
-        // refuses to jump in — return true unconditionally.
-        if target_swordfighting {
-            return true;
-        }
-
-        // Check if any lower-pride ally is engaging or observing our
-        // target. The original game walks the ally list — those that already
-        // passed this decision's own omnidirectional-detection gate — in the
-        // order battle planning inserted them, not a fresh proximity list.
-        let my_pride = self.soldier_profile_pride;
-        for &friend in &self.base.list_us {
-            if friend == self.base.me {
-                continue;
-            }
-            // PCs on the allied list fail the original game's soldier test and
-            // are absent from the camp-soldier snapshot.
-            let Some(f) = tick
-                .camp_soldiers
-                .iter()
-                .find(|soldier| soldier.handle == friend)
-            else {
-                continue;
-            };
-            if !f.is_able_to_fight {
-                continue;
-            }
-            // Only consider allies with lower pride
-            if f.pride >= my_pride {
-                continue;
-            }
-            // Original tests the broad `_ANY_SWORDFIGHT_SUBSTATE_` AI
-            // family here, not the actor's physical sword relationship.
-            // Approaching allies (RunningToEnemy/WalkingToEnemy/Charging)
-            // already count as committed to the same target.
-            if f.ai_substate.is_any_swordfight() && f.primary_target == self.base.primary_target {
-                return true;
-            }
-            // Is this soldier observing our target? The 180° test runs
-            // from the observing ally's own eyes, radius and facing.
-            let observe_substates = [
-                Substate::AttackingApproachToObserve,
-                Substate::AttackingObserve,
-                Substate::AttackingObserveAndMove,
-            ];
-            if observe_substates.contains(&f.ai_substate)
-                && self.is_detecting_180_degrees_from(friend, new_target.get(), ctx, tick)
-            {
-                return true;
-            }
-        }
-        false
-    }
-
     // -----------------------------------------------------------------------
     // Helper methods (internal)
     // -----------------------------------------------------------------------
@@ -1422,13 +1300,6 @@ impl EnemyAi {
             LookThereContinuation::EventView { enemy, enemy_pos } => {
                 self.event_view_after_look_there(env, enemy, enemy_pos, global)?;
             }
-            LookThereContinuation::EventSeesBody {
-                body,
-                body_pos,
-                is_charly,
-            } => {
-                self.event_sees_body_after_look_there(body, body_pos, is_charly, ctx, tick);
-            }
             LookThereContinuation::EventGetArrow => {
                 self.event_get_arrow_after_look_there(ctx, tick);
             }
@@ -1521,29 +1392,31 @@ impl EnemyAi {
 
     #[track_caller]
     pub fn set_state(&mut self, state: AiState, substate: Substate) {
-        let debug_decision_path = decision_path_debug_enabled()
-            && decision_path_debug_matches(self.base.cached_frame, self.base.me);
-        if debug_decision_path {
-            crate::ai_enemy::parity_trace::AidecisionSetState {
-                frame: &(self.base.cached_frame),
-                owner: &(self.base.me),
-                caller: &(std::panic::Location::caller()),
-                from_state: &(self.base.current_state),
-                from_substate: &(self.base.current_substate),
-                couldnt: &(self.base.couldnt_reachpoint),
-                already: &(self.base.already_on_point),
-                owner_work_before: &(self.base.outbox.reentrant.owner_work),
-                state: &(state),
-                substate: &(substate),
-            }
-            .emit();
+        let forced_attentive = self.begin_state_change(state, substate);
+        if self.base.current_substate != substate {
+            let prefix = self
+                .base
+                .outbox
+                .actor
+                .has_boundary_work()
+                .then(|| std::mem::take(&mut self.base.outbox.actor));
+            let source = match state {
+                AiState::Attacking | AiState::Menacing | AiState::Fleeing => {
+                    AiStateChangeSource::from_optional_human(self.base.primary_target)
+                }
+                _ => AiStateChangeSource::SelfActor,
+            };
+            self.base
+                .queue_state_change(state, substate, source, prefix);
         }
-        debug_assert_eq!(
-            substate.ai_state_family(),
-            Some(state),
-            "EnemyAi::set_state received mismatched state/substate: {state:?}/{substate:?}"
-        );
+        self.finish_state_change(state, substate, forced_attentive);
+    }
 
+    pub(crate) fn begin_state_change(&mut self, state: AiState, substate: Substate) -> bool {
+        let forced_attentive = self.forced_attentive;
+        debug_assert_eq!(substate.ai_state_family(), Some(state));
+        self.base
+            .register_log_line(LogLineType::ChangeState, substate as u16);
         // Every state transition forgets pending timers; otherwise a
         // stale timer launched in the previous substate fires an
         // out-of-context `EventTimer` after the new substate has
@@ -1560,16 +1433,8 @@ impl EnemyAi {
             self.set_guarded_pc(None);
         }
 
-        // Alert-path switch.  When leaving STATE_DEFAULT into any
-        // other state and the NPC has a configured `alert_path_id`
-        // it hasn't switched to yet, adopt that hiking path as the
-        // patrol path.  Previously this was only handled on the
-        // `SleepingAwakening` arm; departures from Default into any
-        // alertable state (Wondering / Seeking / Attacking / …)
-        // skipped the swap and the soldier kept patrolling on the
-        // unaware path.
-        if self.base.current_state == AiState::Default
-            && state != AiState::Default
+        // Adopt the alert path on the first non-default transition.
+        if state != AiState::Default
             && !self.changed_to_alert_path
             && let Some(alert_path_id) = self.base.alert_path_id
         {
@@ -1579,14 +1444,29 @@ impl EnemyAi {
             self.base.has_patrol_path = true;
         }
 
-        // `set_view_status(EYES_LOOK_FORWARD)` when leaving
-        // STATE_SLEEPING. Reasserting LookForward for *every* sleeping
-        // departure (not just `SleepingAwakening`) covers routes that drop
-        // straight from a dream/blind substate into Wondering/Attacking
-        // without going through the SleepingAwakening pipeline. The actual
-        // write is queued below, after the state-change callback, matching the
-        // statement order in the original game's state transition.
-        let opens_eyes = self.base.current_state == AiState::Sleeping && state != AiState::Sleeping;
+        forced_attentive
+    }
+
+    pub(crate) fn finish_state_change(
+        &mut self,
+        state: AiState,
+        substate: Substate,
+        forced_attentive: bool,
+    ) {
+        self.prepare_state_change_tail(state, substate);
+        self.commit_state_change(state, substate, forced_attentive);
+    }
+
+    pub(crate) fn prepare_state_change_tail(&mut self, state: AiState, substate: Substate) {
+        if self.base.current_state == AiState::Sleeping && state != AiState::Sleeping {
+            self.base
+                .outbox
+                .reentrant
+                .owner_work
+                .push(AiOwnerWork::SetEyeStatus(
+                    crate::element::EyeStatus::LookForward,
+                ));
+        }
 
         // Break the archer-behind-me pairing when leaving any
         // substate that isn't shield-protect / phalanx /
@@ -1686,46 +1566,14 @@ impl EnemyAi {
                 .delete_detectable_type(crate::element::DetectableType::Beggar);
             self.beggar_to_examine = None;
         }
+    }
 
-        // Fire `filter_ai_event(source, AI_STATE_CHANGE_TO_*)`
-        // inside `set_state` whenever `current_substate != substate`,
-        // *before* the raw state/substate assignment so the script
-        // reads the outgoing state.  Source = `primary_target` for
-        // Attacking/Menacing/Fleeing, otherwise `me`.
-        // Engine access isn't available here, so queue the
-        // notification for the post-think dispatcher to drain in
-        // order.
-        if self.base.current_substate != substate {
-            // Work done before changing state (most importantly stopping) belongs
-            // inside the synchronous state-change boundary. Detach that prefix
-            // so the engine applies it before FilterAIEvent and before the
-            // attentive-mode tail below. Leaving an empty prefix as `None`
-            // avoids an unnecessary recursive drain.
-            let actor_effects_before_callback = self
-                .base
-                .outbox
-                .actor
-                .has_boundary_work()
-                .then(|| std::mem::take(&mut self.base.outbox.actor));
-            let source = match state {
-                AiState::Attacking | AiState::Menacing | AiState::Fleeing => {
-                    AiStateChangeSource::from_optional_human(self.base.primary_target)
-                }
-                _ => AiStateChangeSource::SelfActor,
-            };
-            self.base
-                .queue_state_change(state, substate, source, actor_effects_before_callback);
-        }
-        if opens_eyes {
-            self.base
-                .outbox
-                .reentrant
-                .owner_work
-                .push(AiOwnerWork::SetEyeStatus(
-                    crate::element::EyeStatus::LookForward,
-                ));
-        }
-
+    pub(crate) fn commit_state_change(
+        &mut self,
+        state: AiState,
+        substate: Substate,
+        forced_attentive: bool,
+    ) {
         tracing::trace!(
             me = self.base.me,
             timer_ring = self.base.when_does_timer_ring,
@@ -1745,7 +1593,7 @@ impl EnemyAi {
         // `pending_set_attentive_mode` post-think to flip the soldier
         // flags + book the transition animation when posture is
         // Upright).
-        let bfalse_if_not_forced = self.forced_attentive;
+        let bfalse_if_not_forced = forced_attentive;
         let (target_attentive, fast_officer_variant) = match (state, substate) {
             (AiState::Sleeping, _) | (AiState::Default, _) => (bfalse_if_not_forced, false),
 
@@ -1793,7 +1641,7 @@ impl EnemyAi {
                     // yellow-alert status tail.
                     self.base.outbox.actor.set_attentive_mode = None;
                     self.set_alert_status(crate::ai::AlertLevel::Yellow);
-                    return self.finish_set_state(substate);
+                    return;
                 }
                 _ => (true, false),
             },
@@ -1833,27 +1681,13 @@ impl EnemyAi {
         use crate::ai::AlertLevel;
         let alert = match state {
             AiState::Sleeping | AiState::Default => AlertLevel::Green,
+            AiState::Wondering if substate == Substate::WonderingUnderNet => AlertLevel::Green,
             AiState::Wondering | AiState::Seeking | AiState::Fleeing | AiState::Menacing => {
                 AlertLevel::Yellow
             }
             AiState::Attacking => AlertLevel::Red,
         };
         self.set_alert_status(alert);
-
-        if debug_decision_path {
-            crate::ai_enemy::parity_trace::AidecisionSetStateDone {
-                frame: &(self.base.cached_frame),
-                owner: &(self.base.me),
-                state: &(self.base.current_state),
-                substate: &(self.base.current_substate),
-                couldnt: &(self.base.couldnt_reachpoint),
-                already: &(self.base.already_on_point),
-                owner_work_after: &(self.base.outbox.reentrant.owner_work),
-            }
-            .emit();
-        }
-
-        self.finish_set_state(substate)
     }
 
     /// Preserve the enemy state-change archery teardown when a caller reaches
@@ -1892,11 +1726,6 @@ impl EnemyAi {
                 .archery_reservation_release
                 .release_sector = true;
         }
-    }
-
-    fn finish_set_state(&mut self, substate: Substate) {
-        self.base
-            .register_log_line(LogLineType::ChangeState, substate as u16);
     }
 
     /// Flag that this soldier is about to launch (or is executing) a
@@ -2654,7 +2483,7 @@ impl EnemyAi {
 
     /// New-task priority decision — shared between the
     /// indoor and outdoor branches of character-based decisions.
-    fn has_the_new_task_priority(&self) -> bool {
+    pub(crate) fn has_the_new_task_priority(&self) -> bool {
         if self.new_task_priority >= self.current_task_priority {
             return true;
         }

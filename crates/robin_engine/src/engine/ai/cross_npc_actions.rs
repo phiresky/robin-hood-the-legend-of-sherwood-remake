@@ -839,7 +839,7 @@ impl EngineInner {
     fn process_synchronous_look_there_broadcast(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        source_id: crate::element::EntityId,
+        source_id: EntityId,
         caller: u32,
         position: crate::ai::Position,
         radius: u16,
@@ -849,89 +849,73 @@ impl EngineInner {
         assert_eq!(
             source_id.index(),
             caller,
-            "look-there broadcast caller must be its owner"
+            "look-there caller must be its owner"
         );
-        let (caller_camp, caller_position) = self
-            .world
-            .entities
-            .get(source_id)
-            .map(|entity| (entity.camp(), entity.element_data().position()))
-            .unwrap_or_else(|| panic!("look-there caller {caller} disappeared"));
-        let radius_sq = f32::from(radius) * f32::from(radius);
-        let candidates = self.world.fighter_registry_order();
+        self.execute_ai_look_there(sim, assets, source_id, position, radius);
+        self.process_synchronous_look_there_resume(sim, source_id, caller, continuation, assets);
+    }
 
-        for target_id in candidates {
+    pub(super) fn execute_ai_look_there(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        source_id: EntityId,
+        position: crate::ai::Position,
+        radius: u16,
+    ) {
+        let camp = self.expect_entity(source_id, "look-there caller").camp();
+        let count = self.ai.global.all_soldier_handles.len();
+        let radius_squared = f32::from(radius).powi(2);
+        let stimulus = crate::ai::Stimulus {
+            info: crate::ai::StimulusInfo::Hint(crate::ai::Hint {
+                seek_point: position,
+                seek_flags: 0,
+                who_tells_me: crate::ai::AiEntityHandle::new(source_id.index()),
+            }),
+            ..crate::ai::Stimulus::new(crate::ai::StimulusType::CallLookThere)
+        };
+        for index in 0..count {
+            let handle = *self
+                .ai
+                .global
+                .all_soldier_handles
+                .get(index)
+                .expect("look-there soldier registry shortened during callback");
+            let target_id = EntityId::Soldier(crate::entity_id::SoldierId(handle));
             if target_id == source_id {
                 continue;
             }
-            let eligible = self
-                .world
-                .entities
-                .get(target_id)
-                .filter(|entity| {
-                    matches!(entity, Entity::Soldier(_))
-                        && self.camps_are_allied(entity.camp(), caller_camp)
-                })
-                .and_then(Entity::enemy_ai)
-                .is_some_and(|enemy| {
-                    matches!(
-                        enemy.base.current_state,
-                        crate::ai::AiState::Default | crate::ai::AiState::Wondering
-                    ) || (enemy.base.current_state == crate::ai::AiState::Seeking
-                        && matches!(
-                            enemy.base.current_substate,
-                            crate::ai::Substate::SeekingJustWatching
-                                | crate::ai::Substate::SeekingJustWatchingSidewards
-                        ))
-                });
-            if !eligible {
+            let entity = self.expect_entity(target_id, "look-there soldier");
+            if !self.camps_are_allied(entity.camp(), camp) {
                 continue;
             }
-
-            // Original evaluates the state and range together immediately
-            // before the direct Think call. An earlier recipient may have
-            // re-entered and changed this soldier since the loop began.
-            let target_position = self
-                .world
-                .entities
-                .expect_entity(
-                    target_id,
-                    format_args!("look-there target during the registry walk"),
-                )
+            let ai = entity
+                .enemy_ai()
+                .expect("look-there soldier requires enemy AI");
+            if !matches!(
+                ai.base.current_state,
+                crate::ai::AiState::Default | crate::ai::AiState::Wondering
+            ) && !(ai.base.current_state == crate::ai::AiState::Seeking
+                && matches!(
+                    ai.base.current_substate,
+                    crate::ai::Substate::SeekingJustWatching
+                        | crate::ai::Substate::SeekingJustWatchingSidewards
+                ))
+            {
+                continue;
+            }
+            let target = entity.element_data().position();
+            let caller = self
+                .expect_entity(source_id, "look-there range caller")
                 .element_data()
                 .position();
-            let dx = target_position.x - caller_position.x;
-            let dy = target_position.y - caller_position.y;
-            let dz = target_position.z - caller_position.z;
-            if !look_there_target_is_inside_radius(dx * dx + dy * dy + dz * dz, radius_sq) {
-                continue;
+            let dx = target.x - caller.x;
+            let dy = target.y - caller.y;
+            let dz = target.z - caller.z;
+            if look_there_target_is_inside_radius(dx * dx + dy * dy + dz * dz, radius_squared) {
+                self.execute_ai_callback(sim, assets, target_id, &stimulus);
             }
-
-            let hint = crate::ai::Hint {
-                seek_point: position,
-                seek_flags: 0,
-                who_tells_me: crate::ai::AiEntityHandle::new(caller),
-            };
-            self.world
-                .entities
-                .expect_ai_controller_mut(
-                    source_id,
-                    format_args!("look-there caller {caller} lost its AI"),
-                )
-                .outbox
-                .reentrant
-                .cross_npc_actions
-                .push(crate::ai::CrossNpcAction::SendStimulus {
-                    target: target_id.index(),
-                    stimulus_type: crate::ai::StimulusType::CallLookThere,
-                    info: crate::ai::StimulusInfo::Hint(hint),
-                    fallback_to_sender: None,
-                    to_whole_patrol: false,
-                });
-            self.process_synchronous_stimuli_for(sim, source_id, assets);
         }
-
-        self.process_synchronous_look_there_resume(sim, source_id, caller, continuation, assets);
     }
 
     fn process_synchronous_look_there_resume(

@@ -505,11 +505,14 @@ impl EngineInner {
         ) && let Some(primary) = primary
         {
             let target = self.expect_human_id_for_ai_handle(primary.get(), "phalanx shield target");
-            let (point, elevation) = self.live_shield_danger_point(target);
+            let point = self
+                .expect_entity(target, "phalanx shield danger point")
+                .element_data()
+                .position();
             self.world
                 .entities
                 .expect_ai_controller_mut(owner, format_args!("phalanx shield restoration"))
-                .raise_shield(point, elevation);
+                .raise_shield_world(point);
             self.drain_direct_ai_owner_boundary(sim, owner, assets);
             self.world
                 .entities

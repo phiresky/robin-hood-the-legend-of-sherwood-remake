@@ -601,6 +601,59 @@ mod tests {
     }
 
     #[test]
+    fn state_tail_reads_callback_mutations_but_keeps_entry_forced_attentive() {
+        let (mut engine, _assets, ids) = fixture(1);
+        let ai = enemy_mut(&mut engine, ids[0]);
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultOnPost;
+        ai.forced_attentive = false;
+        let forced = ai.begin_state_change(AiState::Default, Substate::DefaultInMacro);
+        // Model writes performed by the synchronous state filter.
+        ai.forced_attentive = true;
+        ai.base.current_state = AiState::Sleeping;
+        ai.finish_state_change(AiState::Default, Substate::DefaultInMacro, forced);
+        assert!(
+            !ai.base
+                .outbox
+                .actor
+                .set_attentive_mode
+                .as_ref()
+                .unwrap()
+                .target
+        );
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(
+                    work,
+                    AiOwnerWork::SetEyeStatus(crate::element::EyeStatus::LookForward)
+                ))
+        );
+        assert!(
+            !ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(work, AiOwnerWork::StateChange(_)))
+        );
+        assert_eq!(ai.base.current_substate, Substate::DefaultInMacro);
+    }
+
+    #[test]
+    fn under_net_state_tail_restores_green_alert() {
+        let (mut engine, _assets, ids) = fixture(1);
+        let ai = enemy_mut(&mut engine, ids[0]);
+        ai.set_alert_status(AlertLevel::Red);
+        let forced = ai.begin_state_change(AiState::Wondering, Substate::WonderingUnderNet);
+        ai.finish_state_change(AiState::Wondering, Substate::WonderingUnderNet, forced);
+        assert_eq!(ai.base.view_alert_status, AlertLevel::Green);
+    }
+
+    #[test]
     fn deep_duty_keeps_close_point_on_live_recursion_stack() {
         let (mut engine, assets, ids) = fixture(1);
         let owner = ids[0];
@@ -692,17 +745,57 @@ impl EngineInner {
         substate: Substate,
     ) {
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
-        let entity = self
+        let forced_attentive = {
+            let entity = self
+                .world
+                .entities
+                .expect_entity_mut(owner, format_args!("state-change owner"));
+            if let Some(enemy) = entity.enemy_ai_mut() {
+                Some(enemy.begin_state_change(state, substate))
+            } else {
+                entity
+                    .friendly_ai_mut()
+                    .expect("state-change owner has no role")
+                    .begin_state_change(state, substate);
+                None
+            }
+        };
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let ai = self
             .world
             .entities
-            .expect_entity_mut(owner, format_args!("duty state owner"));
-        if let Some(enemy) = entity.enemy_ai_mut() {
-            enemy.set_state(state, substate);
+            .expect_ai_controller(owner, format_args!("state-change owner"));
+        let notify = forced_attentive.is_none() || ai.current_substate != substate;
+        let source = match state {
+            AiState::Attacking | AiState::Menacing | AiState::Fleeing => {
+                crate::ai::AiStateChangeSource::from_optional_human(ai.primary_target)
+            }
+            _ => crate::ai::AiStateChangeSource::SelfActor,
+        };
+        if notify {
+            self.call_live_ai_state_change_filter(sim, assets, owner, state, source);
+            self.drain_self_stimuli_for_npc(sim, owner, assets);
+        }
+        if let Some(forced_attentive) = forced_attentive {
+            self.world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("state-change callback owner"))
+                .prepare_state_change_tail(state, substate);
+            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("state-change commit owner"))
+                .commit_state_change(state, substate, forced_attentive);
         } else {
-            entity
-                .friendly_ai_mut()
-                .expect("duty owner has no AI role")
-                .set_state(state, substate);
+            let entity = self
+                .world
+                .entities
+                .expect_entity_mut(owner, format_args!("state-change callback owner"));
+            let ai = entity
+                .ai_controller_mut()
+                .expect("state-change callback removed owner AI");
+            ai.set_ai_state(state);
+            ai.current_substate = substate;
         }
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
@@ -787,6 +880,18 @@ impl EngineInner {
         destination: Position,
         flags: GotoFlags,
     ) {
+        self.duty_go_to_speed(sim, assets, owner, destination, flags, 1.0);
+    }
+
+    pub(in crate::engine) fn duty_go_to_speed(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        destination: Position,
+        flags: GotoFlags,
+        speed: f32,
+    ) {
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
         self.world
             .entities
@@ -846,7 +951,7 @@ impl EngineInner {
             entity
                 .ai_controller_mut()
                 .expect("movement requires controller")
-                .queue_prepared_move(destination, flags, 1.0, action_state);
+                .queue_prepared_move(destination, flags, speed, action_state);
             self.launch_preflighted_ai_move(sim, assets, owner);
         }
         self.drain_direct_ai_owner_boundary(sim, owner, assets);

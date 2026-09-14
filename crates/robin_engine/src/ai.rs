@@ -52,13 +52,14 @@ mod contexts;
 pub(crate) use contexts::ai_position_to_point_3d;
 pub use contexts::{
     AI_DOOR_RALLY_POINT_DISTANCE, AiContext, AiGlobalState, AiPerTickData, AntagonistInfo,
-    DoorRallyPoint, FriendSwapCandidate, House, ReinforcementDoorInfo,
+    DoorRallyPoint, House, ReinforcementDoorInfo,
 };
 
 mod duty;
 mod effects;
 pub(crate) use duty::{
-    AiFlow, DutyCall, DutyTail, MoneyFightOperation, OfficerAlertCaller, RiderAttackFallback,
+    AiFlow, BodyReaction, DutyCall, DutyTail, MoneyFightOperation, OfficerAlertCaller,
+    RiderAttackFallback,
 };
 pub(crate) use effects::{AiActorCoreEffects, AiActorPreemptionEffects};
 pub use effects::{

@@ -112,24 +112,13 @@ impl MacroExecution<'_> {
     }
 
     fn set_macro_state(&mut self, substate: Substate) {
-        {
-            let entity = self
-                .engine
-                .world
-                .entities
-                .expect_entity_mut(self.owner, format_args!("macro state transition"));
-            if let Some(enemy) = entity.enemy_ai_mut() {
-                enemy.set_state(AiState::Default, substate);
-            } else {
-                entity
-                    .friendly_ai_mut()
-                    .expect("macro owner has no AI role")
-                    .set_state(AiState::Default, substate);
-            }
-        }
-        // Role-specific timer/alert changes and script notification finish
-        // before the next bytecode read or movement operation.
-        self.settle();
+        self.engine.duty_set_state(
+            self.sim,
+            self.assets,
+            self.owner,
+            AiState::Default,
+            substate,
+        );
     }
 
     fn callback(&mut self, event: StimulusType) {

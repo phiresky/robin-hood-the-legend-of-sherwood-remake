@@ -477,41 +477,11 @@ impl EngineInner {
         tick.nearby_fighters = self.build_nearby_fighters_for(npc_id, assets);
         tick.fighter_registry = self.build_fighter_snapshots_for(npc_id, assets, None);
 
-        // Patrol-chief data is live per-dispatch context, not specific to
-        // CALL_PATROL_COORDINATE. Returning to duty can synchronously enter
-        // DefaultGotoChief and immediately receive EventReachPoint; that
-        // handler faces this position on the same Think stack. Leaving the
-        // general builder's stub origin here made every such member face
-        // sector 15 even though the preceding approach used the real chief.
         if let Some(chief_id) = ai.patrol_chief {
             let chief_ai = self.world.entities.expect_ai_controller(
                 chief_id,
                 format_args!("enemy tick context owner {} patrol chief", npc_id.index()),
             );
-            // Patrol coordination subtracts the patrol chief's AI position, not the
-            // chief's literal sprite position
-            // in the original game.
-            // `Position` substitutes the committed gate side while an actor's
-            // selected element is PassDoor (:4365-4378); this matters while
-            // the chief is still interpolating along the door rail.
-            tick.patrol_chief_position = super::resolve_ai_position_with(
-                &self.world.entities,
-                self.script_domains.interactables.doors.as_slice(),
-                &self.orders.sequence_manager,
-                chief_id,
-                |position_id| {
-                    let element = self
-                        .expect_entity(position_id, "patrol-chief position owner")
-                        .element_data();
-                    crate::ai::Position {
-                        x: element.position_map().x,
-                        y: element.position_map().y,
-                        sector: element.sector(),
-                        level: element.layer(),
-                    }
-                },
-            )
-            .effective;
             tick.patrol_chief_state = chief_ai.current_state;
         }
 
@@ -561,26 +531,10 @@ impl EngineInner {
         }
 
         let Some(target_id) = target_id else {
-            // No target selected — primary-target fields stay None. Friend-swap still
-            // scans the other soldiers; the helper handles the
-            // empty-target case.
-            tick.friend_swap_candidates = build_friend_swap_candidates(
-                &self.world.entities,
-                &self.mission_domain.diplomacy,
-                doors,
-                &self.orders.sequence_manager,
-                npc_id,
-                my_camp,
-                |element| super::ai_view_position_sector(self, element),
-            );
             return tick;
         };
 
-        // Primary target metadata (position, posture, animation,
-        // carrier) from the live entity store.
-        let target_meta = lookup_primary_target_metadata(self, target_id);
-
-        if let Some((pos, posture, anim, carrier_pos, carrier_handle)) = target_meta {
+        if let Some(pos) = lookup_primary_target_position(self, target_id) {
             tick.primary_target_position = Some(pos);
             let target = self.expect_entity(target_id, "resolved primary target");
             let element = target.element_data();
@@ -590,15 +544,8 @@ impl EngineInner {
                 sector: element.sector(),
                 level: element.layer(),
             });
-            tick.primary_target_posture = Some(posture);
-            tick.primary_target_animation = anim;
-            tick.primary_target_carrier_position = carrier_pos;
-            tick.primary_target_carrier_handle = carrier_handle;
         }
 
-        // primary_target_is_pc: look up the target's entity variant.
-        tick.primary_target_is_pc =
-            matches!(self.world.entities.get(target_id), Some(Entity::Pc(_)));
         if build_forecasts
             && let Some(target_entity) = self.world.entities.get(target_id)
             && let Some(input) = extract_exact_forecast_input(
@@ -615,13 +562,6 @@ impl EngineInner {
                 &self.world.fast_grid.level.sector_number_map,
             ));
         }
-        tick.primary_target_jump_line = crate::engine::melee::is_table_swordfight_needed(
-            &self.world.entities,
-            &self.world.fast_grid,
-            &assets.profile_manager,
-            npc_id,
-            target_id,
-        );
         tick.primary_target_multiplicity = self
             .ai
             .global
@@ -629,17 +569,6 @@ impl EngineInner {
             .iter()
             .map(|(&target, &count)| (target, count))
             .collect();
-
-        // Friend-swap candidates for enemy approach reconsideration.
-        tick.friend_swap_candidates = build_friend_swap_candidates(
-            &self.world.entities,
-            &self.mission_domain.diplomacy,
-            doors,
-            &self.orders.sequence_manager,
-            npc_id,
-            my_camp,
-            |element| super::ai_view_position_sector(self, element),
-        );
 
         tick
     }

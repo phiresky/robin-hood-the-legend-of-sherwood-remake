@@ -2,15 +2,12 @@
 
 use super::*;
 use crate::ai::{AiEntityHandle, AiState, HumanHandle, Substate};
+use crate::ai_enemy::increment_battle_target_multiplicity;
 use crate::ai_enemy::{
-    BattleDecisionInputs, ThinkEnv, battle_friend_is_nearer, battle_owner_target_square_distance,
-};
-use crate::ai_enemy::{
-    increment_battle_target_multiplicity, seed_appended_battle_target_multiplicity,
+    BattleDecisionInputs, battle_friend_is_nearer, battle_owner_target_square_distance,
 };
 use crate::element::Human;
 use crate::sim_rng::SimulationContext;
-use std::collections::BTreeMap;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_attack_enemy(
@@ -385,29 +382,26 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        let (old_substate, inputs, multiplicity, unconscious) =
+        let (old_substate, inputs, unconscious) =
             self.prepare_live_battle_decisions(sim, assets, owner);
-
-        // TODO: move the remaining tactical decision tree to live engine queries.
-        // Build its borrowed inputs only after registry admission and cleanup finish.
-        let scratch = self.build_sim_scratch(assets);
-        let mut ctx = self.ai_context_for(owner, self.control.frame_counter, &scratch, assets);
-        ctx.in_uninterruptible_command = self.is_very_very_busy(owner);
-        let tick = self.build_npc_tick_data(sim, owner, assets);
-        let outcome = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("battle decision suffix"))
-            .finish_battle_decisions(
-                ThinkEnv::new(sim, &ctx, &tick, Some(&self.world.fast_grid)),
-                &mut self.ai.global,
-                old_substate,
-                inputs,
-                multiplicity,
-                unconscious,
-            );
-        if let Err(call) = outcome {
-            self.execute_ai_duty_call(sim, assets, owner, call);
+        if inputs.num_enemies_i_can_see == 0 {
+            self.execute_live_battle_without_visible_enemies(sim, assets, owner, unconscious);
+            return;
+        }
+        let (decision, cover) = self.choose_live_battle_decision(sim, assets, owner, inputs);
+        if let Some(decision) = self.execute_live_battle_decision(
+            sim,
+            assets,
+            owner,
+            decision,
+            old_substate,
+            cover,
+            inputs.alerting_soldier_near,
+        ) {
+            self.world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("battle decision log"))
+                .register_log_line(crate::ai::LogLineType::BattleDecision, decision as u16);
         }
     }
 
@@ -416,12 +410,7 @@ impl EngineInner {
         sim: &SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-    ) -> (
-        Substate,
-        BattleDecisionInputs,
-        BTreeMap<HumanHandle, u32>,
-        Vec<HumanHandle>,
-    ) {
+    ) -> (Substate, BattleDecisionInputs, Vec<HumanHandle>) {
         let ai = self
             .world
             .entities
@@ -436,14 +425,12 @@ impl EngineInner {
             .expect_enemy_ai(owner, format_args!("battle personal enemies"))
             .list_them
             .len();
-        let mut multiplicity = BTreeMap::new();
         for index in 0..visible {
             let target = self
                 .world
                 .entities
                 .expect_enemy_ai(owner, format_args!("battle multiplicity reset"))
                 .list_them[index];
-            multiplicity.insert(target, 0);
             self.ai
                 .global
                 .primary_target_multiplicity_scratch
@@ -473,6 +460,7 @@ impl EngineInner {
             friends_lower_company: 0,
             soldiers_lower_pride: false,
             simple_soldiers_near: false,
+            alerting_soldier_near: false,
             min_square_enemy_distance: u32::MAX,
             num_enemies_i_can_see: visible,
             friends_nearer_to_enemy: 0,
@@ -526,6 +514,8 @@ impl EngineInner {
             let attacking = ally.base.current_state == AiState::Attacking;
             let swordfighting = ally.base.current_substate.is_any_swordfight();
             let target = ally.base.primary_target;
+            inputs.alerting_soldier_near |=
+                ally.base.current_substate == Substate::SeekingRunningToOfficer;
             if company > ally.company_number && (reaction_time || attacking) {
                 inputs.friends_lower_company = inputs.friends_lower_company.wrapping_add(1);
             }
@@ -546,13 +536,7 @@ impl EngineInner {
             if !ai.list_them.contains(&handle) {
                 ai.list_them.push(handle);
             }
-            seed_appended_battle_target_multiplicity(
-                &mut multiplicity,
-                handle,
-                &self.ai.global.primary_target_multiplicity_scratch,
-            );
             if swordfighting {
-                increment_battle_target_multiplicity(&mut multiplicity, handle);
                 increment_battle_target_multiplicity(
                     &mut self.ai.global.primary_target_multiplicity_scratch,
                     handle,
@@ -598,9 +582,15 @@ impl EngineInner {
                     .expect("battle target is human")
                     .opponents
                     .is_empty()
-                    && multiplicity.get(&handle).copied().unwrap_or(0) == 0
+                    && self
+                        .ai
+                        .global
+                        .primary_target_multiplicity_scratch
+                        .get(&handle)
+                        .copied()
+                        .unwrap_or(0)
+                        == 0
                 {
-                    multiplicity.insert(handle, 1);
                     self.ai
                         .global
                         .primary_target_multiplicity_scratch
@@ -631,7 +621,7 @@ impl EngineInner {
                 .remove(index);
         }
         inputs.num_enemies_i_can_see = visible;
-        (old_substate, inputs, multiplicity, unconscious)
+        (old_substate, inputs, unconscious)
     }
 }
 
@@ -728,7 +718,7 @@ mod tests {
             .global
             .primary_target_multiplicity_scratch
             .insert(contributed.index(), 4);
-        let (_, inputs, multiplicity, _) =
+        let (_, inputs, _) =
             engine.prepare_live_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
         let ai = engine
             .world
@@ -742,9 +732,43 @@ mod tests {
         assert_eq!(ai.list_them, vec![personal.index(), contributed.index()]);
         assert_eq!(inputs.num_enemies_i_can_see, 1);
         assert_eq!(inputs.friends_nearer_to_enemy, 1);
-        assert_eq!(multiplicity[&personal.index()], 0);
-        assert_eq!(multiplicity[&contributed.index()], 5);
+        assert_eq!(
+            engine.ai.global.primary_target_multiplicity_scratch[&personal.index()],
+            0
+        );
+        assert_eq!(
+            engine.ai.global.primary_target_multiplicity_scratch[&contributed.index()],
+            5
+        );
         assert_eq!(inputs.min_square_enemy_distance, 100);
+    }
+
+    #[test]
+    fn alerting_soldier_admission_is_captured_in_the_battle_scan() {
+        let (mut engine, assets, owner, _, ally, _) = battle_fixture();
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(ally, format_args!("alerting ally"));
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingRunningToOfficer;
+        let (_, admitted, _) =
+            engine.prepare_live_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
+        assert!(admitted.alerting_soldier_near);
+        engine
+            .world
+            .entities
+            .get_mut(ally)
+            .unwrap()
+            .element_data_mut()
+            .set_position_map(MapPoint::new(5000.0, 5000.0));
+        let (_, out_of_view, _) =
+            engine.prepare_live_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
+        assert!(!out_of_view.alerting_soldier_near);
+        assert!(
+            admitted.alerting_soldier_near,
+            "the enclosing decision retains its admission result"
+        );
     }
 
     #[test]
@@ -797,7 +821,7 @@ mod tests {
             .unwrap()
             .element_data_mut()
             .set_position(WorldPoint3D::new(1500.0, 200.0, 0.0));
-        let (_, inputs, _, _) =
+        let (_, inputs, _) =
             engine.prepare_live_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
         assert_eq!(inputs.friends_nearer_to_enemy, 0);
         assert!(
@@ -840,7 +864,7 @@ mod tests {
             .expect_enemy_ai_mut(owner, format_args!("empty personal list"))
             .list_them
             .clear();
-        let (_, inputs, multiplicity, _) =
+        let (_, inputs, _) =
             engine.prepare_live_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
         let ai = engine
             .world
@@ -850,7 +874,10 @@ mod tests {
         assert_eq!(ai.list_them, vec![contributed.index()]);
         assert_eq!(inputs.num_enemies_i_can_see, 0);
         assert_eq!(inputs.friends_nearer_to_enemy, 1);
-        assert_eq!(multiplicity[&contributed.index()], 1);
+        assert_eq!(
+            engine.ai.global.primary_target_multiplicity_scratch[&contributed.index()],
+            1
+        );
     }
 
     #[test]
@@ -932,7 +959,7 @@ mod tests {
             .human_data_mut()
             .unwrap()
             .unconscious = true;
-        let (_, inputs, _, unconscious) =
+        let (_, inputs, unconscious) =
             engine.prepare_live_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
         assert_eq!(inputs.num_enemies_i_can_see, 0);
         assert_eq!(unconscious, vec![personal.index()]);
@@ -960,7 +987,7 @@ mod tests {
             .entities
             .expect_enemy_ai_mut(owner, format_args!("personal targets"))
             .list_them = vec![personal.index(), contributed.index()];
-        let (_, inputs, _, _) =
+        let (_, inputs, _) =
             engine.prepare_live_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
         assert_eq!(inputs.num_enemies_i_can_see, 2);
         assert_eq!(

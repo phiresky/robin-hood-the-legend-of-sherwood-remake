@@ -533,18 +533,18 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
         unreachable!("PassDoor fixture must be a movement element")
     }
     crate::sim_rng::with_seed(0xA013_0518, |sim| {
-        // Tick data resolves the chief from live committed PassDoor state.
+        // AI position resolves the chief from live committed PassDoor state.
         let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
         engine
             .orders
             .sequence_manager
             .element_in_progress(pass_sequence, 0);
         let tick = engine.build_npc_tick_data(sim, minion_id, &assets);
-        assert_eq!(tick.patrol_chief_position.x, 821.0);
-        assert_eq!(tick.patrol_chief_position.y, 1124.0);
-        assert_eq!(tick.patrol_chief_position.level, 2);
+        assert_eq!(engine.live_ai_position(chief_id).x, 821.0);
+        assert_eq!(engine.live_ai_position(chief_id).y, 1124.0);
+        assert_eq!(engine.live_ai_position(chief_id).level, 2);
         assert_eq!(
-            tick.patrol_chief_position.sector,
+            engine.live_ai_position(chief_id).sector,
             crate::position_interface::SectorHandle::new(89).map(|handle| {
                 handle.with_arena_index(crate::fast_find_grid::SectorIndex::new(89).unwrap())
             })

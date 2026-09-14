@@ -173,33 +173,44 @@ fn phalanx_uses_raw_distance_and_running_members_future_anchor() {
 }
 
 #[test]
-fn vector_derived_phalanx_slot_retains_anchor_sector_identity() {
-    use crate::fast_find_grid::SectorIndex;
-    let current = Position {
-        x: 20.0,
-        y: 20.0,
-        sector: crate::ai::SectorHandle::new(18)
-            .map(|s| s.with_arena_index(SectorIndex::new(40).unwrap())),
+fn close_phalanx_slot_with_different_sector_needs_no_movement_order() {
+    let (mut engine, assets, ids) = fixture(&[(100.0, 100.0)]);
+    let owner = ids[0];
+    let index = engine.world.fast_grid_mut().add_sector(
+        square_sector(2, 0, MapPoint::new(90.0, 90.0), MapPoint::new(200.0, 200.0)),
+        0,
+    );
+    let destination = Position {
+        x: 102.0,
+        y: 100.0,
+        sector: crate::ai::SectorHandle::new(2)
+            .map(|s| s.with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap())),
         level: 0,
     };
-    let anchor = Position {
-        x: 80.0,
-        y: 20.0,
-        sector: crate::ai::SectorHandle::new(18)
-            .map(|s| s.with_arena_index(SectorIndex::new(41).unwrap())),
-        level: 0,
-    };
-    let derived = Position {
-        x: anchor.x - 20.0,
-        ..anchor
-    };
-    assert_eq!(derived.sector.unwrap().arena_index(), SectorIndex::new(41));
-    assert!(inherited_position_crosses_sector_identity(
-        &current, &derived
-    ));
-    assert!(!inherited_position_crosses_sector_identity(
-        &anchor, &derived
-    ));
+    engine.enter_ai_think_frame(owner);
+    engine.duty_go_to(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        destination,
+        GotoFlags::RUN,
+    );
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("close formation destination"));
+    assert!(ai.already_on_point);
+    assert!(ai.outbox.actor.orders.is_empty());
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .all(|s| s.elements.iter().all(|e| !matches!(
+                e.data,
+                crate::sequence::SequenceElementData::Movement { .. }
+            )))
+    );
 }
 
 #[test]
@@ -230,19 +241,33 @@ fn phalanx_walks_the_complete_live_chain_and_observes_relinks() {
 }
 
 #[test]
-fn shield_danger_point_keeps_raw_element_projection_and_elevation() {
-    let (mut engine, _, ids) = fixture(&[(578.74, 2388.01)]);
+fn shield_sequence_keeps_stored_world_y_without_map_roundtrip() {
+    let (mut engine, _, ids) = fixture(&[(100.0, 100.0)]);
     let owner = ids[0];
+    let point = WorldPoint3D::new(100.0, 503.01535, 4.06752014);
     let element = engine
         .world
         .entities
         .expect_entity_mut(owner, format_args!("shield threat"))
         .element_data_mut();
-    element.set_position(WorldPoint3D::new(578.74, 2388.01 + 85.44939, 85.44939));
-    element.set_position_map_preserving_3d(MapPoint::new(578.74, 2388.01));
-    let (point, elevation) = engine.live_shield_danger_point(owner);
-    assert_eq!((point.x, point.y), (578.74, 2388.01));
-    assert_eq!(elevation, 85.44939);
+    element.set_position(point);
+    assert_ne!(
+        (element.position_map().y + point.z).to_bits(),
+        point.y.to_bits()
+    );
+    let stored = element.position();
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("shield sequence"));
+    ai.raise_shield_world(stored);
+    let sequence = ai.outbox.actor.launch_sequences.last().unwrap();
+    let element = &sequence.elements[0];
+    assert!(
+        matches!(element.get_property(crate::sequence::Field::ShieldDangerPoint),
+        Some(crate::sequence::FieldValue::Point3D { x, y, z })
+            if x.to_bits() == point.x.to_bits() && y.to_bits() == point.y.to_bits() && z.to_bits() == point.z.to_bits())
+    );
 }
 
 fn periodic_phalanx_fixture(

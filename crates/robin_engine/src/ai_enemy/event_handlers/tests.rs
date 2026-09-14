@@ -51,7 +51,6 @@ fn object_view(object_type: ObjectType) -> AiEntityView {
         is_archer: false,
         is_rider: false,
         stuck_under_net: false,
-        covering_nets: Vec::new(),
         in_coma: false,
         guard: None,
         has_patrol_path: false,
@@ -1793,63 +1792,6 @@ fn couldnt_reach_seeking_body_examines_queued_body_before_starting_seek_area() {
 /// civilian sleeper queued forever: the soldier re-examines the body it is
 /// already standing next to, approach movement short-circuits to
 /// `EVENT_REACHPOINT`, and the seek collapses into returning to duty.
-#[test]
-fn examine_other_bodies_prunes_recovered_civilian_that_cannot_fight() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(206);
-    ai.base.current_state = AiState::Seeking;
-    ai.base.current_substate = Substate::SeekingBody;
-    // Head of the queue: a civilian that woke up. `is_able_to_fight` is
-    // false for every civilian, but incapacitation is false now.
-    ai.other_bodies_to_examine.push(207);
-    // Behind it: a soldier that is genuinely still down.
-    ai.other_bodies_to_examine.push(208);
-
-    let mut recovered = object_view(ObjectType::None);
-    recovered.kind = EntityKind::Civilian;
-    recovered.is_able_to_fight = false;
-
-    let down_position = Position {
-        x: 658.0,
-        y: 2910.0,
-        sector: crate::position_interface::SectorHandle::new(18),
-        level: 0,
-    };
-    let mut still_down = object_view(ObjectType::None);
-    still_down.kind = EntityKind::Soldier;
-    still_down.position = down_position;
-    still_down.is_able_to_fight = false;
-    still_down.is_unconscious = true;
-
-    let mut views = AiEntityViewMap::new();
-    views.insert(207, recovered);
-    views.insert(208, still_down);
-    let ctx = AiContext {
-        position: Position {
-            x: 792.0,
-            y: 2612.0,
-            sector: crate::position_interface::SectorHandle::new(44),
-            level: 0,
-        },
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    assert!(ai.examine_other_bodies(ThinkEnv::new(
-        &crate::sim_rng::test_context(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None
-    )));
-    assert_eq!(
-        ai.base.detected_body,
-        Some(AiEntityHandle::new(208)),
-        "the recovered civilian must be pruned, not examined"
-    );
-    assert_eq!(ai.base.seek_position, down_position);
-    assert!(ai.other_bodies_to_examine.is_empty());
-    let _ = &sim;
-}
 
 /// The predicate itself, in both directions: incapacitation is the OR of
 /// the five body states (plus PC coma) and is independent of
