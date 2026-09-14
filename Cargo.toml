@@ -215,6 +215,17 @@ codegen-backend = "llvm"
 [profile.test.package.jxl_transforms]
 codegen-backend = "llvm"
 
+# rav1d (native AVIF decode: mod terrain, converter quality gates, tests) is
+# built without asm; unoptimized it decodes a 6 MP terrain map in minutes.
+# Optimize it with LLVM in the dev/test profiles so native mod loading and
+# its tests stay usable.
+[profile.dev.package.rav1d]
+codegen-backend = "llvm"
+opt-level = 3
+[profile.test.package.rav1d]
+codegen-backend = "llvm"
+opt-level = 3
+
 # curve25519-dalek (ed25519 signing for leaderboards and replays) compiles its
 # AVX-512 IFMA backend on nightly and runtime-dispatches to it on capable
 # CPUs. Cranelift aborts with "llvm.x86.avx512.vpmadd52l.uq.256 is not yet

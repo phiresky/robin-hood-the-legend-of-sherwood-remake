@@ -59,13 +59,10 @@ serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2.workspace = true
 png = { workspace = true, optional = true }
 zstd.workspace = true
-# Official libjxl Rust port (https://github.com/libjxl/jxl-rs). Used to
-# decode terrain `.map` files when the converter has transcoded them to
-# JPEG XL. SIMD (default features) is ON: the Cranelift dev profiles
-# can't compile its AVX512 intrinsics, so the workspace Cargo.toml builds
-# the jxl crates with the LLVM backend there (same treatment as
-# crc32fast) instead of paying scalar decode in every build.
-jxl = "0.7.1"
+# Pure-Rust AVIF container parser: dimensions / alpha presence of web-recipe
+# AVIF images without decoding pixels (the browser decodes them; see
+# `browser_images`).
+avif-parse = "2.1.0"
 
 # `bzip2` is only needed when reading legacy 16-bit picture data
 # (`.bfn` glyph tables, loose `.res` archives shipped by the original
@@ -75,6 +72,20 @@ jxl = "0.7.1"
 # UB check on wasm32 inside its spare-capacity handling; keeping the
 # dep native-only dodges that entirely.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Official libjxl Rust port (https://github.com/libjxl/jxl-rs). NATIVE ONLY:
+# loose mod terrain (`.map` written by cjxl, e.g. mods/multi-team-demos) and
+# offline tools still use JPEG XL, but the web build ships AVIF decoded by
+# the browser, so the wasm runtime does not link a JXL decoder. SIMD
+# (default features) is ON: the Cranelift dev profiles can't compile its
+# AVX512 intrinsics, so the workspace Cargo.toml builds the jxl crates with
+# the LLVM backend there (same treatment as crc32fast).
+jxl = "0.7.1"
+# Pure-Rust AV1 decoder (the memorysafety port of dav1d) for AVIF assets on
+# native desktop/Android and in the converter's quality gates. NATIVE ONLY:
+# the web build uses the browser's AVIF decoder. `asm` is off so no
+# nasm/cross assembler is needed for the MinGW and Android builds; native
+# decodes only mod terrain and converter gates, where speed is secondary.
+rav1d = { version = "=1.1.0", default-features = false, features = ["bitdepth_8"] }
 # Parallel VQ chunk decode at mission install. Native only: wasm builds run
 # the serial path (no thread pool without atomics).
 rayon = "1"

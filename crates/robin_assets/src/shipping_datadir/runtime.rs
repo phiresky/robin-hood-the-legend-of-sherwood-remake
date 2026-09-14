@@ -536,6 +536,11 @@ impl ShippingDatadir {
             previous.sprite_streaming.retire();
         }
         loaded.clear();
+        // Browser-decoded pixels of released payloads and of this mission's
+        // already-materialized atlases are no longer reachable; keep only
+        // the images the installed mission still decodes later (terrain).
+        crate::browser_images::retain_mission_images(&prepared.mission.browser_image_blobs())
+            .context("release decoded images of replaced missions")?;
         loaded.insert(mission.to_owned(), Arc::new(prepared.mission));
         Ok(())
     }

@@ -1,17 +1,19 @@
-//! Lossy-JXL representation of RLE sprites (map patches / ambient
+//! Lossy-image representation of RLE sprites (map patches / ambient
 //! animation frames) for the WEB shipping format.
 //!
-//! Research basis: docs/COMPRESSION.md "Follow-up: the RLE/patch bucket —
-//! lossy JXL WINS here (2026-08-29)" and the methodology prototyped in
-//! `examples/jxl_sprite_probe.rs`. An RLE sprite ships as a region of ONE
-//! RGBA JXL image (a per-animation-group atlas, or a single-sprite image):
+//! The module and chunk type names predate the switch from JPEG XL to AVIF
+//! (TODO: rename to codec-neutral names once no branch still carries
+//! JXL-era work). Research basis: docs/COMPRESSION.md "Follow-up: the
+//! RLE/patch bucket — lossy JXL WINS here (2026-08-29)" and the AVIF study
+//! that replaced it. An RLE sprite ships as a region of ONE RGBA image (a
+//! per-animation-group atlas, or a single-sprite image):
 //!
-//! - the **color channels** carry the visible RGB, coded lossily (VarDCT);
+//! - the **color channels** carry the visible RGB, coded lossily;
 //! - the **alpha channel** carries the per-pixel CLASS, coded losslessly
-//!   (`cjxl --alpha_distance=0`): transparent, shadow, or opaque. A lossy
-//!   color channel cannot be trusted to say which pixels are keyed, so
-//!   this channel is what makes the sprite exactly reconstructible as a
-//!   raster.
+//!   (AVIF `--qalpha 100`; JXL `--alpha_distance=0`): transparent, shadow,
+//!   or opaque. A lossy color channel cannot be trusted to say which
+//!   pixels are keyed, so this channel is what makes the sprite exactly
+//!   reconstructible as a raster.
 //!
 //! Alpha is a class marker, NOT a blend factor. Materialization turns the
 //! decoded image straight into the RGB565 canvas the sprite bank hands to
@@ -26,7 +28,10 @@
 //! composited RGB565 framebuffers are no longer bit-identical to the
 //! native build, and parity traces screenshot those.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, bail};
+// Only the native-only JPEG XL decoder below needs these.
+#[cfg(not(target_arch = "wasm32"))]
+use anyhow::{Context, anyhow};
 
 use crate::frame_holder::{SHADOW_KEY, TRANSPARENT_COLOR_16};
 
@@ -204,31 +209,26 @@ pub fn smear_invisible_rgb(rgba: &mut [u8], width: usize, height: usize) {
     }
 }
 
-/// Decode a JXL blob to `(width, height, RGBA8)` via jxl-rs — the same
-/// decoder the runtime uses for terrain maps (`Picture::load_jxl_rgb565`).
+/// Decode a JXL blob to `(width, height, RGBA8)` via jxl-rs. Native only:
+/// the web build ships AVIF atlases decoded by the browser (see
+/// [`crate::browser_images`]) and does not link a JXL decoder.
 ///
 /// The image MUST carry a straight (non-premultiplied) alpha channel:
 /// premultiplication scales the color channels by alpha, which would both
 /// destroy the smeared edge colors and make visible-region RGB depend on a
 /// channel this format uses as a class marker.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn decode_jxl_rgba8(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
     decode_jxl_rgba8_impl(bytes, false)
 }
 
-/// Decode independent sections on the existing pool, including when a
-/// single large atlas dominates its chunk. Browser main-thread calls stay
-/// serial because blocking rayon joins are only legal on workers there.
-#[cfg(feature = "engine-adapters")]
+/// [`decode_jxl_rgba8`] with independent sections decoded on the rayon pool.
+#[cfg(all(feature = "engine-adapters", not(target_arch = "wasm32")))]
 pub(crate) fn decode_jxl_rgba8_parallel(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
-    #[cfg(not(target_arch = "wasm32"))]
-    let parallel = true;
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
-    let parallel = rayon::current_thread_index().is_some();
-    #[cfg(all(target_arch = "wasm32", not(feature = "wasm-threads")))]
-    let parallel = false;
-    decode_jxl_rgba8_impl(bytes, parallel)
+    decode_jxl_rgba8_impl(bytes, true)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn decode_jxl_rgba8_impl(bytes: &[u8], parallel: bool) -> Result<(usize, usize, Vec<u8>)> {
     use jxl::api::{
         JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
