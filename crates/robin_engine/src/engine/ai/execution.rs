@@ -115,6 +115,9 @@ impl EngineInner {
             crate::ai::DutyTail::OfficerLookForSoldier { reason } => {
                 self.execute_ai_officer_look_for_soldier(sim, assets, owner, reason);
             }
+            crate::ai::DutyTail::OfficerInstructGroup => {
+                self.execute_ai_officer_instruct_group(sim, assets, owner);
+            }
             crate::ai::DutyTail::TowerGuardAlert { center } => {
                 self.execute_ai_tower_guard_alert(sim, assets, owner, center);
             }

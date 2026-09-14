@@ -78,16 +78,19 @@ fn failed_fleeing_panic_move_uses_panic_seek_fallback() {
     ai.base.lasting_panic_runs = 7;
     ai.base.set_alert_status(crate::ai::AlertLevel::Red);
 
-    ai.think_unexpected_event(
-        ThinkEnv::new(
-            &sim,
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
+    assert!(matches!(
+        ai.think_unexpected_event(
+            ThinkEnv::new(
+                &sim,
+                &AiContext::test_fixture(),
+                &AiPerTickData::stub(),
+                None,
+            ),
+            &Stimulus::new(StimulusType::EventCouldntReachPoint),
+            &mut AiGlobalState::default(),
         ),
-        &Stimulus::new(StimulusType::EventCouldntReachPoint),
-        &mut AiGlobalState::default(),
-    );
+        Ok(false)
+    ));
 
     assert_eq!(ai.base.current_state, AiState::Fleeing);
     assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
@@ -412,16 +415,19 @@ fn review_officer_sees_soldier_requires_target_in_live_soldier_roster() {
     let mut ai = EnemyAi::new(1);
     ai.soldier_profile_rank = ProfileRank::Officer;
     ai.set_state(AiState::Default, Substate::DefaultOnPost);
-    ai.think_unexpected_event(
-        ThinkEnv::new(
-            &sim,
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
+    assert!(matches!(
+        ai.think_unexpected_event(
+            ThinkEnv::new(
+                &sim,
+                &AiContext::test_fixture(),
+                &AiPerTickData::stub(),
+                None,
+            ),
+            &Stimulus::with_human(StimulusType::EventSeesSoldier, 42),
+            &mut AiGlobalState::default(),
         ),
-        &Stimulus::with_human(StimulusType::EventSeesSoldier, 42),
-        &mut AiGlobalState::default(),
-    );
+        Ok(false)
+    ));
 }
 
 #[test]
@@ -431,15 +437,18 @@ fn review_call_go_to_officer_preserves_original_boolean_gate() {
 
     let mut available = EnemyAi::new(1);
     available.soldier_profile_rank = ProfileRank::Soldier;
-    assert!(available.think_unexpected_event(
-        ThinkEnv::new(
-            &sim,
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None
+    assert!(matches!(
+        available.think_unexpected_event(
+            ThinkEnv::new(
+                &sim,
+                &AiContext::test_fixture(),
+                &AiPerTickData::stub(),
+                None
+            ),
+            &stimulus,
+            &mut AiGlobalState::default()
         ),
-        &stimulus,
-        &mut AiGlobalState::default()
+        Ok(true)
     ));
     assert_eq!(
         available.base.current_substate,
@@ -451,15 +460,18 @@ fn review_call_go_to_officer_preserves_original_boolean_gate() {
     let mut busy = EnemyAi::new(2);
     busy.soldier_profile_rank = ProfileRank::Soldier;
     busy.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-    assert!(!busy.think_unexpected_event(
-        ThinkEnv::new(
-            &sim,
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None
+    assert!(matches!(
+        busy.think_unexpected_event(
+            ThinkEnv::new(
+                &sim,
+                &AiContext::test_fixture(),
+                &AiPerTickData::stub(),
+                None
+            ),
+            &stimulus,
+            &mut AiGlobalState::default()
         ),
-        &stimulus,
-        &mut AiGlobalState::default()
+        Ok(false)
     ));
 }
 
@@ -1039,11 +1051,14 @@ fn event_sees_civilian_beggar_preserves_the_legacy_slots_entity_kind() {
         ..AiContext::test_fixture()
     };
 
-    ai.think_unexpected_event(
-        ThinkEnv::new(&sim_context, &ctx, &AiPerTickData::stub(), None),
-        &Stimulus::with_human(StimulusType::EventSeesBeggar, 17),
-        &mut AiGlobalState::default(),
-    );
+    assert!(matches!(
+        ai.think_unexpected_event(
+            ThinkEnv::new(&sim_context, &ctx, &AiPerTickData::stub(), None),
+            &Stimulus::with_human(StimulusType::EventSeesBeggar, 17),
+            &mut AiGlobalState::default(),
+        ),
+        Ok(false)
+    ));
 
     assert_eq!(
         ai.base.outbox.actor.delete_beggar_for_all_npc,
@@ -1071,11 +1086,14 @@ fn event_sees_current_beggar_does_not_requeue_but_still_requests_global_scrub() 
         ..AiContext::test_fixture()
     };
 
-    ai.think_unexpected_event(
-        ThinkEnv::new(&sim_context, &ctx, &AiPerTickData::stub(), None),
-        &Stimulus::with_human(StimulusType::EventSeesBeggar, 17),
-        &mut AiGlobalState::default(),
-    );
+    assert!(matches!(
+        ai.think_unexpected_event(
+            ThinkEnv::new(&sim_context, &ctx, &AiPerTickData::stub(), None),
+            &Stimulus::with_human(StimulusType::EventSeesBeggar, 17),
+            &mut AiGlobalState::default(),
+        ),
+        Ok(false)
+    ));
 
     assert!(ai.beggars_to_control.is_empty());
     assert!(ai.positions_of_beggars_to_control.is_empty());
@@ -1105,16 +1123,19 @@ fn event_enemy_near_assigns_stimulus_target_and_begins_swordfight() {
         ai.combat_trainer = true;
 
         let stimulus = Stimulus::with_human(StimulusType::EventEnemyNear, 77);
-        ai.think_unexpected_event(
-            ThinkEnv::new(
-                sim,
-                &AiContext::test_fixture(),
-                &AiPerTickData::stub(),
-                None,
+        assert!(matches!(
+            ai.think_unexpected_event(
+                ThinkEnv::new(
+                    sim,
+                    &AiContext::test_fixture(),
+                    &AiPerTickData::stub(),
+                    None,
+                ),
+                &stimulus,
+                &mut AiGlobalState::default(),
             ),
-            &stimulus,
-            &mut AiGlobalState::default(),
-        );
+            Ok(false)
+        ));
 
         assert_eq!(
             ai.base.primary_target,
@@ -1157,16 +1178,19 @@ fn event_enemy_near_is_ignored_outside_original_substates() {
     ai.base.primary_target = Some(AiEntityHandle::new(12));
 
     let stimulus = Stimulus::with_human(StimulusType::EventEnemyNear, 77);
-    ai.think_unexpected_event(
-        ThinkEnv::new(
-            sim,
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
+    assert!(matches!(
+        ai.think_unexpected_event(
+            ThinkEnv::new(
+                sim,
+                &AiContext::test_fixture(),
+                &AiPerTickData::stub(),
+                None,
+            ),
+            &stimulus,
+            &mut AiGlobalState::default(),
         ),
-        &stimulus,
-        &mut AiGlobalState::default(),
-    );
+        Ok(false)
+    ));
 
     assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(12)));
     assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
@@ -1209,7 +1233,7 @@ fn officer_call_alert_halts_actor_without_breaking_running_macro() {
         &mut AiGlobalState::default(),
     );
 
-    assert!(accepted);
+    assert!(matches!(accepted, Ok(true)));
     let halted_before_state_change = ai.base.outbox.reentrant.owner_work.iter().any(|work| {
         matches!(
             work,
@@ -1264,7 +1288,7 @@ fn civilian_call_alert_halts_actor_without_breaking_running_macro() {
         &mut AiGlobalState::default(),
     );
 
-    assert!(accepted);
+    assert!(matches!(accepted, Ok(true)));
     let halted_before_state_change = ai.base.outbox.reentrant.owner_work.iter().any(|work| {
         matches!(
             work,
@@ -1313,7 +1337,7 @@ fn rejected_civilian_call_alert_still_replaces_antagonist() {
         &mut AiGlobalState::default(),
     );
 
-    assert!(!accepted);
+    assert!(matches!(accepted, Ok(false)));
     assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(91)));
     assert_eq!(ai.base.current_state, AiState::Seeking);
     assert_eq!(ai.base.current_substate, Substate::SeekingRunningToOfficer);
@@ -1353,7 +1377,7 @@ fn soldier_call_alert_halts_officer_without_breaking_running_macro() {
         &mut AiGlobalState::default(),
     );
 
-    assert!(accepted);
+    assert!(matches!(accepted, Ok(true)));
     let halted_before_state_change = ai.base.outbox.reentrant.owner_work.iter().any(|work| {
         matches!(
             work,
@@ -1372,40 +1396,6 @@ fn soldier_call_alert_halts_officer_without_breaking_running_macro() {
     assert_eq!(
         ai.base.current_substate,
         Substate::SeekingOfficerWaitForAlertingSoldier
-    );
-}
-
-#[test]
-fn couldnt_reach_running_enemy_enters_battle_overview() {
-    let sim_context = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(1);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingRunningToEnemy;
-    ai.base.list_us = vec![1, 2];
-
-    ai.think_unexpected_event(
-        ThinkEnv::new(
-            &sim_context,
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
-        ),
-        &Stimulus::new(StimulusType::EventCouldntReachPoint),
-        &mut AiGlobalState::default(),
-    );
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingOverviewLookLeft
-    );
-    assert_eq!(
-        ai.base.outbox.actor.look_sidewards,
-        Some(LookDirection::Left)
-    );
-    assert_eq!(
-        ai.base.list_us,
-        vec![1, 2],
-        "battle-overview evaluation must not rebuild the persistent friend list"
     );
 }
 
@@ -1451,11 +1441,14 @@ fn same_frame_observe_move_failure_resumes_inline_roof_fallback() {
 
     let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
     stimulus.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
-    ai.think_unexpected_event(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        &stimulus,
-        &mut AiGlobalState::default(),
-    );
+    assert!(matches!(
+        ai.think_unexpected_event(
+            ThinkEnv::new(&sim, &ctx, &tick, None),
+            &stimulus,
+            &mut AiGlobalState::default(),
+        ),
+        Ok(false)
+    ));
 
     assert_eq!(
         ai.base.current_substate,
@@ -1464,325 +1457,6 @@ fn same_frame_observe_move_failure_resumes_inline_roof_fallback() {
     assert_eq!(ai.base.seek_position, target_position);
     assert_eq!(ai.base.last_goto_destination, wait_position);
     assert!(ai.base.outbox.actor.look_sidewards.is_none());
-}
-
-#[test]
-fn same_frame_fight_lift_failure_preserves_inline_roof_fallback() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(64);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingRunningToLadder;
-    ai.base.primary_target = Some(AiEntityHandle::new(183));
-    ai.base.last_synced_focus_target = Some(AiEntityHandle::new(183));
-    ai.base.timer_is_running = true;
-    ai.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
-    ai.base.when_does_timer_ring = 8_133;
-
-    let target_position = Position {
-        x: 2_788.0,
-        y: 1_029.0,
-        sector: crate::position_interface::SectorHandle::new(63),
-        level: 3,
-    };
-    let wait_position = Position {
-        x: 2_793.0,
-        y: 571.0,
-        sector: crate::position_interface::SectorHandle::new(53),
-        level: 2,
-    };
-    let mut target = object_view(ObjectType::None);
-    target.kind = EntityKind::Pc;
-    target.is_pc = true;
-    target.position = target_position;
-    let mut views = AiEntityViewMap::new();
-    views.insert(183, target);
-    let ctx = AiContext {
-        frame: 8_103,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    tick.avenger_on_roof_wait_positions
-        .push((183, wait_position));
-
-    let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
-    stimulus.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
-    ai.think_unexpected_event(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        &stimulus,
-        &mut AiGlobalState::default(),
-    );
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingRunToAvengerOnRoof
-    );
-    assert_eq!(ai.base.seek_position, target_position);
-    assert_eq!(ai.base.last_goto_destination, wait_position);
-    assert_eq!(
-        ai.base.last_synced_focus_target,
-        Some(AiEntityHandle::new(183))
-    );
-    assert!(!ai.base.couldnt_reachpoint);
-    assert!(ai.base.outbox.actor.orders.is_empty());
-    let Some(crate::ai::AiOwnerWork::ActorEffects(roof_effects)) =
-        ai.base.outbox.reentrant.owner_work.last()
-    else {
-        panic!("roof fallback must settle at a synchronous owner boundary")
-    };
-    assert_eq!(roof_effects.orders.len(), 1);
-    assert_eq!(roof_effects.orders[0].target_x, wait_position.x);
-    assert_eq!(roof_effects.orders[0].target_y, wait_position.y);
-    assert!(roof_effects.look_sidewards.is_none());
-    assert!(!roof_effects.unfocus);
-}
-
-#[test]
-fn same_frame_roof_fallback_failure_uses_generic_overview() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(64);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingRunToAvengerOnRoof;
-    ai.base.primary_target = Some(AiEntityHandle::new(183));
-    ai.base.list_us = vec![64, 79];
-
-    ai.think_unexpected_event(
-        ThinkEnv::new(
-            &sim,
-            &AiContext {
-                frame: 7_938,
-                ..AiContext::test_fixture()
-            },
-            &AiPerTickData::stub(),
-            None,
-        ),
-        &Stimulus::new(StimulusType::EventCouldntReachPoint),
-        &mut AiGlobalState::default(),
-    );
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingOverviewLookLeft
-    );
-    assert_eq!(
-        ai.base.outbox.actor.look_sidewards,
-        Some(LookDirection::Left)
-    );
-}
-
-#[test]
-fn same_frame_ladder_condolation_uses_generic_overview() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(64);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingRunningToLadder;
-    ai.base.primary_target = Some(AiEntityHandle::new(183));
-    ai.base.list_us = vec![64, 79];
-    ai.base.timer_is_running = true;
-    ai.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
-    ai.base.when_does_timer_ring = 7_968;
-
-    let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
-    stimulus.self_origin = crate::ai::SelfStimulusOrigin::Condolation;
-    ai.think_unexpected_event(
-        ThinkEnv::new(
-            &sim,
-            &AiContext {
-                frame: 7_938,
-                ..AiContext::test_fixture()
-            },
-            &AiPerTickData::stub(),
-            None,
-        ),
-        &stimulus,
-        &mut AiGlobalState::default(),
-    );
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingOverviewLookLeft
-    );
-    assert_eq!(
-        ai.base.outbox.actor.look_sidewards,
-        Some(LookDirection::Left)
-    );
-}
-
-#[test]
-fn later_ladder_failure_still_uses_generic_emergency_routine() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(64);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingRunningToLadder;
-    ai.base.primary_target = Some(AiEntityHandle::new(183));
-    ai.base.list_us = vec![64, 79];
-    ai.base.ai_log.push(LogLine {
-        line_type: LogLineType::BattleDecision,
-        info: Decision::Fight as u16,
-        frame: 8_102,
-    });
-
-    let ctx = AiContext {
-        frame: 8_103,
-        ..AiContext::test_fixture()
-    };
-    let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
-    stimulus.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
-    ai.think_unexpected_event(
-        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-        &stimulus,
-        &mut AiGlobalState::default(),
-    );
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingOverviewLookLeft
-    );
-    assert_eq!(
-        ai.base.outbox.actor.look_sidewards,
-        Some(LookDirection::Left)
-    );
-}
-
-#[test]
-fn same_frame_fight_lift_failure_without_roof_wait_resumes_observe_then_overview() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(64);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingRunningToLadder;
-    ai.base.primary_target = Some(AiEntityHandle::new(183));
-    ai.base.last_synced_focus_target = Some(AiEntityHandle::new(183));
-    ai.base.timer_is_running = true;
-    ai.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
-    ai.base.when_does_timer_ring = 7_968;
-
-    let target_position = Position {
-        x: 2_762.243,
-        y: 882.6701,
-        sector: crate::position_interface::SectorHandle::new(53),
-        level: 2,
-    };
-    let mut target = object_view(ObjectType::None);
-    target.kind = EntityKind::Pc;
-    target.is_pc = true;
-    target.position = target_position;
-    let mut views = AiEntityViewMap::new();
-    views.insert(183, target);
-    let ctx = AiContext {
-        frame: 7_938,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-    let tick = AiPerTickData::stub();
-
-    let mut engine_completion = Stimulus::new(StimulusType::EventCouldntReachPoint);
-    engine_completion.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
-    ai.think_unexpected_event(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        &engine_completion,
-        &mut AiGlobalState::default(),
-    );
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingApproachToObserve
-    );
-    assert_eq!(ai.base.when_does_timer_ring, 7_988);
-    assert!(ai.base.timer_is_running);
-    assert!(ai.base.couldnt_reachpoint);
-    assert_eq!(
-        ai.base.last_synced_focus_target,
-        Some(AiEntityHandle::new(183))
-    );
-
-    ai.think_unexpected_event(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        &Stimulus::new(StimulusType::EventCouldntReachPoint),
-        &mut AiGlobalState::default(),
-    );
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingOverviewLookLeft
-    );
-    assert_eq!(
-        ai.base.outbox.actor.look_sidewards,
-        Some(LookDirection::Left)
-    );
-}
-
-#[test]
-fn later_roof_failure_still_uses_generic_emergency_routine() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(64);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingRunToAvengerOnRoof;
-    ai.base.primary_target = Some(AiEntityHandle::new(183));
-    ai.base.list_us = vec![64, 79];
-    let ctx = AiContext {
-        frame: 8_104,
-        ..AiContext::test_fixture()
-    };
-    ai.think_unexpected_event(
-        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-        &Stimulus::new(StimulusType::EventCouldntReachPoint),
-        &mut AiGlobalState::default(),
-    );
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingOverviewLookLeft
-    );
-    assert_eq!(
-        ai.base.outbox.actor.look_sidewards,
-        Some(LookDirection::Left)
-    );
-}
-
-#[test]
-fn couldnt_reach_seeking_body_examines_queued_body_before_starting_seek_area() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(206);
-    ai.base.current_state = AiState::Seeking;
-    ai.base.current_substate = Substate::SeekingBody;
-    ai.other_bodies_to_examine.push(207);
-
-    let alternate_position = Position {
-        x: 658.0,
-        y: 2910.0,
-        sector: crate::position_interface::SectorHandle::new(18),
-        level: 0,
-    };
-    let mut alternate_body = object_view(ObjectType::None);
-    alternate_body.kind = EntityKind::Soldier;
-    alternate_body.position = alternate_position;
-    // Other-body examination prunes the queue by incapacitation, not
-    // by combat readiness — a KO'd body is what keeps this entry
-    // queued.
-    alternate_body.is_unconscious = true;
-    alternate_body.is_able_to_fight = false;
-    let mut views = AiEntityViewMap::new();
-    views.insert(207, alternate_body);
-    let ctx = AiContext {
-        position: Position {
-            x: 792.0,
-            y: 2612.0,
-            sector: crate::position_interface::SectorHandle::new(44),
-            level: 0,
-        },
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    ai.think_unexpected_event(
-        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-        &Stimulus::new(StimulusType::EventCouldntReachPoint),
-        &mut AiGlobalState::default(),
-    );
-
-    assert_eq!(ai.base.detected_body, Some(AiEntityHandle::new(207)));
-    assert_eq!(ai.base.seek_position, alternate_position);
-    assert_eq!(ai.base.current_substate, Substate::SeekingBody);
-    assert!(ai.my_seek_points.is_empty());
 }
 
 /// Enemy examination of other bodies
@@ -1829,66 +1503,6 @@ fn is_out_of_order_is_not_the_complement_of_is_able_to_fight() {
     soldier_flagged_coma.kind = EntityKind::Soldier;
     soldier_flagged_coma.in_coma = true;
     assert!(!soldier_flagged_coma.is_out_of_order());
-}
-
-#[test]
-fn couldnt_reach_seeking_body_centers_fallback_on_actor_not_stale_body() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(206);
-    ai.base.current_state = AiState::Seeking;
-    ai.base.current_substate = Substate::SeekingBody;
-    ai.base.seek_position = Position {
-        x: 2_000.0,
-        y: 2_000.0,
-        sector: crate::position_interface::SectorHandle::new(44),
-        level: 0,
-    };
-    let actor_position = Position {
-        x: 792.0,
-        y: 2612.0,
-        sector: crate::position_interface::SectorHandle::new(44),
-        level: 0,
-    };
-    let actor_seek_point = Position {
-        x: 652.0,
-        y: 2_928.0,
-        sector: crate::position_interface::SectorHandle::new(44),
-        level: 0,
-    };
-    let stale_body_seek_point = Position {
-        x: 2_020.0,
-        y: 2_000.0,
-        sector: crate::position_interface::SectorHandle::new(44),
-        level: 0,
-    };
-    let point = |id, position| SeekPoint {
-        position,
-        frame_when_full_interest: 0,
-        directions: vec![0],
-        last_calculated_interest: 100,
-        locked: false,
-        id,
-    };
-    let mut global = AiGlobalState {
-        seek_points: vec![point(0, actor_seek_point), point(1, stale_body_seek_point)],
-        ..Default::default()
-    };
-    let ctx = AiContext {
-        position: actor_position,
-        self_is_soldier: true,
-        ..AiContext::test_fixture()
-    };
-
-    ai.think_unexpected_event(
-        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-        &Stimulus::new(StimulusType::EventCouldntReachPoint),
-        &mut global,
-    );
-
-    assert_eq!(ai.seek_center, actor_position);
-    assert_eq!(ai.actual_seek_point, Some(0));
-    assert_eq!(ai.base.last_goto_destination, actor_seek_point);
-    assert_ne!(ai.base.last_goto_destination, stale_body_seek_point);
 }
 
 #[test]
@@ -2075,65 +1689,4 @@ fn distraction_noise_records_the_impact_and_enters_investigation() {
         Substate::SeekingHeardstepsPreReactiontime
     );
     assert!(ai.base.timer_is_running);
-}
-
-/// This behavior sweeps the waiting
-/// soldier's own position when the avenger it is watching for goes out of
-/// view and no fighters remain. Rust used the remembered avenger position
-/// seek position, which shifts the seek center and therefore the
-/// near-point membership that drives the phase-4 selection draw count.
-#[test]
-fn avenger_roof_out_of_view_seeks_from_live_owner_position() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(178);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingWaitForAvengerOnRoof;
-    ai.base.primary_target = None;
-    // Keep the stale avenger center far from the live position so a
-    // regression cannot accidentally pick the same seek points.
-    ai.base.seek_position = Position {
-        x: 240.0,
-        y: 860.0,
-        ..Position::default()
-    };
-
-    let live_position = Position {
-        x: 1_800.0,
-        y: 2_200.0,
-        ..Position::default()
-    };
-    let mut global = AiGlobalState {
-        seek_points: [(1_810.0, 2_200.0), (1_820.0, 2_200.0)]
-            .into_iter()
-            .enumerate()
-            .map(|(id, (x, y))| crate::ai::SeekPoint {
-                position: Position {
-                    x,
-                    y,
-                    ..Position::default()
-                },
-                frame_when_full_interest: 0,
-                directions: vec![0],
-                last_calculated_interest: 100,
-                locked: false,
-                id: id as u16,
-            })
-            .collect(),
-        ..Default::default()
-    };
-
-    let ctx = AiContext {
-        frame: 12_345,
-        position: live_position,
-        ..AiContext::test_fixture()
-    };
-
-    ai.think_unexpected_event(
-        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-        &Stimulus::with_human(StimulusType::EventOutOfView, 42),
-        &mut global,
-    );
-
-    assert_eq!(ai.seek_center, live_position);
-    assert_ne!(ai.seek_center, ai.base.seek_position);
 }

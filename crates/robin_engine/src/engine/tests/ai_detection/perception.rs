@@ -2,6 +2,87 @@ use super::*;
 use crate::engine::test_support::actors::for_both_creation_orders;
 
 #[test]
+fn periodic_timer_restart_obeys_static_ai_freeze() {
+    use crate::ai::Substate;
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.control.frame_counter = 100;
+    engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("periodic test"))
+        .current_substate = Substate::AttackingObserve;
+    engine.ai.global.freeze = true;
+    engine.tick_periodic_ai_for_npc(&sim, owner, &assets);
+    assert!(
+        !engine
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("periodic test"))
+            .timer_is_running
+    );
+    engine.ai.global.freeze = false;
+    engine.tick_periodic_ai_for_npc(&sim, owner, &assets);
+    assert!(
+        engine
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("periodic test"))
+            .timer_is_running
+    );
+}
+
+#[test]
+fn periodic_smalltalk_commands_advance_watchdog_but_unrelated_commands_preserve_it() {
+    use crate::ai::Substate;
+    use crate::element::Command;
+    let sim = crate::sim_rng::test_context();
+    for command in [
+        Command::SwordstrikeSmalltalkLeft,
+        Command::SwordstrikeSmalltalkRight,
+        Command::ParrySmalltalkLeft,
+        Command::ParrySmalltalkRight,
+        Command::WaitTimer,
+    ] {
+        let mut engine = EngineInner::new();
+        let owner =
+            engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("periodic test"));
+        ai.current_substate = Substate::AttackingMovingAroundOldEnemy;
+        ai.stuck_counter = 2;
+        let element = crate::sequence::SequenceElement::new_movement(
+            1,
+            command,
+            Some(owner),
+            crate::order::OrderType::WaitingAlerted,
+        );
+        let sequence = engine.orders.sequence_manager.launch_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine.finish_enemy_periodic_stuck_suffix_after_refresh(&sim, owner, &assets, 64);
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("periodic test"))
+                .stuck_counter,
+            if command == Command::WaitTimer { 2 } else { 3 },
+            "{command:?}"
+        );
+    }
+}
+
+#[test]
 fn primary_target_tracking_precedes_view_refresh() {
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
@@ -181,7 +262,7 @@ fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surf
         };
         ai.base.go_to(destination, GotoFlags::RUN, &ctx);
 
-        engine.finish_enemy_periodic_stuck_suffix_after_refresh(&sim, owner, &assets, 0, &ctx);
+        engine.finish_enemy_periodic_stuck_suffix_after_refresh(&sim, owner, &assets, 0);
         let pending = engine
             .orders
             .sequence_manager

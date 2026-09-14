@@ -637,6 +637,7 @@ fn battle_fighter_able(entity: &Entity) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::Position;
     use crate::coordinates::WorldPoint3D;
     use crate::element::Posture;
     use crate::engine::test_support::{
@@ -703,6 +704,181 @@ mod tests {
         ai.base.current_substate = Substate::AttackingSwordfight;
         ai.base.primary_target = Some(AiEntityHandle::new(contributed.index()));
         (engine, assets, owner, personal, ally, contributed)
+    }
+
+    #[test]
+    fn live_predecision_reads_current_pride_with_uword_wrap_and_conditional_rng() {
+        let (mut engine, assets, owner, personal, _, _) = battle_fixture();
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("predecision fixture"));
+        ai.base.list_us = vec![owner.index()];
+        ai.list_them = vec![personal.index(); 2];
+        ai.is_archer_unit = false;
+        ai.soldier_profile_courage = 0;
+        for (pride, draws) in [(0, true), (1000, false), (u16::MAX, true)] {
+            engine
+                .world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("live pride"))
+                .soldier_profile_pride = pride;
+            let sim = crate::sim_rng::SimulationContext::with_seed(19);
+            let expected = crate::sim_rng::SimulationContext::with_seed(19);
+            let decision = engine.execute_ai_make_battle_predecisions(&sim, &assets, owner);
+            let expected_decision = if draws
+                && crate::sim_rng::u16(&expected, crate::sim_rng::RngSite::BattleCourage, 0..100)
+                    > 0
+            {
+                crate::ai::Decision::PredecisionDefensive
+            } else {
+                crate::ai::Decision::PredecisionOffensive
+            };
+            assert_eq!(decision, expected_decision, "pride {pride}");
+            assert_eq!(
+                sim.seed(),
+                expected.seed(),
+                "pride {pride}: exactly the conditional courage draw"
+            );
+        }
+        engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("fleeing predecision"))
+            .base
+            .current_state = AiState::Fleeing;
+        let sim = crate::sim_rng::SimulationContext::with_seed(19);
+        let seed = sim.seed();
+        assert_eq!(
+            engine.execute_ai_make_battle_predecisions(&sim, &assets, owner),
+            crate::ai::Decision::PredecisionDefensive
+        );
+        assert_eq!(sim.seed(), seed);
+    }
+
+    #[test]
+    fn live_proud_decision_uses_entry_substate_for_speech() {
+        use crate::ai::{Decision, LogLineType, Remark, StoredEnumWord};
+        for (entry, previous, speaks) in [
+            (
+                Substate::AttackingReactiontime,
+                Substate::DefaultOnPost,
+                true,
+            ),
+            (
+                Substate::AttackingTooProudToAttack,
+                Substate::AttackingReactiontime,
+                false,
+            ),
+        ] {
+            let (mut engine, assets, owner, target) =
+                super::super::battle_decision_observation_tests::fixture(false);
+            engine
+                .world
+                .entities
+                .get_mut(target)
+                .unwrap()
+                .element_data_mut()
+                .set_position_map(MapPoint::new(250.0, 100.0));
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("proud fixture"));
+            ai.base.current_substate = entry;
+            ai.previous_substate = StoredEnumWord::new(previous);
+            ai.is_vip = false;
+            let result = engine.execute_live_battle_decision(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                Decision::TooProudToAttack,
+                entry,
+                0,
+                false,
+            );
+            assert_eq!(result, Some(Decision::TooProudToAttack));
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("proud result"));
+            assert_eq!(
+                ai.base.current_substate,
+                Substate::AttackingTooProudToAttack
+            );
+            let remarks: Vec<_> = ai
+                .base
+                .ai_log
+                .iter()
+                .filter(|line| line.line_type == LogLineType::Speak)
+                .map(|line| line.info)
+                .collect();
+            assert_eq!(
+                remarks,
+                if speaks {
+                    vec![Remark::ProudDontFight as u16]
+                } else {
+                    vec![]
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn live_rejected_shield_cover_clears_reciprocal_links_and_retains_candidate() {
+        use crate::ai::Decision;
+        for has_target in [false, true] {
+            let (mut engine, assets, owner, target, bearer, _) = battle_fixture();
+            engine.ai.standard_view_polygon_radius = 10;
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("covered archer"));
+            ai.is_archer_unit = true;
+            ai.base.primary_target = Some(AiEntityHandle::new(target.index()));
+            let old_position = ai.base.seek_position;
+            engine
+                .world
+                .entities
+                .expect_enemy_ai_mut(bearer, format_args!("bearer target"))
+                .base
+                .primary_target = has_target.then_some(AiEntityHandle::new(target.index()));
+            let (anchor, direction) = engine.live_shield_bearer_position(bearer);
+            let [x, y] = crate::shadow_polygon::sector_to_direction(direction as i16);
+            let distance = crate::ai_enemy::archer::DISTANCE_SHIELD_BEARER_ARCHER as f32;
+            let expected = Position {
+                x: anchor.x - x * distance,
+                y: anchor.y - (y * crate::position_interface::ASPECT_RATIO) * distance,
+                ..anchor
+            };
+            let outcome = engine.execute_ai_battle_cover(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                bearer.index(),
+            );
+            assert_eq!(outcome, std::ops::ControlFlow::Continue(Decision::Shoot));
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("rejected cover"));
+            assert_eq!(ai.shield_bearer_before_me, None);
+            assert_eq!(
+                ai.base.primary_target,
+                has_target.then_some(AiEntityHandle::new(target.index()))
+            );
+            assert_eq!(
+                ai.base.seek_position,
+                if has_target { expected } else { old_position }
+            );
+            assert_eq!(
+                engine
+                    .world
+                    .entities
+                    .expect_enemy_ai(bearer, format_args!("unlinked bearer"))
+                    .archer_behind_me,
+                None
+            );
+        }
     }
 
     #[test]

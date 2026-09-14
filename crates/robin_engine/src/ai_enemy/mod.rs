@@ -315,22 +315,6 @@ pub struct EnemyAi {
     /// Soldiers this officer has called to a group.
     /// Populated by `alert_soldiers`, read by group coordination substates.
     pub alerted_us: Vec<HumanHandle>,
-    /// Group members still awaiting the officer's synchronous
-    /// `CALL_INSTRUCTION`, paired with the seek point authored for that
-    /// particular attempt. The original game deletes a refusing member from the live
-    /// list and retries the same list index before deciding whether to clear
-    /// `SEEK_LOCATION_FIRST`; keeping this as a continuation queue preserves
-    /// that source order.
-    #[serde(default)]
-    pub pending_group_instruction_candidates: Vec<(HumanHandle, Position)>,
-    /// Flags for the next group instruction. Stored as bits so old serialized
-    /// AI snapshots default cleanly and unknown bits cannot be invented.
-    #[serde(default)]
-    pub pending_group_instruction_seek_flags: u16,
-    /// Whether the first accepted member consumes `SEEK_LOCATION_FIRST`.
-    /// Charly-path distribution keeps the flag for every member instead.
-    #[serde(default)]
-    pub pending_group_instruction_clear_location_after_accept: bool,
 
     // Archery
     /// This NPC's reserved shooting point, as `(archery_sector_idx,

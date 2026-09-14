@@ -37,7 +37,9 @@ fn drunk_body_observer_records_the_body_before_rejecting_its_priority() {
     engine
         .world
         .entities
-        .expect_ai_actor_data_mut(body, format_args!("dead body"))
+        .expect_entity_mut(body, format_args!("dead body"))
+        .npc_data_mut()
+        .expect("body is an NPC")
         .life_points = 0;
     engine.execute_ai_seen_body(
         &crate::sim_rng::test_context(),

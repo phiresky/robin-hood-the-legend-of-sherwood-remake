@@ -1,11 +1,4 @@
-//! Battle decisions and combat execution.
-//!
-//! Contains the combat decision tree (`battle_decisions`,
-//! `make_battle_predecisions`, `execute_battle_decision`,
-//! `get_battle_overview`), enemy approach (`attack_enemy`,
-//! `reconsider_enemy_approach`), rider charges (`maybe_make_rider_attack`
-//! and helpers), the sleeping-enemy approach helpers, and the
-//! swordfight begin/end transitions.
+//! Combat decision inputs, geometry helpers, and live-operation adapters.
 
 use crate::ai::*;
 use crate::fast_find_grid::FastFindGrid;
@@ -200,64 +193,6 @@ impl EnemyAi {
     // -----------------------------------------------------------------------
     // Battle predecisions — offensive or defensive?
     // -----------------------------------------------------------------------
-
-    pub(crate) fn make_battle_predecisions(&mut self, env: ThinkEnv<'_>) -> Decision {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
-        // Archers with no ammo or already swordfighting → defensive.
-        if self.is_archer() && (ctx.remaining_arrows == 0 || ctx.is_swordfighting) {
-            return Decision::PredecisionDefensive;
-        }
-
-        // Already fleeing → defensive
-        if self.base.current_state == AiState::Fleeing {
-            return Decision::PredecisionDefensive;
-        }
-
-        // --------- US ---------
-        // The original game walks the persistent ally list at this exact point.
-        // Deriving the aggregate while constructing generic tick snapshots
-        // both made stale list assumptions and used to trigger eager LOS.
-        let mut us_points = 0_u16;
-        let mut there_is_an_officer = false;
-        for &friend_handle in &self.base.list_us {
-            let friend = ctx.entity_view(friend_handle).unwrap_or_else(|| {
-                panic!(
-                    "battle predecision friendly-list member {} is absent from the AI entity view",
-                    friend_handle
-                )
-            });
-            if friend.is_pc {
-                us_points = us_points.wrapping_add(100);
-                continue;
-            }
-            let (pride, rank) = if friend_handle == self.base.me {
-                (self.soldier_profile_pride, self.get_rank())
-            } else {
-                let soldier = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|soldier| soldier.handle == friend_handle)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "battle predecision soldier {} is absent from camp_soldiers",
-                            friend_handle
-                        )
-                    });
-                (soldier.pride, soldier.rank)
-            };
-            us_points = us_points.wrapping_add(100_u16.wrapping_add(pride));
-            there_is_an_officer |= friend_handle != self.base.me && rank == ProfileRank::Officer;
-        }
-
-        self.battle_predecision_from_points(
-            sim,
-            us_points,
-            self.list_them.len() as u16,
-            there_is_an_officer,
-            ctx.self_life_points,
-            ctx.self_max_life_points,
-        )
-    }
 
     pub(crate) fn battle_predecision_from_points(
         &self,

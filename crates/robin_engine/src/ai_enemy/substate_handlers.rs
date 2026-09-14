@@ -3525,102 +3525,16 @@ impl EnemyAi {
 
     fn seeking_officer_instruct_group_pointing(
         &mut self,
-        env: ThinkEnv<'_>,
+        _env: ThinkEnv<'_>,
         stimulus_type: StimulusType,
     ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, .. } = env;
-        // Officer done pointing, instruct each soldier
         if stimulus_type == StimulusType::EventDone {
-            let mut seek_flags = SeekFlags::REPORT_OFFICER_AFTER;
-            let seek_pos = self.base.seek_position;
-            if (seek_pos.x - ctx.position.x)
-                .abs()
-                .max((seek_pos.y - ctx.position.y).abs())
-                > 100.0
-            {
-                seek_flags |= SeekFlags::LOCATION_FIRST;
-            }
-            // Instruct each soldier via direct CALL_INSTRUCTION and
-            // prune refusals from the live list before finalising.
-            let instructed = self.alerted_us.clone();
-
-            // When the group is chasing a missed friend who walks a
-            // patrol path, the officer spreads the group along that
-            // path: every soldier gets its own waypoint as the seek
-            // point, stepping by `(len - 1) / (soldiers - 1)` and
-            // wrapping. Only then does the whole group keep
-            // LOCATION_FIRST — otherwise the officer sends everyone to
-            // the same reported position and only the first soldier
-            // searches the location itself.
-            let mut charly_waypoints: Vec<Position> = Vec::new();
-            if self.base.my_reconnaissance_report.report_type == ReportType::MissedCharly {
-                seek_flags |= SeekFlags::CHARLY_SEEK;
-                let charly = self.base.my_reconnaissance_report.charly;
-                let charly_path = ctx.entity_view(charly).and_then(|view| {
-                    view.has_patrol_path
-                        .then_some(view.patrol_hiking_path_index)
-                        .flatten()
-                });
-                if let Some(path_index) = charly_path
-                    && !instructed.is_empty()
-                    && let Some(path) = ctx.hiking_paths.get(usize::from(path_index))
-                    && !path.waypoints.is_empty()
-                {
-                    seek_flags |= SeekFlags::LOCATION_FIRST;
-                    charly_waypoints = path
-                        .waypoints
-                        .iter()
-                        .map(|w| Position {
-                            x: w.x as f32,
-                            y: w.y as f32,
-                            sector: None,
-                            level: w.level,
-                        })
-                        .collect();
-                }
-            }
-
-            // Waypoint cursor and stride for the charly-path spread.
-            let waypoint_step = if charly_waypoints.is_empty() {
-                0
-            } else if instructed.len() > 1 {
-                (charly_waypoints.len() - 1) / (instructed.len() - 1)
-            } else {
-                0
-            };
-            let mut waypoint_index = 0usize;
-
-            tracing::trace!(
-                target: "robin_engine::ai_enemy::phalanx",
-                officer = self.base.me,
-                frame = ctx.frame,
-                group = ?instructed,
-                charly_waypoints = charly_waypoints.len(),
-                "officer instructs its alerted group with CallInstruction"
-            );
-            let mut pending_instructions = Vec::with_capacity(instructed.len());
-            for handle in instructed.iter().copied() {
-                let soldier_seek_pos = if charly_waypoints.is_empty() {
-                    seek_pos
-                } else {
-                    let pos = charly_waypoints[waypoint_index];
-                    waypoint_index = (waypoint_index + waypoint_step) % charly_waypoints.len();
-                    pos
-                };
-                pending_instructions.push((handle, soldier_seek_pos));
-            }
-            self.pending_group_instruction_candidates = pending_instructions;
-            self.pending_group_instruction_seek_flags = seek_flags.bits();
-            self.pending_group_instruction_clear_location_after_accept =
-                charly_waypoints.is_empty();
-            if self.pending_group_instruction_candidates.is_empty() {
-                self.return_to_duty_default(env)?;
-            } else {
-                // The original game updates each soldier synchronously. A refusal deletes
-                // that member and retries the same list index, so only the
-                // first *accepted* member consumes LOCATION_FIRST.
-                self.queue_next_group_instruction();
-            }
+            return Err(crate::ai::DutyCall {
+                flags: DutyFlags::empty(),
+                think_result: false,
+                tail: crate::ai::DutyTail::OfficerInstructGroup,
+                after: Vec::new(),
+            });
         }
         Ok(false)
     }

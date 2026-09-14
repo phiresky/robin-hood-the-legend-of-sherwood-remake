@@ -1228,8 +1228,8 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
 }
 
 #[test]
-fn resumed_return_to_duty_publishes_goto_after_attentive_inline() {
-    use crate::ai::{AiOwnerWork, AiState, DutyFlags, Substate};
+fn live_return_to_duty_publishes_goto_after_attentive_inline() {
+    use crate::ai::{AiState, DutyFlags, Substate};
     use crate::coordinates::MapPoint;
     use crate::element::Command;
     use crate::fast_find_grid::{GridSector, SectorIndex};
@@ -1339,30 +1339,7 @@ fn resumed_return_to_duty_publishes_goto_after_attentive_inline() {
     ai.attentive = true;
     ai.will_be_attentive = true;
 
-    // Observe the exact live-outbox lifecycle rather than relying on a later
-    // global movement drain to hide a publication-order error.
-    engine.resume_return_to_duty_after_patrol_init_for_npc(
-        &sim,
-        owner,
-        &assets,
-        DutyFlags::empty(),
-        false,
-    );
-    {
-        let ai = engine
-            .get_entity(owner)
-            .and_then(Entity::enemy_ai)
-            .expect("return-to-duty owner retains Enemy AI after common tail");
-        assert_eq!(ai.base.outbox.actor.orders.len(), 1);
-        assert!(ai.base.outbox.actor.orders[0].after_attentive_mode);
-        assert!(ai.base.outbox.actor.has_pending_attentive_mode());
-        assert!(matches!(
-            ai.base.outbox.reentrant.owner_work.as_slice(),
-            [AiOwnerWork::StateChange(_)]
-        ));
-    }
-
-    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
+    engine.execute_ai_return_to_duty(&sim, &assets, owner, DutyFlags::empty());
     let commands = engine
         .orders
         .sequence_manager

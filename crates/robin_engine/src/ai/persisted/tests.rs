@@ -243,8 +243,6 @@ fn enemy_ai_scalar_projection_matrix() {
             shield_bearer_direction: (50u32 + seed) as u16,
             phalanx_aborted: seed & (1 << 2) != 0,
             changed_to_alert_path: seed & (1 << 3) != 0,
-            pending_group_instruction_seek_flags: (57u32 + seed) as u16,
-            pending_group_instruction_clear_location_after_accept: seed & (1 << 1) != 0,
             my_archery_sector_index: (61u32 + seed) as u16,
             my_archery_point_increment: (63u32 + seed) as i8,
             enemy_seen_below: seed & (1 << 3) != 0,
@@ -446,10 +444,6 @@ fn enemy_and_friendly_projection_recurse_into_base_and_last_patrol_stimulus() {
         previous_state: StoredEnumWord::from_raw(i32::MIN),
         previous_substate: StoredEnumWord::from_raw(i32::MAX),
         missed_pc: Some(AiEntityHandle::new(0)),
-        pending_group_instruction_candidates: vec![
-            (3, Position::default()),
-            (1, Position::default()),
-        ],
         last_stimulus_dispatched_to_patrol: Some(provenance_stimulus(
             SelfStimulusOrigin::Condolation,
         )),

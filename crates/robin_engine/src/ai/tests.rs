@@ -1746,9 +1746,9 @@ fn clear_all_pending_clears_every_outbox_barrier() {
     ai.outbox
         .reentrant
         .cross_npc_actions
-        .push(CrossNpcAction::BreakPhalanx {
+        .push(CrossNpcAction::RequestAlert {
             target: 8,
-            refresh_them_list: false,
+            caller: 0,
         });
     ai.outbox
         .reentrant

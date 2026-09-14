@@ -140,11 +140,6 @@ fn golden_enemy() -> EnemyAi {
         previous_substate: StoredEnumWord::from_raw(i32::MAX),
         missed_pc: Some(AiEntityHandle::new(0)),
         archer_behind_me: Some(AiEntityHandle::new(12)),
-        pending_group_instruction_candidates: vec![
-            (3, Position::default()),
-            (1, Position::default()),
-        ],
-        pending_group_instruction_seek_flags: 5,
         ale_reliable_distraction: true,
         soldier_profile_hearing_factor: 0.1,
         my_shooting_point: Some((1, 2)),
@@ -290,9 +285,6 @@ const ENEMY_DEFAULTED_KEYS: &[&str] = &[
     "beggar_to_examine",
     "archer_behind_me",
     "shield_bearer_before_me",
-    "pending_group_instruction_candidates",
-    "pending_group_instruction_seek_flags",
-    "pending_group_instruction_clear_location_after_accept",
     "ale_reliable_distraction",
     "left_combat_neighbour",
     "right_combat_neighbour",
@@ -317,9 +309,6 @@ fn enemy_ai_missing_defaulted_fields_decode_to_type_defaults() {
     expected.beggar_to_examine = None;
     expected.archer_behind_me = None;
     expected.shield_bearer_before_me = None;
-    expected.pending_group_instruction_candidates = Vec::new();
-    expected.pending_group_instruction_seek_flags = 0;
-    expected.pending_group_instruction_clear_location_after_accept = false;
     expected.ale_reliable_distraction = false;
     expected.left_combat_neighbour = None;
     expected.right_combat_neighbour = None;

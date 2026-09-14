@@ -827,6 +827,7 @@ mod tests {
         if indoors {
             sector.sector_type |= crate::sector::SectorType::BUILDING;
         }
+        sector.sector_type |= crate::sector::SectorType::MOUSE;
         engine.world.fast_grid_mut().add_sector(sector, 0);
         engine.world.fast_grid_mut().add_sector(
             crate::engine::test_support::square_sector(

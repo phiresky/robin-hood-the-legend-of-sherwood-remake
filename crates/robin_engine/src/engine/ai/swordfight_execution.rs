@@ -337,14 +337,15 @@ mod tests {
             }
             assert!(
                 engine
-                    .world
-                    .entities
-                    .get(owner)
-                    .unwrap()
-                    .human_data()
-                    .unwrap()
-                    .opponents
-                    .is_empty()
+                    .orders
+                    .sequence_manager
+                    .sequences_iter()
+                    .any(|sequence| {
+                        sequence.elements.iter().any(|element| {
+                            element.owner == Some(owner)
+                                && element.command == Command::QuitSwordfight
+                        })
+                    })
             );
             assert_eq!(engine.ai_think_depth(), 1);
         }

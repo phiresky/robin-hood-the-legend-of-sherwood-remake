@@ -36,6 +36,129 @@ struct AlertExecution<'a> {
 }
 
 impl EngineInner {
+    pub(in crate::engine) fn execute_ai_officer_instruct_group(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        use crate::ai::{Hint, ReportType};
+        use crate::ai_enemy::SeekFlags;
+        let enemy = self
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("officer group instruction"));
+        let mut instruction = Hint {
+            seek_point: enemy.base.seek_position,
+            who_tells_me: AiEntityHandle::new(owner.index()),
+            seek_flags: SeekFlags::REPORT_OFFICER_AFTER.bits(),
+        };
+        let position = self.live_ai_position(owner);
+        if (instruction.seek_point.x - position.x)
+            .abs()
+            .max((instruction.seek_point.y - position.y).abs())
+            > 100.0
+        {
+            instruction.seek_flags |= SeekFlags::LOCATION_FIRST.bits();
+        }
+        let mut count = enemy.alerted_us.len();
+        let path = if enemy.base.my_reconnaissance_report.report_type == ReportType::MissedCharly {
+            instruction.seek_flags |= SeekFlags::CHARLY_SEEK.bits();
+            let charly = enemy
+                .base
+                .my_reconnaissance_report
+                .charly
+                .expect("group checkpoint report requires a checkpoint");
+            let charly = self.expect_human_id_for_ai_handle(charly.get(), "group checkpoint path");
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller(charly, format_args!("group checkpoint path"));
+            if ai.has_patrol_path && count > 0 {
+                instruction.seek_flags |= SeekFlags::LOCATION_FIRST.bits();
+                Some(
+                    ai.patrol_path
+                        .as_ref()
+                        .map(|path| path.hiking_path_index)
+                        .or(ai.detached_patrol_path_status.hiking_path_index)
+                        .expect("checkpoint with a path requires its authored path"),
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let path_size = path.map_or(0, |path| {
+            assets.navigation.hiking_paths[path.get() as usize]
+                .waypoints
+                .len()
+        });
+        assert!(
+            path.is_none() || path_size > 0,
+            "group checkpoint path is empty"
+        );
+        let waypoint_step = if path.is_some() && count > 1 {
+            (path_size - 1) / (count - 1)
+        } else {
+            0
+        };
+        let mut waypoint_index = 0;
+        let mut index = 0;
+        while index < count {
+            if let Some(path) = path {
+                let waypoint =
+                    &assets.navigation.hiking_paths[path.get() as usize].waypoints[waypoint_index];
+                instruction.seek_point = Position {
+                    x: waypoint.x as f32,
+                    y: waypoint.y as f32,
+                    sector: assets.navigation.hiking_waypoint_sector(
+                        path.get() as usize,
+                        waypoint_index,
+                        waypoint.sector,
+                    ),
+                    level: waypoint.level,
+                };
+                waypoint_index = (waypoint_index + waypoint_step) % path_size;
+            } else if index > 0 {
+                instruction.seek_flags &= !SeekFlags::LOCATION_FIRST.bits();
+            }
+            let target = self
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("group instruction recipient"))
+                .alerted_us[index];
+            let target = self.expect_human_id_for_ai_handle(target, "group instruction recipient");
+            let mut stimulus = Stimulus::new(StimulusType::CallInstruction);
+            stimulus.info = StimulusInfo::Hint(instruction);
+            if self.execute_ai_callback(sim, assets, target, &stimulus) {
+                index += 1;
+            } else {
+                self.world
+                    .entities
+                    .expect_enemy_ai_mut(owner, format_args!("refused group instruction"))
+                    .alerted_us
+                    .remove(index);
+                count -= 1;
+            }
+        }
+        if count > 0 {
+            self.duty_set_state(
+                sim,
+                assets,
+                owner,
+                AiState::Seeking,
+                Substate::SeekingOfficerWaitForInstructedGroup,
+            );
+            self.world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("group instruction timer"))
+                .launch_timer(30, self.control.frame_counter);
+        } else {
+            self.execute_ai_return_to_duty(sim, assets, owner, crate::ai::DutyFlags::empty());
+        }
+    }
+
     pub(in crate::engine) fn execute_ai_run_and_alert_soldiers(
         &mut self,
         sim: &SimulationContext,
@@ -114,41 +237,32 @@ impl EngineInner {
             _ if accepted => return,
             _ => {}
         }
-        // TODO: move area-search and panic suffixes to owner-ID execution.
-        let scratch = self.build_sim_scratch(assets);
-        let mut ctx = self.ai_context_for(owner, self.control.frame_counter, &scratch, assets);
-        ctx.in_uninterruptible_command = self.is_very_very_busy(owner);
-        let tick = self.build_npc_tick_data(sim, owner, assets);
-        let env = crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, Some(&self.world.fast_grid));
-        let enemy = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("officer alert caller"));
-        let outcome = match caller {
-            OfficerAlertCaller::SeekBody { center, radius } => enemy.resume_failed_alert_soldiers(
-                env,
+        match caller {
+            OfficerAlertCaller::SeekBody { center, radius } => self.execute_failed_ai_alert(
+                sim,
+                assets,
+                owner,
                 crate::ai::AlertSoldiersFailureContinuation::SeekBody { center, radius },
-                &mut self.ai.global,
             ),
-            OfficerAlertCaller::SeekMissedCharly { center } => enemy.resume_failed_alert_soldiers(
-                env,
-                crate::ai::AlertSoldiersFailureContinuation::SeekMissedCharly { center },
-                &mut self.ai.global,
+            OfficerAlertCaller::SeekMissedCharly { .. } => self.execute_failed_ai_alert(
+                sim,
+                assets,
+                owner,
+                crate::ai::AlertSoldiersFailureContinuation::SeekMissedCharly {
+                    center: self.live_ai_position(owner),
+                },
             ),
-            OfficerAlertCaller::SeekHint { center } => enemy.seek_area(
-                env,
+            OfficerAlertCaller::SeekHint { center } => self.execute_ai_seek_area(
+                sim,
+                assets,
+                owner,
                 center,
                 crate::parameters_ai::AI_HINT_SEEK_RADIUS as u16,
                 crate::ai_enemy::SeekFlags::LOCATION_FIRST,
                 crate::ai_enemy::UNDEFINED_DIRECTION,
-                &mut self.ai.global,
             ),
             _ => unreachable!(),
-        };
-        if let Err(call) = outcome {
-            self.execute_ai_duty_call(sim, assets, owner, call);
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
     pub(in crate::engine) fn execute_ai_alert_officer(
         &mut self,
@@ -176,27 +290,89 @@ impl EngineInner {
         if self.execute_ai_alert_soldiers(sim, assets, owner, center, flags) {
             return;
         }
-        if matches!(failure, crate::ai::AlertSoldiersFailureContinuation::None) {
-            return;
-        }
-        // TODO: move the remaining seek-entry suffixes to owner-ID execution.
-        let scratch = self.build_sim_scratch(assets);
-        let mut ctx = self.ai_context_for(owner, self.control.frame_counter, &scratch, assets);
-        ctx.in_uninterruptible_command = self.is_very_very_busy(owner);
-        let tick = self.build_npc_tick_data(sim, owner, assets);
-        let outcome = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("failed officer alert"))
-            .resume_failed_alert_soldiers(
-                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, Some(&self.world.fast_grid)),
-                failure,
-                &mut self.ai.global,
-            );
-        if let Err(call) = outcome {
-            self.execute_ai_duty_call(sim, assets, owner, call);
-        }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_failed_ai_alert(sim, assets, owner, failure);
+    }
+
+    fn execute_failed_ai_alert(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        failure: crate::ai::AlertSoldiersFailureContinuation,
+    ) {
+        use crate::ai::AlertSoldiersFailureContinuation as Failure;
+        use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
+        let (center, radius, flags) = match failure {
+            Failure::None => return,
+            Failure::ReturnToDuty => {
+                self.execute_ai_return_to_duty(sim, assets, owner, crate::ai::DutyFlags::empty());
+                return;
+            }
+            Failure::SeekBody { center, radius } => (
+                center,
+                radius,
+                SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
+            ),
+            Failure::SeekMissingInstructedSoldier => (
+                self.live_ai_position(owner),
+                crate::parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
+                SeekFlags::LOCATION_FIRST
+                    | self
+                        .world
+                        .entities
+                        .expect_enemy_ai(owner, format_args!("missing soldier seek"))
+                        .seek_flags,
+            ),
+            Failure::SeekMissedCharly { .. } => {
+                let checkpoint = self
+                    .world
+                    .entities
+                    .expect_ai_controller(owner, format_args!("missing checkpoint seek"))
+                    .checkpoint_charly
+                    .expect("missing checkpoint seek requires a checkpoint");
+                let checkpoint =
+                    self.expect_human_id_for_ai_handle(checkpoint.get(), "missing checkpoint seek");
+                let has_path = self
+                    .world
+                    .entities
+                    .expect_ai_controller(checkpoint, format_args!("missing checkpoint path"))
+                    .has_patrol_path;
+                (
+                    self.live_ai_position(owner),
+                    if has_path {
+                        crate::parameters_ai::AI_PATROL_CHARLY_SEEK_RADIUS as u16
+                    } else {
+                        crate::parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS as u16
+                    },
+                    SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
+                )
+            }
+            Failure::FleeingRunToDoor => {
+                self.duty_set_state(
+                    sim,
+                    assets,
+                    owner,
+                    AiState::Fleeing,
+                    Substate::FleeingRunToDoor,
+                );
+                self.execute_ai_callback(
+                    sim,
+                    assets,
+                    owner,
+                    &Stimulus::new(StimulusType::EventReachPoint),
+                );
+                return;
+            }
+        };
+        self.execute_ai_seek_area(
+            sim,
+            assets,
+            owner,
+            center,
+            radius,
+            flags,
+            UNDEFINED_DIRECTION,
+        );
     }
 
     pub(in crate::engine) fn execute_ai_alert_soldiers(
@@ -312,17 +488,7 @@ impl EngineInner {
                 },
             );
         } else {
-            // TODO: reserve target selection still belongs to the borrowed
-            // combat handler; query it only after all recipient calls finish.
-            let scratch = self.build_sim_scratch(assets);
-            let mut ctx = self.ai_context_for(owner, self.control.frame_counter, &scratch, assets);
-            ctx.in_uninterruptible_command = self.is_very_very_busy(owner);
-            let tick = self.build_npc_tick_data(sim, owner, assets);
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("failed officer combat alert"))
-                .enter_battle_reserve(&ctx, &tick);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_battle_reserve(sim, assets, owner);
         }
         self.world
             .entities
@@ -337,6 +503,9 @@ impl EngineInner {
             );
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 impl AlertExecution<'_> {
     fn run_and_alert_soldiers(&mut self, center: Position) -> bool {

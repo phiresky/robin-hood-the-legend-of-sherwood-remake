@@ -30,7 +30,7 @@ fn missed_pc_search_reads_current_forecast_instead_of_old_seek_position() {
     );
     let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
     assert_eq!(ai.seek_center, forecast);
-    assert!(ai.seek_flags.contains(crate::ai::SeekFlags::HOUSE));
+    assert!(ai.seek_flags.contains(crate::ai_enemy::SeekFlags::HOUSE));
 }
 
 #[test]

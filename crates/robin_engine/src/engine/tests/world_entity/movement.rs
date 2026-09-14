@@ -589,7 +589,7 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
 
 #[test]
 fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fallback() {
-    use crate::ai::{AiContext, AiState, Position, Substate};
+    use crate::ai::{AiState, Substate};
     use crate::coordinates::MapPoint;
     use crate::fast_find_grid::GridSector;
     use crate::gate::{Door, DoorIndex};
@@ -734,32 +734,6 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         Some(wait),
         "pending lift provenance must precompute the source-synchronous roof wait"
     );
-
-    let owner = engine
-        .get_entity_mut(owner_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("roof-wait owner retains Enemy AI");
-    owner.base.current_state = AiState::Attacking;
-    owner.base.current_substate = Substate::AttackingRunningToEnemy;
-    owner.base.couldnt_reachpoint = true;
-    owner.resume_reconsider_enemy_approach_after_go_near(
-        Position {
-            x: 100.0,
-            y: 200.0,
-            sector: crate::position_interface::SectorHandle::new(2),
-            level: 0,
-        },
-        Some(wait),
-        &AiContext::test_fixture(),
-    );
-    assert!(!owner.base.couldnt_reachpoint);
-    assert_eq!(
-        owner.base.current_substate,
-        Substate::AttackingRunToAvengerOnRoof
-    );
-    assert_eq!(owner.base.outbox.actor.orders.len(), 1);
-    assert_eq!(owner.base.outbox.actor.orders[0].target_x, 100.0);
-    assert_eq!(owner.base.outbox.actor.orders[0].target_y, 100.0);
 
     engine
         .orders

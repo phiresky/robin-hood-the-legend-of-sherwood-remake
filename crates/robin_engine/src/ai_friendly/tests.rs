@@ -57,7 +57,7 @@ fn friendly_ai_defaults() {
 fn civilian_start_think_distinguishes_static_and_ailock_freeze() {
     let ctx = AiAdmission {
         frame: 0,
-        original_creation_order: 0,
+        original_creation_order: Some(0),
         think_depth: 0,
         in_building: false,
         self_is_rider: false,

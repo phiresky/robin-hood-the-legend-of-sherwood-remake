@@ -27,6 +27,8 @@ mod duty_common;
 mod duty_execution;
 mod enemy_report_execution;
 mod event_dispatch;
+#[cfg(test)]
+mod event_handler_live_tests;
 mod execution;
 mod friend_check_execution;
 mod friendly_execution;

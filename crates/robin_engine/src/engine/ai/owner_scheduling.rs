@@ -617,139 +617,258 @@ impl EngineInner {
             return;
         }
 
-        // Civilian periodic work starts at the every-64-frame suffix. Keep
-        // the synchronous drain, but avoid constructing an unused context.
-        if matches!(entity, Entity::Civilian(_)) && (frame_phase & 63) != 0 {
-            self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
-            return;
+        let civilian = entity.is_civilian();
+        if !civilian {
+            self.run_enemy_periodic_prefix(sim, npc_id, assets);
+            self.refresh_ai_arrow_protection(sim, assets, npc_id, true);
         }
-
-        // sequence launch notification with no incoming element.
-        // Civilians consume this entry-time value directly. Enemy
-        // The periodic update can synchronously register work during
-        // arrow-protection refresh, so its stuck suffix re-reads the live
-        // manager after closing that authored prefix below.
-        let sequence_null_about_to_launch = self
-            .orders
-            .sequence_manager
-            .element_is_about_to_be_launched(npc_id, crate::element::Command::Null);
-
-        // `command == Wait` — entity is idle.  Read the live
-        // sequence-element command via `actor_command` rather
-        // than `action_state == Waiting` so we don't get a
-        // false-positive on `WaitTimer` (which sets `action_state
-        // = Waiting` via the animation map but is not
-        // `Command::Wait`) or a false-negative on the brief
-        // window where a teardown nulls the sequence-element
-        // before the next animation tick resets `action_state`.
-        let actor_command = self.actor_command(npc_id);
-        let is_idle = actor_command == crate::element::Command::Wait;
-        let receiving_wasp_sting = actor_command == crate::element::Command::ReceiveWaspSting;
-        // The original game's animation lookup returns the order action, not
-        // the sprite row most recently performed. A transition may complete
-        // during actor action execution and promote its successor before the NPC
-        // the actor update reaches periodic tasks; in that window `Sprite::last_action`
-        // still names the transition.
-        let scratch = self.build_sim_scratch(assets);
-        let building_sector = self
-            .world
-            .entities
-            .get(npc_id)
-            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-            .unwrap_or_else(|| panic!("periodic NPC {} disappeared", npc_id.index()));
-        let entity = self.expect_entity(npc_id, "periodic NPC before call");
-
-        let mut ctx =
-            self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
-        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-
-        // Split borrow: the AI tick below reads `self.ai.global` / `self.world.fast_grid`
-        // alongside the mutable entity, so the arena lookup stays explicit here.
-        let entity = self
-            .world
-            .entities
-            .expect_entity_mut(npc_id, format_args!("periodic NPC before call"));
-
-        match entity {
-            Entity::Pc(_) | Entity::Soldier(_) => {
-                let has_stuck_suffix = entity
-                    .enemy_ai_mut()
-                    .unwrap_or_else(|| {
-                        panic!("periodic soldier {} has no enemy AI", npc_id.index())
-                    })
-                    .the_16th_frame_before_stuck(
-                        sim,
-                        &ctx,
-                        frame_phase,
-                        &self.ai.global,
-                        is_idle,
-                        receiving_wasp_sting,
-                    );
-
-                self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
-                self.refresh_ai_arrow_protection(sim, assets, npc_id, true);
-                if has_stuck_suffix {
-                    self.finish_enemy_periodic_stuck_suffix_after_refresh(
-                        sim,
-                        npc_id,
-                        assets,
-                        frame_phase,
-                        &ctx,
-                    );
-                }
-            }
-            Entity::Civilian(c) => {
-                c.npc
-                    .ai_brain
-                    .friendly_mut()
-                    .unwrap_or_else(|| {
-                        panic!("periodic civilian {} has no friendly AI", npc_id.index())
-                    })
-                    .the_16th_frame(frame_phase, &ctx, is_idle, sequence_null_about_to_launch);
-            }
-            _ => unreachable!("post-detection owner must remain an AI actor"),
+        if frame_phase & 63 == 0 {
+            self.finish_enemy_periodic_stuck_suffix_after_refresh(sim, npc_id, assets, frame_phase);
         }
         self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 
-    /// Close arrow-protection refresh's synchronous prefix and resume the
-    /// every-64-frame watchdog at its exact live manager-query boundary.
+    fn run_enemy_periodic_prefix(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+    ) {
+        if self
+            .world
+            .entities
+            .expect_ai_controller(npc_id, format_args!("periodic wasp owner"))
+            .current_substate
+            == crate::ai::Substate::WonderingWaspInArmour
+            && self.actor_command(npc_id) != crate::element::Command::ReceiveWaspSting
+        {
+            self.dispatch_think_with_drain(
+                sim,
+                npc_id,
+                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventWaspAway),
+                None,
+                assets,
+            );
+        }
+        if self
+            .world
+            .entities
+            .expect_ai_controller(npc_id, format_args!("periodic retreat owner"))
+            .current_substate
+            == crate::ai::Substate::FleeingMerryManRunToLeaveMap
+            && self.actor_command(npc_id) == crate::element::Command::Wait
+        {
+            self.execute_ai_merry_man_forest_cassos(sim, assets, npc_id);
+        }
+        let frame = self.control.frame_counter;
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(npc_id, format_args!("periodic timer owner"));
+        if !ai.timer_is_running
+            && !self.ai.global.freeze
+            && matches!(
+                ai.current_substate,
+                crate::ai::Substate::AttackingSwordfight | crate::ai::Substate::AttackingObserve
+            )
+        {
+            ai.launch_timer(10, frame);
+        }
+        if self.live_actor_animation(npc_id) == Some(crate::order::OrderType::WaitingUprightBored)
+            && self
+                .world
+                .entities
+                .expect_ai_controller(npc_id, format_args!("periodic remark owner"))
+                .current_state
+                == crate::ai::AiState::Default
+            && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::VipIdleRemark, 0..12) == 0
+        {
+            let ai = self
+                .world
+                .entities
+                .expect_enemy_ai_mut(npc_id, format_args!("periodic remark owner"));
+            if ai.get_rank() == crate::profiles::ProfileRank::Officer {
+                ai.base.say(crate::ai::Remark::OfficerComplains);
+            } else if ai.is_vip {
+                ai.base.say(crate::ai::Remark::VipSpeaksToHimself);
+            }
+            self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
+        }
+    }
+
+    /// Resume the watchdog after protection's synchronous movement and callbacks.
     pub(in crate::engine) fn finish_enemy_periodic_stuck_suffix_after_refresh(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
         frame_phase: u8,
-        ctx: &crate::ai::AiContext,
     ) {
-        // Arrow-protection refresh's movement/state changes are synchronous in
-        // Original. Materialize their manager registrations before the
-        // following live command/pending-sequence-launch reads,
-        // but retain the enclosing direct-call completion boundary until the
-        // suffix has run.
+        use crate::ai::{AiState, AlertLevel, Remark, Stimulus, StimulusType, Substate};
         self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
-        let actor_command = self.actor_command(npc_id);
-        let post_refresh_stuck_command_active = matches!(
-            actor_command,
-            crate::element::Command::Wait
-                | crate::element::Command::SwordstrikeSmalltalkLeft
-                | crate::element::Command::SwordstrikeSmalltalkRight
-                | crate::element::Command::ParrySmalltalkLeft
-                | crate::element::Command::ParrySmalltalkRight
-        );
-        let post_refresh_sequence_about_to_launch = self
-            .orders
-            .sequence_manager
-            .element_is_about_to_be_launched(npc_id, crate::element::Command::Null);
-        self.world
+        let civilian = self
+            .expect_entity(npc_id, "periodic watchdog owner")
+            .is_civilian();
+        let substate = self
+            .world
             .entities
-            .expect_enemy_ai_mut(npc_id, format_args!("periodic AI owner"))
-            .the_16th_frame_after_refresh(
-                frame_phase,
-                ctx,
-                post_refresh_stuck_command_active,
-                post_refresh_sequence_about_to_launch,
-            );
+            .expect_ai_controller(npc_id, format_args!("periodic watchdog owner"))
+            .current_substate;
+        let enemy_reachpoint = matches!(
+            substate,
+            Substate::DefaultGotoPost
+                | Substate::DefaultGotoRoute
+                | Substate::DefaultEnroute
+                | Substate::DefaultPatrolEnroute
+                | Substate::DefaultPatrolEnrouteRunning
+                | Substate::DefaultGotoChief
+                | Substate::DefaultPatrolChiefReturnToPatrol
+                | Substate::WonderingApproachingAle
+                | Substate::WonderingApproachingMoney
+                | Substate::WonderingRunningForMoney
+                | Substate::WonderingApproachingToLoot
+                | Substate::WonderingBrawlApproaching
+                | Substate::WonderingOfficerApproachingBrawl
+                | Substate::WonderingApproachingBrawlVictim
+                | Substate::SeekingHeardsteps
+                | Substate::SeekingArrow
+                | Substate::SeekingBody
+                | Substate::SeekingNet
+                | Substate::SeekingSeekpoint
+                | Substate::SeekingSeekpointPassedAmbushPointLeft
+                | Substate::SeekingSeekpointPassedAmbushPointRight
+                | Substate::SeekingSeekpointApproachingBeggar
+                | Substate::SeekingSoldierGoToOfficer
+                | Substate::SeekingSoldierReturnToOfficer
+                | Substate::SeekingOfficerLeavingHouseToInstructGroup
+                | Substate::SeekingGroupGoToOfficer
+                | Substate::SeekingRunningToOfficer
+                | Substate::SeekingRunningToOfficerSeen
+                | Substate::SeekingCharly
+                | Substate::SeekingCharlyGoToOfficer
+                | Substate::SeekingCharlyGoToOfficerSeen
+                | Substate::SeekingCombatAlert
+                | Substate::AttackingRunningToEnemy
+                | Substate::AttackingWalkingToEnemy
+                | Substate::AttackingChargingEnemy
+                | Substate::AttackingSwordfightStepBack
+                | Substate::AttackingTooProudToAttackRetire
+                | Substate::AttackingTooProudToAttackApproach
+                | Substate::AttackingObserveAndMove
+                | Substate::AttackingApproachingNewEnemy
+                | Substate::AttackingMovingAroundOldEnemy
+                | Substate::AttackingApproachingSleepingEnemy
+                | Substate::AttackingArcherRetireFromCombat
+                | Substate::AttackingRunningToPhalanx
+                | Substate::AttackingArcherRunOnShootingPath
+                | Substate::AttackingArcherRunOnShootingPathFinalSprint
+                | Substate::AttackingDoorFightLeaving
+                | Substate::AttackingRiderChargingApproaching
+                | Substate::AttackingRiderChargingPassing
+                | Substate::AttackingRiderChargingGettingDistance
+                | Substate::AttackingRiderChargingApproachingBlindly
+                | Substate::AttackingRunningToLadder
+                | Substate::AttackingRunToAvengerOnRoof
+                | Substate::FleeingPanic
+                | Substate::FleeingRunToHide
+                | Substate::FleeingRunToDoor
+                | Substate::FleeingHiding
+                | Substate::FleeingRunToAlertSoldiers
+                | Substate::FleeingRetireFromCombat
+                | Substate::FleeingMerryManRunToLeaveMap
+                | Substate::FleeingRunForArrowReserves,
+        );
+        let in_reachpoint_arm = if civilian {
+            matches!(
+                substate,
+                Substate::DefaultPatrolEnroute
+                    | Substate::DefaultPatrolEnrouteRunning
+                    | Substate::WonderingChildApproachingWhistling
+                    | Substate::SeekingCivilianRunningToSoldier
+                    | Substate::SeekingCivilianRunningToSoldierSeen
+                    | Substate::FleeingChildChased
+                    | Substate::FleeingChildChasedSupplementalRuns
+                    | Substate::FleeingChildFriendChased
+                    | Substate::DefaultGotoPost
+                    | Substate::DefaultGotoRoute
+                    | Substate::DefaultEnroute
+                    | Substate::FleeingRunToHide
+                    | Substate::FleeingRunToDoor
+                    | Substate::FleeingPanic
+            )
+        } else {
+            enemy_reachpoint
+        };
+        let command = self.actor_command(npc_id);
+        let stuck_command = command == crate::element::Command::Wait
+            || !civilian
+                && matches!(
+                    command,
+                    crate::element::Command::SwordstrikeSmalltalkLeft
+                        | crate::element::Command::SwordstrikeSmalltalkRight
+                        | crate::element::Command::ParrySmalltalkLeft
+                        | crate::element::Command::ParrySmalltalkRight
+                );
+        if !in_reachpoint_arm {
+            self.world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("periodic watchdog reset"))
+                .stuck_counter = 0;
+        } else if stuck_command {
+            let pending = self
+                .orders
+                .sequence_manager
+                .element_is_about_to_be_launched(npc_id, crate::element::Command::Null);
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("periodic watchdog counter"));
+            if pending {
+                ai.stuck_counter = 0;
+            } else if ai.stuck_counter < 3 {
+                ai.stuck_counter += 1;
+            } else {
+                let destination = ai.last_goto_destination;
+                let flags = ai.last_goto_flags;
+                if destination.sector.is_some() {
+                    self.duty_go_to(sim, assets, npc_id, destination, flags);
+                } else {
+                    self.dispatch_think_with_drain(
+                        sim,
+                        npc_id,
+                        &Stimulus::new(StimulusType::EventCouldntReachPoint),
+                        None,
+                        assets,
+                    );
+                }
+                self.world
+                    .entities
+                    .expect_ai_controller_mut(
+                        npc_id,
+                        format_args!("periodic watchdog callback return"),
+                    )
+                    .stuck_counter = 0;
+            }
+        }
+        if !civilian && frame_phase == 0 {
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("periodic alcohol owner"));
+            if ai.blood_alcohol > 0 {
+                if ai.current_music_alert_status == AlertLevel::Green
+                    && ai.current_state != AiState::Sleeping
+                    && ai.blood_alcohol > 20
+                {
+                    ai.say(Remark::Drunken);
+                    self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
+                }
+                self.world
+                    .entities
+                    .expect_ai_controller_mut(npc_id, format_args!("periodic alcohol decay"))
+                    .blood_alcohol -= 1;
+            }
+        }
     }
 
     /// Civilian random speech during the NPC update, keyed by frame phase.

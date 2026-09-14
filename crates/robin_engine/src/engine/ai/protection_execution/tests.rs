@@ -367,7 +367,7 @@ fn periodic_phalanx_move_is_registered_before_idle_stuck_check() {
 #[test]
 fn periodic_phalanx_move_keeps_attentive_command_classification() {
     let (mut engine, assets, owner) =
-        periodic_phalanx_fixture(500.0, crate::element::Command::EnterAttentive);
+        periodic_phalanx_fixture(500.0, crate::element::Command::EnterAttentiveMode);
     engine
         .world
         .entities
@@ -398,7 +398,7 @@ fn periodic_phalanx_move_keeps_attentive_command_classification() {
     );
     assert_eq!(
         engine.actor_command(owner),
-        crate::element::Command::EnterAttentive
+        crate::element::Command::EnterAttentiveMode
     );
     assert_eq!(ai.base.stuck_counter, 0);
 }

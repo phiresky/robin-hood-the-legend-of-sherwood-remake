@@ -144,6 +144,27 @@ impl EngineInner {
             .launch_timer(duration, self.control.frame_counter);
     }
 
+    pub(in crate::engine) fn execute_ai_battle_reserve(
+        &mut self,
+        sim: &SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        self.select_battle_primary(
+            owner,
+            PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
+        );
+        self.focus_battle_primary(sim, assets, owner);
+        self.battle_state_timer(
+            sim,
+            assets,
+            owner,
+            AiState::Attacking,
+            Substate::AttackingReserve,
+            50,
+        );
+    }
+
     fn battle_command(
         &mut self,
         sim: &SimulationContext,
@@ -529,19 +550,7 @@ impl EngineInner {
                     }
                 }
                 Decision::Reserve => {
-                    self.select_battle_primary(
-                        owner,
-                        PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
-                    );
-                    self.focus_battle_primary(sim, assets, owner);
-                    self.battle_state_timer(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Attacking,
-                        Substate::AttackingReserve,
-                        50,
-                    );
+                    self.execute_ai_battle_reserve(sim, assets, owner);
                     ControlFlow::Break(true)
                 }
                 Decision::LastReserve => {

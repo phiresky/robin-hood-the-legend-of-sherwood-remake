@@ -701,7 +701,7 @@ fn combat_command_consumes_live_script_filter_refusal() {
             .element_data_mut()
             .set_position_map(MapPoint::new(x, 100.0));
         entity
-            .actor_data_mut()
+            .npc_data_mut()
             .expect("combat alert actor")
             .view_radius = 500;
         let enemy = entity.enemy_ai_mut().expect("combat alert brain");
@@ -6068,7 +6068,7 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
         .ai_controller()
         .unwrap();
     assert!(!seeking_ai.already_on_point);
-    assert_eq!(engine.ai_think_depth(), 0);
+    assert_eq!(seeking_engine.ai_think_depth(), 0);
 
     let (mut fleeing_engine, fleeing_assets, fleeing) =
         setup_ai_state_native_probe("FleeingRngProbe", 5);

@@ -1621,7 +1621,6 @@ pub enum LookThereContinuation {
 pub enum ThinkResultContinuation {
     OfficerCalledSoldier,
     OfficerSentCharlyToOfficer,
-    OfficerInstructedGroupSoldier { last: bool },
 }
 
 // ---------------------------------------------------------------------------
