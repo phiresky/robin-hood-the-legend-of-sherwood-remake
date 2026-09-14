@@ -109,6 +109,30 @@ pub(super) fn transcode_sixteen_to_jxl(src: &Path, quality: Option<u8>) -> Resul
     transcode_picture_to_jxl(&pic, quality)
 }
 
+/// Decode a packed 16-bit minimap (`.min`) and encode it as keyed RGBA JXL.
+/// Unlike `.map` terrain, minimaps carry the exact transparent key around
+/// the playfield; see [`encode_minimap_picture_to_jxl`].
+pub(super) fn transcode_minimap_to_jxl(src: &Path, quality: Option<u8>) -> Result<Vec<u8>> {
+    let mut file =
+        SbFile::open(&src.to_string_lossy()).map_err(|e| anyhow!("open {}: {e}", src.display()))?;
+    let pic = Picture::load_sixteen_from_stream(&mut file)
+        .with_context(|| format!("decode {}", src.display()))?;
+    encode_minimap_picture_to_jxl(&pic, quality)
+}
+
+/// Minimaps use the interface pictures' keyed encoding: the pixel class
+/// (transparent / shadow / opaque) lives in a losslessly coded alpha channel,
+/// so a lossy colour pass cannot turn the transparent key into near-green
+/// that the renderer and minimap hit mask would treat as visible. The runtime
+/// decodes it with `Picture::load_minimap_from_bytes`.
+pub(super) fn encode_minimap_picture_to_jxl(pic: &Picture, quality: Option<u8>) -> Result<Vec<u8>> {
+    // TODO: at `quality = None` the keyed encoder takes the `to_rgba8888`
+    // path (alpha only marks the transparent key), so a lossless minimap
+    // pixel that is exactly SHADOW_KEY decodes nudged by one step. Harmless
+    // for minimaps; revisit if lossless JXL minimaps ever ship.
+    transcode_picture_to_jxl_rgba_keyed(pic, quality)
+}
+
 pub(super) fn is_interface_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/").to_ascii_lowercase();
     normalized == "interface/default.res"

@@ -155,8 +155,13 @@ fn main() -> Result<()> {
                 name.ends_with(".map") || name.ends_with(".min")
             })
             .map(|(name, bytes)| {
-                Picture::load_terrain_from_bytes_parallel(bytes)
-                    .with_context(|| format!("decode {name}"))
+                // Keyed minimaps decode serially; they are small next to maps.
+                if name.to_ascii_lowercase().ends_with(".min") {
+                    Picture::load_minimap_from_bytes(bytes)
+                } else {
+                    Picture::load_terrain_from_bytes_parallel(bytes)
+                }
+                .with_context(|| format!("decode {name}"))
             })
             .collect::<Result<Vec<_>>>()?;
         report.terrain_ms = elapsed(start);

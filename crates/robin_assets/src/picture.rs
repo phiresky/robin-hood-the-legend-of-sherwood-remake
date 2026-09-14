@@ -174,6 +174,13 @@ fn is_jxl_signature(bytes: &[u8]) -> bool {
     false
 }
 
+/// Header facts of a JPEG XL image read without decoding its frame.
+struct JxlHeader {
+    width: u16,
+    height: u16,
+    extra_channels: usize,
+}
+
 /// Seek to an absolute byte position (SEEK_SET).
 pub(crate) fn seek_to(file: &mut SbFile, pos: u64) -> Result<()> {
     let offset = i64::try_from(pos).with_context(|| format!("seek position {pos} exceeds i64"))?;
@@ -354,9 +361,16 @@ impl Picture {
     /// Always returns the picture in `PixelFormat::Rgb16` so downstream code
     /// (which expects RGB565 pixels for the GPU upload path) is unchanged.
     pub fn load_terrain_from_stream(file: &mut SbFile) -> Result<Self> {
-        // Peek 12 bytes to identify JXL (which has a 2- or 12-byte signature),
-        // then either slurp the rest and hand it to the JXL decoder, or
-        // rewind and parse as the legacy Sixteen format.
+        match Self::read_jxl_remainder(file)? {
+            Some(blob) => Self::load_jxl_rgb565(&blob),
+            None => Self::load_sixteen_from_stream(file),
+        }
+    }
+
+    /// Peek 12 bytes to identify JXL (which has a 2- or 12-byte signature).
+    /// JXL: slurp the rest of the stream and return it. Otherwise rewind the
+    /// peeked bytes so the caller can parse the legacy Sixteen format.
+    fn read_jxl_remainder(file: &mut SbFile) -> Result<Option<Vec<u8>>> {
         let start = file.tell();
         let mut head = [0u8; 12];
         file.read(&mut head)
@@ -373,11 +387,49 @@ impl Picture {
             blob.resize(total, 0);
             file.read(&mut blob[head.len()..])
                 .map_err(|e| anyhow!("read terrain body: {e}"))?;
-            return Self::load_jxl_rgb565(&blob);
+            return Ok(Some(blob));
         }
-        // Legacy Sixteen format: rewind the 12 peeked bytes and parse.
         seek_to(file, start)?;
-        Self::load_sixteen_from_stream(file)
+        Ok(None)
+    }
+
+    /// Decode a minimap bitmap (`.min`) from a byte slice.
+    ///
+    /// Unlike `.map` terrain, minimaps use the exact RGB565 transparent key
+    /// for the area outside the playfield (and the minimap hit mask compares
+    /// against it exactly). Lossy RGB coding breaks that comparison, so the
+    /// shipping converter encodes JXL minimaps with the keyed-RGBA scheme the
+    /// interface pictures use: pixel class in a losslessly coded alpha
+    /// channel, decoded by [`Self::load_jxl_rgba565_keyed`].
+    ///
+    /// Datadirs built before that change (v16 and older) carry 3-channel RGB
+    /// JXL minimaps; those still decode through the terrain RGB path, with a
+    /// one-time warning because their key pixels are no longer exact.
+    pub fn load_minimap_from_bytes(bytes: &[u8]) -> Result<Self> {
+        if !is_jxl_signature(bytes) {
+            return Self::load_sixteen_from_bytes(bytes);
+        }
+        if Self::jxl_header(bytes)?.extra_channels > 0 {
+            return Self::load_jxl_rgba565_keyed(bytes);
+        }
+        static LEGACY_RGB_MINIMAP_WARNING: std::sync::Once = std::sync::Once::new();
+        LEGACY_RGB_MINIMAP_WARNING.call_once(|| {
+            tracing::warn!(
+                "JXL minimap has no key (alpha) channel: its transparent border decodes as \
+                 visible green. The datadir predates keyed minimaps and needs reconversion."
+            );
+        });
+        Self::load_jxl_rgb565(bytes)
+    }
+
+    /// Stream form of [`Self::load_minimap_from_bytes`], with the same
+    /// start-position and consumption rules as
+    /// [`Self::load_terrain_from_stream`].
+    pub fn load_minimap_from_stream(file: &mut SbFile) -> Result<Self> {
+        match Self::read_jxl_remainder(file)? {
+            Some(blob) => Self::load_minimap_from_bytes(&blob),
+            None => Self::load_sixteen_from_stream(file),
+        }
     }
 
     /// Pixel dimensions of a terrain bitmap (`.map` / `.min`) without
@@ -399,6 +451,13 @@ impl Picture {
     /// Read JPEG XL image dimensions without decoding its frame pixels.
     /// Works for both RGB terrain and keyed RGBA interface pictures.
     pub fn jxl_dimensions(bytes: &[u8]) -> Result<(u16, u16)> {
+        let header = Self::jxl_header(bytes)?;
+        Ok((header.width, header.height))
+    }
+
+    /// Image-info stage of a JPEG XL decode: dimensions and extra-channel
+    /// count, without decoding frame pixels.
+    fn jxl_header(bytes: &[u8]) -> Result<JxlHeader> {
         use jxl::api::{JxlDecoder, JxlDecoderOptions, ProcessingResult, states};
 
         let mut input = bytes;
@@ -410,11 +469,13 @@ impl Picture {
             }
             Err(e) => bail!("jxl: decoder error reading image info: {e:?}"),
         };
-        let (w, h) = dec_with_image.basic_info().size;
-        Ok((
-            u16::try_from(w).context("jxl picture width exceeds u16")?,
-            u16::try_from(h).context("jxl picture height exceeds u16")?,
-        ))
+        let info = dec_with_image.basic_info();
+        let (w, h) = info.size;
+        Ok(JxlHeader {
+            width: u16::try_from(w).context("jxl picture width exceeds u16")?,
+            height: u16::try_from(h).context("jxl picture height exceeds u16")?,
+            extra_channels: info.extra_channels.len(),
+        })
     }
 
     /// Same dispatch as [`Self::load_terrain_from_stream`] but on an
@@ -914,6 +975,78 @@ impl Picture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn minimap_loader_dispatches_on_the_jxl_key_channel() {
+        use crate::frame_holder::{SHADOW_KEY, TRANSPARENT_COLOR_16};
+        // cjxl 0.12.0 `-q 80 --alpha_distance=0 -e 9`, 8x4 RGBA in the keyed
+        // class layout: columns 0-1 alpha 0 (with smeared, non-key RGB),
+        // (7, 3) alpha 128, everything else opaque colour.
+        let keyed = [
+            255, 10, 24, 112, 176, 19, 0, 140, 128, 4, 232, 0, 201, 194, 62, 2, 0, 0, 84, 168, 140,
+            50, 110, 240, 114, 174, 231, 203, 15, 29, 22, 211, 54, 174, 51, 180, 213, 182, 133, 37,
+            140, 137, 71, 198, 193, 193, 66, 194, 17, 226, 110, 156, 87, 13, 231, 15, 0, 0, 0, 219,
+            111, 158, 229, 128, 29, 163, 37, 4, 149, 0,
+        ];
+        let minimap = Picture::load_minimap_from_bytes(&keyed).unwrap();
+        assert_eq!((minimap.width, minimap.height), (8, 4));
+        assert_eq!(Picture::terrain_dimensions(&keyed).unwrap(), (8, 4));
+        for (index, pixel) in minimap.data.chunks_exact(2).enumerate() {
+            let pixel = u16::from_le_bytes([pixel[0], pixel[1]]);
+            let expected = match (index % 8, index / 8) {
+                (0 | 1, _) => Some(TRANSPARENT_COLOR_16),
+                (7, 3) => Some(SHADOW_KEY),
+                _ => None,
+            };
+            match expected {
+                Some(key) => assert_eq!(pixel, key, "pixel {index}"),
+                None => assert!(
+                    pixel != TRANSPARENT_COLOR_16 && pixel != SHADOW_KEY,
+                    "opaque pixel {index} decoded as key {pixel:#06x}"
+                ),
+            }
+        }
+        // The terrain RGB decoder must keep rejecting keyed images.
+        assert!(Picture::load_terrain_from_bytes(&keyed).is_err());
+
+        // Legacy (v16) 3-channel minimap: cjxl 0.11.2 2x3 solid red RGB.
+        let legacy = [
+            255, 10, 16, 0, 2, 128, 72, 8, 2, 1, 0, 156, 2, 75, 24, 155, 156, 113, 132, 3, 56, 128,
+            3, 56, 32, 74, 192, 57, 5, 1, 0, 32, 68, 128, 8, 16, 1, 34, 64, 228, 255, 145, 123,
+            250, 30, 90, 103, 87, 85, 85, 85, 37, 73, 146, 16, 80, 119, 119, 119, 119, 119, 255,
+            255, 255, 191, 85, 111, 102, 102, 102, 6, 254, 223, 191, 231, 191, 135, 198, 156, 115,
+            174, 181, 207, 189, 73, 146, 36, 4, 84, 85, 85, 85, 85, 85, 255, 255, 255, 207, 189,
+            175, 187, 187, 187, 27, 254, 223, 191, 231, 191, 135, 198, 156, 115, 174, 181, 207,
+            189, 73, 146, 36, 4, 84, 85, 85, 85, 85, 85, 255, 255, 255, 207, 189, 175, 187, 187,
+            187, 27, 254, 223, 191, 231, 191, 135, 198, 156, 115, 174, 181, 207, 189, 73, 146, 36,
+            4, 84, 85, 85, 85, 85, 85, 255, 255, 255, 207, 189, 175, 187, 187, 187, 251, 2, 33, 0,
+            120, 248, 123, 244, 99, 0, 0,
+        ];
+        assert_eq!(
+            Picture::load_minimap_from_bytes(&legacy).unwrap().data,
+            Picture::load_jxl_rgb565(&legacy).unwrap().data
+        );
+
+        // Sixteen minimaps (raw datadirs) pass through unchanged.
+        let sixteen = Picture {
+            width: 2,
+            height: 1,
+            pitch: 4,
+            pixel_format: PixelFormat::Rgb16,
+            data: [TRANSPARENT_COLOR_16, 0xf800]
+                .into_iter()
+                .flat_map(u16::to_le_bytes)
+                .collect(),
+            palette: None,
+        };
+        let bytes = sixteen
+            .write_sixteen_to_bytes(SixteenPacking::None)
+            .unwrap();
+        assert_eq!(
+            Picture::load_minimap_from_bytes(&bytes).unwrap().data,
+            sixteen.data
+        );
+    }
 
     #[test]
     fn pixel_format_bpp() {

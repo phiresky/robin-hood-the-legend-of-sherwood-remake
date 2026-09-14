@@ -464,12 +464,15 @@ pub(super) fn build_level_assets(
                 let bytes = if let Some(bytes) = encoded_level_assets.get(&rel) {
                     bytes.clone()
                 } else {
-                    // Minimaps follow the map format: the runtime picture
-                    // loader sniffs the JXL signature, so `.min` decodes
-                    // through the same path as `.map` with no extra code.
-                    let bytes = match opts.map_format.jxl_quality() {
-                        Some(quality) => transcode_sixteen_to_jxl(&path, quality)?,
-                        None => transcode_sixteen_drop_bzip(&path)?,
+                    // Minimaps follow the map format's quality, but `.map`
+                    // terrain is opaque 3-channel JXL while `.min` carries
+                    // the exact transparent key and must use the keyed
+                    // RGBA encoding (decoded by
+                    // `Picture::load_minimap_from_bytes`).
+                    let bytes = match (opts.map_format.jxl_quality(), ext) {
+                        (Some(quality), ".min") => transcode_minimap_to_jxl(&path, quality)?,
+                        (Some(quality), _) => transcode_sixteen_to_jxl(&path, quality)?,
+                        (None, _) => transcode_sixteen_drop_bzip(&path)?,
                     };
                     encoded_level_assets.insert(rel.clone(), bytes.clone());
                     bytes

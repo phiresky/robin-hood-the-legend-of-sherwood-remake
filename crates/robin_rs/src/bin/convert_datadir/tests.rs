@@ -457,6 +457,71 @@ fn opus_membership_only_dependency_is_written_and_decodes() {
 }
 
 #[test]
+#[ignore = "requires cjxl on PATH"]
+fn lossy_minimap_jxl_keeps_the_exact_transparent_key() {
+    use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
+    use robin_engine::minimap::HitMask;
+
+    // A minimap-shaped picture: a keyed border around an opaque playfield
+    // whose colours include near-key greens that lossy coding could land on
+    // the key, plus an interior keyed hole.
+    let (width, height) = (48u16, 32u16);
+    let source: Vec<u16> = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let border = x < 4 || y < 3 || x >= width - 5 || y >= height - 4;
+            let hole = (20..26).contains(&x) && (12..18).contains(&y);
+            if border || hole {
+                TRANSPARENT_COLOR_16
+            } else if (x + y) % 7 == 0 {
+                0x07A0 // near-key green
+            } else {
+                ((x & 0x1f) << 11) | ((y * 2) << 5) | ((x + y) & 0x1f)
+            }
+        })
+        .collect();
+    let picture = Picture {
+        width,
+        height,
+        pitch: width * 2,
+        pixel_format: PixelFormat::Rgb16,
+        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
+        palette: None,
+    };
+
+    let encoded = super::encode_minimap_picture_to_jxl(&picture, Some(80)).unwrap();
+    let decoded = Picture::load_minimap_from_bytes(&encoded).unwrap();
+    assert_eq!((decoded.width, decoded.height), (width, height));
+    assert_eq!(
+        Picture::terrain_dimensions(&encoded).unwrap(),
+        (width, height)
+    );
+    let pixels: Vec<u16> = decoded
+        .data
+        .chunks_exact(2)
+        .map(|word| u16::from_le_bytes([word[0], word[1]]))
+        .collect();
+    for (index, (&want, &got)) in source.iter().zip(&pixels).enumerate() {
+        assert_eq!(
+            want == TRANSPARENT_COLOR_16,
+            got == TRANSPARENT_COLOR_16,
+            "pixel {index}: source {want:#06x} decoded {got:#06x}"
+        );
+    }
+    let expected_mask = HitMask::from_pixels_u16(width, height, &source, TRANSPARENT_COLOR_16);
+    let decoded_mask = HitMask::from_pixels_u16(width, height, &pixels, TRANSPARENT_COLOR_16);
+    for y in 0..height {
+        for x in 0..width {
+            assert_eq!(
+                decoded_mask.is_opaque(x, y),
+                expected_mask.is_opaque(x, y),
+                "hit mask differs at ({x}, {y})"
+            );
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires ffmpeg with libopus"]
 fn opus_transcode_is_byte_deterministic() {
     let sample_rate = 8_000u32;
