@@ -9,7 +9,7 @@ use crate::campaign::Campaign;
 use crate::engine::{Engine, LevelAssets};
 use crate::game_operation::GameCode;
 use crate::replay::{ReplayData, state_hash};
-use robin_run_protocol::Digest32;
+use robin_run_types::Digest32;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 

@@ -1089,7 +1089,7 @@ mod tests {
 
     #[test]
     fn test_sprite_info_row_for_action() {
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[0] = 0; // WaitingUprightBored -> row 0
         conversion[10] = 1; // RunningUpright -> row 1
 
@@ -1108,7 +1108,7 @@ mod tests {
 
     #[test]
     fn test_sprite_info_script_for_action() {
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[0] = 0;
 
         let script = SpriteScript {
@@ -1180,7 +1180,7 @@ mod tests {
 
     #[test]
     fn test_sprite_info_serde_roundtrip() {
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[0] = 0;
 
         let script = SpriteScript {
@@ -1239,7 +1239,7 @@ mod tests {
             "ACCESSORIES_Ale/ACCESSOIRES Ale",
             SpriteInfo {
                 scripts: std::sync::Arc::new(Vec::new()),
-                conversion: std::sync::Arc::new(vec![UNMAPPED; NONANIMATION_END]),
+                conversion: std::sync::Arc::new(crate::engine::test_support::unmapped_conversion()),
                 size: SpriteSize::new(12.0, 8.0),
                 center: SpriteAnchor::new(2.0, 3.0),
             },
@@ -1262,7 +1262,7 @@ mod tests {
     fn parsed_shipping_rhs_loads_without_legacy_file() {
         let info = SpriteInfo {
             scripts: std::sync::Arc::new(Vec::new()),
-            conversion: std::sync::Arc::new(vec![UNMAPPED; NONANIMATION_END]),
+            conversion: std::sync::Arc::new(crate::engine::test_support::unmapped_conversion()),
             size: SpriteSize::new(12.0, 8.0),
             center: SpriteAnchor::new(2.0, 3.0),
         };

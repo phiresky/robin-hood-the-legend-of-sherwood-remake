@@ -5,6 +5,7 @@
 //! metrics.
 
 use ab_glyph::{Font, FontArc, PxScale, ScaleFont};
+use robin_engine::le_bytes::{TruncatedRead, array_at, u32_at};
 use robin_engine::sbfile::SbFileSystem;
 use std::path::{Path, PathBuf};
 
@@ -13,7 +14,9 @@ const TAG_LEN: usize = 6;
 const SBTTFT_TAG: &[u8; TAG_LEN] = b"SBTTFT";
 const SBFONT_TAG: &[u8; TAG_LEN] = b"SBFONT";
 
-// Expected .tfn file size: 6 (tag) + 4 (version) + 44 (FONT_HEADER) + 36 (TT_FONT_HEADER)
+// Expected .tfn file size: 6 (tag) + 4 (version) + 44 (FONT_HEADER) + 36 (TT_FONT_HEADER).
+// Parsing bounds-checks each field instead; fixtures still size against this.
+#[cfg(test)]
 const MIN_SBF_SIZE: usize = 90;
 
 /// Style flags.
@@ -51,9 +54,13 @@ fn cstr_len(buf: &[u8]) -> usize {
     buf.iter().position(|&b| b == 0).unwrap_or(buf.len())
 }
 
-/// Read a little-endian u32 from a byte slice at `offset`.
-fn read_u32_le(data: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
+/// Why a `.tfn` descriptor could not be parsed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TfnParseError {
+    #[error("truncated .tfn descriptor: {0}")]
+    Truncated(#[from] TruncatedRead),
+    #[error("bad .tfn tag {0:?} (expected SBTTFT)")]
+    BadTag([u8; TAG_LEN]),
 }
 
 // Candidate extensions and style variants are optional; an absent face is
@@ -158,7 +165,11 @@ impl TrueTypeFont {
             }
         };
 
-        if !font.parse_sbf(&data) {
+        if let Err(error) = font.parse_sbf(&data) {
+            tracing::error!(
+                "robin_rs font: cannot parse '{}': {error}",
+                sbf_path.display()
+            );
             return font;
         }
 
@@ -231,33 +242,31 @@ impl TrueTypeFont {
     /// [54..86] ttf_name      .ttf filename (NUL-padded)
     /// [86..90] color         COLORREF (0x00BBGGRR)
     /// ```
-    fn parse_sbf(&mut self, data: &[u8]) -> bool {
-        if data.len() < MIN_SBF_SIZE {
-            return false;
+    ///
+    /// On error the font is left unchanged (invalid).
+    fn parse_sbf(&mut self, data: &[u8]) -> Result<(), TfnParseError> {
+        let file_tag = array_at(data, 0, "tag")?;
+        if &file_tag != SBTTFT_TAG {
+            return Err(TfnParseError::BadTag(file_tag));
         }
+        let file_version = u32_at(data, 6)?;
+        let name = array_at(data, 10, "font name")?;
+        let flags = u32_at(data, 42)?;
+        let styles = u32_at(data, 46)?;
+        let height = u32_at(data, 50)?;
+        let tt_name = array_at(data, 54, "TrueType name")?;
+        let color = u32_at(data, 86)?;
 
-        // TAG
-        self.file_tag.copy_from_slice(&data[0..TAG_LEN]);
-        if &self.file_tag != SBTTFT_TAG {
-            tracing::warn!("robin_rs font: bad tag {:?}", &self.file_tag);
-            return false;
-        }
-
-        // Version
-        self.file_version = read_u32_le(data, 6);
-
-        // FONT_HEADER
-        self.name.copy_from_slice(&data[10..10 + FONT_NAME_LEN]);
-        self.flags = read_u32_le(data, 42);
-        self.styles = read_u32_le(data, 46);
-        self.height = read_u32_le(data, 50);
-
-        // TT_FONT_HEADER
-        self.tt_name.copy_from_slice(&data[54..54 + FONT_NAME_LEN]);
-        self.color = read_u32_le(data, 86);
-
+        self.file_tag = file_tag;
+        self.file_version = file_version;
+        self.name = name;
+        self.flags = flags;
+        self.styles = styles;
+        self.height = height;
+        self.tt_name = tt_name;
+        self.color = color;
         self.valid = true;
-        true
+        Ok(())
     }
 
     // -- TTF loading ---------------------------------------------------------
@@ -644,7 +653,7 @@ mod tests {
         // A reader with the same descriptor must not pick up the other
         // preparation's sibling face.
         let mut font = TrueTypeFont::new_invalid();
-        assert!(font.parse_sbf(&descriptor));
+        font.parse_sbf(&descriptor).unwrap();
         assert_eq!(
             font.find_and_load_ttf(Some(Path::new("isolated/fonts")), &invalid),
             0
@@ -859,7 +868,7 @@ mod tests {
         assert_eq!(data.len(), MIN_SBF_SIZE);
 
         let mut font = TrueTypeFont::new_invalid();
-        assert!(font.parse_sbf(&data));
+        font.parse_sbf(&data).unwrap();
         assert!(font.is_valid());
         assert_eq!(font.name_str(), "List Default");
         assert_eq!(font.truetype_name_str(), "Arial");
@@ -886,9 +895,43 @@ mod tests {
         data.extend_from_slice(&tt);
         data.extend_from_slice(&0xFFFFFFu32.to_le_bytes());
 
-        font.parse_sbf(&data);
+        font.parse_sbf(&data).unwrap();
         let out = font.to_sbf_bytes();
         assert_eq!(data, out);
+    }
+
+    #[test]
+    fn truncated_descriptor_reports_typed_error_at_every_length() {
+        let full = make_test_font().to_sbf_bytes();
+        assert_eq!(full.len(), MIN_SBF_SIZE);
+        for len in 0..full.len() {
+            let mut font = TrueTypeFont::new_invalid();
+            match font.parse_sbf(&full[..len]) {
+                Err(TfnParseError::Truncated(error)) => {
+                    assert_eq!(error.len, len);
+                    assert!(error.offset <= len, "{error}");
+                }
+                other => panic!("length {len}: expected truncation, got {other:?}"),
+            }
+            assert!(!font.is_valid(), "length {len} left a partially valid font");
+            assert_eq!(font.get_height(), 0, "length {len} wrote partial fields");
+        }
+    }
+
+    #[test]
+    fn bad_tag_and_truncated_file_do_not_load() {
+        let mut bad = make_test_font().to_sbf_bytes();
+        bad[..TAG_LEN].copy_from_slice(b"NOTTFT");
+        let mut font = TrueTypeFont::new_invalid();
+        assert_eq!(font.parse_sbf(&bad), Err(TfnParseError::BadTag(*b"NOTTFT")));
+
+        let truncated = make_test_font().to_sbf_bytes()[..60].to_vec();
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset("short/font.tfn", truncated)
+            .unwrap();
+        let font = TrueTypeFont::load(Path::new("short/font.tfn"), &SbFileSystem::new(vfs));
+        assert!(!font.is_valid());
+        assert!(!font.has_loaded_face());
     }
 
     #[test]
@@ -897,7 +940,8 @@ mod tests {
         let path = original_data::data_file("Data/Interface/Fonts/ListDefault.tfn");
         let data = std::fs::read(&path).expect("read required original font");
         let mut font = TrueTypeFont::new_invalid();
-        assert!(font.parse_sbf(&data), "failed to parse {}", path.display());
+        font.parse_sbf(&data)
+            .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()));
         assert!(font.is_valid());
         assert_eq!(font.truetype_name_str(), "Arial");
         assert_eq!(font.get_height(), 15);

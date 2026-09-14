@@ -176,7 +176,7 @@ impl Database {
             .await
     }
 
-    /// The HTTP layer passes the capacity/backup verdict sampled immediately
+    /// The HTTP layer passes the capacity admission verdict sampled immediately
     /// before this transaction. Committed and active exact retries remain
     /// observable while admission is red, but no challenge is consumed and no
     /// artifact-writing reservation is acquired until it is green again.

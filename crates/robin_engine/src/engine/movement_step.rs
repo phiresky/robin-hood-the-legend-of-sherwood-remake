@@ -2405,22 +2405,22 @@ impl MovementStepCtx<'_> {
                     _ => None,
                 })
             });
-        let next_order_id = &mut self.orders.next_order_id;
         let concrete_door_prefix = if lazy_next_animation.is_some() {
             entity
                 .actor_data_mut()
                 .and_then(|actor| actor.active_door_pass.as_mut())
-                .map(|pass| materialize_door_action_point_prefix(pass, next_order_id))
+                .map(|pass| {
+                    materialize_door_action_point_prefix(pass, &mut self.orders.next_order_id)
+                })
                 .unwrap_or_default()
         } else {
             Vec::new()
         };
         let mut continuation_door_action = None;
         let mut discard_lazy_door_followers = false;
-        if let Some(element) = self
+        if let Some((element, next_order_id)) = self
             .orders
-            .sequence_manager
-            .get_element_mut(move_seq_id, move_elem_idx)
+            .element_with_order_ids_mut(move_seq_id, move_elem_idx)
         {
             for order in concrete_door_prefix {
                 element.push_order(order);

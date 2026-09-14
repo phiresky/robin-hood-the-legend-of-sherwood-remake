@@ -114,7 +114,7 @@ fn build_test_scb() -> ScbFile {
     let (startup_init, startup_quads) = empty_function("Initialize", 0);
     let startup = ClassEntry {
         source_file: "test.scs".into(),
-        class_name: "StartUp".into(),
+        class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
         size_of_member_variables: 0,
         member_variables: vec![],
         functions: vec![startup_init],

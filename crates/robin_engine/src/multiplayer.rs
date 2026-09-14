@@ -13,7 +13,7 @@
 
 use crate::engine::Engine;
 use crate::player_command::{DialogResult, ModalKind, PlayerCommand, PlayerId, PlayerInput};
-use robin_run_protocol::{LeaderboardCoSignInstanceV1, LeaderboardCoSignRequestV1, Validate};
+use robin_run_types::{LeaderboardCoSignInstanceV1, LeaderboardCoSignRequestV1, Validate};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -1935,18 +1935,18 @@ mod tests {
     use super::*;
 
     fn leaderboard_request(
-        purpose: robin_run_protocol::LeaderboardCoSignPurposeV1,
+        purpose: robin_run_types::LeaderboardCoSignPurposeV1,
         byte: u8,
     ) -> LeaderboardCoSignRequestV1 {
         LeaderboardCoSignRequestV1 {
             instance: LeaderboardCoSignInstanceV1 {
                 purpose,
-                replay_session_id: robin_run_protocol::Digest32::from_bytes([byte; 32]),
-                submission_offer_sha256: robin_run_protocol::Digest32::from_bytes(
+                replay_session_id: robin_run_types::Digest32::from_bytes([byte; 32]),
+                submission_offer_sha256: robin_run_types::Digest32::from_bytes(
                     [byte.wrapping_add(1); 32],
                 ),
             },
-            run_digest: robin_run_protocol::Digest32::from_bytes([byte.wrapping_add(2); 32]),
+            run_digest: robin_run_types::Digest32::from_bytes([byte.wrapping_add(2); 32]),
         }
     }
 
@@ -2345,7 +2345,7 @@ mod tests {
     #[test]
     fn leaderboard_cosign_wire_roundtrips_exact_typed_request_and_response() {
         let request = leaderboard_request(
-            robin_run_protocol::LeaderboardCoSignPurposeV1::CampaignContinuation,
+            robin_run_types::LeaderboardCoSignPurposeV1::CampaignContinuation,
             7,
         );
         let response = LeaderboardCoSignResponse {
@@ -2366,21 +2366,16 @@ mod tests {
 
     #[test]
     fn leaderboard_cosign_decode_rejects_zero_digest_key_and_signature() {
-        let mut request = leaderboard_request(
-            robin_run_protocol::LeaderboardCoSignPurposeV1::Submission,
-            4,
-        );
-        request.run_digest = robin_run_protocol::Digest32::default();
+        let mut request =
+            leaderboard_request(robin_run_types::LeaderboardCoSignPurposeV1::Submission, 4);
+        request.run_digest = robin_run_types::Digest32::default();
         assert!(
             decode_msg(&encode_msg(&NetMsg::LeaderboardCoSignRequest(request)))
                 .unwrap_err()
                 .contains("run_digest")
         );
 
-        let valid = leaderboard_request(
-            robin_run_protocol::LeaderboardCoSignPurposeV1::Submission,
-            5,
-        );
+        let valid = leaderboard_request(robin_run_types::LeaderboardCoSignPurposeV1::Submission, 5);
         for response in [
             LeaderboardCoSignResponse {
                 instance: valid.instance,
@@ -2405,7 +2400,7 @@ mod tests {
     fn leaderboard_cosign_channel_api_keeps_target_and_local_arm_out_of_wire_payload() {
         let (channels, _incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
         let continuation = leaderboard_request(
-            robin_run_protocol::LeaderboardCoSignPurposeV1::CampaignContinuation,
+            robin_run_types::LeaderboardCoSignPurposeV1::CampaignContinuation,
             12,
         );
         channels
@@ -2423,10 +2418,8 @@ mod tests {
                 .contains("signed locally")
         );
 
-        let submission = leaderboard_request(
-            robin_run_protocol::LeaderboardCoSignPurposeV1::Submission,
-            13,
-        );
+        let submission =
+            leaderboard_request(robin_run_types::LeaderboardCoSignPurposeV1::Submission, 13);
         channels.arm_leaderboard_cosign_request(submission).unwrap();
         assert!(matches!(
             outgoing.recv().unwrap(),
@@ -2450,10 +2443,8 @@ mod tests {
     #[test]
     fn leaderboard_cosign_inbox_is_dedicated_ordered_and_fail_closed_at_bound() {
         let (channels, _incoming, _outgoing, _cursor, _snapshot) = NetChannels::new();
-        let request = leaderboard_request(
-            robin_run_protocol::LeaderboardCoSignPurposeV1::Submission,
-            20,
-        );
+        let request =
+            leaderboard_request(robin_run_types::LeaderboardCoSignPurposeV1::Submission, 20);
         assert!(
             channels
                 .defer_leaderboard_cosign_event(NetEvent::Note("not authorization".into()))

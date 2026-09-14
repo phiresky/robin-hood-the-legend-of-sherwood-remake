@@ -30,8 +30,7 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
         .unwrap()
         .fire_self_stimulus(StimulusType::EventDone);
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.drain_pending_self_stimuli(sim, &assets);
 
     let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
@@ -375,8 +374,7 @@ fn condolation_reenters_think_before_dispatch_returns() {
         .sequence_manager
         .element_in_progress(seq_id, 0);
     engine.orders.sequence_manager.element_terminated(seq_id, 0);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.dispatch_condolations(sim, &assets);
 
     let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
@@ -886,8 +884,7 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
         .orders
         .sequence_manager
         .element_terminated(parent_id, 0);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.dispatch_condolations(sim, &assets);
 
     let commands: Vec<_> = engine

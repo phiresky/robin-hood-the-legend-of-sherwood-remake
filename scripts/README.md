@@ -8,7 +8,6 @@ live corpus or deployment. See `docs/TESTING.md` for package and fixture gates.
 ## Build and quality gates
 
 - `check-quality.sh`: named CI/local quality suites and explicit fixture gates, including the advisory `unreferenced-items` suite (never fails the run).
-- `fetch-slang-shaders.sh`: fetch the libretro preset collection for `retroarch-shaders` at its pinned commit into the ignored `vendor/slang-shaders/`.
 - `check_asset_boundary.py`: engine/assets ownership boundary checks.
 - `build-native.sh`: build the native client and matching replay admission helper.
 - `build-wasm-threads.sh`: supported threaded browser build wrapper; not obsolete.
@@ -76,7 +75,7 @@ code. Keep standalone tools discoverable instead of treating no importers as
 proof of dead code. Most require external game data or Python imaging packages.
 
 - `build_robin_hood_engineer_sprites.py`: export atlases to an explicitly chosen external Factorio mod graphics directory.
-- `convert_native_fonts_to_woff2.py`: convert original fonts (the former `web-font-specimen/` comparison page is retained only in Git history).
+- `convert_native_fonts_to_woff2.py`: convert original fonts for the `web-font-specimen/` comparison page.
 - `generate_ferris_overlay.py`: generate the local Ferris overlay assets.
 - `generate_missing_knights.py`: reconstruct missing mounted-knight colour families.
 - `import_fabri18_sprites.py`: import an external sprite collection.

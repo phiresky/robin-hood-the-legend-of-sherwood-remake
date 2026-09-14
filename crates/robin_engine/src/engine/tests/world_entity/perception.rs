@@ -990,7 +990,6 @@ fn dead_body_alert_tail_fails_loud_for_wrong_ai_owner() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let Entity::Soldier(soldier) = engine
         .get_entity_mut(owner)
@@ -1000,7 +999,7 @@ fn dead_body_alert_tail_fails_loud_for_wrong_ai_owner() {
     };
     soldier.npc.ai_brain =
         AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(owner.index())));
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     engine.execute_ai_alert_officer_for_caller(
         &sim,
@@ -1325,8 +1324,7 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let soldier_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
 
     for (id, rank, state, substate) in [
         (
@@ -1392,8 +1390,7 @@ fn review_officer_sees_soldier_accepts_officer_rank_target() {
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     for id in [officer_id, target_id] {
         let enemy = engine
             .get_entity_mut(id)
@@ -1493,8 +1490,7 @@ fn review_soldier_alert_records_sender_even_when_later_call_is_refused() {
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let callback_officer_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     for (id, x, rank) in [
         (reporter_id, 100.0, ProfileRank::Soldier),

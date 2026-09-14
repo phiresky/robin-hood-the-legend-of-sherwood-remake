@@ -2015,7 +2015,7 @@ mod tests {
     ) {
         use crate::coordinates::{SpriteFrameOffset, SpriteLocalPoint};
         use crate::profiles::{BowProfile, BowShootMode, CharacterProfile, ProfileManager};
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use crate::sprite_script::SpriteScript;
 
         let mut campaign = crate::campaign::Campaign::default();
         // Campaign status lookup validates the serialized description's
@@ -2074,7 +2074,7 @@ mod tests {
             offsets: vec![SpriteFrameOffset::ZERO],
             sound_ids: vec![0],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[action as usize] = 0;
         engine
             .get_entity_mut(shooter)

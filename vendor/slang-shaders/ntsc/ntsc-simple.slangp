@@ -1,0 +1,6 @@
+shaders = "2"
+feedback_pass = "0"
+shader0 = "../stock.slang"
+scale_type_x0 = "source"
+scale_x0 = "2.000000"
+shader1 = "shaders/ntsc-simple/ntsc_simple.slang"

@@ -1126,11 +1126,7 @@ impl EngineInner {
         let difficulty_factor = crate::player_profile::DifficultyRules::percent_as_f32(
             sim.config().difficulty.rules().blip_detection_range_percent,
         );
-        let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
+        let sight_obstacles = self.world.sight_obstacles(assets);
 
         let mut detecting_pc = None;
         for &pc_id in self.world.original_pc_registry() {
@@ -2503,11 +2499,7 @@ impl EngineInner {
         let (eye, eye_world) = human_eye_point_for_visibility(viewer);
         let mut target_world = element.position();
         target_world.z += 1.0;
-        let obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: &assets.environment.static_sight_obstacles,
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
+        let obstacles = self.world.sight_obstacles(assets);
         ai_vision::compute_object_visibility(&ai_vision::ObjectVisibilityQuery {
             viewer_los: eye,
             viewer_world: eye_world,

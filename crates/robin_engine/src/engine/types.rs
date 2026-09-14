@@ -722,7 +722,14 @@ pub struct MacroSlotLengths {
 /// the host. Rollback replay discards the produced `SideEffects` so
 /// audio/UI aren't duplicated when a frame is re-simulated.
 #[derive(
-    Debug, Default, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode,
+    Debug,
+    Default,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SideEffects {
     /// The game-state code returned by the tick (in-progress / succeeded / failed / interrupted).
@@ -829,6 +836,7 @@ pub struct SideEffects {
     /// profile.
     #[state_hash(skip)]
     #[bitcode(skip)]
+    #[serde(skip)]
     pub pending_minimap_position: Option<crate::coordinates::ScreenPoint>,
     /// Script/sequence-driven minimap show/hide requests produced this
     /// tick. The minimap itself is host-owned, so the game loop applies
@@ -836,77 +844,15 @@ pub struct SideEffects {
     pub pending_minimap_display_maps: Vec<MinimapDisplayRequest>,
 }
 
-impl serde::Serialize for SideEffects {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedSideEffects::capture(self).serialize(serializer)
-    }
-}
-impl<'de> serde::Deserialize<'de> for SideEffects {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(PersistedSideEffects::deserialize(deserializer)?.into_runtime())
-    }
-}
-
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedSideEffects {
-    code: crate::game_operation::GameCode,
-
-    sounds: Vec<SoundCommand>,
-
-    displayed_noises: Vec<crate::ai::Noise>,
-
-    host_events: Vec<HostEvent>,
-
-    overlay: Option<OverlayChange>,
-
-    invalidate_background: bool,
-
-    invalidate_trajectory_preview: bool,
-
-    reset_input: bool,
-
-    fade_to_black: Option<Option<FadeToBlack>>,
-
-    set_draw_hidden: Option<bool>,
-
-    skip_render: bool,
-
-    pending_dialogues: Vec<i32>,
-
-    pending_popup_texts: Vec<i32>,
-
-    pending_debriefings: Vec<crate::player_command::DebriefingTextId>,
-
-    pending_sherwood_report: bool,
-
-    trade_receipts: Vec<crate::trading::TradeReceipt>,
-
-    pending_show_console: bool,
-
-    pending_mark_pc_ids: Vec<crate::element::EntityId>,
-
-    bg_blits: Vec<super::PendingBgBlit>,
-
-    pending_silent_win_widget_swap: bool,
-
-    pending_mission_state_notice: bool,
-
-    cancel_multi_selection: bool,
-
-    pending_reset_input: bool,
-
-    pending_swordfight_drag_ignore: bool,
-
-    ui_has_focus: bool,
-
-    pending_minimap_display_maps: Vec<MinimapDisplayRequest>,
-}
-
-impl PersistedSideEffects {
-    pub(crate) fn capture(value: &SideEffects) -> Self {
-        let SideEffects {
+impl SideEffects {
+    /// In-memory equivalent of a save round trip, without running a codec.
+    ///
+    /// This exhaustive destructure is the single persistence decision point:
+    /// `_` fields survive a save verbatim, bound fields are process-local and
+    /// reset to what deserialization reconstructs.
+    pub(crate) fn persisted_clone(&self) -> Self {
+        let mut clone = self.clone();
+        let Self {
             code: _,
             sounds: _,
             displayed_noises: _,
@@ -932,69 +878,11 @@ impl PersistedSideEffects {
             pending_reset_input: _,
             pending_swordfight_drag_ignore: _,
             ui_has_focus: _,
-            pending_minimap_position: _,
+            pending_minimap_position,
             pending_minimap_display_maps: _,
-        } = value;
-        Self {
-            code: value.code,
-            sounds: value.sounds.clone(),
-            displayed_noises: value.displayed_noises.clone(),
-            host_events: value.host_events.clone(),
-            overlay: value.overlay.clone(),
-            invalidate_background: value.invalidate_background,
-            invalidate_trajectory_preview: value.invalidate_trajectory_preview,
-            reset_input: value.reset_input,
-            fade_to_black: value.fade_to_black,
-            set_draw_hidden: value.set_draw_hidden,
-            skip_render: value.skip_render,
-            pending_dialogues: value.pending_dialogues.clone(),
-            pending_popup_texts: value.pending_popup_texts.clone(),
-            pending_debriefings: value.pending_debriefings.clone(),
-            pending_sherwood_report: value.pending_sherwood_report,
-            trade_receipts: value.trade_receipts.clone(),
-            pending_show_console: value.pending_show_console,
-            pending_mark_pc_ids: value.pending_mark_pc_ids.clone(),
-            bg_blits: value.bg_blits.clone(),
-            pending_silent_win_widget_swap: value.pending_silent_win_widget_swap,
-            pending_mission_state_notice: value.pending_mission_state_notice,
-            cancel_multi_selection: value.cancel_multi_selection,
-            pending_reset_input: value.pending_reset_input,
-            pending_swordfight_drag_ignore: value.pending_swordfight_drag_ignore,
-            ui_has_focus: value.ui_has_focus,
-            pending_minimap_display_maps: value.pending_minimap_display_maps.clone(),
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> SideEffects {
-        SideEffects {
-            code: self.code,
-            sounds: self.sounds,
-            displayed_noises: self.displayed_noises,
-            host_events: self.host_events,
-            overlay: self.overlay,
-            invalidate_background: self.invalidate_background,
-            invalidate_trajectory_preview: self.invalidate_trajectory_preview,
-            reset_input: self.reset_input,
-            fade_to_black: self.fade_to_black,
-            set_draw_hidden: self.set_draw_hidden,
-            skip_render: self.skip_render,
-            pending_dialogues: self.pending_dialogues,
-            pending_popup_texts: self.pending_popup_texts,
-            pending_debriefings: self.pending_debriefings,
-            pending_sherwood_report: self.pending_sherwood_report,
-            trade_receipts: self.trade_receipts,
-            pending_show_console: self.pending_show_console,
-            pending_mark_pc_ids: self.pending_mark_pc_ids,
-            bg_blits: self.bg_blits,
-            pending_silent_win_widget_swap: self.pending_silent_win_widget_swap,
-            pending_mission_state_notice: self.pending_mission_state_notice,
-            cancel_multi_selection: self.cancel_multi_selection,
-            pending_reset_input: self.pending_reset_input,
-            pending_swordfight_drag_ignore: self.pending_swordfight_drag_ignore,
-            ui_has_focus: self.ui_has_focus,
-            pending_minimap_position: None,
-            pending_minimap_display_maps: self.pending_minimap_display_maps,
-        }
+        } = &mut clone;
+        *pending_minimap_position = None;
+        clone
     }
 }
 

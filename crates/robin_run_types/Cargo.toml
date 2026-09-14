@@ -1,0 +1,23 @@
+[package]
+name = "robin_run_types"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "robin_run_types"
+
+# Leaf crate: plain run-identity data types shared by the deterministic engine
+# and robin_run_protocol. It must stay free of signing, networking and engine
+# crates; the isolated identity signer reaches it through robin_run_protocol.
+[dependencies]
+bitcode.workspace = true
+hex.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+robin_display_text.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

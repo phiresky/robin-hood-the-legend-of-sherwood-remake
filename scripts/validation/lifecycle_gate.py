@@ -24,8 +24,8 @@ SAVE_CHECKS = {"native_save_load_restored_state", "recording_continues_after_sta
                "save_load_post_restore_replay_hashes"}
 BROWSER_GROUPS = {
     "audio": "web_audio_backend::",
-    "client_protocol": "multiplayer::client_protocol::tests::",
-    "identity": "multiplayer::identity::tests::",
+    "client_protocol": "multiplayer::transport::client_protocol::tests::",
+    "identity": "multiplayer::transport::identity::tests::",
 }
 BROWSER_IDENTITY_CASES = {
     BROWSER_GROUPS["identity"] + "connect_addr_roundtrips_json_and_id",

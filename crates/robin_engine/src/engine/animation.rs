@@ -3176,33 +3176,30 @@ impl EngineInner {
             self.striking_down_sword_valid_after_perform(assets, entity_id);
 
         let reusable_cloaks_enabled = self.control.sim_config.reusable_cloaks;
-        // The original loop only leaves through its actor arm; a non-actor
-        // entity keeps re-looking the slot up exactly as before (it cannot
-        // reach here: `actor_animation_operands` panics on a non-actor).
-        loop {
-            let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
-                panic!("actor {entity_id:?} vanished before generic animation dispatch")
-            });
-            // Actors: animate based on current action state
-            if entity.actor_data().is_some() {
-                return ActorAnimationStepCtx {
-                    entity,
-                    orders: &mut self.orders,
-                    sim,
-                    assets,
-                    entity_id,
-                    frame_counter: self.control.frame_counter,
-                    reusable_cloaks_enabled,
-                    selected_generic_order,
-                    entry,
-                    operands,
-                    striking_down_sword_valid_after_perform,
-                    combat_injury_terminated,
-                    completion_outcomes,
-                }
-                .run();
-            }
+        let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
+            panic!("actor {entity_id:?} vanished before generic animation dispatch")
+        });
+        // `actor_animation_operands` already panics on a non-actor.
+        assert!(
+            entity.actor_data().is_some(),
+            "generic animation dispatch owner {entity_id:?} is not an actor"
+        );
+        ActorAnimationStepCtx {
+            entity,
+            orders: &mut self.orders,
+            sim,
+            assets,
+            entity_id,
+            frame_counter: self.control.frame_counter,
+            reusable_cloaks_enabled,
+            selected_generic_order,
+            entry,
+            operands,
+            striking_down_sword_valid_after_perform,
+            combat_injury_terminated,
+            completion_outcomes,
         }
+        .run()
     }
 
     /// Initialize live takeoff and death placement before generic sprite dispatch.
@@ -3589,7 +3586,7 @@ mod shoulder_idle_initialization_tests {
     use crate::element::{ActorPc, ElementData, ElementKind, Entity, HumanData, PcData, Posture};
     use crate::order::Order;
     use crate::sequence::{SequenceElement, SequencePriority};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     #[test]
     fn waiting_carrying_on_shoulders_initialization_idles_carried_once() {
@@ -3608,7 +3605,7 @@ mod shoulder_idle_initialization_tests {
             human: HumanData::default(),
             pc: PcData::default(),
         });
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::WaitingCarryingOnShoulders as usize] = 0;
         let script = SpriteScript {
             action_id: OrderType::WaitingCarryingOnShoulders as u16,
@@ -3720,7 +3717,7 @@ mod shoulder_idle_initialization_tests {
             pc: PcData::default(),
         };
         climber.human.carrier = Some(helper_id);
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::WaitingOnShoulders as usize] = 100;
         let script = SpriteScript {
             action_id: OrderType::WaitingOnShoulders as u16,

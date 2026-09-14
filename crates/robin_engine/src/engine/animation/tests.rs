@@ -492,7 +492,7 @@ fn dead_actor_executes_its_selected_ordinary_animation() {
     use crate::order::Order;
     use crate::sequence::SequenceElement;
     use crate::sprite::MotionState;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(weak_soldier_at_action_done(0));
@@ -524,7 +524,7 @@ fn dead_actor_executes_its_selected_ordinary_animation() {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
             sound_ids: vec![0],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[action as usize] = 0;
         entity.element_data_mut().sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![script]),
@@ -758,7 +758,7 @@ fn weak_sword_resumes_when_tiredness_reaches_zero() {
 fn weak_sword_first_arrival_at_action_done_preserves_done() {
     use crate::order::Order;
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let sim = crate::sim_rng::test_context();
     let assets = crate::engine::types::LevelAssets::new();
@@ -778,7 +778,7 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
         sound_ids: vec![0; 3],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
     entity.element_data_mut().sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script]),
@@ -1572,7 +1572,7 @@ fn striking_down_execute_fixture() -> (
 ) {
     use crate::order::Order;
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let mut pc = Entity::Pc(ActorPc {
@@ -1601,7 +1601,7 @@ fn striking_down_execute_fixture() -> (
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
         sound_ids: vec![0; 3],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
     pc.element_data_mut().sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script]),

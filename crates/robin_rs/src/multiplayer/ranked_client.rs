@@ -1,52 +1,5 @@
 //! Client ranked-admission and co-sign trust state shared by native and browser transports.
 
-/// Browser stream gating, not a second trust authority: the shared join state
-/// validates every protocol transition before the transport publishes this phase.
-#[cfg(any(target_arch = "wasm32", test))]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(super) enum BrowserAdmissionPhase {
-    #[default]
-    AwaitingChallenge,
-    AwaitingRankedDecision,
-    AwaitingBrowseDecision,
-    Ranked,
-    BrowseOnly,
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-impl BrowserAdmissionPhase {
-    pub(super) fn pending(self) -> bool {
-        matches!(
-            self,
-            Self::AwaitingRankedDecision | Self::AwaitingBrowseDecision
-        )
-    }
-
-    pub(super) fn resolved(self) -> bool {
-        matches!(self, Self::Ranked | Self::BrowseOnly)
-    }
-
-    pub(super) fn can_reconnect(self) -> bool {
-        matches!(self, Self::AwaitingRankedDecision | Self::Ranked)
-    }
-}
-
-#[test]
-fn browser_admission_gates_keep_pending_resolved_and_reconnect_states_consistent() {
-    use BrowserAdmissionPhase::*;
-    for (phase, pending, resolved, reconnect) in [
-        (AwaitingChallenge, false, false, false),
-        (AwaitingRankedDecision, true, false, true),
-        (AwaitingBrowseDecision, true, false, false),
-        (Ranked, false, true, true),
-        (BrowseOnly, false, true, false),
-    ] {
-        assert_eq!(phase.pending(), pending);
-        assert_eq!(phase.resolved(), resolved);
-        assert_eq!(phase.can_reconnect(), reconnect);
-    }
-}
-
 use robin_engine::multiplayer::{
     LeaderboardCoSignResponse, RankedBrowseOnlyReason, RankedJoinAccepted,
     RankedJoinAttestationDocument, RankedJoinChallenge, RankedJoinClaimDocument,
@@ -537,6 +490,25 @@ impl ClientRankedJoinState {
         Ok(matches!(
             self.lock()?.phase,
             ClientRankedJoinPhase::Accepted(_)
+        ))
+    }
+
+    /// Ranking is resolved for the current stream: admitted, or irreversibly
+    /// browse-only. The browser holds `ReadyToSim` until this holds.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn admission_resolved(&self) -> Result<bool, MultiplayerError> {
+        Ok(matches!(
+            self.lock()?.phase,
+            ClientRankedJoinPhase::Accepted(_) | ClientRankedJoinPhase::BrowseOnly(_)
+        ))
+    }
+
+    /// This lane irreversibly gave up ranking (typed `Unavailable` answer or
+    /// browse-only). A reconnect keeps it that way instead of resetting it.
+    pub(crate) fn irreversibly_unranked(&self) -> Result<bool, MultiplayerError> {
+        Ok(matches!(
+            self.lock()?.phase,
+            ClientRankedJoinPhase::Unavailable | ClientRankedJoinPhase::BrowseOnly(_)
         ))
     }
 }

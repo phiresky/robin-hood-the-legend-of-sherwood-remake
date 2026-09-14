@@ -43,8 +43,7 @@ fn constructor_primed_throwables_receive_exactly_one_appended_live_slot_advance(
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_test_pc(Posture::Upright));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let start = WorldPoint3D::new(0.0, 0.0, 20.0);
     let end = WorldPoint3D::new(200.0, 0.0, 0.0);
     let mut spawned = Vec::new();
@@ -109,7 +108,7 @@ fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
         Animation, ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType,
         TrajectoryPoint,
     };
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     for object_type in [ObjectType::Apple, ObjectType::Stone] {
         let mut engine = EngineInner::new();
@@ -119,7 +118,7 @@ fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
             initial_element.active = true;
             initial_element
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[Animation::ObjectFlying as usize] = 0;
         conversion[Animation::ObjectBursting as usize] = 16;
         let row = |animation: Animation, frames: Vec<u32>, delays: Vec<u16>| SpriteScript {
@@ -341,7 +340,7 @@ fn interrupted_mid_grab_installs_wait_without_executing_the_dropped_body() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::{CascadeFlags, SequenceElement};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let body = engine.add_test_entity(make_test_soldier(Posture::Tied));
@@ -373,7 +372,7 @@ fn interrupted_mid_grab_installs_wait_without_executing_the_dropped_body() {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
             sound_ids: vec![0],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[tied as usize] = 0;
         let body_entity = engine.get_entity_mut(body).unwrap();
         body_entity.element_data_mut().sprite = crate::sprite::Sprite::new(
@@ -961,7 +960,7 @@ fn add_pay_facing_actors(engine: &mut EngineInner) -> (EntityId, EntityId) {
     use crate::campaign::CampaignValue;
     use crate::element::{Entity, Posture};
     use crate::order::OrderType;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let pc = engine.add_test_entity(make_test_pc(Posture::Upright));
     let beggar = engine.add_test_entity(make_test_civilian(Posture::Upright));
@@ -998,7 +997,7 @@ fn add_pay_facing_actors(engine: &mut EngineInner) -> (EntityId, EntityId) {
             sound_ids: vec![0; 3],
         })
         .collect();
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::Paying as usize] = 0;
     engine.get_entity_mut(pc).unwrap().element_data_mut().sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(scripts),
@@ -1529,13 +1528,12 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
         .position_iface_mut()
         .set_direction(crate::position_interface::Direction::from_raw(1));
     engine.set_actors_frozen(true);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     {
         use crate::sprite::Sprite;
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use crate::sprite_script::SpriteScript;
         use std::sync::Arc;
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[crate::element::Animation::ObjectFlying as usize] = 16;
         let script = SpriteScript {
             action_id: crate::element::Animation::ObjectFlying as u16,
@@ -1638,7 +1636,7 @@ fn leave_listen_postpone_fixture() -> LeaveListenFixture {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
@@ -1662,7 +1660,7 @@ fn leave_listen_postpone_fixture() -> LeaveListenFixture {
             sound_ids: vec![0; 3],
         })
         .collect::<Vec<_>>();
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     for (row, order_type) in order_types.into_iter().enumerate() {
         conversion[order_type as usize] = row as u16;
     }
@@ -2262,7 +2260,7 @@ fn post_initialize_waits_for_post_refresh_stage() {
     };
     let startup = ClassEntry {
         source_file: "post_initialize_ordering_test.scs".into(),
-        class_name: "StartUp".into(),
+        class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
         size_of_member_variables: 0,
         member_variables: Vec::new(),
         functions: vec![Function {

@@ -580,7 +580,7 @@ fn minimal_mission() -> crate::engine::MissionScript {
         version: SCB_VERSION,
         classes: vec![ClassEntry {
             source_file: "refresh_seek_test.scs".into(),
-            class_name: "StartUp".into(),
+            class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
             size_of_member_variables: 0,
             member_variables: Vec::new(),
             functions: vec![Function {
@@ -1012,7 +1012,6 @@ fn resolve_stop_npc_seek_with_target_at(
 ) -> (crate::ai::AiState, crate::ai::Substate) {
     let sim = crate::sim_rng::test_context();
     let mut engine = crate::engine::EngineInner::new();
-    let mut assets = LevelAssets::new();
     let mut owner_entity = test_pc_at(0.0, 0.0, 1);
     owner_entity
         .element_data_mut()
@@ -1025,7 +1024,7 @@ fn resolve_stop_npc_seek_with_target_at(
     owner_entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
     let owner = engine.add_test_entity(owner_entity);
     let target = engine.add_test_entity(test_moving_soldier_at(target_position));
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let _ = engine.resolve_entity_seek(
         &sim,

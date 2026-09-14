@@ -572,17 +572,14 @@ impl EngineInner {
         // increment computation. Rust rewrites targets in place here;
         // reroll the id for any changed target to preserve that
         // motion-processing invariant.
-        if let Some(elem) = self
-            .orders
-            .sequence_manager
-            .get_element_mut(seq_id, elem_idx)
+        if let Some((elem, next_order_id)) =
+            self.orders.element_with_order_ids_mut(seq_id, elem_idx)
         {
             // Skip any non-walking orders at the front (startup
             // transition or end transition — their geometry is not
             // part of the drunken-rewrite path).  Replace subsequent
             // walking orders' targets with the deviated waypoints.
             let mut dev_iter = deviated.iter();
-            let next_order_id = &mut self.orders.next_order_id;
             for order in elem.orders.iter_mut() {
                 if matches!(
                     order.order_type,
@@ -761,11 +758,7 @@ impl EngineInner {
             animation_end.and_then(|anim| self.sprite_distance_for_animation(owner, anim));
 
         // ── Apply transitions in order ──────────────────────────
-        let next_order_id = &mut self.orders.next_order_id;
-        let Some(elem) = self
-            .orders
-            .sequence_manager
-            .get_element_mut(seq_id, elem_idx)
+        let Some((elem, next_order_id)) = self.orders.element_with_order_ids_mut(seq_id, elem_idx)
         else {
             return false;
         };

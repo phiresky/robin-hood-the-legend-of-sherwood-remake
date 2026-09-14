@@ -75,6 +75,46 @@ impl TestActor {
         self
     }
 
+    /// `set_position(pos)` only; the map position keeps its default.
+    pub(crate) fn position(mut self, pos: crate::coordinates::WorldPoint3D) -> Self {
+        self.entity.element_data_mut().set_position(pos);
+        self
+    }
+
+    /// `set_sector_topology(sector, sector.arena_index())`.
+    pub(crate) fn sector_topology(
+        mut self,
+        sector: Option<crate::position_interface::SectorHandle>,
+    ) -> Self {
+        self.entity
+            .element_data_mut()
+            .set_sector_topology(sector, sector.and_then(|sector| sector.arena_index()));
+        self
+    }
+
+    pub(crate) fn script_class(mut self, script_class: &str) -> Self {
+        self.actor_mut().script_class = script_class.into();
+        self
+    }
+
+    /// Campaign-description slot of a PC; the campaign's character table
+    /// must hold a matching entry.
+    pub(crate) fn campaign_description(mut self, index: u32) -> Self {
+        self.pc_mut().pc.campaign_description_index = Some(index);
+        self
+    }
+
+    pub(crate) fn robin(mut self, robin: bool) -> Self {
+        self.pc_mut().pc.robin = robin;
+        self
+    }
+
+    /// `set_position_map(pos)` only; the world position keeps its default.
+    pub(crate) fn map_position(mut self, pos: crate::coordinates::MapPoint) -> Self {
+        self.entity.element_data_mut().set_position_map(pos);
+        self
+    }
+
     pub(crate) fn sector(mut self, sector: u16) -> Self {
         self.entity
             .element_data_mut()
@@ -143,6 +183,13 @@ impl TestActor {
             Entity::Pc(pc) => &mut pc.actor,
             other => unreachable!("TestActor holds only soldiers and PCs, got {other:?}"),
         }
+    }
+
+    fn pc_mut(&mut self) -> &mut crate::element::ActorPc {
+        let Entity::Pc(pc) = &mut self.entity else {
+            panic!("PC-only setter on a non-PC TestActor");
+        };
+        pc
     }
 
     fn soldier_mut(&mut self) -> &mut crate::element::ActorSoldier {

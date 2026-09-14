@@ -26,6 +26,7 @@ use crate::element::{
     Entity, EntityId, HumanData, NpcData, ObjectData, ObjectType, Posture,
 };
 use crate::engine::EngineInner;
+use crate::engine::test_support::actors::TestActor;
 use crate::engine::test_support::asm::*;
 use crate::engine::types::{LevelAssets, MissionScript};
 use crate::scb::{ClassEntry, Function, ScbFile};
@@ -183,33 +184,22 @@ fn test_campaign() -> crate::campaign::Campaign {
 }
 
 fn make_pc(robin: bool) -> Entity {
-    let mut entity = crate::engine::test_support::actors::make_test_pc(Posture::Upright);
-    entity.element_data_mut().active = true;
-    entity
-        .element_data_mut()
-        .set_position(WorldPoint3D::default());
-    let pc = entity.pc_data_mut().expect("PC fixture");
-    pc.life_points = 50;
-    pc.robin = robin;
-    pc.profile_index = crate::profiles::CharacterProfileIdx(0);
-    pc.campaign_description_index = Some(0);
-    entity
+    TestActor::pc(Posture::Upright)
+        .position(WorldPoint3D::default())
+        .life_points(50)
+        .robin(robin)
+        .pc_profile(0)
+        .campaign_description(0)
+        .build()
 }
 
 fn make_scripted_soldier(script_class: &str) -> Entity {
-    let mut entity = crate::engine::test_support::actors::make_test_ai_soldier(
-        crate::element::Camp::Lacklandists,
-    );
-    entity.element_data_mut().active = true;
-    entity
-        .actor_data_mut()
-        .expect("script actor fixture")
-        .script_class = script_class.into();
-    entity
-        .npc_data_mut()
-        .expect("script soldier fixture")
-        .life_points = 50;
-    entity
+    TestActor::soldier(Posture::Upright)
+        .camp(crate::element::Camp::Lacklandists)
+        .enemy_ai(Default::default())
+        .script_class(script_class)
+        .life_points(50)
+        .build()
 }
 
 /// Returns the engine plus the actor script handles for: robin PC, a
@@ -318,9 +308,8 @@ fn filter_allows_when_actor_has_no_filter_override() {
 #[test]
 fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() {
     let sim = crate::sim_rng::test_context();
-    let mut assets = LevelAssets::new();
     let (mut engine, _, _, _) = build_engine();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let actor = engine
         .world
         .entities
@@ -400,11 +389,10 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
 #[test]
 fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
     let sim = crate::sim_rng::test_context();
-    let mut assets = LevelAssets::new();
     let (mut engine, _, _, _) = build_engine();
     let member = engine.add_test_entity(make_scripted_civilian(""));
     let member_at_post = engine.add_test_entity(make_scripted_soldier(""));
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let chief = engine
         .world
         .entities
@@ -595,12 +583,11 @@ fn remove_all_subordinates_rereads_roster_after_member_state_callback() {
 #[test]
 fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate() {
     let sim = crate::sim_rng::test_context();
-    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let old_chief = engine.add_test_entity(make_scripted_soldier(""));
     let new_chief = engine.add_test_entity(make_scripted_soldier(""));
     let old_member = engine.add_test_entity(make_scripted_soldier(""));
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     engine
         .get_entity_mut(old_chief)
@@ -622,7 +609,7 @@ fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate()
     let new_chief_handle = crate::natives::ScriptHandleCodec::actor_handle(new_chief);
     let startup = ClassEntry {
         source_file: "remove_then_add_test.scs".into(),
-        class_name: "StartUp".into(),
+        class_name: STARTUP_CLASS.into(),
         size_of_member_variables: 0,
         member_variables: Vec::new(),
         functions: vec![Function {
@@ -872,8 +859,7 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         ai.base.current_substate = Substate::DefaultOnPost;
     }
 
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.attach_script_bindings(&assets);
     let mission = engine
         .scripts
@@ -1727,14 +1713,7 @@ fn build_action_change_scb(target_handle: i32, observer_handle: i32) -> ScbFile 
     ScbFile {
         version: crate::scb::SCB_VERSION,
         classes: vec![
-            ClassEntry {
-                source_file: "action_change_test.scs".into(),
-                class_name: "StartUp".into(),
-                size_of_member_variables: 0,
-                member_variables: vec![],
-                functions: vec![],
-                quads: vec![],
-            },
+            empty_startup_class("action_change_test.scs".into()),
             action_change_class(
                 "PostureMutator",
                 2,
@@ -1827,8 +1806,7 @@ fn bind_test_actor_animations(
     actions: &[crate::order::OrderType],
 ) {
     let mut scripts = Vec::new();
-    let mut conversion =
-        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     for &action in actions {
         conversion[action as usize] = scripts.len() as u16;
         let script = crate::sprite_script::SpriteScript {
@@ -2530,14 +2508,7 @@ fn per_actor_wait_initialization_does_not_publish_later_wait_to_earlier_callback
         MissionScript::from_scb(ScbFile {
             version: crate::scb::SCB_VERSION,
             classes: vec![
-                ClassEntry {
-                    source_file: "wait_isolation_test.scs".into(),
-                    class_name: "StartUp".into(),
-                    size_of_member_variables: 0,
-                    member_variables: vec![],
-                    functions: vec![],
-                    quads: vec![],
-                },
+                empty_startup_class("wait_isolation_test.scs".into()),
                 action_change_class("WaitProbe", 4, body),
             ],
         })
@@ -4094,8 +4065,7 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
     }
     engine.control.frame_counter = 42;
     engine.set_actors_frozen(true);
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
 
@@ -4644,8 +4614,7 @@ fn waking_up_creation_order_engine(
         sprite.action_done_frame = 1;
         sprite.action_done_counter = 0;
     }
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     // The target starts unconscious, so the shared fixture skips its combat
     // attachments — but it wakes up mid-test and then needs a live HtH
     // weapon profile for its fighter snapshot.
@@ -5213,14 +5182,7 @@ fn post_filter_panic_class(class_name: &str) -> ClassEntry {
 }
 
 fn state_change_scb(classes: Vec<ClassEntry>) -> ScbFile {
-    let mut all = vec![ClassEntry {
-        source_file: "state_change_test.scs".into(),
-        class_name: "StartUp".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
-        functions: vec![],
-        quads: vec![],
-    }];
+    let mut all = vec![empty_startup_class("state_change_test.scs".into())];
     all.extend(classes);
     ScbFile {
         version: crate::scb::SCB_VERSION,
@@ -7188,8 +7150,7 @@ fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move(
 
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_scripted_soldier(""));
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     assets.navigation.hiking_paths = std::sync::Arc::new(vec![RawHikingPath {
         waypoints: vec![
             RawWaypoint {
@@ -7283,8 +7244,7 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_scripted_soldier("Arrival"));
     let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     assets.navigation.hiking_paths = std::sync::Arc::new(vec![RawHikingPath {
         waypoints: vec![RawWaypoint {
             x: 0,
@@ -7322,14 +7282,7 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
         MissionScript::from_scb(ScbFile {
             version: crate::scb::SCB_VERSION,
             classes: vec![
-                ClassEntry {
-                    source_file: "arrival.scs".into(),
-                    class_name: "StartUp".into(),
-                    size_of_member_variables: 0,
-                    member_variables: vec![],
-                    functions: vec![],
-                    quads: vec![],
-                },
+                empty_startup_class("arrival.scs".into()),
                 ClassEntry {
                     source_file: "arrival.scs".into(),
                     class_name: "Arrival".into(),

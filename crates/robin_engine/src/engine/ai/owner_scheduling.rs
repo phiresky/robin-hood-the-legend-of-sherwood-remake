@@ -384,11 +384,7 @@ impl EngineInner {
             member.soldier_data().is_some_and(|soldier| soldier.rider),
             member_element.direction(),
             self.entity_data_in_building_sector(member_element),
-            crate::sight_obstacle::ObstacleList {
-                static_obstacles: &assets.environment.static_sight_obstacles,
-                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                static_active: &self.world.static_sight_obstacle_active,
-            },
+            self.world.sight_obstacles(assets),
         )
     }
 

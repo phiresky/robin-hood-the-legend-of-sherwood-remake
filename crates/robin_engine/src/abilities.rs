@@ -3564,7 +3564,7 @@ mod tests {
     };
     use crate::sequence::SequenceElement;
     use crate::sight_obstacle::ObstacleList;
-    use crate::sprite_script::{SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     fn carry_profiles() -> crate::profiles::ProfileManager {
         let mut profiles = crate::profiles::ProfileManager::default();
@@ -3858,8 +3858,7 @@ mod tests {
         ));
         body.element
             .set_material(crate::element::GameMaterial::Wood);
-        let mut conversion =
-            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::BeingCarriedPeasantC as usize] = 100;
         body.element.sprite.conversion = std::sync::Arc::new(conversion);
         let mut scripts = vec![crate::sprite_script::SpriteScript::default(); 116];
@@ -4232,7 +4231,7 @@ mod tests {
             sound_ids: vec![0; 4],
             ..SpriteScript::default()
         };
-        let mut conversion = vec![UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::Tying as usize] = 0;
 
         let mut owner_element = {
@@ -5007,8 +5006,7 @@ mod tests {
             .element
             .set_position_map(MapPoint::new(80.0, 90.0));
         carrier_entity.element.set_direction_instantly(9);
-        let mut carrier_conversion =
-            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        let mut carrier_conversion = crate::engine::test_support::unmapped_conversion();
         carrier_conversion[OrderType::TransitionWaitingUprightCarryingCorpse as usize] = 0;
         carrier_entity.element.sprite.conversion = std::sync::Arc::new(carrier_conversion);
         let mut carrier_scripts = vec![crate::sprite_script::SpriteScript::default(); 16];
@@ -5035,8 +5033,7 @@ mod tests {
             .element
             .set_position_map(MapPoint::new(10.0, 20.0));
         target_entity.element.set_direction_instantly(4);
-        let mut conversion =
-            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::BeingLiftedPeasantC as usize] = 100;
         target_entity.element.sprite.conversion = std::sync::Arc::new(conversion);
         target_entity.element.sprite.scripts =
@@ -5386,8 +5383,7 @@ mod tests {
         helper.element.sprite.current_row = 777;
         helper.element.sprite.current_frame = 0;
         helper.element.sprite.frame_count = u16::MAX;
-        let mut helper_conversion =
-            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        let mut helper_conversion = crate::engine::test_support::unmapped_conversion();
         helper_conversion[OrderType::TransitionHelpingClimbingUp as usize] = 100;
         helper.element.sprite.conversion = std::sync::Arc::new(helper_conversion);
         let mut helper_scripts = vec![crate::sprite_script::SpriteScript::default(); 116];

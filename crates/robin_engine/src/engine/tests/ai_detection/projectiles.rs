@@ -59,8 +59,7 @@ fn later_npc_hears_the_pc_noise_from_its_completed_creation_slot() {
         ..Detectable::default()
     });
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     crate::sim_rng::with_seed(0xA013_0016, |sim| {
         engine.tick_actor_owner_envelopes(sim, &assets)
@@ -107,8 +106,7 @@ fn arrow_reaction_with_null_interesting_object_clears_stale_look_there_focus() {
         assert_eq!(receiver.enemy_ai().unwrap().base.interesting_object, None);
     }
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     crate::sim_rng::with_seed(0xA013_1091, |sim| {
         engine.execute_ai_callback(
             sim,

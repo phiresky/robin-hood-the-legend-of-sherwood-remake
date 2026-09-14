@@ -2878,14 +2878,9 @@ fn scripted_snapshot_fixture() -> (
 ) {
     let scb = crate::scb::ScbFile {
         version: crate::scb::SCB_VERSION,
-        classes: vec![crate::scb::ClassEntry {
-            source_file: "snapshot_attachment_test.scs".to_owned(),
-            class_name: "StartUp".to_owned(),
-            size_of_member_variables: 0,
-            member_variables: Vec::new(),
-            functions: Vec::new(),
-            quads: Vec::new(),
-        }],
+        classes: vec![crate::engine::test_support::asm::empty_startup_class(
+            "snapshot_attachment_test.scs".to_owned(),
+        )],
     };
     let program = std::sync::Arc::new(
         crate::script_manager::ScriptProgram::from_scb(scb).expect("prepare test bytecode"),

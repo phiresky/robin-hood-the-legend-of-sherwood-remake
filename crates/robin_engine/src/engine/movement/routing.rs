@@ -986,7 +986,7 @@ mod exact_ai_goto_source_tests {
             version: crate::scb::SCB_VERSION,
             classes: vec![ClassEntry {
                 source_file: "queued_goto_door_test.scs".into(),
-                class_name: "StartUp".into(),
+                class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
                 size_of_member_variables: 0,
                 member_variables: Vec::new(),
                 functions: vec![Function {
