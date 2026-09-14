@@ -43,9 +43,110 @@
 use anyhow::{Result, anyhow};
 use smallvec::SmallVec;
 
-/// Context maps are on the per-tile hot path; foldhash beats SipHash by a
-/// wide margin here and lookup-only use never depends on iteration order.
-type HashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomState>;
+/// Order-2 context map on the per-tile hot path: 32-bit key -> [`Ctx`].
+///
+/// Open addressing with linear probing over compact 8-byte `(key, index)`
+/// slots (load factor <= 1/2), pointing into an append-only context arena.
+/// Compared with the previous foldhash `HashMap<u32, Ctx>`:
+/// - a probe touches one small slot instead of a ~64-byte bucket, and the
+///   hash is a single multiply (wasm has no SSE group probing to lean on);
+/// - growth rehashes only the slots — contexts never move, so there is no
+///   `reserve_rehash` churn over large `Ctx` values;
+/// - there is no per-lookup `entry` machinery.
+///
+/// Iteration order is never observed and contexts are addressed only by
+/// key, so the coded bitstream is independent of the table layout.
+struct CtxTable {
+    slots: Vec<CtxSlot>,
+    ctxs: Vec<Ctx>,
+}
+
+#[derive(Clone, Copy)]
+struct CtxSlot {
+    key: u32,
+    /// Arena index, or [`CtxSlot::EMPTY`].
+    index: u32,
+}
+
+impl CtxSlot {
+    const EMPTY: u32 = u32::MAX;
+}
+
+impl CtxTable {
+    fn with_capacity(contexts: usize) -> Self {
+        let slots = (contexts.max(8) * 2).next_power_of_two();
+        Self {
+            slots: vec![
+                CtxSlot {
+                    key: 0,
+                    index: CtxSlot::EMPTY,
+                };
+                slots
+            ],
+            ctxs: Vec::with_capacity(contexts),
+        }
+    }
+
+    #[inline(always)]
+    fn home(key: u32, mask: usize) -> usize {
+        // Fibonacci hashing: the high half of a 64-bit multiply mixes both
+        // key halves (primary << 16 | second) into the probed bits.
+        ((u64::from(key).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize) & mask
+    }
+
+    /// The context for `key`, inserting an empty one on first use.
+    #[inline(always)]
+    fn get_or_insert(&mut self, key: u32) -> &mut Ctx {
+        let mask = self.slots.len() - 1;
+        let mut i = Self::home(key, mask);
+        let index = loop {
+            let slot = self.slots[i];
+            if slot.index == CtxSlot::EMPTY {
+                break self.insert_at(i, key);
+            }
+            if slot.key == key {
+                break slot.index as usize;
+            }
+            i = (i + 1) & mask;
+        };
+        &mut self.ctxs[index]
+    }
+
+    #[inline(never)]
+    fn insert_at(&mut self, slot: usize, key: u32) -> usize {
+        let index = self.ctxs.len();
+        assert!(index < CtxSlot::EMPTY as usize, "context arena overflow");
+        self.ctxs.push(Ctx::default());
+        self.slots[slot] = CtxSlot {
+            key,
+            index: index as u32,
+        };
+        if self.ctxs.len() * 2 > self.slots.len() {
+            self.grow();
+        }
+        index
+    }
+
+    fn grow(&mut self) {
+        let new_len = self.slots.len() * 2;
+        let mask = new_len - 1;
+        let mut slots = vec![
+            CtxSlot {
+                key: 0,
+                index: CtxSlot::EMPTY,
+            };
+            new_len
+        ];
+        for slot in self.slots.iter().filter(|s| s.index != CtxSlot::EMPTY) {
+            let mut i = Self::home(slot.key, mask);
+            while slots[i].index != CtxSlot::EMPTY {
+                i = (i + 1) & mask;
+            }
+            slots[i] = *slot;
+        }
+        self.slots = slots;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Range coder (LZMA-style, 32-bit range, byte renormalisation)
@@ -1093,16 +1194,16 @@ struct Model {
     /// diagonal / the variant's left) was measured a wash: ±1% per
     /// character, extra memory and time — PPMC escape costs cancel the
     /// sharper predictions.
-    c2: HashMap<u32, Ctx>,
+    c2: CtxTable,
     /// Two-predecessor level for family members with two already-decoded
     /// siblings: (base1-tile, base2-tile). Its See statistics live at index
     /// 4 so the established levels keep their indices (and single-base
     /// bitstreams stay byte-identical).
-    c2pair: HashMap<u32, Ctx>,
+    c2pair: CtxTable,
     /// Auxiliary-reference level for standalone sprites with an aligned
     /// previously-decoded reference (temporal predecessor or adjacent
     /// direction): (aux-tile, above). See slot [`SEE_LEVEL_AUX`].
-    c2aux: HashMap<u32, Ctx>,
+    c2aux: CtxTable,
     /// primary alone (the stronger single predictor).
     c1: Vec<Ctx>,
     /// second alone.
@@ -1119,18 +1220,12 @@ impl Model {
             // Pre-size the context maps: models routinely end with tens of
             // thousands of order-2 contexts, and growing there from empty
             // shows up as rehash churn in decode profiles.
-            c2: HashMap::with_capacity_and_hasher(1 << 15, Default::default()),
+            c2: CtxTable::with_capacity(1 << 15),
             // Reserve only model levels this stream can visit. An unused
             // order-2 map otherwise allocates thousands of empty contexts
             // for every chunk, including chunks decoding concurrently.
-            c2pair: HashMap::with_capacity_and_hasher(
-                if has_pair { 1 << 14 } else { 0 },
-                Default::default(),
-            ),
-            c2aux: HashMap::with_capacity_and_hasher(
-                if has_aux { 1 << 14 } else { 0 },
-                Default::default(),
-            ),
+            c2pair: CtxTable::with_capacity(if has_pair { 1 << 14 } else { 0 }),
+            c2aux: CtxTable::with_capacity(if has_aux { 1 << 14 } else { 0 }),
             // Order-1 contexts are direct-indexed by symbol (last slot =
             // EDGE): no hashing on the per-tile hot path.
             c1: (0..=alphabet as usize).map(|_| Ctx::default()).collect(),
@@ -1153,7 +1248,7 @@ impl Model {
         // to the escape material that actually reaches them, and the update
         // cost drops from four context touches per tile to ~1.3.
         for (level, ctx) in [
-            self.c2.entry(key2).or_default(),
+            self.c2.get_or_insert(key2),
             &mut self.c1[(primary as usize).min(alphabet as usize)],
             &mut self.c1b[(second as usize).min(alphabet as usize)],
             &mut self.c0,
@@ -1194,8 +1289,8 @@ impl Model {
         let excl = &mut self.excl;
         let see = &mut self.see;
         for (level, ctx) in [
-            (SEE_LEVEL_PAIR2, self.c2pair.entry(key_pair).or_default()),
-            (0, self.c2.entry(key2).or_default()),
+            (SEE_LEVEL_PAIR2, self.c2pair.get_or_insert(key_pair)),
+            (0, self.c2.get_or_insert(key2)),
             (1, &mut self.c1[(b1 as usize).min(alphabet as usize)]),
             (2, &mut self.c1b[(above as usize).min(alphabet as usize)]),
             (3, &mut self.c0),
@@ -1236,12 +1331,8 @@ impl Model {
         // reference is strong exactly where it exists (43-68% identity), and
         // ordering it after (above,left) measured worse (Knight01 +2.3%).
         for (skip, level, ctx) in [
-            (
-                skip_aux,
-                SEE_LEVEL_AUX,
-                self.c2aux.entry(key_aux).or_default(),
-            ),
-            (false, 0, self.c2.entry(key2).or_default()),
+            (skip_aux, SEE_LEVEL_AUX, self.c2aux.get_or_insert(key_aux)),
+            (false, 0, self.c2.get_or_insert(key2)),
             (
                 false,
                 1,
@@ -1292,7 +1383,7 @@ impl Model {
         let mut aux_ctx: Option<&mut Ctx> = if skip_aux {
             None
         } else {
-            Some(self.c2aux.entry(key_aux).or_default())
+            Some(self.c2aux.get_or_insert(key_aux))
         };
         if let Some(ctx) = aux_ctx.as_deref_mut()
             && let LevelCode::Hit(i, s) = decode_level(ctx, SEE_LEVEL_AUX, dec, see, excl)
@@ -1303,7 +1394,7 @@ impl Model {
             return s;
         }
         let mut chain: [&mut Ctx; 4] = [
-            self.c2.entry(key2).or_default(),
+            self.c2.get_or_insert(key2),
             &mut self.c1[(above as usize).min(alphabet as usize)],
             &mut self.c1b[(left as usize).min(alphabet as usize)],
             &mut self.c0,
@@ -1343,7 +1434,7 @@ impl Model {
         self.excl.begin();
         let excl = &mut self.excl;
         let see = &mut self.see;
-        let pair_ctx = self.c2pair.entry(key_pair).or_default();
+        let pair_ctx = self.c2pair.get_or_insert(key_pair);
         if let LevelCode::Hit(i, s) = decode_level(pair_ctx, SEE_LEVEL_PAIR2, dec, see, excl) {
             // Hot exit: the (b1, b2) level resolves most pair-coded tiles
             // without touching the rest of the chain or its hash entry.
@@ -1351,7 +1442,7 @@ impl Model {
             return s;
         }
         let mut chain: [&mut Ctx; 4] = [
-            self.c2.entry(key2).or_default(),
+            self.c2.get_or_insert(key2),
             &mut self.c1[(b1 as usize).min(alphabet as usize)],
             &mut self.c1b[(above as usize).min(alphabet as usize)],
             &mut self.c0,
@@ -1395,7 +1486,7 @@ impl Model {
         // and a miss proves absence (see [`LevelCode`]), so no learning
         // step ever rescans a symbol list.
         let mut chain: [&mut Ctx; 4] = [
-            self.c2.entry(key2).or_default(),
+            self.c2.get_or_insert(key2),
             &mut self.c1[(primary as usize).min(alphabet as usize)],
             &mut self.c1b[(second as usize).min(alphabet as usize)],
             &mut self.c0,
