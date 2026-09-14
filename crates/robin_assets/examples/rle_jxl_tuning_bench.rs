@@ -190,6 +190,68 @@ mod native {
         Ok(())
     }
 
+    fn write_png(path: &Path, w: usize, h: usize, channels: usize, px: &[u8]) -> Result<()> {
+        let mut enc = png::Encoder::new(
+            std::io::BufWriter::new(std::fs::File::create(path)?),
+            w as u32,
+            h as u32,
+        );
+        enc.set_color(match channels {
+            3 => png::ColorType::Rgb,
+            4 => png::ColorType::Rgba,
+            other => bail!("unsupported channel count {other}"),
+        });
+        enc.set_depth(png::BitDepth::Eight);
+        let mut writer = enc.write_header()?;
+        writer.write_image_data(px)?;
+        writer.finish()?;
+        Ok(())
+    }
+
+    /// Sixteen `.map` -> RGB888 PNG, the exact pixels `convert_datadir`'s
+    /// `picture_to_rgb888` hands cjxl for terrain (RGB565 bit replication).
+    pub fn map2png(map: &Path, out: &Path) -> Result<()> {
+        use robin_assets::picture::{Picture, PixelFormat};
+        let mut file = robin_data_io::sbfile::SbFile::open(&map.to_string_lossy())
+            .map_err(|e| anyhow::anyhow!("open {}: {e}", map.display()))?;
+        let pic = Picture::load_sixteen_from_stream(&mut file)
+            .with_context(|| format!("decode {}", map.display()))?;
+        anyhow::ensure!(
+            pic.pixel_format == PixelFormat::Rgb16,
+            "{}: expected an Rgb16 terrain picture, got {:?}",
+            map.display(),
+            pic.pixel_format
+        );
+        let (w, h) = (usize::from(pic.width), usize::from(pic.height));
+        let pitch = if pic.pitch == 0 {
+            w * 2
+        } else {
+            usize::from(pic.pitch)
+        };
+        anyhow::ensure!(pitch >= w * 2, "pitch shorter than a row");
+        anyhow::ensure!(
+            h == 0 || pic.data.len() >= (h - 1) * pitch + w * 2,
+            "picture data truncated"
+        );
+        let mut rgb = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let o = y * pitch + x * 2;
+                let word = u16::from_le_bytes([pic.data[o], pic.data[o + 1]]);
+                rgb.extend(robin_assets::rle_jxl::expand565(word));
+            }
+        }
+        write_png(out, w, h, 3, &rgb)?;
+        println!("{} {w}x{h}", out.display());
+        Ok(())
+    }
+
+    /// Decode with jxl-rs (the runtime decoder) and write the result as PNG.
+    pub fn jxl2png(jxl: &Path, out: &Path) -> Result<()> {
+        let (w, h, channels, px) = decode_jxl(&std::fs::read(jxl)?)?;
+        write_png(out, w, h, channels, &px)
+    }
+
     fn read_png(path: &Path) -> Result<(usize, usize, usize, Vec<u8>)> {
         let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path)?));
         let mut reader = decoder.read_info()?;
@@ -295,8 +357,13 @@ fn main() -> Result<()> {
         Some("extract") => native::extract(Path::new(&args[2]), &args[3], Path::new(&args[4])),
         #[cfg(all(not(target_arch = "wasm32"), feature = "engine-adapters"))]
         Some("score") => native::score(Path::new(&args[2]), Path::new(&args[3])),
+        #[cfg(all(not(target_arch = "wasm32"), feature = "engine-adapters"))]
+        Some("map2png") => native::map2png(Path::new(&args[2]), Path::new(&args[3])),
+        #[cfg(all(not(target_arch = "wasm32"), feature = "engine-adapters"))]
+        Some("jxl2png") => native::jxl2png(Path::new(&args[2]), Path::new(&args[3])),
         _ => bail!(
-            "usage: extract <Data> <mission> <out> | time <dir> [repeats] | score <src> <cand>"
+            "usage: extract <Data> <mission> <out> | time <dir> [repeats] | score <src> <cand> \
+             | map2png <map> <out.png> | jxl2png <in.jxl> <out.png>"
         ),
     }
 }

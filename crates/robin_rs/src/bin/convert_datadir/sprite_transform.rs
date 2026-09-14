@@ -84,13 +84,26 @@ const RLE_JXL_MAX_ATLAS_PIXELS: usize = 4 << 20;
 /// this floor also guarantees the per-chunk aggregate floor that
 /// `sprite_compression_probe --verify-shipping` enforces.
 const RLE_JXL_MIN_SPRITE_PSNR_DB: f64 = 24.0;
-/// cjxl `--faster_decoding` level for RLE sprite JXL. Measured on the Demo
-/// Dem_Lei_MP atlases (75 images, cjxl 0.12 q80 e7): level 2 cut jxl-rs
-/// decode by roughly a third natively and nearly half on serial wasm for
-/// +2.7% bytes at unchanged opaque-pixel PSNR; level 3 is faster still but
-/// +4.3% bytes. Only the lossy colour channels are affected — alpha stays
+/// Decode-speed encoder settings for RLE sprite JXL: cjxl
+/// `--faster_decoding=2 --epf=0`. Measured on the Demo Dem_Lei_MP atlases
+/// (75 images, cjxl 0.12 q80 e7, quiet 12-core machine, best of 3 passes):
+///
+/// | setting        | bytes  | jxl-rs native serial | serial wasm | PSNR565 |
+/// |----------------|--------|----------------------|-------------|---------|
+/// | default        | 836 KB | 459 ms               | 690 ms      | 29.63   |
+/// | fd2            | +2.7%  | -33%                 | -33%        | 29.62   |
+/// | fd2 + epf0     | +1.1%  | -41%                 | -43%        | 29.58   |
+/// | fd3            | +4.3%  | -50%                 | -50%        | 29.58   |
+///
+/// The edge-preserving filter is a decoder-side smoothing pass (jxl-rs skips
+/// its render stage when the frame header disables it); on this pixel art it
+/// buys almost nothing, and without it the encoder also spends fewer bytes.
+/// Only the lossy colour channels are affected: alpha stays
 /// `--alpha_distance=0` exact, and `member_quality` still gates every sprite.
-const RLE_JXL_FASTER_DECODING: u8 = 2;
+const RLE_JXL_DECODE_SPEED: JxlDecodeSpeed = JxlDecodeSpeed {
+    faster_decoding: 2,
+    epf: Some(0),
+};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(super) struct RleJxlChunkStats {
@@ -455,7 +468,7 @@ pub(super) fn build_rle_jxl_chunk(
                     png::ColorType::Rgba,
                     Some(quality),
                     7,
-                    RLE_JXL_FASTER_DECODING,
+                    RLE_JXL_DECODE_SPEED,
                 )
                 .with_context(|| format!("cjxl atlas for {rel}"))?;
                 let (dec_w, _dec_h, decoded) = rle_jxl::decode_jxl_rgba8(&jxl)
@@ -525,7 +538,7 @@ pub(super) fn build_rle_jxl_chunk(
             png::ColorType::Rgba,
             Some(quality),
             7,
-            RLE_JXL_FASTER_DECODING,
+            RLE_JXL_DECODE_SPEED,
         )
         .with_context(|| format!("cjxl sprite {id} of {rel}"))?;
         let (dec_w, _dec_h, decoded) = rle_jxl::decode_jxl_rgba8(&jxl)

@@ -341,15 +341,29 @@ pub(super) fn transcode_pixels_to_jxl(
         color,
         quality,
         effort,
-        0,
+        JxlDecodeSpeed::DEFAULT,
     )
+}
+
+/// Encoder options that trade bytes for decoder speed. `DEFAULT` passes no
+/// flags at all, so recipes that do not opt in stay byte-identical.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct JxlDecodeSpeed {
+    /// cjxl `--faster_decoding` level; 0 = cjxl default (flag omitted).
+    pub(super) faster_decoding: u8,
+    /// cjxl `--epf` strength; `None` = encoder chooses (flag omitted).
+    pub(super) epf: Option<u8>,
+}
+
+impl JxlDecodeSpeed {
+    pub(super) const DEFAULT: Self = Self {
+        faster_decoding: 0,
+        epf: None,
+    };
 }
 
 /// Dimension-explicit form of [`transcode_pixels_to_jxl`]; the RLE sprite
 /// atlas path has no `Picture` to borrow dims from.
-///
-/// `faster_decoding` is cjxl's `--faster_decoding` level (0 = cjxl default,
-/// flag omitted so output stays byte-identical to earlier recipes).
 pub(super) fn encode_pixels_to_jxl(
     width: u32,
     height: u32,
@@ -357,7 +371,7 @@ pub(super) fn encode_pixels_to_jxl(
     color: png::ColorType,
     quality: Option<u8>,
     effort: u8,
-    faster_decoding: u8,
+    decode_speed: JxlDecodeSpeed,
 ) -> Result<Vec<u8>> {
     use std::io::Write as _;
     use std::process::Stdio;
@@ -384,8 +398,14 @@ pub(super) fn encode_pixels_to_jxl(
     } else {
         cmd.args(["-d", "0", "--modular=1", "-e", &effort]);
     }
-    if faster_decoding > 0 {
-        cmd.arg(format!("--faster_decoding={faster_decoding}"));
+    if decode_speed.faster_decoding > 0 {
+        cmd.arg(format!(
+            "--faster_decoding={}",
+            decode_speed.faster_decoding
+        ));
+    }
+    if let Some(epf) = decode_speed.epf {
+        cmd.arg(format!("--epf={epf}"));
     }
     // Input and output last: PNG on stdin, JXL on stdout.
     cmd.args(["-", "-"]);
