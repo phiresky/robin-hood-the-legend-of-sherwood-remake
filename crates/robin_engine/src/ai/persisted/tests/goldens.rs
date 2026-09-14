@@ -64,33 +64,6 @@ where
     );
 }
 
-fn scrub_stimulus(value: &mut Stimulus) {
-    value.self_origin = SelfStimulusOrigin::default();
-}
-
-fn scrub_queued(value: &mut QueuedSelfStimulus) {
-    value.origin = SelfStimulusOrigin::default();
-}
-
-fn scrub_detection(value: &mut AiDetectionOutbox) {
-    value.stimuli.iter_mut().for_each(scrub_stimulus);
-}
-
-fn scrub_reentrant(value: &mut AiReentrantOutbox) {
-    value.engine_drains_after_script_go_on = false;
-    value.self_stimuli.iter_mut().for_each(scrub_queued);
-}
-
-fn scrub_outbox(value: &mut AiOutbox) {
-    scrub_detection(&mut value.detection);
-    scrub_reentrant(&mut value.reentrant);
-}
-
-fn scrub_controller(value: &mut AiController) {
-    value.stimulus_queue.iter_mut().for_each(scrub_stimulus);
-    scrub_outbox(&mut value.outbox);
-}
-
 fn scrubbed<T: Clone>(value: &T, scrub: impl FnOnce(&mut T)) -> T {
     let mut value = value.clone();
     scrub(&mut value);
@@ -100,14 +73,10 @@ fn scrubbed<T: Clone>(value: &T, scrub: impl FnOnce(&mut T)) -> T {
 fn golden_controller() -> AiController {
     AiController {
         last_stimulus_actor: Some(AiEntityHandle::new(3)),
-        last_synced_focus_target: Some(AiEntityHandle::new(0)),
         master: Some(AiEntityHandle::new(11)),
         synchronize_charly: Some(AiEntityHandle::new(0)),
         path_id: PathId::new(4),
-        stimulus_queue: vec![
-            provenance_stimulus(SelfStimulusOrigin::Condolation),
-            Stimulus::new(StimulusType::EventDone),
-        ],
+        stimulus_queue: vec![populated_stimulus(), Stimulus::new(StimulusType::EventDone)],
         panic_center_x: -3.25,
         panic_center_y: f32::MAX,
         ..populated_controller()
@@ -142,9 +111,7 @@ fn golden_enemy() -> EnemyAi {
         ale_reliable_distraction: true,
         soldier_profile_hearing_factor: 0.1,
         my_shooting_point: Some((1, 2)),
-        last_stimulus_dispatched_to_patrol: Some(provenance_stimulus(
-            SelfStimulusOrigin::Condolation,
-        )),
+        last_stimulus_dispatched_to_patrol: Some(populated_stimulus()),
         ..Default::default()
     }
 }
@@ -159,20 +126,10 @@ fn golden_friendly() -> FriendlyAi {
     }
 }
 
-fn golden_reentrant() -> AiReentrantOutbox {
-    populated_outbox().reentrant
-}
-
 #[test]
 fn ai_controller_golden() {
     let live = golden_controller();
-    let expected = scrubbed(&live, scrub_controller);
-    check_golden(
-        "AiController",
-        &live,
-        &expected,
-        golden!("ai_controller.json"),
-    );
+    check_golden("AiController", &live, &live, golden!("ai_controller.json"));
 }
 
 #[test]
@@ -191,76 +148,21 @@ fn ai_global_state_golden() {
 }
 
 #[test]
-fn queued_self_stimulus_golden() {
-    let live = QueuedSelfStimulus::new(
-        StimulusType::EventDone,
-        SelfStimulusOrigin::EngineCompletion,
-    );
-    let expected = scrubbed(&live, scrub_queued);
-    check_golden(
-        "QueuedSelfStimulus",
-        &live,
-        &expected,
-        golden!("queued_self_stimulus.json"),
-    );
-}
-
-#[test]
 fn stimulus_golden() {
-    let live = provenance_stimulus(SelfStimulusOrigin::EngineCompletion);
-    let expected = scrubbed(&live, scrub_stimulus);
-    check_golden("Stimulus", &live, &expected, golden!("stimulus.json"));
-}
-
-#[test]
-fn ai_outbox_golden() {
-    let live = populated_outbox();
-    let expected = scrubbed(&live, scrub_outbox);
-    check_golden("AiOutbox", &live, &expected, golden!("ai_outbox.json"));
-}
-
-#[test]
-fn ai_detection_outbox_golden() {
-    let live = populated_outbox().detection;
-    let expected = scrubbed(&live, scrub_detection);
-    check_golden(
-        "AiDetectionOutbox",
-        &live,
-        &expected,
-        golden!("ai_detection_outbox.json"),
-    );
-}
-
-#[test]
-fn ai_reentrant_outbox_golden() {
-    let live = golden_reentrant();
-    let expected = scrubbed(&live, scrub_reentrant);
-    check_golden(
-        "AiReentrantOutbox",
-        &live,
-        &expected,
-        golden!("ai_reentrant_outbox.json"),
-    );
+    let live = populated_stimulus();
+    check_golden("Stimulus", &live, &live, golden!("stimulus.json"));
 }
 
 #[test]
 fn enemy_ai_golden() {
     let live = golden_enemy();
-    let expected = scrubbed(&live, |value| {
-        scrub_controller(&mut value.base);
-        value
-            .last_stimulus_dispatched_to_patrol
-            .iter_mut()
-            .for_each(scrub_stimulus);
-    });
-    check_golden("EnemyAi", &live, &expected, golden!("enemy_ai.json"));
+    check_golden("EnemyAi", &live, &live, golden!("enemy_ai.json"));
 }
 
 #[test]
 fn friendly_ai_golden() {
     let live = golden_friendly();
-    let expected = scrubbed(&live, |value| scrub_controller(&mut value.base));
-    check_golden("FriendlyAi", &live, &expected, golden!("friendly_ai.json"));
+    check_golden("FriendlyAi", &live, &live, golden!("friendly_ai.json"));
 }
 
 /// Remove `keys` from a golden JSON object and decode the result.
@@ -275,8 +177,6 @@ fn decode_without<T: DeserializeOwned>(json: &str, keys: &[&str]) -> Result<T, s
 
 /// Fields with explicit default policies in the current JSON schema.
 const ENEMY_DEFAULTED_KEYS: &[&str] = &[
-    "pending_sword_strike_consideration",
-    "pending_combat_insult_after_strike_consideration",
     "missed_pc",
     "investigating_distraction",
     "beggar_to_examine",
@@ -292,13 +192,6 @@ fn enemy_ai_missing_defaulted_fields_decode_to_type_defaults() {
     let json = include_str!("goldens/enemy_ai.json");
     let decoded: EnemyAi = decode_without(json, ENEMY_DEFAULTED_KEYS).unwrap();
     let mut expected = golden_enemy();
-    scrub_controller(&mut expected.base);
-    expected
-        .last_stimulus_dispatched_to_patrol
-        .iter_mut()
-        .for_each(scrub_stimulus);
-    expected.pending_sword_strike_consideration = false;
-    expected.pending_combat_insult_after_strike_consideration = false;
     expected.missed_pc = None;
     expected.investigating_distraction = false;
     expected.beggar_to_examine = None;
@@ -319,11 +212,6 @@ fn enemy_ai_missing_defaulted_fields_decode_to_type_defaults() {
 
 #[test]
 fn skipped_scratch_keys_are_absent_and_ignored_on_decode() {
-    let controller = serde_json::to_value(golden_controller()).unwrap();
-    assert!(
-        controller["stimulus_queue"][0].get("self_origin").is_none(),
-        "self_origin must not be persisted"
-    );
     let global = serde_json::to_value(golden_global()).unwrap();
     for key in [
         "primary_target_multiplicity_scratch",
@@ -331,10 +219,4 @@ fn skipped_scratch_keys_are_absent_and_ignored_on_decode() {
     ] {
         assert!(global.get(key).is_none(), "{key} must not be persisted");
     }
-    let reentrant = serde_json::to_value(golden_reentrant()).unwrap();
-    assert!(reentrant.get("engine_drains_after_script_go_on").is_none());
-    assert_eq!(
-        reentrant["self_stimuli"],
-        serde_json::json!(["EventDone", "EventReachPoint"])
-    );
 }

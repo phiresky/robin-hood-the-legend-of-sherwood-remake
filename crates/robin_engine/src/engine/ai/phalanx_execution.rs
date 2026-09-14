@@ -294,7 +294,6 @@ impl EngineInner {
             .expect_enemy_ai_mut(owner, format_args!("abandon phalanx"))
             .phalanx_aborted = true;
         self.execute_battle_decisions(sim, assets, owner);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     fn phalanx_line_accessible(
@@ -353,7 +352,7 @@ impl EngineInner {
             .entities
             .expect_ai_controller_mut(owner, format_args!("phalanx emoticon"))
             .clear_emoticon();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         if let Some(target) = self.select_live_ai_primary_target(owner, PrimaryTargetFlags::empty())
         {
             let target = self.expect_human_id_for_ai_handle(target.get(), "phalanx close threat");
@@ -378,13 +377,8 @@ impl EngineInner {
             self.execute_ai_get_battle_overview(sim, assets, owner, 0);
             return true;
         }
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("phalanx shield update"))
-            .outbox
-            .actor
-            .refresh_shield = true;
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.refresh_retained_shield_obstacle(assets, owner);
+
         // This membership list deliberately survives the callbacks that issue moves.
         let mut members = Vec::new();
         let mut current = owner;
@@ -509,11 +503,8 @@ impl EngineInner {
                 .expect_entity(target, "phalanx shield danger point")
                 .element_data()
                 .position();
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("phalanx shield restoration"))
-                .raise_shield_world(point);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.launch_ai_raise_shield(owner, point);
+
             self.world
                 .entities
                 .expect_ai_controller_mut(owner, format_args!("phalanx shield timer"))
@@ -533,18 +524,10 @@ impl EngineInner {
                     target.x - owner_position.x,
                     target.y - owner_position.y,
                 ) as u16;
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("phalanx facing"))
-                    .set_direction_goal(direction);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("phalanx facing shield"))
-                    .outbox
-                    .actor
-                    .refresh_shield = true;
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.execute_ai_direction_goal(owner, direction);
+
+                self.refresh_retained_shield_obstacle(assets, owner);
+
                 self.world
                     .entities
                     .expect_ai_controller_mut(owner, format_args!("phalanx facing timer"))

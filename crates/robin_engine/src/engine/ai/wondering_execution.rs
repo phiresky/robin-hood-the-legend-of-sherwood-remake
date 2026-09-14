@@ -125,8 +125,7 @@ impl EngineInner {
                 } else {
                     crate::ai::LookDirection::LeftRight
                 };
-                self.seek_enemy_mut(owner).base.outbox.actor.look_sidewards = Some(direction);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.execute_ai_look_sidewards(owner, direction);
             }
             (Substate::SeekingJustWatchingSidewards, EventDone) => {
                 match self.seek_enemy(owner).soldier_profile_rank {
@@ -373,8 +372,9 @@ impl EngineInner {
         self.seek_enemy_mut(owner).base.antagonist = None;
         let mut suspects = Vec::new();
         let mut nearest = 65_432_u16;
-        // Membership must survive callbacks to earlier children in this list.
-        for target in self.one_shot_noise_listener_ids() {
+        let count = self.world.npc_registry_ids.len();
+        for index in 0..count {
+            let target = self.world.npc_registry_ids[index];
             let Entity::Civilian(child) = self.expect_entity(target, "child registry") else {
                 continue;
             };
@@ -447,7 +447,7 @@ impl EngineInner {
                 flags: SpeechFlags::MYTALK_1.bits(),
             },
         );
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         self.duty_set_state(
             sim,
             assets,

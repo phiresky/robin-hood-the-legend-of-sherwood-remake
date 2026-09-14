@@ -138,12 +138,7 @@ impl EngineInner {
         owner: EntityId,
         target: Option<AiEntityHandle>,
     ) {
-        self.observation_ai_mut(owner)
-            .base
-            .outbox
-            .actor
-            .set_focus(target);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_focus(owner, target);
     }
     pub(super) fn observation_emoticon(
         &mut self,
@@ -154,7 +149,6 @@ impl EngineInner {
         self.observation_ai_mut(owner)
             .base
             .set_emoticon(EmoticonType::QuestionMark);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
     pub(super) fn execute_ai_react_live(
         &mut self,
@@ -234,8 +228,11 @@ impl EngineInner {
         let ai = self.observation_ai_mut(owner);
         ai.base.frame_when_enemy_detected = frame;
         ai.enemy_seen_below = below;
-        ai.base.outbox.detection.mark_alerted = true;
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.world
+            .entities
+            .expect_ai_actor_data_mut(owner, format_args!("accepted enemy sighting"))
+            .alerted = true;
+
         self.observation_forget_object(owner);
         let position = self.live_ai_position(enemy);
         self.observation_ai_mut(owner)
@@ -393,11 +390,13 @@ impl EngineInner {
             AiState::Default,
             Substate::DefaultLookingShadow,
         );
-        self.observation_ai_mut(owner).set_alert_status_with_flags(
+        self.execute_ai_set_alert_status(
+            assets,
+            owner,
             crate::ai::AlertLevel::Yellow,
             crate::ai::AlertFlags::ONLY_MUSIC,
         );
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         self.duty_face_position_ground(sim, assets, owner, position);
         self.observation_timer(owner, 10);
     }
@@ -516,8 +515,8 @@ impl EngineInner {
                     self.observation_ai_mut(owner).other_seen_ale.push(object);
                     return;
                 }
-                self.observation_ai_mut(owner).base.break_macro();
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.execute_ai_break_macro(owner);
+
                 self.observation_say(sim, assets, owner, Remark::SeesObject);
                 self.observation_face_object(sim, assets, owner, target);
                 self.observation_emoticon(sim, assets, owner);
@@ -610,7 +609,7 @@ impl EngineInner {
             self.observation_ai_mut(owner)
                 .base
                 .set_emoticon(EmoticonType::Thunderstorm);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             self.duty_set_state(
                 sim,
                 assets,
@@ -633,13 +632,8 @@ impl EngineInner {
                 Some(owner),
                 Some(object),
             ));
-            self.observation_ai_mut(owner)
-                .base
-                .outbox
-                .actor
-                .launch_sequences
-                .push(sequence);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.launch_sequence(sequence);
+
             self.duty_set_state(
                 sim,
                 assets,
@@ -681,7 +675,7 @@ impl EngineInner {
                 20,
                 frame,
             );
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             self.observation_say(sim, assets, owner, Remark::AleYes);
             let target = self
                 .observation_ai(owner)
@@ -708,7 +702,7 @@ impl EngineInner {
                 50,
                 frame,
             );
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             let remark = if self.expect_entity(owner, "ale refusal owner").is_vip() {
                 Remark::VipAleNo
             } else {

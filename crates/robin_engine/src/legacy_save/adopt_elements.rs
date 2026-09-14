@@ -906,7 +906,6 @@ fn convert_npc(
     // bookkeeping; leaving its marker at the constructor default would make
     // the first post-load view refresh focus on the primary target and
     // overwrite a saved LookForward/Stare state that Original preserves.
-    ai.last_synced_focus_target = ai.primary_target;
     ai.initial_position = Position {
         x: saved.initial_position.x,
         y: saved.initial_position.y,
@@ -2954,7 +2953,6 @@ fn convert_stimulus(
             "local_ai.stimulus_queue.owner",
         )?,
         to_whole_patrol: saved.to_whole_patrol,
-        self_origin: crate::ai::SelfStimulusOrigin::Ordinary,
     })
 }
 

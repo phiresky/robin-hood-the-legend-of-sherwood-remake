@@ -78,7 +78,7 @@ impl EngineInner {
                 } else {
                     crate::ai::LookDirection::RightLeft
                 };
-                self.seek_enemy_mut(owner).base.outbox.actor.look_sidewards = Some(direction);
+                self.execute_ai_look_sidewards(owner, direction);
             }
             (SeekingSeekpointWatchingSidewards, EventDone | EventTimer) => {
                 if let Some(&direction) = self.seek_enemy(owner).seek_point_view_directions.first()
@@ -119,12 +119,14 @@ impl EngineInner {
                     AiState::Seeking,
                     SeekingSeekpointCheckingAmbushPoint,
                 );
-                self.seek_enemy_mut(owner).base.outbox.actor.look_sidewards =
-                    Some(if substate == SeekingSeekpointPassedAmbushPointLeft {
+                self.execute_ai_look_sidewards(
+                    owner,
+                    if substate == SeekingSeekpointPassedAmbushPointLeft {
                         crate::ai::LookDirection::Left
                     } else {
                         crate::ai::LookDirection::Right
-                    });
+                    },
+                );
             }
             (SeekingSeekpointCheckingAmbushPoint, EventDone) => {
                 self.duty_set_state(sim, assets, owner, AiState::Seeking, SeekingSeekpoint);
@@ -226,7 +228,7 @@ impl EngineInner {
             }
             _ => {}
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         Some(false)
     }
 
@@ -377,13 +379,8 @@ impl EngineInner {
                     Some(owner),
                     Some(net),
                 ));
-                self.seek_enemy_mut(owner)
-                    .base
-                    .outbox
-                    .actor
-                    .launch_sequences
-                    .push(sequence);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                self.launch_sequence(sequence);
+
                 self.seek_enemy_mut(owner)
                     .base
                     .set_emoticon(EmoticonType::None);

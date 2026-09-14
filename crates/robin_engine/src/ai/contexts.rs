@@ -365,62 +365,10 @@ pub struct House {
     /// Doors that connect this building to the outside.  Indices into
     /// the canonical interactable door table.
     pub door_indices: Vec<u32>,
-    /// Entities currently inside the building.  Kept live by the
-    /// `PassDoor` Enter / Leave hooks in `engine::door_pass`.
-    pub occupant_ids: Vec<crate::element::EntityId>,
     /// Whether this building carries an arrow reserve. Populated from
     /// the GUYS/CAVE tenant chunk.
     pub arrow_reserve: bool,
 }
-
-impl House {
-    /// Number of actors currently inside the building.
-    #[inline]
-    pub fn occupant_count(&self) -> usize {
-        self.occupant_ids.len()
-    }
-
-    /// Match original-game building-sector authorization.
-    ///
-    /// Original-game prototype initialization sets
-    /// maximal occupant count to `0xFFFF`, and the proto loader does not
-    /// overwrite it. The occupant count is nevertheless tested live on each
-    /// authorization call.
-    #[inline]
-    pub fn is_authorized(&self) -> bool {
-        self.occupant_count() < usize::from(u16::MAX)
-    }
-
-    /// Whether the given entity is currently an occupant.
-    #[inline]
-    pub fn contains_occupant(&self, eid: crate::element::EntityId) -> bool {
-        self.occupant_ids.contains(&eid)
-    }
-}
-
-// ─── On the actor-handle vs EntityId dual ─────────────────────────
-//
-// Building occupancy is tracked in two parallel data structures:
-//
-//   * `ai::House::occupant_ids: Vec<EntityId>` — the AI-facing view.
-//     Populated at `EngineInner::initialize_buildings` and maintained
-//     live by the `execute_pass_door` Enter / Leave hooks.  New AI
-//     code should query this.
-//
-//   * `ScriptDomains::buildings` — the script-facing view, indexed by
-//     `building_index` with actor
-//     script handles. Kept in sync by the same hooks so script
-//     natives (`GetNumberOfOccupants`, `GetOccupant`, etc.) see the
-//     same occupancy that AI code does.
-//
-// Both are kept consistent; the dual exists because script identity
-// (`i32` handle) and AI identity (`EntityId`) co-exist across the
-// codebase and neither can be dropped independently.  Long-term
-// consolidation would either migrate script natives to `EntityId`
-// or delete `building_occupants` once all natives query via a
-// a canonical `occupants_of(building_index) -> &[i32]` helper that
-// derives from the House list on demand.
-//
 
 /// A rally point positioned just outside a building door.
 ///

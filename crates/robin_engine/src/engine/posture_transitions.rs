@@ -1307,10 +1307,12 @@ mod tests {
         ActiveDoorPass, ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData,
         InstalledActorOrder, PcData,
     };
+    use crate::engine::LevelAssets;
     use crate::order::Order;
     use crate::sequence::SequenceElement;
 
     fn selected_running_pc() -> (EngineInner, EntityId, SequenceId, std::num::NonZeroU32) {
+        let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
@@ -1334,10 +1336,13 @@ mod tests {
             .orders
             .push_back(Order::new(OrderType::RunningUpright, 10.0, 20.0, order_id));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         (engine, owner, sequence, order_id)
     }
 
@@ -1394,6 +1399,7 @@ mod tests {
 
     #[test]
     fn make_crouched_publishes_rewritten_walk_before_inserting_posture_transition() {
+        let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
@@ -1423,10 +1429,13 @@ mod tests {
             walk_order_id,
         ));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(owner)
             .expect("test PC")
@@ -1535,6 +1544,7 @@ mod tests {
 
     #[test]
     fn sword_door_pass_make_fast_rewrites_lazy_tail_without_inserting_transition() {
+        let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
@@ -1558,10 +1568,13 @@ mod tests {
             .orders
             .push_back(Order::new(OrderType::PassingDoor, 0.0, 0.0, order_id));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         {
             let actor = engine
                 .get_entity_mut(owner)

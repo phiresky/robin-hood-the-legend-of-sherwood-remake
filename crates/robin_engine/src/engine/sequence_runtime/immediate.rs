@@ -30,9 +30,13 @@ impl EngineInner {
                     element_index,
                 ) {
                     self.dispatch_sequence_messages(sim, assets, &[(handle, msg, arg1, arg2)], &[]);
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(sequence_id, element_index);
+                    self.element_terminated(
+                        sim,
+                        assets,
+                        &mut Vec::new(),
+                        sequence_id,
+                        element_index,
+                    );
                 }
             }
             crate::sequence::SequenceAction::ExecuteImmediateEngine {
@@ -46,9 +50,13 @@ impl EngineInner {
                     element_index,
                 ) {
                     self.dispatch_sequence_messages(sim, assets, &[], &[(msg, arg1, arg2)]);
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(sequence_id, element_index);
+                    self.element_terminated(
+                        sim,
+                        assets,
+                        &mut Vec::new(),
+                        sequence_id,
+                        element_index,
+                    );
                 }
             }
             other => panic!(
@@ -101,7 +109,7 @@ impl EngineInner {
                         });
                 }
             }
-            self.dispatch_condolations(sim, assets);
+
             self.drain_pending_immediate_actions_sync(sim, assets);
             self.orders
                 .sequence_manager
@@ -143,7 +151,7 @@ impl EngineInner {
                         });
                 }
             }
-            self.dispatch_condolations(sim, assets);
+
             self.drain_registration_inline_actions_sync(sim, assets);
             self.orders
                 .sequence_manager
@@ -173,12 +181,15 @@ impl EngineInner {
             | Command::StopMobile
             | Command::ActivateMobile
             | Command::DeactivateMobile => {
-                MobileImmediateContext {
-                    entities: &mut self.world.entities,
-                    mobiles: &mut self.world.mobile_elements,
-                    sequence_manager: &mut self.orders.sequence_manager,
-                }
-                .dispatch(owner, cmd, seq_id, elem_idx);
+                self.dispatch_mobile_immediate(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    owner,
+                    cmd,
+                    seq_id,
+                    elem_idx,
+                );
             }
             Command::SendMessage => {
                 // Dispatch ProcessMessage to the owner's per-actor
@@ -188,11 +199,15 @@ impl EngineInner {
                 return Some((handle, msg, arg1, arg2));
             }
             Command::Unblip | Command::ReplaceAnim | Command::RestoreAnim => {
-                SpriteImmediateContext {
-                    entities: &mut self.world.entities,
-                    sequence_manager: &mut self.orders.sequence_manager,
-                }
-                .dispatch(owner, cmd, seq_id, elem_idx);
+                self.dispatch_sprite_immediate(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    owner,
+                    cmd,
+                    seq_id,
+                    elem_idx,
+                );
             }
             Command::Speak => {
                 // NPC: `say_remark(speak_id, speak_flags)`.
@@ -221,9 +236,7 @@ impl EngineInner {
                 };
                 let Some(speak_id) = speak_id else {
                     tracing::warn!(?owner, "Speak: missing SpeakId property — terminating");
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
+                    self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                     return None;
                 };
                 let owner_is_pc = self.get_entity(owner).is_some_and(|e| e.is_pc());
@@ -260,62 +273,25 @@ impl EngineInner {
                         "Speak: invalid remark id or missing AI controller"
                     );
                 }
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
-            Command::Teleport => self.execute_teleport(assets, owner, seq_id, elem_idx),
+            Command::Teleport => self.execute_teleport(sim, assets, owner, seq_id, elem_idx),
             Command::LockAi | Command::UnlockAi => {
-                let unconscious = self
+                if self
                     .get_entity(owner)
-                    .is_some_and(|entity| entity.is_unconscious());
-                let mut stop_for_lock = false;
-                if let Some(ai) = self
-                    .get_entity_mut(owner)
-                    .and_then(crate::element::Entity::ai_controller_mut)
+                    .and_then(crate::element::Entity::ai_controller)
+                    .is_some()
                 {
                     if cmd == Command::LockAi {
-                        // Immediate execution calls the owner directly; it
-                        // does not pass through launch/instruction and therefore
-                        // does not select the LockAi element. ScriptLockAI
-                        // still sees the actor's outgoing command and calls
-                        // Stop(Normal) synchronously before LockAi itself
-                        // terminates.
-                        //
-                        // Suppress the controller's deferred halt and close
-                        // that Stop explicitly below, at this exact immediate
-                        // command boundary.
-                        ai.script_lock(false, true);
-                        stop_for_lock = true;
+                        self.execute_ai_script_lock(sim, assets, owner, false);
                     } else {
-                        // The original game's script-driven AI unlock is deliberately not
-                        // conditional on script-lock state. A repeated authored
-                        // UnlockAi still clears detections and synchronously
-                        // runs EVENT_RETURN_TO_DUTY, which can replace the
-                        // actor's current movement with a fresh movement order.
-                        ai.script_unlock(unconscious);
+                        self.execute_ai_script_unlock(sim, assets, owner);
                     }
                 }
-                if stop_for_lock {
-                    self.stop_owner(owner, crate::sequence::SequencePriority::Normal);
-                    self.dispatch_condolations(sim, assets);
-                }
-                if cmd == Command::UnlockAi {
-                    // ScriptUnlockAI calls Think(EVENT_RETURN_TO_DUTY)
-                    // before returning. Finish the owner-local AI callback,
-                    // but do not instruct any resulting movement here:
-                    // Registering a sequence element to go queues
-                    // that ordinary Move for its manager-update phase.
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
-                }
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
             _ => {
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
         }
         None
@@ -351,23 +327,19 @@ impl EngineInner {
                 return Some((msg, arg1, arg2));
             }
             Some(command @ (Command::LockUser | Command::UnlockUser)) => {
-                self.apply_script_user_lock(assets, command);
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.apply_script_user_lock(sim, assets, command);
+                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
             Some(Command::Timer) => {
-                let timer = TimerImmediateContext {
-                    sequence_manager: &self.orders.sequence_manager,
-                }
-                .entry(seq_id, elem_idx);
+                let timer =
+                    self.timer_immediate_entry(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 self.add_timer(timer.remaining, timer.element_ref);
             }
             Some(Command::CameraJumpTo) => {
                 // Terminate any pending camera sequence element,
                 // snap the view to the requested point, invalidate
                 // background, and terminate self.
-                self.terminate_prev_camera_sequence_element();
+                self.terminate_prev_camera_sequence_element(sim, assets);
                 self.players.seats[0].follow_element = None;
                 self.players.seats[0].locker_active = false;
                 let point = self
@@ -385,16 +357,14 @@ impl EngineInner {
                         self.check_location_is_valid_for_camera(pos);
                     self.feedback.pending_side_effects.invalidate_background = true;
                 }
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
             Some(Command::CameraGoto) => {
                 // Terminate any previous camera sequence element,
                 // stash this one as the in-progress camera element,
                 // and start a slide toward the target.
                 // Fast-forward snaps instantly.
-                self.terminate_prev_camera_sequence_element();
+                self.terminate_prev_camera_sequence_element(sim, assets);
                 self.players.seats[0].follow_element = None;
                 self.players.seats[0].locker_active = false;
                 let (point, speed) = {
@@ -416,9 +386,7 @@ impl EngineInner {
                         self.feedback.cutscene_camera.view_position =
                             self.check_location_is_valid_for_camera(pos);
                     }
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
+                    self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 } else if let Some(pos) = point {
                     // Store the raw script point as
                     // `camera_wanted`, store the centered+clamped
@@ -432,9 +400,7 @@ impl EngineInner {
                     self.feedback.cutscene_camera.sequence_element =
                         Some(crate::sequence::SequenceElementRef::new(seq_id, elem_idx));
                 } else {
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
+                    self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 }
             }
             Some(Command::ZoomLevel) => {
@@ -442,7 +408,7 @@ impl EngineInner {
                 // record the requested zoom factor, and latch this
                 // element as the in-progress camera element until
                 // the zoom transition finishes.
-                self.terminate_prev_camera_sequence_element();
+                self.terminate_prev_camera_sequence_element(sim, assets);
                 let zoom = self
                     .orders
                     .sequence_manager
@@ -457,16 +423,14 @@ impl EngineInner {
                     self.feedback.cutscene_camera.sequence_element =
                         Some(crate::sequence::SequenceElementRef::new(seq_id, elem_idx));
                 } else {
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
+                    self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 }
             }
             Some(Command::LockCameraOn) => {
                 // Terminate any previous camera sequence element,
                 // start following the antagonist, drop any titbit
                 // locks, and terminate self.
-                self.terminate_prev_camera_sequence_element();
+                self.terminate_prev_camera_sequence_element(sim, assets);
                 let target = self
                     .orders
                     .sequence_manager
@@ -485,17 +449,13 @@ impl EngineInner {
                     self.players.seats[0].locker_active = false;
                 }
                 self.feedback.titbit_manager.remove_lock();
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
             Some(Command::LockCameraStop) => {
-                self.terminate_prev_camera_sequence_element();
+                self.terminate_prev_camera_sequence_element(sim, assets);
                 self.players.seats[0].follow_element = None;
                 self.players.seats[0].locker_active = false;
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
             Some(
                 command @ (Command::DisplayMap | Command::PlayDialog | Command::DisplayPopupText),
@@ -511,13 +471,14 @@ impl EngineInner {
                 let refreshes_during_popup = command == Command::DisplayPopupText
                     && !self.control.fast_forward
                     && self.control.begin_popup_scroll_display();
-                PresentationCommandContext {
-                    fast_forward: self.control.fast_forward,
-                    side_effects: &mut self.feedback.pending_side_effects,
-                    messenger: &mut self.orders.messenger,
-                    sequence_manager: &mut self.orders.sequence_manager,
-                }
-                .dispatch(command, seq_id, elem_idx);
+                self.dispatch_presentation_command(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    command,
+                    seq_id,
+                    elem_idx,
+                );
                 if refreshes_during_dialogue || refreshes_during_popup {
                     // Dialogue display constructs a menu screen
                     // inline; accepted popup scroll backgrounds take the same
@@ -530,19 +491,17 @@ impl EngineInner {
                 }
             }
             Some(Command::Freeze | Command::FreezeAll) => {
-                FreezeImmediateContext {
-                    control: &mut self.control,
-                    sequence_manager: &mut self.orders.sequence_manager,
-                }
-                .dispatch(seq_id, elem_idx);
+                self.dispatch_freeze_immediate(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
             Some(command @ (Command::CharacterAvailable | Command::ActionAvailable)) => {
-                AvailabilityImmediateContext {
-                    entities: &mut self.world.entities,
-                    messenger: &mut self.orders.messenger,
-                    sequence_manager: &mut self.orders.sequence_manager,
-                }
-                .dispatch(command, seq_id, elem_idx);
+                self.dispatch_availability_immediate(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    command,
+                    seq_id,
+                    elem_idx,
+                );
             }
             Some(Command::OpenScroll) => {
                 // Call `scroll_is_taken` on the scroll referenced
@@ -574,9 +533,7 @@ impl EngineInner {
                         "OpenScroll sequence command missing Scroll/ScrollReader property"
                     );
                 }
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
             _ => {
                 // Unknown commands fall through without being

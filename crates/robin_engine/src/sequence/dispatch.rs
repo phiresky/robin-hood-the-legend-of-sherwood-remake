@@ -534,7 +534,10 @@ impl SequenceManager {
                         owner = ?elem.owner,
                         "owner-only immediate command has no owner — terminating"
                     );
-                    self.element_terminated(seq_id, elem_idx);
+                    return Some(SequenceAction::EngineCommand {
+                        sequence_id: seq_id,
+                        element_index: elem_idx,
+                    });
                 }
             } else if let Some(owner) = elem.owner {
                 return Some(SequenceAction::InstructOwner {

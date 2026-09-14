@@ -178,7 +178,9 @@ impl EngineInner {
     /// by the original game's actor update.
     pub(in crate::engine) fn dispatch_sword_strike(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         target: EntityId,
         strike: SwordStrike,
@@ -194,9 +196,7 @@ impl EngineInner {
             .map(|e| e.is_human() && !e.is_dead())
             .unwrap_or(false);
         if !owner_ok {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         }
 
@@ -209,9 +209,7 @@ impl EngineInner {
             .map(|e| e.is_human())
             .unwrap_or(false);
         if !target_ok {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         }
 
@@ -230,9 +228,7 @@ impl EngineInner {
                 self.set_as_new_principal_opponent(assets, owner, target);
                 self.set_as_new_principal_opponent(assets, target, owner);
             } else {
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
+                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                 return OwnerActionBarrier::Skip;
             }
         }
@@ -270,9 +266,7 @@ impl EngineInner {
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
 
-        self.orders
-            .sequence_manager
-            .element_in_progress(seq_id, elem_idx);
+        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
 
         tracing::debug!(
             attacker = ?owner,
@@ -293,18 +287,28 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         opponent: Option<EntityId>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
-        self.dispatch_enter_swordfight_impl(sim, assets, owner, opponent, seq_id, elem_idx)
+        self.dispatch_enter_swordfight_impl(
+            sim,
+            assets,
+            active_scripts,
+            owner,
+            opponent,
+            seq_id,
+            elem_idx,
+        )
     }
 
     fn dispatch_enter_swordfight_impl(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         opponent: Option<EntityId>,
         seq_id: crate::sequence::SequenceId,
@@ -319,15 +323,11 @@ impl EngineInner {
         }
         {
             let Some(entity) = self.world.entities.get_mut(owner) else {
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
+                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                 return OwnerActionBarrier::Skip;
             };
             if entity.is_dead() || entity.human_data().map(|h| h.unconscious).unwrap_or(true) {
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
+                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                 return OwnerActionBarrier::Skip;
             }
         }
@@ -364,7 +364,10 @@ impl EngineInner {
                 });
             match self.try_launch_table_swordfight_move(owner, opp, jl_idx) {
                 TableFightMove::Abort => {
-                    self.orders.sequence_manager.element_interrupted(
+                    self.element_interrupted(
+                        sim,
+                        assets,
+                        active_scripts,
                         seq_id,
                         elem_idx,
                         crate::sequence::CascadeFlags::NEXT_LEVEL,
@@ -457,9 +460,13 @@ impl EngineInner {
                     self.orders
                         .sequence_manager
                         .set_cross_postponed_link((seq_id, elem_idx), None);
-                    self.orders
-                        .sequence_manager
-                        .element_impossible(postponed_sequence, postponed_index);
+                    self.element_impossible(
+                        sim,
+                        assets,
+                        active_scripts,
+                        postponed_sequence,
+                        postponed_index,
+                    );
                 }
             }
         }
@@ -474,14 +481,10 @@ impl EngineInner {
                 .push_order_on(seq_id, elem_idx, order);
         }
         if transition.is_some() {
-            self.orders
-                .sequence_manager
-                .element_in_progress(seq_id, elem_idx);
+            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             OwnerActionBarrier::Reach
         } else {
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             // Termination synchronously sends the removal notification.
             // If that callback changes the selected sequence element, actor instruction handling
             // returns before its accepted-motion/order epilogue.
@@ -620,6 +623,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -647,14 +651,10 @@ impl EngineInner {
                     id,
                 ),
             );
-            self.orders
-                .sequence_manager
-                .element_in_progress(seq_id, elem_idx);
+            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             OwnerActionBarrier::Reach
         } else {
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             OwnerActionBarrier::Skip
         }
     }
@@ -664,21 +664,20 @@ impl EngineInner {
     /// Dispatch a ParrySword command.
     pub(in crate::engine) fn dispatch_parry_sword(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         low: bool,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
         let Some(entity) = self.world.entities.get(owner) else {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         };
         let Some(actor) = entity.actor_data() else {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         };
 
@@ -703,9 +702,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .begin_instruct_callback(owner, seq_id, elem_idx);
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             self.orders
                 .sequence_manager
                 .end_instruct_callback(owner, seq_id, elem_idx);
@@ -735,29 +732,26 @@ impl EngineInner {
             elem_idx,
             crate::order::Order::new(hold, 0.0, 0.0, id),
         );
-        self.orders
-            .sequence_manager
-            .element_in_progress(seq_id, elem_idx);
+        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         OwnerActionBarrier::Reach
     }
 
     /// Dispatch a StopParrySword command.
     pub(in crate::engine) fn dispatch_stop_parry(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
         let Some(entity) = self.world.entities.get(owner) else {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         };
         let Some(actor) = entity.actor_data() else {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         };
         if !matches!(
@@ -770,9 +764,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .begin_instruct_callback(owner, seq_id, elem_idx);
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             self.orders
                 .sequence_manager
                 .end_instruct_callback(owner, seq_id, elem_idx);
@@ -790,9 +782,7 @@ impl EngineInner {
                 id,
             ),
         );
-        self.orders
-            .sequence_manager
-            .element_in_progress(seq_id, elem_idx);
+        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         OwnerActionBarrier::Reach
     }
 }
@@ -815,46 +805,40 @@ impl EngineInner {
 /// animations: facing is controlled by Focus/the shield danger point before
 /// translation, and selecting the new order must not derive a fresh goal from
 /// its zero-valued destination.
-pub(crate) struct ShieldCommandContext<'a> {
-    entities: &'a mut crate::entities::Entities,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-    orders: OrderEmitter<'a>,
-}
-
-impl<'a> ShieldCommandContext<'a> {
-    pub(crate) fn new(
-        entities: &'a mut crate::entities::Entities,
-        sequence_manager: &'a mut crate::sequence::SequenceManager,
-        next_order_id: &'a mut u32,
-    ) -> Self {
-        Self {
-            entities,
-            sequence_manager,
-            orders: OrderEmitter::new(next_order_id),
-        }
-    }
-
+impl EngineInner {
     /// Dispatch one shield command and return an owned follow-up that must be
     /// launched synchronously before the sequence phase splices pending work.
-    pub(crate) fn dispatch(
+    pub(in crate::engine) fn dispatch_shield_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> Option<crate::sequence::SequenceElement> {
         match command {
-            Command::RaiseShield => self.dispatch_raise_shield(owner, seq_id, elem_idx),
+            Command::RaiseShield => {
+                self.dispatch_raise_shield(sim, assets, active_scripts, owner, seq_id, elem_idx)
+            }
             Command::RaiseShieldInstantly => {
-                self.dispatch_raise_shield_instantly(owner, seq_id, elem_idx);
+                self.dispatch_raise_shield_instantly(
+                    sim,
+                    assets,
+                    active_scripts,
+                    owner,
+                    seq_id,
+                    elem_idx,
+                );
                 None
             }
             Command::LowerShield => {
-                self.dispatch_lower_shield(owner, seq_id, elem_idx);
+                self.dispatch_lower_shield(sim, assets, active_scripts, owner, seq_id, elem_idx);
                 None
             }
             Command::ParryShield => {
-                self.dispatch_parry_shield(owner, seq_id, elem_idx);
+                self.dispatch_parry_shield(sim, assets, active_scripts, owner, seq_id, elem_idx);
                 None
             }
             _ => unreachable!("non-shield command passed to shield command context"),
@@ -867,6 +851,9 @@ impl<'a> ShieldCommandContext<'a> {
     /// transitions to `HoldingShield` and queues the raising animation.
     fn dispatch_raise_shield(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -882,12 +869,14 @@ impl<'a> ShieldCommandContext<'a> {
         // "already holding shield" actor still gets its danger point
         // and protection link refreshed by the new command.
         let (danger_pt, danger_pt3d, danger_layer, new_protected) = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| match &e.data {
                 crate::sequence::SequenceElementData::Interaction { antagonist } => {
                     let pt = antagonist.and_then(|id| {
-                        self.entities
+                        self.world
+                            .entities
                             .get(id)
                             .map(|e| e.element_data().position_map())
                     });
@@ -928,7 +917,7 @@ impl<'a> ShieldCommandContext<'a> {
         // `sync_danger_point_titbits`).
         if let Some(pt3d) = danger_pt3d
             && (pt3d.x != 0.0 || pt3d.y != 0.0 || pt3d.z != 0.0)
-            && let Some(entity) = self.entities.get_mut(owner)
+            && let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(pc) = entity.pc_data_mut()
         {
             pc.shield_danger_point = pt3d;
@@ -937,7 +926,11 @@ impl<'a> ShieldCommandContext<'a> {
         // Only assign shield protection when the Generic property is
         // non-null.
         if let Some(prot) = new_protected
-            && let Some(pc) = self.entities.get_mut(owner).and_then(Entity::pc_data_mut)
+            && let Some(pc) = self
+                .world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::pc_data_mut)
         {
             pc.shield_protected = Some(prot);
         }
@@ -948,6 +941,7 @@ impl<'a> ShieldCommandContext<'a> {
         // following them. A soldier in MOVING_SHIELD must still append the
         // ordinary raising animation.
         let (action_state, owner_is_pc) = self
+            .world
             .entities
             .get(owner)
             .map(|entity| {
@@ -959,14 +953,16 @@ impl<'a> ShieldCommandContext<'a> {
             .unwrap_or((None, false));
         match (action_state, owner_is_pc) {
             (Some(ActionState::HoldingShield), _) | (Some(ActionState::MovingShield), true) => {
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                 let protected_now = self
+                    .world
                     .entities
                     .get(owner)
                     .and_then(|e| e.pc_data())
                     .and_then(|pc| pc.shield_protected);
                 if let Some(target) = protected_now {
                     let danger_zero = self
+                        .world
                         .entities
                         .get(owner)
                         .and_then(|e| e.pc_data())
@@ -1004,14 +1000,14 @@ impl<'a> ShieldCommandContext<'a> {
                 return None;
             }
             (None, _) => {
-                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                 return None;
             }
             _ => {} // Waiting, Bored, ParryingShield, etc. — proceed.
         }
 
         let mut started = false;
-        if let Some(entity) = self.entities.get_mut(owner) {
+        if let Some(entity) = self.world.entities.get_mut(owner) {
             // The PC override faces the picked danger point. Enemy NPCs use
             // the human-base RaiseShield implementation instead: their AI
             // has already called Focus, and the non-directional shield order
@@ -1049,17 +1045,17 @@ impl<'a> ShieldCommandContext<'a> {
             // `engine/animation.rs` gates advance on TERMINATED only
             // so the upright / holding-shield state-change side effect
             // on Done doesn't also pop the order mid-play.
-            self.orders.push(
-                self.sequence_manager,
+            OrderEmitter::new(&mut self.orders.next_order_id).push(
+                &mut self.orders.sequence_manager,
                 seq_id,
                 elem_idx,
                 crate::order::OrderType::RaisingShield,
                 (0.0, 0.0),
                 false,
             );
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         } else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         }
         None
     }
@@ -1069,19 +1065,22 @@ impl<'a> ShieldCommandContext<'a> {
     /// Sets `HoldingShield` immediately without a raising animation.
     fn dispatch_raise_shield_instantly(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        if let Some(entity) = self.entities.get_mut(owner) {
+        if let Some(entity) = self.world.entities.get_mut(owner) {
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::HoldingShield;
                 actor.clear_path();
             }
             entity.set_posture(Posture::Upright);
         }
-        self.orders.push(
-            self.sequence_manager,
+        OrderEmitter::new(&mut self.orders.next_order_id).push(
+            &mut self.orders.sequence_manager,
             seq_id,
             elem_idx,
             crate::order::OrderType::WaitingShield,
@@ -1092,7 +1091,7 @@ impl<'a> ShieldCommandContext<'a> {
         // WAITING_SHIELD order installed. Actor instruction handling then marks the
         // accepted, still-selected element IN_PROGRESS; it does not terminate
         // this command at translation time.
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
     }
 
     /// Dispatch a LowerShield command.
@@ -1100,11 +1099,15 @@ impl<'a> ShieldCommandContext<'a> {
     /// Transitions out of shield state to `Waiting` with a lowering animation.
     fn dispatch_lower_shield(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
         let actor = self
+            .world
             .entities
             .get_mut(owner)
             .and_then(crate::element::Entity::actor_data_mut)
@@ -1120,15 +1123,15 @@ impl<'a> ShieldCommandContext<'a> {
         // The sprite-anim fallback to TRANSITION_LOWERING_SWORD when the
         // actor has no LOWERING_SHIELD anim is applied by the animation
         // driver. The order itself remains LOWERING_SHIELD.
-        self.orders.push(
-            self.sequence_manager,
+        OrderEmitter::new(&mut self.orders.next_order_id).push(
+            &mut self.orders.sequence_manager,
             seq_id,
             elem_idx,
             crate::order::OrderType::LoweringShield,
             (0.0, 0.0),
             false,
         );
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
     }
 
     /// Dispatch a ParryShield command.
@@ -1136,6 +1139,9 @@ impl<'a> ShieldCommandContext<'a> {
     /// Transitions to `ParryingShield` from a shield-holding state.
     fn dispatch_parry_shield(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -1154,19 +1160,20 @@ impl<'a> ShieldCommandContext<'a> {
         // `dispatch_arm_completion` entry gates advance on TERMINATED only so
         // the parry sprite plays all the way through before the side-effect
         // handler returns to HoldingShield.
-        self.entities
+        self.world
+            .entities
             .get(owner)
             .and_then(crate::element::Entity::actor_data)
             .unwrap_or_else(|| panic!("ParryShield owner {owner:?} is not a live actor"));
-        self.orders.push(
-            self.sequence_manager,
+        OrderEmitter::new(&mut self.orders.next_order_id).push(
+            &mut self.orders.sequence_manager,
             seq_id,
             elem_idx,
             crate::order::OrderType::ParryingShield,
             (0.0, 0.0),
             false,
         );
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
     }
 }
 
@@ -1181,6 +1188,9 @@ impl EngineInner {
     /// clear a movement goal belonging to the element that will resume next.
     fn terminate_accepted_empty_damage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         victim_id: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -1204,9 +1214,7 @@ impl EngineInner {
                 .motion_state = crate::sprite::MotionState::InProgress;
         }
         self.orders.sequence_manager.set_translating_element(None);
-        self.orders
-            .sequence_manager
-            .element_terminated(seq_id, elem_idx);
+        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         self.trace_sword_damage_lifecycle(
             "accepted-empty-after-terminate",
             victim_id,
@@ -1227,6 +1235,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         victim_id: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -1274,7 +1283,14 @@ impl EngineInner {
                     ?command,
                     "dispatch_receive_damage: element is not Damage"
                 );
-                return self.terminate_accepted_empty_damage(victim_id, seq_id, elem_idx);
+                return self.terminate_accepted_empty_damage(
+                    sim,
+                    assets,
+                    active_scripts,
+                    victim_id,
+                    seq_id,
+                    elem_idx,
+                );
             }
         };
 
@@ -1302,9 +1318,7 @@ impl EngineInner {
                     }
                 };
                 if !owner_active {
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
+                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 }
                 let damage_probe = super::damage::SwordDamageProbe::before(self, victim_id);
@@ -1344,9 +1358,7 @@ impl EngineInner {
                     .get_entity(victim_id)
                     .is_some_and(|victim| victim.element_data().active);
                 if !victim_active {
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
+                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 }
                 self.apply_piercing_damage(
@@ -1403,7 +1415,7 @@ impl EngineInner {
                 );
             }
             Command::ReceiveNet => {
-                self.apply_net(victim_id);
+                self.apply_net(sim, assets, victim_id);
             }
             _ => {
                 tracing::warn!(
@@ -1441,12 +1453,17 @@ impl EngineInner {
             .map(|e| e.orders.len())
             .unwrap_or(0);
         if order_count > 0 && self.get_entity(victim_id).is_some() {
-            self.orders
-                .sequence_manager
-                .element_in_progress(seq_id, elem_idx);
+            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         }
-        self.terminate_accepted_empty_damage(victim_id, seq_id, elem_idx)
+        self.terminate_accepted_empty_damage(
+            sim,
+            assets,
+            active_scripts,
+            victim_id,
+            seq_id,
+            elem_idx,
+        )
     }
 }
 
@@ -1521,15 +1538,12 @@ mod swordfight_preparation_tests {
 
 #[cfg(test)]
 mod shield_order_tests {
-    use super::ShieldCommandContext;
     use crate::element::{
         ActionState, ActorData, ActorSoldier, ElementData, ElementKind, Entity, HumanData, NpcData,
         Posture, SoldierData,
     };
-    use crate::entities::Entities;
-    use crate::entity_id::{EntityId, SoldierId};
     use crate::order::OrderType;
-    use crate::sequence::{Sequence, SequenceElement, SequenceManager};
+    use crate::sequence::{Sequence, SequenceElement};
     use crate::{element::Command, sequence::SequenceState};
 
     fn lying_soldier() -> Entity {
@@ -1549,39 +1563,52 @@ mod shield_order_tests {
 
     #[test]
     fn ordinary_raise_shield_retains_lying_until_generated_stand_up_executes() {
-        let owner = EntityId::Soldier(SoldierId(0));
-        let mut entities = Entities::from_legacy_slots(vec![Some(lying_soldier())]);
-        let mut sequence_manager = SequenceManager::new();
+        let mut engine = crate::engine::EngineInner::new();
+        let owner = engine.add_test_entity(lying_soldier());
+        let sim = crate::sim_rng::test_context();
+        let assets = crate::engine::LevelAssets::new();
         let mut sequence = Sequence::new();
         sequence.append_element(SequenceElement::new_generic(
             1,
             Command::RaiseShield,
             Some(owner),
         ));
-        let sequence_id = sequence_manager.launch_sequence(sequence);
-        let mut next_order_id = 1;
-        let mut context =
-            ShieldCommandContext::new(&mut entities, &mut sequence_manager, &mut next_order_id);
+        let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
 
         // The posture transition has already prepended this order. Translation
         // may append RaisingShield, but Original does not stand the actor up
         // until StandingUp itself executes and returns MotionState::Start.
-        context.orders.push(
-            context.sequence_manager,
+        let order_id = engine.orders.allocate_order_id();
+        let mut order = crate::order::Order::new(OrderType::StandingUp, 0.0, 0.0, order_id);
+        order.compute_direction = false;
+        engine
+            .orders
+            .sequence_manager
+            .push_order_on(sequence_id, 0, order);
+        engine.dispatch_shield_command(
+            &sim,
+            &assets,
+            &mut Vec::new(),
+            owner,
+            Command::RaiseShield,
             sequence_id,
             0,
-            OrderType::StandingUp,
-            (0.0, 0.0),
-            false,
         );
-        context.dispatch(owner, Command::RaiseShield, sequence_id, 0);
 
         assert_eq!(
-            entities.get(owner).unwrap().element_data().posture(),
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .element_data()
+                .posture(),
             Posture::Lying
         );
         assert_eq!(
-            sequence_manager
+            engine
+                .orders
+                .sequence_manager
                 .get_element(sequence_id, 0)
                 .unwrap()
                 .orders
@@ -1591,7 +1618,9 @@ mod shield_order_tests {
             [OrderType::StandingUp, OrderType::RaisingShield]
         );
         assert!(
-            sequence_manager
+            engine
+                .orders
+                .sequence_manager
                 .get_element(sequence_id, 0)
                 .unwrap()
                 .orders
@@ -1602,33 +1631,47 @@ mod shield_order_tests {
 
     #[test]
     fn instant_raise_shield_still_enters_upright_holding_state_immediately() {
-        let owner = EntityId::Soldier(SoldierId(0));
-        let mut entities = Entities::from_legacy_slots(vec![Some(lying_soldier())]);
-        let mut sequence_manager = SequenceManager::new();
+        let mut engine = crate::engine::EngineInner::new();
+        let owner = engine.add_test_entity(lying_soldier());
+        let sim = crate::sim_rng::test_context();
+        let assets = crate::engine::LevelAssets::new();
         let mut sequence = Sequence::new();
         sequence.append_element(SequenceElement::new_generic(
             1,
             Command::RaiseShieldInstantly,
             Some(owner),
         ));
-        let sequence_id = sequence_manager.launch_sequence(sequence);
-        let mut next_order_id = 1;
+        let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
 
-        ShieldCommandContext::new(&mut entities, &mut sequence_manager, &mut next_order_id)
-            .dispatch(owner, Command::RaiseShieldInstantly, sequence_id, 0);
+        engine.dispatch_shield_command(
+            &sim,
+            &assets,
+            &mut Vec::new(),
+            owner,
+            Command::RaiseShieldInstantly,
+            sequence_id,
+            0,
+        );
 
-        let entity = entities.get(owner).unwrap();
+        let entity = engine.world.entities.get(owner).unwrap();
         assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::HoldingShield
         );
         assert_eq!(
-            sequence_manager.get_element(sequence_id, 0).unwrap().state,
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .state,
             SequenceState::InProgress
         );
         assert_eq!(
-            sequence_manager
+            engine
+                .orders
+                .sequence_manager
                 .get_element(sequence_id, 0)
                 .unwrap()
                 .orders
@@ -1639,7 +1682,9 @@ mod shield_order_tests {
         );
         // Shield translation never recomputes facing.
         assert!(
-            sequence_manager
+            engine
+                .orders
+                .sequence_manager
                 .get_element(sequence_id, 0)
                 .unwrap()
                 .orders
@@ -1650,27 +1695,38 @@ mod shield_order_tests {
 
     #[test]
     fn parry_shield_translation_does_not_recheck_current_action_state() {
-        let owner = EntityId::Soldier(SoldierId(0));
         let mut soldier = lying_soldier();
         soldier
             .element_data_mut()
             .publish_order_posture(Posture::Upright);
         soldier.actor_data_mut().unwrap().action_state = ActionState::Waiting;
-        let mut entities = Entities::from_legacy_slots(vec![Some(soldier)]);
-        let mut sequence_manager = SequenceManager::new();
+        let mut engine = crate::engine::EngineInner::new();
+        let owner = engine.add_test_entity(soldier);
+        let sim = crate::sim_rng::test_context();
+        let assets = crate::engine::LevelAssets::new();
         let mut sequence = Sequence::new();
         sequence.append_element(SequenceElement::new_generic(
             1,
             Command::ParryShield,
             Some(owner),
         ));
-        let sequence_id = sequence_manager.launch_sequence(sequence);
-        let mut next_order_id = 1;
+        let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
 
-        ShieldCommandContext::new(&mut entities, &mut sequence_manager, &mut next_order_id)
-            .dispatch(owner, Command::ParryShield, sequence_id, 0);
+        engine.dispatch_shield_command(
+            &sim,
+            &assets,
+            &mut Vec::new(),
+            owner,
+            Command::ParryShield,
+            sequence_id,
+            0,
+        );
 
-        let element = sequence_manager.get_element(sequence_id, 0).unwrap();
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap();
         assert_eq!(element.state, SequenceState::InProgress);
         assert_eq!(
             element
@@ -1682,7 +1738,9 @@ mod shield_order_tests {
         );
         assert!(element.orders.iter().all(|order| !order.compute_direction));
         assert_eq!(
-            entities
+            engine
+                .world
+                .entities
                 .get(owner)
                 .unwrap()
                 .actor_data()

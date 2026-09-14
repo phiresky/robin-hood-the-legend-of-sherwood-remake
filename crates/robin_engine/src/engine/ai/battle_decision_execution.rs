@@ -125,8 +125,8 @@ impl EngineInner {
             .world
             .entities
             .expect_ai_controller_mut(owner, format_args!("battle focus"));
-        ai.outbox.actor.set_focus(ai.primary_target);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let target = ai.primary_target;
+        self.execute_ai_focus(owner, target);
     }
 
     pub(super) fn battle_state_timer(
@@ -173,14 +173,11 @@ impl EngineInner {
         owner: EntityId,
         command: crate::element::Command,
     ) {
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("battle command"))
-            .outbox
-            .actor
-            .launch_commands
-            .push(command);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.launch_element(crate::sequence::SequenceElement::new(
+            1,
+            command,
+            Some(owner),
+        ));
     }
 
     fn battle_panic_remark(
@@ -581,21 +578,15 @@ impl EngineInner {
                             .sector_with_aspect(crate::position_interface::ASPECT_RATIO);
                             self.world
                                 .entities
-                                .expect_ai_controller_mut(owner, format_args!("reserve direction"))
-                                .outbox
-                                .actor
-                                .set_direction_instantly = Some(direction as i16);
-                            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                                .expect_entity_mut(
+                                    owner,
+                                    format_args!("instant AI direction owner"),
+                                )
+                                .element_data_mut()
+                                .set_direction_instantly(direction as i16);
                         }
                     } else {
-                        let ai = self
-                            .world
-                            .entities
-                            .expect_ai_controller_mut(owner, format_args!("reserve sword"));
-                        ai.outbox.actor.enter_swordfight =
-                            Some(crate::ai::EnterSwordfightRequest::RaiseSword);
-                        ai.outbox.actor.enter_swordfight_jump_line = None;
-                        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                        self.launch_ai_raise_sword(owner);
                     }
                     self.focus_battle_primary(sim, assets, owner);
                     self.battle_state_timer(
@@ -620,26 +611,14 @@ impl EngineInner {
                         let target =
                             self.select_battle_primary(owner, PrimaryTargetFlags::VIPS_ALLOWED);
                         let center = target.map(|target| self.live_ai_position(target));
-                        let ai = self
-                            .world
-                            .entities
-                            .expect_ai_controller_mut(owner, format_args!("battle panic"));
-                        let already = matches!(
-                            ai.current_substate,
-                            Substate::FleeingPanic | Substate::FleeingRunToDoor
-                        );
-                        ai.directed_panic = center.is_some();
-                        if let Some(center) = center {
-                            ai.panic_center_x = center.x;
-                            ai.panic_center_y = center.y;
-                        }
-                        ai.outbox.actor.begin_panic = Some(crate::ai::PanicRequest {
+                        self.execute_ai_panic(
+                            sim,
+                            assets,
+                            owner,
                             center,
-                            runs: crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
-                            alert: crate::ai::AlertLevel::Red,
-                            is_new_panic: !already,
-                        });
-                        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                            crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+                            crate::ai::AlertLevel::Red,
+                        );
                     }
                     ControlFlow::Break(true)
                 }

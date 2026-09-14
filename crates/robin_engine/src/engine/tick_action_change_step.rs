@@ -83,15 +83,6 @@ impl EngineInner {
                 .current_order_for_actor(entity_id)
                 .is_none();
         if frozen_without_order {
-            // The actor update does not reach the
-            // execution-freeze return until after it has
-            // observed an orderless selected element and run
-            // order advancement. A terminal transition recorded
-            // in an earlier-created attacker's slot therefore
-            // sends its selected-element condolence before the
-            // Human/NPC tail (and its detection refresh), even
-            // though this actor cannot execute an order now.
-            self.dispatch_selected_condolations_for_actor_entry(sim, entity_id, assets);
             self.drain_script_synchronous_actions(
             sim,
             assets,
@@ -234,7 +225,10 @@ impl EngineInner {
         entry: ActionChangeEntryOrder,
     ) -> ActionChangeOwnerSelections {
         let ActionChangeSlotCtx {
-            assets, entity_id, ..
+            sim,
+            assets,
+            entity_id,
+            ..
         } = ctx;
         let ActionChangeEntryOrder {
             selected_order,
@@ -270,7 +264,7 @@ impl EngineInner {
         // replace the selected order in the same owner walk, so
         // sampling in a global pre-pass would validate stale work.
         let validity_short_circuited = !enter_swordfight_corpse_exit
-            && self.pre_tick_human_execute_validity_for(assets, entity_id);
+            && self.pre_tick_human_execute_validity_for(sim, assets, entity_id);
         if !validity_short_circuited
             && !enter_swordfight_corpse_exit
             && selected_order_type
@@ -512,6 +506,8 @@ impl EngineInner {
             // animation, exactly once.
             let motion_before_modifier = *motion;
             self.apply_actor_post_execute_wait_modifier_to_motion(
+                ctx.sim,
+                ctx.assets,
                 entity_id,
                 entry_seq_id,
                 entry_elem_idx,
@@ -775,7 +771,7 @@ impl EngineInner {
         // here is intentional: WaitingSword callbacks above may
         // have synchronously replaced it.
         if let Some(result) = execute_result.as_mut() {
-            self.apply_actor_post_execute_wait_modifier(entity_id, result);
+            self.apply_actor_post_execute_wait_modifier(sim, assets, entity_id, result);
         }
         // The base actor update calls line-crossing detection
         // after the complete execution chain and its wait
@@ -850,14 +846,6 @@ impl EngineInner {
         // synchronous decision tick finishes may order advancement/completion
         // promote the actor's successor order.
         self.process_anim_completion_outcomes(sim, outcomes, assets);
-        // Terminating a sequence element calls the
-        // actor's removal notification and then readiness
-        // synchronously inside this update slot. Close only
-        // this owner's newly terminated stack before its derived
-        // NPC tail runs; leaving it in the global queue delays
-        // immediate successors such as UnlockAI until after
-        // detection and changes observable AI state.
-        self.dispatch_condolations_for_owner_boundary(sim, entity_id, assets);
         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
     .unwrap_or_else(|error| {
         panic!(

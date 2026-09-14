@@ -7,6 +7,7 @@ use crate::engine::{EngineInner, LevelAssets};
 impl EngineInner {
     pub(super) fn dispatch_pc_selection(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         pc_id: &EntityId,
@@ -25,6 +26,7 @@ impl EngineInner {
             );
         }
         self.select_pc_with_action_fanout(
+            sim,
             assets,
             seat,
             *pc_id,
@@ -37,6 +39,7 @@ impl EngineInner {
 
     pub(super) fn dispatch_portrait_selection(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         portrait_index: &u32,
@@ -47,19 +50,20 @@ impl EngineInner {
         }
         // Portrait click → `select_by_portrait_index` fires
         // `select_pc` with `speak=true` directly.
-        self.select_by_portrait_index(assets, seat, *portrait_index as u8, *append);
+        self.select_by_portrait_index(sim, assets, seat, *portrait_index as u8, *append);
         self.update_recording_after_selection_change();
     }
 
     pub(super) fn apply_box_select(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         pt1: crate::coordinates::MapPoint,
         pt2: crate::coordinates::MapPoint,
         shift: bool,
     ) {
-        self.perform_box_selection(assets, seat, pt1, pt2, shift);
+        self.perform_box_selection(sim, assets, seat, pt1, pt2, shift);
         self.feedback.pending_side_effects.host_events.push(
             crate::engine::HostEvent::CancelMultiSelection {
                 suppress_next_double: true,

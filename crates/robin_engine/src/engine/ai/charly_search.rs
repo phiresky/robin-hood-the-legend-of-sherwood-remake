@@ -17,7 +17,7 @@ impl EngineInner {
         self.observation_ai_mut(owner)
             .base
             .set_emoticon(EmoticonType::QuestionMark);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         if self.observation_ai(owner).get_rank() == ProfileRank::Officer {
             self.execute_ai_missed_charly_alert(sim, assets, owner);
             return;
@@ -107,9 +107,13 @@ impl EngineInner {
             AiState::Seeking,
             Substate::SeekingCharly,
         );
-        self.observation_ai_mut(owner)
-            .set_alert_status(AlertLevel::Yellow);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_set_alert_status(
+            assets,
+            owner,
+            AlertLevel::Yellow,
+            crate::ai::AlertFlags::empty(),
+        );
+
         let ai = self.observation_ai(owner);
         let position = ai.search_charly_way[0];
         let flags = GotoFlags::RUN

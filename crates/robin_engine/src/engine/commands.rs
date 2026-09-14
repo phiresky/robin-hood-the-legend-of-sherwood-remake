@@ -211,7 +211,13 @@ impl EngineInner {
             // Stopping an actor leaves its default Wait element alone. For real
             // movement it rewrites/stops the sequence so its transition can
             // finish; it does not directly force the action state to Waiting.
-            StopPc { pc_id } => self.stop_owner(*pc_id, crate::sequence::SequencePriority::Normal),
+            StopPc { pc_id } => self.stop_actor_orders(
+                sim,
+                assets,
+                &mut Vec::new(),
+                *pc_id,
+                crate::sequence::SequencePriority::Normal,
+            ),
 
             // ── Sequence-based interactions ──────────────────────
             LaunchInteraction { .. } => self.apply_launch_interaction_command(sim, assets, cmd),
@@ -223,12 +229,12 @@ impl EngineInner {
 
             // ── Swordfight ──────────────────────────────────────
             EnterSwordfight { .. } => self.apply_enter_swordfight_command(sim, assets, cmd),
-            SwordStrikeCmd { .. } => self.apply_sword_strike_command(assets, cmd),
+            SwordStrikeCmd { .. } => self.apply_sword_strike_command(sim, assets, cmd),
             SetPrincipalOpponent { actor, opponent_id } => {
                 self.set_as_new_principal_opponent(assets, *actor, *opponent_id)
             }
 
-            ClearShootList { pc_id } => self.apply_clear_shoot_list_command(*pc_id),
+            ClearShootList { pc_id } => self.apply_clear_shoot_list_command(sim, assets, *pc_id),
             DropAmmo { .. } => self.apply_drop_ammo_command(cmd),
             DropAleAt { .. } => self.apply_drop_ale_at_command(cmd),
             ShieldSelectProtected { protected_pc, .. } => {
@@ -282,11 +288,13 @@ impl EngineInner {
             MoveTacticalUnits { .. } => {
                 self.apply_move_tactical_units_command(sim, assets, seat, cmd)
             }
-            SetCombatStance { soldiers, stance } => self.set_tactical_stance(soldiers, *stance),
+            SetCombatStance { soldiers, stance } => {
+                self.set_tactical_stance(sim, assets, soldiers, *stance)
+            }
             SetTacticalFormation { .. } => self.apply_set_tactical_formation_command(cmd),
             SetTacticalPatrol { .. } => self.apply_set_tactical_patrol_command(sim, assets, cmd),
-            SetTacticalFollow { .. } => self.apply_set_tactical_follow_command(assets, cmd),
-            ReleaseTacticalControl => self.release_tactical_control(),
+            SetTacticalFollow { .. } => self.apply_set_tactical_follow_command(sim, assets, cmd),
+            ReleaseTacticalControl => self.release_tactical_control(sim, assets),
 
             // ── Special ─────────────────────────────────────────
             ResetComa { pc_id } => self.reset_coma(assets, *pc_id),
@@ -419,20 +427,16 @@ impl EngineInner {
                 pc_id,
                 action_index,
             } => {
-                let selected_before = self.players.seats[seat].selection.clone();
-                if self.select_pc_action_by_index_from_message(
+                self.select_pc_action_by_index_from_message(
+                    sim,
                     assets,
                     seat,
                     *pc_id,
                     *action_index as u8,
-                ) {
-                    self.close_player_select_action_stop_callbacks(sim, assets, selected_before);
-                }
+                );
             }
             SelectResolvedAction { pc_id, action } => {
-                let selected_before = self.players.seats[seat].selection.clone();
-                self.set_pc_action_from_message(assets, seat, *pc_id, *action);
-                self.close_player_select_action_stop_callbacks(sim, assets, selected_before);
+                self.set_pc_action_from_message(sim, assets, seat, *pc_id, *action);
             }
             SelectPlannedAction { pc_id, action } => {
                 if !self.players.seats[seat].selection.contains(pc_id) {
@@ -485,6 +489,7 @@ impl EngineInner {
             }
             CancelAction { pc_id } => {
                 self.set_pc_action_from_message(
+                    sim,
                     assets,
                     seat,
                     *pc_id,
@@ -493,7 +498,7 @@ impl EngineInner {
             }
             UnselectAllActions => {
                 for pc_id in self.players.seats[seat].selection.clone() {
-                    self.unselect_action(pc_id);
+                    self.unselect_action(sim, assets, pc_id);
                 }
                 self.players.seats[seat].selected_action = crate::profiles::Action::NoAction;
             }
@@ -511,6 +516,7 @@ impl EngineInner {
             }
             SelectPc { pc_id, append } => {
                 self.dispatch_pc_selection(
+                    sim,
                     assets,
                     seat,
                     pc_id,
@@ -519,7 +525,7 @@ impl EngineInner {
                 );
             }
             TogglePcSelection { pc_id } => {
-                self.toggle_pc_selection(assets, seat, *pc_id);
+                self.toggle_pc_selection(sim, assets, seat, *pc_id);
                 self.update_recording_after_selection_change();
             }
             UnselectPc { pc_id } => {
@@ -530,7 +536,7 @@ impl EngineInner {
                 }
             }
             BoxSelect { pt1, pt2, shift } => {
-                self.apply_box_select(assets, seat, *pt1, *pt2, *shift);
+                self.apply_box_select(sim, assets, seat, *pt1, *pt2, *shift);
                 self.update_recording_after_selection_change();
             }
             BoxUnselect { pt1, pt2 } => {
@@ -538,7 +544,7 @@ impl EngineInner {
                 self.update_recording_after_selection_change();
             }
             SelectAllPcs => {
-                self.select_all_pcs(assets, seat);
+                self.select_all_pcs(sim, assets, seat);
                 self.update_recording_after_selection_change();
             }
             UnselectAllPcs => {
@@ -556,7 +562,7 @@ impl EngineInner {
                 portrait_index,
                 append,
             } => {
-                self.dispatch_portrait_selection(assets, seat, portrait_index, append);
+                self.dispatch_portrait_selection(sim, assets, seat, portrait_index, append);
             }
             SelectTacticalUnits { soldiers, append } => {
                 self.select_tactical_units(seat, soldiers, *append);
@@ -597,7 +603,7 @@ impl EngineInner {
                         .map(|pc| pc.current_action)
                         .unwrap_or(crate::profiles::Action::NoAction);
                     if cur != crate::profiles::Action::NoAction {
-                        self.unselect_action(id);
+                        self.unselect_action(sim, assets, id);
                     }
                     if let Some(entity) = self.get_entity_mut(id)
                         && let Some(pc) = entity.pc_data_mut()
@@ -622,7 +628,7 @@ impl EngineInner {
                         None => continue,
                     };
                     if cur != restore {
-                        self.unselect_action(id);
+                        self.unselect_action(sim, assets, id);
                     }
                     if let Some(entity) = self.get_entity_mut(id)
                         && let Some(pc) = entity.pc_data_mut()
@@ -983,29 +989,6 @@ impl EngineInner {
     ) {
         self.apply_command_for_seat_with_replay_context(sim, camera, assets, seat, command, false);
     }
-
-    /// Close the actor-stop callbacks authored by a player action selection
-    /// before the next engine actor walk.
-    ///
-    /// The original game stops every selected PC synchronously. A
-    /// stopped `TakeCorpse` can therefore run its condolence immediately:
-    /// `DropCorpse(12, true)` releases the body and calls the body's `Wait()`
-    /// before creation-order actor slots begin. Rust queues cards
-    /// to avoid re-entrant borrows, so leaving them for the actor/global drain
-    /// makes a body whose slot has not yet run miss its first idle Execute.
-    /// Registered action-entry elements remain on the manager FIFO; this
-    /// closes only selected-owner condolence cards created by the synchronous
-    /// Stop stack.
-    fn close_player_select_action_stop_callbacks(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        selected_before: Vec<EntityId>,
-    ) {
-        for owner in selected_before {
-            self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
-        }
-    }
 }
 
 /// Admission steps and per-arm handlers of
@@ -1254,7 +1237,12 @@ impl EngineInner {
         self.apply_enter_swordfight(sim, assets, *actor, *target, *running);
     }
 
-    fn apply_sword_strike_command(&mut self, assets: &LevelAssets, cmd: &PlayerCommand) {
+    fn apply_sword_strike_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        cmd: &PlayerCommand,
+    ) {
         let PlayerCommand::SwordStrikeCmd {
             actor,
             target,
@@ -1268,6 +1256,7 @@ impl EngineInner {
             unreachable!("apply_sword_strike_command called for {cmd:?}")
         };
         self.dispatch_player_sword_strike(
+            sim,
             assets,
             actor,
             target,
@@ -1279,13 +1268,23 @@ impl EngineInner {
         );
     }
 
-    fn apply_clear_shoot_list_command(&mut self, pc_id: EntityId) {
+    fn apply_clear_shoot_list_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+    ) {
         // Clear the retained human-instruction FIFO. Keep the
         // broader pending-element cleanup for pre-instruction work that
         // has not reached that FIFO yet.
         self.clear_pc_shoot_list(pc_id);
-        let resolver = Self::priority_resolver(&self.world.entities);
-        self.orders.sequence_manager.stop_pending_elements_matching(
+        let resolver = |engine: &EngineInner, element: &crate::sequence::SequenceElement| {
+            Self::priority_resolver(&engine.world.entities)(element)
+        };
+        self.stop_pending_elements_matching(
+            sim,
+            assets,
+            &mut Vec::new(),
             pc_id,
             Command::ShootBow,
             crate::sequence::SequencePriority::Preference,
@@ -1406,7 +1405,12 @@ impl EngineInner {
         self.set_tactical_patrol(sim, assets, soldiers, *destination, *formation)
     }
 
-    fn apply_set_tactical_follow_command(&mut self, assets: &LevelAssets, cmd: &PlayerCommand) {
+    fn apply_set_tactical_follow_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        cmd: &PlayerCommand,
+    ) {
         let PlayerCommand::SetTacticalFollow {
             soldiers,
             hero,
@@ -1415,7 +1419,7 @@ impl EngineInner {
         else {
             unreachable!("apply_set_tactical_follow_command called for {cmd:?}")
         };
-        self.set_tactical_follow(assets, soldiers, *hero, *formation)
+        self.set_tactical_follow(sim, assets, soldiers, *hero, *formation)
     }
 
     fn apply_perform_resolved_orientation_command(

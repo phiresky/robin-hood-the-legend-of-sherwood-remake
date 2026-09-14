@@ -65,7 +65,11 @@ fn draw_fast_forward_skips() {
     let mut engine = EngineInner::new();
     engine.control.fast_forward = true;
     engine.control.frame_counter = 1; // Not a multiple of 32
-    let result = engine.tick_display_state(&mut display);
+    let result = engine.tick_display_state(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut display,
+    );
     assert_eq!(result, 1); // Should skip
 }
 
@@ -75,7 +79,11 @@ fn draw_fast_forward_every_32nd() {
     let mut engine = EngineInner::new();
     engine.control.fast_forward = true;
     engine.control.frame_counter = 32; // Multiple of 32
-    let result = engine.tick_display_state(&mut display);
+    let result = engine.tick_display_state(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut display,
+    );
     assert_eq!(result, 0); // Should render
 }
 
@@ -633,6 +641,7 @@ fn timer_tick_decrements_and_removes() {
 
 #[test]
 fn cancelled_crouch_terminates_in_manager_and_releases_successor() {
+    let mut assets = LevelAssets::new();
     use crate::element::{Command, Posture};
     use crate::sequence::{Field, FieldValue, Sequence, SequenceElement, SequenceState};
 
@@ -649,10 +658,13 @@ fn cancelled_crouch_terminates_in_manager_and_releases_successor() {
     timer.set_property(Field::Timer, FieldValue::Integer(5));
     sequence.append_element(timer);
     let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
 
     // Exercise the real cancellation producer, including the selected actor's
     // successor chain, then let the manager instruct the cancelled successor.
@@ -666,10 +678,13 @@ fn cancelled_crouch_terminates_in_manager_and_releases_successor() {
             .command,
         Command::Null,
     );
-    engine
-        .orders
-        .sequence_manager
-        .element_terminated(sequence_id, 0);
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -1349,10 +1364,13 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
         wait.orders
             .push_back(Order::new(waiting, 0.0, 0.0, order_id));
         let wait_sequence = engine.orders.sequence_manager.launch_element(wait);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(wait_sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            wait_sequence,
+            0,
+        );
         engine.publish_selected_order_as_installed(attacker);
 
         let sim = crate::sim_rng::test_context();
@@ -1995,7 +2013,11 @@ fn camera_slide_approaches_target() {
     engine.feedback.cutscene_camera.camera_wanted = crate::coordinates::MapPoint::new(500.0, 300.0);
     engine.control.speed = 1.0;
 
-    engine.perform_director_work(&mut display);
+    engine.perform_director_work(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut display,
+    );
 
     // Should have set Scroll display op (or moved toward target)
     // The scrolling vector should point toward the target
@@ -2037,7 +2059,11 @@ fn camera_slide_cancels_at_target() {
     engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(500.0, 300.0);
     engine.feedback.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(500.0, 300.0);
 
-    engine.perform_director_work(&mut display);
+    engine.perform_director_work(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut display,
+    );
 
     // Should have cancelled the slide
     assert!(!engine.feedback.cutscene_camera.is_sliding());

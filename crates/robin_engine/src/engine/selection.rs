@@ -146,17 +146,19 @@ impl EngineInner {
     /// `speak` fires the `HERO_SELECT` exclamation after a successful add.
     pub(crate) fn select_pc(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         id: EntityId,
         multi_select: bool,
         speak: bool,
     ) {
-        self.select_pc_with_action_fanout(assets, seat, id, multi_select, speak, true);
+        self.select_pc_with_action_fanout(sim, assets, seat, id, multi_select, speak, true);
     }
 
     pub(super) fn select_pc_with_action_fanout(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         id: EntityId,
@@ -203,7 +205,7 @@ impl EngineInner {
             self.hero_speaking(assets, id, crate::engine::melee::HERO_SELECT);
         }
         if synthesize_action_fanout {
-            self.apply_post_select_action_fanout(assets, seat);
+            self.apply_post_select_action_fanout(sim, assets, seat);
         }
     }
 
@@ -213,11 +215,16 @@ impl EngineInner {
     /// action did not change. That restitution still runs SelectAction's
     /// stop-in-place and per-action entry hooks, so it cannot be reduced to
     /// retaining `current_action` in place.
-    fn apply_post_select_action_fanout(&mut self, assets: &LevelAssets, seat: usize) {
+    fn apply_post_select_action_fanout(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        seat: usize,
+    ) {
         if self.players.seats[seat].selection.len() > 1 {
             let ids = self.players.seats[seat].selection.clone();
             for id in ids {
-                self.unselect_action(id);
+                self.unselect_action(sim, assets, id);
             }
             self.players.seats[seat].selected_action = Action::NoAction;
         } else if let Some(&id) = self.players.seats[seat].selection.first() {
@@ -226,12 +233,18 @@ impl EngineInner {
                 .and_then(|entity| entity.pc_data())
                 .map(|pc| pc.current_action)
                 .unwrap_or(Action::NoAction);
-            self.set_pc_action_from_message(assets, seat, id, action);
+            self.set_pc_action_from_message(sim, assets, seat, id, action);
         }
     }
 
     /// Toggle a PC in/out of the current selection (Ctrl+click).
-    pub(crate) fn toggle_pc_selection(&mut self, assets: &LevelAssets, seat: usize, id: EntityId) {
+    pub(crate) fn toggle_pc_selection(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        seat: usize,
+        id: EntityId,
+    ) {
         if let Some(pos) = self.players.seats[seat]
             .selection
             .iter()
@@ -251,13 +264,18 @@ impl EngineInner {
             }
             // Ctrl-click addition routes through SelectPC in Original and
             // therefore performs the same post-selection action fanout.
-            self.apply_post_select_action_fanout(assets, seat);
+            self.apply_post_select_action_fanout(sim, assets, seat);
         }
     }
 
     /// Select all playable PCs. Robin is placed at the head of the list;
     /// everyone else preserves `pc_ids` order.
-    pub(crate) fn select_all_pcs(&mut self, assets: &LevelAssets, seat: usize) {
+    pub(crate) fn select_all_pcs(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        seat: usize,
+    ) {
         for pc_id in self.world.pc_ids.clone() {
             if let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) {
                 pc.pc.portrait.open = false;
@@ -294,7 +312,7 @@ impl EngineInner {
                 }
             }
         }
-        self.apply_post_select_action_fanout(assets, seat);
+        self.apply_post_select_action_fanout(sim, assets, seat);
     }
 
     /// Clear the selection.
@@ -369,6 +387,7 @@ impl EngineInner {
     /// Re-enable temporary actions on a specific PC or every selected PC.
     pub(crate) fn apply_enable_all_actions_temp(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         target_pc: Option<EntityId>,
@@ -378,7 +397,7 @@ impl EngineInner {
             Some(id) => vec![id],
         };
         for id in targets {
-            self.enable_pc_actions_temp(assets, seat, id);
+            self.enable_pc_actions_temp(sim, assets, seat, id);
         }
     }
 
@@ -389,6 +408,7 @@ impl EngineInner {
     /// part of this lifecycle.
     pub(crate) fn enable_pc_actions_temp(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         pc_id: EntityId,
@@ -423,7 +443,7 @@ impl EngineInner {
         if let Some(action) = restore_action
             && self.players.seats[seat].selection.contains(&pc_id)
         {
-            self.set_pc_action_from_message(assets, seat, pc_id, action);
+            self.set_pc_action_from_message(sim, assets, seat, pc_id, action);
         }
     }
 
@@ -445,7 +465,12 @@ impl EngineInner {
     ///
     /// After level load, pick the playable PC with the highest profile
     /// priority (Robin has priority 10) and center + select.
-    pub(crate) fn select_highest_priority_pc(&mut self, assets: &LevelAssets, seat: usize) {
+    pub(crate) fn select_highest_priority_pc(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        seat: usize,
+    ) {
         if false {
             return;
         }
@@ -477,7 +502,7 @@ impl EngineInner {
             };
             self.center_on_point(seat, pos);
             // Initialize-from-mission path selects without the speak flag.
-            self.select_pc(assets, seat, pc_id, false, false);
+            self.select_pc(sim, assets, seat, pc_id, false, false);
         }
     }
 
@@ -627,6 +652,7 @@ impl EngineInner {
     /// adds to current selection instead of replacing.
     pub(crate) fn select_by_portrait_index(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         index: u8,
@@ -635,10 +661,10 @@ impl EngineInner {
         let pc_id = self.character_for_portrait_index(index);
         if let Some(id) = pc_id {
             if multi_select {
-                self.toggle_pc_selection(assets, seat, id);
+                self.toggle_pc_selection(sim, assets, seat, id);
             } else {
                 // Portrait clicks bark HERO_SELECT.
-                self.select_pc(assets, seat, id, false, true);
+                self.select_pc(sim, assets, seat, id, false, true);
             }
         }
     }
@@ -676,16 +702,18 @@ impl EngineInner {
     /// emitted as a side effect for the host to consume after the tick.
     pub(crate) fn set_pc_action_from_message(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         pc_id: EntityId,
         action: Action,
     ) {
-        self.set_pc_action_inner(assets, None, seat, pc_id, action);
+        self.set_pc_action_inner(sim, assets, None, seat, pc_id, action);
     }
 
     fn set_pc_action_inner(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         input: Option<&mut InputState>,
         seat: usize,
@@ -718,7 +746,7 @@ impl EngineInner {
                 }
             }
             self.players.seats[seat].selection.clear();
-            self.select_pc(assets, seat, pc_id, false, false);
+            self.select_pc(sim, assets, seat, pc_id, false, false);
         }
 
         if !self.players.seats[seat].selection.contains(&pc_id) {
@@ -769,7 +797,7 @@ impl EngineInner {
                     ?action,
                     "before unselect_action"
                 );
-                self.unselect_action(id);
+                self.unselect_action(sim, assets, id);
                 tracing::trace!(
                     target: "parity_action",
                     ?id,
@@ -822,7 +850,7 @@ impl EngineInner {
                     ?action,
                     "before group stop_owner (priority=Normal)"
                 );
-                self.stop_owner(id, SequencePriority::Normal);
+                self.stop_actor_orders(sim, assets, &mut Vec::new(), id, SequencePriority::Normal);
                 tracing::trace!(
                     target: "parity_action",
                     ?id,
@@ -840,7 +868,7 @@ impl EngineInner {
                 // derived on-demand by `compute_trajectory_preview`, so we
                 // don't need a separate state write.
                 if !record_qa => {
-                    self.manage_input_pre_action_bow(assets, seat);
+                    self.manage_input_pre_action_bow(sim, assets, seat);
                 }
             Action::Shield | Action::BigShield => {
                 // Reset shield protection for the fresh activation.
@@ -966,7 +994,12 @@ impl EngineInner {
     /// The original game requires the caller to have selected exactly one PC. The
     /// macro-recording short-circuit is enforced by the sole caller
     /// `set_pc_action`.
-    fn manage_input_pre_action_bow(&mut self, assets: &LevelAssets, seat: usize) {
+    fn manage_input_pre_action_bow(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        seat: usize,
+    ) {
         let Some(&pc_id) = self.players.seats[seat].selection.first() else {
             return;
         };
@@ -983,7 +1016,13 @@ impl EngineInner {
             return;
         }
 
-        self.stop_owner(pc_id, SequencePriority::Preference);
+        self.stop_actor_orders(
+            sim,
+            assets,
+            &mut Vec::new(),
+            pc_id,
+            SequencePriority::Preference,
+        );
         let elem = SequenceElement::new(1, Command::EquipBow, Some(pc_id));
         let mut sequence = crate::sequence::Sequence::new();
         sequence.append_element(elem);
@@ -1001,7 +1040,12 @@ impl EngineInner {
     /// - Sets `current_action = NoAction`
     ///
     /// Skips cleanup when the PC is swordfighting.
-    pub(crate) fn unselect_action(&mut self, pc_id: EntityId) {
+    pub(crate) fn unselect_action(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+    ) {
         use crate::element::{ActionState, Command, Posture};
         use crate::sequence::SequenceElement;
 
@@ -1030,7 +1074,13 @@ impl EngineInner {
                         ?pc_id,
                         "before bow cleanup stop_owner (priority=Preference)"
                     );
-                    self.stop_owner(pc_id, crate::sequence::SequencePriority::Preference);
+                    self.stop_actor_orders(
+                        sim,
+                        assets,
+                        &mut Vec::new(),
+                        pc_id,
+                        crate::sequence::SequencePriority::Preference,
+                    );
                     tracing::trace!(
                         target: "parity_action",
                         ?pc_id,
@@ -1154,6 +1204,7 @@ impl EngineInner {
 
     pub(crate) fn select_pc_action_by_index_from_message(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         pc_id: EntityId,
@@ -1175,12 +1226,13 @@ impl EngineInner {
         if action == Action::NoAction || pc.action_slot_disabled(idx) {
             return false;
         }
-        self.set_pc_action_from_message(assets, seat, pc_id, action);
+        self.set_pc_action_from_message(sim, assets, seat, pc_id, action);
         true
     }
 
     pub(crate) fn perform_box_selection(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         p1: crate::coordinates::MapPoint,
@@ -1223,7 +1275,7 @@ impl EngineInner {
             self.unselect_all_pcs(seat);
         }
         for pc_id in box_selected {
-            self.select_pc(assets, seat, pc_id, true, true);
+            self.select_pc(sim, assets, seat, pc_id, true, true);
         }
     }
 
@@ -1513,7 +1565,14 @@ mod tests {
         }));
         engine.players.seats[0].selection = vec![previously_selected];
 
-        engine.select_pc(&assets, 0, rescued_pc, false, false);
+        engine.select_pc(
+            &crate::sim_rng::test_context(),
+            &assets,
+            0,
+            rescued_pc,
+            false,
+            false,
+        );
 
         assert_eq!(engine.players.seats[0].selection, vec![rescued_pc]);
     }
@@ -1549,7 +1608,7 @@ mod tests {
             },
         }));
 
-        engine.enable_pc_actions_temp(&assets, 0, rescued_pc);
+        engine.enable_pc_actions_temp(&crate::sim_rng::test_context(), &assets, 0, rescued_pc);
 
         assert_eq!(
             engine
@@ -1584,12 +1643,22 @@ mod tests {
         let mut shooting = SequenceElement::new(1, Command::ShootBowOnce, Some(pc_id));
         shooting.priority = SequencePriority::Normal;
         let sequence_id = engine.orders.sequence_manager.launch_element(shooting);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence_id, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            sequence_id,
+            0,
+        );
 
-        engine.select_pc(&assets, 0, pc_id, false, false);
+        engine.select_pc(
+            &crate::sim_rng::test_context(),
+            &assets,
+            0,
+            pc_id,
+            false,
+            false,
+        );
 
         assert_eq!(
             engine
@@ -1614,12 +1683,21 @@ mod tests {
         let mut shooting = SequenceElement::new(1, Command::ShootBow, Some(shooting_pc));
         shooting.priority = SequencePriority::Normal;
         let shooting_sequence = engine.orders.sequence_manager.launch_element(shooting);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(shooting_sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            shooting_sequence,
+            0,
+        );
 
-        engine.set_pc_action_from_message(&assets, 0, target_pc, Action::Bow);
+        engine.set_pc_action_from_message(
+            &crate::sim_rng::test_context(),
+            &assets,
+            0,
+            target_pc,
+            Action::Bow,
+        );
 
         assert_eq!(engine.players.seats[0].selection, vec![target_pc]);
         assert_eq!(

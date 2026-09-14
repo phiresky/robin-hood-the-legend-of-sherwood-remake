@@ -64,12 +64,8 @@ impl Entities {
 
     /// In-memory equivalent of a save/load round trip, used by
     /// `PersistedWorldState::capture` (which also runs without serialization
-    /// for replay/rollback save markers). Sprites and NPC AI brains drop their
-    /// runtime-only state; generations restart empty.
-    ///
-    /// TODO: PC-owned `PcData::ai` brains are cloned raw, matching the removed
-    /// `Persisted*` mirrors, although serde projects them; decide whether the
-    /// in-memory projection should project them too.
+    /// for replay/rollback save markers). Sprites drop their runtime-only state;
+    /// generations restart empty.
     pub(crate) fn persisted_projection(&self) -> Self {
         let slots = self
             .slots
@@ -79,9 +75,6 @@ impl Entities {
                     let mut entity = entity.clone();
                     let element = entity.element_data_mut();
                     element.sprite = element.sprite.persisted_projection();
-                    if let Some(npc) = entity.npc_data_mut() {
-                        npc.ai.ai_brain = npc.ai.ai_brain.persisted_projection();
-                    }
                     entity
                 })
             })

@@ -48,8 +48,8 @@ impl EngineInner {
             .world
             .entities
             .expect_ai_controller_mut(owner, format_args!("cover focus"));
-        ai.outbox.actor.set_focus(ai.primary_target);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let target = ai.primary_target;
+        self.execute_ai_focus(owner, target);
     }
 
     fn cover_step_back_goal(
@@ -396,16 +396,17 @@ impl EngineInner {
                 .world
                 .entities
                 .expect_enemy_ai_mut(owner, format_args!("archer observer equip"));
-            ai.base
-                .outbox
-                .actor
-                .launch_commands
-                .push(if ai.enemy_seen_below {
-                    crate::element::Command::EquipBowDown
-                } else {
-                    crate::element::Command::EquipBow
-                });
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            let command = if ai.enemy_seen_below {
+                crate::element::Command::EquipBowDown
+            } else {
+                crate::element::Command::EquipBow
+            };
+            self.launch_element(crate::sequence::SequenceElement::new(
+                1,
+                command,
+                Some(owner),
+            ));
+
             self.duty_set_state(
                 sim,
                 assets,

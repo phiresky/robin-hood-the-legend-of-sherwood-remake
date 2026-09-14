@@ -172,15 +172,3 @@ fn swordfight_facing_guard_uses_literal_position_after_principal_refresh() {
         target_elevation,
     ));
 }
-
-#[test]
-fn directed_panic_request_does_not_add_flee_speech() {
-    let mut ai = EnemyAi::new(91);
-    let enemy_pos = position(663.922_5, 2096.012);
-
-    ai.panic_from_position(enemy_pos, parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
-    let request = ai.base.outbox.actor.begin_panic.as_ref().unwrap();
-
-    assert_eq!(request.center, Some(enemy_pos));
-    assert_eq!(request.runs, parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
-}

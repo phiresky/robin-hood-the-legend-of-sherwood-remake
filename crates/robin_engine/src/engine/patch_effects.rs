@@ -446,9 +446,7 @@ impl EngineInner {
                 // differs observably: the actor is not moved, the corrected
                 // source is different, and first-point selection becomes enabled.
                 if !self.extract_move_instruction_owner(id) {
-                    self.orders
-                        .sequence_manager
-                        .element_impossible(seq_id, elem_idx);
+                    self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                     continue;
                 }
                 match self.try_dispatch_move_path(sim, assets, id, seq_id, elem_idx, dest, action) {
@@ -475,9 +473,7 @@ impl EngineInner {
                             .installed_order = installed_order;
                     }
                     MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
-                        self.orders
-                            .sequence_manager
-                            .element_impossible(seq_id, elem_idx);
+                        self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                     }
                     MovePathOutcome::Failed => {
                         // Source extraction failure already performed the
@@ -840,7 +836,10 @@ mod tests {
         engine
             .orders
             .sequence_manager
-            .element_in_progress(sequence, 0);
+            .get_element_mut(sequence, 0)
+            .unwrap()
+            .state = crate::sequence::SequenceState::InProgress;
+        engine.orders.sequence_manager.rebuild_indices();
         engine
             .get_entity_mut(owner)
             .expect("test PC exists")

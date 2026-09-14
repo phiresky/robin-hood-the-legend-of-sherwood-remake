@@ -185,10 +185,13 @@ fn corpse_exit_initialization_fixture(
         ));
     }
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     if active_drop {
         engine
             .get_entity_mut(carrier)
@@ -265,10 +268,13 @@ fn install_owner_selected_test_melee_frames(
         .orders
         .sequence_manager
         .push_order_on(sequence, 0, order);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     bind_test_action_point(
         engine,
         attacker,

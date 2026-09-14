@@ -42,13 +42,8 @@ impl EngineInner {
         owner: EntityId,
         observer_camp: Camp,
     ) {
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("sleeping enemy search"))
-            .outbox
-            .actor
-            .set_unfocus();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_unfocus(owner);
+
         let trainer = self
             .world
             .entities
@@ -69,7 +64,9 @@ impl EngineInner {
             .clear();
         // Registry membership is selected after duty callbacks. No callback occurs
         // inside this scan; candidate properties are read in registration order.
-        for target in self.world.fighter_registry_order() {
+        let fighter_count = self.world.fighter_registry_ids.len();
+        for index in 0..fighter_count {
+            let target = self.world.fighter_registry_ids[index];
             let entity = self.expect_entity(target, "sleeping enemy candidate");
             if !self.camps_are_hostile(observer_camp, entity.camp())
                 || !entity.is_unconscious()

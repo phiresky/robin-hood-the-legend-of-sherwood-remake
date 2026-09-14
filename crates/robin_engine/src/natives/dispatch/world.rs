@@ -223,30 +223,6 @@ impl NativeContext<'_, '_> {
                         .buildings
                         .actor_building
                         .remove(&actor_h);
-                    // Original-game pre-teleport building cleanup
-                    // in the original game calls
-                    // building departure, and the original game keeps a
-                    // single occupant list per building. The port mirrors
-                    // that list in both `ScriptDomains::buildings::occupants`
-                    // and the AI-facing `AiGlobalState::houses`, so the
-                    // teleport must drop the actor from both — exactly as the
-                    // PassDoor Leave hook in `engine::door_pass` does.
-                    // Otherwise indoor enemy alerts keep counting a soldier
-                    // who was teleported out of the house and stages an extra
-                    // pursuer in the door battle.
-                    let house_key = building_idx
-                        .and_then(|idx| u16::try_from(idx).ok())
-                        .and_then(crate::sector::BuildingIdx::new);
-                    let actor_id = self.actor_id(actor_h);
-                    if let (Some(house_key), Some(actor_id)) = (house_key, actor_id)
-                        && let Some(house) = self
-                            .ai_global_mut()
-                            .houses
-                            .iter_mut()
-                            .find(|house| house.building_index == Some(house_key))
-                    {
-                        house.occupant_ids.retain(|&e| e != actor_id);
-                    }
                     1
                 } else {
                     script_error!(native, "actor {actor_h} not in a building");

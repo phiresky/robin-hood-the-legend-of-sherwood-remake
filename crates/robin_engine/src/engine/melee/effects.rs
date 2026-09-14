@@ -506,6 +506,8 @@ impl EngineInner {
     /// (priority lives on the actor, not the element).
     pub(crate) fn dispatch_fall(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -594,13 +596,9 @@ impl EngineInner {
             // FallingShoulders and FallingBackUpright with
             // direction computation disabled.
             self.push_translated_damage_order((seq_id, elem_idx), anim);
-            self.orders
-                .sequence_manager
-                .element_in_progress(seq_id, elem_idx);
+            self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         } else {
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         }
     }
 

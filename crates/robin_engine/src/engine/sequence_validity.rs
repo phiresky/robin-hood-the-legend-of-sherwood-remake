@@ -1348,6 +1348,7 @@ impl EngineInner {
     ///   behaviour where the same NI guard blocks the cascade.
     pub(super) fn pre_tick_human_execute_validity_for(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
     ) -> bool {
@@ -1455,9 +1456,7 @@ impl EngineInner {
 
         match terminal {
             ValidityArmTerminal::Aborted => {
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
+                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 // The bow driver is keyed independently from the selected
                 // sequence element. Once this Execute guard aborts a shot,
                 // the specialized bow tick no longer sees a selected shoot
@@ -1487,14 +1486,14 @@ impl EngineInner {
                 }
             }
             ValidityArmTerminal::Terminated => {
-                self.do_next_order(seq_id, elem_idx);
+                self.do_next_order(sim, assets, seq_id, elem_idx);
             }
             ValidityArmTerminal::TerminatedWithDrop { needs_drop } => {
                 if needs_drop {
                     // Instant drop.
                     self.force_drop_carried_corpse_instant(entity_id);
                 }
-                self.do_next_order(seq_id, elem_idx);
+                self.do_next_order(sim, assets, seq_id, elem_idx);
             }
             // Unresolved variant — should never reach apply phase
             // because the snapshot loop converts it to
@@ -1505,7 +1504,7 @@ impl EngineInner {
                     ?entity_id,
                     "human_execute_validity: unresolved TerminatedDropCorpseUnlessDrop"
                 );
-                self.do_next_order(seq_id, elem_idx);
+                self.do_next_order(sim, assets, seq_id, elem_idx);
             }
         }
         true
@@ -2109,10 +2108,13 @@ mod tests {
             .orders
             .push_back(crate::order::Order::test_new(action, 0.0, 0.0));
         let sequence = engine.orders.sequence_manager.launch_element(element);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(shooter)
             .and_then(Entity::actor_data_mut)
@@ -2258,17 +2260,24 @@ mod tests {
             0.0,
         ));
         let sequence = engine.orders.sequence_manager.launch_element(element);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine
             .get_entity_mut(pc_id)
             .and_then(Entity::actor_data_mut)
             .expect("test actor data")
             .execute_order_initialising = true;
 
-        engine.pre_tick_human_execute_validity_for(&LevelAssets::new(), pc_id);
+        engine.pre_tick_human_execute_validity_for(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            pc_id,
+        );
 
         assert_eq!(
             engine
@@ -2378,10 +2387,13 @@ mod tests {
                 0.0,
             ));
             let sequence = engine.orders.sequence_manager.launch_element(element);
-            engine
-                .orders
-                .sequence_manager
-                .element_in_progress(sequence, 0);
+            engine.element_in_progress(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                &mut Vec::new(),
+                sequence,
+                0,
+            );
             let installed_order = engine
                 .orders
                 .sequence_manager
@@ -2449,7 +2461,11 @@ mod tests {
             .and_then(Entity::human_data_mut)
             .expect("test target human data")
             .unconscious = true;
-        engine.pre_tick_human_execute_validity_for(&assets, shooter);
+        engine.pre_tick_human_execute_validity_for(
+            &crate::sim_rng::test_context(),
+            &assets,
+            shooter,
+        );
 
         assert_eq!(
             engine
@@ -2497,7 +2513,11 @@ mod tests {
             .expect("test target human data")
             .unconscious = true;
 
-        engine.pre_tick_human_execute_validity_for(&assets, shooter);
+        engine.pre_tick_human_execute_validity_for(
+            &crate::sim_rng::test_context(),
+            &assets,
+            shooter,
+        );
 
         assert_eq!(
             engine
@@ -2576,7 +2596,11 @@ mod tests {
             .expect("test target human data")
             .unconscious = true;
 
-        engine.pre_tick_human_execute_validity_for(&assets, shooter);
+        engine.pre_tick_human_execute_validity_for(
+            &crate::sim_rng::test_context(),
+            &assets,
+            shooter,
+        );
 
         assert_eq!(
             engine
@@ -2646,7 +2670,11 @@ mod tests {
     #[test]
     fn bow_release_initialization_preserves_valid_target_shots() {
         let (mut engine, assets, shooter, _target, sequence) = bow_execute_fixture();
-        engine.pre_tick_human_execute_validity_for(&assets, shooter);
+        engine.pre_tick_human_execute_validity_for(
+            &crate::sim_rng::test_context(),
+            &assets,
+            shooter,
+        );
 
         assert_eq!(
             engine

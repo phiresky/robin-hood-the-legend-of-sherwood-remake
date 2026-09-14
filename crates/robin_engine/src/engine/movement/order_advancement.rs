@@ -126,11 +126,14 @@ impl PreparedMovementPop {
 mod tests {
     use super::*;
     use crate::element::Command;
+    use crate::engine::{EngineInner, LevelAssets};
     use crate::sequence::{Sequence, SequenceElement};
 
-    fn selected_move() -> (SequenceManager, EntityId, SequenceId) {
-        let owner = EntityId::Pc(crate::entity_id::PcId(7));
-        let mut manager = SequenceManager::new();
+    fn selected_move() -> (EngineInner, EntityId, SequenceId) {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_test_entity(crate::element::Entity::Pc(
+            crate::engine::test_support::actors::unbound_pc(crate::element::Posture::Upright),
+        ));
         let mut sequence = Sequence::new();
         let mut element =
             SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
@@ -141,25 +144,38 @@ mod tests {
             std::num::NonZeroU32::new(1).unwrap(),
         ));
         sequence.append_element(element);
-        let id = manager.launch_sequence(sequence);
-        manager.element_in_progress(id, 0);
-        (manager, owner, id)
+        let id = engine.orders.sequence_manager.launch_sequence(sequence);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            id,
+            0,
+        );
+        (engine, owner, id)
     }
 
     #[test]
     fn preparation_does_not_advance_selected_order() {
-        let (mut manager, owner, id) = selected_move();
-        let before = manager
+        let (mut engine, owner, id) = selected_move();
+        let before = engine
+            .orders
+            .sequence_manager
             .get_element(id, 0)
             .unwrap()
             .current_order()
             .unwrap()
             .order_id;
-        let (diagnostic_owner, selected) = capture_selection(&manager, id, 0).unwrap();
+        let (diagnostic_owner, selected) =
+            capture_selection(&engine.orders.sequence_manager, id, 0).unwrap();
         assert_eq!(diagnostic_owner, owner);
-        let prepared = selected.unwrap().prepare(&mut manager);
+        let prepared = selected
+            .unwrap()
+            .prepare(&mut engine.orders.sequence_manager);
         assert_eq!(
-            manager
+            engine
+                .orders
+                .sequence_manager
                 .get_element(id, 0)
                 .unwrap()
                 .current_order()
@@ -168,19 +184,30 @@ mod tests {
             before
         );
         assert!(
-            prepared.finish(&manager).is_none(),
+            prepared.finish(&engine.orders.sequence_manager).is_none(),
             "only the coordinator may advance the order"
         );
     }
 
     #[test]
     fn post_callback_classification_retains_captured_order_identity() {
-        let (mut manager, owner, id) = selected_move();
-        let selected = capture_selection(&manager, id, 0).unwrap().1.unwrap();
+        let (mut engine, owner, id) = selected_move();
+        let selected = capture_selection(&engine.orders.sequence_manager, id, 0)
+            .unwrap()
+            .1
+            .unwrap();
         let order_id = selected.order_id;
-        let prepared = selected.prepare(&mut manager);
-        manager.element_terminated(id, 0);
-        let terminal = prepared.finish(&manager).expect("captured move terminated");
+        let prepared = selected.prepare(&mut engine.orders.sequence_manager);
+        engine.element_terminated(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            id,
+            0,
+        );
+        let terminal = prepared
+            .finish(&engine.orders.sequence_manager)
+            .expect("captured move terminated");
         assert_eq!(terminal.owner, owner);
         assert_eq!(terminal.order_id, order_id);
         assert_eq!(terminal.order_type, OrderType::WalkingUpright);
@@ -188,11 +215,20 @@ mod tests {
 
     #[test]
     fn terminal_capture_cannot_mutate_a_replacement_selection() {
-        let (mut manager, owner, id) = selected_move();
-        manager.element_terminated(id, 0);
-        let (diagnostic_owner, selected) = capture_selection(&manager, id, 0).unwrap();
+        let (mut engine, owner, id) = selected_move();
+        engine.element_terminated(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            id,
+            0,
+        );
+        let (diagnostic_owner, selected) =
+            capture_selection(&engine.orders.sequence_manager, id, 0).unwrap();
         assert_eq!(diagnostic_owner, owner);
         assert!(selected.is_none());
-        assert!(capture_selection(&manager, SequenceId(u32::MAX), 0).is_none());
+        assert!(
+            capture_selection(&engine.orders.sequence_manager, SequenceId(u32::MAX), 0).is_none()
+        );
     }
 }

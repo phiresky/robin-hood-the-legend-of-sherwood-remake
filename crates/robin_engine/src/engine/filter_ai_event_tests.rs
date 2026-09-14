@@ -344,7 +344,6 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
         ai.initial_view_direction = 1;
         ai.current_state = crate::ai::AiState::Default;
         ai.current_substate = crate::ai::Substate::DefaultOnPost;
-        ai.fire_self_stimulus(crate::ai::StimulusType::EventReturnToDuty);
     }
     assert!(
         engine
@@ -355,7 +354,13 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
         "the just-completed animation has no live order even though the sprite retains its row"
     );
 
-    engine.drain_self_stimuli_for_npc(&sim, actor, &assets);
+    engine.dispatch_filtered_stimulus(
+        &sim,
+        &assets,
+        actor,
+        &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReturnToDuty),
+        None,
+    );
     // The Think boundary only registers the launched Turn with the sequence
     // manager; the manager's own update dispatches it later in the frame.
     engine.hourglass_phase_sequences(
@@ -507,7 +512,7 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
         "a close-post return outside Think completes its reach-point and turn callbacks synchronously"
     );
     assert!(
-        on_post_ai.outbox.reentrant.self_stimuli.is_empty(),
+        on_post_ai.stimulus_queue.is_empty(),
         "completed close-post callbacks must not leak into the member's later owner slot"
     );
 }
@@ -1758,6 +1763,7 @@ fn build_action_change_scb(target_handle: i32, observer_handle: i32) -> ScbFile 
 
 fn install_test_action(
     engine: &mut EngineInner,
+    assets: &LevelAssets,
     actor: EntityId,
     action: crate::order::OrderType,
     old_action: crate::order::OrderType,
@@ -1777,10 +1783,13 @@ fn install_test_action(
         .orders
         .push_back(crate::order::Order::test_new(action, 0.0, 0.0));
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     assert_eq!(
         engine
             .orders
@@ -1807,13 +1816,15 @@ fn install_test_wait_timer(
     );
     element.set_property(Field::Timer, FieldValue::Integer(frames));
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    super::sequence_runtime::WaitCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(actor, crate::element::Command::WaitTimer, sequence, 0);
+    engine.dispatch_wait_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        actor,
+        crate::element::Command::WaitTimer,
+        sequence,
+        0,
+    );
     let _ = engine
         .orders
         .sequence_manager
@@ -1859,6 +1870,7 @@ fn bind_test_actor_animations(
 
 fn install_test_order_queue(
     engine: &mut EngineInner,
+    assets: &LevelAssets,
     actor: EntityId,
     orders: impl IntoIterator<Item = crate::order::Order>,
 ) -> crate::sequence::SequenceId {
@@ -1868,10 +1880,13 @@ fn install_test_order_queue(
         element.orders.push_back(order);
     }
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     let _ = engine
         .orders
         .sequence_manager
@@ -1922,10 +1937,13 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
         let mut element = SequenceElement::new_generic(1, Command::UnlockDoor, Some(unlocker));
         element.orders.push_back(order);
         let sequence = engine.orders.sequence_manager.launch_element(element);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         let _ = engine
             .orders
             .sequence_manager
@@ -2052,12 +2070,14 @@ fn action_change_ordering_engine(
 
     install_test_action(
         &mut engine,
+        &assets,
         mutator,
         crate::order::OrderType::RunningUpright,
         crate::order::OrderType::WaitingUpright,
     );
     install_test_action(
         &mut engine,
+        &assets,
         observer,
         crate::order::OrderType::WalkingUpright,
         crate::order::OrderType::WaitingUpright,
@@ -2091,6 +2111,7 @@ fn action_change_unbound_nonempty_script_class_does_not_consume_transition() {
     engine.attach_script_bindings(&assets);
     install_test_action(
         &mut engine,
+        &assets,
         actor,
         crate::order::OrderType::WalkingUpright,
         crate::order::OrderType::WaitingUpright,
@@ -2178,6 +2199,7 @@ fn action_change_self_mutation_stores_live_post_callback_animation() {
         .expect("self-mutation mission remains installed");
     install_test_action(
         &mut engine,
+        &assets,
         actor,
         crate::order::OrderType::WalkingUpright,
         crate::order::OrderType::WaitingUpright,
@@ -2208,7 +2230,7 @@ fn action_change_self_mutation_stores_live_post_callback_animation() {
 }
 
 #[test]
-fn ai_sequence_launch_drains_immediate_engine_elements_inside_owner_tail() {
+fn sequence_launch_dispatches_immediate_engine_elements() {
     use crate::element::Command;
     use crate::sequence::{Field, FieldValue, Sequence, SequenceElement, SequenceState};
 
@@ -2227,18 +2249,10 @@ fn ai_sequence_launch_drains_immediate_engine_elements_inside_owner_tail() {
     let mut timer = SequenceElement::new_generic(1, Command::Timer, None);
     timer.set_property(Field::Timer, FieldValue::Integer(12));
     sequence.append_element(timer);
+    engine.launch_sequence(sequence);
     engine
-        .world
-        .entities
-        .get_mut(owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("AI sequence owner retains its controller")
-        .outbox
-        .actor
-        .launch_sequences
-        .push(sequence);
-
-    engine.drain_pending_for_npc(&crate::sim_rng::test_context(), owner, &assets);
+        .drain_script_synchronous_actions(&crate::sim_rng::test_context(), &assets, &mut Vec::new())
+        .unwrap();
 
     assert_eq!(engine.orders.timer_elements.len(), 1);
     let timer_ref = engine.orders.timer_elements[0].element_ref;
@@ -2255,7 +2269,7 @@ fn ai_sequence_launch_drains_immediate_engine_elements_inside_owner_tail() {
             .sequence_manager
             .take_pending_synchronous_actions()
             .is_empty(),
-        "the AI owner tail must not leak its inline sequence work"
+        "all immediate sequence elements must complete before the caller continues"
     );
 }
 
@@ -2282,6 +2296,7 @@ fn animation_execution_gates_do_not_skip_action_change() {
         bind_test_actor_animations(&mut engine, actor, &[OrderType::WalkingUpright]);
         install_test_action(
             &mut engine,
+            &assets,
             actor,
             OrderType::WalkingUpright,
             OrderType::WaitingUpright,
@@ -2417,6 +2432,7 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
     use crate::order::OrderType;
 
     for movement_order in [OrderType::WalkingUpright, OrderType::WalkingWithSword] {
+        let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
         let actor = engine.add_test_entity(make_scripted_soldier(""));
         let stale = engine.add_test_entity(make_scripted_soldier(""));
@@ -2473,20 +2489,20 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
         );
         element.orders.push_back(order);
         let sequence = engine.orders.sequence_manager.launch_element(element);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         let _ = engine
             .orders
             .sequence_manager
             .take_pending_synchronous_actions();
 
-        let (injuries, outcomes, executed) = engine.tick_actor_animation_for(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            actor,
-        );
+        let (injuries, outcomes, executed) =
+            engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
 
         assert!(injuries.is_empty(), "{movement_order:?}");
         assert!(outcomes.seq_advance.is_empty(), "{movement_order:?}");
@@ -2610,7 +2626,7 @@ fn combat_injury_think_finishes_before_same_slot_action_change() {
         engine.orders.allocate_order_id(),
     );
     let order_id = order.order_id;
-    install_test_order_queue(&mut engine, actor, [order]);
+    install_test_order_queue(&mut engine, &assets, actor, [order]);
     {
         let sprite = &mut engine
             .world
@@ -2627,10 +2643,14 @@ fn combat_injury_think_finishes_before_same_slot_action_change() {
         sprite.action_done_frame = 1;
         sprite.action_done_counter = 0;
     }
-    engine.dispatch_ai_stimulus(
-        actor,
-        crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
-    );
+    engine
+        .world
+        .entities
+        .expect_ai_controller_mut(actor, format_args!("combat injury retained stimulus"))
+        .stimulus_queue
+        .push(crate::ai::Stimulus::new(
+            crate::ai::StimulusType::EventTimer,
+        ));
 
     let (_, phases) = capture_actor_animation_boundary(|| {
         engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets)
@@ -2659,9 +2679,7 @@ fn combat_injury_think_finishes_before_same_slot_action_change() {
             .get(actor)
             .and_then(|entity| entity.ai_controller())
             .expect("combat-injury actor retains AI")
-            .outbox
-            .detection
-            .stimuli
+            .stimulus_queue
             .iter()
             .map(|stimulus| stimulus.stimulus_type)
             .collect::<Vec<_>>(),
@@ -2763,6 +2781,7 @@ fn live_actor_walk_visits_callback_spawned_later_slot_and_skips_holes() {
     let mut engine = EngineInner::new();
     let first = engine.add_test_entity(make_pc(true));
     let removed = engine.add_test_entity(make_pc(false));
+    let removed_during_callback = engine.add_test_entity(make_pc(false));
     let later = engine.add_test_entity(make_pc(false));
     engine.remove_entity(removed);
     let assets = LevelAssets::new();
@@ -2777,6 +2796,7 @@ fn live_actor_walk_visits_callback_spawned_later_slot_and_skips_holes() {
             |engine, owner| {
                 visited.push(owner);
                 if owner == first {
+                    engine.remove_entity(removed_during_callback);
                     let id = engine.add_test_entity(make_pc(false));
                     assert!(
                         id.index() > later.index(),
@@ -2790,6 +2810,18 @@ fn live_actor_walk_visits_callback_spawned_later_slot_and_skips_holes() {
     let spawned = spawned.expect("the first owner's callback must spawn an actor");
 
     assert_eq!(visited, vec![first, later, spawned]);
+    assert!(
+        !engine
+            .world
+            .actor_registry_ids
+            .contains(&removed_during_callback)
+    );
+    assert!(
+        !engine
+            .world
+            .fighter_registry_ids
+            .contains(&removed_during_callback)
+    );
     assert_eq!(
         phases
             .into_iter()
@@ -2817,6 +2849,7 @@ fn earlier_owner_callback_installs_invalid_later_pc_init_order_rejected_same_fra
     bind_test_actor_animations(&mut engine, later, &[OrderType::Taking]);
     install_test_action(
         &mut engine,
+        &assets,
         first,
         OrderType::WaitingUprightBored,
         OrderType::WaitingUprightBored,
@@ -2837,10 +2870,13 @@ fn earlier_owner_callback_installs_invalid_later_pc_init_order_rejected_same_fra
                 .orders
                 .push_back(Order::test_new(OrderType::Taking, 0.0, 0.0));
             let sequence = engine.orders.sequence_manager.launch_element(element);
-            engine
-                .orders
-                .sequence_manager
-                .element_in_progress(sequence, 0);
+            engine.element_in_progress(
+                &crate::sim_rng::test_context(),
+                &assets,
+                &mut Vec::new(),
+                sequence,
+                0,
+            );
             let _ = engine
                 .orders
                 .sequence_manager
@@ -2898,7 +2934,7 @@ fn terminating_animation_promotes_next_order_before_same_actor_action_change() {
         0.0,
         engine.orders.allocate_order_id(),
     );
-    install_test_order_queue(&mut engine, actor, [first, second]);
+    install_test_order_queue(&mut engine, &assets, actor, [first, second]);
     {
         let sprite = &mut engine
             .world
@@ -3146,10 +3182,13 @@ fn turning_selects_sprite_row_after_the_direction_step() {
     let mut element = SequenceElement::new(1, Command::Turn, Some(actor));
     element.orders.push_back(order);
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     let _ = engine
         .orders
         .sequence_manager
@@ -3204,10 +3243,13 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
     let mut element = SequenceElement::new(1, Command::Turn, Some(actor));
     element.orders.push_back(order);
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     let _ = engine
         .orders
         .sequence_manager
@@ -3405,10 +3447,13 @@ fn wait_timer_termination_replaces_forwarded_completion_exactly_once() {
     element.set_property(Field::Timer, FieldValue::Integer(0));
     element.orders.extend([first, second]);
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     let _ = engine
         .orders
         .sequence_manager
@@ -3477,7 +3522,7 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
         0.0,
         engine.orders.allocate_order_id(),
     );
-    let entry_sequence = install_test_order_queue(&mut engine, actor, [first, second]);
+    let entry_sequence = install_test_order_queue(&mut engine, &assets, actor, [first, second]);
     {
         let sprite = &mut engine
             .get_entity_mut(actor)
@@ -3503,10 +3548,13 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
             if callback_owner != actor || replacement_sequence.is_some() {
                 return;
             }
-            engine
-                .orders
-                .sequence_manager
-                .postpone_element(entry_sequence, 0);
+            engine.postpone_element(
+                &crate::sim_rng::test_context(),
+                &assets,
+                &mut Vec::new(),
+                entry_sequence,
+                0,
+            );
             let mut timer = crate::sequence::SequenceElement::new_generic(
                 1,
                 crate::element::Command::WaitTimer,
@@ -3514,15 +3562,15 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
             );
             timer.set_property(Field::Timer, FieldValue::Integer(0));
             let sequence = engine.orders.sequence_manager.launch_element(timer);
-            super::sequence_runtime::WaitCommandContext {
-                entities: &mut engine.world.entities,
-                sequence_manager: &mut engine.orders.sequence_manager,
-                orders: super::sequence_runtime::OrderEmitter::new(
-                    &mut engine.orders.next_order_id,
-                ),
-                profiles: &assets.profile_manager,
-            }
-            .dispatch(actor, crate::element::Command::WaitTimer, sequence, 0);
+            engine.dispatch_wait_command(
+                &crate::sim_rng::test_context(),
+                &assets,
+                &mut Vec::new(),
+                actor,
+                crate::element::Command::WaitTimer,
+                sequence,
+                0,
+            );
             let _ = engine
                 .orders
                 .sequence_manager
@@ -3576,6 +3624,7 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
             bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
             install_test_action(
                 &mut engine,
+                &assets,
                 actor,
                 OrderType::WaitingUprightBored,
                 OrderType::WaitingUprightBored,
@@ -3598,15 +3647,15 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
                 );
                 timer.set_property(Field::Timer, FieldValue::Integer(1));
                 let sequence = engine.launch_element(timer);
-                super::sequence_runtime::WaitCommandContext {
-                    entities: &mut engine.world.entities,
-                    sequence_manager: &mut engine.orders.sequence_manager,
-                    orders: super::sequence_runtime::OrderEmitter::new(
-                        &mut engine.orders.next_order_id,
-                    ),
-                    profiles: &assets.profile_manager,
-                }
-                .dispatch(target, crate::element::Command::WaitTimer, sequence, 0);
+                engine.dispatch_wait_command(
+                    &crate::sim_rng::test_context(),
+                    &assets,
+                    &mut Vec::new(),
+                    target,
+                    crate::element::Command::WaitTimer,
+                    sequence,
+                    0,
+                );
                 let _ = engine
                     .orders
                     .sequence_manager
@@ -3690,14 +3739,6 @@ fn waiting_sword_pair(
         human.smalltalk_initiative = true;
         human.received_smalltalk_initiative = true;
     }
-    for actor in [attacker, defender] {
-        install_test_action(
-            &mut engine,
-            actor,
-            OrderType::WaitingSword,
-            OrderType::WaitingSword,
-        );
-    }
     let mut assets = LevelAssets::new();
     let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
     profiles.soldiers.push(crate::profiles::SoldierProfile {
@@ -3710,6 +3751,16 @@ fn waiting_sword_pair(
             distance: [20, 40, 70, 100],
             ..crate::profiles::HtHWeaponProfile::default()
         });
+    for actor in [attacker, defender] {
+        install_test_action(
+            &mut engine,
+            &assets,
+            actor,
+            OrderType::WaitingSword,
+            OrderType::WaitingSword,
+        );
+    }
+
     (engine, assets, attacker, defender)
 }
 
@@ -3718,12 +3769,14 @@ fn waiting_sword_execute_faces_world_xy_not_projected_map_xy() {
     use crate::element::ActionState;
     use crate::order::OrderType;
 
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_scripted_soldier(""));
     let opponent = engine.add_test_entity(make_scripted_soldier(""));
     bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingSword]);
     install_test_action(
         &mut engine,
+        &assets,
         actor,
         OrderType::WaitingSword,
         OrderType::WaitingSword,
@@ -3765,11 +3818,8 @@ fn waiting_sword_execute_faces_world_xy_not_projected_map_xy() {
         .opponents
         .push(opponent);
 
-    let (_, _, execute_result) = engine.tick_actor_animation_for(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        actor,
-    );
+    let (_, _, execute_result) =
+        engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
 
     assert_eq!(
         execute_result.expect("WaitingSword must execute").motion,
@@ -3888,12 +3938,15 @@ fn frozen_all_consumes_actor_initialisation_once_without_sprite_identity() {
     let order_id = order.order_id;
     element.orders.push_back(order);
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
-    engine.set_actors_frozen(true);
     let assets = LevelAssets::new();
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
+    engine.set_actors_frozen(true);
 
     engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
     assert_eq!(
@@ -3936,12 +3989,14 @@ fn frozen_all_consumes_actor_initialisation_once_without_sprite_identity() {
 fn frozen_all_runs_weak_sword_actor_initialisation_before_sprite_start() {
     use crate::order::OrderType;
 
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let weak = engine.add_test_entity(make_pc(true));
     let opponent = engine.add_test_entity(make_pc(false));
     bind_test_actor_animations(&mut engine, weak, &[OrderType::BeingWeakSword]);
     install_test_action(
         &mut engine,
+        &assets,
         weak,
         OrderType::BeingWeakSword,
         OrderType::WaitingSword,
@@ -3966,10 +4021,7 @@ fn frozen_all_runs_weak_sword_actor_initialisation_before_sprite_start() {
         .smalltalk_initiative = true;
     engine.set_actors_frozen(true);
 
-    engine.tick_actor_animation_action_change_slots(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-    );
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
 
     assert!(
         !engine
@@ -3998,12 +4050,14 @@ fn frozen_all_stunned_sword_initialisation_preserves_smalltalk_initiative() {
     use crate::order::OrderType;
     use crate::titbit::{ElementHandle, TitbitKind};
 
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let stunned = engine.add_test_entity(make_pc(true));
     let opponent = engine.add_test_entity(make_pc(false));
     bind_test_actor_animations(&mut engine, stunned, &[OrderType::BeingStunnedSword]);
     install_test_action(
         &mut engine,
+        &assets,
         stunned,
         OrderType::BeingStunnedSword,
         OrderType::WaitingSword,
@@ -4025,10 +4079,7 @@ fn frozen_all_stunned_sword_initialisation_preserves_smalltalk_initiative() {
         .opponents = vec![stunned].into();
     engine.set_actors_frozen(true);
 
-    engine.tick_actor_animation_action_change_slots(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-    );
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
 
     assert!(
         engine
@@ -4061,8 +4112,11 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
     let stunned = engine.add_test_entity(make_pc(true));
     let opponent = engine.add_test_entity(make_scripted_soldier(""));
     bind_test_actor_animations(&mut engine, stunned, &[OrderType::BeingStunnedSword]);
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     install_test_action(
         &mut engine,
+        &assets,
         stunned,
         OrderType::BeingStunnedSword,
         OrderType::WaitingSword,
@@ -4087,15 +4141,11 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
         // An unrelated deferred detection event must not be stolen by the
         // direct combat callback.
         ai.base
-            .outbox
-            .detection
-            .stimuli
+            .stimulus_queue
             .push(Stimulus::new(StimulusType::EventFitAgain));
     }
     engine.control.frame_counter = 42;
     engine.set_actors_frozen(true);
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
 
@@ -4108,9 +4158,7 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
     assert_eq!(
         opponent_ai
             .base
-            .outbox
-            .detection
-            .stimuli
+            .stimulus_queue
             .iter()
             .map(|stimulus| stimulus.stimulus_type)
             .collect::<Vec<_>>(),
@@ -4412,10 +4460,23 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
         } else {
             (second, first)
         };
+        let mut assets = LevelAssets::new();
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles.soldiers.push(crate::profiles::SoldierProfile {
+            hth_weapon_id: 1,
+            ..crate::profiles::SoldierProfile::default()
+        });
+        profiles
+            .hth_weapons
+            .push(crate::profiles::HtHWeaponProfile {
+                distance: [20, 40, 70, 100],
+                ..crate::profiles::HtHWeaponProfile::default()
+            });
         for actor in [pruner, mutated] {
             bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingSword]);
             install_test_action(
                 &mut engine,
+                &assets,
                 actor,
                 OrderType::WaitingSword,
                 OrderType::WaitingSword,
@@ -4453,18 +4514,7 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
             human.smalltalk_initiative = true;
             human.received_smalltalk_initiative = true;
         }
-        let mut assets = LevelAssets::new();
-        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
-        profiles.soldiers.push(crate::profiles::SoldierProfile {
-            hth_weapon_id: 1,
-            ..crate::profiles::SoldierProfile::default()
-        });
-        profiles
-            .hth_weapons
-            .push(crate::profiles::HtHWeaponProfile {
-                distance: [20, 40, 70, 100],
-                ..crate::profiles::HtHWeaponProfile::default()
-            });
+
         crate::sim_rng::with_seed(5, |sim| {
             engine.tick_actor_animation_action_change_slots(sim, &assets);
         });
@@ -4549,19 +4599,21 @@ fn skipped_and_non_waiting_sword_slots_do_not_touch_combat_refs_or_rng() {
         .execution_frozen = true;
     bind_test_actor_animations(&mut engine, skipped, &[OrderType::WaitingSword]);
     bind_test_actor_animations(&mut engine, ordinary, &[OrderType::WaitingUpright]);
+    let assets = LevelAssets::new();
     install_test_action(
         &mut engine,
+        &assets,
         skipped,
         OrderType::WaitingSword,
         OrderType::WaitingSword,
     );
     install_test_action(
         &mut engine,
+        &assets,
         ordinary,
         OrderType::WaitingUpright,
         OrderType::WaitingUpright,
     );
-    let assets = LevelAssets::new();
 
     let observed = crate::sim_rng::with_seed(77, |sim| {
         engine.tick_actor_animation_action_change_slots(sim, &assets);
@@ -4612,6 +4664,8 @@ fn waking_up_creation_order_engine(
         &[OrderType::BeingUnconscious, OrderType::StandingUp],
     );
 
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     let waking = crate::order::Order::new(
         OrderType::WakingUp,
         0.0,
@@ -4620,14 +4674,14 @@ fn waking_up_creation_order_engine(
     )
     .with_antagonist(target);
     let waking_id = waking.order_id;
-    install_test_order_queue(&mut engine, rescuer, [waking]);
+    install_test_order_queue(&mut engine, &assets, rescuer, [waking]);
     let unconscious = crate::order::Order::new(
         OrderType::BeingUnconscious,
         0.0,
         0.0,
         engine.orders.allocate_order_id(),
     );
-    install_test_order_queue(&mut engine, target, [unconscious]);
+    install_test_order_queue(&mut engine, &assets, target, [unconscious]);
     {
         let sprite = &mut engine
             .world
@@ -4644,8 +4698,7 @@ fn waking_up_creation_order_engine(
         sprite.action_done_frame = 1;
         sprite.action_done_counter = 0;
     }
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+
     // The target starts unconscious, so the shared fixture skips its combat
     // attachments — but it wakes up mid-test and then needs a live HtH
     // weapon profile for its fighter snapshot.
@@ -4746,11 +4799,10 @@ fn waking_up_done_does_not_force_awake_a_script_locked_npc() {
         !target_entity
             .ai_controller()
             .expect("wake target retains AI")
-            .outbox
-            .detection
-            .stimuli
+            .ai_log
             .iter()
-            .any(|stimulus| stimulus.stimulus_type == crate::ai::StimulusType::EventFitAgain),
+            .any(|line| line.line_type == crate::ai::LogLineType::Event
+                && line.info == crate::ai::StimulusType::EventFitAgain as u16),
         "a target that did not wake must not receive EVENT_FITAGAIN"
     );
 }
@@ -4779,12 +4831,14 @@ fn actor_animation_missing_required_antagonist_fails_with_slot_context() {
 
 #[test]
 fn npc_searching_animation_allows_missing_antagonist() {
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_scripted_soldier(""));
     bind_test_actor_animations(&mut engine, actor, &[crate::order::OrderType::Searching]);
     let order_id = engine.orders.allocate_order_id();
     install_test_order_queue(
         &mut engine,
+        &assets,
         actor,
         [crate::order::Order::new(
             crate::order::OrderType::Searching,
@@ -4794,7 +4848,7 @@ fn npc_searching_animation_allows_missing_antagonist() {
         )],
     );
 
-    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &LevelAssets::new(), actor);
+    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
 
     assert_eq!(
         engine
@@ -4813,6 +4867,7 @@ fn npc_searching_animation_allows_missing_antagonist() {
 #[test]
 #[should_panic(expected = "required Searching antagonist")]
 fn npc_searching_animation_rejects_present_stale_antagonist() {
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_scripted_soldier(""));
     let stale = engine.add_test_entity(make_scripted_soldier(""));
@@ -4821,6 +4876,7 @@ fn npc_searching_animation_rejects_present_stale_antagonist() {
     let order_id = engine.orders.allocate_order_id();
     install_test_order_queue(
         &mut engine,
+        &assets,
         actor,
         [
             crate::order::Order::new(crate::order::OrderType::Searching, 0.0, 0.0, order_id)
@@ -4828,7 +4884,7 @@ fn npc_searching_animation_rejects_present_stale_antagonist() {
         ],
     );
 
-    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &LevelAssets::new(), actor);
+    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
 }
 
 // ───────── Owner-local state-change notifications ─────────
@@ -5586,7 +5642,11 @@ fn install_unrelated_multi_exit_building_actor(
     door_actor
 }
 
-fn select_unrelated_pass_door_fixture(engine: &mut EngineInner, door_actor: EntityId) {
+fn select_unrelated_pass_door_fixture(
+    engine: &mut EngineInner,
+    assets: &LevelAssets,
+    door_actor: EntityId,
+) {
     use crate::gate::DoorIndex;
 
     // Original-game door-passing detection uses selected-command state, not merely the
@@ -5615,10 +5675,13 @@ fn select_unrelated_pass_door_fixture(engine: &mut EngineInner, door_actor: Enti
         unreachable!("PassDoor fixture must be a movement element")
     }
     let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(pass_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        pass_sequence,
+        0,
+    );
 }
 
 fn resolve_test_actor_forecast(
@@ -5695,9 +5758,8 @@ fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
 #[test]
 fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
     use crate::element::Command;
-    use crate::entity_id::PcId;
     use crate::gate::DoorIndex;
-    use crate::sequence::{SequenceElement, SequenceManager};
+    use crate::sequence::SequenceElement;
 
     let mut actor = make_pc(true);
     let Entity::Pc(pc) = &mut actor else {
@@ -5712,27 +5774,43 @@ fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
         crate::position_interface::DoorHandle::new(133).expect("valid door index"),
     );
 
-    let owner = EntityId::Pc(PcId(0));
-    let mut sequences = SequenceManager::new();
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let owner = engine.add_test_entity(actor);
     assert!(
-        !super::ai::selected_actor_is_passing_door(&sequences, owner),
+        !super::ai::selected_actor_is_passing_door(&engine.orders.sequence_manager, owner),
         "a live saved door outside selected PassDoor must use the current-position forecast"
     );
     assert_eq!(
-        super::ai::extract_forecast_input(&actor, false)
-            .expect("actor has forecast state")
-            .door_pass,
+        super::ai::extract_forecast_input(
+            engine.get_entity(owner).expect("forecast owner exists"),
+            false
+        )
+        .expect("actor has forecast state")
+        .door_pass,
         None
     );
 
-    let sequence_id =
-        sequences.launch_element(SequenceElement::new(1, Command::PassDoor, Some(owner)));
-    sequences.element_in_progress(sequence_id, 0);
-    let selected_pass_door = super::ai::selected_actor_is_passing_door(&sequences, owner);
+    let sequence_id = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::PassDoor, Some(owner)));
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
+    let selected_pass_door =
+        super::ai::selected_actor_is_passing_door(&engine.orders.sequence_manager, owner);
     assert!(selected_pass_door);
 
-    let input = super::ai::extract_forecast_input(&actor, selected_pass_door)
-        .expect("actor has forecast state");
+    let input = super::ai::extract_forecast_input(
+        engine.get_entity(owner).expect("forecast owner exists"),
+        selected_pass_door,
+    )
+    .expect("actor has forecast state");
     assert_eq!(
         input.door_pass,
         Some((DoorIndex::new(133).expect("valid door index"), true))
@@ -6007,6 +6085,7 @@ fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_
     };
     engine.launch_ai_move(
         &crate::sim_rng::test_context(),
+        &assets,
         actor,
         destination,
         crate::ai::GotoFlags::empty(),
@@ -6114,7 +6193,7 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
     let (mut seeking_engine, seeking_assets, seeking) =
         setup_ai_state_native_probe("SeekingRngProbe", 3);
     let door_actor = install_unrelated_multi_exit_building_actor(&mut seeking_engine, seeking);
-    select_unrelated_pass_door_fixture(&mut seeking_engine, door_actor);
+    select_unrelated_pass_door_fixture(&mut seeking_engine, &seeking_assets, door_actor);
     {
         let entity = seeking_engine.world.entities.get_mut(seeking).unwrap();
         entity
@@ -6156,7 +6235,7 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
         setup_ai_state_native_probe("FleeingRngProbe", 5);
     let fleeing_door_actor =
         install_unrelated_multi_exit_building_actor(&mut fleeing_engine, fleeing);
-    select_unrelated_pass_door_fixture(&mut fleeing_engine, fleeing_door_actor);
+    select_unrelated_pass_door_fixture(&mut fleeing_engine, &fleeing_assets, fleeing_door_actor);
     let (_, fleeing_trace) = with_draw_trace(|| {
         run_ai_state_native_probe(&mut fleeing_engine, &fleeing_assets, fleeing);
     });
@@ -6172,7 +6251,7 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
 
     let (mut engine, assets, owner) = setup_ai_state_native_probe("EnvelopeRngProbe", 3);
     let door_actor = install_unrelated_multi_exit_building_actor(&mut engine, owner);
-    select_unrelated_pass_door_fixture(&mut engine, door_actor);
+    select_unrelated_pass_door_fixture(&mut engine, &assets, door_actor);
     engine
         .get_entity_mut(owner)
         .expect("forecast control owner exists")
@@ -6240,19 +6319,15 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
     owner_ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(entering_primary.index()));
     owner_ai.missed_pc = Some(crate::ai::AiEntityHandle::new(entering_primary.index()));
     owner_ai.base.locks_flag_field = AiLockFlags::FREEZE;
-    owner_ai
-        .base
-        .outbox
-        .detection
-        .stimuli
-        .push(Stimulus::with_human(
-            StimulusType::EventView,
-            entering_primary.index(),
-        ));
-
     let sim = crate::sim_rng::test_context();
     let (_, trace) = with_draw_trace(|| {
-        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(&sim, owner, &assets)
+        engine.dispatch_filtered_stimulus(
+            &sim,
+            &assets,
+            owner,
+            &Stimulus::with_human(StimulusType::EventView, entering_primary.index()),
+            Some(entering_primary),
+        )
     });
     assert!(
         !trace.contains(&RngSite::BuildingExitGate),
@@ -6497,7 +6572,6 @@ fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero
         0,
         "nested decision-entry/completion brackets balance before the outer callback resumes"
     );
-    assert!(ai.base.outbox.actor.begin_panic.is_none());
     let speak = ai
         .base
         .ai_log
@@ -6769,39 +6843,32 @@ fn initialization_caches_the_aspect_adjusted_initial_view_direction() {
 }
 
 #[test]
-fn direct_ai_drain_consumes_civilian_blink_enemy_request() {
+fn civilian_blink_clears_detection_edges_inline() {
     let mut engine = EngineInner::new();
     let civilian = engine.add_test_entity(make_scripted_civilian(""));
-    engine
+    let enemy = engine.add_test_entity(make_scripted_soldier(""));
+    let npc = engine
         .world
         .entities
-        .get_mut(civilian)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .outbox
-        .actor
-        .blink_all_enemies = true;
-
-    engine.drain_direct_ai_owner_boundary(
-        &crate::sim_rng::test_context(),
-        civilian,
-        &LevelAssets::new(),
+        .expect_ai_actor_data_mut(civilian, format_args!("test civilian"));
+    npc.detectable_lists[crate::element::DetectableType::Enemy as usize].push(
+        crate::element::Detectable {
+            element: Some(enemy),
+            detectable_type: crate::element::DetectableType::Enemy,
+            seen_now: true,
+            seen_last_frame: true,
+            ..Default::default()
+        },
     );
-
-    assert!(
-        !engine
-            .world
-            .entities
-            .get(civilian)
-            .unwrap()
-            .ai_controller()
-            .unwrap()
-            .outbox
-            .actor
-            .blink_all_enemies,
-        "clearing an NPC's blinking enemy must settle for civilians as well as soldiers"
-    );
+    engine.execute_ai_blink_all_enemies(civilian);
+    let npc = engine
+        .world
+        .entities
+        .expect_ai_actor_data(civilian, format_args!("test civilian"));
+    let entry = &npc.detectable_lists[crate::element::DetectableType::Enemy as usize][0];
+    assert!(!entry.seen_now);
+    assert!(!entry.seen_last_frame);
+    assert_eq!(entry.element, Some(enemy));
 }
 
 fn run_cross_owner_state_change_order(mutator_first: bool) -> i32 {
@@ -6874,21 +6941,7 @@ fn ai_focus_accepts_live_object_element() {
             ..Default::default()
         },
     }));
-    engine
-        .world
-        .entities
-        .get_mut(observer)
-        .and_then(Entity::ai_controller_mut)
-        .expect("observer retains AI")
-        .outbox
-        .actor
-        .set_focus(ale.index());
-
-    engine.drain_pending_for_npc(
-        &crate::sim_rng::test_context(),
-        observer,
-        &LevelAssets::new(),
-    );
+    engine.execute_ai_focus(observer, Some(crate::ai::AiEntityHandle::new(ale.index())));
 
     let npc = engine
         .world
@@ -7113,10 +7166,6 @@ fn fit_again_engine_calls_surround_state_callback_in_original_order() {
         ai.current_state = AiState::Sleeping;
         ai.current_substate = Substate::SleepingUnconscious;
         ai.timer_is_running = false;
-        ai.outbox
-            .detection
-            .stimuli
-            .push(Stimulus::new(StimulusType::EventFitAgain));
         engine
             .world
             .entities
@@ -7131,12 +7180,17 @@ fn fit_again_engine_calls_surround_state_callback_in_original_order() {
                 ..Detectable::default()
             });
 
-        let (woke, observations) = super::script::capture_ai_state_callback_observations(|| {
+        let (_, observations) = super::script::capture_ai_state_callback_observations(|| {
             crate::sim_rng::with_seed(0xA013_F17A, |sim| {
-                engine.dispatch_pending_fit_again_for_npc(sim, owner, &assets)
+                engine.dispatch_filtered_stimulus(
+                    sim,
+                    &assets,
+                    owner,
+                    &Stimulus::new(StimulusType::EventFitAgain),
+                    None,
+                )
             })
         });
-        assert!(woke);
         let observation = observations
             .iter()
             .find(|observation| observation.owner == owner)
@@ -7224,10 +7278,13 @@ fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move(
         Some(owner),
         crate::order::OrderType::WalkingUpright,
     ));
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(selected, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        selected,
+        0,
+    );
 
     let handled = engine.dispatch_filtered_stimulus(
         &crate::sim_rng::test_context(),
@@ -7364,11 +7421,6 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
     ai.current_state = AiState::Default;
     ai.current_substate = Substate::DefaultGotoRoute;
     ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &assets.navigation.hiking_paths);
-    // This sibling belongs to an enclosing queued completion, after arrival.
-    ai.outbox
-        .reentrant
-        .self_stimuli
-        .push(StimulusType::EventTimer.into());
     engine.dispatch_filtered_stimulus(
         &crate::sim_rng::test_context(),
         &assets,
@@ -7383,11 +7435,6 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
     assert!(ai.script_locked);
     assert_eq!(ai.current_substate, Substate::DefaultGotoRouteTurn);
     assert_eq!(engine.ai_think_depth(), 0);
-    assert_eq!(
-        ai.outbox.reentrant.self_stimuli.len(),
-        1,
-        "caller sibling ran inside arrival"
-    );
     for code in [3, 5, 101] {
         assert_eq!(
             engine.scripts.globals[code], 1,

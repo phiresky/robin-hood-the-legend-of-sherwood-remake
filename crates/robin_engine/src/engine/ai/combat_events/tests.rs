@@ -4,6 +4,102 @@ use crate::element::Command;
 use crate::order::OrderType;
 
 #[test]
+fn after_combat_injury_speaks_once_only_after_a_rejected_strike_proposal() {
+    use crate::ai::{LogLineType, Remark, Stimulus};
+    use crate::element::ActionState;
+    use crate::sim_rng::{RngSite, SimulationRng};
+
+    for (roll, accepted) in [(85, false), (0, true)] {
+        let (mut engine, mut assets, owner, target) = fixture(Substate::AttackingSwordfight);
+        place(&mut engine, target, 110.0, 100.0, 0.0);
+        for (id, opponent, dx) in [(owner, target, 10.0), (target, owner, -10.0)] {
+            let entity = engine.get_entity_mut(id).unwrap();
+            entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+            entity.human_data_mut().unwrap().opponents = vec![opponent];
+            entity.element_data_mut().set_direction_instantly(
+                crate::position_interface::vector_to_sector_0_to_15_iso(dx, 0.0) as i16,
+            );
+        }
+        let initial = {
+            let entity = engine.get_entity(owner).unwrap();
+            crate::ai::Position {
+                x: 100.0,
+                y: 100.0,
+                sector: entity.element_data().sector(),
+                level: entity.element_data().layer(),
+            }
+        };
+        let ai = engine.combat_event_ai_mut(owner);
+        ai.combat_trainer = true;
+        ai.base.initial_position = initial;
+        ai.base.ai_log.clear();
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles.soldiers[0].fighting = 20;
+        profiles.soldiers[0].exclamation_id = 221;
+        profiles.soldiers[0].hth_weapon_id = 1;
+        profiles.characters[0].hth_weapon_id = 1;
+        let mut weapon = crate::profiles::HtHWeaponProfile::default();
+        weapon.distance[crate::weapons::WeaponDistance::Maximal as usize] = 30;
+        let thrust = &mut weapon.thrusts[crate::weapons::SwordStrike::A as usize];
+        thrust.energy = 7;
+        thrust.maximal_distance = 30;
+        thrust.cutting = 4;
+        profiles.hth_weapons[0] = weapon;
+
+        engine.control.rng = SimulationRng::with_original_replay(vec![roll, 37]);
+        engine.with_simulation_context(|engine, sim| {
+            engine.execute_ai_callback(
+                sim,
+                &assets,
+                owner,
+                &Stimulus::new(StimulusType::EventAfterCombatInjury),
+            );
+        });
+
+        let ai = engine.combat_event_ai(owner);
+        assert_eq!(
+            ai.base.current_substate,
+            if accepted {
+                Substate::AttackingSwordfightSpecialStrike
+            } else {
+                Substate::AttackingSwordfight
+            }
+        );
+        assert_eq!(
+            ai.base
+                .ai_log
+                .iter()
+                .filter(|line| {
+                    line.line_type == LogLineType::Speak && line.info == Remark::CombatInsult as u16
+                })
+                .count(),
+            usize::from(!accepted)
+        );
+        assert_eq!(
+            engine
+                .feedback
+                .sound_sim
+                .pending_exclamations
+                .iter()
+                .filter(|speech| {
+                    speech.actor_id == owner.index()
+                        && speech.exclamation_id == Remark::CombatInsult as u16
+                })
+                .count(),
+            usize::from(!accepted)
+        );
+        assert_eq!(engine.control.rng.original_replay_cursor(), Some(1));
+        assert_eq!(
+            engine.control.rng.original_replay_sites(0..1).unwrap(),
+            vec![RngSite::SwordStrikeSelection]
+        );
+        engine.with_simulation_context(|_, sim| {
+            assert_eq!(crate::sim_rng::u32(sim, RngSite::ScriptRand, 0..100), 37);
+        });
+    }
+}
+
+#[test]
 fn enemy_near_retargets_only_the_four_observing_substates() {
     for (substate, enters) in [
         (Substate::AttackingReactiontimeTurning, true),
@@ -177,10 +273,13 @@ fn selected_door_position(engine: &mut EngineInner, owner: EntityId, point: MapP
     *gate_id = Some(gate);
     *direction = 1;
     let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 }
 
 #[test]

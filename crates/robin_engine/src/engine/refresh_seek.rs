@@ -796,9 +796,7 @@ impl crate::engine::EngineInner {
             self.resolve_entity_seek(sim, assets, owner, target, flags, seek_distance)
         else {
             self.stop_selected_seek_for_refresh(owner);
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return;
         };
         // Seek refresh's transient selected seek is replaced by the concrete
@@ -823,7 +821,7 @@ impl crate::engine::EngineInner {
             *destination = resolved.destination;
         }
 
-        self.relaunch_seek_replacement(owner, seq_id, elem_idx, new_elem);
+        self.relaunch_seek_replacement(sim, assets, owner, seq_id, elem_idx, new_elem);
     }
 
     /// Original-game seek refresh waits instead of rebuilding
@@ -926,9 +924,7 @@ impl crate::engine::EngineInner {
                 )
             }
             None => {
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
+                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return true;
             }
         };
@@ -942,9 +938,7 @@ impl crate::engine::EngineInner {
                 )
             }
             None => {
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
+                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return true;
             }
         };
@@ -963,9 +957,7 @@ impl crate::engine::EngineInner {
             // The unable-to-do bark belongs to movement-sequence construction's
             // gate-path failure below.
             self.stop_selected_seek_for_refresh(owner);
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return true;
         };
 
@@ -1016,14 +1008,15 @@ impl crate::engine::EngineInner {
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
             self.stop_selected_seek_for_refresh(owner);
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return true;
         };
 
         self.stop_selected_seek_for_refresh(owner);
-        self.orders.sequence_manager.element_interrupted(
+        self.element_interrupted(
+            sim,
+            assets,
+            &mut Vec::new(),
             seq_id,
             elem_idx,
             CascadeFlags::NEXT_LEVEL,
@@ -1190,9 +1183,7 @@ impl crate::engine::EngineInner {
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
             self.stop_selected_seek_for_refresh(owner);
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return true;
         };
         if gate_path.is_empty() {
@@ -1200,7 +1191,10 @@ impl crate::engine::EngineInner {
         }
 
         self.stop_selected_seek_for_refresh(owner);
-        self.orders.sequence_manager.element_interrupted(
+        self.element_interrupted(
+            sim,
+            assets,
+            &mut Vec::new(),
             seq_id,
             elem_idx,
             CascadeFlags::NEXT_LEVEL,
@@ -1231,13 +1225,18 @@ impl crate::engine::EngineInner {
     /// replacement becomes current.
     pub(super) fn relaunch_seek_replacement(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         seq_id: SequenceId,
         elem_idx: usize,
         new_elem: SequenceElement,
     ) {
         self.stop_selected_seek_for_refresh(owner);
-        self.orders.sequence_manager.element_interrupted(
+        self.element_interrupted(
+            sim,
+            assets,
+            &mut Vec::new(),
             seq_id,
             elem_idx,
             CascadeFlags::NEXT_LEVEL,

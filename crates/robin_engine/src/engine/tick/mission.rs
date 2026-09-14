@@ -238,7 +238,7 @@ impl EngineInner {
         self.tick_pc_reinforcement_arrivals();
 
         // ── Process messenger (engine-state messages) ────────────
-        self.drain_engine_state_messages(assets);
+        self.drain_engine_state_messages(sim, assets);
 
         None
     }
@@ -276,7 +276,11 @@ impl EngineInner {
     /// (UI/mission flow) are left in the queue for their respective
     /// consumers (UI layer, tests, etc.) to observe. We only consume the
     /// ones that actually affect engine state.
-    fn drain_engine_state_messages(&mut self, assets: &LevelAssets) {
+    fn drain_engine_state_messages(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         // Message forwarding is synchronous and recursive:
         // a message emitted while handling another message completes
         // before the outer call resumes.  Keep host/UI-only messages for
@@ -288,8 +292,8 @@ impl EngineInner {
         while let Some(msg) = messages.pop_front() {
             // The two handlers are one match split in arm order: a message
             // reaches the second only if no arm of the first matched.
-            if let Some(msg) = self.handle_selection_and_macro_message(assets, msg)
-                && let Some(msg) = self.handle_input_and_action_message(assets, msg)
+            if let Some(msg) = self.handle_selection_and_macro_message(sim, assets, msg)
+                && let Some(msg) = self.handle_input_and_action_message(sim, assets, msg)
             {
                 // Other messages are consumed by downstream systems
                 // (UI layer, mission flow). Re-enqueue so those
@@ -313,6 +317,7 @@ impl EngineInner {
     /// the message unchanged when no arm matches.
     fn handle_selection_and_macro_message(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         msg: crate::messenger::Message,
     ) -> Option<crate::messenger::Message> {
@@ -460,22 +465,22 @@ impl EngineInner {
             MessageType::Pc(crate::messenger::PcMessage::SelectCharacter, Some(pc_id)) => {
                 // Tick messenger drains: ambient single-seat
                 // semantics; LOCAL seat for now.
-                self.select_pc(assets, 0, pc_id, false, false);
+                self.select_pc(sim, assets, 0, pc_id, false, false);
                 self.emit_character_selection_followups();
             }
             MessageType::Pc(crate::messenger::PcMessage::SelectCharacterWithEcho, Some(pc_id)) => {
-                self.select_pc(assets, 0, pc_id, false, true);
+                self.select_pc(sim, assets, 0, pc_id, false, true);
                 self.emit_character_selection_followups();
             }
             MessageType::Pc(crate::messenger::PcMessage::SelectAddCharacter, Some(pc_id)) => {
-                self.select_pc(assets, 0, pc_id, true, false);
+                self.select_pc(sim, assets, 0, pc_id, true, false);
                 self.emit_character_selection_followups();
             }
             MessageType::Pc(
                 crate::messenger::PcMessage::SelectAddCharacterWithEcho,
                 Some(pc_id),
             ) => {
-                self.select_pc(assets, 0, pc_id, true, true);
+                self.select_pc(sim, assets, 0, pc_id, true, true);
                 self.emit_character_selection_followups();
             }
             // `pc == None` drops the whole selection;
@@ -562,6 +567,7 @@ impl EngineInner {
     /// matches.
     fn handle_input_and_action_message(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         msg: crate::messenger::Message,
     ) -> Option<crate::messenger::Message> {
@@ -695,7 +701,7 @@ impl EngineInner {
                 self.apply_disable_all_actions_temp(0, pc);
             }
             MessageType::Pc(crate::messenger::PcMessage::EnableAllActionsTemp, pc) => {
-                self.apply_enable_all_actions_temp(assets, 0, pc);
+                self.apply_enable_all_actions_temp(sim, assets, 0, pc);
             }
             _ => return Some(msg),
         }
@@ -743,8 +749,6 @@ impl EngineInner {
         // ── Process pending AI orders ─────────────────────────────
         //
         // Register AI orders before the frame-paced path-request phase.
-
-        self.drain_pending_self_stimuli(sim, assets);
 
         // TODO(original-parity): determine which queued NPC-order effects must
         // remain inside an individual NPC's creation-ordered update.

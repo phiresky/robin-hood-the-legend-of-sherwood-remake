@@ -701,10 +701,13 @@ fn completed_step_back_publishes_history_at_motion_terminal() {
     *stored_destination = destination;
     *flags = MoveFlags::STEP_BACK_IN_COMBAT;
     let sequence_id = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     let actor = engine
         .get_entity_mut(mover_id)
         .unwrap()
@@ -822,10 +825,13 @@ fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history
     *stored_destination = destination;
     *flags = MoveFlags::STEP_BACK_IN_COMBAT;
     let sequence_id = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     let actor = engine
         .get_entity_mut(mover_id)
         .unwrap()
@@ -848,10 +854,13 @@ fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history
         MapPoint::new(107.2, 100.0),
         "the final-waypoint transition must terminate before reaching the movement goal"
     );
-    engine
-        .orders
-        .sequence_manager
-        .element_impossible(sequence_id, 0);
+    engine.element_impossible(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     assert!(
         !engine
             .get_entity(mover_id)
@@ -976,10 +985,13 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
     }
     movement.orders.push_back(order);
     let sequence = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     engine
         .get_entity_mut(carrier)
         .unwrap()
@@ -1028,6 +1040,7 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
 
 #[test]
 fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
+    let assets = LevelAssets::new();
     use crate::coordinates::MapPoint;
     use crate::engine::MissionScript;
     use crate::engine::movement::GoalShape;
@@ -1200,10 +1213,13 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             panic!("PassDoor changed element kind")
         };
 
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence_id, pass_index);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence_id,
+            pass_index,
+        );
         let resolved = crate::engine::ai::resolve_ai_position_with(
             &engine.world.entities,
             &engine.script_domains.interactables.doors,
@@ -1373,10 +1389,13 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
         ));
         let sequence_id = engine.orders.sequence_manager.launch_element(movement);
         let _ = engine.orders.sequence_manager.hourglass();
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence_id, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence_id,
+            0,
+        );
         sequence_id
     };
     let first_sequence = launch_waiting_move(&mut engine, first_owner);
@@ -1484,10 +1503,13 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
         ));
         let sequence_id = engine.orders.sequence_manager.launch_element(movement);
         let _ = engine.orders.sequence_manager.hourglass();
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence_id, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence_id,
+            0,
+        );
         sequence_id
     };
     let expired_sequence = launch_failed_move(&mut engine, expired_owner);
@@ -1587,6 +1609,7 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
 
 #[test]
 fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
+    let assets = LevelAssets::new();
     use crate::order::{Order, OrderType};
     use crate::sequence::{MoveFlags, Sequence, SequenceElement, SequenceElementData};
 
@@ -1598,10 +1621,13 @@ fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
         .orders
         .push_back(Order::test_new(OrderType::WaitingUprightBored, 0.0, 0.0));
     let selected_id = engine.orders.sequence_manager.launch_element(selected);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(selected_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        selected_id,
+        0,
+    );
 
     let mut unrelated = Sequence::new();
     unrelated.append_element(SequenceElement::new_movement(
@@ -1640,6 +1666,7 @@ fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
 
 #[test]
 fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     engine
@@ -1662,6 +1689,7 @@ fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
     let sequence_id = engine
         .launch_ai_move(
             &crate::sim_rng::test_context(),
+            &assets,
             owner,
             destination,
             crate::ai::GotoFlags::RUN,
@@ -1705,6 +1733,7 @@ fn ai_move_constructs_route_before_later_owner_topology_changes() {
     let sequence_id = engine
         .launch_ai_move(
             &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
             owner,
             destination,
             crate::ai::GotoFlags::RUN,
@@ -1937,10 +1966,13 @@ fn production_owner_uses_exact_selected_element_not_background_movement() {
         .orders
         .push_back(Order::test_new(OrderType::RiderCharging, 300.0, 100.0));
     let movement_seq = engine.orders.sequence_manager.launch_element(background);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(movement_seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        movement_seq,
+        0,
+    );
 
     let generic_data = SequenceElement::new_generic(1, Command::Point, Some(rider)).data;
     let selected = engine
@@ -2082,10 +2114,13 @@ fn install_rider_charge_fixture(
     }
     movement.orders.push_back(order);
     let sequence_id = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     engine
         .get_entity_mut(rider_id)
         .unwrap()
@@ -2164,6 +2199,7 @@ fn install_charge_victim_motion(
     start: MapPoint,
     goal: MapPoint,
 ) {
+    let assets = LevelAssets::new();
     use crate::element::{ActionState, Command};
     use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
@@ -2209,10 +2245,13 @@ fn install_charge_victim_motion(
         .orders
         .push_back(Order::new(action, goal.x, goal.y, order_id));
     let sequence = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     engine
         .get_entity_mut(victim_id)
         .unwrap()
@@ -2263,22 +2302,31 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
         .orders
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::Wait, Some(foreign_owner)));
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(foreign_seq, 0);
-    engine
-        .orders
-        .sequence_manager
-        .element_terminated(foreign_seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        foreign_seq,
+        0,
+    );
+    engine.element_terminated(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        foreign_seq,
+        0,
+    );
     let nested_seq = engine
         .orders
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::Wait, Some(nested_owner)));
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(nested_seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        nested_seq,
+        0,
+    );
     install_condolation_nested_termination(mover_id, StimulusType::EventReachPoint, nested_seq, 0);
     let sim = crate::sim_rng::test_context();
 
@@ -2313,11 +2361,6 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
             .expect("completed movement remains inspectable")
             .state,
         crate::sequence::SequenceState::Terminated
-    );
-    let backlog = engine.orders.sequence_manager.drain_pending_condolations();
-    assert!(
-        backlog.is_empty(),
-        "every owner's condolation drains at its own boundary within the tick"
     );
 }
 
@@ -3522,6 +3565,7 @@ fn rider_charge_requires_weapon_profile() {
 
 #[test]
 fn current_movement_bootstraps_from_waiting_with_destination_state() {
+    let assets = LevelAssets::new();
     use crate::element::{ActionState, Command, Posture};
     use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
@@ -3573,10 +3617,13 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
     let mut movement = SequenceElement::new_movement(1, Command::Move, Some(mover_id), action);
     movement.orders.push_back(order);
     let sequence_id = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     engine
         .get_entity_mut(mover_id)
         .unwrap()
@@ -3627,6 +3674,7 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
 
 #[test]
 fn move_waiting_freeze_does_not_enter_destination_motion() {
+    let assets = LevelAssets::new();
     use crate::element::{ActionState, Command, Posture};
     use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
@@ -3690,10 +3738,13 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
         order_id,
     ));
     let sequence_id = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     engine
         .get_entity_mut(mover_id)
         .unwrap()
@@ -3879,6 +3930,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         destination: MapPoint,
         seek_target: Option<EntityId>,
     ) -> crate::sequence::SequenceId {
+        let assets = LevelAssets::new();
         let mut element =
             SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
         element.orders.push_back(Order::test_new(
@@ -3906,10 +3958,13 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         }
 
         let sequence_id = engine.orders.sequence_manager.launch_element(element);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence_id, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence_id,
+            0,
+        );
         let actor = engine
             .get_entity_mut(owner)
             .expect("movement owner exists")
@@ -4076,6 +4131,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
 
 #[test]
 fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
+    let assets = LevelAssets::new();
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     use crate::element::{ActionState, Command, Posture};
@@ -4123,10 +4179,13 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
     *sector = SectorHandle::new(1);
 
     let sequence_id = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     let actor = engine
         .get_entity_mut(mover_id)
         .expect("mover exists")
@@ -4138,7 +4197,6 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
     // A newly-seen motion order spends one tick in MotionState::Start.
     // On the next tick the destination is within one animation step. The
     // original game still applies actor repulsion before checking arrival.
-    let assets = LevelAssets::new();
     engine.tick_entity_movement(sim, &assets);
     engine.tick_entity_movement(sim, &assets);
 
@@ -4175,6 +4233,7 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
 
 #[test]
 fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snapping() {
+    let assets = LevelAssets::new();
     use crate::element::{ActionState, Command, Posture};
     use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
@@ -4253,10 +4312,13 @@ fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snappin
     *sector = SectorHandle::new(1);
 
     let sequence_id = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     let actor = engine
         .get_entity_mut(mover_id)
         .unwrap()
@@ -4266,7 +4328,6 @@ fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snappin
     actor.active_movement = ActiveMovement::new(sequence_id, 0);
 
     let sim = crate::sim_rng::test_context();
-    let assets = LevelAssets::new();
     engine.tick_entity_movement(&sim, &assets);
     {
         let pi = engine
@@ -4414,7 +4475,7 @@ fn enemy_blink_state(engine: &EngineInner, npc_id: EntityId) -> (bool, bool) {
 }
 
 #[test]
-fn deferred_wakeup_pc_applies_specific_blink_inline_to_opposite_camp_npcs() {
+fn concussion_wakeup_pc_applies_specific_blink_inline_to_opposite_camp_npcs() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     use crate::combat::ConcussionOutcome;
@@ -4427,11 +4488,27 @@ fn deferred_wakeup_pc_applies_specific_blink_inline_to_opposite_camp_npcs() {
     install_seen_enemy(&mut engine, same_camp_npc, waker);
     install_seen_enemy(&mut engine, opposite_camp_npc, waker);
 
-    engine
-        .orders
-        .pending_concussion_side_effects
-        .push((waker, ConcussionOutcome::WokeUp));
-    engine.drain_pending_concussion_side_effects(sim, &LevelAssets::new());
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let human = engine
+        .get_entity_mut(waker)
+        .unwrap()
+        .human_data_mut()
+        .unwrap();
+    human.unconscious = true;
+    human.concussion_of_the_brain = crate::combat::CONCUSSION_WAKEUP_THRESHOLD;
+    assert_eq!(
+        engine.apply_scripted_concussion(sim, &assets, waker, 0, true),
+        ConcussionOutcome::WokeUp
+    );
+    assert!(
+        !engine
+            .get_entity(waker)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .unconscious
+    );
 
     assert_eq!(enemy_blink_state(&engine, same_camp_npc), (true, true));
     assert_eq!(
@@ -4441,7 +4518,7 @@ fn deferred_wakeup_pc_applies_specific_blink_inline_to_opposite_camp_npcs() {
 }
 
 #[test]
-fn deferred_wakeup_soldier_defers_blink_until_its_creation_slot() {
+fn concussion_wakeup_blinks_hostile_observers_before_returning() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     use crate::combat::ConcussionOutcome;
@@ -4459,29 +4536,37 @@ fn deferred_wakeup_soldier_defers_blink_until_its_creation_slot() {
     install_seen_enemy(&mut engine, same_camp_npc, waker);
     install_seen_enemy(&mut engine, opposite_camp_npc, waker);
 
-    engine
-        .orders
-        .pending_concussion_side_effects
-        .push((waker, ConcussionOutcome::WokeUp));
-    engine.drain_pending_concussion_side_effects(sim, &LevelAssets::new());
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let human = engine
+        .get_entity_mut(waker)
+        .unwrap()
+        .human_data_mut()
+        .unwrap();
+    human.unconscious = true;
+    human.concussion_of_the_brain = crate::combat::CONCUSSION_WAKEUP_THRESHOLD;
+    assert_eq!(
+        engine.apply_scripted_concussion(sim, &assets, waker, 0, true),
+        ConcussionOutcome::WokeUp
+    );
+    assert!(
+        !engine
+            .get_entity(waker)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .unconscious
+    );
 
     assert_eq!(enemy_blink_state(&engine, same_camp_npc), (true, true));
-    assert_eq!(enemy_blink_state(&engine, opposite_camp_npc), (true, true));
-    assert!(
-        engine
-            .get_entity(waker)
-            .and_then(|entity| entity.ai_controller())
-            .unwrap()
-            .outbox
-            .detection
-            .stimuli
-            .iter()
-            .any(|stimulus| stimulus.stimulus_type == crate::ai::StimulusType::EventFitAgain)
+    assert_eq!(
+        enemy_blink_state(&engine, opposite_camp_npc),
+        (false, false)
     );
 }
 
 #[test]
-fn deferred_wakeup_soldier_skips_blink_when_npcs_cannot_be_enemies() {
+fn concussion_wakeup_soldier_skips_blink_when_npcs_cannot_be_enemies() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     use crate::combat::ConcussionOutcome;
@@ -4492,12 +4577,27 @@ fn deferred_wakeup_soldier_skips_blink_when_npcs_cannot_be_enemies() {
     let opposite_camp_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     install_seen_enemy(&mut engine, opposite_camp_npc, waker);
 
-    engine
-        .orders
-        .pending_concussion_side_effects
-        .push((waker, ConcussionOutcome::WokeUp));
-    engine.drain_pending_concussion_side_effects(sim, &LevelAssets::new());
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let human = engine
+        .get_entity_mut(waker)
+        .unwrap()
+        .human_data_mut()
+        .unwrap();
+    human.unconscious = true;
+    human.concussion_of_the_brain = crate::combat::CONCUSSION_WAKEUP_THRESHOLD;
+    assert_eq!(
+        engine.apply_scripted_concussion(sim, &assets, waker, 0, true),
+        ConcussionOutcome::WokeUp
+    );
+    assert!(
+        !engine
+            .get_entity(waker)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .unconscious
+    );
 
-    engine.apply_wake_redetection_blinks(waker);
     assert_eq!(enemy_blink_state(&engine, opposite_camp_npc), (true, true));
 }

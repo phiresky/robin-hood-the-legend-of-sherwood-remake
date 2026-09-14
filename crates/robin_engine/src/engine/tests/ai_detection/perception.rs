@@ -73,10 +73,13 @@ fn periodic_smalltalk_commands_advance_watchdog_but_unrelated_commands_preserve_
             .sequence_manager
             .pop_next_hourglass_action()
             .expect("fixture command is registered for its owner");
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
         engine.finish_enemy_periodic_stuck_suffix_after_refresh(&sim, owner, &assets, 64);
         assert_eq!(
             engine
@@ -306,6 +309,7 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
     use crate::sequence::SequenceElement;
 
     fn observe(pc_first: bool) -> bool {
+        let mut assets = LevelAssets::new();
         let mut engine = EngineInner::new();
         let (pc, npc) = if pc_first {
             let pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
@@ -356,12 +360,14 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
             .orders
             .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
         let sequence = engine.orders.sequence_manager.launch_element(movement);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
 
-        let mut assets = LevelAssets::new();
         complete_test_runtime_fixture(&mut engine, &mut assets);
 
         crate::sim_rng::with_seed(0xA013_0015, |sim| {
@@ -656,11 +662,6 @@ fn civilian_macro_break_drains_missed_friend_detectables_immediately() {
         civilian.detectable_lists[DetectableType::MissedFriend as usize].is_empty(),
         "common macro completion deletes must be applied to civilian NpcData"
     );
-    let ai = engine
-        .get_entity(civilian_id)
-        .and_then(Entity::ai_controller)
-        .expect("macro civilian retains AI");
-    assert!(ai.outbox.actor.deleted_detectable_types().is_empty());
 }
 
 #[test]
@@ -861,8 +862,8 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
     recovering.npc.eye_status = EyeStatus::Closed;
     recovering.npc.inform_my_friends = true;
     let ai = recovering.npc.ai_brain.base_mut().unwrap();
-    ai.outbox.recovery.inform_resurrection = true;
-    ai.outbox.recovery.set_eye_status = Some(EyeStatus::LookForward);
+    ai.current_state = crate::ai::AiState::Sleeping;
+    ai.current_substate = crate::ai::Substate::SleepingUnconscious;
 
     let Entity::Soldier(observer) = engine.get_entity_mut(observer_id).unwrap() else {
         panic!("observer changed kind")
@@ -875,9 +876,33 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
         ..Detectable::default()
     }];
 
-    engine.tick_ai_pending_resurrection_and_eyes_for_npc(recovering_id);
-
     crate::sim_rng::with_seed(0x0A01_35A6, |sim| {
+        engine.execute_ai_callback(
+            sim,
+            &assets,
+            recovering_id,
+            &crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
+        );
+        assert_eq!(
+            engine
+                .get_entity(recovering_id)
+                .unwrap()
+                .npc_data()
+                .unwrap()
+                .eye_status,
+            EyeStatus::LookForward,
+            "FitAgain must finish its eye update before returning"
+        );
+        assert!(
+            engine
+                .get_entity(observer_id)
+                .unwrap()
+                .npc_data()
+                .unwrap()
+                .detectable_lists[DetectableType::Body as usize]
+                .is_empty(),
+            "FitAgain must remove the stale body before the subsequent inform pass"
+        );
         engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
     });
 
@@ -891,15 +916,6 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
         .unwrap();
     assert_eq!(recovering.eye_status, EyeStatus::LookForward);
     assert!(!recovering.inform_my_friends);
-    assert!(
-        !recovering
-            .ai_brain
-            .base()
-            .unwrap()
-            .outbox
-            .recovery
-            .inform_resurrection
-    );
     assert_eq!(
         observer.detectable_lists[DetectableType::Body as usize]
             .iter()
@@ -908,16 +924,6 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
         vec![Some(recovering_id)],
         "recovery must delete the stale body first, then the simultaneous inform flag must re-add it"
     );
-}
-
-#[test]
-#[should_panic(
-    expected = "NPC 0 is missing its required AI controller while applying recovery state"
-)]
-fn npc_recovery_requires_an_ai_controller() {
-    let mut engine = EngineInner::new();
-    let npc_id = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
-    engine.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
 }
 
 #[test]
@@ -1168,20 +1174,7 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
 }
 
 #[test]
-fn dispatch_ai_stimulus_intentionally_ignores_pcs() {
-    use crate::ai::{Stimulus, StimulusType};
-    use crate::element::{Entity, Posture};
-
-    let mut engine = EngineInner::new();
-    let pc_id = engine.add_test_entity(make_test_pc(Posture::Upright));
-
-    engine.dispatch_ai_stimulus(pc_id, Stimulus::new(StimulusType::EventFitAgain));
-
-    assert!(matches!(engine.get_entity(pc_id), Some(Entity::Pc(_))));
-}
-
-#[test]
-fn wake_prefix_preserves_existing_stimulus_fifo() {
+fn wake_callback_observes_preceding_loss_of_consciousness() {
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::element::{Camp, Entity, EyeStatus};
 
@@ -1194,39 +1187,29 @@ fn wake_prefix_preserves_existing_stimulus_fifo() {
         .and_then(Entity::ai_controller_mut)
         .unwrap();
     ai.current_state = AiState::Default;
-    ai.outbox.detection.stimuli = vec![
-        Stimulus::new(StimulusType::EventLoseConsciousness),
-        Stimulus::new(StimulusType::EventFitAgain),
-        Stimulus::new(StimulusType::EventImpossible),
-    ];
-
-    let woke = crate::sim_rng::with_seed(0xA013_F1F0, |sim| {
-        engine.dispatch_pending_fit_again_for_npc(sim, npc_id, &assets)
+    crate::sim_rng::with_seed(0xA013_F1F0, |sim| {
+        engine.execute_ai_callback(
+            sim,
+            &assets,
+            npc_id,
+            &Stimulus::new(StimulusType::EventLoseConsciousness),
+        );
+        engine.execute_ai_callback(
+            sim,
+            &assets,
+            npc_id,
+            &Stimulus::new(StimulusType::EventFitAgain),
+        );
     });
-    assert!(woke);
     let ai = engine
         .get_entity(npc_id)
         .and_then(Entity::ai_controller)
         .unwrap();
-    assert_eq!(
-        ai.outbox
-            .detection
-            .stimuli
-            .iter()
-            .map(|stimulus| stimulus.stimulus_type)
-            .collect::<Vec<_>>(),
-        vec![StimulusType::EventImpossible],
-        "the older prefix through FITAGAIN must dispatch in FIFO order while only the suffix remains"
-    );
     assert_eq!(ai.current_state, AiState::Sleeping);
     assert_eq!(
         ai.current_substate,
         Substate::SleepingAwakening,
         "LOSE_CONSCIOUSNESS must run before FITAGAIN; plucking FITAGAIN first would leave the NPC unconscious"
-    );
-    assert_eq!(
-        ai.outbox.recovery.set_eye_status, None,
-        "each synchronous Think in the restored FIFO prefix must commit its eye write inline"
     );
     assert_eq!(
         engine
@@ -1400,6 +1383,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
 
 #[test]
 fn npc_hearing_thinks_before_same_slot_optical_detection() {
+    let mut assets = LevelAssets::new();
     use crate::ai::AiState;
     use crate::element::{Camp, Detectable, DetectableType, ElementData, ElementKind, Entity};
     use crate::order::{Order, OrderType};
@@ -1492,12 +1476,14 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
         .orders
         .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
     let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(movement_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        movement_sequence,
+        0,
+    );
 
-    let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
         .characters
@@ -1763,6 +1749,7 @@ fn add_locked_detection_scene(engine: &mut EngineInner) -> LockedDetectionIds {
 }
 
 fn launch_running_noise_for(engine: &mut EngineInner, first_visible_id: EntityId) {
+    let assets = LevelAssets::new();
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
 
@@ -1779,10 +1766,13 @@ fn launch_running_noise_for(engine: &mut EngineInner, first_visible_id: EntityId
         .orders
         .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
     let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(movement_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        movement_sequence,
+        0,
+    );
 }
 
 fn freeze_observer_with_seeded_detectables(engine: &mut EngineInner, ids: LockedDetectionIds) {
@@ -1908,7 +1898,6 @@ fn assert_locked_ai_retains_detection_fifo(engine: &EngineInner, ids: LockedDete
         (ai.base.current_state, ai.base.current_substate),
         (AiState::Default, Substate::DefaultOnPost)
     );
-    assert!(ai.base.outbox.detection.stimuli.is_empty());
     assert_eq!(
         ai.base.last_stimulus_actor,
         Some(crate::ai::AiEntityHandle::new(body_id.index()))
@@ -2735,7 +2724,6 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
         .get_entity(observer_id)
         .and_then(Entity::enemy_ai)
         .expect("Royalist multi-edge observer retains enemy AI");
-    assert!(ai.base.outbox.detection.stimuli.is_empty());
     assert_eq!(ai.base.current_state, AiState::Default);
     assert_eq!(
         ai.base.last_stimulus_actor,
@@ -3378,7 +3366,7 @@ fn enemy_optics_reads_pc_order_from_live_creation_slot_state() {
         .got_the_beggar_trick = false;
 
     crate::sim_rng::with_seed(0xA013_11E0, |sim| {
-        engine.refresh_detection_after_world_snapshot_for_test(sim, &assets, |engine| {
+        engine.refresh_detection_after_live_mutation_for_test(sim, &assets, |engine| {
             engine
                 .orders
                 .sequence_manager
@@ -3435,7 +3423,7 @@ fn enemy_optics_reads_pc_detection_z_from_live_creation_slot_posture() {
         .got_the_beggar_trick = true;
 
     crate::sim_rng::with_seed(0xA013_11E1, |sim| {
-        engine.refresh_detection_after_world_snapshot_for_test(sim, &assets, |engine| {
+        engine.refresh_detection_after_live_mutation_for_test(sim, &assets, |engine| {
             let Entity::Pc(pc) = engine
                 .get_entity_mut(pc_id)
                 .expect("live-Z PC survives snapshot")

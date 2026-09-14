@@ -119,14 +119,15 @@ fn dispatch_pass_with_element_mutation(
     *element_flags = flags;
     mutate_element(&mut element);
     let seq_id = engine.orders.sequence_manager.launch_element(element);
-    let barrier = PassDoorLaunchContext::new(
-        doors,
-        &mut engine.world.entities,
-        &engine.world.fast_grid,
-        &mut engine.orders.sequence_manager,
-        &mut engine.orders.next_order_id,
-    )
-    .dispatch(owner, seq_id, 0);
+    engine.script_domains.interactables.doors = doors.to_vec();
+    let barrier = engine.instruct_pass_door(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        owner,
+        seq_id,
+        0,
+    );
     (barrier, seq_id)
 }
 
@@ -983,7 +984,12 @@ fn wall_transition_and_passing_door_use_separate_owner_slots() {
         .orders
         .sequence_manager
         .push_order_on(seq_id, 0, transition_order.clone());
-    engine.do_next_order(seq_id, 0);
+    engine.do_next_order(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        seq_id,
+        0,
+    );
 
     bind_single_animation(
         &mut engine,
@@ -2153,14 +2159,15 @@ fn non_movement_pass_door_is_an_invariant_failure() {
             Some(owner),
         ));
 
-    PassDoorLaunchContext::new(
-        &[default_door()],
-        &mut engine.world.entities,
-        &engine.world.fast_grid,
-        &mut engine.orders.sequence_manager,
-        &mut engine.orders.next_order_id,
-    )
-    .dispatch(owner, seq_id, 0);
+    engine.script_domains.interactables.doors = vec![default_door()];
+    engine.instruct_pass_door(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        owner,
+        seq_id,
+        0,
+    );
 }
 
 /// Actor translation only assigns the direct-door-passing flag inside

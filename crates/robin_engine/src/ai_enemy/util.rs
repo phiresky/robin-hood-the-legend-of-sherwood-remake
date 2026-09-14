@@ -1,4 +1,4 @@
-//! Shared helpers for the enemy-AI module: math, snapshots, combat-position
+//! Shared helpers for the enemy-AI module: math, combat-position
 //! evaluation, ambush-point status, and tunable constants.
 
 use bitflags::bitflags;
@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use super::map_vec_ext::AiMapVec;
 use crate::ai::*;
 use crate::coordinates::MapVec;
-use crate::element::EntityId;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
 
 // ---------------------------------------------------------------------------
@@ -1066,35 +1065,6 @@ pub(super) fn pos_distance(a: Position, b: Position) -> f32 {
     let dx = a.x - b.x;
     let dy = a.y - b.y;
     (dx * dx + dy * dy).sqrt()
-}
-
-/// Resolve a seek point by ID. Global IDs are indices into
-/// `AiGlobalState::seek_points`; 1111 and 2222 are personal sentinels.
-pub(super) fn resolve_seek_point_id<'a>(
-    id: u16,
-    personal1: &'a Option<SeekPoint>,
-    personal2: &'a Option<SeekPoint>,
-    global: &'a AiGlobalState,
-) -> Option<&'a SeekPoint> {
-    match id {
-        1111 => personal1.as_ref(),
-        2222 => personal2.as_ref(),
-        _ => global.seek_points.get(id as usize),
-    }
-}
-
-/// Mutable version of [`resolve_seek_point_id`].
-pub(super) fn resolve_seek_point_mut<'a>(
-    id: u16,
-    personal1: &'a mut Option<SeekPoint>,
-    personal2: &'a mut Option<SeekPoint>,
-    global: &'a mut AiGlobalState,
-) -> Option<&'a mut SeekPoint> {
-    match id {
-        1111 => personal1.as_mut(),
-        2222 => personal2.as_mut(),
-        _ => global.seek_points.get_mut(id as usize),
-    }
 }
 
 #[cfg(test)]

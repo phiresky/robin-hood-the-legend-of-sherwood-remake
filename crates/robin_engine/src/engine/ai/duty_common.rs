@@ -191,10 +191,13 @@ mod tests {
             *gate_id = Some(crate::gate::DoorIndex::new(0).unwrap());
             *direction = 1;
             let sequence = engine.orders.sequence_manager.launch_element(pass);
-            engine
-                .orders
-                .sequence_manager
-                .element_in_progress(sequence, 0);
+            engine.element_in_progress(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                &mut Vec::new(),
+                sequence,
+                0,
+            );
             enemy_mut(&mut engine, owner).base.patrol_chief = Some(chief);
             engine.execute_common_ai_duty(
                 &crate::sim_rng::test_context(),
@@ -406,7 +409,6 @@ mod tests {
         );
         assert_eq!(ai.base.current_state, AiState::Attacking);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
-        assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
         assert!(
             !engine
                 .orders
@@ -442,10 +444,6 @@ mod tests {
                 assert!(!ai.attentive, "{stimulus:?}");
                 assert!(!ai.will_be_attentive, "{stimulus:?}");
                 assert_eq!(ai.forced_attentive, forced);
-                assert!(
-                    ai.base.outbox.actor.set_attentive_mode.is_none(),
-                    "attentive transition must have executed"
-                );
                 if stimulus == StimulusType::EventLoseConsciousness {
                     engine.execute_ai_callback(
                         &crate::sim_rng::test_context(),
@@ -533,7 +531,6 @@ mod tests {
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.current_task_priority, task_priority::NONE);
         assert!(!ai.base.needs_patrol_reinit);
-        assert!(!ai.base.outbox.actor.has_boundary_work());
         assert!(
             engine
                 .orders
@@ -585,15 +582,8 @@ mod tests {
             unreachable!()
         };
         soldier.soldier.cached_camp = Camp::Royalists;
-        let ai = enemy_mut(&mut engine, owner);
-        ai.base
-            .outbox
-            .actor
-            .add_detectable((target, DetectableType::Beggar));
-        ai.base
-            .outbox
-            .actor
-            .add_detectable((target, DetectableType::Enemy));
+        engine.execute_ai_add_detectable(owner, target, DetectableType::Beggar);
+        engine.execute_ai_add_detectable(owner, target, DetectableType::Enemy);
         duty(&mut engine, &assets, owner);
         let npc = engine
             .world
@@ -693,7 +683,7 @@ mod tests {
     fn under_net_state_tail_restores_green_alert() {
         let (mut engine, assets, ids) = fixture(1);
         let owner = ids[0];
-        enemy_mut(&mut engine, owner).set_alert_status(AlertLevel::Red);
+        engine.execute_ai_set_alert_status(&assets, owner, AlertLevel::Red, AlertFlags::empty());
         engine.duty_set_state(
             &crate::sim_rng::test_context(),
             &assets,
@@ -724,7 +714,6 @@ mod tests {
         assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
         assert!(ai.base.already_on_point);
         assert_eq!(engine.ai_think_depth(), 100);
-        assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
     }
 
     #[test]
@@ -818,7 +807,6 @@ impl EngineInner {
         state: AiState,
         substate: Substate,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let forced_attentive = if self
             .expect_entity(owner, "state-change owner")
             .enemy_ai()
@@ -830,13 +818,23 @@ impl EngineInner {
                 .world
                 .entities
                 .expect_entity_mut(owner, format_args!("state-change owner"));
-            entity
+            let ai = entity
                 .friendly_ai_mut()
-                .expect("state-change owner has no role")
-                .begin_state_change(state, substate);
+                .expect("state-change owner has no role");
+            debug_assert_eq!(substate.ai_state_family(), Some(state));
+            ai.base
+                .register_log_line(crate::ai::LogLineType::ChangeState, substate as u16);
+            let alert = match state {
+                AiState::Sleeping | AiState::Default | AiState::Wondering => {
+                    crate::ai::AlertLevel::Green
+                }
+                AiState::Seeking | AiState::Fleeing => crate::ai::AlertLevel::Yellow,
+                _ => panic!("Civilian AI entered invalid state: {state:?}"),
+            };
+            self.execute_ai_set_alert_status(assets, owner, alert, crate::ai::AlertFlags::empty());
             None
         };
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         let ai = self
             .world
             .entities
@@ -850,7 +848,6 @@ impl EngineInner {
         };
         if notify {
             self.call_live_ai_state_change_filter(sim, assets, owner, state, source);
-            self.drain_self_stimuli_for_npc(sim, owner, assets);
         }
         if let Some(forced_attentive) = forced_attentive {
             self.finish_live_enemy_state(sim, assets, owner, state, substate, forced_attentive);
@@ -865,7 +862,6 @@ impl EngineInner {
             ai.set_ai_state(state);
             ai.current_substate = substate;
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     pub(in crate::engine) fn duty_face_direction(
@@ -875,7 +871,6 @@ impl EngineInner {
         owner: EntityId,
         direction: u16,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let entity = self
             .world
             .entities
@@ -896,9 +891,8 @@ impl EngineInner {
                 .expect("facing requires controller")
                 .already_turned = true;
         } else {
-            self.launch_live_ai_turn(owner, direction as i16, false);
+            self.launch_live_ai_turn(sim, assets, owner, direction as i16, false);
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     pub(in crate::engine) fn duty_face_position_at_elevation(
@@ -909,7 +903,6 @@ impl EngineInner {
         position: Position,
         elevation: f32,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let here = self.live_ai_position(owner);
         let entity = self.expect_entity(owner, "duty facing position owner");
         let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -926,7 +919,6 @@ impl EngineInner {
         owner: EntityId,
         position: Position,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let target = self.position_to_point_3d(
             assets,
             position.sector,
@@ -942,11 +934,16 @@ impl EngineInner {
             target.x - body.x,
             target.y - body.y,
         );
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("pointing owner"))
-            .point_direction(direction);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
+        let mut turn = SequenceElement::new_generic(1, crate::element::Command::Turn, Some(owner));
+        turn.set_property(Field::Direction, FieldValue::Integer(direction as u32));
+        let mut point =
+            SequenceElement::new_generic(2, crate::element::Command::Point, Some(owner));
+        point.set_property(Field::Direction, FieldValue::Integer(direction as u32));
+        let mut sequence = Sequence::new();
+        sequence.append_element(turn);
+        sequence.append_element(point);
+        self.launch_sequence(sequence);
     }
 
     pub(in crate::engine) fn duty_go_to(
@@ -969,7 +966,6 @@ impl EngineInner {
         flags: GotoFlags,
         speed: f32,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         self.world
             .entities
             .expect_ai_controller_mut(owner, format_args!("movement request owner"))
@@ -995,31 +991,91 @@ impl EngineInner {
             .map(|order| order.order_type)
             .unwrap_or(crate::order::OrderType::NonanimationEnd);
         let civilian = entity.is_civilian();
-        let admitted_flags = entity
+        let ai = entity
             .ai_controller_mut()
-            .expect("duty movement requires controller")
-            .prepare_move_request(
-                destination,
-                flags,
-                position,
-                layer,
-                sector,
-                animation,
-                civilian,
-                depth,
-            );
-        if let Some(flags) = admitted_flags {
-            if !self.authorize_ai_destination(
-                owner,
-                destination,
-                true,
-                flags.contains(GotoFlags::ASK_OBSTACLE),
-            ) {
+            .expect("duty movement requires controller");
+        let flags = {
+            let mut flags = flags;
+            if civilian {
+                flags -= GotoFlags::FORBIDDEN_CIVILIANS;
+            }
+            let dx = (position.x - destination.x).abs();
+            let dy = (position.y - destination.y).abs();
+            if dx.max(dy) < 5.0
+                && !ai.likes_to_sit_around
+                && !ai.special_action
+                && matches!(
+                    animation,
+                    crate::order::OrderType::WaitingUpright
+                        | crate::order::OrderType::WaitingAlerted
+                        | crate::order::OrderType::NonanimationEnd
+                )
+            {
+                if depth > 0 {
+                    ai.already_on_point = true;
+                } else {
+                    self.execute_ai_callback(
+                        sim,
+                        assets,
+                        owner,
+                        &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReachPoint),
+                    );
+                }
                 return;
             }
-            self.launch_ai_move(sim, owner, destination, flags, speed);
+            let tolerance = if flags.contains(GotoFlags::NEAR) {
+                ai.stop_before_end_of_path_distance as f32
+            } else {
+                0.0
+            };
+            if flags.contains(GotoFlags::NEAR)
+                && destination.level == layer
+                && dx * dx + dy * dy <= tolerance * tolerance
+            {
+                if depth > 0 {
+                    ai.already_on_point = true;
+                } else {
+                    self.execute_ai_callback(
+                        sim,
+                        assets,
+                        owner,
+                        &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReachPoint),
+                    );
+                }
+                return;
+            }
+            if destination.x <= 0.0
+                || destination.y <= 0.0
+                || destination.sector.is_none()
+                || (destination.level as i16) < 0
+            {
+                ai.couldnt_reachpoint = true;
+                return;
+            }
+            let crosses_sector = match (
+                destination.sector.and_then(|s| s.arena_index()),
+                sector.and_then(|s| s.arena_index()),
+            ) {
+                (Some(destination), Some(current)) => destination != current,
+                _ => destination.sector != sector,
+            };
+            if flags.contains(GotoFlags::STRAIGHT)
+                && !flags.contains(GotoFlags::ASK_OBSTACLE)
+                && (crosses_sector || destination.level != layer)
+            {
+                flags -= GotoFlags::STRAIGHT;
+            }
+            flags
+        };
+        if !self.authorize_ai_destination(
+            owner,
+            destination,
+            true,
+            flags.contains(GotoFlags::ASK_OBSTACLE),
+        ) {
+            return;
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.launch_ai_move(sim, assets, owner, destination, flags, speed);
     }
 
     pub(in crate::engine) fn duty_go_near(
@@ -1031,7 +1087,6 @@ impl EngineInner {
         distance: i32,
         flags: GotoFlags,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let depth = self.ai_think_depth();
         self.world
             .entities
@@ -1047,7 +1102,7 @@ impl EngineInner {
         owner: EntityId,
         flags: DutyFlags,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_set_alert_status(assets, owner, AlertLevel::Green, AlertFlags::empty());
         {
             let entity = self
                 .world
@@ -1058,15 +1113,6 @@ impl EngineInner {
                 .expect("duty owner has no actor")
                 .detectable_lists[crate::element::DetectableType::Friend as usize]
                 .is_empty();
-            if let Some(enemy) = entity.enemy_ai_mut() {
-                enemy.set_alert_status_with_flags(AlertLevel::Green, AlertFlags::empty());
-            } else {
-                entity
-                    .friendly_ai_mut()
-                    .expect("duty owner has no AI role")
-                    .base
-                    .set_alert_status(AlertLevel::Green);
-            }
             let ai = entity
                 .ai_controller_mut()
                 .expect("duty owner has no controller");
@@ -1083,7 +1129,6 @@ impl EngineInner {
                 ai.detected_body = None;
             }
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
 
         let chief = self
             .world

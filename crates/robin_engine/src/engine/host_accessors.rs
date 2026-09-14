@@ -492,7 +492,13 @@ impl EngineInner {
     /// — its Execute arm consumes the event in
     /// `dispatch_arm_completion` (`engine/animation.rs`) and mutates
     /// the front order in place without popping.
-    pub(crate) fn do_next_order(&mut self, seq_id: crate::sequence::SequenceId, elem_idx: usize) {
+    pub(crate) fn do_next_order(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
         if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
             let element_state = self
                 .orders
@@ -678,9 +684,7 @@ impl EngineInner {
         // Removal-notification callback can synchronously instruct a real
         // successor. The actor's next update entry supplies Wait only if
         // that stack unwinds without one.
-        self.orders
-            .sequence_manager
-            .element_terminated(seq_id, elem_idx);
+        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
     }
 
     /// Guarantee that `entity_id` has a live `Command::Wait` sequence
@@ -766,8 +770,15 @@ impl EngineInner {
     /// Remove an entity. Leaves a None hole (IDs are stable).
     pub(crate) fn remove_entity<I: Into<EntityId>>(&mut self, id: I) {
         let id = id.into();
+        // Alert counters track constructed soldier brains, not registry membership.
+        // Removing an entity does not reverse its last music-alert contribution.
         self.world.entities.remove(id);
         self.world.soldier_registry.remove(id);
+        self.world.npc_registry_ids.retain(|&member| member != id);
+        self.world.actor_registry_ids.retain(|&member| member != id);
+        self.world
+            .fighter_registry_ids
+            .retain(|&member| member != id);
         // Remove from index lists
         self.world.pc_ids.retain(|&i| i != id);
         self.world.original_pc_registry_ids.retain(|&i| i != id);

@@ -117,33 +117,43 @@ impl EngineInner {
         }
 
         self.feedback.cutscene_camera.sequence_element = None;
-        self.orders
-            .sequence_manager
-            .element_terminated(sequence_ref.sequence_id, sequence_ref.element_index);
+        let sim = self.control.simulation_context();
+        self.element_terminated(
+            &sim,
+            assets,
+            &mut Vec::new(),
+            sequence_ref.sequence_id,
+            sequence_ref.element_index,
+        );
 
         // The original game's transition to terminated synchronously executes
         // immediate successors inside the director callback.
         // Ordinary successors remain queued for the next manager update.
-        let sim = self.control.simulation_context();
-        self.drain_registration_inline_actions_sync(&sim, assets);
         Ok(())
     }
 
-    fn release_director_sequence_autonomously(&mut self) {
+    fn release_director_sequence_autonomously(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.feedback.cutscene_camera.external_completion_replay {
             return;
         }
         if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-            self.orders
-                .sequence_manager
-                .element_terminated(r.sequence_id, r.element_index);
+            self.element_terminated(sim, assets, &mut Vec::new(), r.sequence_id, r.element_index);
         }
     }
 
     /// Script-driven camera changes: follow-cam, camera slide, zoom dispatch.
     ///
     /// Called at the start of each `draw()` frame.
-    pub(super) fn perform_director_work(&mut self, display: &mut CameraDisplayState) {
+    pub(super) fn perform_director_work(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        display: &mut CameraDisplayState,
+    ) {
         // ── Locker follow-cam ────────────────────────────────────
         // If following an NPC with locker, cancel if it dies or is
         // knocked unconscious.
@@ -272,7 +282,7 @@ impl EngineInner {
             self.feedback.cutscene_camera.desired_zoom_factor = -1.0;
             // Zoom reached target, release the latched ZoomLevel
             // sequence element.
-            self.release_director_sequence_autonomously();
+            self.release_director_sequence_autonomously(sim, assets);
         }
 
         if self.feedback.cutscene_camera.desired_zoom_factor > 0.0
@@ -373,7 +383,7 @@ impl EngineInner {
                     display.background_transform.scrolling_vector = MapVec::ZERO;
                     // Slide clipped at level edge, release the latched
                     // CameraGoto element.
-                    self.release_director_sequence_autonomously();
+                    self.release_director_sequence_autonomously(sim, assets);
                 } else {
                     // Accelerate slide speed
                     if self.control.speed == 1.0 {
@@ -398,7 +408,7 @@ impl EngineInner {
                 display.background_transform.scrolling_vector = MapVec::ZERO;
                 // Slide reached target, release the latched
                 // CameraGoto element.
-                self.release_director_sequence_autonomously();
+                self.release_director_sequence_autonomously(sim, assets);
             }
         }
     }

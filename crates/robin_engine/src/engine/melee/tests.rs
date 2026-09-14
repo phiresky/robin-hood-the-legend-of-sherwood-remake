@@ -136,10 +136,13 @@ fn give_flight(
         0.0,
         0.0,
     );
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::default(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     if let Some(entity) = engine.world.entities.get_mut(flyer) {
         entity.set_posture(Posture::Flying);
@@ -256,10 +259,7 @@ fn assets_with_sword_profile_effects(
     }
 }
 
-fn make_enemy_strike_pair(
-    engine: &mut EngineInner,
-    pending_consideration: bool,
-) -> (EntityId, EntityId) {
+fn make_enemy_strike_pair(engine: &mut EngineInner) -> (EntityId, EntityId) {
     let attacker = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
     let target = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
 
@@ -276,7 +276,6 @@ fn make_enemy_strike_pair(
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
         ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
         ai.hth_weapon_id = 1;
-        ai.pending_sword_strike_consideration = pending_consideration;
     }
     {
         let target_entity = engine.get_entity_mut(target).unwrap();
@@ -308,9 +307,9 @@ fn make_enemy_ai_hero_strike_pair(engine: &mut EngineInner) -> (EntityId, Entity
     let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
     let target = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
 
-    for (owner, opponent, camp, authorize_strike) in [
-        (attacker, target, crate::element::Camp::Custom(2), true),
-        (target, attacker, crate::element::Camp::Custom(3), false),
+    for (owner, opponent, camp) in [
+        (attacker, target, crate::element::Camp::Custom(2)),
+        (target, attacker, crate::element::Camp::Custom(3)),
     ] {
         let Entity::Pc(pc) = engine.get_entity_mut(owner).unwrap() else {
             unreachable!()
@@ -326,7 +325,6 @@ fn make_enemy_ai_hero_strike_pair(engine: &mut EngineInner) -> (EntityId, Entity
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
         ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(opponent.index()));
         ai.hth_weapon_id = 1;
-        ai.pending_sword_strike_consideration = authorize_strike;
         pc.pc.ai = Some(Box::new(crate::element::AiActorData {
             ai_brain: crate::element::AiBrain::Enemy(Box::new(ai)),
             ..Default::default()
@@ -416,10 +414,13 @@ fn install_test_melee_order(
         .orders
         .sequence_manager
         .push_order_on(sequence, 0, order);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::default(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     let script = crate::sprite_script::SpriteScript {
         action_id: order_type as u16,
@@ -544,6 +545,7 @@ fn dispatch_crowded_cross_sector_swordfight(
     engine.dispatch_enter_swordfight(
         &sim,
         &LevelAssets::default(),
+        &mut Vec::new(),
         owner,
         Some(opponent),
         seq_id,

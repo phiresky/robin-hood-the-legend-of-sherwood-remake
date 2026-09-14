@@ -256,6 +256,7 @@ fn unequip_bow_from_aiming_up_queues_lower_unload_then_unequip() {
 
 #[test]
 fn turn_context_sets_goal_without_snapping_and_books_turning() {
+    let assets = LevelAssets::new();
     use crate::sequence::{Field, FieldValue};
 
     let mut engine = EngineInner::new();
@@ -264,14 +265,15 @@ fn turn_context_sets_goal_without_snapping_and_books_turning() {
     turn.set_property(Field::Direction, FieldValue::Integer(5));
     let seq_id = engine.orders.sequence_manager.launch_element(turn);
 
-    let barrier = TurnCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-    }
-    .dispatch(owner, Command::Turn, seq_id, 0);
+    let barrier = engine.dispatch_turn_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::Turn,
+        seq_id,
+        0,
+    );
 
     assert_eq!(barrier, OwnerActionBarrier::Reach);
     let entity = engine.world.entities.get(owner).unwrap();
@@ -314,15 +316,15 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
     wait.set_property(Field::Timer, FieldValue::Integer(7));
     let seq_id = engine.orders.sequence_manager.launch_element(wait);
 
-    let barrier = WaitCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::WaitTimer, seq_id, 0);
+    let barrier = engine.dispatch_wait_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::WaitTimer,
+        seq_id,
+        0,
+    );
 
     assert_eq!(barrier, OwnerActionBarrier::Reach);
     assert_eq!(
@@ -375,7 +377,10 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
         actor.seek_target = Some(owner);
         actor.post_seek_sequence = Some(crate::sequence::Sequence::new().into_post_seek());
     }
-    engine.orders.sequence_manager.element_interrupted(
+    engine.element_interrupted(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
         seq_id,
         0,
         crate::sequence::CascadeFlags::NEXT_LEVEL,
@@ -383,10 +388,13 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
     let mut idle = SequenceElement::new(1, Command::Wait, Some(owner));
     idle.priority = crate::sequence::SequencePriority::Wait;
     let idle_sequence = engine.orders.sequence_manager.launch_element(idle);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(idle_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        idle_sequence,
+        0,
+    );
     assert_eq!(engine.actor_legacy_wait_time(owner), 7);
 
     // Savegame_linux3/Profile_003/Savegame_065 replay-003 frame
@@ -491,15 +499,15 @@ fn frozen_all_wait_timer_still_completes_in_owner_slot() {
     let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
     wait.set_property(Field::Timer, FieldValue::Integer(0));
     let seq_id = engine.orders.sequence_manager.launch_element(wait);
-    WaitCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::WaitTimer, seq_id, 0);
+    engine.dispatch_wait_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::WaitTimer,
+        seq_id,
+        0,
+    );
     let _ = engine
         .orders
         .sequence_manager
@@ -548,10 +556,13 @@ fn wait_timer_wraps_beggar_execute_and_generic_execute_once_each() {
         let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
         wait.priority = crate::sequence::SequencePriority::Normal;
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(seq_id, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            seq_id,
+            0,
+        );
         let order_id = engine.orders.allocate_order_id();
         engine.orders.sequence_manager.push_order_on(
             seq_id,
@@ -695,10 +706,13 @@ fn owner_local_stop_movement_new_id_preserves_execute_start() {
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
     movement.priority = crate::sequence::SequencePriority::Normal;
     let sequence_id = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     let entry_order_id = engine.orders.allocate_order_id();
     engine.orders.sequence_manager.push_order_on(
         sequence_id,
@@ -725,7 +739,14 @@ fn owner_local_stop_movement_new_id_preserves_execute_start() {
             // A LINE_SCRIPT EnterZone callback can invoke StopActor here,
             // after execution has produced START but before the actor update
             // performs its completion projection.
-            engine.stop_owner(owner, crate::sequence::SequencePriority::Script);
+            engine.stop_owner(
+                &crate::sim_rng::test_context(),
+                &assets,
+                &mut Vec::new(),
+                owner,
+                crate::sequence::SequencePriority::Script,
+                &|engine, element| EngineInner::priority_resolver(&engine.world.entities)(element),
+            );
         },
         |_, _, _| {},
     );
@@ -762,10 +783,13 @@ fn fresh_waypoint_start_advancing_to_older_stop_transition_is_in_progress() {
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::RunningUpright);
     movement.priority = crate::sequence::SequencePriority::Normal;
     let sequence_id = engine.orders.sequence_manager.launch_element(movement);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     // Path postprocessing allocates its final transition before inserting
     // path waypoints ahead of it, so the waypoint has the newer ID.
     let transition_order_id = engine.orders.allocate_order_id();
@@ -802,7 +826,7 @@ fn fresh_waypoint_start_advancing_to_older_stop_transition_is_in_progress() {
                 .element_data_mut()
                 .sprite
                 .last_motion_state = Some(crate::sprite::MotionState::Start);
-            engine.do_next_order(sequence_id, 0);
+            engine.do_next_order(&crate::sim_rng::test_context(), &assets, sequence_id, 0);
         },
         |_, _, _| {},
     );
@@ -832,6 +856,7 @@ fn fresh_waypoint_start_advancing_to_older_stop_transition_is_in_progress() {
 
 #[test]
 fn npc_state_context_preserves_menace_order_and_reaches_splice_barrier() {
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
     let seq_id = engine
@@ -839,13 +864,14 @@ fn npc_state_context_preserves_menace_order_and_reaches_splice_barrier() {
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::StartMenace, Some(owner)));
 
-    let barrier = NpcStateCommandContext {
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-    }
-    .dispatch(Command::StartMenace, seq_id, 0);
+    let barrier = engine.dispatch_npc_state_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        Command::StartMenace,
+        seq_id,
+        0,
+    );
 
     assert_eq!(barrier, OwnerActionBarrier::Reach);
     let element = engine
@@ -870,6 +896,7 @@ fn npc_state_context_preserves_menace_order_and_reaches_splice_barrier() {
 
 #[test]
 fn npc_attention_context_uses_alerted_look_and_reaches_splice_barrier() {
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let mut soldier_entity = make_bow_soldier(Posture::Upright, ActionState::Waiting);
     let Entity::Soldier(soldier) = &mut soldier_entity else {
@@ -889,14 +916,15 @@ fn npc_attention_context_uses_alerted_look_and_reaches_splice_barrier() {
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::LookLeft, Some(owner)));
 
-    let barrier = NpcAttentionCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-    }
-    .dispatch(owner, Command::LookLeft, seq_id, 0);
+    let barrier = engine.dispatch_npc_attention_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::LookLeft,
+        seq_id,
+        0,
+    );
 
     assert_eq!(barrier, OwnerActionBarrier::Reach);
     let element = engine
@@ -922,16 +950,15 @@ fn stealth_context_crouches_and_preserves_terminated_order() {
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::CrouchDown, Some(owner)));
 
-    let barrier = StealthCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        titbit_manager: &mut engine.feedback.titbit_manager,
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::CrouchDown, seq_id, 0);
+    let barrier = engine.dispatch_stealth_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::CrouchDown,
+        seq_id,
+        0,
+    );
 
     assert_eq!(barrier, OwnerActionBarrier::Reach);
     // Translation only appends the crouch transition order; the posture
@@ -966,15 +993,15 @@ fn wait_timer_context_rejects_missing_timer_contextually() {
     let wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
     let seq_id = engine.orders.sequence_manager.launch_element(wait);
 
-    WaitCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::WaitTimer, seq_id, 0);
+    engine.dispatch_wait_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::WaitTimer,
+        seq_id,
+        0,
+    );
 }
 
 #[test]
@@ -987,15 +1014,15 @@ fn wait_context_rejects_stale_owner_contextually() {
     let seq_id = engine.orders.sequence_manager.launch_element(wait);
     engine.remove_entity(owner);
 
-    WaitCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::Wait, seq_id, 0);
+    engine.dispatch_wait_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::Wait,
+        seq_id,
+        0,
+    );
 }
 
 #[test]
@@ -1049,15 +1076,16 @@ fn direct_ability_context_starts_whistle_and_reaches_splice_barrier() {
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::WhistleCmd, Some(owner)));
 
-    let barrier = DirectAbilityCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::WhistleCmd, true, seq_id, 0);
+    let barrier = engine.dispatch_direct_ability_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::WhistleCmd,
+        true,
+        seq_id,
+        0,
+    );
 
     assert_eq!(barrier, OwnerActionBarrier::Reach);
     let element = engine
@@ -1093,15 +1121,16 @@ fn direct_ability_context_preserves_eat_no_ammo_skip_barrier() {
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::EatCmd, Some(owner)));
 
-    let barrier = DirectAbilityCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::EatCmd, false, seq_id, 0);
+    let barrier = engine.dispatch_direct_ability_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::EatCmd,
+        false,
+        seq_id,
+        0,
+    );
 
     assert_eq!(barrier, OwnerActionBarrier::Skip);
     let element = engine
@@ -1123,15 +1152,16 @@ fn direct_ability_context_preserves_missing_throw_target_skip_barrier() {
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::ThrowApple, Some(owner)));
 
-    let barrier = DirectAbilityCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::ThrowApple, true, seq_id, 0);
+    let barrier = engine.dispatch_direct_ability_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::ThrowApple,
+        true,
+        seq_id,
+        0,
+    );
 
     assert_eq!(barrier, OwnerActionBarrier::Skip);
     assert_eq!(
@@ -1147,6 +1177,7 @@ fn direct_ability_context_preserves_missing_throw_target_skip_barrier() {
 
 #[test]
 fn position_assertion_context_interrupts_at_tolerance_boundary() {
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
     let mut assertion = SequenceElement::new_movement(
@@ -1166,11 +1197,14 @@ fn position_assertion_context_interrupts_at_tolerance_boundary() {
     }
     let seq_id = engine.orders.sequence_manager.launch_element(assertion);
 
-    let barrier = PositionAssertionContext {
-        entities: &engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-    }
-    .dispatch(owner, seq_id, 0);
+    let barrier = engine.dispatch_position_assertion(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        seq_id,
+        0,
+    );
 
     assert_eq!(barrier, OwnerActionBarrier::Skip);
     assert_eq!(
@@ -1187,6 +1221,7 @@ fn position_assertion_context_interrupts_at_tolerance_boundary() {
 
 #[test]
 fn position_assertion_context_accepts_nan_distance_like_original() {
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
     engine
@@ -1213,11 +1248,14 @@ fn position_assertion_context_accepts_nan_distance_like_original() {
     }
     let seq_id = engine.orders.sequence_manager.launch_element(assertion);
 
-    let barrier = PositionAssertionContext {
-        entities: &engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-    }
-    .dispatch(owner, seq_id, 0);
+    let barrier = engine.dispatch_position_assertion(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        seq_id,
+        0,
+    );
 
     assert_eq!(barrier, OwnerActionBarrier::Skip);
     assert_eq!(
@@ -1245,6 +1283,7 @@ fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
         sector_in: sector_number,
         ..crate::gate::Door::default()
     };
+    engine.script_domains.interactables.doors.push(door.clone());
     let mut wait = SequenceElement::new_movement(
         1,
         Command::WaitFreeLift,
@@ -1260,23 +1299,24 @@ fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
     }
     let seq_id = engine.orders.sequence_manager.launch_element(wait);
 
-    WaitCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
+    engine.dispatch_wait_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::WaitFreeLift,
+        seq_id,
+        0,
+    );
 
-    let authorized = LiftWaitCommandContext {
-        entities: &mut engine.world.entities,
-        fast_grid: std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        doors: std::slice::from_ref(&door),
-        sequence_manager: &mut engine.orders.sequence_manager,
-    }
-    .authorize_and_reserve(owner, seq_id, 0);
+    let authorized = engine.authorize_and_reserve_lift_wait(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        seq_id,
+        0,
+    );
 
     assert!(!authorized);
     assert_eq!(
@@ -1315,6 +1355,7 @@ fn lift_wait_context_rejects_crenel_lift_type_contextually() {
         sector_in: sector_number,
         ..crate::gate::Door::default()
     };
+    engine.script_domains.interactables.doors.push(door.clone());
     let mut wait = SequenceElement::new_movement(
         1,
         Command::WaitFreeLift,
@@ -1329,23 +1370,24 @@ fn lift_wait_context_rejects_crenel_lift_type_contextually() {
         *sector = crate::position_interface::SectorHandle::new(42);
     }
     let seq_id = engine.orders.sequence_manager.launch_element(wait);
-    WaitCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
+    engine.dispatch_wait_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::WaitFreeLift,
+        seq_id,
+        0,
+    );
 
-    LiftWaitCommandContext {
-        entities: &mut engine.world.entities,
-        fast_grid: std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        doors: std::slice::from_ref(&door),
-        sequence_manager: &mut engine.orders.sequence_manager,
-    }
-    .authorize_and_reserve(owner, seq_id, 0);
+    engine.authorize_and_reserve_lift_wait(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        seq_id,
+        0,
+    );
 }
 
 #[test]
@@ -1360,6 +1402,7 @@ fn lift_wait_context_reserves_direction_before_terminating() {
         sector_in: sector_number,
         ..crate::gate::Door::default()
     };
+    engine.script_domains.interactables.doors.push(door.clone());
     let mut wait = SequenceElement::new_movement(
         1,
         Command::WaitFreeLift,
@@ -1375,26 +1418,27 @@ fn lift_wait_context_reserves_direction_before_terminating() {
     }
     let seq_id = engine.orders.sequence_manager.launch_element(wait);
 
-    WaitCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
+    engine.dispatch_wait_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::WaitFreeLift,
+        seq_id,
+        0,
+    );
 
-    let authorized = LiftWaitCommandContext {
-        entities: &mut engine.world.entities,
-        fast_grid: std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        doors: std::slice::from_ref(&door),
-        sequence_manager: &mut engine.orders.sequence_manager,
-    }
-    .authorize_and_reserve(owner, seq_id, 0);
+    let authorized = engine.authorize_and_reserve_lift_wait(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        seq_id,
+        0,
+    );
 
     assert!(authorized);
-    engine.do_next_order(seq_id, 0);
+    engine.do_next_order(&crate::sim_rng::test_context(), &assets, seq_id, 0);
     assert_eq!(
         engine
             .orders
@@ -1475,25 +1519,24 @@ fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
         *sector = crate::position_interface::SectorHandle::new(42);
     }
     let seq_id = engine.orders.sequence_manager.launch_element(wait);
-    WaitCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
-
-    assert!(
-        LiftWaitCommandContext {
-            entities: &mut engine.world.entities,
-            fast_grid: std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-            doors: std::slice::from_ref(&door),
-            sequence_manager: &mut engine.orders.sequence_manager,
-        }
-        .authorize_and_reserve(owner, seq_id, 0)
+    engine.dispatch_wait_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::WaitFreeLift,
+        seq_id,
+        0,
     );
+
+    assert!(engine.authorize_and_reserve_lift_wait(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        seq_id,
+        0
+    ));
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).occupants, 1);
 
     engine.execute_pass_door(
@@ -1564,15 +1607,15 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         *sector = crate::position_interface::SectorHandle::new(42);
     }
     let seq_id = engine.orders.sequence_manager.launch_element(wait);
-    WaitCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
+    engine.dispatch_wait_command(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        owner,
+        Command::WaitFreeLift,
+        seq_id,
+        0,
+    );
     engine.set_actors_frozen(true);
     let _ = engine
         .orders

@@ -77,11 +77,6 @@ impl DutyExecution<'_> {
             .expect_enemy_ai_mut(self.owner, format_args!("duty owner"))
     }
 
-    fn settle(&mut self) {
-        self.engine
-            .drain_direct_ai_owner_boundary(self.sim, self.owner, self.assets);
-    }
-
     fn state(&mut self, state: AiState, substate: Substate) {
         self.engine
             .duty_set_state(self.sim, self.assets, self.owner, state, substate);
@@ -127,21 +122,18 @@ impl DutyExecution<'_> {
 
     fn enemy_duty(&mut self, flags: DutyFlags) {
         self.enemy_mut().investigating_distraction = false;
-        self.enemy_mut()
-            .base
-            .outbox
-            .actor
-            .delete_detectable_type(crate::element::DetectableType::Beggar);
-        self.settle();
+        self.engine
+            .execute_ai_delete_detectable_type(self.owner, crate::element::DetectableType::Beggar);
+
         {
             let enemy = self.enemy_mut();
             enemy.beggar_to_examine = None;
             enemy.known_enemy_strike_1 = None;
             enemy.known_enemy_strike_2 = None;
             enemy.known_enemy_strike_3 = None;
-            enemy.base.outbox.actor.set_unfocus();
+            self.engine.execute_ai_unfocus(self.owner);
         }
-        self.settle();
+
         self.enemy_mut().fleeing_seen_enemy_counter = 0;
 
         if self
@@ -153,7 +145,7 @@ impl DutyExecution<'_> {
         {
             self.state(AiState::Seeking, Substate::SeekingSoldierReturnToOfficer);
             self.enemy_mut().base.clear_emoticon();
-            self.settle();
+
             let position = self.enemy().officers_position;
             self.go_near(position, 40, GotoFlags::RUN);
             if self.enemy().base.already_on_point {
@@ -201,8 +193,8 @@ impl DutyExecution<'_> {
                     .base
                     .missed_in_action
                     .push(checkpoint.get());
-                self.enemy_mut().base.set_checkpoint_charly(None);
-                self.settle();
+                self.engine
+                    .execute_ai_set_checkpoint_charly(self.owner, None);
             }
         }
 
@@ -389,8 +381,8 @@ impl DutyExecution<'_> {
     }
 
     fn alert_officer_after_search(&mut self) -> bool {
-        self.enemy_mut().base.outbox.actor.set_unfocus();
-        self.settle();
+        self.engine.execute_ai_unfocus(self.owner);
+
         let mut nearest = None;
         let mut nearest_distance = crate::ai_enemy::combat::MAX_ALERT_OFFICER_RADIUS as u32;
         for id in self.camp_soldiers() {
@@ -468,12 +460,12 @@ impl DutyExecution<'_> {
         self.enemy_mut().current_task_priority = task_priority::ALERT;
         self.state(AiState::Seeking, Substate::SeekingRunningToOfficer);
         self.enemy_mut().base.antagonist = Some(AiEntityHandle::new(officer.index()));
-        self.enemy_mut()
-            .base
-            .outbox
-            .actor
-            .append_detectable((officer, crate::element::DetectableType::Friend));
-        self.settle();
+        self.engine.execute_ai_append_detectable(
+            self.owner,
+            officer,
+            crate::element::DetectableType::Friend,
+        );
+
         let entity = self
             .engine
             .world

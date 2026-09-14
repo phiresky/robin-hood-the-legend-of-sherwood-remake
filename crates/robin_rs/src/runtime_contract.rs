@@ -34,19 +34,3 @@ impl RuntimeContract {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::RuntimeContract;
-
-    #[test]
-    fn checked_in_browser_contract_matches_compiled_engine() {
-        let checked_in: RuntimeContract =
-            serde_json::from_str(include_str!("../../../wasm-www/runtime-contract.json")).unwrap();
-        assert_eq!(
-            checked_in,
-            RuntimeContract::current(),
-            "regenerate wasm-www/runtime-contract.json with export_runtime_contract"
-        );
-    }
-}

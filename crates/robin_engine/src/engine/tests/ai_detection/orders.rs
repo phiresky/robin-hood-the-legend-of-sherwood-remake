@@ -127,7 +127,13 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         0.0,
     ));
     let seq = engine.orders.sequence_manager.launch_element(element);
-    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        seq,
+        0,
+    );
     let actor = engine
         .get_entity_mut(listener)
         .unwrap()
@@ -309,6 +315,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
 
 #[test]
 fn production_listen_creation_order_runs_heard_before_later_reveal() {
+    let mut assets = LevelAssets::new();
     use crate::element::{Command, TargetFilter};
     use crate::movement::{AbilityKind, ActiveAbility};
     use crate::order::{Order, OrderType};
@@ -335,7 +342,13 @@ fn production_listen_creation_order_runs_heard_before_later_reveal() {
         0.0,
     ));
     let seq = engine.orders.sequence_manager.launch_element(element);
-    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        seq,
+        0,
+    );
     let actor = engine
         .get_entity_mut(listener)
         .unwrap()
@@ -353,7 +366,6 @@ fn production_listen_creation_order_runs_heard_before_later_reveal() {
     };
     engine.set_actors_frozen(true);
 
-    let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
@@ -459,7 +471,7 @@ fn tiredness_recovery_uses_original_creation_order_cadence() {
 }
 
 #[test]
-fn patrol_direction_macro_effect_closes_at_the_chief_owner_boundary() {
+fn patrol_direction_instruction_registers_member_turn_before_returning() {
     use crate::ai::Substate;
     use crate::element::{ActionState, Camp, Entity};
 
@@ -483,7 +495,6 @@ fn patrol_direction_macro_effect_closes_at_the_chief_owner_boundary() {
         .ai_controller_mut()
         .unwrap();
     chief_ai.patrol = vec![member];
-    chief_ai.instruct_patrol_direction_to_patrol_members(7);
 
     let Entity::Soldier(member_entity) = engine.get_entity_mut(member).unwrap() else {
         unreachable!()
@@ -498,7 +509,7 @@ fn patrol_direction_macro_effect_closes_at_the_chief_owner_boundary() {
         .current_substate = Substate::DefaultPatrolEnrouteWaiting;
 
     crate::sim_rng::with_seed(0x0A01_3D1A, |sim| {
-        engine.drain_pending_for_npc(sim, chief, &assets)
+        engine.instruct_patrol_direction_to_patrol_members(sim, chief, &assets, 7)
     });
 
     let member_ai = engine.get_entity(member).unwrap().ai_controller().unwrap();
@@ -598,16 +609,17 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
         ai.antagonist = Some(crate::ai::AiEntityHandle::new(target.index()));
         if let Some(stimulus) = queue {
             ai.stimulus_queue.push(stimulus);
-        } else {
-            ai.outbox
-                .reentrant
-                .self_stimuli
-                .push(StimulusType::EventDone.into());
         }
     }
     engine.tick_ai_queued_stimuli_for_npc(sim, retained_owner, &assets);
     assert_launched(&engine, retained_owner, Command::Turn, "retained Think");
-    engine.drain_self_stimuli_for_npc(sim, self_owner, &assets);
+    engine.execute_ai_callback(
+        sim,
+        &assets,
+        self_owner,
+        &Stimulus::new(StimulusType::EventDone),
+    );
+
     assert_launched(&engine, self_owner, Command::Turn, "recursive self-Think");
 
     let periodic_ai = engine
@@ -696,7 +708,7 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
     });
 
     crate::sim_rng::with_seed(0xA013_2640, |sim| {
-        engine.execute_ai_dispatch_patrol_event(sim, &assets, subordinate_id, stimulus);
+        engine.dispatch_filtered_stimulus(sim, &assets, subordinate_id, &stimulus, None);
     });
 
     let chief = engine
@@ -705,10 +717,6 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
         .unwrap();
     assert_eq!(chief.current_state, AiState::Default);
     assert_eq!(chief.current_substate, Substate::DefaultLookingShadow);
-    assert!(
-        !chief.outbox.actor.has_boundary_work(),
-        "the direct chief routine must close its Halt/Face work before returning to the subordinate"
-    );
     assert!(
         engine
             .orders
@@ -721,8 +729,8 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
 }
 
 #[test]
-fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
-    use crate::ai::{AiState, StimulusType, Substate};
+fn natural_recovery_finishes_inline_for_soldiers_and_civilians() {
+    use crate::ai::{AiState, Substate};
     use crate::element::{AiBrain, Camp, Entity, EyeStatus, Posture};
 
     for civilian in [false, true] {
@@ -772,31 +780,12 @@ fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
         ai.current_state = AiState::Sleeping;
         ai.current_substate = Substate::SleepingUnconscious;
 
-        engine.tick_concussion_healing(&assets);
-
-        let entity = engine.get_entity(npc_id).unwrap();
-        assert!(!entity.human_data().unwrap().unconscious);
-        assert_eq!(entity.element_data().posture(), Posture::Lying);
-        assert_eq!(entity.npc_data().unwrap().eye_status, EyeStatus::Closed);
-        assert_eq!(entity.npc_data().unwrap().view_radius, 0);
-        assert_eq!(
-            entity
-                .ai_controller()
-                .unwrap()
-                .outbox
-                .detection
-                .stimuli
-                .iter()
-                .map(|stimulus| stimulus.stimulus_type)
-                .collect::<Vec<_>>(),
-            vec![StimulusType::EventFitAgain]
-        );
-
         crate::sim_rng::with_seed(0x0A01_3F17, |sim| {
-            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
+            engine.tick_concussion_healing_for(sim, npc_id, &assets)
         });
 
         let entity = engine.get_entity(npc_id).unwrap();
+        assert!(!entity.human_data().unwrap().unconscious);
         let ai = entity.ai_controller().unwrap();
         assert_ne!(ai.current_substate, Substate::SleepingUnconscious);
         assert_eq!(
@@ -808,9 +797,6 @@ fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
             173,
             "owner-slot recovery must open the eyes before that NPC refreshes its view"
         );
-        assert!(ai.outbox.detection.stimuli.is_empty());
-        assert!(!ai.outbox.recovery.inform_resurrection);
-        assert_eq!(ai.outbox.recovery.set_eye_status, None);
     }
 }
 

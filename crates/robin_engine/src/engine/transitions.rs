@@ -912,6 +912,8 @@ fn build_ctx(
 /// exit path).
 fn make_action_transition_actor(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -982,10 +984,7 @@ fn make_action_transition_actor(
                     if command == Command::RaiseShield {
                         // The command is refused because the shield is
                         // already up with no auto-lower path.
-                        engine
-                            .orders
-                            .sequence_manager
-                            .element_terminated(seq_id, elem_idx);
+                        engine.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                         return false;
                     }
                     push_anim_order(engine, seq_id, elem_idx, OrderType::LoweringShield);
@@ -1165,7 +1164,7 @@ fn make_action_transition_human(
             }
             true
         }
-        _ => make_action_transition_actor(engine, seq_id, elem_idx, owner, flags),
+        _ => make_action_transition_actor(engine, sim, assets, seq_id, elem_idx, owner, flags),
     }
 }
 
@@ -1216,10 +1215,7 @@ fn make_action_transition_soldier(
                 OrderType::TransitionWaitingAlertedWaitingUpright,
             );
         } else {
-            engine
-                .orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            engine.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             if let Some(enemy) = engine
                 .get_entity_mut(owner)
                 .and_then(crate::element::Entity::enemy_ai_mut)
@@ -1297,7 +1293,7 @@ fn dispatch_make_action_transition(
         ElementKind::ActorCivilian => {
             make_action_transition_human(engine, sim, assets, seq_id, elem_idx, owner, flags)
         }
-        _ => make_action_transition_actor(engine, seq_id, elem_idx, owner, flags),
+        _ => make_action_transition_actor(engine, sim, assets, seq_id, elem_idx, owner, flags),
     }
 }
 
@@ -1311,6 +1307,8 @@ fn dispatch_make_action_transition(
 /// this base for every posture they don't handle.
 fn make_posture_transition_actor(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     _owner: EntityId,
@@ -1441,6 +1439,8 @@ fn make_posture_transition_actor(
 
 fn make_posture_transition_human(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1462,13 +1462,15 @@ fn make_posture_transition_human(
         return true;
     }
 
-    make_posture_transition_actor(engine, seq_id, elem_idx, owner, flags)
+    make_posture_transition_actor(engine, sim, assets, seq_id, elem_idx, owner, flags)
 }
 
 /// Only `SITTING` is handled here; `LYING` / `DODGED` are deferred
 /// to the base.
 fn make_posture_transition_npc(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1487,11 +1489,13 @@ fn make_posture_transition_npc(
         return true;
     }
 
-    make_posture_transition_human(engine, seq_id, elem_idx, owner, flags)
+    make_posture_transition_human(engine, sim, assets, seq_id, elem_idx, owner, flags)
 }
 
 fn make_posture_transition_soldier(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1518,11 +1522,13 @@ fn make_posture_transition_soldier(
         return true;
     }
 
-    make_posture_transition_npc(engine, seq_id, elem_idx, owner, flags)
+    make_posture_transition_npc(engine, sim, assets, seq_id, elem_idx, owner, flags)
 }
 
 fn make_posture_transition_pc(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1574,7 +1580,7 @@ fn make_posture_transition_pc(
                         // the carried PC so it can't acquire a fresh
                         // sequence element while the carrier plays the
                         // dismount animation.
-                        engine.actor_freeze_execution(carried_id);
+                        engine.actor_freeze_execution(sim, assets, carried_id);
                     } else {
                         // Fallback when the carrier no longer has a
                         // carried actor attached.
@@ -1641,7 +1647,7 @@ fn make_posture_transition_pc(
                         .and_then(|e| e.human_data())
                         .and_then(|h| h.carrier);
                     if let Some(carrier_id) = carrier_id {
-                        engine.actor_freeze_execution(carrier_id);
+                        engine.actor_freeze_execution(sim, assets, carrier_id);
                     }
                 }
                 true
@@ -1711,11 +1717,13 @@ fn make_posture_transition_pc(
         }
     }
 
-    make_posture_transition_human(engine, seq_id, elem_idx, owner, flags)
+    make_posture_transition_human(engine, sim, assets, seq_id, elem_idx, owner, flags)
 }
 
 fn dispatch_make_posture_transition(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1723,14 +1731,16 @@ fn dispatch_make_posture_transition(
 ) -> bool {
     let kind = transition_owner(engine, owner).kind();
     match kind {
-        ElementKind::ActorPc => make_posture_transition_pc(engine, seq_id, elem_idx, owner, flags),
+        ElementKind::ActorPc => {
+            make_posture_transition_pc(engine, sim, assets, seq_id, elem_idx, owner, flags)
+        }
         ElementKind::ActorSoldier => {
-            make_posture_transition_soldier(engine, seq_id, elem_idx, owner, flags)
+            make_posture_transition_soldier(engine, sim, assets, seq_id, elem_idx, owner, flags)
         }
         ElementKind::ActorCivilian => {
-            make_posture_transition_npc(engine, seq_id, elem_idx, owner, flags)
+            make_posture_transition_npc(engine, sim, assets, seq_id, elem_idx, owner, flags)
         }
-        _ => make_posture_transition_actor(engine, seq_id, elem_idx, owner, flags),
+        _ => make_posture_transition_actor(engine, sim, assets, seq_id, elem_idx, owner, flags),
     }
 }
 
@@ -1740,6 +1750,8 @@ fn dispatch_make_posture_transition(
 
 fn make_final_action_transition_actor(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     flags: EA,
@@ -1832,6 +1844,8 @@ fn make_final_action_transition_actor(
 
 fn make_final_action_transition_human(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     flags: EA,
@@ -1934,7 +1948,7 @@ fn make_final_action_transition_human(
         return true;
     }
 
-    make_final_action_transition_actor(engine, seq_id, elem_idx, flags)
+    make_final_action_transition_actor(engine, sim, assets, seq_id, elem_idx, flags)
 }
 
 /// Soldier-specific "alerted" auto-insert — a soldier receiving a
@@ -1943,6 +1957,8 @@ fn make_final_action_transition_human(
 /// command.
 fn make_final_action_transition_soldier(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1972,10 +1988,7 @@ fn make_final_action_transition_soldier(
                 OrderType::TransitionWaitingUprightWaitingAlerted,
             );
         } else {
-            engine
-                .orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            engine.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             if let Some(enemy) = engine
                 .get_entity_mut(owner)
                 .and_then(crate::element::Entity::enemy_ai_mut)
@@ -2025,11 +2038,13 @@ fn make_final_action_transition_soldier(
         return true;
     }
 
-    make_final_action_transition_human(engine, seq_id, elem_idx, flags)
+    make_final_action_transition_human(engine, sim, assets, seq_id, elem_idx, flags)
 }
 
 fn dispatch_make_final_action_transition(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -2037,13 +2052,13 @@ fn dispatch_make_final_action_transition(
 ) -> bool {
     let kind = transition_owner(engine, owner).kind();
     match kind {
-        ElementKind::ActorSoldier => {
-            make_final_action_transition_soldier(engine, seq_id, elem_idx, owner, flags)
-        }
+        ElementKind::ActorSoldier => make_final_action_transition_soldier(
+            engine, sim, assets, seq_id, elem_idx, owner, flags,
+        ),
         ElementKind::ActorPc | ElementKind::ActorCivilian => {
-            make_final_action_transition_human(engine, seq_id, elem_idx, flags)
+            make_final_action_transition_human(engine, sim, assets, seq_id, elem_idx, flags)
         }
-        _ => make_final_action_transition_actor(engine, seq_id, elem_idx, flags),
+        _ => make_final_action_transition_actor(engine, sim, assets, seq_id, elem_idx, flags),
     }
 }
 
@@ -2128,13 +2143,29 @@ impl EngineInner {
         }
 
         if !target.stage(self, |engine| {
-            dispatch_make_posture_transition(engine, seq_id, elem_idx, owner, change_flags)
+            dispatch_make_posture_transition(
+                engine,
+                sim,
+                assets,
+                seq_id,
+                elem_idx,
+                owner,
+                change_flags,
+            )
         })? {
             return Ok(false);
         }
 
         if !target.stage(self, |engine| {
-            dispatch_make_final_action_transition(engine, seq_id, elem_idx, owner, enter_flags)
+            dispatch_make_final_action_transition(
+                engine,
+                sim,
+                assets,
+                seq_id,
+                elem_idx,
+                owner,
+                enter_flags,
+            )
         })? {
             return Ok(false);
         }

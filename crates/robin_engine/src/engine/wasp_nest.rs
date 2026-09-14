@@ -247,7 +247,13 @@ impl EngineInner {
                         // transitions are rewritten and any in-flight
                         // path request is cancelled (the bare
                         // `SequenceManager::stop_owner` skips both).
-                        self.stop_owner(victim_id, crate::sequence::SequencePriority::Injury);
+                        self.stop_actor_orders(
+                            sim,
+                            assets,
+                            &mut Vec::new(),
+                            victim_id,
+                            crate::sequence::SequencePriority::Injury,
+                        );
                         let sting = crate::sequence::SequenceElement::new(
                             1,
                             crate::element::Command::ReceiveWaspSting,

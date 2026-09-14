@@ -1808,6 +1808,12 @@ fn entity_persisted_projection_matches_json_round_trip_body() {
     let civilian_id = EntityId::Civilian(crate::entity_id::CivilianId(3));
     for id in [soldier_id, civilian_id] {
         let entity = entities.get_mut(id).expect("fixture npc");
+        let ai = entity.ai_controller_mut().expect("fixture NPC brain");
+        ai.script_locked = true;
+        ai.stimulus_queue = vec![
+            crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
+            crate::ai::Stimulus::new(crate::ai::StimulusType::EventDone),
+        ];
         let sprite = &mut entity.element_data_mut().sprite;
         sprite.alternate_scripts = Some(std::sync::Arc::new(vec![
             crate::sprite_script::SpriteScript::default(),

@@ -92,7 +92,7 @@ fn synchronous_execute_tails_crossings_and_terminal_handoffs_stay_ordered() {
             "drain_script_synchronous_actions",
             "advance_live_order_after_terminal_handoff",
             "pop_selected_movement_order",
-            "dispatch_condolations_for_owner_boundary",
+            "element_impossible",
             "drain_script_synchronous_actions",
         ],
     );

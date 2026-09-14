@@ -10,18 +10,26 @@ use super::*;
 /// inheritance explicit and prevents callback state from leaking into saves.
 #[derive(Clone, Debug, Default)]
 struct ScriptCallStack {
-    frames: Vec<crate::natives::ScriptCallFrame>,
+    frames: Vec<(crate::natives::ScriptCallFrame, bool)>,
 }
 
 impl ScriptCallStack {
-    fn push(&mut self, frame: crate::natives::ScriptCallFrame) {
-        self.frames.push(frame);
+    fn push(&mut self, frame: crate::natives::ScriptCallFrame, vm_activation: bool) {
+        self.frames.push((frame, vm_activation));
     }
 
     fn pop(&mut self) -> crate::natives::ScriptCallFrame {
         self.frames
             .pop()
             .expect("script call-frame stack underflow")
+            .0
+    }
+
+    fn vm_depth(&self) -> usize {
+        self.frames
+            .iter()
+            .filter(|(_, vm_activation)| *vm_activation)
+            .count()
     }
 
     #[cfg(test)]
@@ -713,8 +721,16 @@ impl MissionScript {
     pub(in crate::engine) fn push_active_driver_frame(
         &mut self,
         frame: crate::natives::ScriptCallFrame,
+        vm_activation: bool,
     ) {
-        self.call_stack.push(frame);
+        self.call_stack.push(frame, vm_activation);
+    }
+
+    /// Count VM activations across every synchronous callback entry, including
+    /// callbacks whose local native-driver stack starts empty. External-native
+    /// receiver guards protect context but do not consume a recursion slot.
+    pub(in crate::engine) fn active_vm_depth(&self) -> usize {
+        self.call_stack.vm_depth()
     }
 
     pub(in crate::engine) fn pop_active_driver_frame(

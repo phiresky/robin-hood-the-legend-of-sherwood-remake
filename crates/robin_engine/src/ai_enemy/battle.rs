@@ -7,10 +7,7 @@ use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 use crate::sim_rng::SimulationContext;
 
 use super::map_vec_ext::AiMapVec;
-use super::util::vec_to_sector;
-use super::{
-    EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, archer, combat,
-};
+use super::{EnemyAi, ProfileRank, combat};
 use crate::coordinates::MapVec;
 
 /// Enemy-approach reconsideration uses raw saved-position map coordinates and stores
@@ -35,22 +32,6 @@ fn enough_nearer_friends_to_observe(
     // friends at every non-integral threshold.
     f32::from(nearer_friends)
         >= visible_enemies + visible_enemies * (0.045_f32 * f32::from(courage))
-}
-
-/// Derive the original game's nearby-alerting-soldier state from the friends already admitted
-/// to the ally list. The admission walk has performed the authoritative 360-degree
-/// detection query; querying the camp again here changes both call order and
-/// the opaque-visibility cache.
-fn has_nearby_alerting_soldier(
-    owner: NpcHandle,
-    admitted_friends: &[HumanHandle],
-    candidates: impl IntoIterator<Item = (NpcHandle, Substate)>,
-) -> bool {
-    candidates.into_iter().any(|(handle, substate)| {
-        handle != owner
-            && admitted_friends.contains(&handle)
-            && substate == Substate::SeekingRunningToOfficer
-    })
 }
 
 /// The original game compares the actors' literal squared distance
@@ -439,8 +420,6 @@ fn battle_friend_claim_uses_primary_target_not_swordfight_opponent() {
     assert_eq!(multiplicity[&live_primary_target], 2);
     assert_eq!(multiplicity[&swordfight_opponent], 0);
 }
-
-impl EnemyAi {}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 /// Decision-local aggregates handed from `battle_decisions` to the

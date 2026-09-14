@@ -90,15 +90,12 @@ impl EngineInner {
         assert_eq!(element.owner, Some(owner));
         assert_eq!(element.command, Command::ShootBow);
         self.stamp_element_transition_state(owner, seq_id, elem_idx);
-        if self.non_interruptable_guard(owner, seq_id, elem_idx) {
-            self.dispatch_condolations(sim, assets);
+        if self.non_interruptable_guard(sim, assets, owner, seq_id, elem_idx) {
             return false;
         }
         if !self.generate_transition(sim, assets, owner, seq_id, elem_idx) {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
-            self.dispatch_condolations(sim, assets);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+
             return false;
         }
         // Actor instruction checks the element state again after transition
@@ -145,8 +142,7 @@ impl EngineInner {
         {
             element.priority = priority;
         }
-        if !self.arbitrate_held_shoot_instruct(seq_id, elem_idx) {
-            self.dispatch_condolations(sim, assets);
+        if !self.arbitrate_held_shoot_instruct(sim, assets, &mut Vec::new(), seq_id, elem_idx) {
             // Priority arbitration's POSTPONE_NEW outcome has handled this instruction:
             // Original returns true even though translation does not run yet.
             // Shoot-list processing must consequently remove the retained
@@ -162,7 +158,7 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .begin_instruct_callback(owner, seq_id, elem_idx);
-        self.dispatch_condolations(sim, assets);
+
         let still_selected = self
             .orders
             .sequence_manager
@@ -180,16 +176,12 @@ impl EngineInner {
                 _ => None,
             });
         let Some(target) = target else {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return true;
         };
         let ammo_count = self.get_bow_ammo_count(owner);
         if ammo_count == 0 {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return true;
         }
 
@@ -201,9 +193,7 @@ impl EngineInner {
                 .get_element(seq_id, elem_idx)
                 .is_some_and(|element| !element.orders.is_empty());
             if has_transition_orders {
-                self.orders
-                    .sequence_manager
-                    .element_in_progress(seq_id, elem_idx);
+                self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             } else {
                 // Actor instruction handling writes IN_PROGRESS before publishing the
                 // translated current order. An accepted shot whose body and
@@ -217,9 +207,7 @@ impl EngineInner {
                     .expect("accepted empty held ShootBow lost its actor")
                     .continuation
                     .motion_state = crate::sprite::MotionState::InProgress;
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
             return true;
         }
@@ -236,14 +224,12 @@ impl EngineInner {
             Some(shoot_mode),
             &mut self.orders.next_order_id,
         ) {
-            BeginShotResult::Started => self
-                .orders
-                .sequence_manager
-                .element_in_progress(seq_id, elem_idx),
-            BeginShotResult::Impossible => self
-                .orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx),
+            BeginShotResult::Started => {
+                self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx)
+            }
+            BeginShotResult::Impossible => {
+                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx)
+            }
         }
         true
     }
@@ -303,9 +289,7 @@ impl EngineInner {
                 element_index,
                 "Move/Seek action has invalid sequence-element data"
             );
-            self.orders
-                .sequence_manager
-                .element_impossible(sequence_id, element_index);
+            self.element_impossible(sim, assets, &mut Vec::new(), sequence_id, element_index);
             return OwnerActionBarrier::Skip;
         };
 
@@ -333,9 +317,7 @@ impl EngineInner {
             {
                 actor.post_seek_sequence = Some(post_seek);
             }
-            self.orders
-                .sequence_manager
-                .element_terminated(sequence_id, element_index);
+            self.element_terminated(sim, assets, &mut Vec::new(), sequence_id, element_index);
             self.start_post_seek_sequence(sim, assets, owner, None);
             return OwnerActionBarrier::Skip;
         }
@@ -346,9 +328,7 @@ impl EngineInner {
         // precede seek-refresh/cross-sector lowering: that lowering can consume
         // the wrapper without ever reaching ordinary path dispatch.
         if !self.extract_move_instruction_owner(owner) {
-            self.orders
-                .sequence_manager
-                .element_impossible(sequence_id, element_index);
+            self.element_impossible(sim, assets, &mut Vec::new(), sequence_id, element_index);
             return OwnerActionBarrier::Skip;
         }
 
@@ -373,9 +353,7 @@ impl EngineInner {
                 owner,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
-            self.orders
-                .sequence_manager
-                .element_impossible(sequence_id, element_index);
+            self.element_impossible(sim, assets, &mut Vec::new(), sequence_id, element_index);
             return OwnerActionBarrier::Skip;
         }
 
@@ -477,14 +455,22 @@ impl EngineInner {
                             .continuation
                             .motion_state = crate::sprite::MotionState::InProgress;
                         if retained_transition {
-                            self.orders
-                                .sequence_manager
-                                .element_in_progress(sequence_id, element_index);
+                            self.element_in_progress(
+                                sim,
+                                assets,
+                                &mut Vec::new(),
+                                sequence_id,
+                                element_index,
+                            );
                         } else {
                             self.orders.sequence_manager.set_translating_element(None);
-                            self.orders
-                                .sequence_manager
-                                .element_terminated(sequence_id, element_index);
+                            self.element_terminated(
+                                sim,
+                                assets,
+                                &mut Vec::new(),
+                                sequence_id,
+                                element_index,
+                            );
                         }
                         return OwnerActionBarrier::Reach;
                     }
@@ -531,9 +517,13 @@ impl EngineInner {
                     let Some(resolved) =
                         self.resolve_entity_seek(sim, assets, owner, target, flags, seek_distance)
                     else {
-                        self.orders
-                            .sequence_manager
-                            .element_impossible(sequence_id, element_index);
+                        self.element_impossible(
+                            sim,
+                            assets,
+                            &mut Vec::new(),
+                            sequence_id,
+                            element_index,
+                        );
                         return OwnerActionBarrier::Skip;
                     };
                     if let Some(crate::sequence::SequenceElementData::Movement {
@@ -608,9 +598,7 @@ impl EngineInner {
                     None,
                     "building interior move",
                 );
-                self.orders
-                    .sequence_manager
-                    .element_terminated(sequence_id, element_index);
+                self.element_terminated(sim, assets, &mut Vec::new(), sequence_id, element_index);
                 return OwnerActionBarrier::Skip;
             }
 
@@ -639,9 +627,7 @@ impl EngineInner {
                     order_id,
                 ),
             );
-            self.orders
-                .sequence_manager
-                .element_in_progress(sequence_id, element_index);
+            self.element_in_progress(sim, assets, &mut Vec::new(), sequence_id, element_index);
             return OwnerActionBarrier::Reach;
         }
 
@@ -704,13 +690,21 @@ impl EngineInner {
                 action,
             );
             replacement.data = replacement_data;
-            self.relaunch_seek_replacement(owner, sequence_id, element_index, replacement);
+            self.relaunch_seek_replacement(
+                sim,
+                assets,
+                owner,
+                sequence_id,
+                element_index,
+                replacement,
+            );
             return OwnerActionBarrier::Skip;
         }
 
         self.dispatch_prepared_move_instruction(
             sim,
             assets,
+            &mut Vec::new(),
             owner,
             sequence_id,
             element_index,
@@ -767,7 +761,7 @@ impl EngineInner {
         // remains queued for the next frame just as in the Original.
         let manager_fifo_before_condolations =
             self.orders.sequence_manager.deferred_elements_to_go();
-        self.dispatch_condolations(sim, assets);
+
         let terminal_handoff_successors = self
             .orders
             .sequence_manager
@@ -853,7 +847,7 @@ impl EngineInner {
             // `Ready()` before returning to this action loop. Closing that
             // boundary here lets an immediate next-level successor preempt
             // older actions already detached into `SequencePhase`.
-            self.dispatch_condolations(sim, assets);
+
             // Keep Rust's translation identity through its deferred
             // removal-notification bookkeeping, then release it. This mirrors
             // an actor pointer, not SequenceManager's launch list: pending-
@@ -978,7 +972,7 @@ impl EngineInner {
                 // Its exact outgoing movement pop must also have a linked
                 // descendant that was live immediately before the pop and
                 // became Impossible/Interrupted afterward.
-                self.advance_live_order_after_terminal_handoff(owner);
+                self.advance_live_order_after_terminal_handoff(sim, assets, owner);
             }
         }
 

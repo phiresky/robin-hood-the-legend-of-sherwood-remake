@@ -1,14 +1,4 @@
 use super::*;
-use crate::position_interface::SectorHandle;
-
-fn test_position(x: f32, y: f32) -> Position {
-    Position {
-        x,
-        y,
-        sector: None,
-        level: 0,
-    }
-}
 
 #[test]
 fn enemy_ai_defaults() {
@@ -18,38 +8,6 @@ fn enemy_ai_defaults() {
     assert_eq!(ai.base.current_state, AiState::Default);
     assert!(!ai.tower_guard);
     assert!(!ai.combat_trainer);
-}
-
-#[test]
-fn repeated_directed_panic_preserves_existing_red_alert_until_engine_boundary() {
-    let mut ai = EnemyAi::new(53);
-    ai.base.current_state = AiState::Fleeing;
-    ai.base.current_substate = Substate::FleeingPanic;
-    ai.set_alert_status(crate::ai::AlertLevel::Red);
-
-    let center = test_position(667.0, 824.0);
-    let incoming_runs = crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8;
-    let existing_runs = incoming_runs.saturating_add(3);
-    ai.base.lasting_panic_runs = existing_runs;
-    ai.panic_from_position(center, incoming_runs);
-
-    assert_eq!(ai.base.current_state, AiState::Fleeing);
-    assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
-    assert_eq!(ai.base.lasting_panic_runs, existing_runs);
-    assert_eq!(ai.base.view_alert_status, crate::ai::AlertLevel::Red);
-    assert_eq!(
-        ai.base.current_music_alert_status,
-        crate::ai::AlertLevel::Red
-    );
-    let request = ai
-        .base
-        .outbox
-        .actor
-        .begin_panic
-        .expect("repeated panic still reaches the engine door/search boundary");
-    assert_eq!(request.center, Some(center));
-    assert_eq!(request.runs, incoming_runs);
-    assert!(!request.is_new_panic);
 }
 
 #[test]
@@ -63,44 +21,6 @@ fn set_state_rejects_mismatched_numeric_substate_family() {
     assert_ne!(
         Substate::SleepingForever.ai_state_family(),
         Some(AiState::Default)
-    );
-}
-
-#[test]
-fn guarded_pc_relationship_uses_typed_optional_ids_and_delta() {
-    let mut ai = EnemyAi::new(1);
-    let guarded = PcId(17);
-
-    ai.set_guarded_pc(Some(guarded));
-    assert_eq!(ai.guarded_pc, Some(guarded));
-    assert_eq!(
-        ai.base.outbox.actor.set_guarded_pc,
-        Some(GuardedPcEffect {
-            old: None,
-            new: Some(guarded),
-        })
-    );
-
-    ai.set_guarded_pc(None);
-    assert_eq!(ai.guarded_pc, None);
-    assert_eq!(
-        ai.base.outbox.actor.set_guarded_pc,
-        Some(GuardedPcEffect {
-            old: Some(guarded),
-            new: None,
-        })
-    );
-
-    let encoded = serde_json::to_string(&ai).expect("serialize typed guard relationship");
-    let decoded: EnemyAi =
-        serde_json::from_str(&encoded).expect("deserialize typed guard relationship");
-    assert_eq!(decoded.guarded_pc, None);
-    assert_eq!(
-        decoded.base.outbox.actor.set_guarded_pc,
-        Some(GuardedPcEffect {
-            old: Some(guarded),
-            new: None,
-        })
     );
 }
 

@@ -113,10 +113,16 @@ impl EngineInner {
                             flags: 0,
                         },
                     );
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                     let center = self.reporting_civilian_mut(owner).base.seek_position;
-                    self.reporting_civilian_mut(owner)
-                        .panic_from_point_at(center, AI_STANDARD_PANIC_RUNS as u8);
+                    self.execute_ai_panic(
+                        sim,
+                        assets,
+                        owner,
+                        Some(center),
+                        AI_STANDARD_PANIC_RUNS as u8,
+                        crate::ai::AlertLevel::Red,
+                    );
                 }
             }
             Substate::SeekingCivilianRunningToSoldier => {
@@ -209,7 +215,7 @@ impl EngineInner {
                             flags: 0,
                         },
                     );
-                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                     let position = self.reporting_civilian_mut(owner).base.seek_position;
                     self.duty_point_to(sim, assets, owner, position);
                 }
@@ -245,15 +251,20 @@ impl EngineInner {
             Substate::SeekingCivilianGiveAlertingReportToSoldierEnd => {
                 if event == StimulusType::EventTimer {
                     let civilian = self.reporting_civilian_mut(owner);
-                    civilian.panic_from_point_at(
-                        civilian.base.seek_position,
+                    let center = civilian.base.seek_position;
+                    self.execute_ai_panic(
+                        sim,
+                        assets,
+                        owner,
+                        Some(center),
                         AI_STANDARD_PANIC_RUNS as u8,
+                        crate::ai::AlertLevel::Red,
                     );
                 }
             }
             _ => return None,
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         Some(false)
     }
 
@@ -311,13 +322,18 @@ impl EngineInner {
                     || !self.civilian_alert_soldier(sim, assets, owner, false)
                 {
                     let center = self.reporting_civilian_mut(owner).base.seek_position;
-                    self.reporting_civilian_mut(owner)
-                        .panic_from_point_at(center, AI_STANDARD_PANIC_RUNS as u8);
+                    self.execute_ai_panic(
+                        sim,
+                        assets,
+                        owner,
+                        Some(center),
+                        AI_STANDARD_PANIC_RUNS as u8,
+                        crate::ai::AlertLevel::Red,
+                    );
                 }
             }
             _ => {}
         }
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 
     /// Select in registry order, then finish the route before evaluating its result.
@@ -357,7 +373,7 @@ impl EngineInner {
                 flags: 0,
             },
         );
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
         true
     }
 
@@ -546,12 +562,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        self.reporting_civilian_mut(owner)
-            .base
-            .outbox
-            .actor
-            .delete_detectable_type(crate::element::DetectableType::Friend);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_delete_detectable_type(owner, crate::element::DetectableType::Friend);
     }
 
     fn civilian_call_alert(
@@ -570,9 +581,15 @@ impl EngineInner {
             &Stimulus::with_human(StimulusType::CallAlert, owner.index()),
         );
         if !accepted {
-            self.reporting_civilian_mut(owner)
-                .panic_undirected(AI_STANDARD_PANIC_RUNS as u8);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_panic(
+                sim,
+                assets,
+                owner,
+                None,
+                AI_STANDARD_PANIC_RUNS as u8,
+                crate::ai::AlertLevel::Red,
+            );
+
             return;
         }
         if reached {
@@ -601,7 +618,7 @@ impl EngineInner {
                     flags: 0,
                 },
             );
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             self.approach_reporting_soldier(sim, assets, owner);
             self.reporting_civilian_mut(owner)
                 .base
@@ -715,7 +732,6 @@ mod tests {
         );
         assert_eq!(ai.base.current_remark, Remark::CivPanic);
         assert!(!ai.base.couldnt_reachpoint);
-        assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
     }
 
     #[test]
@@ -731,7 +747,6 @@ mod tests {
         );
         assert_eq!(ai.base.current_remark, Remark::CivPanic);
         assert!(!ai.base.couldnt_reachpoint);
-        assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
         let friends = &engine
             .world
             .entities
@@ -776,7 +791,6 @@ mod tests {
         assert_eq!(ai.base.current_state, AiState::Fleeing);
         assert_eq!(ai.base.current_remark, Remark::CivPanic);
         assert!(!ai.base.couldnt_reachpoint);
-        assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
     }
 
     #[test]

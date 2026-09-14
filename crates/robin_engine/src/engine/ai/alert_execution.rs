@@ -484,8 +484,8 @@ mod tests;
 
 impl AlertExecution<'_> {
     fn run_and_alert_soldiers(&mut self, center: Position) -> bool {
-        self.enemy_mut().base.outbox.actor.set_unfocus();
-        self.settle();
+        self.engine.execute_ai_unfocus(self.owner);
+
         self.enemy_mut().base.seek_position = center;
         let owner = self
             .engine
@@ -638,23 +638,19 @@ impl AlertExecution<'_> {
                 }
             }
         }
-        self.enemy_mut()
-            .base
-            .outbox
-            .actor
-            .delete_detectable_type(crate::element::DetectableType::Friend);
-        self.settle();
+        self.engine
+            .execute_ai_delete_detectable_type(self.owner, crate::element::DetectableType::Friend);
+
         self.enemy_mut().base.alert_soldiers_point = self.enemy().base.seek_position;
         if reason != crate::ai::ReportType::Body {
             self.enemy_mut().base.detected_body = None;
         }
         if let Some(id) = head {
-            self.enemy_mut()
-                .base
-                .outbox
-                .actor
-                .add_detectable((id, crate::element::DetectableType::Friend));
-            self.settle();
+            self.engine.execute_ai_add_detectable(
+                self.owner,
+                id,
+                crate::element::DetectableType::Friend,
+            );
         }
         let count = self.engine.world.soldier_registry.camp(camp).len();
         for index in 0..count {
@@ -674,12 +670,11 @@ impl AlertExecution<'_> {
             {
                 continue;
             }
-            self.enemy_mut()
-                .base
-                .outbox
-                .actor
-                .add_detectable((id, crate::element::DetectableType::Friend));
-            self.settle();
+            self.engine.execute_ai_add_detectable(
+                self.owner,
+                id,
+                crate::element::DetectableType::Friend,
+            );
         }
         self.state(
             AiState::Seeking,
@@ -852,8 +847,8 @@ impl AlertExecution<'_> {
         use crate::ai::{AiEntityHandle, GotoFlags};
         use crate::ai_enemy::SeekFlags;
         assert_eq!(self.enemy().soldier_profile_rank, ProfileRank::Soldier);
-        self.enemy_mut().base.outbox.actor.set_unfocus();
-        self.settle();
+        self.engine.execute_ai_unfocus(self.owner);
+
         let camp = self
             .engine
             .expect_entity(self.owner, "officer search camp")
@@ -966,12 +961,12 @@ impl AlertExecution<'_> {
         self.enemy_mut().current_task_priority = task_priority::ALERT;
         self.state(AiState::Seeking, Substate::SeekingRunningToOfficer);
         self.enemy_mut().base.antagonist = Some(AiEntityHandle::new(officer.index()));
-        self.enemy_mut()
-            .base
-            .outbox
-            .actor
-            .append_detectable((officer, crate::element::DetectableType::Friend));
-        self.settle();
+        self.engine.execute_ai_append_detectable(
+            self.owner,
+            officer,
+            crate::element::DetectableType::Friend,
+        );
+
         let position = self.forecast(officer);
         self.enemy_mut().gather_position = position;
         self.engine.duty_go_near(
@@ -1012,8 +1007,8 @@ impl AlertExecution<'_> {
             self.timer(30);
             return true;
         }
-        self.enemy_mut().base.outbox.actor.set_unfocus();
-        self.settle();
+        self.engine.execute_ai_unfocus(self.owner);
+
         {
             let enemy = self.enemy_mut();
             enemy.current_task_priority = task_priority::ALERT;
@@ -1290,13 +1285,8 @@ impl AlertExecution<'_> {
                 Command::GatherSoldiers,
                 Some(self.owner),
             ));
-            self.enemy_mut()
-                .base
-                .outbox
-                .actor
-                .launch_sequences
-                .push(sequence);
-            self.settle();
+            self.engine.launch_sequence(sequence);
+
             self.engine.execute_ai_speech(
                 self.sim,
                 self.assets,
@@ -1399,11 +1389,6 @@ impl AlertExecution<'_> {
             .expect_enemy_ai_mut(self.owner, format_args!("officer coordination"))
     }
 
-    fn settle(&mut self) {
-        self.engine
-            .drain_direct_ai_owner_boundary(self.sim, self.owner, self.assets);
-    }
-
     fn state(&mut self, state: AiState, substate: Substate) {
         self.engine
             .duty_set_state(self.sim, self.assets, self.owner, state, substate);
@@ -1421,10 +1406,9 @@ impl AlertExecution<'_> {
         self.enemy_mut().current_task_priority = task_priority::ALERT;
         let mut accepted = 0_u16;
         let mut average = crate::coordinates::MapVec::new(0.0, 0.0);
-        // Retain only registration identities across callbacks. Eligibility,
-        // visibility, and positions are queried at each member's call site.
-        let members: Vec<_> = self.engine.world.entities.npc_ids().collect();
-        for member in members {
+        let count = self.engine.world.npc_registry_ids.len();
+        for index in 0..count {
+            let member = self.engine.world.npc_registry_ids[index];
             let entity = self.engine.expect_entity(member, "combat alert recipient");
             let Entity::Soldier(soldier) = entity else {
                 continue;
@@ -1511,13 +1495,8 @@ impl AlertExecution<'_> {
             FieldValue::Integer(point_direction as u32),
         );
         sequence.append_element(point);
-        self.enemy_mut()
-            .base
-            .outbox
-            .actor
-            .launch_sequences
-            .push(sequence);
-        self.settle();
+        self.engine.launch_sequence(sequence);
+
         let frame = self.engine.control.frame_counter;
         self.enemy_mut()
             .base

@@ -75,6 +75,7 @@ fn sword_gesture_sequence(
 impl EngineInner {
     pub(super) fn dispatch_player_sword_strike(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         actor: &EntityId,
         target: &EntityId,
@@ -93,7 +94,7 @@ impl EngineInner {
             with_seek,
             "PlayerCommand::SwordStrikeCmd"
         );
-        self.prepare_tactical_player_combat_command(*actor);
+        self.prepare_tactical_player_combat_command(sim, assets, *actor);
         if *with_seek {
             self.apply_sword_strike_with_seek(
                 assets,
@@ -128,7 +129,7 @@ impl EngineInner {
         use crate::element::Entity;
         use crate::order::OrderType;
 
-        self.prepare_tactical_player_combat_command(pc_id);
+        self.prepare_tactical_player_combat_command(sim, assets, pc_id);
 
         // VIP gate
         let target_is_vip = self

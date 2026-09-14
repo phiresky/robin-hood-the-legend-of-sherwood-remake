@@ -531,7 +531,7 @@ fn translate_default(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
     s
 }
 
-/// Return value from [`PassDoorLaunchContext::build_door_pass`].
+/// Return value from [`EngineInner::build_door_pass`].
 ///
 /// Pairs the built step chain with a post-install action-recursive
 /// override.  When the PC exits a ladder/wall pass into a forced-crouch
@@ -564,45 +564,18 @@ pub(super) enum PassDoorLaunchBarrier {
     SkipSplice,
 }
 
-/// Canonical PassDoor launch state.
-///
-/// Door traversal disables anti-collision, resolves direction from the actor's
-/// side of the door, authorizes the actor,
-/// translates the door/lift variant, then starts the first movement order
-/// synchronously. No script VM or mission mirror participates in that
-/// translation.
-pub(super) struct PassDoorLaunchContext<'a> {
-    doors: &'a [crate::gate::Door],
-    entities: &'a mut crate::entities::Entities,
-    fast_grid: &'a crate::fast_find_grid::FastFindGrid,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-    next_order_id: &'a mut u32,
-}
-
-impl<'a> PassDoorLaunchContext<'a> {
-    pub(super) fn new(
-        doors: &'a [crate::gate::Door],
-        entities: &'a mut crate::entities::Entities,
-        fast_grid: &'a crate::fast_find_grid::FastFindGrid,
-        sequence_manager: &'a mut crate::sequence::SequenceManager,
-        next_order_id: &'a mut u32,
-    ) -> Self {
-        Self {
-            doors,
-            entities,
-            fast_grid,
-            sequence_manager,
-            next_order_id,
-        }
-    }
-
-    pub(super) fn dispatch(
+impl EngineInner {
+    pub(super) fn instruct_pass_door(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         entity_id: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> PassDoorLaunchBarrier {
         let movement = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|element| match &element.data {
@@ -643,7 +616,7 @@ impl<'a> PassDoorLaunchContext<'a> {
             panic!("PassDoor sequence element {seq_id:?}/{elem_idx} for {entity_id:?} has no gate")
         });
         let door = self
-            .doors
+            .script_domains.interactables.doors
             .get(usize::from(door_index))
             .unwrap_or_else(|| {
                 panic!(
@@ -652,7 +625,7 @@ impl<'a> PassDoorLaunchContext<'a> {
             });
 
         let (actor_sector, auth_info) = self
-            .entities
+            .world.entities
             .get(entity_id)
             .map(|entity| (entity.element_data().sector(), entity.actor_auth_info()))
             .unwrap_or_else(|| {
@@ -664,7 +637,8 @@ impl<'a> PassDoorLaunchContext<'a> {
         // Door traversal disables anti-collision before the
         // direction/authorization switch. Denied and otherwise-impossible
         // attempts therefore leave it disabled until movement teardown.
-        self.entities
+        self.world
+            .entities
             .get_mut(entity_id)
             .expect("PassDoor owner disappeared between canonical lookups")
             .position_iface_mut()
@@ -693,7 +667,7 @@ impl<'a> PassDoorLaunchContext<'a> {
                 ?direct,
                 "PassDoor: actor not authorized"
             );
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             return PassDoorLaunchBarrier::SkipSplice;
         }
         let lift_type = match door.door_type {
@@ -709,7 +683,7 @@ impl<'a> PassDoorLaunchContext<'a> {
                 ?direct,
                 "PassDoor: actor not authorized for lift type"
             );
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             return PassDoorLaunchBarrier::SkipSplice;
         }
 
@@ -746,15 +720,21 @@ impl<'a> PassDoorLaunchContext<'a> {
             _ => true,
         };
         if rewrite_element_action
-            && let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx)
+            && let Some(elem) = self
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
         {
             elem.set_action(built.root_action);
         }
         if let Some(override_action) = built.post_chain_action_recursive {
-            self.sequence_manager
+            self.orders
+                .sequence_manager
                 .set_action_recursive(seq_id, elem_idx, override_action);
         }
-        built.pass.preallocate_pending_order_ids(self.next_order_id);
+        built
+            .pass
+            .preallocate_pending_order_ids(&mut self.orders.next_order_id);
         let (initial_step, initial_order_id) = built
             .pass
             .pop_pending_step()
@@ -788,7 +768,7 @@ impl<'a> PassDoorLaunchContext<'a> {
             built.pass,
             built.sets_passing_door_directly,
         );
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         tracing::debug!(
             entity = ?entity_id,
             door = %door_index,
@@ -796,25 +776,6 @@ impl<'a> PassDoorLaunchContext<'a> {
             "PassDoor: started multi-step door pass"
         );
         PassDoorLaunchBarrier::ReachSplice
-    }
-
-    fn grid_sector_by_number(
-        &self,
-        sector_number: crate::sector::SectorNumber,
-    ) -> Option<&crate::fast_find_grid::GridSector> {
-        self.fast_grid
-            .level
-            .sector_number_map
-            .get(&sector_number)
-            .and_then(|&index| self.fast_grid.level.sectors.get(index))
-    }
-
-    fn sector_forces_crouch(&self, sector_number: crate::sector::SectorNumber) -> bool {
-        self.grid_sector_by_number(sector_number)
-            .unwrap_or_else(|| {
-                panic!("PassDoor references missing canonical sector {sector_number}")
-            })
-            .force_crouched
     }
 }
 
@@ -833,7 +794,7 @@ pub(super) fn start_hulk_on(entity: &mut crate::element::Entity, speed: f32) {
 
 // ─── EngineInner methods ─────────────────────────────────────────────────
 
-impl PassDoorLaunchContext<'_> {
+impl EngineInner {
     /// Build the complete door-pass step chain for the given door and actor.
     ///
     /// Dispatches to the appropriate translate function based on door type
@@ -850,9 +811,14 @@ impl PassDoorLaunchContext<'_> {
     ) -> BuiltDoorPass {
         // Snapshot canonical door geometry and type.
         let (door_type, pt_mid, pt_in, pt_out, sector_in, door_sector_out) = {
-            let door = self.doors.get(usize::from(door_index)).unwrap_or_else(|| {
-                panic!("PassDoor build for {entity_id:?} references missing door {door_index}")
-            });
+            let door = self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))
+                .unwrap_or_else(|| {
+                    panic!("PassDoor build for {entity_id:?} references missing door {door_index}")
+                });
             (
                 door.door_type,
                 door.point_mid,
@@ -865,6 +831,7 @@ impl PassDoorLaunchContext<'_> {
 
         // Read actor properties.
         let entity = self
+            .world
             .entities
             .get(entity_id)
             .unwrap_or_else(|| panic!("PassDoor build references missing owner {entity_id:?}"));
@@ -962,7 +929,7 @@ impl PassDoorLaunchContext<'_> {
         if !derived_override_is_authoritative {
             action = super::movement::determine_lift_movement_animation_for(
                 entity,
-                self.fast_grid,
+                &self.world.fast_grid,
                 posture_after_transition,
                 action,
                 destination,
@@ -1119,9 +1086,11 @@ impl PassDoorLaunchContext<'_> {
         order.reverse = reverse;
         order.compute_direction = compute_direction;
         order.tolerance = tolerance;
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        self.orders
+            .sequence_manager
+            .push_order_on(seq_id, elem_idx, order);
 
-        let entity = self.entities.get_mut(entity_id).unwrap_or_else(|| {
+        let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
             panic!(
                 "PassDoor initial walk for {entity_id:?} at {seq_id:?}/{elem_idx} lost its actor"
             )
@@ -1298,16 +1267,6 @@ impl EngineInner {
                         .buildings
                         .actor_building
                         .remove(&actor_handle);
-                }
-                // Drop this entity from the matching `AiGlobalState`
-                // house's live occupant list.  Keyed by sector number
-                // (the `House::sector_index` field), not building
-                // index.
-                for house in self.ai.global.houses.iter_mut() {
-                    if house.sector_index == cur_sector_num as u32 {
-                        house.occupant_ids.retain(|&e| e != entity_id);
-                        break;
-                    }
                 }
                 // Re-show the actor sprite now that they've left the building.
                 let carried_to_unhide = if let Some(entity) = self.get_entity_mut(entity_id) {
@@ -1540,20 +1499,6 @@ impl EngineInner {
                 .buildings
                 .actor_building
                 .insert(actor_handle, bld_handle);
-            // Add this entity to the matching `AiGlobalState` house's
-            // live occupant list.  If no house exists for this
-            // sector — either because the building has no plain
-            // `Building` doors (e.g. mission-scripted portal
-            // entries), or the init scan missed it — we skip the
-            // update rather than synthesising a door-less house.
-            for house in self.ai.global.houses.iter_mut() {
-                if house.sector_index == u32::from(u16::from(target_sector_num)) {
-                    if !house.occupant_ids.contains(&entity_id) {
-                        house.occupant_ids.push(entity_id);
-                    }
-                    break;
-                }
-            }
             // Hide the actor sprite inside the building.
             let carried_to_hide = if let Some(entity) = self.get_entity_mut(entity_id) {
                 let elem = entity.element_data_mut();

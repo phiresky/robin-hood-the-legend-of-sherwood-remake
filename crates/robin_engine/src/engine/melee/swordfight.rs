@@ -306,7 +306,7 @@ impl EngineInner {
             {
                 pc.melee_target = None;
             }
-            self.enable_pc_actions_temp(assets, 0, entity_id);
+            self.enable_pc_actions_temp(sim, assets, 0, entity_id);
         }
         if self
             .world
@@ -314,11 +314,11 @@ impl EngineInner {
             .get(entity_id)
             .is_some_and(|entity| entity.enemy_ai().is_some())
         {
-            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+            self.execute_ai_callback(
                 sim,
-                entity_id,
                 assets,
-                crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
+                entity_id,
+                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
             );
         }
 
@@ -357,26 +357,24 @@ impl EngineInner {
             .get(&crate::sector::SectorNumber::new(this_sector_num))
             .copied();
 
-        // Snapshot opponents + current jump-lines so we can mutate in a
-        // second pass without holding a borrow on `self.world.entities`.
-        let opponents: Vec<(EntityId, Option<crate::jump_line::JumpLineIndex>)> = owner
+        let opponent_count = owner
             .human_data()
             .expect("opponent jump-line refresh owner must be human")
             .opponents
-            .iter_with_jump_lines()
-            .collect();
+            .len();
 
-        // (slot_index, new_this_jl, opponent_id, new_opp_jl)
-        let mut updates: Vec<(
-            usize,
-            Option<crate::jump_line::JumpLineIndex>,
-            EntityId,
-            Option<crate::jump_line::JumpLineIndex>,
-        )> = Vec::new();
-
-        for (i, (opp_id, current_jl)) in opponents.iter().enumerate() {
+        for i in 0..opponent_count {
+            let opponents = &self
+                .expect_entity(entity_id, "opponent jump-line refresh owner")
+                .human_data()
+                .expect("opponent jump-line refresh owner must be human")
+                .opponents;
+            let opp_id = *opponents
+                .get(i)
+                .expect("required opponent slot during refresh");
+            let current_jl = opponents.jump_line(i);
             let opp_sector_num = match self
-                .get_entity(*opp_id)
+                .get_entity(opp_id)
                 .and_then(|e| e.element_data().sector())
             {
                 Some(s) => i16::from(s),
@@ -386,7 +384,7 @@ impl EngineInner {
             if opp_sector_num == this_sector_num {
                 // Same sector → clear if currently set.
                 if current_jl.is_some() {
-                    updates.push((i, None, *opp_id, None));
+                    self.update_opponent_jump_line_pair(entity_id, i, None, opp_id, None);
                 }
                 continue;
             }
@@ -405,7 +403,7 @@ impl EngineInner {
             let stale = match current_jl {
                 None => true,
                 Some(idx) => {
-                    let jl = self.world.fast_grid.level.jump_lines.get(usize::from(*idx));
+                    let jl = self.world.fast_grid.level.jump_lines.get(usize::from(idx));
                     match jl {
                         None => true,
                         Some(jl_data) => {
@@ -435,7 +433,7 @@ impl EngineInner {
                 &self.world.fast_grid,
                 &assets.profile_manager,
                 entity_id,
-                *opp_id,
+                opp_id,
             );
             let mut paired: Option<(
                 crate::jump_line::JumpLineIndex,
@@ -446,7 +444,7 @@ impl EngineInner {
                     &self.world.entities,
                     &self.world.fast_grid,
                     &assets.profile_manager,
-                    *opp_id,
+                    opp_id,
                     entity_id,
                 );
                 if let Some(opp_raw) = new_opp_idx {
@@ -468,40 +466,41 @@ impl EngineInner {
                 }
             }
 
-            match paired {
-                Some((this_jl, opp_jl)) => {
-                    updates.push((i, Some(this_jl), *opp_id, Some(opp_jl)));
-                }
-                None => {
-                    updates.push((i, None, *opp_id, None));
-                }
-            }
+            let (this_jl, opp_jl) = match paired {
+                Some((this_jl, opp_jl)) => (Some(this_jl), Some(opp_jl)),
+                None => (None, None),
+            };
+            self.update_opponent_jump_line_pair(entity_id, i, this_jl, opp_id, opp_jl);
         }
+    }
 
-        // Phase 2: write back.
-        for (i, this_jl, opp_id, opp_jl) in updates {
-            let owner_human = self.world.entities.expect_human_data_mut(
-                entity_id,
-                format_args!("opponent jump-line owner during refresh"),
-            );
-            assert!(
-                owner_human.opponents.update_jump_line_at(i, this_jl),
-                "opponent slot {i} disappeared from {entity_id:?} during jump-line refresh"
-            );
+    fn update_opponent_jump_line_pair(
+        &mut self,
+        entity_id: EntityId,
+        i: usize,
+        this_jl: Option<crate::jump_line::JumpLineIndex>,
+        opp_id: EntityId,
+        opp_jl: Option<crate::jump_line::JumpLineIndex>,
+    ) {
+        let owner_human = self.world.entities.expect_human_data_mut(
+            entity_id,
+            format_args!("opponent jump-line owner during refresh"),
+        );
+        assert!(
+            owner_human.opponents.update_jump_line_at(i, this_jl),
+            "opponent slot {i} disappeared from {entity_id:?} during jump-line refresh"
+        );
 
-            // Mirror onto the opponent's slot for `entity_id`.
-            // The reciprocal opponent jump-line relationship is required.
-            // The analysis phase above is read-only,
-            // so a missing record here is malformed state, not a race to hide.
-            let opponent_human = self
-                .expect_entity_mut(opp_id, "opponent during jump-line refresh")
-                .human_data_mut()
-                .unwrap_or_else(|| panic!("opponent {opp_id:?} is not human"));
-            assert!(
-                opponent_human.opponents.update_jump_line(entity_id, opp_jl),
-                "opponent {opp_id:?} has no reciprocal record for {entity_id:?}"
-            );
-        }
+        // Mirror onto the opponent's slot for `entity_id`.
+        // The reciprocal opponent jump-line relationship is required.
+        let opponent_human = self
+            .expect_entity_mut(opp_id, "opponent during jump-line refresh")
+            .human_data_mut()
+            .unwrap_or_else(|| panic!("opponent {opp_id:?} is not human"));
+        assert!(
+            opponent_human.opponents.update_jump_line(entity_id, opp_jl),
+            "opponent {opp_id:?} has no reciprocal record for {entity_id:?}"
+        );
     }
 
     /// Re-evaluate the opponent list after a change.
@@ -558,7 +557,7 @@ impl EngineInner {
             // soldier in its pre-quit substate while the falling-edge
             // OUTOFVIEW arrived, which changed how that event was routed.
             if matches!(self.world.entities.get(entity_id), Some(Entity::Pc(_))) {
-                self.enable_pc_actions_temp(assets, 0, entity_id);
+                self.enable_pc_actions_temp(sim, assets, 0, entity_id);
             }
             if self
                 .world
@@ -566,11 +565,11 @@ impl EngineInner {
                 .get(entity_id)
                 .is_some_and(|entity| entity.enemy_ai().is_some())
             {
-                self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                self.execute_ai_callback(
                     sim,
-                    entity_id,
                     assets,
-                    crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
+                    entity_id,
+                    &crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
                 );
             }
         } else if count >= 2 {
@@ -869,19 +868,19 @@ impl EngineInner {
             // remain linked through the sequence's postponed pointer even
             // after the original game clears the queued shooting sequences. Interrupting one
             // here invents a condolation/EventDone and severs the link.
-            let resolver = Self::priority_resolver(&self.world.entities);
-            self.orders.sequence_manager.stop_pending_elements_matching(
+            let resolver = |engine: &EngineInner, element: &crate::sequence::SequenceElement| {
+                Self::priority_resolver(&engine.world.entities)(element)
+            };
+            self.stop_pending_elements_matching(
+                sim,
+                assets,
+                &mut Vec::new(),
                 initiator,
                 crate::element::Command::ShootBow,
                 crate::sequence::SequencePriority::Preference,
                 &resolver,
             );
         }
-
-        // Cancel any pending AI bow shot.
-        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(initiator)
-            && let Some(ai) = s.npc.ai_brain.base_mut()
-        {}
 
         // ENTER_SWORDFIGHT translation prepares the opponent before entering
         // the fight. Swordfight reconsideration enters the fight directly,
@@ -898,7 +897,13 @@ impl EngineInner {
             // Original suppresses only the nested Prepare body; the nested
             // Swordfight entry continues and publishes the relationship.
             let _ = with_swordfight_preparation_scope(opponent, initiator, || {
-                self.stop_owner_current(opponent, crate::sequence::SequencePriority::Preference);
+                self.stop_owner_current(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    opponent,
+                    crate::sequence::SequencePriority::Preference,
+                );
                 // The original game stops preference-priority work while preparing to enter a swordfight
                 // before `Think(EVENT_ENTER_SWORDFIGHT)`. `Stop` reaches
                 // interruption, whose removal-notification callback
@@ -907,7 +912,6 @@ impl EngineInner {
                 // is still in its old AI substate. Leaving the card queued until
                 // after EventEnterSwordfight lets that old completion run as a
                 // swordfight completion and can immediately quit the new fight.
-                self.dispatch_condolations_for_owner_boundary(sim, opponent, assets);
                 // Actor stopping resumes after that synchronous card and only now
                 // stops sequence elements that have not launched yet. The old completion
                 // can have queued fresh overview work (LookLeft in the retained
@@ -918,6 +922,7 @@ impl EngineInner {
                 self.stop_owner_pending_after_callback(
                     sim,
                     assets,
+                    &mut Vec::new(),
                     opponent,
                     crate::sequence::SequencePriority::Preference,
                 );
@@ -1347,6 +1352,7 @@ impl EngineInner {
             .is_some_and(Entity::is_pc)
         {
             self.set_pc_action_from_message(
+                sim,
                 assets,
                 0,
                 initiator,
@@ -1387,24 +1393,23 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        // Original walks a fixed count from the quitter's live list while
-        // every reciprocal opponent removal mutates only the other actor.
-        // Snapshotting that list gives the same ownership without holding a
-        // borrow across the synchronous callbacks.
-        let opponents: Vec<EntityId> = self
+        let opponent_count = self
             .expect_entity(entity_id, "swordfight exit owner")
             .human_data()
             .unwrap_or_else(|| panic!("swordfight exit owner {entity_id:?} is not human"))
             .opponents
-            .ids();
+            .len();
 
-        // Route every reciprocal unlink through the authoritative
-        // opponent-removal helper. It owns strength recomputation, the
-        // logical opponent-list initiative reset, and final-opponent PC/AI
-        // callbacks.
-        for opp_id in &opponents {
+        for index in 0..opponent_count {
+            let opp_id = *self
+                .expect_entity(entity_id, "swordfight exit owner")
+                .human_data()
+                .expect("swordfight exit owner must remain human")
+                .opponents
+                .get(index)
+                .expect("required live opponent slot during swordfight exit");
             assert!(
-                self.delete_opponent(sim, assets, *opp_id, entity_id),
+                self.delete_opponent(sim, assets, opp_id, entity_id),
                 "swordfight exit owner {entity_id:?} was absent from reciprocal opponent {opp_id:?}"
             );
         }
@@ -1432,7 +1437,7 @@ impl EngineInner {
             }
         }
         if enable_self_actions {
-            self.enable_pc_actions_temp(assets, 0, entity_id);
+            self.enable_pc_actions_temp(sim, assets, 0, entity_id);
         }
 
         // When a non-dead AI owner voluntarily quits a swordfight,
@@ -1444,11 +1449,11 @@ impl EngineInner {
                 .enemy_ai()
                 .is_some()
         {
-            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+            self.execute_ai_callback(
                 sim,
-                entity_id,
                 assets,
-                crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
+                entity_id,
+                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
             );
         }
     }

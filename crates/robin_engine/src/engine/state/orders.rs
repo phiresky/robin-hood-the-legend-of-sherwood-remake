@@ -20,15 +20,14 @@ use super::super::{PendingScrollAmulet, TimerEntry, movement};
 pub(crate) struct OrderRuntime {
     pub(crate) next_order_id: u32,
     pub(crate) messenger: Messenger,
-    pub(in crate::engine) pending_path_requests: movement::PendingPathRequestQueue,
-    pub(in crate::engine) failed_path_requests: Vec<movement::FailedPathRequest>,
+    pub(crate) pending_path_requests: movement::PendingPathRequestQueue,
+    pub(crate) failed_path_requests: Vec<movement::FailedPathRequest>,
     pub(crate) timer_elements: Vec<TimerEntry>,
     pub(crate) sequence_manager: SequenceManager,
     pub(crate) pending_reinforcements: Vec<Option<EntityId>>,
     pub(crate) pending_scroll_amulets: Vec<PendingScrollAmulet>,
     pub(crate) pending_hero_speeches: Vec<(EntityId, u16)>,
     pub(crate) pending_hades_kills: Vec<EntityId>,
-    pub(crate) pending_concussion_side_effects: Vec<(EntityId, crate::combat::ConcussionOutcome)>,
 }
 
 /// Explicit save-owned projection; process-local state is reconstructed here,
@@ -54,8 +53,6 @@ pub(crate) struct PersistedOrderRuntime {
     pending_hero_speeches: Vec<(EntityId, u16)>,
 
     pending_hades_kills: Vec<EntityId>,
-
-    pending_concussion_side_effects: Vec<(EntityId, crate::combat::ConcussionOutcome)>,
 }
 
 impl PersistedOrderRuntime {
@@ -71,7 +68,6 @@ impl PersistedOrderRuntime {
             pending_scroll_amulets: _,
             pending_hero_speeches: _,
             pending_hades_kills: _,
-            pending_concussion_side_effects: _,
         } = value;
         Self {
             next_order_id: value.next_order_id,
@@ -86,7 +82,6 @@ impl PersistedOrderRuntime {
             pending_scroll_amulets: value.pending_scroll_amulets.clone(),
             pending_hero_speeches: value.pending_hero_speeches.clone(),
             pending_hades_kills: value.pending_hades_kills.clone(),
-            pending_concussion_side_effects: value.pending_concussion_side_effects.clone(),
         }
     }
 
@@ -102,7 +97,6 @@ impl PersistedOrderRuntime {
             pending_scroll_amulets: self.pending_scroll_amulets,
             pending_hero_speeches: self.pending_hero_speeches,
             pending_hades_kills: self.pending_hades_kills,
-            pending_concussion_side_effects: self.pending_concussion_side_effects,
         }
     }
 }
@@ -128,7 +122,6 @@ impl OrderRuntime {
             pending_scroll_amulets: Vec::new(),
             pending_hero_speeches: Vec::new(),
             pending_hades_kills: Vec::new(),
-            pending_concussion_side_effects: Vec::new(),
         }
     }
 
@@ -216,6 +209,5 @@ mod tests {
         assert!(orders.pending_scroll_amulets.is_empty());
         assert!(orders.pending_hero_speeches.is_empty());
         assert!(orders.pending_hades_kills.is_empty());
-        assert!(orders.pending_concussion_side_effects.is_empty());
     }
 }

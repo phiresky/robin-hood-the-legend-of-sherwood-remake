@@ -882,11 +882,13 @@ fn selection_boundary_fixture() -> (Engine, LevelAssets, EntityId, crate::sequen
     );
     wait.priority = crate::sequence::SequencePriority::Wait;
     let wait_sequence = engine.inner.orders.sequence_manager.launch_element(wait);
-    engine
-        .inner
-        .orders
-        .sequence_manager
-        .element_in_progress(wait_sequence, 0);
+    engine.inner.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        wait_sequence,
+        0,
+    );
     (engine, assets, pc_id, wait_sequence)
 }
 
@@ -1594,11 +1596,13 @@ fn rejected_external_fact_prevents_command_and_hourglass() {
         .orders
         .sequence_manager
         .launch_sequence(sequence);
-    engine
-        .inner
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.inner.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     engine.inner.feedback.cutscene_camera.sequence_element =
         Some(crate::sequence::SequenceElementRef::new(sequence_id, 0));
     assert!(
@@ -1684,11 +1688,13 @@ fn no_hourglass_director_prefix_exposes_new_delayed_drop_ale_seek() {
         .orders
         .sequence_manager
         .launch_sequence(sequence);
-    engine
-        .inner
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence_id, 0);
+    engine.inner.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence_id,
+        0,
+    );
     engine.inner.feedback.cutscene_camera.sequence_element =
         Some(crate::sequence::SequenceElementRef::new(sequence_id, 0));
 

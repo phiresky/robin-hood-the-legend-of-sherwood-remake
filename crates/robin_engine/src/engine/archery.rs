@@ -491,11 +491,11 @@ impl EngineInner {
         // This is a live cone + LOS query, not the detection cadence's stale
         // `seen_now` snapshot, matching the original game's immediate detection.
         if self.npc_is_detecting_human(assets, target, shooter, self.control.frame_counter) {
-            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+            self.execute_ai_callback(
                 sim,
-                target,
                 assets,
-                crate::ai::Stimulus::with_human(
+                target,
+                &crate::ai::Stimulus::with_human(
                     crate::ai::StimulusType::EventArrowLaunched,
                     shooter.index(),
                 ),
@@ -533,7 +533,7 @@ impl EngineInner {
             // The specialized active-shot owner bypasses generic animation
             // side effects. Close human action execution's synchronous
             // MSG_SELECT_ACTION(BOW) callback before this actor slot returns.
-            self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Bow);
+            self.set_pc_action_from_message(sim, assets, 0, pc_id, crate::profiles::Action::Bow);
         }
         for result in events.fired {
             let Some(shooter_entity) = self.get_entity(result.shooter) else {
@@ -1103,9 +1103,7 @@ impl EngineInner {
             // terminates.
         }
         for (seq_id, elem_idx) in events.completed {
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         }
         spawned_projectiles
     }
@@ -2366,13 +2364,12 @@ impl EngineInner {
             sight_obstacles,
             water_zones: Some(&assets.environment.water_zones),
         };
-        let actor_order = self.world.actor_registry_order();
         let results = bow_shot::tick_existing_projectile_in_actor_order(
             &mut self.world.entities,
             sight_obstacles,
             Some(&obstacle_check),
             projectile_id,
-            &actor_order,
+            &self.world.actor_registry_ids,
             &self.mission_domain.diplomacy,
         );
         self.process_projectile_tick_results(sim, assets, results);
@@ -2394,13 +2391,12 @@ impl EngineInner {
             sight_obstacles,
             water_zones: Some(&assets.environment.water_zones),
         };
-        let actor_order = self.world.actor_registry_order();
         let results = bow_shot::tick_arrow_in_actor_order_with_diplomacy(
             &mut self.world.entities,
             sight_obstacles,
             Some(&obstacle_check),
             arrow_id,
-            &actor_order,
+            &self.world.actor_registry_ids,
             &self.mission_domain.diplomacy,
         );
         self.process_projectile_tick_results(sim, assets, results);
@@ -2545,7 +2541,7 @@ impl EngineInner {
                         }
                         // No damage; if the victim is a soldier, set
                         // apple-smell and dispatch EventApple.
-                        self.on_apple_hit_human(result.arrow, victim);
+                        self.on_apple_hit_human(sim, assets, result.arrow, victim);
                     }
                     crate::element::ObjectType::Stone => {
                         if let Some(old_pos) = result.human_hit_old_position {
@@ -2802,7 +2798,13 @@ impl EngineInner {
 
     /// Apple lands on a human.  Apples deal no damage; they only
     /// affect soldiers via the apple-smell AI hook.
-    fn on_apple_hit_human(&mut self, apple: EntityId, victim: EntityId) {
+    fn on_apple_hit_human(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        apple: EntityId,
+        victim: EntityId,
+    ) {
         // Use the shooter's original position (trajectory origin) as
         // the EventApple stimulus anchor.
         let Some(trajectory_origin) = self
@@ -2828,7 +2830,7 @@ impl EngineInner {
             return;
         }
         self.set_soldier_apple_smell(victim);
-        self.dispatch_event_apple(victim, trajectory_origin);
+        self.dispatch_event_apple(sim, assets, victim, trajectory_origin);
     }
 
     /// Stone lands on a human.  Non-VIPs that fail the
@@ -2917,7 +2919,7 @@ impl EngineInner {
                 );
                 return;
             };
-            self.dispatch_event_apple(victim, trajectory_origin);
+            self.dispatch_event_apple(sim, assets, victim, trajectory_origin);
         }
     }
 
@@ -3072,10 +3074,18 @@ impl EngineInner {
 
     /// Dispatch an EventApple stimulus at the origin of the thrown
     /// projectile.  Used by both apple and stone impacts on NPCs.
-    fn dispatch_event_apple(&mut self, victim: EntityId, origin: crate::ai::Position) {
-        self.dispatch_ai_stimulus(
+    fn dispatch_event_apple(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim: EntityId,
+        origin: crate::ai::Position,
+    ) {
+        self.execute_ai_callback(
+            sim,
+            assets,
             victim,
-            crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventApple, origin),
+            &crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventApple, origin),
         );
     }
 
@@ -3095,11 +3105,11 @@ impl EngineInner {
         // makes the outcome depend on whether the NPC's creation-order slot
         // is before or after the projectile.  Run the one Think inline while
         // retaining older deferred stimuli ahead of work emitted here.
-        self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+        self.execute_ai_callback(
             sim,
-            victim,
             assets,
-            crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventGetArrow, origin),
+            victim,
+            &crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventGetArrow, origin),
         );
     }
 
@@ -3431,7 +3441,12 @@ impl EngineInner {
 
     /// Apply the gameplay half of player execution's Listen-exit action message.
     /// The caller has already installed the explicit Wait successor.
-    pub(super) fn apply_listen_done_action_handoff(&mut self, actor_id: EntityId) {
+    pub(super) fn apply_listen_done_action_handoff(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+    ) {
         self.get_entity(actor_id)
             .unwrap_or_else(|| panic!("ListenDone owner {actor_id:?} disappeared"))
             .pc_data()
@@ -3450,7 +3465,7 @@ impl EngineInner {
                         Some(actor_id),
                         crate::profiles::Action::Listen as u32,
                     ));
-                self.unselect_action(actor_id);
+                self.unselect_action(sim, assets, actor_id);
             }
         } else if let Some(pc) = self
             .get_entity_mut(actor_id)
@@ -3478,10 +3493,10 @@ impl EngineInner {
         if !self.initialize_ability_tying_init(sim, assets, actor_id) {
             return;
         }
-        if !self.initialize_ability_carry_init(actor_id) {
+        if !self.initialize_ability_carry_init(sim, assets, actor_id) {
             return;
         }
-        if !self.initialize_ability_climb_on_shoulders_init(actor_id) {
+        if !self.initialize_ability_climb_on_shoulders_init(sim, assets, actor_id) {
             return;
         }
         if !self.initialize_ability_heal_facing(actor_id) {
@@ -3578,12 +3593,8 @@ impl EngineInner {
                 order_id,
             } => {
                 self.cleanup_aborted_ability(actor_id, kind, seq_id, elem_idx, order_id);
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-                if kind == crate::movement::AbilityKind::Strangle {
-                    self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
-                }
+                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                if kind == crate::movement::AbilityKind::Strangle {}
             }
             AbilityTickResult::CarryDone {
                 carrier_id,
@@ -3639,10 +3650,10 @@ impl EngineInner {
                 actor_id, position, ..
             } => self.apply_ability_whistle_done(sim, assets, actor_id, position),
             AbilityTickResult::ListenEntered { actor_id } => {
-                self.apply_ability_listen_entered(assets, actor_id)
+                self.apply_ability_listen_entered(sim, assets, actor_id)
             }
             AbilityTickResult::ListenDone { actor_id, .. } => {
-                self.apply_ability_listen_done(actor_id)
+                self.apply_ability_listen_done(sim, assets, actor_id)
             }
             AbilityTickResult::ThrowNetDone {
                 actor_id,
@@ -3742,14 +3753,13 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        self.do_next_order(seq_id, elem_idx);
+        self.do_next_order(sim, assets, seq_id, elem_idx);
         // Order advancement terminates the exhausted element, and
         // The original game immediately sends the condolence notification before
         // returning from that state-change stack. This is required
         // for every ability, not only Strangle: it clears the
         // actor's selected element (so the command becomes Wait)
         // and may synchronously instruct a successor.
-        self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
         let next = self
             .orders
             .sequence_manager
@@ -4070,8 +4080,7 @@ impl EngineInner {
             // Execute returned TERMINATED: close the selected
             // order through the ordinary actor-update path,
             // including the synchronous owner condolence card.
-            self.do_next_order(seq_id, elem_idx);
-            self.dispatch_condolations_for_owner_boundary(sim, healer_id, assets);
+            self.do_next_order(sim, assets, seq_id, elem_idx);
             // The actor envelope normally serializes Execute's
             // return after the synchronous completion stack. This
             // DONE guard closes that stack locally, so publish the
@@ -4221,7 +4230,12 @@ impl EngineInner {
         );
     }
 
-    fn apply_ability_listen_entered(&mut self, assets: &LevelAssets, actor_id: EntityId) {
+    fn apply_ability_listen_entered(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+    ) {
         // Entry transition animation just finished; the
         // PC is now in ActionState::Listening /
         // ListenPhase::CountingDown.  Forward
@@ -4242,14 +4256,19 @@ impl EngineInner {
         // postponed behind itself (a move instructed while the
         // PC was listening never resumes).  An unselected PC only
         // stores the action.
-        self.set_pc_action_from_message(assets, 0, actor_id, crate::profiles::Action::Listen);
+        self.set_pc_action_from_message(sim, assets, 0, actor_id, crate::profiles::Action::Listen);
         tracing::debug!(
             actor = ?actor_id,
             "Listen: entry transition done → CountingDown, MSG_SELECT_ACTION sent"
         );
     }
 
-    fn apply_ability_listen_done(&mut self, actor_id: EntityId) {
+    fn apply_ability_listen_done(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+    ) {
         // Player-character execution launches Wait synchronously
         // on the DONE edge of
         // TRANSITION_LISTENING_WAITING_UPRIGHT.  This is an
@@ -4264,7 +4283,7 @@ impl EngineInner {
         // Apply that message's gameplay half inline, before a
         // later input-boundary SelectPC can restitute the stale
         // Listen action and Stop() the just-postponed Wait.
-        self.apply_listen_done_action_handoff(actor_id);
+        self.apply_listen_done_action_handoff(sim, assets, actor_id);
         tracing::debug!(
             actor = ?actor_id,
             "Listen: exit transition done → Inactive, MSG_UNSELECT_ACTION sent"
@@ -4445,10 +4464,7 @@ impl EngineInner {
                 elem_idx,
                 Some(order_id),
             );
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
-            self.dispatch_condolations_for_owner_boundary(sim, pc_id, assets);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return;
         }
 
@@ -4696,9 +4712,7 @@ impl EngineInner {
                 crate::ai::StimulusType::EventGotHit,
                 actor_id.index(),
             );
-            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
-                sim, target_id, assets, stimulus,
-            );
+            self.execute_ai_callback(sim, assets, target_id, &stimulus);
             #[cfg(test)]
             crate::engine::soldier_helpers::observe_strangle_condolation_step(
                 "TerminalEventGotHit",
@@ -4812,10 +4826,7 @@ impl EngineInner {
                     .and_then(Entity::actor_data)
                     .and_then(|actor| actor.active_ability.order_id),
             );
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
-            self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return;
         }
         let authorized_position = victim_box.center();
@@ -4829,7 +4840,7 @@ impl EngineInner {
             victim.element_data_mut().sprite.display_order_ref = None;
             victim.element_data_mut().sprite.behind_display_order_ref = false;
         }
-        self.actor_freeze_execution(target_id);
+        self.actor_freeze_execution(sim, assets, target_id);
         let victim = self
             .get_entity_mut(target_id)
             .unwrap_or_else(|| panic!("strangle victim {target_id:?} vanished at Done"));
@@ -4914,10 +4925,7 @@ impl EngineInner {
                     elem_idx,
                     Some(order_id),
                 );
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return false;
             }
 
@@ -5017,10 +5025,7 @@ impl EngineInner {
                     elem_idx,
                     Some(order_id),
                 );
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return false;
             }
         }
@@ -5086,10 +5091,7 @@ impl EngineInner {
             };
             if !valid {
                 self.cleanup_aborted_ability(actor_id, kind, seq_id, elem_idx, Some(order_id));
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return false;
             }
 
@@ -5120,7 +5122,12 @@ impl EngineInner {
         true
     }
 
-    fn initialize_ability_carry_init(&mut self, actor_id: EntityId) -> bool {
+    fn initialize_ability_carry_init(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+    ) -> bool {
         let pending_carry_init = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
@@ -5147,13 +5154,18 @@ impl EngineInner {
                 actor_id,
                 target_id,
             );
-            self.actor_freeze_execution(target_id);
+            self.actor_freeze_execution(sim, assets, target_id);
             self.apply_carry_building_hulk(actor_id, target_id);
         }
         true
     }
 
-    fn initialize_ability_climb_on_shoulders_init(&mut self, actor_id: EntityId) -> bool {
+    fn initialize_ability_climb_on_shoulders_init(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+    ) -> bool {
         let pending_climb_on_shoulders_init = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
@@ -5177,7 +5189,7 @@ impl EngineInner {
                 actor_id,
                 helper_id,
             );
-            self.actor_freeze_execution(helper_id);
+            self.actor_freeze_execution(sim, assets, helper_id);
         }
         true
     }
@@ -5278,10 +5290,7 @@ impl EngineInner {
                     elem_idx,
                     Some(order_id),
                 );
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return false;
             }
 
@@ -5970,12 +5979,15 @@ mod tests {
                 Command::LowerShield,
                 Some(target_id),
             ));
-        crate::engine::melee::ShieldCommandContext::new(
-            &mut engine.world.entities,
-            &mut engine.orders.sequence_manager,
-            &mut engine.orders.next_order_id,
-        )
-        .dispatch(target_id, Command::LowerShield, lower, 0);
+        engine.dispatch_shield_command(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            target_id,
+            Command::LowerShield,
+            lower,
+            0,
+        );
         assert_eq!(
             engine
                 .orders
@@ -5995,14 +6007,7 @@ mod tests {
 
         let sim = crate::sim_rng::test_context();
         let (mut engine, assets, shooter, target, lower) = arrow_warning_fixture(true, 55.0);
-        engine
-            .get_entity_mut(target)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap()
-            .outbox
-            .detection
-            .stimuli
-            .push(Stimulus::new(StimulusType::EventTimer));
+        let optical_batch = vec![Stimulus::new(StimulusType::EventTimer)];
 
         engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
 
@@ -6026,15 +6031,28 @@ mod tests {
             Some(crate::ai::AiEntityHandle::new(shooter.index())),
             "the arrow reaction must run now, not remain queued for the target's later slot"
         );
-        let queued = &engine
+        let ai = engine
             .get_entity(target)
             .and_then(Entity::ai_controller)
-            .unwrap()
-            .outbox
-            .detection
-            .stimuli;
-        assert_eq!(queued.len(), 1);
-        assert_eq!(queued[0].stimulus_type, StimulusType::EventTimer);
+            .unwrap();
+        assert!(
+            !ai.ai_log
+                .iter()
+                .any(|line| line.line_type == crate::ai::LogLineType::Event
+                    && line.info == StimulusType::EventTimer as u16)
+        );
+        engine.dispatch_optical_stimuli(&sim, target, &assets, optical_batch);
+        let ai = engine
+            .get_entity(target)
+            .and_then(Entity::ai_controller)
+            .unwrap();
+        assert!(
+            ai.ai_log
+                .iter()
+                .any(|line| line.line_type == crate::ai::LogLineType::Event
+                    && line.info == StimulusType::EventTimer as u16),
+            "the caller's local optical batch is delivered only at its scan boundary"
+        );
     }
 
     #[test]
@@ -6057,15 +6075,14 @@ mod tests {
                     .state,
                 SequenceState::InProgress
             );
-            assert!(
+            assert_eq!(
                 engine
                     .get_entity(target)
                     .and_then(Entity::ai_controller)
                     .unwrap()
-                    .outbox
-                    .detection
-                    .stimuli
-                    .is_empty()
+                    .primary_target,
+                None,
+                "a rejected warning must not select the shooter",
             );
         }
     }

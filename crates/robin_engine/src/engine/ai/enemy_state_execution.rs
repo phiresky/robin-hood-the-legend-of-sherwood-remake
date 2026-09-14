@@ -209,7 +209,6 @@ impl EngineInner {
                 fast,
                 crate::engine::soldier_helpers::AttentiveModeCaller::AiOwnerEffect,
             );
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
         }
         let alert = match state {
             AiState::Sleeping | AiState::Default => AlertLevel::Green,
@@ -217,6 +216,6 @@ impl EngineInner {
             AiState::Attacking => AlertLevel::Red,
             _ => AlertLevel::Yellow,
         };
-        self.seek_enemy_mut(owner).set_alert_status(alert);
+        self.execute_ai_set_alert_status(assets, owner, alert, crate::ai::AlertFlags::empty());
     }
 }

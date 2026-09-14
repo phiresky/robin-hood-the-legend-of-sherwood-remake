@@ -581,10 +581,13 @@ fn live_primary_selection_scores_raw_door_position_and_live_multiplicity() {
         unreachable!()
     }
     let sequence = engine.orders.sequence_manager.launch_element(pass);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     assert_eq!(engine.live_ai_position(passing).x, 277.0);
     engine
         .world
@@ -835,13 +838,16 @@ fn shield_sequence_keeps_stored_world_y_without_map_roundtrip() {
         point.y.to_bits()
     );
     let stored = element.position();
-    let ai = engine
-        .world
-        .entities
-        .expect_ai_controller_mut(owner, format_args!("shield sequence"));
-    ai.raise_shield_world(stored);
-    let sequence = ai.outbox.actor.launch_sequences.last().unwrap();
-    let element = &sequence.elements[0];
+    engine.launch_ai_raise_shield(owner, stored);
+    let element = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| &sequence.elements)
+        .find(|element| {
+            element.owner == Some(owner) && element.command == crate::element::Command::RaiseShield
+        })
+        .expect("live shield launch registers the command");
     assert!(
         matches!(element.get_property(crate::sequence::Field::ShieldDangerPoint),
         Some(crate::sequence::FieldValue::Point3D { x, y, z })
@@ -901,10 +907,13 @@ fn periodic_phalanx_fixture(
         .sequence_manager
         .pop_next_hourglass_action()
         .unwrap();
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(selected, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        selected,
+        0,
+    );
     engine
         .world
         .entities

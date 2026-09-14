@@ -488,6 +488,7 @@ fn perform_flight_order_set_excludes_action_and_ladder_falls() {
 
 #[test]
 fn dead_actor_executes_its_selected_ordinary_animation() {
+    let assets = crate::engine::types::LevelAssets::new();
     use crate::element::{ActionState, Command, Posture};
     use crate::order::Order;
     use crate::sequence::SequenceElement;
@@ -537,10 +538,13 @@ fn dead_actor_executes_its_selected_ordinary_animation() {
         .orders
         .push_back(Order::test_new(OrderType::WaitingUprightBored, 0.0, 0.0));
     let sequence = engine.orders.sequence_manager.launch_element(selected);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
 
     let (_, outcomes, result) = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
@@ -788,10 +792,7 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
     let mut selected = SequenceElement::new(1, Command::Wait, Some(actor));
     selected.orders.push_back(Order::test_new(action, 0.0, 0.0));
     let sequence = engine.orders.sequence_manager.launch_element(selected);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
 
     let (_, _, start) = engine.tick_actor_animation_for(&sim, &assets, actor);
     assert_eq!(start.expect("weak-sword START").motion, MotionState::Start);
@@ -1570,6 +1571,7 @@ fn striking_down_execute_fixture() -> (
     EntityId,
     crate::sequence::SequenceId,
 ) {
+    let assets = crate::engine::types::LevelAssets::new();
     use crate::order::Order;
     use crate::sequence::SequenceElement;
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
@@ -1623,10 +1625,13 @@ fn striking_down_execute_fixture() -> (
     let order = Order::test_new(action, 0.0, 0.0).with_antagonist(victim);
     selected.orders.push_back(order);
     let sequence = engine.orders.sequence_manager.launch_element(selected);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        sequence,
+        0,
+    );
     let order_id = engine
         .orders
         .sequence_manager
@@ -1657,13 +1662,7 @@ fn striking_down_execute_fixture() -> (
         "fixture must begin with a valid unconscious live soldier target"
     );
 
-    (
-        engine,
-        crate::engine::types::LevelAssets::new(),
-        owner,
-        victim,
-        sequence,
-    )
+    (engine, assets, owner, victim, sequence)
 }
 
 #[test]

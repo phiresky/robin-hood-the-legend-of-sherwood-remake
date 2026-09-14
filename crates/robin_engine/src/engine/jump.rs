@@ -21,7 +21,7 @@
 //! are absolute Spellbound 3D coordinates, matching the original game
 //! 3D destination assignment path. When the last step terminates,
 //! the owning sequence element is notified via
-//! [`SequenceManager::element_terminated`].
+//! [`EngineInner::element_terminated`].
 
 use std::collections::VecDeque;
 
@@ -1054,7 +1054,12 @@ impl EngineInner {
     /// function reads the completion signal via `active_ai_anim` being
     /// cleared (with `AiAnimCompletion::NextJumpStep`) and forwards it
     /// to [`EngineInner::advance_jump_step`].
-    pub(super) fn tick_active_jump_for(&mut self, assets: &LevelAssets, entity_id: EntityId) {
+    pub(super) fn tick_active_jump_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) {
         // The order authored by a step that starts this tick.  It is stamped
         // onto the sequence element after the entity borrow closes, because
         // `next_order_id` and the sequence manager sit beside `world.entities`.
@@ -1162,7 +1167,7 @@ impl EngineInner {
         // Advance a step that reached its Execute termination boundary.
         if force_advance
             && let Some((new_layer, new_sector, projection_point)) =
-                self.advance_jump_step(entity_id)
+                self.advance_jump_step(sim, assets, entity_id)
         {
             self.finalize_airborne_jump_landing(
                 assets,
@@ -1175,9 +1180,7 @@ impl EngineInner {
 
         // Terminate the sequence element of a jump that finished this tick.
         if let Some((seq_id, elem_idx)) = jump_done {
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         }
     }
 
@@ -1189,6 +1192,8 @@ impl EngineInner {
     /// the next step.
     pub(super) fn advance_jump_step(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         entity_id: EntityId,
     ) -> Option<(u16, Option<u16>, MapPoint)> {
         let entity = self.world.entities.get_mut(entity_id)?;
@@ -1386,9 +1391,7 @@ impl EngineInner {
             ));
         }
         if let Some((sequence_id, element_index)) = jump_completion {
-            self.orders
-                .sequence_manager
-                .element_terminated(sequence_id, element_index);
+            self.element_terminated(sim, assets, &mut Vec::new(), sequence_id, element_index);
             // Do not project `IN_PROGRESS` merely because the jump element
             // terminated. The original game advances only when proceeding
             // returns a real next order. The common actor completion latch

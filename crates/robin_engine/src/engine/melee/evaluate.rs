@@ -382,7 +382,7 @@ impl EngineInner {
             format_args!("reactive step-back diagnostic victim after drain"),
         );
         eprintln!(
-            "REACTIVE_STEP_BACK frame={} co={} phase=after_drain victim={} state={:?} substate={:?} animation={:?} command={:?} couldnt={} already={} self_stimuli={:?}",
+            "REACTIVE_STEP_BACK frame={} co={} phase=after_drain victim={} state={:?} substate={:?} animation={:?} command={:?} couldnt={} already={}",
             debug.frame,
             debug.creation_order,
             victim_id.index(),
@@ -396,7 +396,6 @@ impl EngineInner {
             self.actor_command(victim_id),
             ai.couldnt_reachpoint,
             ai.already_on_point,
-            ai.outbox.reentrant.self_stimuli,
         );
     }
 
@@ -2872,7 +2871,7 @@ impl EngineInner {
                 }
                 // This branch returns immediately after requesting movement; close the
                 // owner-local callback boundary before the caller resumes.
-                self.drain_direct_ai_owner_boundary(sim, victim_id, assets);
+
                 if let Some(debug) = step_back_debug {
                     self.trace_reactive_step_back_after_drain(debug, victim_id);
                 }
@@ -2975,7 +2974,7 @@ impl EngineInner {
         {
             ai.base.set_emoticon(crate::ai::EmoticonType::XMark);
         }
-        self.drain_direct_ai_owner_boundary(sim, victim_id, assets);
+
         self.begin_ai_special_strike(sim, assets, victim_id);
         self.stop_ai_owner(sim, assets, victim_id);
 

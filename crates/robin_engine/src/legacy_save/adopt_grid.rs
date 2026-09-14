@@ -617,16 +617,10 @@ impl LegacyFastFindGridAdoptionPlan {
                 .collect();
             engine.script_domains.buildings.arrow_reserves[planned.building_index] =
                 planned.arrow_reserve;
-            // Original-game building restoration restores the authoritative
-            // occupant list from the save. `AiGlobalState::houses` is the
-            // runtime view used by indoor enemy alerts, so it must observe
-            // the same restored list instead of retaining mission-start
-            // occupants from `initialize_buildings`.
             if let Some(house) = engine.ai.global.houses.iter_mut().find(|house| {
                 house.building_index
                     == crate::sector::BuildingIdx::new(planned.building_index as u16)
             }) {
-                house.occupant_ids = planned.occupants;
                 house.arrow_reserve = planned.arrow_reserve;
             }
         }
@@ -1368,10 +1362,6 @@ mod tests {
 
         assert_eq!(engine.script_domains.buildings.occupants[0], [0x1000_0009]);
         assert!(engine.script_domains.buildings.arrow_reserves[0]);
-        assert_eq!(
-            engine.ai.global.houses[0].occupant_ids,
-            [EntityId::Soldier(crate::entity_id::SoldierId(9))]
-        );
         assert!(engine.ai.global.houses[0].arrow_reserve);
         let lift = engine.world.fast_grid.lift_state.get(&2).unwrap();
         assert_eq!(lift.occupants_pc, 0);

@@ -194,7 +194,8 @@ fn launch_test_shoot_element(
     // Transition the element to InProgress so `current_element_for_actor`
     // finds it — the engine does this as part of the hourglass dispatch,
     // which the tests skip.
-    sm.element_in_progress(seq_id, 0);
+    sm.get_element_mut(seq_id, 0).unwrap().state = crate::sequence::SequenceState::InProgress;
+    sm.rebuild_indices();
     (sm, seq_id, 0)
 }
 
@@ -425,9 +426,11 @@ fn single_owner_tick_preserves_replaced_other_actor_shot() {
     let target = EntityId::Soldier(crate::entity_id::SoldierId(2));
     let mut sm = SequenceManager::new();
     let first_seq = sm.launch_element(build_shoot_bow_element(first, target));
-    sm.element_in_progress(first_seq, 0);
+    sm.get_element_mut(first_seq, 0).unwrap().state = crate::sequence::SequenceState::InProgress;
+    sm.rebuild_indices();
     let other_seq = sm.launch_element(build_shoot_bow_element(other, target));
-    sm.element_in_progress(other_seq, 0);
+    sm.get_element_mut(other_seq, 0).unwrap().state = crate::sequence::SequenceState::InProgress;
+    sm.rebuild_indices();
     let mut next_order_id = 1;
     assert_eq!(
         begin_bow_shot(
@@ -516,7 +519,8 @@ fn frozen_owner_bow_initialises_direction_without_advancing_sprite_or_order() {
         .action_state = ActionState::AimingWithBow;
     let mut sm = SequenceManager::new();
     let seq = sm.launch_element(build_shoot_bow_element(shooter, target));
-    sm.element_in_progress(seq, 0);
+    sm.get_element_mut(seq, 0).unwrap().state = crate::sequence::SequenceState::InProgress;
+    sm.rebuild_indices();
     let mut next_order_id = 1;
     assert_eq!(
         begin_bow_shot(
@@ -1903,6 +1907,8 @@ fn ordered_projectile_scan_uses_actor_registry_not_entity_slots() {
     let pc = EntityId::Pc(crate::entity_id::PcId(0));
     let soldier_1 = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let soldier_2 = EntityId::Soldier(crate::entity_id::SoldierId(2));
+    world.actor_registry_ids = vec![pc, soldier_1, soldier_2];
+    world.fighter_registry_ids = world.actor_registry_ids.clone();
     world.install_original_creation_orders(
         std::collections::BTreeMap::from([
             (pc, 100),
@@ -1912,7 +1918,7 @@ fn ordered_projectile_scan_uses_actor_registry_not_entity_slots() {
         ]),
         104,
     );
-    let actor_order = world.actor_registry_order();
+    let actor_order = world.actor_registry_ids.clone();
     assert_eq!(actor_order, [pc, soldier_2, soldier_1]);
 
     let results = tick_arrow_in_actor_order(
@@ -2956,7 +2962,8 @@ fn tick_active_pc_equip_start(script_driven: bool) -> BowTickEvents {
         order_id,
     ));
     let sequence_id = sm.launch_element(element);
-    sm.element_in_progress(sequence_id, 0);
+    sm.get_element_mut(sequence_id, 0).unwrap().state = crate::sequence::SequenceState::InProgress;
+    sm.rebuild_indices();
     entities
         .get_mut(shooter)
         .unwrap()

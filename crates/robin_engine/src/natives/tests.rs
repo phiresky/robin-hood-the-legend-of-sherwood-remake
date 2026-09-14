@@ -3256,7 +3256,6 @@ fn set_actor_posture_ko_yields_one_canonical_engine_action() {
     active.priority = crate::sequence::SequencePriority::Normal;
     let active_id = host.sequence_manager.launch_element(active);
     host.sequence_manager.take_pending_synchronous_actions();
-    host.sequence_manager.element_in_progress(active_id, 0);
 
     let mut posture = NativeStack::default();
     posture.push_i32(actor);
@@ -3279,7 +3278,7 @@ fn set_actor_posture_ko_yields_one_canonical_engine_action() {
             .get_element(active_id, 0)
             .expect("old active element")
             .state,
-        crate::sequence::SequenceState::InProgress,
+        crate::sequence::SequenceState::Todo,
         "the native adapter must not duplicate the engine posture pipeline"
     );
 }
@@ -3388,8 +3387,7 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
         0.0,
         std::num::NonZeroU32::new(1).unwrap(),
     ));
-    let sequence_id = sequences.launch_element(element);
-    sequences.element_in_progress(sequence_id, 0);
+    sequences.launch_element(element);
     let mut sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();
     let frame = 123;

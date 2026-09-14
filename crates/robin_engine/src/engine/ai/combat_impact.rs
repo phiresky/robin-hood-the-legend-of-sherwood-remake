@@ -61,7 +61,7 @@ impl EngineInner {
                 ai.enemy_seen_below = false;
                 ai.base
                     .set_transient_emoticon(EmoticonType::XMark, 30, frame);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                 self.duty_set_state(
                     sim,
                     assets,
@@ -190,8 +190,9 @@ impl EngineInner {
             .world
             .entities
             .expect_ai_controller_mut(owner, format_args!("incoming arrow focus"));
-        ai.outbox.actor.set_focus(ai.primary_target);
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        let target = ai.primary_target;
+        self.execute_ai_focus(owner, target);
+
         self.duty_set_state(
             sim,
             assets,
@@ -312,7 +313,7 @@ impl EngineInner {
                     .primary_target = Some(attacker);
                 self.execute_ai_attack_enemy(sim, assets, owner, attacker.get());
             }
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
             let npc = self
                 .world
                 .entities

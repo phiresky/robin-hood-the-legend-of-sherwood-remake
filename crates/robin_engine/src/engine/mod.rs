@@ -52,7 +52,7 @@ mod refresh_seek;
 mod reinforcement;
 mod rollback_safe;
 mod rolling;
-mod script;
+pub(crate) mod script;
 mod scroll_reveal;
 mod seat;
 mod sector_motion;
@@ -807,7 +807,7 @@ impl EngineInner {
                 self.is_pc_selectable(assets, pc_id),
                 "highest-priority playable PC {pc_id:?} is not selectable after mission initialization"
             );
-            self.select_pc(assets, 0, pc_id, false, false);
+            self.select_pc(sim, assets, 0, pc_id, false, false);
             assert_eq!(
                 self.players.seats[0].selection.as_slice(),
                 &[pc_id],
@@ -898,11 +898,13 @@ impl EngineInner {
     /// and clear the slot. Called before latching a new camera command
     /// onto [`CameraState::sequence_element`]; the previous element is
     /// transitioned to `Terminated` and the slot nulled.
-    pub(super) fn terminate_prev_camera_sequence_element(&mut self) {
+    pub(super) fn terminate_prev_camera_sequence_element(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-            self.orders
-                .sequence_manager
-                .element_terminated(r.sequence_id, r.element_index);
+            self.element_terminated(sim, assets, &mut Vec::new(), r.sequence_id, r.element_index);
         }
     }
 
@@ -1271,6 +1273,15 @@ impl EngineInner {
         if matches!(entity, Entity::Soldier(_)) {
             self.world.soldier_registry.register(id, entity.camp());
         }
+        if entity.npc_data().is_some() {
+            self.world.npc_registry_ids.push(id);
+        }
+        if entity.actor_data().is_some() {
+            self.world.actor_registry_ids.push(id);
+        }
+        if matches!(entity, Entity::Pc(_) | Entity::Soldier(_)) {
+            self.world.fighter_registry_ids.push(id);
+        }
         self.world.entities.push(Some(entity));
         self.world.assign_next_original_creation_order(id);
         id
@@ -1297,6 +1308,15 @@ impl EngineInner {
         if matches!(entity, Entity::Soldier(_)) {
             self.world.soldier_registry.register(id, entity.camp());
         }
+        if entity.npc_data().is_some() {
+            self.world.npc_registry_ids.push(id);
+        }
+        if entity.actor_data().is_some() {
+            self.world.actor_registry_ids.push(id);
+        }
+        if matches!(entity, Entity::Pc(_) | Entity::Soldier(_)) {
+            self.world.fighter_registry_ids.push(id);
+        }
         self.world.entities.push(Some(entity));
         self.world
             .assign_reserved_original_creation_order(id, creation_order);
@@ -1304,6 +1324,22 @@ impl EngineInner {
     }
 
     fn initialize_entity_for_publication(&mut self, id: EntityId, entity: &mut Entity) {
+        if entity.is_soldier()
+            && let Some(ai) = entity.ai_controller()
+        {
+            let count = match ai.current_music_alert_status {
+                crate::ai::AlertLevel::Green => &mut self.ai.global.green_alert_soldiers,
+                crate::ai::AlertLevel::Yellow => &mut self.ai.global.yellow_alert_soldiers,
+                crate::ai::AlertLevel::Red => &mut self.ai.global.red_alert_soldiers,
+            };
+            *count = count
+                .checked_add(1)
+                .expect("soldier alert counter overflow at publication");
+            let overall = self.ai.global.overall_villain_alert();
+            self.ai.global.overall_alert_status = overall;
+            self.ai.global.overall_villain_alert_status = overall;
+        }
+
         // Adding a script element assigns its script-list
         // index as soon as it enters the entity list. AI door passing uses
         // this required identity to resolve the actor's committed gate-side
@@ -2083,7 +2119,7 @@ impl EngineInner {
         // priority / transition / translate.
         if elem.command == crate::element::Command::Null {
             let seq_id = self.orders.sequence_manager.launch_element(elem);
-            self.orders.sequence_manager.element_terminated(seq_id, 0);
+            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, 0);
             return seq_id;
         }
 
@@ -2134,7 +2170,7 @@ impl EngineInner {
             ?seq_id,
             "before non_interruptable_guard"
         );
-        if self.non_interruptable_guard(owner, seq_id, elem_idx) {
+        if self.non_interruptable_guard(sim, assets, owner, seq_id, elem_idx) {
             tracing::trace!(
                 target: "parity_launch",
                 ?owner,
@@ -2161,9 +2197,7 @@ impl EngineInner {
             "before generate_transition"
         );
         if !self.generate_transition(sim, assets, owner, seq_id, elem_idx) {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return seq_id;
         }
         tracing::trace!(
@@ -2174,7 +2208,7 @@ impl EngineInner {
         );
         tracing::trace!(target: "parity_launch", ?owner, ?seq_id, "before arbitrate");
 
-        self.arbitrate_instruct(seq_id, elem_idx);
+        self.arbitrate_instruct(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         tracing::trace!(target: "parity_launch", ?owner, ?seq_id, "after arbitrate");
         tracing::trace!(
             target: "parity_launch",
@@ -2272,7 +2306,7 @@ impl EngineInner {
                 .orders
                 .sequence_manager
                 .launch_single_order_sequence_unchecked(owner, command);
-            self.orders.sequence_manager.element_terminated(seq_id, 0);
+            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, 0);
             return (seq_id, false);
         }
 
@@ -2302,7 +2336,7 @@ impl EngineInner {
 
         // NonInterruptable guard — see `launch_element_for_owner` for
         // details.
-        if self.non_interruptable_guard(owner, seq_id, elem_idx) {
+        if self.non_interruptable_guard(sim, assets, owner, seq_id, elem_idx) {
             return (seq_id, false);
         }
 
@@ -2312,9 +2346,7 @@ impl EngineInner {
         // InProgress promotion below. Skipped only by synthetic lowering
         // paths that have already chosen their exact transition order.
         if with_transitions && !self.generate_transition(sim, assets, owner, seq_id, elem_idx) {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return (seq_id, false);
         }
 
@@ -2324,7 +2356,7 @@ impl EngineInner {
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
 
-        let accepted = self.arbitrate_instruct(seq_id, elem_idx);
+        let accepted = self.arbitrate_instruct(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         // Synchronously promote to `InProgress` so same-frame consumers
         // (animation driver, `current_order_for_actor`) see the
         // attached order without waiting for the next hourglass pass.
@@ -2347,9 +2379,7 @@ impl EngineInner {
                 None => true, // no current — we're free to promote
             };
             if still_current {
-                self.orders
-                    .sequence_manager
-                    .element_in_progress(seq_id, elem_idx);
+                self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 instructed = true;
                 // Mirror the original actor lifecycle flag when the element
                 // transitions to InProgress.
@@ -2559,6 +2589,8 @@ impl EngineInner {
     /// `false` otherwise.
     fn non_interruptable_guard(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         new_seq: crate::sequence::SequenceId,
         new_idx: usize,
@@ -2568,7 +2600,7 @@ impl EngineInner {
 
         // Player-character instruction owns these early-return commands before
         // it delegates to the base Actor method containing this guard.
-        if self.pc_instruct_early_completion(owner, new_seq, new_idx) {
+        if self.pc_instruct_early_completion(sim, assets, owner, new_seq, new_idx) {
             return true;
         }
 
@@ -2610,13 +2642,19 @@ impl EngineInner {
             // The move will be invalid after this newly-instructed door
             // pass executes. Once Execute has run, the lifecycle flag is
             // cleared and later moves are postponed normally.
-            self.orders
-                .sequence_manager
-                .element_impossible(new_seq, new_idx);
+            self.element_impossible(sim, assets, &mut Vec::new(), new_seq, new_idx);
         } else {
             // `new.Postpone(current)` — current is the blocker, new is
             // the waiter.
-            self.engine_postpone(cur_seq, cur_idx, new_seq, new_idx);
+            self.engine_postpone(
+                sim,
+                assets,
+                &mut Vec::new(),
+                cur_seq,
+                cur_idx,
+                new_seq,
+                new_idx,
+            );
         }
         true
     }
@@ -2643,7 +2681,12 @@ impl EngineInner {
     /// which left any in-progress element in `InProgress` state; when
     /// the freeze was later cleared, the animation driver re-read a
     /// stale InProgress element instead of the postponed successor.
-    pub(crate) fn actor_freeze_execution(&mut self, owner: EntityId) {
+    pub(crate) fn actor_freeze_execution(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
         use crate::sequence::CascadeFlags;
 
         if let Some(entity) = self.world.entities.get_mut(owner)
@@ -2663,7 +2706,10 @@ impl EngineInner {
                 &mut self.orders,
                 owner,
             );
-            self.orders.sequence_manager.element_interrupted(
+            self.element_interrupted(
+                sim,
+                assets,
+                &mut Vec::new(),
                 cur_seq,
                 cur_idx,
                 CascadeFlags::NEXT_LEVEL,
@@ -2694,6 +2740,8 @@ impl EngineInner {
     /// speech, and cascade `Impossible` into later posture recovery work.
     fn pc_instruct_early_completion(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -2715,9 +2763,7 @@ impl EngineInner {
             }
             _ => return false,
         };
-        self.orders
-            .sequence_manager
-            .element_terminated(seq_id, elem_idx);
+        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         self.orders.pending_hero_speeches.push((owner, expression));
         true
     }
@@ -2929,12 +2975,16 @@ impl EngineInner {
         if let Some(target_id) = target
             && self.get_entity(target_id).is_some_and(|e| e.is_pc())
         {
-            self.stop_owner(target_id, crate::sequence::SequencePriority::Normal);
+            self.stop_actor_orders(
+                sim,
+                assets,
+                &mut Vec::new(),
+                target_id,
+                crate::sequence::SequencePriority::Normal,
+            );
         }
         if let Some((seq_id, elem_idx)) = seek_element {
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         }
 
         // The original game's transition to terminated closes condolence dispatch and then
@@ -2944,7 +2994,6 @@ impl EngineInner {
         // be registered after that successor. Rust defers condolence cards to
         // avoid re-entrant borrows, so explicitly close this owner's terminal
         // stack before launching the post-seek tail.
-        self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         self.launch_sequence(post_seek.into_sequence());
         true
     }
@@ -2960,15 +3009,20 @@ impl EngineInner {
     ///
     /// Sets `AiController::inside_halt_method` on the target NPC and
     /// flips the sequence manager's `halt_pending` marker while the
-    /// `stop_owner(Preference)` cascade runs, so any `PendingCondolation`
-    /// queued while the sequence is being torn down is tagged
+    /// `stop_owner(Preference)` cascade runs, so each `CondolationCard`
+    /// delivered while the sequence is being torn down is tagged
     /// `from_halt=true`. The downstream removal-notification handler
     /// checks that tag to suppress the `Think(EVENT_DONE)` /
     /// `Think(EVENT_IMPOSSIBLE)` / `Think(EVENT_COULDNT_REACHPOINT)`
     /// dispatches that should not fire from a halt.
     ///
     /// Movement calls halt here unless `GotoFlags::NO_HALT` is set.
-    pub(crate) fn halt_actor(&mut self, owner: EntityId) {
+    pub(crate) fn halt_actor(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
         // Snapshot the actor-base selected element before Stop tears down the
         // sequence-manager identity. The original game clears the
         // sprite goal synchronously when this exact selected element is
@@ -2997,7 +3051,13 @@ impl EngineInner {
         }
         self.orders.sequence_manager.set_halt_pending(true);
 
-        self.stop_owner(owner, crate::sequence::SequencePriority::Preference);
+        self.stop_actor_orders(
+            sim,
+            assets,
+            &mut Vec::new(),
+            owner,
+            crate::sequence::SequencePriority::Preference,
+        );
         // Stop can retain the selected movement element by replacing its
         // current walking order with a transition-to-waiting order. Original
         // has not sent the actor condolence callback in that case, so the
@@ -3422,12 +3482,40 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     let mut profiles = (*assets.profile_manager).clone();
     let mut needs_hth_weapon = false;
 
-    // Level loading records soldiers in load order before `init_ai` copies
-    // that roster into the global AI state.  Tests which construct entities
-    // directly must install both halves of that invariant: several Original
-    // routines deliberately scan inactive or unconscious soldiers through
-    // soldier counting rather than the active-NPC registry.
+    // Complete authored bindings and live membership after direct fixture setup.
+    // Inactive and unconscious actors remain registered until actual removal.
     assets.entities.soldier_entity_ids = engine.world.entities.soldier_ids().collect();
+    engine.world.npc_registry_ids = engine.world.entities.npc_ids().collect();
+    engine.world.actor_registry_ids = engine
+        .world
+        .entities
+        .actors()
+        .map(|(id, _)| id.into())
+        .collect();
+    engine.world.fighter_registry_ids = engine
+        .world
+        .entities
+        .occupied()
+        .filter_map(|(id, entity)| {
+            matches!(entity, Entity::Pc(_) | Entity::Soldier(_)).then_some(id)
+        })
+        .collect();
+    let creation_orders = &engine.world.original_creation_order_by_entity;
+    for registry in [
+        &mut engine.world.actor_registry_ids,
+        &mut engine.world.fighter_registry_ids,
+    ] {
+        registry.sort_by_key(|id| {
+            *creation_orders
+                .get(id)
+                .expect("fixture actor requires a creation order")
+        });
+    }
+    engine.world.npc_registry_ids.sort_by_key(|id| {
+        *creation_orders
+            .get(id)
+            .expect("fixture NPC requires a creation order")
+    });
 
     // Profiles are static level data: production actors carry them whatever
     // their live state, and a fixture actor that starts dead, inactive or
@@ -3564,4 +3652,27 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
         &engine.world.entities,
         assets.entities.soldier_entity_ids.iter().copied(),
     );
+    // Fixtures may construct brains or seed alert levels after publishing their actors.
+    // Finish that explicit setup before exercising the live alert setter.
+    let mut counts = [0u16; 3];
+    for (_, soldier) in engine.world.entities.soldiers() {
+        let level = soldier
+            .npc
+            .ai_brain
+            .base()
+            .expect("completed fixture soldier has AI")
+            .current_music_alert_status;
+        let count = &mut counts[level as usize];
+        *count = count
+            .checked_add(1)
+            .expect("fixture soldier alert counter overflow");
+    }
+    [
+        engine.ai.global.green_alert_soldiers,
+        engine.ai.global.yellow_alert_soldiers,
+        engine.ai.global.red_alert_soldiers,
+    ] = counts;
+    let overall = engine.ai.global.overall_villain_alert();
+    engine.ai.global.overall_alert_status = overall;
+    engine.ai.global.overall_villain_alert_status = overall;
 }

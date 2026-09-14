@@ -2,6 +2,47 @@
 use super::*;
 
 impl SequenceManager {
+    /// Resolve the current following chain after the owner's completion callback.
+    pub(crate) fn live_cascade_target(
+        &self,
+        sequence_id: SequenceId,
+        element_index: usize,
+        flags: CascadeFlags,
+    ) -> Option<SequenceElementRef> {
+        let sequence = self
+            .get_sequence(sequence_id)
+            .expect("cascade owner sequence missing");
+        if flags.contains(CascadeFlags::FOLLOWING) {
+            return sequence.live_following_ref(element_index);
+        }
+        if !flags.contains(CascadeFlags::NEXT_LEVEL) {
+            return None;
+        }
+        let command_level = self
+            .get_element(sequence_id, element_index)
+            .expect("cascade owner element missing")
+            .command_level;
+        let mut next = sequence.live_following_ref(element_index);
+        let mut visited = HashSet::new();
+        while let Some(target) = next {
+            assert!(
+                visited.insert(target),
+                "cycle in following cascade at {target:?}"
+            );
+            let element = self
+                .get_element(target.sequence_id, target.element_index)
+                .expect("following cascade target missing");
+            if element.command_level != command_level {
+                return Some(target);
+            }
+            next = self
+                .get_sequence(target.sequence_id)
+                .expect("following sequence missing")
+                .live_following_ref(target.element_index);
+        }
+        None
+    }
+
     // ─── Lookup ─────────────────────────────────────────────────
 
     /// Get a sequence by ID. O(log N).
@@ -369,89 +410,6 @@ impl SequenceManager {
         self.launch_sequence(seq)
     }
 
-    /// Interrupt one freshly launched actor Wait before its synchronous
-    /// launch action reaches instruction handling.
-    ///
-    /// This is deliberately identity-based rather than an owner/command scan:
-    /// EnterBeggar's DONE callback creates one Wait, postpones it behind the
-    /// still-selected noninterruptible transition, then selected-PC
-    /// `SelectAction(Beggar)` immediately stops that exact postponed element.
-    /// Rust replays the callback after retiring the transition, so its split
-    /// representation must remove the queued instruction before it can select
-    /// the Wait. Preserve the launch (and therefore sequence/element ID
-    /// consumption) while touching no older queued work for the same owner.
-    pub(crate) fn interrupt_just_registered_wait_before_instruct(
-        &mut self,
-        owner: EntityId,
-        sequence_id: SequenceId,
-    ) {
-        let element = self
-            .get_element(sequence_id, 0)
-            .unwrap_or_else(|| panic!("fresh Wait {sequence_id:?}/0 disappeared before Stop"));
-        assert_eq!(
-            element.owner,
-            Some(owner),
-            "fresh Wait {sequence_id:?}/0 changed owner before Stop"
-        );
-        assert_eq!(
-            element.command,
-            Command::Wait,
-            "selected beggar callback may discard only its fresh Wait"
-        );
-        assert_eq!(
-            element.priority,
-            SequencePriority::Wait,
-            "selected beggar callback Wait lost RHPRIORITY_WAIT"
-        );
-        assert_eq!(
-            element.state,
-            SequenceState::Todo,
-            "selected beggar callback Wait must be stopped before Instruct"
-        );
-        assert!(
-            element.orders.is_empty(),
-            "selected beggar callback Wait translated before its Stop"
-        );
-
-        let target = (sequence_id, 0);
-        let queued_actions = self
-            .pending_synchronous_actions
-            .iter()
-            .filter(|entry| {
-                matches!(
-                    entry,
-                    PendingSyncEntry::Action(SequenceAction::InstructOwner {
-                        owner: queued_owner,
-                        sequence_id: queued_sequence,
-                        element_index: 0,
-                    }) if *queued_owner == owner && *queued_sequence == sequence_id
-                )
-            })
-            .count();
-        assert_eq!(
-            queued_actions, 1,
-            "fresh Wait {sequence_id:?}/0 must have exactly one queued Go action"
-        );
-        self.pending_synchronous_actions.retain(|entry| {
-            !matches!(
-                entry,
-                PendingSyncEntry::Action(SequenceAction::InstructOwner {
-                    owner: queued_owner,
-                    sequence_id: queued_sequence,
-                    element_index: 0,
-                }) if *queued_owner == owner && *queued_sequence == sequence_id
-            )
-        });
-        assert!(
-            !self.elements_to_go.contains(&target),
-            "fresh RHPRIORITY_WAIT element unexpectedly entered the deferred manager FIFO"
-        );
-        assert!(
-            self.terminate_sequence(sequence_id),
-            "fresh Wait {sequence_id:?} disappeared before interruption"
-        );
-    }
-
     /// Launch a one-shot generic sequence carrying a single pre-built
     /// `Order` for `actor`, and immediately mark its element as
     /// `InProgress` so consumers (animation driver, AI peek-current)
@@ -777,5 +735,104 @@ impl SequenceManager {
         let (seq_id, elem_idx) = self.current_element_for_actor(actor)?;
         let order = self.get_element(seq_id, elem_idx)?.current_order()?;
         Some((seq_id, elem_idx, order))
+    }
+}
+
+impl crate::engine::EngineInner {
+    /// Interrupt one freshly launched actor Wait before its synchronous
+    /// launch action reaches instruction handling.
+    ///
+    /// This is deliberately identity-based rather than an owner/command scan:
+    /// EnterBeggar's DONE callback creates one Wait, postpones it behind the
+    /// still-selected noninterruptible transition, then selected-PC
+    /// `SelectAction(Beggar)` immediately stops that exact postponed element.
+    /// Rust replays the callback after retiring the transition, so its split
+    /// representation must remove the queued instruction before it can select
+    /// the Wait. Preserve the launch (and therefore sequence/element ID
+    /// consumption) while touching no older queued work for the same owner.
+    pub(crate) fn interrupt_just_registered_wait_before_instruct(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        owner: EntityId,
+        sequence_id: SequenceId,
+    ) {
+        let element = self
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap_or_else(|| panic!("fresh Wait {sequence_id:?}/0 disappeared before Stop"));
+        assert_eq!(
+            element.owner,
+            Some(owner),
+            "fresh Wait {sequence_id:?}/0 changed owner before Stop"
+        );
+        assert_eq!(
+            element.command,
+            Command::Wait,
+            "selected beggar callback may discard only its fresh Wait"
+        );
+        assert_eq!(
+            element.priority,
+            SequencePriority::Wait,
+            "selected beggar callback Wait lost RHPRIORITY_WAIT"
+        );
+        assert_eq!(
+            element.state,
+            SequenceState::Todo,
+            "selected beggar callback Wait must be stopped before Instruct"
+        );
+        assert!(
+            element.orders.is_empty(),
+            "selected beggar callback Wait translated before its Stop"
+        );
+
+        let target = (sequence_id, 0);
+        let queued_actions = self
+            .orders
+            .sequence_manager
+            .pending_synchronous_actions
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry,
+                    PendingSyncEntry::Action(SequenceAction::InstructOwner {
+                        owner: queued_owner,
+                        sequence_id: queued_sequence,
+                        element_index: 0,
+                    }) if *queued_owner == owner && *queued_sequence == sequence_id
+                )
+            })
+            .count();
+        assert_eq!(
+            queued_actions, 1,
+            "fresh Wait {sequence_id:?}/0 must have exactly one queued Go action"
+        );
+        self.orders
+            .sequence_manager
+            .pending_synchronous_actions
+            .retain(|entry| {
+                !matches!(
+                    entry,
+                    PendingSyncEntry::Action(SequenceAction::InstructOwner {
+                        owner: queued_owner,
+                        sequence_id: queued_sequence,
+                        element_index: 0,
+                    }) if *queued_owner == owner && *queued_sequence == sequence_id
+                )
+            });
+        assert!(
+            !self
+                .orders
+                .sequence_manager
+                .elements_to_go
+                .contains(&target),
+            "fresh RHPRIORITY_WAIT element unexpectedly entered the deferred manager FIFO"
+        );
+        assert!(
+            self.terminate_sequence(sim, assets, active_scripts, sequence_id),
+            "fresh Wait {sequence_id:?} disappeared before interruption"
+        );
     }
 }

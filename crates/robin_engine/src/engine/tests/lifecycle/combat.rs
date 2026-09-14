@@ -48,6 +48,7 @@ fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
     engine.dispatch_receive_damage(
         &crate::sim_rng::test_context(),
         &assets,
+        &mut Vec::new(),
         victim,
         sequence,
         0,
@@ -98,6 +99,7 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
     engine.dispatch_receive_damage(
         &crate::sim_rng::test_context(),
         &LevelAssets::default(),
+        &mut Vec::new(),
         victim,
         sequence,
         0,
@@ -301,10 +303,13 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
             ),
             crate::abilities::BeginResult::Started
         );
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            sequence,
+            0,
+        );
 
         let target_life_before = engine
             .get_entity(target)
@@ -440,10 +445,7 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
         .actor_data_mut()
         .unwrap()
         .action_state = ActionState::Moving;
-    engine.dispatch_ai_stimulus(
-        victim,
-        crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
-    );
+
     let seq = engine
         .orders
         .sequence_manager
@@ -501,17 +503,6 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
         "EventStop's re-entrant state/timer effects must be applied before FREEZE",
     );
     assert!(victim_ai.timer_is_running);
-    assert_eq!(
-        victim_ai
-            .outbox
-            .detection
-            .stimuli
-            .iter()
-            .map(|stimulus| stimulus.stimulus_type)
-            .collect::<Vec<_>>(),
-        vec![crate::ai::StimulusType::EventTimer],
-        "synchronous EventStop and its re-entrant effects must preserve the older FIFO",
-    );
     assert_eq!(
         engine
             .get_entity(attacker)
@@ -787,7 +778,13 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
         ),
         crate::abilities::BeginResult::Started
     );
-    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        seq,
+        0,
+    );
     engine
         .get_entity_mut(attacker)
         .unwrap()
@@ -1109,7 +1106,13 @@ fn launch_initialized_strangle(
             element.direction(),
         )
     };
-    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        seq,
+        0,
+    );
     StrangleLaunch {
         seq,
         expected_action_point,
@@ -1229,10 +1232,6 @@ fn assert_failed_strangle_cleanup(
         "owner-boundary condolation must unlock the failed victim before returning"
     );
     let victim_ai = victim_entity.ai_controller().unwrap();
-    assert!(
-        victim_ai.outbox.detection.stimuli.is_empty(),
-        "synchronous EventGotHit Think must finish before tick_ability_for returns"
-    );
     assert_eq!(
         victim_ai.primary_target,
         Some(crate::ai::AiEntityHandle::new(attacker.index())),
@@ -1280,8 +1279,13 @@ fn strangle_condolation_rejects_non_interaction_owner_data() {
         .orders
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::StrangleCmd, Some(owner)));
-    engine.orders.sequence_manager.element_impossible(seq, 0);
-    engine.dispatch_condolations_for_owner_boundary(&sim, owner, &LevelAssets::new());
+    engine.element_impossible(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        seq,
+        0,
+    );
 }
 
 #[test]
@@ -1418,7 +1422,7 @@ fn explicit_quit_dispatch_preserves_cross_postponed_sword_movement_action() {
         .unwrap()
         .cross_postponed = Some((movement, 0));
 
-    engine.dispatch_quit_swordfight(&sim, &assets, owner, quit, 0);
+    engine.dispatch_quit_swordfight(&sim, &assets, &mut Vec::new(), owner, quit, 0);
 
     let movement = engine
         .orders
@@ -1464,10 +1468,13 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
     let mut damage = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data = SequenceElementData::new_sword_damage(attacker, SwordStrike::E, 0);
     let damage_sequence = engine.orders.sequence_manager.launch_element(damage);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(damage_sequence, 0);
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        damage_sequence,
+        0,
+    );
 
     engine.handle_death_with_damage_element(&sim, &assets, victim, (damage_sequence, 0), None);
 
@@ -1508,7 +1515,7 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
         victim_entity.set_posture(Posture::Dead);
         victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
     }
-    engine.do_next_order(damage_sequence, 0);
+    engine.do_next_order(&sim, &assets, damage_sequence, 0);
     assert_eq!(
         engine
             .orders
@@ -1537,15 +1544,15 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
     // element before Translate; the dead-hold animation choice reads the
     // stamped action-state-after-transition, not the live actor field.
     engine.stamp_element_transition_state(victim, wait_sequence, 0);
-    crate::engine::sequence_runtime::WaitCommandContext {
-        entities: &mut engine.world.entities,
-        sequence_manager: &mut engine.orders.sequence_manager,
-        orders: crate::engine::sequence_runtime::OrderEmitter::new(
-            &mut engine.orders.next_order_id,
-        ),
-        profiles: &assets.profile_manager,
-    }
-    .dispatch(victim, Command::Wait, wait_sequence, 0);
+    engine.dispatch_wait_command(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        victim,
+        Command::Wait,
+        wait_sequence,
+        0,
+    );
 
     let wait = engine
         .orders

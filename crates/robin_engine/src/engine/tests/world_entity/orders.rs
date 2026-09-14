@@ -38,8 +38,7 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
         .unwrap()
         .ai_controller_mut()
         .unwrap();
-    ai.stimulus_queue = queued.clone();
-    ai.outbox.detection.stimuli = queued;
+    ai.stimulus_queue = queued;
 
     let request = |owner| PendingPathRequest::test_request(owner, SequenceId(1), 0);
     let mut targeting_removed = request(first);
@@ -85,7 +84,7 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
         .unwrap()
         .ai_controller()
         .unwrap();
-    for stimuli in [&ai.stimulus_queue, &ai.outbox.detection.stimuli] {
+    for stimuli in [&ai.stimulus_queue] {
         assert_eq!(stimuli.len(), 2);
         assert_eq!(
             stimuli[0].owner, historical.owner,
@@ -278,9 +277,9 @@ fn original_pc_registry_is_independent_from_portrait_priority_order() {
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     assert_eq!(
-        engine.ai_pc_snapshot_ids_for_test(&assets),
-        vec![second, first],
-        "AI snapshots must scan Original's registry, not portrait priority"
+        engine.world.original_pc_registry(),
+        &[second, first],
+        "gameplay registry order must remain independent of portrait priority"
     );
 
     engine.remove_entity(second);
@@ -368,82 +367,41 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
 }
 
 #[test]
-fn direct_ai_owner_boundary_preserves_preexisting_foreign_condolation() {
+fn terminal_callbacks_finish_in_call_order_across_owners() {
     use crate::element::Command;
     use crate::sequence::SequenceElement;
-
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let foreign_a =
-        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let foreign_b =
-        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owners: Vec<_> = (0..3)
+        .map(|_| engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists)))
+        .collect();
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-
-    let terminate = |engine: &mut EngineInner, card_owner| {
-        let sequence = engine
-            .orders
-            .sequence_manager
-            .launch_element(SequenceElement::new(1, Command::Wait, Some(card_owner)));
-        engine
-            .orders
-            .sequence_manager
-            .element_in_progress(sequence, 0);
-        engine
-            .orders
-            .sequence_manager
-            .element_terminated(sequence, 0);
-    };
-    terminate(&mut engine, foreign_a);
-    terminate(&mut engine, owner);
-    terminate(&mut engine, foreign_b);
-
-    // Exercise the nested global drain in `drain_pending_for_npc`, not
-    // merely the idle direct-boundary endpoint. The owner's Halt and its
-    // pre-existing root must close now, while foreign A/B stay queued.
-    let live_owner_sequence = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new(1, Command::Wait, Some(owner)));
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(live_owner_sequence, 0);
-    engine
-        .get_entity_mut(owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("direct-boundary owner has AI")
-        .outbox
-        .actor
-        .halt = true;
-
-    let ((), stimuli) = crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
-        engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
+    let (_, stimuli) = crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
+        for &owner in &owners {
+            let sequence = engine
+                .orders
+                .sequence_manager
+                .launch_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+            engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
+            engine.element_terminated(&sim, &assets, &mut Vec::new(), sequence, 0);
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, 0)
+                    .unwrap()
+                    .state,
+                crate::sequence::SequenceState::Terminated
+            );
+        }
     });
-
-    let backlog = engine.orders.sequence_manager.drain_pending_condolations();
     assert_eq!(
-        backlog
-            .iter()
-            .map(|dispatch| dispatch.card.owner)
-            .collect::<Vec<_>>(),
-        vec![foreign_a, foreign_b],
-        "pre-existing foreign cards retain their FIFO around owner Halt recursion"
-    );
-    assert!(
-        stimuli.iter().any(|(stimulus_owner, stimulus)| {
-            *stimulus_owner == owner && *stimulus == crate::ai::StimulusType::EventDone
-        }),
-        "the owner's pre-existing terminal root must be delivered, not dropped"
-    );
-    assert!(
-        !engine
-            .orders
-            .sequence_manager
-            .has_live_element_for_actor_matching(owner, |_| true),
-        "the selected owner's Halt must still close causally inside the direct boundary"
+        stimuli,
+        owners
+            .into_iter()
+            .map(|owner| (owner, crate::ai::StimulusType::EventDone))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -488,10 +446,6 @@ fn resumed_return_to_duty_uses_live_position_and_translates_its_goto() {
         .expect("return-to-duty owner retains Enemy AI");
     assert_eq!(ai.base.current_state, AiState::Default);
     assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
-    assert!(
-        !ai.base.outbox.actor.has_boundary_work(),
-        "common return-to-duty movement must be translated before the resumed owner work returns"
-    );
     assert!(
         engine
             .orders

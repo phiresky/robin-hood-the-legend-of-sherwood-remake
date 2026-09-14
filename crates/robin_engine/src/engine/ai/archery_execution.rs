@@ -472,7 +472,7 @@ impl EngineInner {
                     .entities
                     .expect_ai_controller_mut(owner, format_args!("bow emoticon"))
                     .set_emoticon(EmoticonType::None);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+
                 let tower = self
                     .world
                     .entities
@@ -570,8 +570,8 @@ impl EngineInner {
                     .entities
                     .expect_ai_controller_mut(owner, format_args!("bow cover focus"));
                 ai.launch_timer(5, frame);
-                ai.outbox.actor.set_focus(ai.primary_target);
-                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                let target = ai.primary_target;
+                self.execute_ai_focus(owner, target);
             }
             (Substate::AttackingArcherRunOnShootingPath, StimulusType::EventReachPoint) => loop {
                 let ai = self

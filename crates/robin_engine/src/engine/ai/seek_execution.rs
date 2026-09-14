@@ -3,7 +3,7 @@ use super::*;
 use crate::ai::{
     AiEntityHandle, AiState, DutyFlags, EmoticonType, GotoFlags, Position, SeekPoint, Substate,
 };
-use crate::ai_enemy::{EnemyAi, SeekAreaSpec, SeekFlags, UNDEFINED_DIRECTION, task_priority};
+use crate::ai_enemy::{EnemyAi, SeekAreaSpec, SeekFlags, task_priority};
 use crate::parameters_ai;
 use crate::sim_rng::SimulationContext;
 
@@ -67,11 +67,10 @@ impl EngineInner {
         flags: SeekFlags,
         seek_direction: u16,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let center = self.resolve_live_seek_center(owner, center);
         self.stop_ai_owner(sim, assets, owner);
-        self.seek_enemy_mut(owner).base.outbox.actor.set_unfocus();
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_unfocus(owner);
+
         if self.is_player_aligned_camp(self.expect_entity(owner, "seek camp").camp())
             || self.seek_enemy(owner).company_number == 100
         {
@@ -79,8 +78,7 @@ impl EngineInner {
             return;
         }
         if !flags.contains(SeekFlags::CHARLY_SEEK) {
-            self.seek_enemy_mut(owner).base.set_checkpoint_charly(None);
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            self.execute_ai_set_checkpoint_charly(owner, None);
         }
         self.seek_enemy_mut(owner).current_task_priority = task_priority::SEEKING;
         if self.execute_seek_other_bodies(sim, assets, owner) {
@@ -114,19 +112,11 @@ impl EngineInner {
                 })
                 .collect();
             beggars.sort_unstable_by_key(|id| self.world.original_creation_order(*id));
-            let ai = self.seek_enemy_mut(owner);
-            ai.base
-                .outbox
-                .actor
-                .delete_detectable_type(crate::element::DetectableType::Beggar);
-            ai.beggar_to_examine = None;
+            self.execute_ai_delete_detectable_type(owner, crate::element::DetectableType::Beggar);
+            self.seek_enemy_mut(owner).beggar_to_examine = None;
             for id in beggars {
-                ai.base
-                    .outbox
-                    .actor
-                    .add_detectable((id, crate::element::DetectableType::Beggar));
+                self.execute_ai_add_detectable(owner, id, crate::element::DetectableType::Beggar);
             }
-            self.drain_direct_ai_owner_boundary(sim, owner, assets);
         }
 
         let ai = self.seek_enemy_mut(owner);
@@ -299,7 +289,6 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         loop {
             if let Some(id) = self.seek_enemy(owner).actual_seek_point {
                 self.seek_point_mut(owner, id).locked = false;
@@ -445,12 +434,8 @@ impl EngineInner {
         ai.base.seek_position = position;
         ai.base.set_emoticon(EmoticonType::XMark);
         self.duty_set_state(sim, assets, owner, AiState::Seeking, Substate::SeekingBody);
-        self.seek_enemy_mut(owner)
-            .base
-            .outbox
-            .actor
-            .set_focus(AiEntityHandle::new(body.index()));
-        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.execute_ai_focus(owner, Some(AiEntityHandle::new(body.index())));
+
         let position = self.seek_enemy(owner).base.seek_position;
         self.duty_go_near(
             sim,
@@ -841,7 +826,6 @@ mod tests {
             .element_data_mut()
             .set_position_map(MapPoint::new(25.0, 25.0));
         actor.element_data_mut().set_sector(Some(test_sector()));
-        ai.base.outbox = Default::default();
         let owner = engine.add_test_entity(actor);
         ai.base.me = owner.index();
         *engine

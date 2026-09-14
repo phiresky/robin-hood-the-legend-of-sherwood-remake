@@ -87,7 +87,6 @@ fn directed_cassos_reads_the_live_target_and_completes_panic() {
     );
     assert!(!ai.directed_panic);
     assert_eq!(ai.current_state, AiState::Fleeing);
-    assert!(ai.outbox.actor.begin_panic.is_none());
 }
 
 #[test]
@@ -116,7 +115,6 @@ fn repeated_cassos_without_a_target_remains_undirected() {
     let ai = &engine.get_entity(owner).unwrap().enemy_ai().unwrap().base;
     assert!(!ai.directed_panic);
     assert_eq!(ai.lasting_panic_runs, 11);
-    assert!(ai.outbox.actor.begin_panic.is_none());
 }
 
 #[test]

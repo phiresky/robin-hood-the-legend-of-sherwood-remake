@@ -500,8 +500,6 @@ pub(super) fn print_startup_actors(
                 ai.already_on_point,
                 ai.last_goto_destination,
                 ai.initial_view_direction,
-                ai.outbox.reentrant.self_stimuli.clone(),
-                ai.outbox.actor.launch_commands.clone(),
             )
         });
         eprintln!(

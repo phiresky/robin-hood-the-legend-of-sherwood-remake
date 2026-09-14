@@ -181,7 +181,16 @@ fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
         Some(target),
     );
     let sequence = engine.launch_element(strike);
-    engine.dispatch_sword_strike(&assets, attacker, target, SwordStrike::A, sequence, 0);
+    engine.dispatch_sword_strike(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        attacker,
+        target,
+        SwordStrike::A,
+        sequence,
+        0,
+    );
 
     let element = engine
         .orders
