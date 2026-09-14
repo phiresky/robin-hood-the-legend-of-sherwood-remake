@@ -128,7 +128,53 @@ function validateAssets(assets, directory, label, htmlHandling = 'auto-trailing-
     requireEqual(assets.not_found_handling, '404-page', `${label} missing-asset policy`);
 }
 
+// Cross-origin isolation for the game document. The threaded runtime needs
+// `crossOriginIsolated` for shared wasm memory (the rayon decode pool).
+// `require-corp` (not `credentialless`) because every game subresource is
+// same-origin, the only cross-origin embed is the signer frame we control, and
+// Safari supports only `require-corp`. The leaderboard pages detach COOP/COEP:
+// they need no shared memory, so they keep the unisolated signer path.
+export const PUBLIC_ISOLATION = Object.freeze({
+    'Cross-Origin-Embedder-Policy': 'require-corp',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+});
+// Public and runtime assets are only ever consumed by the same origin. A
+// cross-origin embedder (and a Spectre-capable isolated process) is refused
+// explicitly. Both Workers are redeployed, with restaged headers, every release.
+export const SAME_ORIGIN_RESOURCE = 'same-origin';
+// The signer is framed by the isolated game page, so its document must opt in
+// to COEP and allow its same-site embedder via CORP. `same-origin` would block
+// the frame; `cross-origin` would be needlessly broad.
+export const SIGNER_ISOLATION = Object.freeze({
+    'Cross-Origin-Embedder-Policy': 'require-corp',
+    'Cross-Origin-Resource-Policy': 'same-site',
+});
+
+function headerValues(block, name) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    return [...block.matchAll(new RegExp(`^\\s*${escaped}:\\s*(.+?)\\s*$`, 'gimu'))].map(match => match[1]);
+}
+
+function requireExactHeader(block, name, expected, label) {
+    const values = headerValues(block, name);
+    if (values.length !== 1 || values[0] !== expected) {
+        throw new Error(`${label} must set exactly ${name}: ${expected}`);
+    }
+}
+
+function requireDetached(block, name, label) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    if (!new RegExp(`^\\s*! ${escaped}\\s*$`, 'mu').test(block) || headerValues(block, name).length !== 0) {
+        throw new Error(`${label} must detach ${name}`);
+    }
+}
+
 export function validatePublicHeaders(text) {
+    const root = routeBlock(text, '/*');
+    for (const [name, value] of Object.entries(PUBLIC_ISOLATION)) {
+        requireExactHeader(root, name, value, 'public game document isolation');
+    }
+    requireExactHeader(root, 'Cross-Origin-Resource-Policy', SAME_ORIGIN_RESOURCE, 'public resources');
     requireHeader(text, 'Content-Security-Policy', [
         "frame-ancestors 'none'",
         `frame-src ${DEPLOYMENT.signerOrigin}`,
@@ -154,6 +200,10 @@ export function validatePublicHeaders(text) {
         || !leaderboardCsp.includes("frame-ancestors 'none'")) {
         throw new Error('leaderboard response CSP must be self-only except for the isolated signer frame');
     }
+    for (const name of Object.keys(PUBLIC_ISOLATION)) requireDetached(leaderboardBlock, name, 'leaderboard headers');
+    if (/^\s*(?:!\s*)?Cross-Origin-/imu.test(routeBlock(text, '/assets/*'))) {
+        throw new Error('public asset headers must inherit the site cross-origin policy unchanged');
+    }
     requireCacheRules(text, 'public');
 }
 
@@ -174,6 +224,13 @@ export function validateSignerHeaders(text) {
     if (/^\s*X-Frame-Options\s*:/imu.test(text)) {
         throw new Error('signer headers must not deny the one authorized parent frame');
     }
+    const root = routeBlock(text, '/*');
+    for (const [name, value] of Object.entries(SIGNER_ISOLATION)) {
+        requireExactHeader(root, name, value, 'signer frame isolation compatibility');
+    }
+    if (headerValues(text, 'Cross-Origin-Opener-Policy').length !== 0) {
+        throw new Error('signer headers must not set an opener policy for a framed document');
+    }
     requireHeader(text, 'X-Content-Type-Options', ['nosniff'], 'signer');
     requireHeader(text, 'Referrer-Policy', ['no-referrer'], 'signer');
     requireHeader(text, 'X-Robinhood-Static-Origin', ['signer-v1'], 'signer');
@@ -191,6 +248,7 @@ export function validateRuntimeHeaders(text) {
     requireHeader(text, 'X-Content-Type-Options', ['nosniff'], 'runtime');
     requireHeader(text, 'Referrer-Policy', ['no-referrer'], 'runtime');
     requireHeader(text, 'X-Robinhood-Static-Origin', ['runtime-v1'], 'runtime');
+    requireExactHeader(routeBlock(text, '/*'), 'Cross-Origin-Resource-Policy', SAME_ORIGIN_RESOURCE, 'runtime resources');
     requireCacheRules(text, 'runtime', /^\/wasm\/\*\s*$/mu);
     if (!/^\/wasm\/latest\.json\s*$/mu.test(text)
         || !/^\/wasm\/datadir-deployment\.json\s*$/mu.test(text)
@@ -210,6 +268,12 @@ export function validateDatadirHeaders(text) {
     requireHeader(text, 'X-Content-Type-Options', ['nosniff'], 'datadir');
     requireHeader(text, 'Referrer-Policy', ['no-referrer'], 'datadir');
     requireHeader(text, 'X-Robinhood-Static-Origin', ['datadir-v1'], 'datadir');
+    // No CORP requirement here: the isolated game fetches datadirs same-origin
+    // (which COEP never checks), and the datadir Worker is only redeployed
+    // with a new datadir generation, so a header change would not reach it on
+    // an ordinary runtime release.
+    // TODO: add `Cross-Origin-Resource-Policy: same-origin` with the next
+    // datadir generation deployment, then require it here and in the smoke.
     if (!/^\/\*\s*$/mu.test(text)
         || !/^\/datadirs\/\*\s*$/mu.test(text)
         || !/^\s*Cache-Control:\s*public, max-age=31536000, immutable\s*$/mu.test(text)

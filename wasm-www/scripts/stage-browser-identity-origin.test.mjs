@@ -4,6 +4,7 @@ import {
     existsSync,
     mkdtempSync,
     mkdirSync,
+    readdirSync,
     readFileSync,
     rmSync,
     writeFileSync,
@@ -124,6 +125,54 @@ test('isolated crates need only their owned byte-exact, reachable transport', t 
         writeFileSync(join(root, snippetDirectory, owned), 'export const corrupted = true;\n');
         assert.throws(() => stageBrowserIdentityOrigin(role, root, 'entry.js'), /differs from its checked-in source authority/u);
     }
+});
+
+function pinnedWorkerHelperSource() {
+    // The exemption is bound to the exact published crate bytes.
+    const home = process.env.CARGO_HOME ?? join(process.env.HOME ?? '', '.cargo');
+    const registry = join(home, 'registry/src');
+    if (!existsSync(registry)) return undefined;
+    for (const index of readdirSync(registry)) {
+        const path = join(registry, index, 'wasm-bindgen-rayon-1.3.0/src/workerHelpers.no-bundler.js');
+        if (existsSync(path)) return readFileSync(path);
+    }
+    return undefined;
+}
+
+test('only the engine origin admits the pinned worker-pool helper re-import', t => {
+    const helper = pinnedWorkerHelperSource();
+    if (helper === undefined) {
+        t.skip('wasm-bindgen-rayon 1.3.0 is not in the local Cargo registry');
+        return;
+    }
+    const helperPath = 'snippets/wasm-bindgen-rayon-38edf6e439f6d70d/src/workerHelpers.no-bundler.js';
+    const threaded = (role, entryName, owned, helperBytes) => {
+        const root = mkdtempSync(join(tmpdir(), `identity-threaded-${role}.`));
+        t.after(() => rmSync(root, { recursive: true, force: true }));
+        writeGeneratedOrigin(root, entryName, owned);
+        mkdirSync(dirname(join(root, helperPath)), { recursive: true });
+        writeFileSync(join(root, helperPath), helperBytes);
+        writeFileSync(
+            join(root, entryName),
+            `import './${snippetDirectory}/${owned}';\nimport './${helperPath}';\n`,
+        );
+        return root;
+    };
+
+    const engine = threaded('engine', 'robin.js', 'browser_identity_client.js', helper);
+    assert.equal(stageBrowserIdentityOrigin('engine', engine, 'robin.js').retained,
+        `${snippetDirectory}/browser_identity_client.js`);
+
+    const reshaped = threaded('engine-reshaped', 'robin.js', 'browser_identity_client.js',
+        Buffer.concat([helper, Buffer.from('\n// reshaped\n')]));
+    assert.throws(() => stageBrowserIdentityOrigin('engine', reshaped, 'robin.js'),
+        /not the pinned wasm-bindgen-rayon helper/u);
+
+    const signer = threaded('identity_signer', 'leaderboard_identity_bridge.js', 'browser_identity_vault.js', helper);
+    assert.throws(
+        () => stageBrowserIdentityOrigin('identity_signer', signer, 'leaderboard_identity_bridge.js'),
+        /unsupported dynamic, phased, or attributed import/u,
+    );
 });
 
 test('staging requires the retained snippet in a closed static import graph', () => {

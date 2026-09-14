@@ -8,6 +8,7 @@ import {
 import { dirname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from 'es-module-lexer/minimal/js';
+import { isWorkerPoolEngineReimport, pinnedWorkerPoolHelper } from './runtime-javascript-modules.mjs';
 
 const STATIC_IMPORT = 1;
 const IMPORT_META = 3;
@@ -84,18 +85,28 @@ export function stageBrowserIdentityOrigin(origin, rootArgument, entryArgument) 
     const javascript = new Set(files.filter(path => path.endsWith('.js')));
     const imports = new Map();
     for (const path of javascript) {
+        const bytes = readFileSync(path);
         let parsed;
         try {
-            [parsed] = parse(readFileSync(path, 'utf8'), relative(root, path));
+            [parsed] = parse(bytes.toString('utf8'), relative(root, path));
         } catch (error) {
             throw new Error(
                 `invalid JavaScript module in staged ${origin} origin: ${relative(root, path)}`,
                 { cause: error },
             );
         }
+        // Only the threaded engine carries wasm-bindgen-rayon's worker helper,
+        // whose one dynamic import re-imports the engine glue inside workers.
+        const workerPoolHelper = origin === 'engine'
+            && pinnedWorkerPoolHelper(relative(root, path).split(sep).join('/'), bytes);
+        let engineReimports = 0;
         const targets = [];
         for (const imported of parsed) {
             if (imported.t === IMPORT_META) continue;
+            if (workerPoolHelper && isWorkerPoolEngineReimport(imported) && engineReimports === 0) {
+                engineReimports += 1;
+                continue;
+            }
             if (imported.t !== STATIC_IMPORT || imported.a !== -1 || imported.n === undefined) {
                 throw new Error(
                     `staged ${origin} module has unsupported dynamic, phased, or attributed import: ${relative(root, path)}`,

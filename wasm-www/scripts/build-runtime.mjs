@@ -48,16 +48,28 @@ export function run(command, args, options = {}) {
     return result;
 }
 
+// Shared wasm memories must declare their maximum up front. The threaded
+// runtime declares the full wasm32 range (65536 pages = 4 GiB, see
+// scripts/wasm-threads.cargo-config.toml); 64-bit browsers only reserve address
+// space for it, and the non-shared build could already grow that far.
+export const THREADED_MEMORY_MAX_PAGES = 65536;
+
+export function requireSharedMemoryImport(wasm) {
+    const result = run('wasm-objdump', ['-x', '-j', 'Import', wasm], { encoding: 'utf8', stdio: 'pipe' });
+    const memories = result.stdout.split('\n').filter(line => /memory\[[0-9]+\]/u.test(line));
+    if (memories.length !== 1 || !/ shared /u.test(memories[0])) {
+        throw new Error(`threaded wasm must import exactly one shared memory; check target flags: ${wasm}`);
+    }
+    if (!new RegExp(`max=${THREADED_MEMORY_MAX_PAGES}(?:[^0-9]|$)`, 'u').test(memories[0])) {
+        throw new Error(`threaded wasm shared memory maximum is not ${THREADED_MEMORY_MAX_PAGES} pages: ${memories[0].trim()}`);
+    }
+}
+
 export function buildRuntime(options) {
     const plan = runtimeBuildPlan(options);
     run('cargo', plan.cargo, options?.requireIdentity
         ? { env: { ...process.env, ROBIN_REQUIRE_BUILD_IDENTITY: '1' } } : {});
-    if (plan.threads) {
-        const result = run('wasm-objdump', ['-x', '-j', 'Import', plan.wasm], { encoding: 'utf8', stdio: 'pipe' });
-        if (!/memory\[[0-9]+\].* shared /u.test(result.stdout)) {
-            throw new Error('threaded wasm has no shared memory import; check target flags');
-        }
-    }
+    if (plan.threads) requireSharedMemoryImport(plan.wasm);
     run(plan.bindgen, plan.bindgenArgs);
     if (plan.optimize) run(process.execPath, plan.optimize);
 }

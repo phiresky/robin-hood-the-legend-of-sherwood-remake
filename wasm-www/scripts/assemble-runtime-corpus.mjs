@@ -92,7 +92,10 @@ export async function assembleRuntimeCorpus({
     let existingRoot;
     if (existing !== null) {
         existingRoot = resolve(existing);
-        await verifyRuntimeCorpus(existingRoot, { datadirAuthorityPath: existingAuthorityPath, retainedGenerations });
+        // Its `_headers` is replaced below; the output is verified strictly.
+        await verifyRuntimeCorpus(existingRoot, {
+            datadirAuthorityPath: existingAuthorityPath, retainedGenerations, replacedHeaders: true,
+        });
     }
     await requireAbsent(outputRoot);
     requireDisjointOutput(outputRoot, [
