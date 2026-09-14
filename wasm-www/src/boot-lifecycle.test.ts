@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bootGame, loadRuntimeInParallel, assertMultiplayerWasmCompatibility, type BootDependencies, type RobinWasmModule } from './boot-lifecycle.ts';
+import { bootGame, loadRuntimeInParallel, assertMultiplayerWasmCompatibility, onFirstRuntimeFrame, FIRST_FRAME_PRESENTED_EVENT, type BootDependencies, type RobinWasmModule } from './boot-lifecycle.ts';
 import type { VerifiedBrowserJoinTicket } from './join_ticket.ts';
 
 function fixture(calls: string[]): BootDependencies {
@@ -225,4 +225,41 @@ test('multiplayer content access and preloads stay behind runtime compatibility 
             assert.deepEqual(calls, ['build']);
         }
     }
+});
+
+function manualTimer(): { schedule: (callback: () => void, ms: number) => () => void; fire: () => void; cancelled: () => boolean; delay: () => number | undefined } {
+    let pending: (() => void) | undefined;
+    let wasCancelled = false;
+    let requested: number | undefined;
+    return {
+        schedule: (callback, ms) => { pending = callback; requested = ms; return () => { wasCancelled = true; }; },
+        fire: () => pending?.(),
+        cancelled: () => wasCancelled,
+        delay: () => requested,
+    };
+}
+
+test('boot overlay settles once on the first runtime frame and releases its fallback', () => {
+    const target = new EventTarget();
+    const timer = manualTimer();
+    const outcomes: string[] = [];
+    onFirstRuntimeFrame(target, 10_000, outcome => outcomes.push(outcome), timer.schedule);
+    assert.equal(timer.delay(), 10_000);
+    assert.deepEqual(outcomes, []);
+    target.dispatchEvent(new Event(FIRST_FRAME_PRESENTED_EVENT));
+    target.dispatchEvent(new Event(FIRST_FRAME_PRESENTED_EVENT));
+    timer.fire();
+    assert.deepEqual(outcomes, ['presented']);
+    assert.equal(timer.cancelled(), true);
+});
+
+test('boot overlay falls back when the runtime never presents, ignoring late frames', () => {
+    const target = new EventTarget();
+    const timer = manualTimer();
+    const outcomes: string[] = [];
+    onFirstRuntimeFrame(target, 250, outcome => outcomes.push(outcome), timer.schedule);
+    target.dispatchEvent(new Event('some-other-event'));
+    timer.fire();
+    target.dispatchEvent(new Event(FIRST_FRAME_PRESENTED_EVENT));
+    assert.deepEqual(outcomes, ['timeout']);
 });

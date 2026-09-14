@@ -6,15 +6,16 @@ use super::interactive::{
     InteractiveFrontendAssembly, InteractiveMission, InteractiveRendererAssembly,
     MissionRendererConfig, ProcessFrontendMission, ProcessInterfaceResources,
 };
+use super::loading_progress::LoadingPhase;
 use super::replay_init::{ReplayMissionIdentity, init_replay_and_rollback};
 use super::runtime::{
     FrameContract, MissionControl, MissionRuntime, MissionWorld, TimelineRuntime,
 };
 use super::setup::{
-    DecodingInterfaceResources, LOADING_AUDIO_PROGRESS, LoadedInteractiveResources,
-    LoadedMissionCore, MissionEngineResources, MissionInterfaceSetup, MissionLaunchSetup,
-    MissionLoadError, MissionProcessResources, TerrainJoinPoint, pre_decode_maps_and_resources,
-    prepare_mission, setup_local_seat_and_multiplayer_snapshot, setup_mission_audio,
+    DecodingInterfaceResources, LoadedInteractiveResources, LoadedMissionCore,
+    MissionEngineResources, MissionInterfaceSetup, MissionLaunchSetup, MissionLoadError,
+    MissionProcessResources, TerrainJoinPoint, pre_decode_maps_and_resources, prepare_mission,
+    setup_local_seat_and_multiplayer_snapshot, setup_mission_audio,
 };
 use super::{
     MissionError, MissionOutcome, install_cold_save_lua_session, install_pending_lua_session,
@@ -679,7 +680,10 @@ impl MissionLoadingScreen {
             prepare_renderer_early: prepare_renderer_early(),
             renderer_config,
         };
-        stage.status("Preparing mission data...", 0.02);
+        stage.status(
+            "Preparing mission data...",
+            LoadingPhase::PrepareMissionData.end(),
+        );
         if let Some(renderer) = stage.renderer.as_mut() {
             renderer.refresh();
             renderer.drain_events(window);
@@ -712,30 +716,25 @@ impl MissionLoadingScreen {
             ));
             timer.step("prepare game renderer");
         }
-        let fraction = if progress.total == 0 {
-            1.0
-        } else {
-            progress.completed as f32 / progress.total as f32
+        use crate::shipping_mission::MissionLoadPhase;
+        let target =
+            super::loading_progress::shipping_progress_target(progress.phase, progress.fraction);
+        let (verb, label) = match progress.phase {
+            MissionLoadPhase::Data => ("Loading", "mission data"),
+            MissionLoadPhase::Sprites => ("Decoding", "sprites"),
+            MissionLoadPhase::Audio => ("Loading", "mission audio"),
         };
-        let (start, span, label) = match progress.phase {
-            crate::shipping_mission::MissionLoadPhase::Data => {
-                let span = if cfg!(all(target_arch = "wasm32", feature = "audio")) {
-                    0.06
-                } else {
-                    0.08
-                };
-                (0.02, span, "mission data")
-            }
-            crate::shipping_mission::MissionLoadPhase::Audio => (0.08, 0.02, "mission audio"),
-        };
-        let target = start + span * fraction;
+        let counted = format!("{verb} {label} ({}/{})", progress.completed, progress.total);
         let text = match progress.file {
-            Some(file) => format!(
-                "Loading {label} ({}/{}): {file}",
-                progress.completed, progress.total
-            ),
-            None if progress.completed == progress.total => format!("{label} ready"),
-            None => format!("Loading {label} (0/{})", progress.total),
+            Some(file) => format!("{counted}: {file}"),
+            None if progress.completed == progress.total => {
+                let mut label = label.to_owned();
+                if let Some(first) = label.get_mut(..1) {
+                    first.make_ascii_uppercase();
+                }
+                format!("{label} ready")
+            }
+            None => counted,
         };
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_counted_status(text, target);
@@ -862,7 +861,10 @@ impl InteractiveLoadStage {
 
         let mut game = Game::new(location);
         game.global_options = args.config.global_options.clone();
-        loading.status("Loading process resources...", 0.11);
+        loading.status(
+            "Loading process resources...",
+            LoadingPhase::ProcessResources.end(),
+        );
         let process = MissionProcessResources::load(
             &mut host,
             &game,
@@ -891,7 +893,10 @@ impl InteractiveLoadStage {
             rng_seed,
             sim_config,
         } = start;
-        self.loading.status("Loading interface resources...", 0.12);
+        self.loading.status(
+            "Loading interface resources...",
+            LoadingPhase::InterfaceResources.end(),
+        );
         let (ground_mark, titbit_rows, minimap_widget) =
             self.process.engine_setup_resources(&mut self.host);
         // Pre-engine metadata extraction is done with the interface archive;
@@ -961,7 +966,7 @@ impl LoadedInteractiveStage {
     ) -> Result<LoadedInteractiveStage<AudioPreparedBootstrap>, (Box<MissionBootstrap>, MissionError)>
     {
         self.loading
-            .status("Loading mission audio...", LOADING_AUDIO_PROGRESS);
+            .status("Loading mission audio...", LoadingPhase::MissionAudio.end());
         let bootstrap = self
             .bootstrap
             .prepare_audio(self.process.audio_backend.as_mut(), profiles)?;
@@ -1667,9 +1672,10 @@ impl InteractiveMissionBuilder {
             }
         };
         timer.step("load stage begin");
-        loading
-            .loading
-            .status("Checking ranked mission authority...", 0.115);
+        loading.loading.status(
+            "Checking ranked mission authority...",
+            LoadingPhase::RankedAuthority.end(),
+        );
         let ranked_plan = if args.replay.is_some() || args.replay_data.is_some() {
             super::leaderboard_runtime::RankedPreFramePlan::browse_only(
                 "replay playback cannot submit a new ranked run",
