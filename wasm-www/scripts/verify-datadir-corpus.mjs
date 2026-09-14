@@ -14,8 +14,12 @@ export const DEMO_PARENT_ROOT = 'datadirs/demo-leicester';
 // bump (v16r2: keyed minimaps, shared-layer locale fallback).
 // v17: native shipping datadir format 17 (match-gated VQ sprite coding).
 // v17r2: same format, opusenc/libopus 1.6.1 audio and per-datadir music remasters.
-export const DEMO_ROOT = `${DEMO_PARENT_ROOT}/v17r2`;
-export const DEMO_PATH = `${DEMO_ROOT}/v17r2-web-opus-q80.rhdata.zst`;
+// v18: native shipping datadir format 18 (browser-decoded AVIF web images).
+// TODO(release): once v17r2 is published, move it into
+// RETAINED_DEMO_GENERATIONS below with its deployed digests (the corpus
+// verifier rejects a published generation directory that is not listed).
+export const DEMO_ROOT = `${DEMO_PARENT_ROOT}/v18`;
+export const DEMO_PATH = `${DEMO_ROOT}/v18-web-opus-q80.rhdata.zst`;
 export const DEMO_CONTENT_MANIFEST_PATH = `${DEMO_ROOT}/robinhood-web-content.json`;
 export const WEB_CONTENT_MANIFEST_NAME = 'robinhood-web-content.json';
 export const WEB_CONTENT_MANIFEST_SCHEMA = 2;

@@ -53,6 +53,20 @@ if [[ ! -d "$lossless_music_dir" ]]; then
     echo "missing lossless music WAV directory $lossless_music_dir (set ROBIN_LOSSLESS_MUSIC_DIR)" >&2
     exit 1
 fi
+# The converter runs `avifenc`/`avifdec` from PATH; prefer the toolchain's
+# pinned static builds and refuse any other version (AVIF bytes depend on
+# the exact libavif/libaom).
+export PATH="$toolchain/bin:$PATH"
+for avif_tool in avifenc avifdec; do
+    if ! command -v "$avif_tool" >/dev/null; then
+        echo "$avif_tool not on PATH (scripts/install_pinned_avif_tools.sh, then copy bin/$avif_tool into $toolchain/bin)" >&2
+        exit 1
+    fi
+    if [[ $("$avif_tool" --version | head -n 1) != 'Version: 1.4.2 (aom [enc/dec]:3.15.0)' ]]; then
+        echo "$avif_tool is not the pinned libavif 1.4.2 / libaom 3.15.0 build: $("$avif_tool" --version | head -n 1)" >&2
+        exit 1
+    fi
+done
 cargo build --locked --release -p robin_rs --bin convert_datadir --features tools
 target/release/convert_datadir \
     --input "$source_datadir" \

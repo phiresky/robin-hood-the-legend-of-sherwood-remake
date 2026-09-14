@@ -950,7 +950,7 @@ fn native_shipping_format_roundtrips_and_rejects_legacy_payloads() {
     datadir.locales.insert("de-DE".into(), german);
 
     let encoded = encode_native(&datadir);
-    assert_eq!(&encoded[..8], b"RHDDNA17");
+    assert_eq!(&encoded[..8], b"RHDDNA18");
     assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
     let decoded = decode_native(&encoded).expect("decode native shipping datadir");
     assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));
@@ -998,7 +998,7 @@ fn native_shipping_format_roundtrips_and_rejects_legacy_payloads() {
     );
 
     let mut previous_schema = encoded.clone();
-    previous_schema[..8].copy_from_slice(b"RHDDNA16");
+    previous_schema[..8].copy_from_slice(b"RHDDNA17");
     let error = decode_native(&previous_schema).unwrap_err();
     assert!(error.to_string().contains("regenerate datadir.bin"));
 

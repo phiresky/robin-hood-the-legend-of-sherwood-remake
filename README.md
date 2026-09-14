@@ -209,24 +209,25 @@ datadir deployment receipt is metadata, not game bytes:
 The dedicated datadir Worker stores only the separately authorized Demo
 closures. Its objects are served `immutable`, so every native datadir format
 is a separate generation directory, and so is any rebuild that changes bytes.
-The current generation (format 17) is:
+The current generation (format 18, AVIF web images) is:
 
-    /datadirs/demo-leicester/v17r2/v17r2-web-opus-q80.rhdata.zst
-    /datadirs/demo-leicester/v17r2/robinhood-web-content.json
-    /datadirs/demo-leicester/v17r2/missions/*.rhmission.zst
-    /datadirs/demo-leicester/v17r2/rhs/*.rhmission.zst
-    /datadirs/demo-leicester/v17r2/terrain/*.rhmission.zst
-    /datadirs/demo-leicester/v17r2/audio/*.rhmission.zst
-    /datadirs/demo-leicester/v17r2/audio/assets/*.opus
-    /datadirs/demo-leicester/v17r2/audio/bundles/*.bin
+    /datadirs/demo-leicester/v18/v18-web-opus-q80.rhdata.zst
+    /datadirs/demo-leicester/v18/robinhood-web-content.json
+    /datadirs/demo-leicester/v18/missions/*.rhmission.zst
+    /datadirs/demo-leicester/v18/rhs/*.rhmission.zst
+    /datadirs/demo-leicester/v18/terrain/*.rhmission.zst
+    /datadirs/demo-leicester/v18/audio/*.rhmission.zst
+    /datadirs/demo-leicester/v18/audio/assets/*.opus
+    /datadirs/demo-leicester/v18/audio/bundles/*.bin
 
 Earlier generations stay published byte-for-byte because older wasm builds and
 replay links pin them. They are listed with their digests in
 `RETAINED_DEMO_GENERATIONS` (`wasm-www/scripts/verify-datadir-corpus.mjs`);
 format 15 is the `/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst` closure
-directly under `/datadirs/demo-leicester/`, the first format-16 build is
-`/datadirs/demo-leicester/v16/`, and the second is
-`/datadirs/demo-leicester/v16r2/`.
+directly under `/datadirs/demo-leicester/`, the format-16 builds are
+`/datadirs/demo-leicester/v16/` and `/datadirs/demo-leicester/v16r2/`, and the
+format-17 (JPEG XL) builds are `/datadirs/demo-leicester/v17/` and
+`/datadirs/demo-leicester/v17r2/`.
 
 The shell fetches `/wasm/latest.json` when no query parameter is present. It
 loads the exact static JavaScript import closure declared by that manifest.
@@ -254,14 +255,15 @@ divergence.
 
 The game data is not rebuilt by CI because the source game
 data cannot be stored in this repository. Build the production web artifact
-with the canonical wrapper (which always selects JXL q80 maps, Opus audio, and
-the wasm-safe zstd window):
+with the canonical wrapper (which always selects AVIF q60 maps, minimaps,
+interface pictures and RLE sprite atlases, Opus audio, and the wasm-safe zstd
+window):
 
     scripts/build_web_shipping_datadir.sh \
         datadirs/demo_leicester_ecoste /tmp/robin-web-shipping
 
 Publish the generated `Data/datadir.bin` as
-`/datadirs/demo-leicester/v17r2/v17r2-web-opus-q80.rhdata.zst`, preserving its generated
+`/datadirs/demo-leicester/v18/v18-web-opus-q80.rhdata.zst`, preserving its generated
 `Data/robinhood-web-content.json`, `Data/missions/`, `Data/rhs/`,
 `Data/terrain/`, and `Data/audio/` closure beside it
 (`node wasm-www/scripts/assemble-datadir-corpus.mjs --update PRIOR_CORPUS

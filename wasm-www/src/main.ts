@@ -302,7 +302,7 @@ function preloadLocalShippingFiles(
 // their Demo generation in manifest.json, so replays of older builds keep
 // loading the retained older datadir. `?wasm-base=` development builds have no
 // manifest and use the current generation.
-const CURRENT_DEMO_DATADIR_PATH = '/datadirs/demo-leicester/v17r2/v17r2-web-opus-q80.rhdata.zst';
+const CURRENT_DEMO_DATADIR_PATH = '/datadirs/demo-leicester/v18/v18-web-opus-q80.rhdata.zst';
 const PUBLISHED_DEMO_ORIGIN = 'https://robinhood.phiresky.xyz';
 
 type DemoDatadirIdentity = { readonly sha256: string; readonly byteLength: number };

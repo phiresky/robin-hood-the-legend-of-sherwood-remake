@@ -69,7 +69,7 @@ fake "$bin/scp" </dev/null
 fake "$bin/node" </dev/null
 for avif_tool in avifenc avifdec; do
     fake "$bin/$avif_tool" <<'EOF'
-echo 'Version: 1.4.2 (aom [enc/dec]:3.15.0)'
+echo "Version: ${FAKE_AVIF_VERSION:-1.4.2 (aom [enc/dec]:3.15.0)}"
 EOF
 done
 fake "$bin/zstd" <<'EOF'
@@ -162,6 +162,13 @@ reject 'build_web_shipping_datadir.sh'
 FAKE_OPUSENC_LIBOPUS='libopus 1.5.2' release --web-only --rebuild-datadir --dry-run
 expect_status 1
 expect 'does not report libopus 1.6.1'
+reject 'build_web_shipping_datadir.sh'
+
+# 3c. A rebuild with an avifenc/avifdec other than the pinned libavif 1.4.2 on
+# libaom 3.15.0 is refused before converting (AVIF output depends on both).
+FAKE_AVIF_VERSION='1.4.1 (aom [enc/dec]:3.14.0)' release --web-only --rebuild-datadir --dry-run
+expect_status 1
+expect 'is not the pinned libavif 1.4.2 / libaom 3.15.0 build'
 reject 'build_web_shipping_datadir.sh'
 
 # 4. Dirty tree and a HEAD that is not main are refused before any work.
