@@ -1077,16 +1077,18 @@ fn postponed_sword_entry_rebuilds_exit_from_live_moving_state() {
     let sim = crate::sim_rng::test_context();
     let owner = engine.add_test_entity(TestActor::pc(P::Upright).action_state(AS::Waiting).build());
     let (sequence, index) = launch(&mut engine, owner, Command::EnterSwordfight);
-    engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence, index);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, index)
+        .unwrap()
+        .state = crate::sequence::SequenceState::Postponed;
     engine
         .get_entity_mut(owner)
         .unwrap()
         .actor_data_mut()
         .unwrap()
         .action_state = AS::Moving;
-
-    // Releasing postponed work re-registers it without changing its state.
-    engine.orders.sequence_manager.register_element_to_go(sequence, index);
 
     let mut display = crate::engine::HostDisplayState::default();
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
