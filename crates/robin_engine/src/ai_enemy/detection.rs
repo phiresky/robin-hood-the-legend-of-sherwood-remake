@@ -76,19 +76,6 @@ impl EnemyAi {
         los_clear
     }
 
-    /// Admission gate for one member of a whole-patrol broadcast: a
-    /// non-soldier member short-circuits before the detection query, so it
-    /// costs no visibility traffic.
-    ///
-    /// The broadcast walk runs in the engine, which owns both the chief and
-    /// the member, so the gate is evaluated through this accessor immediately
-    /// before the member's `think`.
-    pub(crate) fn detects_patrol_member_360(&self, member: NpcHandle, ctx: &AiContext) -> bool {
-        ctx.entity_view_logged(member, "patrol broadcast member")
-            .is_some_and(|v| v.is_soldier())
-            && self.is_detecting_360_degrees(member as HumanHandle, ctx)
-    }
-
     /// Reverse of [`Self::is_detecting_360_degrees`]: does `viewer`
     /// feel *me*?  The radius belongs to the viewer and the detection
     /// point to me, so the resulting ray runs viewer→me — call sites
@@ -229,82 +216,35 @@ impl EnemyAi {
     /// officer's real `Think` return value.
     pub(crate) fn resolve_charly_officer_report(
         &mut self,
-        env: ThinkEnv<'_>,
+        frame: u32,
         accepted: bool,
     ) -> AiFlow<()> {
-        let ctx = env.ctx;
         if accepted {
-            self.set_state_with_timer(
-                AiState::Seeking,
-                Substate::SeekingCharlyGoToOfficerSeen,
-                10,
-                ctx,
-            );
+            self.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficerSeen);
+            self.base.launch_timer(10, frame);
         } else {
             return Err(DutyCall::new(DutyFlags::empty(), false));
         }
         Ok(())
     }
 
-    pub(crate) fn resolve_soldier_alert_request(
-        &mut self,
-        env: ThinkEnv<'_>,
-        accepted: bool,
-    ) -> AiFlow<()> {
-        let ThinkEnv { sim, ctx, .. } = env;
-        if !accepted {
-            return Err(DutyCall::new(DutyFlags::empty(), false));
-        }
-
-        self.set_state(AiState::Seeking, Substate::SeekingRunningToOfficerSeen);
-        self.base
-            .say_with_flags(Remark::CallsOfficer, SpeechFlags::MYTALK_0);
-        let target = self.base.antagonist.unwrap_or_else(|| {
-            panic!(
-                "accepted soldier alert from {} requires a target officer",
-                self.base.me
-            )
-        });
-        let officer_target_pos = ctx
-            .entity_view(target)
-            .unwrap_or_else(|| {
-                panic!(
-                    "accepted soldier alert from {} requires target officer {} view",
-                    self.base.me, target
-                )
-            })
-            .forecasted_destination
-            .resolve(sim)
-            .position;
-        self.base.go_near(
-            officer_target_pos,
-            parameters_ai::AI_TALK_DISTANCE,
-            crate::ai::GotoFlags::RUN,
-            ctx,
-        );
-        self.base.launch_timer(20, ctx.frame);
-        Ok(())
-    }
-
+    /// Apply local result bookkeeping. A true result asks the caller to
+    /// finish the speech and point toward the live officer position.
     pub(crate) fn resolve_think_result(
         &mut self,
-        env: ThinkEnv<'_>,
+        frame: u32,
         accepted: bool,
         target: NpcHandle,
         continuation: ThinkResultContinuation,
-        global: &mut AiGlobalState,
-    ) -> AiFlow<()> {
-        let ThinkEnv {
-            ctx, tick, grid, ..
-        } = env;
+    ) -> AiFlow<bool> {
         match continuation {
             ThinkResultContinuation::OfficerCalledSoldier => {
                 if accepted {
                     self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForSoldier);
                     self.base
-                        .set_transient_emoticon(EmoticonType::XMark, 20, ctx.frame);
+                        .set_transient_emoticon(EmoticonType::XMark, 20, frame);
                     self.base.say(Remark::OfficerCallsSoldier);
-                    self.base.launch_timer(20, ctx.frame);
+                    self.base.launch_timer(20, frame);
                 } else {
                     return Err(DutyCall::new(DutyFlags::empty(), false));
                 }
@@ -313,7 +253,9 @@ impl EnemyAi {
                 if accepted {
                     self.base
                         .say_with_flags(Remark::SendsCharlyToOfficer, SpeechFlags::MYTALK_2);
-                    self.base.point_to(self.officers_position, ctx);
+                    // The caller reads the live pointing destination after
+                    // the speech callback has completed.
+                    return Ok(true);
                 }
             }
             ThinkResultContinuation::OfficerInstructedGroupSoldier { last } => {
@@ -334,100 +276,16 @@ impl EnemyAi {
                     if self.alerted_us.is_empty() {
                         return Err(DutyCall::new(DutyFlags::empty(), false));
                     } else {
-                        self.set_state_with_timer(
+                        self.set_state(
                             AiState::Seeking,
                             Substate::SeekingOfficerWaitForInstructedGroup,
-                            30,
-                            ctx,
                         );
-                    }
-                }
-            }
-            ThinkResultContinuation::OfficerAlertedSoldier {
-                last,
-                use_formation,
-                failure,
-            } => {
-                if accepted {
-                    self.alerted_us.push(target);
-                    self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::ConsiderReport {
-                            target,
-                            flags: ReportUpdateFlags::UPDATE_CHARLY.bits()
-                                | ReportUpdateFlags::UPDATE_TYPE.bits(),
-                        },
-                    );
-                }
-                let finished = if self.alerted_us.len() >= 20 {
-                    self.pending_alert_soldier_candidates.clear();
-                    true
-                } else if !self.pending_alert_soldier_candidates.is_empty() {
-                    let next = self.pending_alert_soldier_candidates.remove(0);
-                    let next_is_last = self.pending_alert_soldier_candidates.is_empty();
-                    self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::RequestThinkResult {
-                            target: next,
-                            caller: self.base.me,
-                            stimulus_type: StimulusType::CallAlert,
-                            info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
-                            continuation: ThinkResultContinuation::OfficerAlertedSoldier {
-                                last: next_is_last,
-                                use_formation,
-                                failure,
-                            },
-                        },
-                    );
-                    false
-                } else {
-                    last
-                };
-                if finished {
-                    self.pending_alert_soldier_candidates.clear();
-                    if accepted {
-                        // Original resumes AlertSoldiers only after the
-                        // accepted recipient's ConsiderReport call returns.
-                        // Keep that callback and all owner-side effects ahead
-                        // of formation/state/sequence work.
-                        self.base.outbox.reentrant.cross_npc_actions.push(
-                            CrossNpcAction::FinalizeAlertSoldiers {
-                                caller: self.base.me,
-                                use_formation,
-                                failure,
-                            },
-                        );
-                    } else {
-                        // A refused final call has no ConsiderReport boundary.
-                        self.finalize_alert_soldiers(
-                            ThinkEnv {
-                                grid: grid.filter(|_| use_formation),
-                                ..env
-                            },
-                            failure,
-                            global,
-                        )?;
-                    }
-                }
-            }
-            ThinkResultContinuation::OfficerCombatAlertedSoldier {
-                last,
-                // TODO: `use_formation` only ever fed the (unused) grid
-                // placeholder of `finish_command_soldiers_to_attack`; check
-                // whether the formation layout should honour it.
-                use_formation: _,
-            } => {
-                if accepted {
-                    self.alerted_us.push(target);
-                }
-                if last {
-                    if self.finish_command_soldiers_to_attack(ctx) {
-                        self.base.say(Remark::OfficerGivesAttackOrder);
-                    } else {
-                        self.enter_battle_reserve(ctx, tick);
+                        self.base.launch_timer(30, frame);
                     }
                 }
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     pub(super) fn queue_next_group_instruction(&mut self) {
@@ -455,7 +313,7 @@ impl EnemyAi {
             });
     }
 
-    pub(super) fn resume_failed_alert_soldiers(
+    pub(crate) fn resume_failed_alert_soldiers(
         &mut self,
         env: ThinkEnv<'_>,
         continuation: AlertSoldiersFailureContinuation,
@@ -509,49 +367,6 @@ impl EnemyAi {
                 self.set_state(AiState::Fleeing, Substate::FleeingRunToDoor);
                 self.base.fire_self_stimulus(StimulusType::EventReachPoint);
             }
-        }
-        Ok(())
-    }
-
-    pub(crate) fn finalize_alert_soldiers(
-        &mut self,
-        env: ThinkEnv<'_>,
-        failure: AlertSoldiersFailureContinuation,
-        global: &mut AiGlobalState,
-    ) -> AiFlow<()> {
-        let ThinkEnv { ctx, .. } = env;
-        // Missing-PC search is synchronous. The
-        // DEFAULT_LOOKING_FOR_CHARLY timer handler calls it and then arms its
-        // regular check timer, so that trailing 10-frame timer overwrites the
-        // 20-frame wait timer installed by a successful AlertSoldiers call.
-        // Rust suspends AlertSoldiers at the cross-NPC Think boundary; by the
-        // time this continuation runs, the caller tail has already armed the
-        // check timer.  Remember that exact suspended call site and replay
-        // its timer write after the alert finalization.
-        let resume_looking_for_charly_timer = matches!(
-            failure,
-            AlertSoldiersFailureContinuation::SeekMissedCharly { .. }
-        ) && self.base.current_state == AiState::Default
-            && matches!(
-                self.base.current_substate,
-                Substate::DefaultLookingForCharly | Substate::DefaultLookingSidewardsForCharly
-            )
-            && self.base.timer_is_running
-            && self.base.when_does_timer_ring
-                == ctx
-                    .frame
-                    .wrapping_add(parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32);
-        if !self.finish_alert_soldiers(env) {
-            self.resume_failed_alert_soldiers(env, failure, global)
-                .map_err(|call| {
-                    call.then(DutyTail::FinalizeAlertSoldiers {
-                        restore_check_timer: resume_looking_for_charly_timer,
-                    })
-                })?;
-        }
-        if resume_looking_for_charly_timer {
-            self.base
-                .launch_timer(parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32, ctx.frame);
         }
         Ok(())
     }
@@ -695,34 +510,34 @@ pub(super) fn view_radius_memo_viewer(
 /// Viewer half of a 180° detection test, so the test can be evaluated
 /// from the acting NPC, from an ally it is reasoning about, or from a
 /// phalanx member's snapshot.
-pub(super) struct Viewer180 {
+pub(crate) struct Viewer180 {
     /// Identity the surface radius memo is keyed by — the ally when the
     /// test runs through an ally's eyes, not the deciding soldier.
-    pub(super) entity: crate::element::EntityId,
-    pub(super) eye_ground: crate::coordinates::GroundPoint,
-    pub(super) eye_z: f32,
-    pub(super) direction: u16,
-    pub(super) in_building: bool,
-    pub(super) view_radius: u16,
-    pub(super) sq_view_radius: f32,
-    pub(super) view_direction: [f32; 2],
-    pub(super) real_half_aperture: f32,
+    pub(crate) entity: crate::element::EntityId,
+    pub(crate) eye_ground: crate::coordinates::GroundPoint,
+    pub(crate) eye_z: f32,
+    pub(crate) direction: u16,
+    pub(crate) in_building: bool,
+    pub(crate) view_radius: u16,
+    pub(crate) sq_view_radius: f32,
+    pub(crate) view_direction: [f32; 2],
+    pub(crate) real_half_aperture: f32,
 }
 
 /// Target half of a 180° detection test, built from an entity view or from
 /// a phalanx enemy snapshot.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub(super) struct Target180 {
-    pub(super) handle: HumanHandle,
+pub(crate) struct Target180 {
+    pub(crate) handle: HumanHandle,
     /// Raw active flag, not able-to-fight: an unconscious actor remains
     /// active and can still pass the 180-degree visibility test.
-    pub(super) active: bool,
+    pub(crate) active: bool,
     /// World-space detection point. Detection-point calculation starts from
     /// the raw element position; an AI-facing position may be a substituted
     /// door endpoint/carrier.
-    pub(super) detection_world: crate::coordinates::WorldPoint3D,
+    pub(crate) detection_world: crate::coordinates::WorldPoint3D,
     /// Projection obstacle the target stands on (view-radius memo key).
-    pub(super) obstacle: Option<crate::position_interface::ObstacleHandle>,
+    pub(crate) obstacle: Option<crate::position_interface::ObstacleHandle>,
 }
 
 /// Entity-view adapter over [`detects_180_degrees_core`].
@@ -760,14 +575,55 @@ pub(super) fn detects_180_degrees(
     detects_180_degrees_core(viewer, &target, ctx)
 }
 
-/// The single 180° detection implementation (steps listed on
-/// [`EnemyAi::is_detecting_180_degrees`]). `#[track_caller]` so adapters
-/// choose where the recorded queries are attributed.
 #[track_caller]
 pub(super) fn detects_180_degrees_core(
     viewer: &Viewer180,
     target: &Target180,
     ctx: &AiContext,
+) -> bool {
+    detects_180_degrees_live(viewer, target, ctx.obstacle_list(), || {
+        let viewer_eye_ground = viewer.eye_ground;
+        let viewer_eye_z = viewer.eye_z;
+        let target_handle = target.handle;
+        let sight_obstacles = ctx.obstacle_list();
+        let target_obstacle = target.obstacle.map(|handle| {
+        sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
+            panic!(
+                "is_detecting_180_degrees: target {target_handle} requires missing sight obstacle {handle}"
+            )
+        })
+    });
+        let compute_radius = || {
+            crate::ai_vision::compute_view_radius(
+                crate::coordinates::WorldPoint3D::new(
+                    viewer_eye_ground.x,
+                    viewer_eye_ground.y,
+                    viewer_eye_z,
+                ),
+                viewer.view_radius,
+                (viewer.view_direction[0], viewer.view_direction[1]),
+                viewer.real_half_aperture,
+                ctx.is_night_or_fog,
+                &ctx.fast_grid,
+                sight_obstacles,
+                target_obstacle,
+            )
+        };
+        let effective_view_radius =
+            ctx.compute_view_radius_cached(viewer.entity, target.obstacle, compute_radius);
+        effective_view_radius
+    })
+}
+
+/// The single 180° detection implementation (steps listed on
+/// [`EnemyAi::is_detecting_180_degrees`]). `#[track_caller]` so adapters
+/// choose where the recorded queries are attributed.
+#[track_caller]
+pub(crate) fn detects_180_degrees_live(
+    viewer: &Viewer180,
+    target: &Target180,
+    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    radius: impl FnOnce() -> f32,
 ) -> bool {
     // Step 1: viewer in a building — always returns false.
     if viewer.in_building {
@@ -823,38 +679,13 @@ pub(super) fn detects_180_degrees_core(
     // run for every target that survives the gates above — and only for
     // those, since the sampling is observable through the shared
     // per-surface radius cache.
-    let sight_obstacles = ctx.obstacle_list();
-    let target_obstacle = target.obstacle.map(|handle| {
-        sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
-            panic!(
-                "is_detecting_180_degrees: target {target_handle} requires missing sight obstacle {handle}"
-            )
-        })
-    });
-    let compute_radius = || {
-        crate::ai_vision::compute_view_radius(
-            crate::coordinates::WorldPoint3D::new(
-                viewer_eye_ground.x,
-                viewer_eye_ground.y,
-                viewer_eye_z,
-            ),
-            viewer.view_radius,
-            (viewer.view_direction[0], viewer.view_direction[1]),
-            viewer.real_half_aperture,
-            ctx.is_night_or_fog,
-            &ctx.fast_grid,
-            sight_obstacles,
-            target_obstacle,
-        )
-    };
-    let effective_view_radius =
-        ctx.compute_view_radius_cached(viewer.entity, target.obstacle, compute_radius);
+    let effective_view_radius = radius();
     if sq_distance > effective_view_radius * effective_view_radius {
         return false;
     }
 
     crate::sight_obstacle::is_reachable_3d(
-        ctx.obstacle_list(),
+        sight_obstacles,
         [viewer_eye_ground.x, viewer_eye_ground.y, viewer_eye_z],
         [
             target_detection_ground.x,

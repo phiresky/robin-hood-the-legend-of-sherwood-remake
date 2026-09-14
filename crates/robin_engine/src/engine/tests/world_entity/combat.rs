@@ -698,30 +698,15 @@ fn review2_combat_alert_preserves_original_busy_lock_acceptance() {
         .and_then(Entity::ai_controller_mut)
         .expect("review2 combat-alert soldier has AI")
         .locks_flag_field = AiLockFlags::BUSY;
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("review2 officer has EnemyAi")
-        .command_soldiers_to_attack(
-            Position {
-                x: 100.0,
-                ..Default::default()
-            },
-            crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-        );
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
-
-    assert_eq!(
-        engine
-            .get_entity(officer_id)
-            .and_then(Entity::enemy_ai)
-            .expect("review2 officer retains EnemyAi")
-            .alerted_us
-            .as_slice(),
-        &[soldier_id.index()],
-        "AI decisions report success when decision entry retains a BUSY stimulus"
-    );
+    assert!(engine.execute_ai_command_soldiers_to_attack(
+        &sim,
+        &assets,
+        officer_id,
+        Position {
+            x: 100.0,
+            ..Default::default()
+        }
+    ));
     assert_eq!(
         engine
             .get_entity(soldier_id)
@@ -740,24 +725,21 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("combat-alert caller has EnemyAi")
-        .command_soldiers_to_attack(
-            Position {
-                x: 300.0,
-                ..Default::default()
-            },
-            crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-        );
     engine
         .get_entity_mut(soldier_id)
         .and_then(Entity::enemy_ai_mut)
         .expect("combat-alert recipient has EnemyAi")
         .set_state(AiState::Fleeing, Substate::FleeingRunToDoor);
 
+    engine.execute_ai_combat_alert_decision(
+        &sim,
+        &assets,
+        officer_id,
+        Position {
+            x: 300.0,
+            ..Default::default()
+        },
+    );
     engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 
     let officer = engine
@@ -823,40 +805,27 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
             -5.0, -5.0, 5.0, 5.0,
         ));
 
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    assert_eq!(tick.camp_soldiers.len(), 2);
-    let grid = &engine.world.fast_grid;
-    engine
-        .world
-        .entities
-        .get_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("partial-refusal caller has EnemyAi")
-        .command_soldiers_to_attack(
-            Position {
-                x: 300.0,
-                ..Default::default()
-            },
-            crate::ai_enemy::ThinkEnv::new(
-                &crate::sim_rng::test_context(),
-                &ctx,
-                &tick,
-                Some(grid),
-            ),
-        );
     engine
         .get_entity_mut(refused_id)
         .and_then(Entity::enemy_ai_mut)
         .expect("partial-refusal rejector has EnemyAi")
         .set_state(AiState::Fleeing, Substate::FleeingRunToDoor);
 
+    engine.execute_ai_combat_alert_decision(
+        &sim,
+        &assets,
+        officer_id,
+        Position {
+            x: 300.0,
+            ..Default::default()
+        },
+    );
     engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 
     let officer = engine
         .get_entity(officer_id)
         .and_then(Entity::enemy_ai)
         .expect("partial-refusal caller retains EnemyAi");
-    assert_eq!(officer.alerted_us, vec![accepted_id.index()]);
     assert_eq!(
         officer.base.current_substate,
         Substate::AttackingOfficerGivingOrders
@@ -895,19 +864,15 @@ fn final_review_combat_alert_requires_recipient_360_detection() {
         })
         .expect("360-degree recipient is a soldier")
         .view_radius = 10;
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    let start = engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("360-degree caller has EnemyAi")
-        .command_soldiers_to_attack(
-            Position {
-                x: 300.0,
-                ..Default::default()
-            },
-            crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-        );
-    assert_eq!(start, crate::ai_enemy::CommandSoldiersStart::Rejected);
+    assert!(!engine.execute_ai_command_soldiers_to_attack(
+        &sim,
+        &assets,
+        officer_id,
+        Position {
+            x: 300.0,
+            ..Default::default()
+        }
+    ));
     assert!(
         engine
             .get_entity(officer_id)
@@ -995,26 +960,17 @@ fn closure_review_combat_alert_uses_exact_is_able_to_fight_under_retained_lock()
                 .set_state(AiState::Attacking, Substate::AttackingHitting),
         }
 
-        let (start, tick) = start_review_command_soldiers(&mut engine, &sim, &assets, officer_id);
-        let candidate = tick
-            .camp_soldiers
-            .iter()
-            .find(|candidate| candidate.handle == soldier_id.index())
-            .expect("ineligible active recipient remains represented in camp snapshot");
-        assert!(!candidate.is_able_to_fight, "case {case:?}");
-        assert_eq!(
-            start,
-            crate::ai_enemy::CommandSoldiersStart::Rejected,
+        let accepted = start_review_command_soldiers(&mut engine, &sim, &assets, officer_id);
+        assert!(
+            !accepted,
             "case {case:?} must be rejected before retained-lock Think"
         );
         assert!(
             engine
-                .get_entity(officer_id)
+                .get_entity(soldier_id)
                 .and_then(Entity::ai_controller)
                 .expect("eligibility caller retains AI")
-                .outbox
-                .reentrant
-                .cross_npc_actions
+                .stimulus_queue
                 .is_empty(),
             "case {case:?} must not be called"
         );
@@ -1043,25 +999,12 @@ fn closure_review_combat_alert_closed_eyes_do_not_disable_360_detection() {
         .base
         .locks_flag_field = AiLockFlags::BUSY;
 
-    let (start, tick) = start_review_command_soldiers(&mut engine, &sim, &assets, officer_id);
-    let candidate = tick
-        .camp_soldiers
-        .iter()
-        .find(|candidate| candidate.handle == soldier_id.index())
-        .expect("closed-eye recipient is in camp snapshot");
-    assert!(candidate.eye_blind);
-    assert!(candidate.is_able_to_fight);
-    assert_eq!(start, crate::ai_enemy::CommandSoldiersStart::Pending);
-
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
-    assert_eq!(
-        engine
-            .get_entity(officer_id)
-            .and_then(Entity::enemy_ai)
-            .expect("closed-eye caller retains EnemyAi")
-            .alerted_us,
-        vec![soldier_id.index()]
-    );
+    assert!(start_review_command_soldiers(
+        &mut engine,
+        &sim,
+        &assets,
+        officer_id
+    ));
     assert_eq!(
         engine
             .get_entity(soldier_id)

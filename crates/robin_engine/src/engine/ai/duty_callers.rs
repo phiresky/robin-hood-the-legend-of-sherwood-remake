@@ -112,46 +112,12 @@ impl EngineInner {
         self.approach_selected_sleeping_enemy(sim, assets, owner);
     }
 
-    fn select_sleeping_enemy(&self, owner: EntityId) -> Option<EntityId> {
-        let owner_world = self
-            .expect_entity(owner, "sleeping enemy target selection owner")
-            .element_data()
-            .position();
-        let count = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("sleeping enemy target count"))
-            .list_them
-            .len();
-        let mut minimum = 65_432_u16;
-        let mut nearest = None;
-        for index in 0..count {
-            let handle = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("sleeping enemy target index"))
-                .list_them[index];
-            let target = self.expect_human_id_for_ai_handle(handle, "sleeping enemy target");
-            if !self.sleeping_enemy_attack_allowed(owner, target) {
-                continue;
-            }
-            let world = self
-                .expect_entity(target, "sleeping enemy target position")
-                .element_data()
-                .position();
-            let dx = world.x - owner_world.x;
-            let dy = (world.y - owner_world.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-            let dz = world.z - owner_world.z;
-            if dx.abs().max(dy.abs()).max(dz.abs()) > f32::from(minimum) {
-                continue;
-            }
-            let distance = (dx * dx + dy * dy + dz * dz).sqrt() as u16;
-            if distance < minimum {
-                minimum = distance;
-                nearest = Some(target);
-            }
-        }
-        nearest
+    pub(in crate::engine) fn select_nearest_battle_target(
+        &self,
+        owner: EntityId,
+    ) -> Option<EntityId> {
+        self.select_live_ai_primary_target(owner, crate::ai_enemy::PrimaryTargetFlags::empty())
+            .map(|target| self.expect_human_id_for_ai_handle(target.get(), "nearest battle target"))
     }
 
     fn approach_selected_sleeping_enemy(
@@ -160,7 +126,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        let nearest = self.select_sleeping_enemy(owner);
+        let nearest = self.select_nearest_battle_target(owner);
         self.world
             .entities
             .expect_ai_controller_mut(owner, format_args!("sleeping enemy primary target"))
@@ -192,7 +158,11 @@ impl EngineInner {
         }
     }
 
-    fn sleeping_enemy_attack_allowed(&self, owner: EntityId, target: EntityId) -> bool {
+    pub(in crate::engine) fn sleeping_enemy_attack_allowed(
+        &self,
+        owner: EntityId,
+        target: EntityId,
+    ) -> bool {
         let vip = self
             .world
             .entities
@@ -350,7 +320,7 @@ mod tests {
             .unwrap()
             .element_data_mut()
             .set_position(WorldPoint3D::new(1378.0, 252.0, 0.0));
-        assert_eq!(engine.select_sleeping_enemy(owner), Some(targets[0]));
+        assert_eq!(engine.select_nearest_battle_target(owner), Some(targets[0]));
     }
 
     #[test]
@@ -362,7 +332,7 @@ mod tests {
             .entities
             .expect_enemy_ai_mut(owner, format_args!("test sleeper order"))
             .list_them = targets.map(|id| id.index()).to_vec();
-        assert_eq!(engine.select_sleeping_enemy(owner), Some(targets[0]));
+        assert_eq!(engine.select_nearest_battle_target(owner), Some(targets[0]));
         let first_position = engine
             .get_entity(targets[0])
             .unwrap()
@@ -373,6 +343,6 @@ mod tests {
             .unwrap()
             .element_data_mut()
             .set_position(first_position);
-        assert_eq!(engine.select_sleeping_enemy(owner), Some(targets[0]));
+        assert_eq!(engine.select_nearest_battle_target(owner), Some(targets[0]));
     }
 }

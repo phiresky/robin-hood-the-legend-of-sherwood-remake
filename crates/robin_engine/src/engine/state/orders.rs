@@ -20,7 +20,6 @@ use super::super::{PendingScrollAmulet, TimerEntry, movement};
 pub(crate) struct OrderRuntime {
     pub(crate) next_order_id: u32,
     pub(crate) messenger: Messenger,
-    pub(crate) pending_move_requests: Vec<(EntityId, crate::order::AiOrderIntent)>,
     pub(in crate::engine) pending_path_requests: movement::PendingPathRequestQueue,
     pub(in crate::engine) failed_path_requests: Vec<movement::FailedPathRequest>,
     pub(crate) timer_elements: Vec<TimerEntry>,
@@ -39,8 +38,6 @@ pub(crate) struct PersistedOrderRuntime {
     next_order_id: u32,
 
     messenger: Messenger,
-
-    pending_move_requests: Vec<(EntityId, crate::order::AiOrderIntent)>,
 
     pending_path_requests: movement::PendingPathRequestQueue,
 
@@ -66,7 +63,6 @@ impl PersistedOrderRuntime {
         let OrderRuntime {
             next_order_id: _,
             messenger: _,
-            pending_move_requests: _,
             pending_path_requests: _,
             failed_path_requests: _,
             timer_elements: _,
@@ -80,7 +76,6 @@ impl PersistedOrderRuntime {
         Self {
             next_order_id: value.next_order_id,
             messenger: value.messenger.clone(),
-            pending_move_requests: value.pending_move_requests.clone(),
             pending_path_requests: value.pending_path_requests.clone(),
             failed_path_requests: value.failed_path_requests.clone(),
             timer_elements: value.timer_elements.clone(),
@@ -99,7 +94,6 @@ impl PersistedOrderRuntime {
         OrderRuntime {
             next_order_id: self.next_order_id,
             messenger: self.messenger,
-            pending_move_requests: self.pending_move_requests,
             pending_path_requests: self.pending_path_requests,
             failed_path_requests: self.failed_path_requests,
             timer_elements: self.timer_elements,
@@ -119,9 +113,6 @@ impl OrderRuntime {
     pub(crate) fn remove_entity(&mut self, id: EntityId) {
         self.failed_path_requests
             .retain(|request| !request.request.references_entity(id));
-        self.pending_move_requests.retain(|(owner, intent)| {
-            *owner != id && intent.antagonist != Some(id) && intent.target_actor != Some(id.index())
-        });
         self.pending_path_requests.remove_entity(id);
     }
 
@@ -129,7 +120,6 @@ impl OrderRuntime {
         Self {
             next_order_id: 1,
             messenger: Messenger::new(),
-            pending_move_requests: Vec::new(),
             pending_path_requests: Default::default(),
             failed_path_requests: Vec::new(),
             timer_elements: Vec::new(),
@@ -181,22 +171,6 @@ impl OrderRuntime {
         self.pending_path_requests = pending;
         self.failed_path_requests = failed;
     }
-
-    /// Validate invariants that must survive queueing and snapshot restore.
-    ///
-    /// The pending-move queue deliberately permits several entries per owner:
-    /// one AI decision can issue two movement requests, each
-    /// of which launches its own sequence
-    /// in the original game. Both survive
-    /// until the sequence-manager hourglass instructs them in launch order.
-    pub(crate) fn validate_invariants(&self) -> Result<(), String> {
-        for (owner, intent) in &self.pending_move_requests {
-            intent
-                .validate_queued_move_topology()
-                .map_err(|detail| format!("pending AI move for {owner:?}: {detail}"))?;
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -236,7 +210,6 @@ mod tests {
         assert_eq!(orders.allocate_order_id().get(), 1);
         assert_eq!(orders.next_order_id, 2);
         assert_eq!(orders.messenger.count(), 0);
-        assert!(orders.pending_move_requests.is_empty());
         assert!(orders.failed_path_requests.is_empty());
         assert!(orders.timer_elements.is_empty());
         assert!(orders.pending_reinforcements.is_empty());
@@ -244,61 +217,5 @@ mod tests {
         assert!(orders.pending_hero_speeches.is_empty());
         assert!(orders.pending_hades_kills.is_empty());
         assert!(orders.pending_concussion_side_effects.is_empty());
-        assert!(orders.validate_invariants().is_ok());
-    }
-
-    /// One AI decision can queue two movement requests for the same actor —
-    /// Swordfight observation reconsideration falls through from its defensive
-    /// step-back into the attack block without returning
-    /// in the original game. Both
-    /// Sequence launches survive in the original game, so the queue must accept
-    /// repeated owners instead of collapsing them to the last intent.
-    #[test]
-    fn pending_move_queue_accepts_two_intents_from_one_think() {
-        let mut orders = OrderRuntime::new();
-        let owner = EntityId::new(7, crate::element::EntityIdKind::Pc);
-        let mut intent =
-            crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 10.0, 20.0);
-        intent.source_position = Some(crate::coordinates::MapPoint::new(1.0, 2.0));
-        intent.source_layer = Some(0);
-        intent.raw_source_layer = Some(0);
-
-        orders.pending_move_requests.push((owner, intent.clone()));
-        orders.pending_move_requests.push((owner, intent));
-
-        assert!(orders.validate_invariants().is_ok());
-        assert_eq!(orders.pending_move_requests.len(), 2);
-    }
-
-    #[test]
-    fn pending_move_queue_rejects_missing_call_time_topology() {
-        let mut orders = OrderRuntime::new();
-        let owner = EntityId::new(7, crate::element::EntityIdKind::Pc);
-        orders.pending_move_requests.push((
-            owner,
-            crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 10.0, 20.0),
-        ));
-
-        let error = orders.validate_invariants().unwrap_err();
-        assert!(error.contains("call-time source position"), "{error}");
-    }
-
-    #[test]
-    fn pending_move_queue_rejects_inconsistent_exact_sector_identity() {
-        let mut orders = OrderRuntime::new();
-        let owner = EntityId::new(7, crate::element::EntityIdKind::Pc);
-        let mut intent =
-            crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 10.0, 20.0);
-        intent.source_position = Some(crate::coordinates::MapPoint::new(1.0, 2.0));
-        intent.source_layer = Some(0);
-        intent.raw_source_layer = Some(0);
-        intent.source_sector = crate::position_interface::SectorHandle::new(3).map(|sector| {
-            sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(3).unwrap())
-        });
-        intent.source_sector_index = crate::fast_find_grid::SectorIndex::new(4);
-        orders.pending_move_requests.push((owner, intent));
-
-        let error = orders.validate_invariants().unwrap_err();
-        assert!(error.contains("source sector identity"), "{error}");
     }
 }

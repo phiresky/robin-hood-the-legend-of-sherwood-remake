@@ -123,18 +123,6 @@ pub(crate) fn consider_report_debug_matches(frame: u32, owner: u32) -> bool {
     config.matches_required([Some(frame), Some(owner)])
 }
 
-/// Geometry result of the original game's common patrol coordination.
-///
-/// The common routine chooses the formation action, but its state change
-/// is dynamically dispatched in the original game. Specialised owners can therefore apply the result
-/// through their own state transition before issuing the actor order.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum PatrolCoordinateAction {
-    Walk { target: Position, speed_factor: f32 },
-    Run { target: Position },
-    FaceChief { target: Position },
-}
-
 /// Action-state teardown/setup elements inserted by AI movement into the
 /// movement's own sequence ahead of the movement element
 /// in the original game. Each flag is
@@ -1079,26 +1067,18 @@ impl AiController {
                 action,
                 CrossNpcAction::SendStimulus { .. }
                     | CrossNpcAction::RegisterSynchronizingActor { .. }
-                    | CrossNpcAction::RelayStimulusToPatrolMembers { .. }
-                    | CrossNpcAction::RequestPatrolDispatch { .. }
                     | CrossNpcAction::RequestAlert { .. }
                     | CrossNpcAction::RequestThinkResult { .. }
                     | CrossNpcAction::ReportBackToOfficer { .. }
                     | CrossNpcAction::ConsiderReport { .. }
-                    | CrossNpcAction::FinalizeAlertSoldiers { .. }
-                    | CrossNpcAction::ResumeTowerGuardBattleDecisions { .. }
                     | CrossNpcAction::BroadcastLookThere { .. }
                     | CrossNpcAction::ResumeAfterLookThere { .. }
-                    | CrossNpcAction::InstructGatherPosition { .. }
-                    | CrossNpcAction::BreakPhalanx { .. }
-                    | CrossNpcAction::SetPhalanxThemList { .. }
                     | CrossNpcAction::UpdateLeftCombatNeighbour { .. }
                     | CrossNpcAction::UpdateRightCombatNeighbour { .. }
                     | CrossNpcAction::SetLeftCombatNeighbour { .. }
                     | CrossNpcAction::SetRightCombatNeighbour { .. }
                     | CrossNpcAction::SetArcherBehindMe { .. }
                     | CrossNpcAction::SetShieldBearerBeforeMe { .. }
-                    | CrossNpcAction::SetPrimaryTarget { .. }
                     | CrossNpcAction::Say { .. }
             ) {
                 synchronous.push(action);
@@ -1120,60 +1100,21 @@ impl AiController {
                     action,
                     CrossNpcAction::SendStimulus { .. }
                         | CrossNpcAction::RegisterSynchronizingActor { .. }
-                        | CrossNpcAction::RelayStimulusToPatrolMembers { .. }
-                        | CrossNpcAction::RequestPatrolDispatch { .. }
                         | CrossNpcAction::RequestAlert { .. }
                         | CrossNpcAction::RequestThinkResult { .. }
                         | CrossNpcAction::ReportBackToOfficer { .. }
                         | CrossNpcAction::ConsiderReport { .. }
-                        | CrossNpcAction::FinalizeAlertSoldiers { .. }
-                        | CrossNpcAction::ResumeTowerGuardBattleDecisions { .. }
                         | CrossNpcAction::BroadcastLookThere { .. }
                         | CrossNpcAction::ResumeAfterLookThere { .. }
-                        | CrossNpcAction::InstructGatherPosition { .. }
                         | CrossNpcAction::UpdateLeftCombatNeighbour { .. }
                         | CrossNpcAction::UpdateRightCombatNeighbour { .. }
                         | CrossNpcAction::SetLeftCombatNeighbour { .. }
                         | CrossNpcAction::SetRightCombatNeighbour { .. }
                         | CrossNpcAction::SetArcherBehindMe { .. }
                         | CrossNpcAction::SetShieldBearerBeforeMe { .. }
-                        | CrossNpcAction::SetPrimaryTarget { .. }
                         | CrossNpcAction::Say { .. }
                 )
             })
-    }
-
-    /// Drain only whole-patrol broadcasts, leaving every other queued action
-    /// in place so the broadcast's own member dispatches stay ordered against
-    /// them.
-    pub fn take_pending_patrol_member_relays(&mut self) -> Vec<CrossNpcAction> {
-        let mut relays = Vec::new();
-        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
-        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
-            if matches!(action, CrossNpcAction::RelayStimulusToPatrolMembers { .. }) {
-                relays.push(action);
-            } else {
-                deferred.push(action);
-            }
-        }
-        self.outbox.reentrant.cross_npc_actions = deferred;
-        relays
-    }
-
-    /// Drain only direct patrol-chief dispatch calls. The chief routine's
-    /// boolean controls whether the caller resumes its local event handler.
-    pub fn take_pending_patrol_dispatch_requests(&mut self) -> Vec<CrossNpcAction> {
-        let mut requests = Vec::new();
-        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
-        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
-            if matches!(action, CrossNpcAction::RequestPatrolDispatch { .. }) {
-                requests.push(action);
-            } else {
-                deferred.push(action);
-            }
-        }
-        self.outbox.reentrant.cross_npc_actions = deferred;
-        requests
     }
 
     /// Drain only result-bearing officer reports, leaving ordinary deferred
@@ -2272,9 +2213,38 @@ impl AiController {
         civilian: bool,
         depth: u8,
     ) {
+        self.begin_move_request(destination, flags);
+        if let Some(flags) = self.prepare_move_request(
+            destination,
+            flags,
+            position,
+            layer,
+            sector,
+            animation,
+            civilian,
+            depth,
+        ) {
+            self.queue_prepared_move(destination, flags, speed, action_state);
+        }
+    }
+
+    pub(crate) fn begin_move_request(&mut self, destination: Position, flags: GotoFlags) {
         self.last_goto_destination = destination;
         self.last_goto_flags = flags;
         self.couldnt_reachpoint = false;
+    }
+
+    pub(crate) fn prepare_move_request(
+        &mut self,
+        destination: Position,
+        flags: GotoFlags,
+        position: Position,
+        layer: u16,
+        sector: Option<crate::position_interface::SectorHandle>,
+        animation: crate::order::OrderType,
+        civilian: bool,
+        depth: u8,
+    ) -> Option<GotoFlags> {
         let mut flags = flags;
         if civilian {
             flags -= GotoFlags::FORBIDDEN_CIVILIANS;
@@ -2292,7 +2262,7 @@ impl AiController {
             )
         {
             self.finish_already_on_point(depth);
-            return;
+            return None;
         }
         let tolerance = if flags.contains(GotoFlags::NEAR) {
             self.stop_before_end_of_path_distance as f32
@@ -2304,7 +2274,7 @@ impl AiController {
             && dx * dx + dy * dy <= tolerance * tolerance
         {
             self.finish_already_on_point(depth);
-            return;
+            return None;
         }
         if destination.x <= 0.0
             || destination.y <= 0.0
@@ -2312,7 +2282,7 @@ impl AiController {
             || (destination.level as i16) < 0
         {
             self.couldnt_reachpoint = true;
-            return;
+            return None;
         }
         let crosses_sector = match (
             destination.sector.and_then(|s| s.arena_index()),
@@ -2327,6 +2297,21 @@ impl AiController {
         {
             flags -= GotoFlags::STRAIGHT;
         }
+        Some(flags)
+    }
+
+    pub(crate) fn queue_prepared_move(
+        &mut self,
+        destination: Position,
+        flags: GotoFlags,
+        speed: f32,
+        action_state: crate::element::ActionState,
+    ) {
+        let tolerance = if flags.contains(GotoFlags::NEAR) {
+            self.stop_before_end_of_path_distance as f32
+        } else {
+            0.0
+        };
         let GotoActionStateTeardown {
             quit_swordfight_before_move,
             enter_swordfight_before_move,
@@ -3125,135 +3110,6 @@ impl AiController {
         false
     }
 
-    // -- Patrol coordination --
-
-    /// Handle `CALL_PATROL_COORDINATE` from the chief: walk or run to the
-    /// assigned formation position.
-    pub fn coordinate_patrol(
-        &mut self,
-        info: &StimulusInfo,
-        ctx: &AiContext,
-        patrol_chief_position: Position,
-    ) {
-        let Some(action) = self.prepare_patrol_coordinate(info, ctx, patrol_chief_position) else {
-            return;
-        };
-        self.apply_base_patrol_coordinate(action, ctx);
-    }
-
-    /// Run the common patrol eligibility, stop-all, and geometry portion.
-    /// State and actor-order effects remain with the concrete AI owner.
-    pub(crate) fn prepare_patrol_coordinate(
-        &mut self,
-        info: &StimulusInfo,
-        ctx: &AiContext,
-        patrol_chief_position: Position,
-    ) -> Option<PatrolCoordinateAction> {
-        self.patrol_chief?;
-
-        let target_pos = match info {
-            StimulusInfo::Position(pos) => *pos,
-            _ => return None,
-        };
-
-        match self.current_substate {
-            // From idle/walking substates: stop current activity first
-            Substate::DefaultInMacro
-            | Substate::DefaultEnroute
-            | Substate::DefaultGotoPost
-            | Substate::DefaultGotoPostTurn
-            | Substate::DefaultOnPost
-            | Substate::DefaultGotoChief
-            | Substate::DefaultOnPostLookingSidewards => {
-                self.stop_all();
-            }
-            // Already in patrol formation — just update target
-            Substate::DefaultPatrolEnroute
-            | Substate::DefaultPatrolEnrouteRunning
-            | Substate::DefaultPatrolEnrouteWaiting => {}
-            _ => return None,
-        }
-
-        Some(Self::plan_patrol_coordinate(
-            target_pos,
-            ctx,
-            patrol_chief_position,
-        ))
-    }
-
-    /// Compute the formation action without committing the owner's state.
-    fn plan_patrol_coordinate(
-        target: Position,
-        ctx: &AiContext,
-        patrol_chief_position: Position,
-    ) -> PatrolCoordinateAction {
-        let vec_to_point = [target.x - ctx.position.x, target.y - ctx.position.y];
-        let vec_to_chief = [
-            patrol_chief_position.x - ctx.position.x,
-            patrol_chief_position.y - ctx.position.y,
-        ];
-        let distance =
-            (vec_to_point[0] * vec_to_point[0] + vec_to_point[1] * vec_to_point[1]).sqrt();
-        let speed_factor = PATROL_SPEED_BASE + distance / PATROL_SPEED_DIVISOR;
-
-        // Avoid stepping backward on the inner side of narrow curves:
-        // when distance <= 30, check if the target is opposite to the
-        // chief direction.
-        let near_point_backwards = if distance > 30.0 {
-            false
-        } else {
-            // Aspect-corrected dot product (negative when vec_to_point
-            // is pointing away from the chief in isometric map space).
-            let inv_ar = crate::position_interface::INVERSE_ASPECT_RATIO;
-            vec_to_chief[0] * vec_to_point[0] + vec_to_chief[1] * inv_ar * vec_to_point[1] * inv_ar
-                < 0.0
-        };
-
-        if near_point_backwards {
-            // Just turn to face the officer instead of walking backward
-            PatrolCoordinateAction::FaceChief {
-                target: Position {
-                    x: patrol_chief_position.x,
-                    y: patrol_chief_position.y,
-                    ..ctx.position
-                },
-            }
-        } else if speed_factor <= 2.0 {
-            PatrolCoordinateAction::Walk {
-                target,
-                speed_factor,
-            }
-        } else {
-            PatrolCoordinateAction::Run { target }
-        }
-    }
-
-    /// Shared fallback retained for callers without a specialised
-    /// state owner.
-    fn apply_base_patrol_coordinate(&mut self, action: PatrolCoordinateAction, ctx: &AiContext) {
-        match action {
-            PatrolCoordinateAction::FaceChief { target } => {
-                self.face_position_with_ctx(target, ctx);
-            }
-            PatrolCoordinateAction::Walk {
-                target,
-                speed_factor,
-            } => {
-                self.set_ai_state(AiState::Default);
-                self.current_substate = Substate::DefaultPatrolEnroute;
-                let flags =
-                    GotoFlags::NO_HALT | GotoFlags::DONT_STOP | self.default_path_walking_flags;
-                self.go_to_speed(target, flags, speed_factor, ctx);
-            }
-            PatrolCoordinateAction::Run { target } => {
-                self.set_ai_state(AiState::Default);
-                self.current_substate = Substate::DefaultPatrolEnrouteRunning;
-                let flags = GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP;
-                self.go_to(target, flags, ctx);
-            }
-        }
-    }
-
     /// Receive a facing direction from the patrol chief.
     pub fn set_instructed_patrol_direction(
         &mut self,
@@ -3629,7 +3485,7 @@ impl AiController {
     pub(crate) fn admit_think_after_role_gates(
         &mut self,
         stimulus: &Stimulus,
-        ctx: &AiContext,
+        ctx: &super::AiAdmission,
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
         // Reset standing-around timer.

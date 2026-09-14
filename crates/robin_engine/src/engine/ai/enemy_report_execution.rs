@@ -15,8 +15,6 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
         stimulus: &Stimulus,
-        ctx: &AiContext,
-        _tick: Option<&AiPerTickData>,
     ) -> Option<bool> {
         let enemy = self.world.entities.get(owner)?.enemy_ai()?;
         let substate = enemy.base.current_substate;
@@ -70,7 +68,8 @@ impl EngineInner {
                         let dy = position.y - remembered.y;
                         if waiting
                             || officer_substate == Substate::SeekingDetectedCharly
-                            || dx * dx + dy * dy >= ctx.sq_standard_view_radius
+                            || dx * dx + dy * dy
+                                >= (self.ai.standard_view_polygon_radius as f32).powi(2)
                         {
                             self.report_timer(owner, 20);
                         } else {
@@ -635,8 +634,6 @@ mod tests {
             &LevelAssets::new(),
             owner,
             &Stimulus::with_human(StimulusType::CallReport, 42),
-            &AiContext::test_fixture(),
-            None,
         );
     }
 
@@ -713,8 +710,6 @@ mod tests {
                 &LevelAssets::new(),
                 owner,
                 &Stimulus::new(StimulusType::EventDone),
-                &AiContext::test_fixture(),
-                None
             ),
             Some(false)
         );
@@ -752,20 +747,13 @@ mod tests {
             y: 1_097.013_8,
             ..Default::default()
         };
-        // The empty view map and stale owner position must not drive the decision.
-        let ctx = AiContext {
-            frame: 14_748,
-            sq_standard_view_radius: 300.0 * 300.0,
-            ..AiContext::test_fixture()
-        };
+        engine.ai.standard_view_polygon_radius = 300;
         assert_eq!(
             engine.execute_enemy_report_callback(
                 &sim,
                 &LevelAssets::new(),
                 owner,
                 &Stimulus::new(StimulusType::EventTimer),
-                &ctx,
-                None
             ),
             Some(false)
         );
@@ -788,8 +776,6 @@ mod tests {
                 &LevelAssets::new(),
                 owner,
                 &Stimulus::new(StimulusType::EventLoseConsciousness),
-                &ctx,
-                None
             ),
             None
         );

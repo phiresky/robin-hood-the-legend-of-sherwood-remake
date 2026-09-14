@@ -6,9 +6,22 @@
 //! default methods; each role supplies only the hooks.
 
 use super::{
-    AiContext, AiController, AiState, AlertLevel, GotoFlags, PatrolCoordinateAction, Position,
-    Stimulus, StimulusInfo, StimulusType, Substate,
+    AiContext, AiController, AiState, AlertLevel, GotoFlags, Position, Stimulus, StimulusInfo,
+    StimulusType, Substate,
 };
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+pub(crate) struct AiAdmission {
+    pub frame: u32,
+    pub original_creation_order: Option<u32>,
+    pub think_depth: u8,
+    pub in_building: bool,
+    pub self_is_rider: bool,
+    pub self_is_dead: bool,
+    pub self_is_unconscious: bool,
+    pub posture: crate::element::Posture,
+    pub position: Position,
+}
 
 pub(crate) trait AiRole {
     fn base_mut(&mut self) -> &mut AiController;
@@ -18,10 +31,6 @@ pub(crate) trait AiRole {
 
     /// The role's own `set_alert_status`.
     fn role_set_alert_status(&mut self, level: AlertLevel);
-
-    /// Runs after a patrol-coordinate walk/run order has been queued.
-    /// `first_new_order` is the actor order-queue length before the order.
-    fn after_patrol_move(&mut self, _first_new_order: usize) {}
 
     // -----------------------------------------------------------------------
     // Movement helpers — bundle set_state + go_to/go_near/go_to_speed
@@ -88,59 +97,6 @@ pub(crate) trait AiRole {
     ) {
         self.role_set_state(state, substate);
         self.base_mut().go_near(destination, distance, flags, ctx);
-    }
-
-    /// Apply common patrol geometry through the role's state changes.
-    /// The base routine owns stop-all and formation planning; the role owns
-    /// the state effects before the movement order and, via
-    /// [`AiRole::after_patrol_move`], any post-order adjustment.
-    fn coordinate_patrol(
-        &mut self,
-        info: &StimulusInfo,
-        ctx: &AiContext,
-        patrol_chief_position: Position,
-    ) {
-        let Some(action) =
-            self.base_mut()
-                .prepare_patrol_coordinate(info, ctx, patrol_chief_position)
-        else {
-            return;
-        };
-
-        match action {
-            PatrolCoordinateAction::FaceChief { target } => {
-                self.base_mut().face_position_with_ctx(target, ctx);
-            }
-            PatrolCoordinateAction::Walk {
-                target,
-                speed_factor,
-            } => {
-                let first_new_order = self.base_mut().outbox.actor.orders.len();
-                let flags = GotoFlags::NO_HALT
-                    | GotoFlags::DONT_STOP
-                    | self.base_mut().default_path_walking_flags;
-                self.go_to_speed(
-                    AiState::Default,
-                    Substate::DefaultPatrolEnroute,
-                    target,
-                    flags,
-                    speed_factor,
-                    ctx,
-                );
-                self.after_patrol_move(first_new_order);
-            }
-            PatrolCoordinateAction::Run { target } => {
-                let first_new_order = self.base_mut().outbox.actor.orders.len();
-                self.go_to(
-                    AiState::Default,
-                    Substate::DefaultPatrolEnrouteRunning,
-                    target,
-                    GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
-                    ctx,
-                );
-                self.after_patrol_move(first_new_order);
-            }
-        }
     }
 
     /// Decision-tick admission work which precedes the script `FilterAIEvent` call.

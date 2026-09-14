@@ -796,9 +796,9 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
 }
 
 #[test]
-fn halt_condolation_does_not_instruct_a_prequeued_replacement_move() {
+fn halt_condolation_does_not_instruct_a_registered_replacement_move() {
     use crate::element::{Command, Posture};
-    use crate::order::{AiOrderIntent, OrderType};
+    use crate::order::OrderType;
     use crate::sequence::{CascadeFlags, SequenceElement};
 
     let sim = crate::sim_rng::test_context();
@@ -812,11 +812,9 @@ fn halt_condolation_does_not_instruct_a_prequeued_replacement_move() {
         .sequence_manager
         .element_in_progress(outgoing_seq, 0);
 
-    engine.orders.pending_move_requests.push((
-        owner,
-        AiOrderIntent::new(OrderType::WalkingUpright, 90.0, 40.0),
-    ));
-    assert_eq!(engine.orders.pending_move_requests.len(), 1);
+    let replacement =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+    let replacement_seq = engine.orders.sequence_manager.launch_element(replacement);
 
     engine.orders.sequence_manager.set_halt_pending(true);
     engine
@@ -826,18 +824,13 @@ fn halt_condolation_does_not_instruct_a_prequeued_replacement_move() {
     engine.orders.sequence_manager.set_halt_pending(false);
     engine.dispatch_condolations(&sim, &LevelAssets::new());
 
-    assert_eq!(
-        engine.orders.pending_move_requests.len(),
-        1,
-        "a Halt card suppresses Think and must not steal its caller's replacement Move"
-    );
     assert!(
         engine
             .orders
             .sequence_manager
-            .sequences_iter()
-            .all(|sequence| sequence.id == outgoing_seq),
-        "the replacement must remain unregistered until its normal owner/manager boundary"
+            .deferred_elements_to_go()
+            .contains(&(replacement_seq, 0)),
+        "a Halt card suppresses Think and leaves the replacement pending manager instruction"
     );
 }
 

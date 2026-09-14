@@ -2041,27 +2041,12 @@ impl EngineInner {
                         [is_swordfighting, in_swordfight_substate],
                     );
                 }
-                let scratch = self.build_sim_scratch(assets);
-                let victim = self
-                    .world
-                    .entities
-                    .get(victim_id)
-                    .expect("sword-strike warning victim disappeared");
-                let mut ctx = self.ai_context_from_entity(
-                    victim,
-                    frame,
-                    self.entity_building_sector(victim.element_data().sector()),
-                    &scratch,
-                    assets,
-                );
-                self.refresh_selected_default_wait_identity(victim_id, &mut ctx);
-                let tick = self.build_npc_tick_data_without_forecasts(sim, victim_id, assets);
                 let stimulus = crate::ai::Stimulus::with_human(
                     crate::ai::StimulusType::EventSwordStrike,
                     attacker_id.index(),
                 );
                 let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
-                self.dispatch_filtered_stimulus(sim, assets, victim_id, &stimulus, &ctx, &tick);
+                self.dispatch_filtered_stimulus(sim, assets, victim_id, &stimulus, None);
                 if let Some(creation_order) = debug {
                     trace_reactive_sword(
                         frame,

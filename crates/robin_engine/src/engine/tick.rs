@@ -2502,10 +2502,11 @@ impl EngineInner {
         mut owner_hook: impl FnMut(&mut Self, EntityId),
     ) -> Vec<super::movement::TerminalMovementOrderPop> {
         let mut terminal_movement_order_pops = Vec::new();
-        let mut prepared = {
+        {
             let _detail = entity_system_detail_guard(EntitySystemDetail::PrepareNpc);
-            self.prepare_npc_owner_pass()
-        };
+            self.prepare_npc_owner_pass();
+        }
+        let mut shield_links_need_refresh = true;
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,
             assets,
@@ -2723,7 +2724,7 @@ impl EngineInner {
                             owner,
                             derived_tail_order_type,
                         );
-                        prepared.invalidate_after_pc_noise_refresh();
+                        shield_links_need_refresh = true;
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanNoise(owner));
                         engine.tick_tiredness_for(owner, assets);
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
@@ -2735,7 +2736,7 @@ impl EngineInner {
                             .get(owner)
                             .is_some_and(|entity| entity.ai_controller().is_some())
                         {
-                            engine.tick_npc_owner_pass(sim, assets, &mut prepared, owner);
+                            engine.tick_npc_owner_pass(sim, assets, &mut shield_links_need_refresh, owner);
                         }
                         engine.tick_pc_auto_heal_for(sim, owner);
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::PcTail(owner));
@@ -2747,7 +2748,7 @@ impl EngineInner {
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
                             owner,
                         ));
-                        engine.tick_npc_owner_pass(sim, assets, &mut prepared, owner);
+                        engine.tick_npc_owner_pass(sim, assets, &mut shield_links_need_refresh, owner);
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::NpcTail(owner));
                     }
                     _ => panic!(

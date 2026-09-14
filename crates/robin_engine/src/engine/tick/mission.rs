@@ -742,16 +742,8 @@ impl EngineInner {
 
         // ── Process pending AI orders ─────────────────────────────
         //
-        // AI Move intents collected by `launch_pending_orders_for_npc`
-        // route through `launch_ai_move`, which just enqueues into
-        // `pending_move_requests` (dedup-per-actor).  The drain below
-        // promotes one Move sequence element per unique actor this
-        // tick — absorbing redundant re-fires that would otherwise
-        // launch a fresh Move each frame and `InterruptCurrent` the
-        // in-flight one. A*-requiring elements enter the frame-paced
-        // path-request queue advanced by the following `Paths` phase.
+        // Register AI orders before the frame-paced path-request phase.
         self.process_pending_ai_orders(sim, assets);
-        self.drain_pending_move_requests(sim);
 
         // ── Dispatch per-waypoint ReachPoint scripts ─────────────
         // When the AI reaches a scripted waypoint it queues the

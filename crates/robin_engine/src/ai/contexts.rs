@@ -842,40 +842,6 @@ pub struct AntagonistInfo {
     pub in_building: bool,
 }
 
-/// Same-camp swordfighter considered during swordfight reconsideration.
-///
-/// This deliberately is not derived from [`crate::ai_enemy::FighterSnapshot`].
-/// The Original rebuilds this particular list from the complete camp fighter
-/// registry and gates it with maximum-norm distance, which uses the actors' 3D
-/// world positions.  The general fighter snapshot is instead a map-space,
-/// able-to-fight scan used by several other combat systems.
-#[derive(Debug, Clone, Copy)]
-pub struct ReconsiderSwordfightFriend {
-    pub handle: HumanHandle,
-    /// the friend's truncated 16-bit maximum-norm distance after the original game's isometric-Y
-    /// stretch. The cast precedes the `< 500` radius comparison.
-    pub max_norm_distance: u16,
-    pub number_of_opponents: u16,
-}
-
-/// Complete fighter-registry entry for swordfight observation reconsideration.
-///
-/// The original game admits fighters with raw element position, while the
-/// shared [`crate::ai_enemy::FighterSnapshot`] intentionally applies
-/// AI position's door-side forecast. Keep this
-/// call-site-specific raw position separate so other AI consumers retain the
-/// shared door-resolved semantics.
-#[derive(Debug, Clone, Copy)]
-pub struct ReconsiderSwordfightObservationFighter {
-    pub handle: HumanHandle,
-    pub raw_world_position: crate::coordinates::WorldPoint3D,
-    pub is_friendly: bool,
-    pub is_able_to_fight: bool,
-    pub is_soldier: bool,
-    pub primary_target: Option<AiEntityHandle>,
-    pub current_substate: Substate,
-}
-
 /// Per-tick analysis data computed by the engine's detection loop.
 /// Populated once per detection tick, consumed by battle_decisions
 /// and swordfight tactics. Passed alongside AiContext.
@@ -909,33 +875,10 @@ pub struct AiPerTickData {
     /// from `nearby_fighters` so radius-based scans retain their exact domain.
     pub fighter_registry: Vec<crate::ai_enemy::FighterSnapshot>,
     pub nearby_fighters: Vec<crate::ai_enemy::FighterSnapshot>,
-    /// Complete registry in Original order for the observation-only raw
-    /// world-position radius test. This must not replace `nearby_fighters`:
-    /// generic combat scans use the door-resolved AI position instead.
-    pub reconsider_swordfight_observation_fighters: Vec<ReconsiderSwordfightObservationFighter>,
-    /// Complete opposing-camp fighter registry for swordfight reconsideration.
-    /// Original applies no 500-unit prefilter here; each entry is admitted
-    /// by omnidirectional detection, whose radius depends on the observer.
-    pub reconsider_swordfight_enemies: Vec<crate::ai_enemy::FighterSnapshot>,
-    /// Complete same-camp, actively swordfighting registry scan for
-    /// swordfight reconsideration. Unlike `nearby_fighters`, its radius uses 3D
-    /// world positions and does not check combat readiness.
-    pub reconsider_swordfight_friends: Vec<ReconsiderSwordfightFriend>,
     /// Same-camp soldiers snapshot for alert functions (`alert_officer`,
     /// `alert_soldiers`).  Populated every tick from the engine's soldier
     /// snapshot list, filtered to the evaluating NPC's camp.
     pub camp_soldiers: Vec<crate::ai_enemy::CampSoldierInfo>,
-    /// Rank-soldier NPCs of every camp in registry order, the domain
-    /// officer attack-command scans.
-    pub alert_soldier_candidates: Vec<crate::ai_enemy::AlertSoldierCandidate>,
-    /// Same-camp soldiers who are currently unconscious + alive.
-    /// Populated alongside `camp_soldiers`, which skips unconscious
-    /// entries; the money-fight scans walk the whole camp registry, so
-    /// they merge this list back into `camp_soldiers` by handle to
-    /// recover registry order.
-    pub camp_unconscious_soldiers: Vec<crate::ai_enemy::CampUnconsciousSoldierInfo>,
-    pub visible_seeking_friends: u16,
-    pub friend_seek_clears_help_flag: bool,
     /// Pre-computed destination forecast for the primary target.
     /// Populated by the engine from the target entity's live state
     /// (door-pass, lift, building traversal). See [`forecast_destination_for_ia`].
@@ -1009,109 +952,6 @@ pub struct AiPerTickData {
     /// blocking gate on the path from that target back to the
     /// evaluating NPC. Empty when the branch doesn't apply.
     pub avenger_on_roof_wait_positions: Vec<(HumanHandle, Position)>,
-
-    /// Handles in `me`'s `DETECTABLE_ENEMY` list whose `seen_last_frame`
-    /// flag is set. Used by arrow-protection refresh so a shield bearer
-    /// doesn't raise his shield against a bow-armed enemy who is occluded
-    /// or has slipped out of his cone of vision this frame.
-    pub seen_last_frame_enemies: Vec<HumanHandle>,
-
-    /// Geometry of the door this NPC would walk *out* of when commanding
-    /// soldiers from inside a building. Used by the `AlertSoldiers`
-    /// indoor branch. `None` when the NPC is not inside a building or no
-    /// exit door is reachable.
-    pub my_exit_door: Option<MyExitDoorInfo>,
-
-    /// Current detection snapshots for every member of this NPC's
-    /// phalanx right-chain, including self. Consumed by
-    /// phalanx enemy-list rebuilding so every recursive step uses that
-    /// member's own radius, viewer geometry, and live enemy inputs.
-    /// The snapshots are pulled up-front to avoid mutating sibling AI
-    /// brains mid-tick.
-    pub phalanx_member_them_lists: Vec<PhalanxMemberThemList>,
-}
-
-/// One human target needed by a phalanx member's step-1 or step-2
-/// detection pass. These are explicit live values rather than a bare
-/// persistent handle so stale `list_them` entries still have to pass
-/// the member's current LOS/radius test.
-#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub struct PhalanxEnemySnapshot {
-    pub handle: HumanHandle,
-    pub position: Position,
-    /// Exact stored 3D position used by detection-point calculation. Rebuilding
-    /// world Y from `position.y + elevation` is not bit-identical after a
-    /// preceding 3D-to-map projection.
-    #[serde(default)]
-    pub world_position: crate::coordinates::WorldPoint3D,
-    pub direction: u16,
-    pub posture: crate::element::Posture,
-    pub elevation: f32,
-    pub is_rider: bool,
-    pub active: bool,
-    pub able_to_fight: bool,
-    pub dead: bool,
-    pub unconscious: bool,
-    pub friend: bool,
-    pub in_building: bool,
-    /// Projection obstacle the target stands on. View-radius calculation caches
-    /// and slices its view sphere per target surface before the final LOS.
-    pub obstacle: Option<crate::position_interface::ObstacleHandle>,
-}
-
-/// One phalanx member's live viewer state and enemy inputs. Equivalent
-/// to recursing into
-/// the right combat neighbor's phalanx enemy-list reinitialization.
-#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub struct PhalanxMemberThemList {
-    /// Member's element handle (matches `FighterSnapshot::handle`).
-    pub handle: HumanHandle,
-    /// Concrete viewer identity used by the per-surface view-radius memo.
-    pub entity: crate::element::EntityId,
-    /// Persistent enemy-list entries evaluated by step 1.
-    pub current_them_list: Vec<PhalanxEnemySnapshot>,
-    /// Live enemy-list entries evaluated by step 2.
-    pub detectable_enemies: Vec<PhalanxEnemySnapshot>,
-    /// Member viewer state used by both detection variants.
-    pub position: Position,
-    /// Exact stored 3D position used as the base of the eye-point calculation.
-    #[serde(default)]
-    pub world_position: crate::coordinates::WorldPoint3D,
-    pub direction: u16,
-    pub posture: crate::element::Posture,
-    pub elevation: f32,
-    pub is_rider: bool,
-    /// Live actor activity. The original game still follows an inactive member's
-    /// phalanx link, but both detection variants reject that member before
-    /// doing geometry or LOS work.
-    pub active: bool,
-    pub in_building: bool,
-    /// Live view-cone values consumed by view-radius calculation.
-    pub view_radius: u16,
-    pub view_direction: [f32; 2],
-    pub real_half_aperture: f32,
-    /// Square of this member's live view radius.
-    pub sq_view_radius: f32,
-}
-
-/// Snapshot of the door an NPC inside a building would use to step
-/// outside. Populated by the engine each tick from the NPC's stored
-/// door reference (or, lazily, the nearest building door when none is
-/// set). Geometry-only — the door's runtime state (open/closed, lock
-/// counter) doesn't affect formation placement.
-#[derive(Debug, Clone, Copy)]
-pub struct MyExitDoorInfo {
-    /// Outside-edge anchor point.
-    pub point_out: MapPoint,
-    /// Door midpoint.
-    pub point_mid: MapPoint,
-    /// Outside-layer index.
-    pub layer_out: u16,
-    /// Outside-sector handle. Wrapped in `Option` because
-    /// `SectorHandle::new(0)` returns `None` for the no-sector sentinel.
-    pub sector_out: Option<crate::position_interface::SectorHandle>,
-    /// Outside-edge as a full Position (for slot construction).
-    pub position_out: Position,
 }
 
 /// Same-camp soldier that is currently approaching its primary target,
@@ -1173,14 +1013,7 @@ impl AiPerTickData {
             primary_target_multiplicity: Vec::new(),
             fighter_registry: Vec::new(),
             nearby_fighters: Vec::new(),
-            reconsider_swordfight_observation_fighters: Vec::new(),
-            reconsider_swordfight_enemies: Vec::new(),
-            reconsider_swordfight_friends: Vec::new(),
             camp_soldiers: Vec::new(),
-            alert_soldier_candidates: Vec::new(),
-            camp_unconscious_soldiers: Vec::new(),
-            visible_seeking_friends: 0,
-            friend_seek_clears_help_flag: false,
             primary_target_forecast: None,
             enemy_detectable_forecasts: Vec::new(),
             enemy_detectable_positions: Vec::new(),
@@ -1199,9 +1032,6 @@ impl AiPerTickData {
             primary_target_carrier_handle: None,
             friend_swap_candidates: Vec::new(),
             avenger_on_roof_wait_positions: Vec::new(),
-            seen_last_frame_enemies: Vec::new(),
-            my_exit_door: None,
-            phalanx_member_them_lists: Vec::new(),
         }
     }
 }

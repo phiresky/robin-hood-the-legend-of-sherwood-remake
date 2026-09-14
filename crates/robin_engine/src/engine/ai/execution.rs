@@ -4,6 +4,26 @@
 use super::*;
 
 impl EngineInner {
+    pub(crate) fn ai_admission(&self, owner: EntityId) -> crate::ai::AiAdmission {
+        let entity = self
+            .world
+            .entities
+            .expect_entity(owner, format_args!("decision admission"));
+        crate::ai::AiAdmission {
+            frame: self.control.frame_counter,
+            original_creation_order: Some(self.world.original_creation_order(owner)),
+            think_depth: self.ai_think_depth(),
+            in_building: self
+                .entity_building_sector(entity.element_data().sector())
+                .is_some(),
+            self_is_rider: matches!(entity, Entity::Soldier(s) if s.soldier.rider),
+            self_is_dead: entity.is_dead(),
+            self_is_unconscious: entity.is_unconscious(),
+            posture: entity.element_data().posture(),
+            position: self.live_ai_position(owner),
+        }
+    }
+
     pub(in crate::engine) fn begin_ai_think_before_filter(
         &mut self,
         owner: EntityId,
@@ -61,6 +81,82 @@ impl EngineInner {
         call: crate::ai::DutyCall,
     ) -> bool {
         match call.tail {
+            crate::ai::DutyTail::SelectShotTarget {
+                old_substate,
+                cover_shield_bearer,
+            } => {
+                self.execute_ai_select_shot_target(
+                    sim,
+                    assets,
+                    owner,
+                    old_substate,
+                    cover_shield_bearer,
+                );
+            }
+            crate::ai::DutyTail::BattleOverview { flags } => {
+                self.execute_ai_get_battle_overview(sim, assets, owner, flags);
+            }
+            crate::ai::DutyTail::ReconsiderEnemyApproach { reachpoint } => {
+                self.execute_ai_reconsider_enemy_approach(sim, assets, owner, reachpoint);
+            }
+            crate::ai::DutyTail::AttackEnemy { target } => {
+                self.execute_ai_attack_enemy(sim, assets, owner, target);
+            }
+            crate::ai::DutyTail::RiderAttack { fallback } => {
+                if !self.execute_ai_maybe_make_rider_attack(sim, assets, owner) {
+                    match fallback {
+                        crate::ai::RiderAttackFallback::Approach => {
+                            self.duty_set_state(
+                                sim,
+                                assets,
+                                owner,
+                                crate::ai::AiState::Attacking,
+                                crate::ai::Substate::AttackingRunningToEnemy,
+                            );
+                            self.execute_ai_reconsider_enemy_approach(sim, assets, owner, true);
+                        }
+                        crate::ai::RiderAttackFallback::BattleDecisions => {
+                            self.execute_battle_decisions(sim, assets, owner);
+                        }
+                    }
+                }
+            }
+            crate::ai::DutyTail::RunAndAlertSoldiers { center } => {
+                self.execute_ai_run_and_alert_soldiers_decision(sim, assets, owner, center);
+            }
+            crate::ai::DutyTail::OfficerLookForSoldier { reason } => {
+                self.execute_ai_officer_look_for_soldier(sim, assets, owner, reason);
+            }
+            crate::ai::DutyTail::TowerGuardAlert { center } => {
+                self.execute_ai_tower_guard_alert(sim, assets, owner, center);
+            }
+            crate::ai::DutyTail::AlertOfficer { caller } => {
+                self.execute_ai_alert_officer_for_caller(sim, assets, owner, caller);
+            }
+            crate::ai::DutyTail::BattleDecisions => {
+                self.execute_battle_decisions(sim, assets, owner);
+            }
+            crate::ai::DutyTail::ReconsiderSwordfight { enemy_weak } => {
+                self.execute_reconsider_swordfight(sim, assets, owner, enemy_weak);
+            }
+            crate::ai::DutyTail::ReconsiderSwordfightObservation => {
+                self.execute_reconsider_swordfight_observation(sim, assets, owner);
+            }
+            crate::ai::DutyTail::CommandSoldiersToAttack { center } => {
+                self.execute_ai_combat_alert_decision(sim, assets, owner, center);
+            }
+            crate::ai::DutyTail::AlertSoldiers {
+                center,
+                flags,
+                failure,
+            } => {
+                self.execute_ai_alert_soldiers_with_failure(
+                    sim, assets, owner, center, flags, failure,
+                );
+            }
+            crate::ai::DutyTail::MoneyFight { operation } => {
+                self.execute_money_fight(sim, assets, owner, operation);
+            }
             crate::ai::DutyTail::None => {
                 self.execute_ai_return_to_duty(sim, assets, owner, call.flags);
             }
@@ -68,14 +164,33 @@ impl EngineInner {
                 self.execute_ai_return_to_duty(sim, assets, owner, call.flags);
                 self.execute_finish_exhausted_search(sim, assets, owner);
             }
+            crate::ai::DutyTail::SeekArea {
+                center,
+                standard_radius,
+                flags,
+                seek_direction,
+            } => {
+                self.execute_ai_seek_area(
+                    sim,
+                    assets,
+                    owner,
+                    center,
+                    standard_radius,
+                    flags,
+                    seek_direction,
+                );
+            }
+            crate::ai::DutyTail::SeekNextPoint => {
+                self.execute_ai_seek_next_point(sim, assets, owner);
+            }
             crate::ai::DutyTail::ScanSleepingEnemies { observer_camp } => {
                 self.execute_kill_nearby_sleeping_enemies(sim, assets, owner, observer_camp);
             }
             crate::ai::DutyTail::ApproachSleepingEnemies { targets } => {
                 self.execute_approach_sleeping_enemies(sim, assets, owner, targets);
             }
-            crate::ai::DutyTail::BroadcastPatrol { stimulus, members } => {
-                self.execute_ai_patrol_broadcast(sim, assets, owner, stimulus, members);
+            crate::ai::DutyTail::DispatchPatrol { stimulus } => {
+                self.execute_ai_dispatch_patrol_event(sim, assets, owner, stimulus);
             }
             crate::ai::DutyTail::Think { stimulus } => {
                 self.execute_ai_callback(sim, assets, owner, &stimulus);
@@ -83,14 +198,28 @@ impl EngineInner {
             crate::ai::DutyTail::SearchCharlyTimer
             | crate::ai::DutyTail::TooProudOverviewRemark
             | crate::ai::DutyTail::SwordfightInsult
-            | crate::ai::DutyTail::AfterCombatInjury
-            | crate::ai::DutyTail::FinalizeAlertSoldiers { .. } => {
+            | crate::ai::DutyTail::GotHitViewStatus
+            | crate::ai::DutyTail::FinishBattleFightAfterAttack
+            | crate::ai::DutyTail::AfterCombatInjury => {
                 panic!("caller tail used as a duty operation");
             }
         }
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
         for tail in call.after {
             match tail {
+                crate::ai::DutyTail::FinishBattleFightAfterAttack => {
+                    self.finish_ai_battle_fight_after_attack(sim, assets, owner);
+                }
+                crate::ai::DutyTail::GotHitViewStatus => {
+                    let npc = self
+                        .world
+                        .entities
+                        .expect_ai_actor_data_mut(owner, format_args!("hit eye-status tail"));
+                    crate::ai_vision::set_view_status(
+                        npc,
+                        crate::element::EyeStatus::DieOrGetUnconscious,
+                    );
+                }
                 crate::ai::DutyTail::SearchCharlyTimer => {
                     self.world
                         .entities
@@ -119,19 +248,6 @@ impl EngineInner {
                         .entities
                         .expect_enemy_ai_mut(owner, format_args!("combat injury tail"))
                         .finish_after_combat_injury();
-                }
-                crate::ai::DutyTail::FinalizeAlertSoldiers {
-                    restore_check_timer,
-                } => {
-                    if restore_check_timer {
-                        self.world
-                            .entities
-                            .expect_ai_controller_mut(owner, format_args!("alert timer tail"))
-                            .launch_timer(
-                                crate::parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32,
-                                self.control.frame_counter,
-                            );
-                    }
                 }
                 _ => panic!("duty operation used as a caller tail"),
             }
@@ -225,87 +341,108 @@ impl EngineInner {
         stimulus: &crate::ai::Stimulus,
         target: Option<EntityId>,
     ) -> bool {
-        let scratch = self.build_sim_scratch(assets);
-        let mut ctx = self.ai_context_for(owner, self.control.frame_counter, &scratch, assets);
-        ctx.in_uninterruptible_command = self.is_very_very_busy(owner);
-        let tick = self
-            .world
-            .entities
-            .expect_entity(owner, format_args!("nested Think owner"))
-            .enemy_ai()
-            .is_some()
-            .then(|| self.build_npc_tick_data_for_target(sim, owner, assets, target));
-        self.dispatch_think_with_drain(sim, owner, stimulus, &ctx, tick.as_ref(), assets)
+        self.dispatch_think_with_drain(sim, owner, stimulus, target, assets)
     }
 
-    pub(in crate::engine) fn execute_ai_think(
+    /// Run the body of an already admitted decision without entering a new frame.
+    pub(in crate::engine) fn execute_ai_handler_body(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
-        ctx: &mut AiContext,
-        enemy_tick: Option<&AiPerTickData>,
-        friendly_tick: Option<&crate::ai_friendly::FriendlyPerTickData>,
+        target: Option<EntityId>,
     ) -> bool {
-        // Direct human interactions can address a PC without an AI brain.
-        if self
+        let enemy_owner = self
             .world
             .entities
-            .get(owner)
-            .and_then(Entity::ai_controller)
-            .is_none()
-        {
-            return false;
-        }
-        ctx.think_depth = self.ai_think_depth();
-        let admitted = {
-            let entity = self
+            .expect_entity(owner, format_args!("admitted decision owner"))
+            .enemy_ai()
+            .is_some();
+        let handled = if stimulus.stimulus_type == StimulusType::EventReturnToDuty {
+            Err(crate::ai::DutyCall::new(
+                crate::ai::DutyFlags::empty(),
+                false,
+            ))
+        } else if enemy_owner
+            && matches!(
+                stimulus.stimulus_type,
+                StimulusType::EventTimer | StimulusType::CallInstruction
+            )
+            && self
                 .world
                 .entities
-                .expect_entity_mut(owner, format_args!("Think admission"));
-            if let Some(enemy) = entity.enemy_ai_mut() {
-                enemy.begin_think(
-                    crate::ai_enemy::ThinkEnv::new(
-                        sim,
-                        ctx,
-                        enemy_tick.expect("enemy Think requires tactical data"),
-                        Some(&self.world.fast_grid),
-                    ),
-                    stimulus,
-                    &mut self.ai.global,
-                )
-            } else {
-                entity
-                    .friendly_ai_mut()
-                    .expect("Think owner has no brain")
-                    .begin_think(sim, stimulus, &mut self.ai.global, ctx)
-            }
-        };
-        if !admitted {
-            self.execute_ai_end_think(sim, assets, owner);
-            return true;
-        }
-
-        let handled = if let Some(handled) =
-            self.execute_friendly_callback(sim, assets, owner, stimulus, ctx)
+                .expect_ai_controller(owner, format_args!("phalanx timer"))
+                .current_substate
+                == crate::ai::Substate::AttackingPhalanx
         {
+            if stimulus.stimulus_type == StimulusType::EventTimer {
+                self.execute_ai_phalanx_timer(sim, assets, owner);
+            } else {
+                self.execute_ai_phalanx_instruction(sim, assets, owner);
+            }
+            Ok(false)
+        } else if enemy_owner
+            && stimulus.stimulus_type == StimulusType::EventTimer
+            && self
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("shield timer"))
+                .current_substate
+                == crate::ai::Substate::AttackingAdvancingWithShield
+        {
+            self.execute_ai_advancing_shield_timer(sim, assets, owner);
+            Ok(false)
+        } else if enemy_owner && stimulus.stimulus_type == StimulusType::CallPatrolCoordinate {
+            self.execute_ai_coordinate_patrol(sim, assets, owner, &stimulus.info);
+            Ok(false)
+        } else if let Some(handled) = self.execute_friendly_callback(sim, assets, owner, stimulus) {
             Ok(handled)
         } else if let Some(handled) =
-            self.execute_enemy_report_callback(sim, assets, owner, stimulus, ctx, enemy_tick)
+            self.execute_enemy_report_callback(sim, assets, owner, stimulus)
         {
             Ok(handled)
         } else {
+            let scratch = self.build_sim_scratch(assets);
+            let mut ctx = self.ai_context_for(owner, self.control.frame_counter, &scratch, assets);
+            if let crate::ai::StimulusInfo::Human(handle) = stimulus.info {
+                let view = ctx.entity_view(handle.get()).unwrap_or_else(|| {
+                    panic!("decision stimulus references missing human {handle}")
+                });
+                ctx.antagonist = Some(crate::ai::AntagonistInfo {
+                    position: view.position,
+                    camp: view.camp,
+                    is_swordfighting: view.is_swordfighting,
+                    is_pc: view.is_pc,
+                    is_robin: view.is_robin,
+                    is_vip: view.is_vip,
+                    in_building: view.in_building,
+                });
+            }
+            ctx.in_uninterruptible_command = self.is_very_very_busy(owner);
+            ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
+            ctx.enter_swordfight_pending = self
+                .orders
+                .sequence_manager
+                .element_is_about_to_be_launched_or_postponed_by_current(
+                    owner,
+                    crate::element::Command::EnterSwordfight,
+                );
+            self.refresh_selected_default_wait_identity(owner, &mut ctx);
+            let enemy_tick = enemy_owner
+                .then(|| self.build_npc_tick_data_for_target(sim, owner, assets, target));
             let entity = self
                 .world
                 .entities
                 .expect_entity_mut(owner, format_args!("Think handler"));
-            if let Some(enemy) = entity.enemy_ai_mut() {
+            let result = if let Some(enemy) = entity.enemy_ai_mut() {
                 enemy.think_body(
                     crate::ai_enemy::ThinkEnv::new(
                         sim,
-                        ctx,
-                        enemy_tick.expect("enemy Think requires tactical data"),
+                        &ctx,
+                        enemy_tick
+                            .as_ref()
+                            .expect("enemy Think requires tactical data"),
                         Some(&self.world.fast_grid),
                     ),
                     stimulus,
@@ -319,12 +456,13 @@ impl EngineInner {
                         sim,
                         stimulus,
                         &mut self.ai.global,
-                        ctx,
-                        friendly_tick.expect("friendly Think requires tactical data"),
+                        &ctx,
                         Some(&self.world.fast_grid),
                         Some(self.script_domains.interactables.doors.as_slice()),
                     )
-            }
+            };
+            ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
+            result
         };
         let handled = match handled {
             Ok(handled) => handled,
@@ -345,6 +483,48 @@ impl EngineInner {
         if has_macro_call {
             self.drain_pending_for_npc(sim, owner, assets);
         }
+        handled
+    }
+
+    pub(in crate::engine) fn execute_ai_think(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        stimulus: &crate::ai::Stimulus,
+        target: Option<EntityId>,
+    ) -> bool {
+        // Direct human interactions can address a PC without an AI brain.
+        if self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::ai_controller)
+            .is_none()
+        {
+            return false;
+        }
+        let admission = self.ai_admission(owner);
+        let admitted = {
+            let entity = self
+                .world
+                .entities
+                .expect_entity_mut(owner, format_args!("Think admission"));
+            if let Some(enemy) = entity.enemy_ai_mut() {
+                enemy.begin_think(&admission, stimulus, &mut self.ai.global)
+            } else {
+                entity
+                    .friendly_ai_mut()
+                    .expect("Think owner has no brain")
+                    .begin_think(sim, stimulus, &mut self.ai.global, &admission)
+            }
+        };
+        if !admitted {
+            self.execute_ai_end_think(sim, assets, owner);
+            return true;
+        }
+
+        let handled = self.execute_ai_handler_body(sim, assets, owner, stimulus, target);
         let suspended = stimulus.stimulus_type == StimulusType::EventAfterScriptGoOn
             && self
                 .world
@@ -357,9 +537,12 @@ impl EngineInner {
             self.execute_ai_end_think(sim, assets, owner);
         }
         if let Some(enemy) = self.world.entities.get(owner).and_then(Entity::enemy_ai) {
-            enemy
-                .base
-                .debug_macro_lifecycle(ctx, "think_return", stimulus.stimulus_type);
+            enemy.base.debug_macro_lifecycle_at(
+                admission.frame,
+                admission.original_creation_order,
+                "think_return",
+                stimulus.stimulus_type,
+            );
         }
         handled
     }

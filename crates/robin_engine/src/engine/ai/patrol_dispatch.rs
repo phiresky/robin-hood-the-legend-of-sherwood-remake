@@ -1,40 +1,102 @@
 use super::*;
 
 impl EngineInner {
-    /// Walk a patrol chief's members, delivering the whole-patrol stimulus to
-    /// each one that the chief currently 360-degree detects.
-    ///
-    /// The detection gate is evaluated inside the loop, immediately before the
-    /// member's own `think`, so a member whose visibility changed because an
-    /// earlier member's dispatch moved somebody is judged on the state that
-    /// dispatch left behind.
-    pub(super) fn process_synchronous_patrol_member_relay_for(
+    pub(in crate::engine) fn execute_ai_dispatch_patrol_event(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        source_id: crate::element::EntityId,
         assets: &LevelAssets,
+        owner: EntityId,
+        mut stimulus: crate::ai::Stimulus,
     ) {
-        let relays = self
+        if !self.dispatch_live_stimulus_to_patrol(sim, assets, owner, &stimulus) {
+            stimulus.to_whole_patrol = true;
+            self.resume_local_patrol_stimulus(sim, assets, owner, &stimulus);
+        }
+    }
+
+    fn resume_local_patrol_stimulus(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        stimulus: &crate::ai::Stimulus,
+    ) {
+        let target = match stimulus.info {
+            crate::ai::StimulusInfo::Human(handle)
+                if matches!(
+                    stimulus.stimulus_type,
+                    crate::ai::StimulusType::EventView
+                        | crate::ai::StimulusType::EventOutOfView
+                        | crate::ai::StimulusType::EventSeesBeggar
+                        | crate::ai::StimulusType::EventEnemyNear
+                ) =>
+            {
+                Some(self.expect_entity_id_for_index(handle.get(), "patrol detection target"))
+            }
+            _ => None,
+        };
+        self.execute_ai_handler_body(sim, assets, owner, stimulus, target);
+    }
+
+    fn dispatch_live_stimulus_to_patrol(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        stimulus: &crate::ai::Stimulus,
+    ) -> bool {
+        use crate::ai::{AiState, StimulusType, Substate};
+
+        if stimulus.to_whole_patrol {
+            return false;
+        }
+        let ai = self
             .world
             .entities
-            .expect_ai_controller_mut(source_id, format_args!("patrol broadcast source"))
-            .take_pending_patrol_member_relays();
-
-        for relay in relays {
-            let crate::ai::CrossNpcAction::RelayStimulusToPatrolMembers {
-                members,
-                stimulus_type,
-                info,
-            } = relay
-            else {
-                unreachable!("patrol-broadcast drain returned a different cross-NPC action")
-            };
-            let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
-            stimulus.info = info;
-            stimulus.to_whole_patrol = true;
-
-            self.execute_ai_patrol_member_broadcast(sim, assets, source_id, &stimulus, members);
+            .expect_enemy_ai(owner, format_args!("patrol dispatch owner"));
+        if matches!(
+            stimulus.stimulus_type,
+            StimulusType::EventSeesObject | StimulusType::EventHear | StimulusType::EventSeesBody
+        ) && ai
+            .last_stimulus_dispatched_to_patrol
+            .as_ref()
+            .is_some_and(|last| last.is_similar(stimulus))
+        {
+            return true;
         }
+        match ai.base.current_state {
+            AiState::Default
+                if ai.base.current_substate != Substate::DefaultPatrolEnrouteRunning => {}
+            AiState::Wondering => {}
+            _ => return false,
+        }
+        if let Some(chief) = ai.base.patrol_chief {
+            if matches!(
+                self.world
+                    .entities
+                    .expect_entity(chief, format_args!("patrol chief")),
+                Entity::Soldier(_)
+            ) && self.patrol_member_visible(assets, owner, chief)
+            {
+                return self.dispatch_live_stimulus_to_patrol(sim, assets, chief, stimulus);
+            }
+        }
+
+        let ai = self
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("patrol dispatch owner"));
+        ai.last_stimulus_dispatched_to_patrol = Some(*stimulus);
+        if ai.base.patrol.is_empty() {
+            return false;
+        }
+        // This call intentionally retains membership before recursively
+        // processing the chief, which can rebuild the live patrol list.
+        let members = ai.base.patrol.iter().map(|member| member.index()).collect();
+        let mut forwarded = *stimulus;
+        forwarded.to_whole_patrol = true;
+        self.execute_ai_patrol_broadcast(sim, assets, owner, forwarded, members);
+        true
     }
 
     pub(in crate::engine) fn execute_ai_patrol_broadcast(
@@ -65,30 +127,12 @@ impl EngineInner {
                 )
             });
 
-            let scratch = self.build_sim_scratch(assets);
-            let detected = {
-                let building_sector = self
-                    .world
+            let detected = matches!(
+                self.world
                     .entities
-                    .get(source_id)
-                    .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                    .unwrap_or_else(|| {
-                        panic!("patrol broadcast chief {} disappeared", source_id.index())
-                    });
-                let entity = self.expect_entity(source_id, "patrol broadcast chief");
-                let chief_ctx = self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    building_sector,
-                    &scratch,
-                    assets,
-                );
-                let chief_ai = self
-                    .world
-                    .entities
-                    .expect_enemy_ai(source_id, format_args!("patrol broadcast chief"));
-                chief_ai.detects_patrol_member_360(member, &chief_ctx)
-            };
+                    .expect_entity(member_id, format_args!("patrol broadcast member")),
+                Entity::Soldier(_)
+            ) && self.patrol_member_visible(assets, source_id, member_id);
             tracing::trace!(
                 target: "patrol_relay",
                 chief = source_id.index(),
@@ -101,151 +145,7 @@ impl EngineInner {
                 continue;
             }
 
-            let building_sector = self
-                .world
-                .entities
-                .get(member_id)
-                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                .unwrap_or_else(|| panic!("patrol broadcast member {member} disappeared"));
-            let ctx = {
-                let entity = self.expect_entity(member_id, "patrol broadcast member");
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    building_sector,
-                    &scratch,
-                    assets,
-                )
-            };
-            let tick_data = self.build_npc_tick_data(sim, member_id, assets);
-            self.dispatch_think_with_drain(sim, member_id, stimulus, &ctx, &tick_data, assets);
-        }
-    }
-
-    /// Invoke a patrol chief's dispatch routine exactly as the subordinate's
-    /// direct original-game behavior does. Its return value, rather than a
-    /// prediction from the chief's state, decides whether the subordinate
-    /// resumes its local handler.
-    pub(super) fn process_synchronous_patrol_dispatch_requests_for(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        source_id: crate::element::EntityId,
-        assets: &LevelAssets,
-    ) {
-        let requests = self
-            .world
-            .entities
-            .expect_ai_controller_mut(source_id, format_args!("patrol-dispatch source"))
-            .take_pending_patrol_dispatch_requests();
-
-        for request in requests {
-            let crate::ai::CrossNpcAction::RequestPatrolDispatch {
-                chief,
-                caller,
-                stimulus_type,
-                info,
-            } = request
-            else {
-                unreachable!("patrol-dispatch drain returned a different action")
-            };
-            assert_eq!(
-                source_id.index(),
-                caller,
-                "patrol-dispatch caller must be its owner"
-            );
-            let chief_id = self.entity_id_for_index(chief).unwrap_or_else(|| {
-                panic!(
-                    "synchronous patrol dispatch from NPC {caller} references missing chief {chief}"
-                )
-            });
-            if !matches!(self.world.entities.get(chief_id), Some(Entity::Soldier(s)) if s.npc.ai_brain.enemy().is_some())
-            {
-                panic!("patrol chief {chief} is not an enemy soldier");
-            }
-
-            let scratch = self.build_sim_scratch(assets);
-            let chief_building_sector = self
-                .world
-                .entities
-                .get(chief_id)
-                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                .unwrap_or_else(|| panic!("patrol chief {chief} disappeared"));
-            let mut chief_ctx = {
-                let entity = self.expect_entity(chief_id, "patrol chief");
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    chief_building_sector,
-                    &scratch,
-                    assets,
-                )
-            };
-            self.refresh_selected_default_wait_identity(chief_id, &mut chief_ctx);
-            let chief_tick = self.build_npc_tick_data(sim, chief_id, assets);
-            let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
-            stimulus.info = info;
-            chief_ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
-            let dispatched = {
-                let global = &mut self.ai.global;
-                let grid = &self.world.fast_grid;
-                self.world
-                    .entities
-                    .expect_enemy_ai_mut(
-                        chief_id,
-                        format_args!("patrol chief {chief} lost its EnemyAi"),
-                    )
-                    .dispatch_stimulus_to_whole_patrol(
-                        crate::ai_enemy::ThinkEnv::new(sim, &chief_ctx, &chief_tick, Some(grid)),
-                        &stimulus,
-                        global,
-                    )
-            };
-            chief_ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
-            let dispatched = match dispatched {
-                Ok(dispatched) => dispatched,
-                Err(call) => {
-                    self.execute_ai_duty_call(sim, assets, chief_id, call);
-                    true
-                }
-            };
-
-            // A successful chief routine can recursively Think and queue the
-            // member walk. Close those effects before the direct call returns.
-            if dispatched {
-                self.drain_direct_ai_owner_boundary(sim, chief_id, assets);
-                continue;
-            }
-
-            // The caller's outer handler resumes after the chief returned
-            // false. Re-enter with the patrol flag set solely as a recursion
-            // guard; no other handler observes that flag.
-            let caller_scratch = self.build_sim_scratch(assets);
-            let caller_building_sector = self
-                .world
-                .entities
-                .get(source_id)
-                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                .unwrap_or_else(|| panic!("patrol-dispatch caller {caller} disappeared"));
-            let caller_ctx = {
-                let entity = self.expect_entity(source_id, "patrol-dispatch caller");
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    caller_building_sector,
-                    &caller_scratch,
-                    assets,
-                )
-            };
-            let caller_tick = self.build_npc_tick_data(sim, source_id, assets);
-            stimulus.to_whole_patrol = true;
-            self.dispatch_think_with_drain(
-                sim,
-                source_id,
-                &stimulus,
-                &caller_ctx,
-                &caller_tick,
-                assets,
-            );
+            self.execute_ai_callback(sim, assets, member_id, stimulus);
         }
     }
 
@@ -300,60 +200,10 @@ impl EngineInner {
                     "synchronous {stimulus_type:?} from enemy NPC {caller} requires enemy-soldier target {target}"
                 );
             }
-            let scratch = self.build_sim_scratch(assets);
-            let target_building_sector = self
-                .world
-                .entities
-                .get(target_id)
-                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                .unwrap_or_else(|| panic!("{stimulus_type:?} target {target} disappeared"));
-            let target_ctx = {
-                let entity = self
-                    .world
-                    .entities
-                    .get(target_id)
-                    .unwrap_or_else(|| panic!("{stimulus_type:?} target {target} disappeared"));
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    target_building_sector,
-                    &scratch,
-                    assets,
-                )
-            };
-            let target_tick = self.build_npc_tick_data(sim, target_id, assets);
             let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
             stimulus.info = info;
-            let accepted = self.dispatch_think_with_drain(
-                sim,
-                target_id,
-                &stimulus,
-                &target_ctx,
-                &target_tick,
-                assets,
-            );
+            let accepted = self.execute_ai_callback(sim, assets, target_id, &stimulus);
 
-            let source_scratch = self.build_sim_scratch(assets);
-            let source_building_sector = self
-                .world
-                .entities
-                .get(source_id)
-                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                .unwrap_or_else(|| panic!("Think-result caller {caller} disappeared"));
-            let mut source_ctx = {
-                let entity = self.expect_entity(source_id, "Think-result caller");
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    source_building_sector,
-                    &source_scratch,
-                    assets,
-                )
-            };
-            self.refresh_selected_default_wait_identity(source_id, &mut source_ctx);
-            let source_tick = self.build_npc_tick_data(sim, source_id, assets);
-            let global = &mut self.ai.global;
-            let grid = &self.world.fast_grid;
             let flow = self
                 .world
                 .entities
@@ -361,15 +211,21 @@ impl EngineInner {
                     source_id,
                     format_args!("Think-result caller {caller} lost its EnemyAi"),
                 )
-                .resolve_think_result(
-                    crate::ai_enemy::ThinkEnv::new(sim, &source_ctx, &source_tick, Some(grid)),
-                    accepted,
-                    target,
-                    continuation,
-                    global,
-                );
-            if let Err(call) = flow {
-                self.execute_ai_duty_call(sim, assets, source_id, call);
+                .resolve_think_result(self.control.frame_counter, accepted, target, continuation);
+            match flow {
+                Err(call) => {
+                    self.execute_ai_duty_call(sim, assets, source_id, call);
+                }
+                Ok(true) => {
+                    self.drain_direct_ai_owner_boundary(sim, source_id, assets);
+                    let destination = self
+                        .world
+                        .entities
+                        .expect_enemy_ai(source_id, format_args!("pointing officer"))
+                        .officers_position;
+                    self.duty_point_to(sim, assets, source_id, destination);
+                }
+                Ok(false) => {}
             }
 
             // The continuation is the caller's original-game stack frame resuming
@@ -422,66 +278,70 @@ impl EngineInner {
                 matches!(self.world.entities.get(target_id), Some(Entity::Soldier(_))),
                 "synchronous CALL_ALERT target {target} is not a soldier"
             );
-            let scratch = self.build_sim_scratch(assets);
-            let target_building_sector = self
-                .world
-                .entities
-                .get(target_id)
-                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                .unwrap_or_else(|| panic!("CALL_ALERT target {target} disappeared"));
-            let target_ctx = {
-                let entity = self.expect_entity(target_id, "CALL_ALERT target");
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    target_building_sector,
-                    &scratch,
-                    assets,
-                )
-            };
-            let target_tick = self.build_npc_tick_data(sim, target_id, assets);
-            let accepted = self.dispatch_think_with_drain(
+            let accepted = self.execute_ai_callback(
                 sim,
+                assets,
                 target_id,
                 &crate::ai::Stimulus::with_human(crate::ai::StimulusType::CallAlert, caller),
-                &target_ctx,
-                &target_tick,
-                assets,
             );
 
-            let source_scratch = self.build_sim_scratch(assets);
-            let source_building_sector = self
-                .world
-                .entities
-                .get(source_id)
-                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                .unwrap_or_else(|| panic!("CALL_ALERT caller {caller} disappeared"));
-            let mut source_ctx = {
-                let entity = self.expect_entity(source_id, "CALL_ALERT caller");
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    source_building_sector,
-                    &source_scratch,
+            if !accepted {
+                self.execute_ai_return_to_duty(
+                    sim,
                     assets,
-                )
-            };
-            self.refresh_selected_default_wait_identity(source_id, &mut source_ctx);
-            let source_tick = self.build_npc_tick_data(sim, source_id, assets);
-            let flow = self
+                    source_id,
+                    crate::ai::DutyFlags::empty(),
+                );
+                continue;
+            }
+            self.duty_set_state(
+                sim,
+                assets,
+                source_id,
+                crate::ai::AiState::Seeking,
+                crate::ai::Substate::SeekingRunningToOfficerSeen,
+            );
+            self.world
+                .entities
+                .expect_ai_controller_mut(source_id, format_args!("soldier alert caller"))
+                .say_with_flags(
+                    crate::ai::Remark::CallsOfficer,
+                    crate::ai::SpeechFlags::MYTALK_0,
+                );
+            self.drain_direct_ai_owner_boundary(sim, source_id, assets);
+            let officer = self
                 .world
                 .entities
-                .expect_enemy_ai_mut(
-                    source_id,
-                    format_args!("soldier CALL_ALERT caller {caller} lost its EnemyAi"),
-                )
-                .resolve_soldier_alert_request(
-                    crate::ai_enemy::ThinkEnv::new(sim, &source_ctx, &source_tick, None),
-                    accepted,
-                );
-            if let Err(call) = flow {
-                self.execute_ai_duty_call(sim, assets, source_id, call);
-            }
+                .expect_ai_controller(source_id, format_args!("soldier alert caller"))
+                .antagonist
+                .expect("accepted soldier alert requires target officer");
+            let officer_id =
+                self.expect_human_id_for_ai_handle(officer.get(), "accepted soldier alert officer");
+            let officer = self.expect_entity(officer_id, "accepted soldier alert forecast");
+            let passing_door =
+                selected_actor_is_passing_door(&self.orders.sequence_manager, officer_id);
+            let input = extract_exact_forecast_input(self, officer, passing_door)
+                .expect("officer forecast requires actor");
+            let destination = crate::ai::forecast_destination_for_ia(
+                sim,
+                &input,
+                &self.script_domains.interactables.doors,
+                &self.world.fast_grid.level.sectors,
+                &self.world.fast_grid.level.sector_number_map,
+            )
+            .position;
+            self.duty_go_near(
+                sim,
+                assets,
+                source_id,
+                destination,
+                crate::parameters_ai::AI_TALK_DISTANCE,
+                crate::ai::GotoFlags::RUN,
+            );
+            self.world
+                .entities
+                .expect_ai_controller_mut(source_id, format_args!("soldier alert timer"))
+                .launch_timer(20, self.control.frame_counter);
         }
     }
 
@@ -507,66 +367,20 @@ impl EngineInner {
                 "officer report source must be the reporting Charly"
             );
 
-            let scratch = self.build_sim_scratch(assets);
             let officer_id =
                 self.expect_human_id_for_ai_handle(officer, "reporting Charly's officer");
-            let officer_building_sector = self
-                .world
-                .entities
-                .get(officer_id)
-                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                .unwrap_or_else(|| panic!("reporting Charly requires missing officer {officer}"));
-            let officer_ctx = {
-                let entity = self.expect_entity(officer_id, "reporting Charly's officer");
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    officer_building_sector,
-                    &scratch,
-                    assets,
-                )
-            };
-            let officer_tick = self.build_npc_tick_data(sim, officer_id, assets);
             let officer_stimulus = crate::ai::Stimulus::with_human(
                 crate::ai::StimulusType::CallMrOfficerIAmBack,
                 charly,
             );
-            let accepted = self.dispatch_think_with_drain(
-                sim,
-                officer_id,
-                &officer_stimulus,
-                &officer_ctx,
-                &officer_tick,
-                assets,
-            );
+            let accepted = self.execute_ai_callback(sim, assets, officer_id, &officer_stimulus);
 
             let charly_id = self.expect_human_id_for_ai_handle(charly, "officer-report Charly");
-            let charly_building_sector = self
-                .world
-                .entities
-                .get(charly_id)
-                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                .unwrap_or_else(|| panic!("officer response requires missing Charly {charly}"));
-            let mut charly_ctx = {
-                let entity = self.expect_entity(charly_id, "officer response Charly");
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    charly_building_sector,
-                    &scratch,
-                    assets,
-                )
-            };
-            self.refresh_selected_default_wait_identity(charly_id, &mut charly_ctx);
-            let charly_tick = self.build_npc_tick_data(sim, charly_id, assets);
             let enemy = self
                 .world
                 .entities
                 .expect_enemy_ai_mut(charly_id, format_args!("reporting Charly {charly}"));
-            let flow = enemy.resolve_charly_officer_report(
-                crate::ai_enemy::ThinkEnv::new(sim, &charly_ctx, &charly_tick, None),
-                accepted,
-            );
+            let flow = enemy.resolve_charly_officer_report(self.control.frame_counter, accepted);
             if let Err(call) = flow {
                 self.execute_ai_duty_call(sim, assets, charly_id, call);
             }

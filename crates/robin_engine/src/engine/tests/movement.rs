@@ -1651,11 +1651,8 @@ fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
         crate::order::AiOrderIntent::new(crate::order::OrderType::RunningUpright, 100.0, 200.0);
     intent.stop_menace_before_move = true;
 
-    engine.launch_ai_move(owner, &intent);
     let sequence_id = engine
-        .drain_pending_move_requests_for_owner(&crate::sim_rng::test_context(), owner)
-        .into_iter()
-        .next()
+        .launch_ai_move(&crate::sim_rng::test_context(), owner, &mut intent)
         .expect("same-sector AI move launches");
     let sequence = engine
         .orders
@@ -1671,7 +1668,7 @@ fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
 }
 
 #[test]
-fn deferred_ai_move_builds_route_from_enqueue_time_topology() {
+fn ai_move_constructs_route_before_later_owner_topology_changes() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let source_sector = crate::position_interface::SectorHandle::new(7);
@@ -1689,7 +1686,9 @@ fn deferred_ai_move_builds_route_from_enqueue_time_topology() {
         crate::order::AiOrderIntent::new(crate::order::OrderType::RunningUpright, 400.0, 500.0);
     intent.target_sector = source_sector;
     intent.target_layer = Some(0);
-    engine.launch_ai_move(owner, &intent);
+    let sequence_id = engine
+        .launch_ai_move(&crate::sim_rng::test_context(), owner, &mut intent)
+        .expect("same-sector route registers inline");
 
     // A selected non-interruptible door element may commit its far-side
     // topology before SequenceManager gets to instruct the postponed movement.
@@ -1706,11 +1705,6 @@ fn deferred_ai_move_builds_route_from_enqueue_time_topology() {
         entity.element_data_mut().set_layer(1);
     }
 
-    let sequence_id = engine
-        .drain_pending_move_requests_for_owner(&crate::sim_rng::test_context(), owner)
-        .into_iter()
-        .next()
-        .expect("deferred same-sector route launches");
     let sequence = engine
         .orders
         .sequence_manager

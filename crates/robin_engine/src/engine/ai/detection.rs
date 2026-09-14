@@ -3,7 +3,7 @@
 //! PC Listen performs its captured-length mixed reveal/Heard scan in the
 //! selected PC owner slot; object discovery remains with its object owner.
 
-use super::snapshots::{DetectionFrameState, HumanTarget, ObjectTarget};
+use super::snapshots::HumanDetectionInput;
 
 /// Record-only snapshot taken right after a Listen `ActivatedByListenable`
 /// callback returned.
@@ -164,7 +164,7 @@ fn trace_them_detection_latches(
     committed: bool,
     enemy_stimuli: &[crate::ai::Stimulus],
     detectables: &[Detectable],
-    enemy_targets: &[EnemyOpticalTarget],
+    entities: &crate::entities::Entities,
 ) {
     eprintln!(
         "[THEM frame={} co={} me={} phase=detection_latches committed={} stimuli={:?}]",
@@ -184,16 +184,13 @@ fn trace_them_detection_latches(
                 npc_id.index()
             )
         });
-        let target = enemy_targets
-            .iter()
-            .find(|target| target.id == target_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "Enemy target {} for NPC {} missing in THEM diagnostic",
-                    target_id.index(),
-                    npc_id.index()
-                )
-            });
+        let target = entities.get(target_id).unwrap_or_else(|| {
+            panic!(
+                "Enemy target {} for NPC {} missing in THEM diagnostic",
+                target_id.index(),
+                npc_id.index()
+            )
+        });
         eprintln!(
             "[THEM frame={} co={} me={} phase=detection_entry target={} seen_now={} seen_last={} visibility={} dead={} unconscious={}]",
             universal_frame,
@@ -203,8 +200,11 @@ fn trace_them_detection_latches(
             det.seen_now,
             det.seen_last_frame,
             det.last_visibility,
-            target.dead,
-            target.unconscious,
+            target.is_dead(),
+            target
+                .human_data()
+                .expect("Enemy diagnostic human")
+                .unconscious,
         );
     }
 }
@@ -608,10 +608,7 @@ fn visibility_stage_debug_enabled(
     ])
 }
 
-/// One live PC/soldier entry in an NPC's mixed Enemy detectable list.
-/// Rebuilt at that NPC's creation slot so earlier NPC Think mutations are
-/// visible, while preserving the list's own insertion order during the scan.
-#[derive(Clone)]
+/// Scalar input for one live PC/soldier read, consumed before the next entry.
 struct EnemyOpticalTarget {
     id: EntityId,
     position: MapPoint,
@@ -1833,7 +1830,6 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        world: &DetectionFrameState,
         npc_id: EntityId,
     ) {
         let _detail = super::super::tick::entity_system_detail_guard(
@@ -1921,24 +1917,6 @@ impl EngineInner {
             );
         }
 
-        // The original game's detectable cleanup and visibility calculation use live
-        // human pointers. Rebuild the target records at this creation
-        // slot, but let the NPC's detectable list dictate scan order.
-        let mut enemy_target_ids: Vec<_> = self
-            .world
-            .entities
-            .get(npc_id)
-            .and_then(Entity::ai_actor_data)
-            .expect("detection-refresh owner lost AI actor data before Enemy snapshot")
-            .detectable_lists[DetectableType::Enemy as usize]
-            .iter()
-            .filter_map(|detectable| detectable.element)
-            .collect();
-        // Retain occupied-slot order and deduplication without scanning humans.
-        enemy_target_ids.sort_unstable_by_key(|id| id.index());
-        enemy_target_ids.dedup();
-        let enemy_targets =
-            self.tick_enemy_ai_build_live_enemy_optical_targets(assets, Some(&enemy_target_ids));
         // Original caches the view radius for this viewer/frame: one
         // ground entry plus one entry on each projection obstacle. Enemy
         // and the later detectable-type buckets share the same cache
@@ -1952,8 +1930,6 @@ impl EngineInner {
         let think_input = self.tick_enemy_ai_refresh_detection_for_npc(
             npc_id,
             assets,
-            world,
-            &enemy_targets,
             universal_frame,
             golden_eye,
             is_forest_level,
@@ -1964,34 +1940,25 @@ impl EngineInner {
         // detectable types, preserving the original
         // SHADOW → (VIEW|OUTOFVIEW)* → BODY → OBJECT → FRIEND →
         // MISSED_FRIEND → BEGGAR FIFO.
-        let enemy_block = think_input;
-        let enemy_detection_tick_data = if let Some((stimuli, aggregate)) = enemy_block {
-            let ai = self.world.entities.expect_ai_controller_mut(
-                npc_id,
-                format_args!("detected NPC before its same-phase stimulus queue"),
-            );
-            let queue_start = ai.outbox.detection.stimuli.len();
-            ai.outbox.detection.stimuli.extend(stimuli.iter().copied());
-            Some(super::post_detection::PendingEnemyDetection::new(
-                queue_start,
-                stimuli,
-                aggregate,
-            ))
-        } else {
-            None
-        };
+        if let Some(stimuli) = think_input {
+            self.world
+                .entities
+                .expect_ai_controller_mut(
+                    npc_id,
+                    format_args!("detected NPC before its same-phase stimulus queue"),
+                )
+                .outbox
+                .detection
+                .stimuli
+                .extend(stimuli);
+        }
         // The original NPC update completes this NPC's entire
         // detection-refresh scan before flushing its FIFO stimulus list.
-        // Rebuild only the volatile human/object target metadata here;
-        // PC noise retains its explicit capture lifetime. These per-type
-        // inputs are read live before the first queued Think for this NPC.
-        let (human_targets, object_targets) =
-            self.tick_enemy_ai_build_human_object_targets_for_npc(npc_id);
+        // Each per-type entry queries its current target before updating the
+        // observer's latches. Think starts only after all buckets finish.
         self.tick_enemy_ai_refresh_per_type_for_npc(
             npc_id,
             assets,
-            &human_targets,
-            &object_targets,
             universal_frame,
             golden_eye,
             &view_radius_cache,
@@ -2022,129 +1989,13 @@ impl EngineInner {
             .get(npc_id)
             .and_then(Entity::ai_controller)
             .is_some_and(|ai| !ai.outbox.detection.stimuli.is_empty());
-        if !has_pending_stimuli {
-            assert!(
-                enemy_detection_tick_data.is_none(),
-                "queued Enemy detection block lost its stimuli before the per-NPC drain"
-            );
-        } else {
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(
-                sim,
-                npc_id,
-                assets,
-                enemy_detection_tick_data,
-            );
+        if has_pending_stimuli {
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets);
         }
     }
 
-    /// Prepare destination forecast alternatives without drawing RNG. The AI
-    /// handler that actually consumes a primary/missed/officer forecast owns
-    /// any building-exit selection draw.
-    pub(super) fn prepare_detection_forecasts_for_owner(
-        &self,
-        npc_id: EntityId,
-        tick_data: &mut AiPerTickData,
-    ) {
-        let forecast = |target_id: EntityId| {
-            let target = self.world.entities.expect_entity(
-                target_id,
-                format_args!("NPC {} destination forecast actor", npc_id.index()),
-            );
-            let input = extract_exact_forecast_input(
-                self,
-                target,
-                selected_actor_is_passing_door(&self.orders.sequence_manager, target_id),
-            )
-            .unwrap_or_else(|| {
-                panic!(
-                    "NPC {} requires a destination forecast for non-actor {}",
-                    npc_id.index(),
-                    target_id.index()
-                )
-            });
-            crate::ai::prepare_forecast_destination_for_ia(
-                &input,
-                self.script_domains.interactables.doors.as_slice(),
-                &self.world.fast_grid.level.sectors,
-                &self.world.fast_grid.level.sector_number_map,
-            )
-        };
-
-        let (primary, missed) = self
-            .world
-            .entities
-            .get(npc_id)
-            .and_then(Entity::enemy_ai)
-            .map(|ai| (ai.base.primary_target, ai.missed_pc))
-            .unwrap_or((None, None));
-        tick_data.enemy_detectable_forecasts.clear();
-        let enemy_handles = self
-            .world
-            .entities
-            .expect_ai_actor_data(npc_id, format_args!("Enemy tick-data owner"))
-            .detectable_lists[crate::element::DetectableType::Enemy as usize]
-            .iter()
-            .filter_map(|detectable| detectable.element)
-            .map(|entity_id| entity_id.index())
-            .collect::<Vec<_>>();
-        for handle in enemy_handles {
-            let target_id = self.entity_id_for_index(handle).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} has Enemy detectable for missing actor {}",
-                    npc_id.index(),
-                    handle
-                )
-            });
-            tick_data
-                .enemy_detectable_forecasts
-                .push((handle, forecast(target_id)));
-        }
-        if tick_data.primary_target_is_pc
-            && let Some(primary) = primary
-        {
-            let target_id = self.entity_id_for_index(primary.get()).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} has missing primary-target actor {}",
-                    npc_id.index(),
-                    primary
-                )
-            });
-            tick_data.primary_target_forecast = Some(forecast(target_id));
-        }
-        if tick_data.missed_pc_is_pc
-            && let Some(missed) = missed
-        {
-            let target_id = self.entity_id_for_index(missed.get()).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} has missing missed-PC actor {}",
-                    npc_id.index(),
-                    missed
-                )
-            });
-            tick_data.missed_pc_forecast = Some(forecast(target_id));
-            tick_data.missed_pc_forecast_handle = Some(missed);
-        }
-        for soldier in &mut tick_data.camp_soldiers {
-            // Only officers are ever selected as forecasted destinations by
-            // officer-alert/reporting paths. Ordinary camp soldiers remain
-            // live metadata inputs but must not consume building-exit RNG
-            // merely because this owner entered Think.
-            if soldier.rank != crate::profiles::ProfileRank::Officer {
-                continue;
-            }
-            let target_id = self.entity_id_for_index(soldier.handle).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} has missing camp-soldier actor {}",
-                    npc_id.index(),
-                    soldier.handle
-                )
-            });
-            soldier.forecast_destination = Some(forecast(target_id));
-        }
-    }
-
-    /// Test seam for creation-slot parity: capture the ordinary tick-start AI
-    /// view, mutate live entity/sequence state, then run only detection refresh.
+    /// Test seam: mutate entity/sequence state after shield-link reconciliation,
+    /// then verify that detection reads the changed live state.
     #[cfg(test)]
     pub(crate) fn refresh_detection_after_world_snapshot_for_test(
         &mut self,
@@ -2152,11 +2003,11 @@ impl EngineInner {
         assets: &LevelAssets,
         mutate_live_state: impl FnOnce(&mut Self),
     ) {
-        let world = self.capture_detection_frame_state();
+        self.refresh_archer_shield_links();
         mutate_live_state(self);
         let owners: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for owner in owners {
-            self.tick_enemy_ai_refresh_detection(sim, assets, &world, owner);
+            self.tick_enemy_ai_refresh_detection(sim, assets, owner);
         }
     }
 
@@ -2179,19 +2030,12 @@ impl EngineInner {
         &mut self,
         npc_id: EntityId,
         assets: &LevelAssets,
-        world: &DetectionFrameState,
-        enemy_targets: &[EnemyOpticalTarget],
         universal_frame: u32,
         golden_eye: bool,
         is_forest_level: bool,
         view_radius_cache: &OwnerViewRadiusCache,
-    ) -> Option<(
-        Vec<crate::ai::Stimulus>,
-        super::post_detection::EnemyDetectionAggregate,
-    )> {
+    ) -> Option<Vec<crate::ai::Stimulus>> {
         use crate::ai::AiState;
-
-        let detection_target_multiplicity = &world.detection_target_multiplicity;
 
         // -- Read NPC state in a scoped borrow --
         let (viewer, viewer_inside_building) = {
@@ -2232,18 +2076,20 @@ impl EngineInner {
         let original_creation_order = self.original_static_creation_order(npc_id);
         let mutation_debug_enemy_targets =
             if detectable_mutation_debug_owner_matches(npc_id.index(), original_creation_order) {
-                enemy_targets
-                    .iter()
-                    .filter_map(|target| {
-                        if !detectable_mutation_debug_target_slot_matches(target.id.index()) {
+                self.world
+                    .entities
+                    .humans()
+                    .filter_map(|(id, _)| {
+                        let target_id = EntityId::from(id);
+                        if !detectable_mutation_debug_target_slot_matches(target_id.index()) {
                             return None;
                         }
-                        let target_creation_order = self.original_static_creation_order(target.id);
+                        let target_creation_order = self.original_static_creation_order(target_id);
                         detectable_mutation_debug_target_matches(
-                            target.id.index(),
+                            target_id.index(),
                             target_creation_order,
                         )
-                        .then_some((target.id, target_creation_order))
+                        .then_some((target_id, target_creation_order))
                     })
                     .collect::<Vec<_>>()
             } else {
@@ -2260,9 +2106,7 @@ impl EngineInner {
         // InstantDetection is camp-wide in the Original: Royalists always
         // commit Enemy sightings, while Lacklandists accumulate in the
         // sleeping/default/wondering states.
-        // Snapshot the authoritative matrix before mutably borrowing the NPC.
-        // Every relationship decision in this scan must observe one revision.
-        let diplomacy = self.mission_domain.diplomacy.clone();
+        let diplomacy = &self.mission_domain.diplomacy;
         let viewer_player_aligned = diplomacy.is_player_aligned(viewer.camp);
         let viewer_hostile_to_player = diplomacy.is_hostile_to_player(viewer.camp);
         let instant_detection = viewer_player_aligned
@@ -2275,7 +2119,6 @@ impl EngineInner {
         // `&self.sight_obstacles` and `self.world.entities.get_mut(...)`
         // are disjoint fields on `self`, so the split borrow is
         // valid.
-        let mut aggregate = super::post_detection::EnemyDetectionAggregate::default();
         let mut enemy_stimuli: Vec<crate::ai::Stimulus> = Vec::new();
         let mut reveal_targets: Vec<EntityId> = Vec::new();
         let mut achievement_observed_pcs: Vec<EntityId> = Vec::new();
@@ -2290,7 +2133,11 @@ impl EngineInner {
                 dynamic_obstacles: &self.world.dynamic_sight_obstacles,
                 static_active: &self.world.static_sight_obstacle_active,
             };
-            let npc = self.world.entities.expect_ai_actor_data_mut(
+            let target_for = |entities: &crate::entities::Entities, target_id| {
+                Self::enemy_optical_input(entities, &self.orders.sequence_manager, &self.world.fast_grid, assets, target_id)
+                    .unwrap_or_else(|| panic!("Enemy detectable target {target_id:?} for NPC {npc_id:?} is missing or is not a PC/soldier"))
+            };
+            let npc = self.world.entities.expect_ai_actor_data(
                 npc_id,
                 format_args!("Enemy optical observer during its Enemy optical scan"),
             );
@@ -2312,7 +2159,7 @@ impl EngineInner {
                 });
 
             let enemy_idx = DetectableType::Enemy as usize;
-            let detectables: &mut Vec<Detectable> = &mut npc.detectable_lists[enemy_idx];
+            let detectables = &npc.detectable_lists[enemy_idx];
 
             // The original game removes only dead enemies during detectable cleanup. The
             // Detectable-admission policy governs new entries, but an existing entry
@@ -2332,25 +2179,32 @@ impl EngineInner {
                     )
                 })
                 .collect::<Vec<_>>();
-            detectables.retain(|d| {
-                let target_id = d.element.unwrap_or_else(|| {
-                    panic!(
-                        "Enemy detectable for NPC {} has no target handle",
-                        npc_id.index()
-                    )
-                });
-                let target = enemy_targets
-                    .iter()
-                    .find(|target| target.id == target_id)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "Enemy detectable target {} for NPC {} is missing or is not a PC/soldier",
-                            target_id.index(),
-                            npc_id.index()
-                        )
-                    });
-                !target.dead
-            });
+            let mut index = 0;
+            loop {
+                let entries = &self
+                    .world
+                    .entities
+                    .expect_ai_actor_data(npc_id, format_args!("Enemy cleanup"))
+                    .detectable_lists[enemy_idx];
+                let Some(entry) = entries.get(index) else {
+                    break;
+                };
+                let target_id = entry.element.expect("Enemy cleanup entry has no target");
+                if target_for(&self.world.entities, target_id).dead {
+                    self.world
+                        .entities
+                        .expect_ai_actor_data_mut(npc_id, format_args!("Enemy cleanup"))
+                        .detectable_lists[enemy_idx]
+                        .remove(index);
+                } else {
+                    index += 1;
+                }
+            }
+            let detectables = &self
+                .world
+                .entities
+                .expect_ai_actor_data(npc_id, format_args!("Enemy cleaned list"))
+                .detectable_lists[enemy_idx];
             for (target_id, target_creation_order, present_before) in mutation_presence_before {
                 let present_after = detectables
                     .iter()
@@ -2398,16 +2252,7 @@ impl EngineInner {
                 "Enemy detectable list"
             );
 
-            // Per-target visibility pass.
-            //
-            // `best_target` tracks the unoccupied-preferred primary
-            // target pick — lowest-score wins, where score is the
-            // Euclidean distance + a penalty for how many friendly
-            // soldiers already target this PC.  We use `u32::MAX`
-            // for "no target yet" so the first visible PC always
-            // replaces it.
             let mut sum_sharpness_new: u16 = 0;
-            let mut best_target: Option<(EntityId, MapPoint, u32)> = None;
             let mut max_sharpness: u32 = 0;
             // The original game handles predetection only from inside the same
             // outer detection-box arm that computes visibility. Keep the
@@ -2449,21 +2294,20 @@ impl EngineInner {
                 fast_grid: &self.world.fast_grid,
             };
 
-            for det in detectables.iter_mut() {
-                let target_id = det
+            for index in 0..detectables.len() {
+                let target_id = self
+                    .world
+                    .entities
+                    .expect_ai_actor_data(npc_id, format_args!("Enemy visibility target"))
+                    .detectable_lists[enemy_idx][index]
                     .element
-                    .expect("enemy detectable survived cleanup without a target entity handle");
-                let target = enemy_targets
-                    .iter()
-                    .find(|target| target.id == target_id)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "Enemy detectable target {} for NPC {} vanished after cleanup",
-                            target_id.index(),
-                            npc_id.index()
-                        )
-                    });
-
+                    .expect("Enemy detectable survived cleanup without a target");
+                let target = target_for(&self.world.entities, target_id);
+                let det = &mut self
+                    .world
+                    .entities
+                    .expect_ai_actor_data_mut(npc_id, format_args!("Enemy visibility latch"))
+                    .detectable_lists[enemy_idx][index];
                 let scan_decision = refresh_detection_scans_target(
                     det.last_visibility,
                     viewer_inside_building,
@@ -2474,7 +2318,7 @@ impl EngineInner {
                 entered_outer_scan.push(scan_decision);
                 let Some(sharpness) = scan_enemy_detectable(
                     det,
-                    target,
+                    &target,
                     &viewer,
                     &view,
                     npc_id,
@@ -2506,29 +2350,6 @@ impl EngineInner {
                         accumulate_detection_sharpness(sum_sharpness_new, sharpness);
                 }
 
-                if is_visible {
-                    // Unoccupied-preferred primary-target scoring:
-                    //   distance = Distance(enemy)
-                    //   distance += 100 * primary_target_multiplicity
-                    //   pick the lowest distance
-                    let dx = target.position.x - eye.x;
-                    let dy = target.position.y - eye.y;
-                    let dist_sq = dx * dx + dy * dy;
-                    let dist = dist_sq.sqrt() as u32;
-                    let mult = detection_target_multiplicity
-                        .get(&target_id)
-                        .copied()
-                        .unwrap_or(0);
-                    let score = dist + 100 * mult;
-                    let replace = match best_target {
-                        None => true,
-                        Some((_, _, s)) => score < s,
-                    };
-                    if replace {
-                        best_target = Some((target_id, target.position, score));
-                    }
-                }
-
                 // The original game updates maximal visibility from the integer
                 // sharpness returned after visibility calculation has reused a
                 // detectable's cached visibility on closed-cadence frames.
@@ -2537,6 +2358,10 @@ impl EngineInner {
                 max_sharpness = max_sharpness.max(u32::from(sharpness));
             }
 
+            let npc = self
+                .world
+                .entities
+                .expect_ai_actor_data_mut(npc_id, format_args!("Enemy scan accumulation"));
             // Write back the beggar-trick flag if a mid-transition
             // sighting flipped it during the loop.
             if got_beggar_trick
@@ -2597,24 +2422,23 @@ impl EngineInner {
                 npc.detectable_lists[enemy_idx].len(),
                 "Enemy outer-scan membership lost detectable-list alignment"
             );
-            for (det, entered_outer_scan) in npc.detectable_lists[enemy_idx]
-                .iter_mut()
-                .zip(entered_outer_scan)
-            {
+            for (index, entered_outer_scan) in entered_outer_scan.into_iter().enumerate() {
                 if !entered_outer_scan {
                     continue;
                 }
-                if let Some(target_id) = det.element {
-                    let target = enemy_targets
-                        .iter()
-                        .find(|target| target.id == target_id)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "shadow Enemy target {} for NPC {} is missing from the live optical view",
-                                target_id.index(),
-                                npc_id.index()
-                            )
-                        });
+                let target_id = self
+                    .world
+                    .entities
+                    .expect_ai_actor_data(npc_id, format_args!("Enemy shadow target"))
+                    .detectable_lists[enemy_idx][index]
+                    .element;
+                if let Some(target_id) = target_id {
+                    let target = target_for(&self.world.entities, target_id);
+                    let npc = self
+                        .world
+                        .entities
+                        .expect_ai_actor_data_mut(npc_id, format_args!("Enemy shadow latch"));
+                    let det = &mut npc.detectable_lists[enemy_idx][index];
                     let shadow_seen_before = det.shadow_seen_last_frame;
                     let queued = update_predetection_shadow_latch(
                         det.seen_now,
@@ -2670,6 +2494,10 @@ impl EngineInner {
 
             // Original adds the current scan only after every detectable has
             // run predetection against the prior accumulator.
+            let npc = self
+                .world
+                .entities
+                .expect_ai_actor_data_mut(npc_id, format_args!("Enemy suspect commit"));
             let suspects = &mut npc.detection_suspects[enemy_idx];
             *suspects = suspects.wrapping_add(sum_sharpness_new);
 
@@ -2698,7 +2526,25 @@ impl EngineInner {
             // we still run the falling-edge check so NPCs react to
             // lost sight the instant it happens.
             let committed = threshold_hit || instant_hit;
-            for det in npc.detectable_lists[enemy_idx].iter_mut() {
+            let count = npc.detectable_lists[enemy_idx].len();
+            for index in 0..count {
+                let entry = &self
+                    .world
+                    .entities
+                    .expect_ai_actor_data(npc_id, format_args!("Enemy sighting target"))
+                    .detectable_lists[enemy_idx][index];
+                let rising_target =
+                    (committed && entry.seen_now && !entry.seen_last_frame).then(|| {
+                        target_for(
+                            &self.world.entities,
+                            entry.element.expect("rising Enemy entry has no target"),
+                        )
+                    });
+                let det = &mut self
+                    .world
+                    .entities
+                    .expect_ai_actor_data_mut(npc_id, format_args!("Enemy sighting latch"))
+                    .detectable_lists[enemy_idx][index];
                 let was_seen = det.seen_last_frame;
                 let is_seen = det.seen_now;
                 let falling_edge = !is_seen && was_seen;
@@ -2711,16 +2557,7 @@ impl EngineInner {
                             npc_id.index()
                         )
                     });
-                    let target = enemy_targets
-                        .iter()
-                        .find(|target| target.id == target_id)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "rising Enemy target {} for NPC {} is missing from the live optical view",
-                                target_id.index(),
-                                npc_id.index()
-                            )
-                        });
+                    let target = rising_target.expect("rising Enemy target was not read");
 
                     // Enemy-bucket detection always emits EVENT_VIEW. A
                     // disguised PC that has not been seen through has zero
@@ -2778,14 +2615,13 @@ impl EngineInner {
                     npc_id,
                     committed,
                     &enemy_stimuli,
-                    &npc.detectable_lists[enemy_idx],
-                    enemy_targets,
+                    &self
+                        .world
+                        .entities
+                        .expect_ai_actor_data(npc_id, format_args!("Enemy detection diagnostic"))
+                        .detectable_lists[enemy_idx],
+                    &self.world.entities,
                 );
-            }
-            // Only a nonempty Enemy stimulus block consumes this immutable
-            // frame aggregate. No Think has run during the scan.
-            if !enemy_stimuli.is_empty() && npc.ai_brain.enemy().is_some() {
-                aggregate = build_enemy_detection_aggregate(world, npc_id, viewer.camp, &diplomacy);
             }
         }
 
@@ -2809,171 +2645,149 @@ impl EngineInner {
             target.reveal_blip();
         }
 
-        (!enemy_stimuli.is_empty()).then_some((enemy_stimuli, aggregate))
+        (!enemy_stimuli.is_empty()).then_some(enemy_stimuli)
     }
 
-    /// Build every PC/soldier that may legally occupy an Enemy list in global
-    /// creation order. The actual scan walks the NPC's live detectable list;
-    /// this view only supplies target fields without aliasing the observer.
-    /// Read stored map/world coordinates independently: converting between
-    /// them would round away the exact values retained by Original.
-    fn tick_enemy_ai_build_live_enemy_optical_targets(
-        &self,
+    /// Read one Enemy target at its detectable-list evaluation point.
+    fn enemy_optical_input(
+        entities: &crate::entities::Entities,
+        sequences: &crate::sequence::SequenceManager,
+        grid: &crate::fast_find_grid::FastFindGrid,
         assets: &LevelAssets,
-        required_targets: Option<&[EntityId]>,
-    ) -> Vec<EnemyOpticalTarget> {
-        let all_targets;
-        let target_ids = match required_targets {
-            Some(ids) => ids,
-            None => {
-                all_targets = self
-                    .world
-                    .entities
-                    .humans()
-                    .map(|(id, _)| EntityId::from(id))
-                    .collect::<Vec<_>>();
-                &all_targets
+        id: EntityId,
+    ) -> Option<EnemyOpticalTarget> {
+        let entity = entities.get(id)?;
+        let building_sector = entity.element_data().sector().filter(|&sector| {
+            let Some(grid_sector) =
+                crate::engine::movement::grid_sector_for_position_handle(&grid.level, sector)
+            else {
+                return false;
+            };
+            assert_eq!(
+                grid_sector.sector_number,
+                crate::sector::SectorNumber::new(i16::from(sector)),
+                "exact sector arena identity disagrees with its public number",
+            );
+            grid_sector.sector_type.is_building()
+        });
+        match entity {
+            Entity::Pc(pc) => {
+                let entity_id: EntityId = id.into();
+                let dead = pc.pc.life_points <= 0;
+                let character = assets
+                    .profile_manager
+                    .get_character(pc.pc.profile_index)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "optical PC {} requires missing character profile {}",
+                            entity_id.index(),
+                            u32::from(pc.pc.profile_index),
+                        )
+                    });
+                let detection_speed_in_forest = character.detection_speed_in_forest;
+                let detection_speed_in_city = character.detection_speed_in_city;
+                let posture = pc.element.posture();
+                let ground_z = pc.element.position().z;
+                let stored_map = (&pc.element).position_map();
+                let stored_world = (&pc.element).position();
+                // A selected command may have no queued order.
+                let selected_element = sequences.current_element_for_actor(entity_id).and_then(
+                    |(sequence_id, element_index)| {
+                        sequences.get_element(sequence_id, element_index)
+                    },
+                );
+                let order_type = selected_element
+                    .and_then(|element| element.current_order())
+                    .map(|order| order.order_type)
+                    .unwrap_or(crate::order::OrderType::Invalid);
+                Some(EnemyOpticalTarget {
+                    id: entity_id,
+                    position: stored_map,
+                    ground_position: GroundPoint::from_map_and_z(stored_map, ground_z),
+                    sector: pc.element.sector(),
+                    layer: pc.element.layer(),
+                    posture,
+                    action_state: pc.actor.action_state,
+                    building_sector,
+                    // An undefined posture retains the stored position
+                    // as a valid zero-offset detection point.
+                    detection_point: (!dead).then(|| {
+                        crate::stealth::detection_point_world(
+                            stored_world,
+                            posture,
+                            pc.element.direction(),
+                            false,
+                        )
+                    }),
+                    direction: pc.element.direction(),
+                    active: pc.element.active,
+                    unconscious: pc.human.unconscious,
+                    // The selected command remains authoritative after
+                    // the sprite-side active door pointer is cleared.
+                    passing_door: selected_element.is_some_and(|element| {
+                        element.command == crate::element::Command::PassDoor
+                    }),
+                    obstacle_idx: pc.element.obstacle_index(),
+                    is_pc: true,
+                    is_soldier: false,
+                    dead,
+                    hollow_man: pc.human.hollow_man,
+                    guarded: pc.pc.guard.is_some(),
+                    detection_speed_in_forest,
+                    detection_speed_in_city,
+                    order_type,
+                    blipped: pc.element.blipped,
+                    camp: pc.pc.cached_camp,
+                })
             }
-        };
-        target_ids
-            .iter()
-            .filter_map(|&id| {
-                // Removed targets are intentionally absent from the snapshot:
-                // detectable cleanup below handles their stale list entries.
-                self.world.entities.get(id).map(|entity| (id, entity))
-            })
-            .filter_map(|(id, entity)| match entity {
-                Entity::Pc(pc) => {
-                    let entity_id: EntityId = id.into();
-                    let dead = pc.pc.life_points <= 0;
-                    let character = assets
-                        .profile_manager
-                        .get_character(pc.pc.profile_index)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "optical PC {} requires missing character profile {}",
-                                entity_id.index(),
-                                u32::from(pc.pc.profile_index),
-                            )
-                        });
-                    let detection_speed_in_forest = character.detection_speed_in_forest;
-                    let detection_speed_in_city = character.detection_speed_in_city;
-                    let posture = pc.element.posture();
-                    let ground_z = pc.element.position().z;
-                    let stored_map = (&pc.element).position_map();
-                    let stored_world = (&pc.element).position();
-                    // Both fields describe the same selected element in this
-                    // immutable snapshot. A command may have no queued order.
-                    let selected_element = self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(entity_id)
-                        .and_then(|(sequence_id, element_index)| {
-                            self.orders
-                                .sequence_manager
-                                .get_element(sequence_id, element_index)
-                        });
-                    let order_type = selected_element
-                        .and_then(|element| element.current_order())
-                        .map(|order| order.order_type)
-                        .unwrap_or(crate::order::OrderType::Invalid);
-                    Some(EnemyOpticalTarget {
-                        id: entity_id,
-                        position: stored_map,
-                        ground_position: GroundPoint::from_map_and_z(stored_map, ground_z),
-                        sector: pc.element.sector(),
-                        layer: pc.element.layer(),
-                        posture,
-                        action_state: pc.actor.action_state,
-                        building_sector: self.entity_building_sector(pc.element.sector()),
-                        // The original game's detection-point calculation defaults the posture
-                        // arm leaves its already-initialized world position
-                        // result unchanged. A living loaded PC with
-                        // An undefined posture therefore has a valid
-                        // zero-offset detection point.
-                        detection_point: (!dead).then(|| {
-                            crate::stealth::detection_point_world(
-                                stored_world,
-                                posture,
-                                pc.element.direction(),
-                                false,
-                            )
-                        }),
-                        direction: pc.element.direction(),
-                        active: pc.element.active,
-                        unconscious: pc.human.unconscious,
-                        // The original game asks whether the selected actor is passing a door
-                        // sequence element is PassDoor.  The sprite-side
-                        // active door pointer can already be null while that
-                        // command is still selected.
-                        passing_door: selected_element.is_some_and(|element| {
-                            element.command == crate::element::Command::PassDoor
-                        }),
-                        obstacle_idx: pc.element.obstacle_index(),
-                        is_pc: true,
-                        is_soldier: false,
-                        dead,
-                        hollow_man: pc.human.hollow_man,
-                        guarded: pc.pc.guard.is_some(),
-                        detection_speed_in_forest,
-                        detection_speed_in_city,
-                        order_type,
-                        blipped: pc.element.blipped,
-                        camp: pc.pc.cached_camp,
-                    })
-                }
-                Entity::Soldier(soldier) => {
-                    let entity_id: EntityId = id.into();
-                    let posture = soldier.element.posture();
-                    let is_rider = soldier.soldier.rider;
-                    let dead = soldier.npc.life_points <= 0;
-                    let stored_map = (&soldier.element).position_map();
-                    let stored_world = (&soldier.element).position();
-                    let position = stored_map;
-                    Some(EnemyOpticalTarget {
-                        id: entity_id,
+            Entity::Soldier(soldier) => {
+                let entity_id: EntityId = id.into();
+                let posture = soldier.element.posture();
+                let is_rider = soldier.soldier.rider;
+                let dead = soldier.npc.life_points <= 0;
+                let stored_map = (&soldier.element).position_map();
+                let stored_world = (&soldier.element).position();
+                let position = stored_map;
+                Some(EnemyOpticalTarget {
+                    id: entity_id,
+                    position,
+                    ground_position: GroundPoint::from_map_and_z(
                         position,
-                        ground_position: GroundPoint::from_map_and_z(
-                            position,
-                            soldier.element.position().z,
-                        ),
-                        sector: soldier.element.sector(),
-                        layer: soldier.element.layer(),
-                        posture,
-                        action_state: soldier.actor.action_state,
-                        building_sector: self.entity_building_sector(soldier.element.sector()),
-                        detection_point: (!dead).then(|| {
-                            crate::stealth::detection_point_world(
-                                stored_world,
-                                posture,
-                                soldier.element.direction(),
-                                is_rider,
-                            )
-                        }),
-                        direction: soldier.element.direction(),
-                        active: soldier.element.active,
-                        unconscious: soldier.human.unconscious,
-                        passing_door: optical_target_is_passing_door(
-                            &self.orders.sequence_manager,
-                            entity_id,
-                        ),
-                        obstacle_idx: soldier.element.obstacle_index(),
-                        is_pc: false,
-                        is_soldier: true,
-                        dead,
-                        hollow_man: soldier.human.hollow_man,
-                        guarded: false,
-                        detection_speed_in_forest: 100,
-                        detection_speed_in_city: 100,
-                        order_type: crate::order::OrderType::WaitingUpright,
-                        blipped: soldier.element.blipped,
-                        camp: soldier.soldier.cached_camp,
-                    })
-                }
-                Entity::Civilian(_) => None,
-                _ => None,
-            })
-            .collect()
+                        soldier.element.position().z,
+                    ),
+                    sector: soldier.element.sector(),
+                    layer: soldier.element.layer(),
+                    posture,
+                    action_state: soldier.actor.action_state,
+                    building_sector,
+                    detection_point: (!dead).then(|| {
+                        crate::stealth::detection_point_world(
+                            stored_world,
+                            posture,
+                            soldier.element.direction(),
+                            is_rider,
+                        )
+                    }),
+                    direction: soldier.element.direction(),
+                    active: soldier.element.active,
+                    unconscious: soldier.human.unconscious,
+                    passing_door: optical_target_is_passing_door(sequences, entity_id),
+                    obstacle_idx: soldier.element.obstacle_index(),
+                    is_pc: false,
+                    is_soldier: true,
+                    dead,
+                    hollow_man: soldier.human.hollow_man,
+                    guarded: false,
+                    detection_speed_in_forest: 100,
+                    detection_speed_in_city: 100,
+                    order_type: crate::order::OrderType::WaitingUpright,
+                    blipped: soldier.element.blipped,
+                    camp: soldier.soldier.cached_camp,
+                })
+            }
+            Entity::Civilian(_) => None,
+            _ => None,
+        }
     }
 
     #[cfg(test)]
@@ -2982,11 +2796,14 @@ impl EngineInner {
         assets: &LevelAssets,
         target: EntityId,
     ) -> (crate::ai::Position, crate::coordinates::WorldPoint3D) {
-        let optical = self
-            .tick_enemy_ai_build_live_enemy_optical_targets(assets, None)
-            .into_iter()
-            .find(|entry| entry.id == target)
-            .unwrap_or_else(|| panic!("test optical target {target:?} is missing"));
+        let optical = Self::enemy_optical_input(
+            &self.world.entities,
+            &self.orders.sequence_manager,
+            &self.world.fast_grid,
+            assets,
+            target,
+        )
+        .unwrap_or_else(|| panic!("test optical target {target:?} is missing"));
         (
             self.live_ai_position(target),
             optical
@@ -3234,8 +3051,6 @@ impl EngineInner {
         &mut self,
         npc_id: EntityId,
         assets: &LevelAssets,
-        human_targets: &std::collections::HashMap<EntityId, HumanTarget>,
-        object_targets: &std::collections::HashMap<EntityId, ObjectTarget>,
         universal_frame: u32,
         golden_eye: bool,
         view_radius_cache: &OwnerViewRadiusCache,
@@ -3286,18 +3101,20 @@ impl EngineInner {
         let original_creation_order = self.original_static_creation_order(npc_id);
         let mutation_debug_human_targets =
             if detectable_mutation_debug_owner_matches(npc_id.index(), original_creation_order) {
-                human_targets
-                    .keys()
+                self.world
+                    .entities
+                    .humans()
+                    .map(|(id, _)| EntityId::from(id))
                     .filter_map(|target_id| {
                         if !detectable_mutation_debug_target_slot_matches(target_id.index()) {
                             return None;
                         }
-                        let target_creation_order = self.original_static_creation_order(*target_id);
+                        let target_creation_order = self.original_static_creation_order(target_id);
                         detectable_mutation_debug_target_matches(
                             target_id.index(),
                             target_creation_order,
                         )
-                        .then_some((*target_id, target_creation_order))
+                        .then_some((target_id, target_creation_order))
                     })
                     .collect::<Vec<_>>()
             } else {
@@ -3315,24 +3132,13 @@ impl EngineInner {
             ai_vision::BASE_VIEW_SPEED
         };
 
-        // Pull the obstacle view + NPC mut borrow for the rest of the
-        // function. Detection refresh belongs to NPC actors and is
-        // therefore shared by soldiers and civilians in the Original.
+        // Obstacles remain borrowed across the pass; each target query finishes
+        // before the observer is borrowed to update that entry's latches.
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
-        let _ai_global = &mut self.ai.global;
-        let Some(npc) = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_actor_data_mut)
-        else {
-            return;
-        };
-
         let view = ViewContext {
             ground_position: viewer.ground_position,
             viewer_inside_building,
@@ -3358,17 +3164,19 @@ impl EngineInner {
             fast_grid: &self.world.fast_grid,
         };
 
+        let entities = &mut self.world.entities;
+
         // ── BODY pass ───────────────────────────────────────
         debug_detectable_list_bucket(
             "post_cleanup",
             DetectableType::Body as usize,
             npc_id,
-            npc,
+            entities.expect_ai_actor_data(npc_id, format_args!("detection bucket diagnostics")),
             universal_frame,
             original_creation_order,
         );
         Self::run_human_detectable_pass(
-            npc,
+            entities,
             npc_id,
             DetectableType::Body,
             ai_vision::DETECTION_FREQUENCY_BODY,
@@ -3389,7 +3197,6 @@ impl EngineInner {
             // Body's per-pass extra gate combines IgnoreBodies +
             // viewer_in_building.
             ignore_bodies,
-            human_targets,
             // Per-target pre-filter — Body has no extra check. Original
             // compares the full 3D eye/detection points across layers.
             |_t| true,
@@ -3401,14 +3208,13 @@ impl EngineInner {
         // Friend, MissedFriend, Beggar. Keep stimulus queue order aligned
         // with that scan order before the per-NPC FIFO Think drain.
         Self::run_object_detectable_pass(
-            npc,
+            entities,
             npc_id,
             ai_vision::DETECTION_FREQUENCY_OBJECT,
             // InstantDetection for OBJECT (Lacklandists) is
             // `!matches!(state, Sleeping|Default)` — Wondering IS
             // instant for Objects.
             !matches!(current_state, AiState::Sleeping | AiState::Default),
-            object_targets,
             view,
         );
 
@@ -3417,12 +3223,12 @@ impl EngineInner {
             "post_cleanup",
             DetectableType::Friend as usize,
             npc_id,
-            npc,
+            entities.expect_ai_actor_data(npc_id, format_args!("detection bucket diagnostics")),
             universal_frame,
             original_creation_order,
         );
         Self::run_human_detectable_pass(
-            npc,
+            entities,
             npc_id,
             DetectableType::Friend,
             ai_vision::DETECTION_FREQUENCY_FRIEND,
@@ -3438,7 +3244,6 @@ impl EngineInner {
             // Per-pass extra gate: Friend uses viewer_in_building
             // alone, no IgnoreBodies override.
             false,
-            human_targets,
             // Per-target pre-filter: target must be able to help.
             |t| t.able_to_help,
             view,
@@ -3449,12 +3254,12 @@ impl EngineInner {
             "post_cleanup",
             DetectableType::MissedFriend as usize,
             npc_id,
-            npc,
+            entities.expect_ai_actor_data(npc_id, format_args!("detection bucket diagnostics")),
             universal_frame,
             original_creation_order,
         );
         Self::run_human_detectable_pass(
-            npc,
+            entities,
             npc_id,
             DetectableType::MissedFriend,
             ai_vision::DETECTION_FREQUENCY_MISSED_FRIEND,
@@ -3467,7 +3272,6 @@ impl EngineInner {
             // No shadow events (early return for MissedFriend).
             false,
             false,
-            human_targets,
             // Per-target pre-filter: skip dead / unconscious targets.
             |t| !missed_friend_or_beggar_target_blocked(t.dead, t.unconscious),
             view,
@@ -3480,6 +3284,8 @@ impl EngineInner {
         // compute visibility for stale entries.
         {
             let beggar_idx = DetectableType::Beggar as usize;
+            let npc =
+                entities.expect_ai_actor_data(npc_id, format_args!("beggar cleanup diagnostics"));
             let (mutation_length_before, mutation_presence_before) =
                 if mutation_debug_human_targets.is_empty() {
                     (0, Vec::new())
@@ -3500,15 +3306,14 @@ impl EngineInner {
                             .collect::<Vec<_>>(),
                     )
                 };
-            npc.detectable_lists[beggar_idx].retain(|det| {
-                let Some(target_id) = det.element else {
-                    return false;
-                };
-                human_targets
-                    .get(&target_id)
-                    .map(|t| t.is_true_or_false_beggar)
-                    .unwrap_or(false)
-            });
+            Self::cleanup_live_detectables(
+                entities,
+                npc_id,
+                DetectableType::Beggar,
+                super::snapshots::is_live_beggar,
+            );
+            let npc =
+                entities.expect_ai_actor_data(npc_id, format_args!("beggar cleanup diagnostics"));
             for (target_id, target_creation_order, present_before) in mutation_presence_before {
                 let present_after = npc.detectable_lists[beggar_idx]
                     .iter()
@@ -3534,13 +3339,13 @@ impl EngineInner {
                 "post_cleanup",
                 beggar_idx,
                 npc_id,
-                npc,
+                entities.expect_ai_actor_data(npc_id, format_args!("detection bucket diagnostics")),
                 universal_frame,
                 original_creation_order,
             );
         }
         Self::run_human_detectable_pass(
-            npc,
+            entities,
             npc_id,
             DetectableType::Beggar,
             ai_vision::DETECTION_FREQUENCY_BEGGAR,
@@ -3550,7 +3355,6 @@ impl EngineInner {
             false,
             false,
             false,
-            human_targets,
             // Per-target pre-filter: skip dead / unconscious targets.
             |t| !missed_friend_or_beggar_target_blocked(t.dead, t.unconscious),
             view,
@@ -3559,7 +3363,9 @@ impl EngineInner {
         // Original performs this reset after the complete detectable-type
         // loop. A Body/Object suspect retained across a closed cadence must
         // keep its earlier worst type even when Enemy is currently zero.
-        finalize_detection_summary(npc);
+        finalize_detection_summary(
+            entities.expect_ai_actor_data_mut(npc_id, format_args!("detection summary")),
+        );
     }
 
     /// Per-NPC per-type detection helper for the four
@@ -3590,7 +3396,7 @@ impl EngineInner {
     /// and Object contribute to `maximal_detection_suspect`; the
     /// three FRIEND-and-after buckets do not.
     fn run_human_detectable_pass<F>(
-        npc: &mut crate::element::AiActorData,
+        entities: &mut crate::entities::Entities,
         npc_id: EntityId,
         kind: DetectableType,
         frequency: u32,
@@ -3600,11 +3406,10 @@ impl EngineInner {
         contribute_to_maximal: bool,
         fire_shadow_for_pc_targets: bool,
         extra_gate_blocks_visibility: bool,
-        targets: &std::collections::HashMap<EntityId, HumanTarget>,
         target_pre_filter: F,
         ctx: ViewContext<'_>,
     ) where
-        F: Fn(&HumanTarget) -> bool,
+        F: Fn(&HumanDetectionInput) -> bool,
     {
         let kind_idx = kind as usize;
         // Original-game detectable visibility only applies
@@ -3618,13 +3423,27 @@ impl EngineInner {
         let mut max_sharpness: u32 = 0;
 
         // (1) Per-detectable visibility pass.
-        for (list_index, det) in npc.detectable_lists[kind_idx].iter_mut().enumerate() {
+        let count = entities
+            .expect_ai_actor_data(npc_id, format_args!("human detection owner"))
+            .detectable_lists[kind_idx]
+            .len();
+        for list_index in 0..count {
+            let target_id = entities
+                .expect_ai_actor_data(npc_id, format_args!("human detection entry"))
+                .detectable_lists[kind_idx][list_index]
+                .element;
+            let target = target_id.and_then(|id| {
+                super::snapshots::human_detection_input(entities, id, ctx.fast_grid)
+            });
+            let npc =
+                entities.expect_ai_actor_data_mut(npc_id, format_args!("human detection latch"));
+            let det = &mut npc.detectable_lists[kind_idx][list_index];
             let Some(target_id) = det.element else {
                 det.seen_now = false;
                 det.last_visibility = 0.0;
                 continue;
             };
-            let Some(target) = targets.get(&target_id) else {
+            let Some(target) = target else {
                 det.seen_now = false;
                 det.last_visibility = 0.0;
                 continue;
@@ -3677,7 +3496,7 @@ impl EngineInner {
             {
                 None
             } else {
-                Some(target_pre_filter(target))
+                Some(target_pre_filter(&target))
             };
             let visibility_blocked = non_enemy_visibility_blocked_with_relationship(
                 ctx.eye_status,
@@ -3814,14 +3633,14 @@ impl EngineInner {
         // Maximal visibility spans the complete outer detectable-type
         // loop, not only Enemy entries. Preserve the Enemy maximum installed
         // by the preceding pass and fold this type's post-cache sharpness in.
-        if let Some(ai) = npc.ai_brain.base_mut() {
-            ai.max_visibility = ai.max_visibility.max(max_sharpness);
-        }
-
-        // (2) Snapshot the suspect accumulator. Original
-        // Predetection reads this value before the current scan is
-        // added below.
-        let suspects_before = npc.detection_suspects[kind_idx];
+        let suspects_before = {
+            let npc = entities
+                .expect_ai_actor_data_mut(npc_id, format_args!("human detection aggregate"));
+            if let Some(ai) = npc.ai_brain.base_mut() {
+                ai.max_visibility = ai.max_visibility.max(max_sharpness);
+            }
+            npc.detection_suspects[kind_idx]
+        };
 
         // (3) Predetection shadow events for PC-typed targets.
         // Body is the only kind that fires; the helper is gated on
@@ -3837,12 +3656,22 @@ impl EngineInner {
         // Predetection leaves its shadow latch unchanged.
         let mut shadow_dispatches: Vec<crate::ai::Position> = Vec::new();
         if fire_shadow_for_pc_targets {
-            for det in npc.detectable_lists[kind_idx].iter_mut() {
+            for index in 0..count {
+                let target_id = entities
+                    .expect_ai_actor_data(npc_id, format_args!("predetection entry"))
+                    .detectable_lists[kind_idx][index]
+                    .element;
+                let target = target_id.and_then(|id| {
+                    super::snapshots::human_detection_input(entities, id, ctx.fast_grid)
+                });
+                let npc =
+                    entities.expect_ai_actor_data_mut(npc_id, format_args!("predetection latch"));
+                let det = &mut npc.detectable_lists[kind_idx][index];
                 // Only PCs are seen as shadows.
                 let Some(target_id) = det.element else {
                     continue;
                 };
-                let Some(target) = targets.get(&target_id) else {
+                let Some(target) = target else {
                     continue;
                 };
                 let shadow_seen_before = det.shadow_seen_last_frame;
@@ -3889,6 +3718,7 @@ impl EngineInner {
         }
 
         // (4) Accumulate and determine whether the full detection commits.
+        let npc = entities.expect_ai_actor_data_mut(npc_id, format_args!("human detection commit"));
         let suspects_after = suspects_before.wrapping_add(sum_of_sharpnesses);
         npc.detection_suspects[kind_idx] = suspects_after;
         let commit_threshold = suspects_after >= ai_vision::DETECTION_SUSPECT_THRESHOLD as u16
@@ -3963,6 +3793,36 @@ impl EngineInner {
         }
     }
 
+    fn cleanup_live_detectables(
+        entities: &mut crate::entities::Entities,
+        owner: EntityId,
+        kind: DetectableType,
+        keep: impl Fn(&Entity) -> bool,
+    ) {
+        let kind = kind as usize;
+        let mut index = 0;
+        loop {
+            let entries = &entities
+                .expect_ai_actor_data(owner, format_args!("detection cleanup"))
+                .detectable_lists[kind];
+            let Some(entry) = entries.get(index) else {
+                break;
+            };
+            let retained = entry
+                .element
+                .and_then(|id| entities.get(id))
+                .is_some_and(&keep);
+            if retained {
+                index += 1;
+            } else {
+                entities
+                    .expect_ai_actor_data_mut(owner, format_args!("detection cleanup"))
+                    .detectable_lists[kind]
+                    .remove(index);
+            }
+        }
+    }
+
     /// Per-NPC OBJECT detection — sibling of
     /// `run_human_detectable_pass` that calls
     /// `ai_vision::compute_object_visibility` instead of
@@ -3970,11 +3830,10 @@ impl EngineInner {
     /// machinery; no shadow events because the PC gate skips
     /// objects.
     fn run_object_detectable_pass(
-        npc: &mut crate::element::AiActorData,
+        entities: &mut crate::entities::Entities,
         npc_id: EntityId,
         frequency: u32,
         instant_detection: bool,
-        targets: &std::collections::HashMap<EntityId, ObjectTarget>,
         ctx: ViewContext<'_>,
     ) {
         let obj_idx = DetectableType::Object as usize;
@@ -3985,12 +3844,10 @@ impl EngineInner {
         // Object detectable cleanup: drop entries whose target
         // is no longer active.  Run before the visibility loop so
         // dead entries don't waste a tick of accumulator decay.
-        npc.detectable_lists[obj_idx].retain(|det| {
-            let Some(target_id) = det.element else {
-                return false;
-            };
-            targets.get(&target_id).map(|o| o.active).unwrap_or(false)
+        Self::cleanup_live_detectables(entities, npc_id, DetectableType::Object, |entity| {
+            entity.element_data().active
         });
+        let npc = entities.expect_ai_actor_data(npc_id, format_args!("object detection cleanup"));
         debug_detectable_list_entries(
             "post_cleanup",
             obj_idx,
@@ -4003,13 +3860,18 @@ impl EngineInner {
         let mut sum_of_sharpnesses: u16 = 0;
         let mut max_sharpness: u32 = 0;
 
-        for det in npc.detectable_lists[obj_idx].iter_mut() {
-            let Some(target_id) = det.element else {
-                det.seen_now = false;
-                det.last_visibility = 0.0;
-                continue;
-            };
-            let Some(object) = targets.get(&target_id) else {
+        let count = npc.detectable_lists[obj_idx].len();
+        for index in 0..count {
+            let target_id = entities
+                .expect_ai_actor_data(npc_id, format_args!("object detection entry"))
+                .detectable_lists[obj_idx][index]
+                .element;
+            let target =
+                target_id.and_then(|id| super::snapshots::object_detection_input(entities, id));
+            let npc =
+                entities.expect_ai_actor_data_mut(npc_id, format_args!("object detection latch"));
+            let det = &mut npc.detectable_lists[obj_idx][index];
+            let Some(object) = target else {
                 det.seen_now = false;
                 det.last_visibility = 0.0;
                 continue;
@@ -4064,6 +3926,8 @@ impl EngineInner {
             det.last_visibility = visibility;
         }
 
+        let npc =
+            entities.expect_ai_actor_data_mut(npc_id, format_args!("object detection commit"));
         if let Some(ai) = npc.ai_brain.base_mut() {
             ai.max_visibility = ai.max_visibility.max(max_sharpness);
         }
@@ -4866,29 +4730,6 @@ mod tests {
             finalize_detection_summary(&mut npc);
             assert_eq!(npc.worst_detected_type, DetectableType::None);
         }
-    }
-}
-
-/// Retain the camp unconscious list whose capture timing belongs to detection.
-/// Tactical inputs are read live when each queued stimulus is delivered.
-fn build_enemy_detection_aggregate(
-    world: &DetectionFrameState,
-    npc_id: EntityId,
-    camp: Camp,
-    diplomacy: &crate::diplomacy::DiplomacyState,
-) -> super::post_detection::EnemyDetectionAggregate {
-    super::post_detection::EnemyDetectionAggregate {
-        camp_unconscious_soldiers: world
-            .unconscious_soldiers
-            .iter()
-            .filter(|(id, other_camp, _)| *id != npc_id && diplomacy.is_allied(*other_camp, camp))
-            .map(
-                |(id, _, knocked_out)| crate::ai_enemy::CampUnconsciousSoldierInfo {
-                    handle: id.index(),
-                    knocked_out_in_money_fight: *knocked_out,
-                },
-            )
-            .collect(),
     }
 }
 

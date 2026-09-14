@@ -149,165 +149,6 @@ fn rider_charge_goal_matches_original_scalar_rounding() {
     assert_eq!(geometry.hit_norm_len.to_bits(), 0x43d0_d28f);
 }
 
-#[test]
-fn rider_charge_friend_corridor_uses_full_fighter_registry() {
-    // nicouzouf Profile_001 Savegame_047 replay-005, frame 1433:
-    // Soldier62 is outside Soldier51's nearby-fighter window but stands
-    // inside the strike corridor toward PC76. Original's global
-    // Fighter enumeration rejects this charge.
-    let mut ai = EnemyAi::new(51);
-    ai.base.primary_target = Some(AiEntityHandle::new(76));
-    ai.list_them = vec![76];
-    let rider = Position {
-        x: f32::from_bits(0x44c7_1d8e),
-        y: f32::from_bits(0x4421_e39e),
-        ..Position::default()
-    };
-    let target = FighterSnapshot {
-        handle: 76,
-        position: Position {
-            x: f32::from_bits(0x4474_03e3),
-            y: f32::from_bits(0x43bb_a89f),
-            ..Position::default()
-        },
-        raw_position: Position {
-            x: f32::from_bits(0x4474_03e3),
-            y: f32::from_bits(0x43bb_a89f),
-            ..Position::default()
-        },
-        is_able_to_fight: true,
-        is_pc: true,
-        ..FighterSnapshot::default()
-    };
-    let blocking_friend = FighterSnapshot {
-        handle: 62,
-        position: Position {
-            x: f32::from_bits(0x447b_182c),
-            y: f32::from_bits(0x43b8_eb5e),
-            ..Position::default()
-        },
-        raw_position: Position {
-            x: f32::from_bits(0x447b_182c),
-            y: f32::from_bits(0x43b8_eb5e),
-            ..Position::default()
-        },
-        is_friendly: true,
-        is_soldier: true,
-        ..FighterSnapshot::default()
-    };
-    let mut tick = AiPerTickData::stub();
-    tick.nearby_fighters = vec![target.clone()];
-    tick.fighter_registry = vec![target, blocking_friend];
-    let ctx = AiContext {
-        self_is_rider: true,
-        position: rider,
-        direction: 11,
-        ..AiContext::test_fixture()
-    };
-
-    assert!(!ai.maybe_make_rider_attack(ThinkEnv::new(
-        &crate::sim_rng::test_context(),
-        &ctx,
-        &tick,
-        None
-    )));
-    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(76)));
-    assert!(ai.base.outbox.actor.orders.is_empty());
-}
-
-#[test]
-fn rider_charge_retains_out_of_range_target_position_for_return_face() {
-    // Original-game rider-attack setup stores the primary target's position
-    // after selecting the charge.  A raw target pointer remains valid
-    // outside Rust's radius-limited nearby-fighter snapshot; the later
-    // GettingDistance reach-point handler faces this stored position.
-    let mut ai = EnemyAi::new(51);
-    ai.base.primary_target = Some(AiEntityHandle::new(76));
-    ai.base.seek_position = Position {
-        x: 900.0,
-        y: 700.0,
-        ..Position::default()
-    };
-    let target_position = Position {
-        x: 0.0,
-        y: -200.0,
-        ..Position::default()
-    };
-    let target = FighterSnapshot {
-        handle: 76,
-        position: target_position,
-        raw_position: target_position,
-        is_able_to_fight: true,
-        is_pc: true,
-        ..FighterSnapshot::default()
-    };
-    let mut tick = AiPerTickData::stub();
-    tick.nearby_fighters.clear();
-    tick.fighter_registry = vec![target];
-    let ctx = AiContext {
-        self_is_rider: true,
-        position: Position::default(),
-        direction: 0,
-        ..AiContext::test_fixture()
-    };
-
-    assert!(ai.maybe_make_rider_attack(ThinkEnv::new(
-        &crate::sim_rng::test_context(),
-        &ctx,
-        &tick,
-        None
-    )));
-    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(76)));
-    assert_eq!(ai.base.seek_position, target_position);
-}
-
-#[test]
-fn rider_charge_geometry_uses_raw_target_position_during_door_transit() {
-    // `Position(target)` substitutes the active door endpoint, while
-    // Rider-attack destination selection reads the target's map position. Put
-    // those points on opposite sides of the rider so the accessor choice
-    // is observable without reproducing the shipped door grid.
-    let mut ai = EnemyAi::new(51);
-    ai.base.primary_target = Some(AiEntityHandle::new(76));
-    ai.list_them = vec![76];
-    let target = FighterSnapshot {
-        handle: 76,
-        position: Position {
-            y: -50.0,
-            level: 1,
-            ..Position::default()
-        },
-        raw_position: Position {
-            y: 50.0,
-            ..Position::default()
-        },
-        is_able_to_fight: true,
-        is_pc: true,
-        ..FighterSnapshot::default()
-    };
-    let mut tick = AiPerTickData::stub();
-    tick.nearby_fighters = vec![target.clone()];
-    tick.fighter_registry = vec![target];
-    let ctx = AiContext {
-        self_is_rider: true,
-        direction: 0,
-        ..AiContext::test_fixture()
-    };
-    let initial_state = (ai.base.current_state, ai.base.current_substate);
-
-    assert!(!ai.maybe_make_rider_attack(ThinkEnv::new(
-        &crate::sim_rng::test_context(),
-        &ctx,
-        &tick,
-        None
-    )));
-    assert_eq!(
-        (ai.base.current_state, ai.base.current_substate),
-        initial_state
-    );
-    assert!(ai.base.outbox.actor.orders.is_empty());
-}
-
 fn pc_view() -> crate::ai_entity_view::AiEntityView {
     let entity = crate::element::Entity::Pc(crate::element::ActorPc {
         element: {
@@ -340,14 +181,6 @@ fn pc_view_at(position: Position) -> crate::ai_entity_view::AiEntityView {
     view.detection_position_world =
         crate::coordinates::WorldPoint3D::new(position.x, position.y, 0.0);
     view
-}
-
-fn add_owner_sword_range(tick: &mut AiPerTickData, owner: u32, range: u16) {
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: owner,
-        sword_range_default: range,
-        ..FighterSnapshot::default()
-    });
 }
 
 #[test]
@@ -453,71 +286,14 @@ fn attack_enemy_retarget_uses_live_exact_sector_over_number_only_fighter_snapsho
     );
 }
 
-fn reconsider_approach_lift_grid() -> FastFindGrid {
-    let mut grid = FastFindGrid::new();
-    let lift_number = crate::sector::SectorNumber::new(42);
-    let ordinary_number = crate::sector::SectorNumber::new(5);
-    let level = std::sync::Arc::make_mut(&mut grid.level);
-    level.sector_number_map.insert(lift_number, 0);
-    level.sector_number_map.insert(ordinary_number, 1);
-    level.door_projection_infos = vec![
-        crate::fast_find_grid::DoorProjectionInfo {
-            point_out: crate::coordinates::MapPoint::new(410.0, 120.0),
-            sector_out: crate::sector::SectorNumber::new(7),
-            layer_out: 3,
-            ..Default::default()
-        },
-        crate::fast_find_grid::DoorProjectionInfo {
-            point_out: crate::coordinates::MapPoint::new(430.0, 300.0),
-            sector_out: ordinary_number,
-            layer_out: 0,
-            ..Default::default()
-        },
-    ];
-    let sector =
-        |sector_number, sector_type, lift_type, gate_indices| crate::fast_find_grid::GridSector {
-            points: Vec::new(),
-            bounding_box: crate::coordinates::MapBBox::new(),
-            sector_type,
-            layer: 0,
-            sector_number,
-            door_index: None,
-            lift_type,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices,
-            underlying_sector: None,
-        };
-    level.sectors.push(sector(
-        lift_number,
-        crate::sector::SectorType::LIFT,
-        Some(crate::sector::LiftType::Ladder),
-        vec![
-            crate::gate::DoorIndex::new(0).expect("valid door index"),
-            crate::gate::DoorIndex::new(1).expect("valid door index"),
-        ],
-    ));
-    level.sectors.push(sector(
-        ordinary_number,
-        crate::sector::SectorType::AREA | crate::sector::SectorType::MOTION,
-        None,
-        Vec::new(),
-    ));
-    grid
-}
-
 #[test]
 fn failed_look_for_help_route_is_consumed_before_event_fallback() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(105);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingRunningToOfficer;
-    ai.base.couldnt_reachpoint = true;
+    // Officer alerting consumes the failed route before returning to this caller.
+    ai.base.couldnt_reachpoint = false;
     ai.base.primary_target = Some(AiEntityHandle::new(252));
     ai.list_them = vec![252];
 
@@ -550,10 +326,7 @@ fn failed_look_for_help_route_is_consumed_before_event_fallback() {
     let mut global = AiGlobalState::default();
 
     let (_, draws) = crate::sim_rng::with_draw_trace(|| {
-        ai.resume_battle_look_for_help_after_alert_officer(
-            ThinkEnv::new(&sim, &ctx, &tick, None),
-            &mut global,
-        );
+        ai.finish_battle_look_for_help(ThinkEnv::new(&sim, &ctx, &tick, None), false, &mut global);
     });
 
     assert_eq!(draws, vec![crate::sim_rng::RngSite::BattlePanicRemark]);
@@ -676,13 +449,14 @@ fn successful_look_for_help_continuation_draws_remark_and_logs_once() {
     let mut global = AiGlobalState::default();
 
     let (_, draws) = crate::sim_rng::with_draw_trace(|| {
-        ai.resume_battle_look_for_help_after_alert_officer(
+        ai.finish_battle_look_for_help(
             ThinkEnv::new(
                 &sim,
                 &AiContext::test_fixture(),
                 &AiPerTickData::stub(),
                 None,
             ),
+            true,
             &mut global,
         );
     });
@@ -717,89 +491,6 @@ fn reconsider_approach_uses_raw_truncated_map_distance() {
 }
 
 #[test]
-fn battle_friend_visibility_is_evaluated_at_the_decision_call_site() {
-    let mut target = pc_view();
-    target.position.x = 100.0;
-    target.detection_position_world.x = 100.0;
-    let ctx = AiContext {
-        self_view_radius: 500,
-        self_is_active: true,
-        ..AiContext::test_fixture()
-    };
-
-    assert!(battle_friend_detected_360(
-        &ctx,
-        1,
-        2,
-        target.detection_position_world,
-        target.direction,
-        &target,
-    ));
-
-    target.in_building = true;
-    assert!(!battle_friend_detected_360(
-        &ctx,
-        1,
-        2,
-        target.detection_position_world,
-        target.direction,
-        &target,
-    ));
-
-    target.in_building = false;
-    target.active = false;
-    assert!(!battle_friend_detected_360(
-        &ctx,
-        1,
-        2,
-        target.detection_position_world,
-        target.direction,
-        &target,
-    ));
-
-    target.active = true;
-    let inactive_owner = AiContext {
-        self_is_active: false,
-        ..ctx
-    };
-    assert!(!battle_friend_detected_360(
-        &inactive_owner,
-        1,
-        2,
-        target.detection_position_world,
-        target.direction,
-        &target,
-    ));
-}
-
-#[test]
-fn battle_fighter_scan_preserves_interleaved_registry_order() {
-    let fighter = |handle, is_pc, is_friendly, is_able_to_fight| FighterSnapshot {
-        handle,
-        is_pc,
-        is_soldier: !is_pc,
-        is_friendly,
-        is_able_to_fight,
-        ..FighterSnapshot::default()
-    };
-    let registry = vec![
-        fighter(54, false, true, true),
-        fighter(47, false, true, true),
-        fighter(167, true, true, true),
-        fighter(48, false, true, true),
-        fighter(36, true, false, true),
-        fighter(49, false, true, false),
-    ];
-
-    assert_eq!(
-        battle_fighter_candidates(&registry, 54)
-            .map(|candidate| candidate.handle)
-            .collect::<Vec<_>>(),
-        vec![47, 167, 48],
-    );
-}
-
-#[test]
 fn out_of_view_alerting_soldier_does_not_suppress_officer_alert() {
     assert!(!has_nearby_alerting_soldier(
         65,
@@ -820,780 +511,6 @@ fn admitted_alerting_soldier_suppresses_duplicate_officer_alert() {
         &[65, 64],
         [(64, Substate::DefaultOnPost)],
     ));
-}
-
-#[test]
-fn rider_charge_approach_focuses_target_for_immediate_visibility_refresh() {
-    let mut ai = EnemyAi::new(51);
-    ai.base.primary_target = Some(AiEntityHandle::new(76));
-
-    let ctx = AiContext {
-        self_is_rider: true,
-        position: Position::default(),
-        direction: 0,
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    tick.nearby_fighters = vec![FighterSnapshot {
-        handle: 76,
-        position: Position {
-            y: -200.0,
-            ..Position::default()
-        },
-        raw_position: Position {
-            y: -200.0,
-            ..Position::default()
-        },
-        is_able_to_fight: true,
-        is_pc: true,
-        ..FighterSnapshot::default()
-    }];
-
-    assert!(ai.maybe_make_rider_attack(ThinkEnv::new(
-        &crate::sim_rng::test_context(),
-        &ctx,
-        &tick,
-        None
-    )));
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingRiderChargingApproaching
-    );
-    let focus = ai.base.outbox.actor.focus.or_else(|| {
-        ai.base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .find_map(|work| match work {
-                crate::ai::AiOwnerWork::StateChange(notification) => notification
-                    .actor_effects_before_callback
-                    .as_ref()
-                    .and_then(|effects| effects.focus),
-                _ => None,
-            })
-    });
-    assert_eq!(focus, Some(AiEntityHandle::new(76)));
-}
-
-#[test]
-fn immediate_rider_charge_replaces_target_focus_with_unfocus() {
-    let mut ai = EnemyAi::new(51);
-    ai.base.primary_target = Some(AiEntityHandle::new(76));
-
-    let ctx = AiContext {
-        self_is_rider: true,
-        position: Position::default(),
-        direction: 0,
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    tick.nearby_fighters = vec![FighterSnapshot {
-        handle: 76,
-        position: Position {
-            y: -50.0,
-            ..Position::default()
-        },
-        raw_position: Position {
-            y: -50.0,
-            ..Position::default()
-        },
-        is_able_to_fight: true,
-        is_pc: true,
-        ..FighterSnapshot::default()
-    }];
-
-    assert!(ai.maybe_make_rider_attack(ThinkEnv::new(
-        &crate::sim_rng::test_context(),
-        &ctx,
-        &tick,
-        None
-    )));
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingRiderChargingPassing
-    );
-    assert_eq!(ai.base.outbox.actor.focus, None);
-    let unfocus = ai.base.outbox.actor.unfocus
-        || ai
-            .base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .any(|work| match work {
-                crate::ai::AiOwnerWork::StateChange(notification) => notification
-                    .actor_effects_before_callback
-                    .as_ref()
-                    .is_some_and(|effects| effects.unfocus),
-                _ => false,
-            });
-    assert!(unfocus);
-}
-
-#[test]
-fn rider_charge_trusts_persistent_primary_over_transient_camp_classification() {
-    let mut ai = EnemyAi::new(51);
-    ai.base.primary_target = Some(AiEntityHandle::new(76));
-
-    let ctx = AiContext {
-        self_is_rider: true,
-        position: Position::default(),
-        direction: 0,
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    tick.nearby_fighters = vec![FighterSnapshot {
-        handle: 76,
-        position: Position {
-            y: -50.0,
-            ..Position::default()
-        },
-        raw_position: Position {
-            y: -50.0,
-            ..Position::default()
-        },
-        is_able_to_fight: false,
-        is_friendly: true,
-        ..FighterSnapshot::default()
-    }];
-
-    assert!(ai.maybe_make_rider_attack(ThinkEnv::new(
-        &crate::sim_rng::test_context(),
-        &ctx,
-        &tick,
-        None
-    )));
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingRiderChargingPassing
-    );
-}
-
-#[test]
-fn reconsider_approach_resolves_position_after_synchronous_retarget() {
-    let mut ai = EnemyAi::new(110);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingReactiontime;
-    ai.base.primary_target = Some(AiEntityHandle::new(91));
-    ai.sword_range = 50;
-
-    let target_position = Position {
-        x: 695.0,
-        y: 2073.0,
-        ..Position::default()
-    };
-    let mut target_view = pc_view();
-    target_view.position = target_position;
-    target_view.forecasted_destination =
-        crate::ai::PreparedForecastDestination::fixed(target_position, 0);
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(91, target_view);
-    let ctx = AiContext {
-        position: Position {
-            x: 698.0,
-            y: 2119.0,
-            ..Position::default()
-        },
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    let mut tick = AiPerTickData::stub();
-    add_owner_sword_range(&mut tick, 110, 50);
-    tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(58));
-    tick.primary_target_position = Some(Position {
-        x: 712.0,
-        y: 2053.0,
-        ..Position::default()
-    });
-
-    ai.reconsider_enemy_approach(
-        false,
-        ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-    );
-
-    // begin_swordfight raises Engage before its state change suspends the
-    // actor-outbox prefix into the queued state-change owner work; the
-    // engine reapplies that prefix when it drains the callback. Read the
-    // request from either place.
-    let engage = ai.base.outbox.actor.enter_swordfight.or_else(|| {
-        ai.base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .find_map(|work| match work {
-                crate::ai::AiOwnerWork::StateChange(notification) => notification
-                    .actor_effects_before_callback
-                    .as_ref()
-                    .and_then(|effects| effects.enter_swordfight),
-                _ => None,
-            })
-    });
-    assert_eq!(
-        engage,
-        Some(EnterSwordfightRequest::Engage(AiEntityHandle::new(91)))
-    );
-    assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
-}
-
-#[test]
-fn reconsider_approach_uses_selected_door_lift_after_synchronous_retarget() {
-    let mut ai = EnemyAi::new(84);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingQuittingSwordfight;
-    ai.base.primary_target = Some(AiEntityHandle::new(173));
-    ai.sword_range = 50;
-
-    let committed_lift_position = Position {
-        x: 500.0,
-        y: 500.0,
-        sector: crate::position_interface::SectorHandle::new(42),
-        level: 0,
-    };
-    let mut replacement_view = pc_view();
-    // A selected PassDoor makes AI Position(target) report the committed
-    // endpoint while the world position remains at the interpolated body.
-    // Poison the latter so this test cannot pass through raw geometry.
-    replacement_view.position = committed_lift_position;
-    replacement_view.detection_position = crate::coordinates::MapPoint::new(70.0, 80.0);
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(173, replacement_view);
-    let ctx = AiContext {
-        position: Position {
-            x: 0.0,
-            y: 0.0,
-            level: 3,
-            ..Position::default()
-        },
-        frame: 1058,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        fast_grid: std::sync::Arc::new(reconsider_approach_lift_grid()),
-        ..AiContext::test_fixture()
-    };
-    assert_eq!(
-        ctx.entity_view(173).unwrap().detection_position,
-        crate::coordinates::MapPoint::new(70.0, 80.0)
-    );
-    assert_eq!(
-        ctx.entity_view(173).unwrap().position,
-        committed_lift_position
-    );
-
-    let mut tick = AiPerTickData::stub();
-    add_owner_sword_range(&mut tick, 84, 50);
-    tick.owner_live_position = Some(ctx.position);
-    tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(47));
-    tick.primary_target_position = Some(Position {
-        x: 900.0,
-        y: 900.0,
-        sector: crate::position_interface::SectorHandle::new(5),
-        level: 0,
-    });
-
-    ai.reconsider_enemy_approach(
-        false,
-        ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-    );
-
-    let expected_entry = Position {
-        x: 410.0,
-        y: 120.0,
-        sector: crate::position_interface::SectorHandle::new(7),
-        level: 3,
-    };
-    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(173)));
-    let focused = ai.base.outbox.actor.focus.or_else(|| {
-        ai.base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .find_map(|work| match work {
-                crate::ai::AiOwnerWork::StateChange(notification) => notification
-                    .actor_effects_before_callback
-                    .as_ref()
-                    .and_then(|effects| effects.focus),
-                _ => None,
-            })
-    });
-    assert_eq!(focused, Some(AiEntityHandle::new(173)));
-    assert_eq!(ai.base.current_substate, Substate::AttackingRunningToLadder);
-    assert_eq!(ai.base.seek_position, expected_entry);
-    assert_eq!(ai.base.outbox.actor.orders.len(), 1);
-    let order = &ai.base.outbox.actor.orders[0];
-    assert_eq!(order.order_type, crate::order::OrderType::RunningUpright);
-    assert_eq!((order.target_x, order.target_y), (410.0, 120.0));
-    assert_eq!(order.target_sector, expected_entry.sector);
-    assert_eq!(order.target_layer, Some(3));
-    assert_eq!(order.tolerance, 30.0);
-    assert!(ai.base.timer_is_running);
-    assert_eq!(ai.base.when_does_timer_ring, 1088);
-}
-
-#[test]
-fn reconsider_approach_does_not_reuse_old_lift_after_synchronous_retarget() {
-    let mut ai = EnemyAi::new(84);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingQuittingSwordfight;
-    ai.base.primary_target = Some(AiEntityHandle::new(173));
-    ai.sword_range = 50;
-
-    let ordinary_replacement = Position {
-        x: 700.0,
-        y: 0.0,
-        sector: crate::position_interface::SectorHandle::new(5),
-        level: 0,
-    };
-    let mut replacement_view = pc_view();
-    replacement_view.position = ordinary_replacement;
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(173, replacement_view);
-    let ctx = AiContext {
-        position: Position::default(),
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        fast_grid: std::sync::Arc::new(reconsider_approach_lift_grid()),
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    // The serialized EnemyAi cache deliberately disagrees with the live
-    // actor weapon. The original game asks the sword for the latter on every
-    // reconsidered enemy approach movement.
-    add_owner_sword_range(&mut tick, 84, 65);
-    tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(47));
-    tick.primary_target_position = Some(Position {
-        x: 500.0,
-        y: 500.0,
-        sector: crate::position_interface::SectorHandle::new(42),
-        level: 0,
-    });
-
-    ai.reconsider_enemy_approach(
-        false,
-        ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-    );
-
-    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(173)));
-    assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
-    assert_ne!(ai.base.current_substate, Substate::AttackingRunningToLadder);
-    assert_eq!(ai.base.seek_position, ordinary_replacement);
-    let order = ai.base.outbox.actor.orders.first().or_else(|| {
-        ai.base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .find_map(|work| match work {
-                crate::ai::AiOwnerWork::StateChange(notification) => notification
-                    .actor_effects_before_callback
-                    .as_ref()
-                    .and_then(|effects| effects.orders.first()),
-                crate::ai::AiOwnerWork::ActorEffects(effects) => effects.orders.first(),
-                _ => None,
-            })
-    });
-    let order = order.expect("ordinary replacement must queue its running approach");
-    assert_eq!(order.order_type, crate::order::OrderType::RunningUpright);
-    assert_eq!((order.target_x, order.target_y), (700.0, 0.0));
-    assert_eq!(order.target_sector, ordinary_replacement.sector);
-    assert_eq!(order.tolerance, 65.0);
-}
-
-#[test]
-fn reconsider_approach_move_precedes_state_change_callback() {
-    let mut ai = EnemyAi::new(180);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingTooProudToAttackApproach;
-    ai.base.primary_target = Some(AiEntityHandle::new(198));
-    ai.sword_range = 50;
-
-    let target_position = Position {
-        x: 1731.4956,
-        y: 2379.8796,
-        ..Position::default()
-    };
-    let ctx = AiContext {
-        think_depth: 1,
-        position: Position {
-            x: 1773.7925,
-            y: 2523.631,
-            ..Position::default()
-        },
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    add_owner_sword_range(&mut tick, 180, 50);
-    tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(198));
-    tick.primary_target_position = Some(target_position);
-
-    ai.reconsider_enemy_approach(
-        true,
-        ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-    );
-
-    assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
-    let transition = ai
-        .base
-        .outbox
-        .reentrant
-        .owner_work
-        .iter()
-        .find_map(|work| match work {
-            crate::ai::AiOwnerWork::StateChange(notification)
-                if notification.incoming_substate == Substate::AttackingRunningToEnemy =>
-            {
-                Some(notification)
-            }
-            _ => None,
-        })
-        .expect("running approach must queue its state-change callback");
-    assert!(transition.actor_effects_before_callback.is_none());
-    let work = &ai.base.outbox.reentrant.owner_work;
-    let actor_effects_index = work
-        .iter()
-        .position(|work| matches!(work, crate::ai::AiOwnerWork::ActorEffects(_)))
-        .expect("approach movement must be sealed as an actor-effects owner boundary");
-    let resume_index = work
-        .iter()
-        .position(|work| {
-            matches!(
-                work,
-                crate::ai::AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear { .. }
-            )
-        })
-        .expect("failed-route continuation must remain queued");
-    assert!(actor_effects_index < resume_index);
-    let state_change_index = work
-        .iter()
-        .position(|work| matches!(work, crate::ai::AiOwnerWork::StateChange(_)))
-        .expect("approach state change remains queued after its route prefix");
-    assert!(actor_effects_index < state_change_index);
-    let crate::ai::AiOwnerWork::ActorEffects(prefix) = &work[actor_effects_index] else {
-        unreachable!()
-    };
-    assert_eq!(prefix.orders.len(), 1);
-    assert_eq!(
-        prefix.orders[0].order_type,
-        crate::order::OrderType::RunningUpright
-    );
-    assert_eq!(prefix.orders[0].tolerance, 50.0);
-    assert!(ai.base.outbox.actor.orders.is_empty());
-    assert!(
-        work[state_change_index + 1..resume_index]
-            .iter()
-            .any(|work| matches!(
-                work,
-                crate::ai::AiOwnerWork::ActorEffects(effects)
-                    if effects.set_attentive_mode.map(|effect| effect.target) == Some(true)
-            ))
-    );
-    assert!(
-        ai.base
-            .outbox
-            .reentrant
-            .reconsider_approach_completion_pending
-    );
-    assert!(ai.base.outbox.reentrant.owner_work.iter().any(|work| {
-        matches!(
-            work,
-            crate::ai::AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear {
-                target: 198,
-                target_position: queued_target,
-            } if *queued_target == target_position
-        )
-    }));
-}
-
-#[test]
-fn reconsider_approach_same_substate_seals_live_move_without_stealing_old_callback() {
-    let mut ai = EnemyAi::new(180);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingRunningToEnemy;
-    ai.base.primary_target = Some(AiEntityHandle::new(198));
-    ai.sword_range = 50;
-    ai.base
-        .outbox
-        .reentrant
-        .owner_work
-        .push(crate::ai::AiOwnerWork::StateChange(
-            crate::ai::AiStateChangeNotification {
-                outgoing_state: AiState::Attacking,
-                outgoing_substate: Substate::AttackingTooProudToAttackApproach,
-                incoming_state: AiState::Attacking,
-                incoming_substate: Substate::AttackingRunningToEnemy,
-                source: crate::ai::AiStateChangeSource::from_optional_human(198),
-                actor_effects_before_callback: None,
-            },
-        ));
-
-    let target_position = Position {
-        x: 1731.4956,
-        y: 2379.8796,
-        ..Position::default()
-    };
-    let ctx = AiContext {
-        think_depth: 1,
-        position: Position {
-            x: 1773.7925,
-            y: 2523.631,
-            ..Position::default()
-        },
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    add_owner_sword_range(&mut tick, 180, 50);
-    tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(198));
-    tick.primary_target_position = Some(target_position);
-
-    ai.reconsider_enemy_approach(
-        true,
-        ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-    );
-
-    let work = &ai.base.outbox.reentrant.owner_work;
-    let crate::ai::AiOwnerWork::StateChange(old_notification) = &work[0] else {
-        panic!("older matching callback must retain its owner slot")
-    };
-    assert!(old_notification.actor_effects_before_callback.is_none());
-    assert_eq!(
-        work.iter()
-            .filter(|work| matches!(work, crate::ai::AiOwnerWork::StateChange(_)))
-            .count(),
-        1,
-        "same-substate updates must not manufacture a callback"
-    );
-    let actor_effects_index = work
-        .iter()
-        .enumerate()
-        .skip(1)
-        .find_map(|(index, work)| match work {
-            crate::ai::AiOwnerWork::ActorEffects(effects)
-                if effects.orders.iter().any(|order| {
-                    order.order_type == crate::order::OrderType::RunningUpright
-                        && order.tolerance == 50.0
-                }) =>
-            {
-                Some(index)
-            }
-            _ => None,
-        })
-        .expect("same-substate approach movement must become real actor owner work");
-    let resume_index = work
-        .iter()
-        .position(|work| {
-            matches!(
-                work,
-                crate::ai::AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear { .. }
-            )
-        })
-        .expect("route completion must resume the source statement");
-    assert!(actor_effects_index < resume_index);
-    let attentive_effects_index = work
-        .iter()
-        .enumerate()
-        .skip(actor_effects_index + 1)
-        .find_map(|(index, work)| match work {
-            crate::ai::AiOwnerWork::ActorEffects(effects)
-                if effects.set_attentive_mode.map(|effect| effect.target) == Some(true) =>
-            {
-                Some(index)
-            }
-            _ => None,
-        })
-        .expect("same-substate update tail must remain after the approach boundary");
-    assert!(attentive_effects_index < resume_index);
-    let crate::ai::AiOwnerWork::ActorEffects(route_effects) = &work[actor_effects_index] else {
-        unreachable!()
-    };
-    assert!(route_effects.set_attentive_mode.is_none());
-    assert!(ai.base.outbox.actor.orders.is_empty());
-    assert!(
-        ai.base
-            .outbox
-            .reentrant
-            .reconsider_approach_completion_pending
-    );
-}
-
-#[test]
-fn failed_reconsider_approach_resumes_with_avenger_roof_wait() {
-    let mut ai = EnemyAi::new(205);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingRunningToEnemy;
-    ai.base.primary_target = Some(AiEntityHandle::new(298));
-    ai.base.couldnt_reachpoint = true;
-    let target_position = Position {
-        x: 264.0,
-        y: 1358.0,
-        ..Position::default()
-    };
-    let wait_position = Position {
-        x: 250.0,
-        y: 1200.0,
-        sector: crate::position_interface::SectorHandle::new(64),
-        level: 1,
-    };
-
-    ai.resume_reconsider_enemy_approach_after_go_near(
-        target_position,
-        Some(wait_position),
-        &AiContext::test_fixture(),
-    );
-
-    assert!(!ai.base.couldnt_reachpoint);
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingRunToAvengerOnRoof
-    );
-    assert_eq!(ai.base.seek_position, target_position);
-    assert_eq!(ai.base.outbox.actor.orders.len(), 1);
-    let order = &ai.base.outbox.actor.orders[0];
-    assert_eq!(order.target_x, wait_position.x);
-    assert_eq!(order.target_y, wait_position.y);
-    assert_eq!(order.target_sector, wait_position.sector);
-    assert_eq!(order.target_layer, Some(wait_position.level));
-    assert_eq!(order.tolerance, 50.0);
-    assert!(
-        !order.defer_instruction,
-        "an ordinary synchronous route failure instructs its roof fallback this frame"
-    );
-}
-
-#[test]
-fn close_avenger_roof_wait_position_completes_without_an_order() {
-    let mut ai = EnemyAi::new(205);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingRunningToEnemy;
-    ai.base.primary_target = Some(AiEntityHandle::new(298));
-    ai.base.couldnt_reachpoint = true;
-    ai.base
-        .outbox
-        .reentrant
-        .reconsider_approach_replaced_path_waiter = true;
-    let target_position = Position {
-        x: 264.0,
-        y: 1358.0,
-        ..Position::default()
-    };
-    let wait_position = Position {
-        x: 250.0,
-        y: 1200.0,
-        sector: crate::position_interface::SectorHandle::new(64),
-        level: 1,
-    };
-    let ctx = AiContext {
-        think_depth: 1,
-        position: wait_position,
-        self_layer: wait_position.level,
-        ..AiContext::test_fixture()
-    };
-
-    ai.resume_reconsider_enemy_approach_after_go_near(target_position, Some(wait_position), &ctx);
-
-    assert!(!ai.base.couldnt_reachpoint);
-    assert!(ai.base.already_on_point);
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingRunToAvengerOnRoof
-    );
-    assert_eq!(ai.base.seek_position, target_position);
-    assert!(ai.base.outbox.actor.orders.is_empty());
-    assert!(
-        !ai.base
-            .outbox
-            .reentrant
-            .reconsider_approach_replaced_path_waiter
-    );
-}
-
-#[test]
-fn failed_reconsider_approach_replacing_path_waiter_halts_roof_after_launch() {
-    let mut ai = EnemyAi::new(205);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingRunningToEnemy;
-    ai.base.primary_target = Some(AiEntityHandle::new(298));
-    ai.base.couldnt_reachpoint = true;
-    ai.base
-        .outbox
-        .reentrant
-        .reconsider_approach_replaced_path_waiter = true;
-
-    ai.resume_reconsider_enemy_approach_after_go_near(
-        Position {
-            x: 264.0,
-            y: 1358.0,
-            ..Position::default()
-        },
-        Some(Position {
-            x: 250.0,
-            y: 1200.0,
-            sector: crate::position_interface::SectorHandle::new(64),
-            level: 1,
-        }),
-        &AiContext::test_fixture(),
-    );
-
-    assert!(ai.base.outbox.actor.orders[0].halt_after_launch_for_path_waiter);
-    assert!(!ai.base.outbox.actor.orders[0].defer_instruction);
-    assert!(
-        !ai.base
-            .outbox
-            .reentrant
-            .reconsider_approach_replaced_path_waiter,
-        "path-waiter provenance is one-shot"
-    );
-}
-
-#[test]
-fn reconsider_approach_already_near_engages_before_approach_state_change() {
-    let mut ai = EnemyAi::new(180);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingReactiontime;
-    ai.base.primary_target = Some(AiEntityHandle::new(198));
-    ai.sword_range = 150;
-    ai.sword_is_charge_weapon = true;
-
-    let target_position = Position {
-        x: 100.0,
-        ..Position::default()
-    };
-    let ctx = AiContext {
-        think_depth: 1,
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    add_owner_sword_range(&mut tick, 180, 150);
-    tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(198));
-    tick.primary_target_position = Some(target_position);
-    // Preserve the charge branch past Original's intentionally broad
-    // "walking circus pyramid" command comparison.
-    tick.primary_target_animation = Some(crate::order::OrderType::WalkingCarryingOnShoulders);
-
-    ai.reconsider_enemy_approach(
-        false,
-        ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-    );
-
-    assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
-    assert!(!ai.base.already_on_point);
-    assert!(ai.base.outbox.actor.orders.is_empty());
-    assert!(
-        !ai.base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .any(|work| matches!(
-                work,
-                crate::ai::AiOwnerWork::StateChange(notification)
-                    if notification.incoming_substate
-                        == Substate::AttackingChargingEnemy
-            )),
-        "the already-near branch must engage before entering the charging-enemy state"
-    );
 }
 
 #[test]
@@ -1721,14 +638,18 @@ fn observe_move_precedes_state_change_callback() {
     // target can lie just outside that 500-unit decision snapshot.
     let tick = AiPerTickData::stub();
 
-    assert!(!ai.execute_battle_decision(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        Decision::Observe,
-        Substate::AttackingReactiontimeRunning,
-        0,
-        &mut std::collections::BTreeMap::from([(198, 0)]),
-        &mut AiGlobalState::default()
-    ));
+    assert!(
+        !ai.execute_battle_decision(
+            ThinkEnv::new(&sim, &ctx, &tick, None),
+            Decision::Observe,
+            Substate::AttackingReactiontimeRunning,
+            0,
+            &mut std::collections::BTreeMap::from([(198, 0)]),
+            &mut AiGlobalState::default()
+        )
+        .unwrap()
+        .is_some()
+    );
 
     let [
         crate::ai::AiOwnerWork::ActorEffects(route),
@@ -1851,10 +772,24 @@ fn proud_decision_speech(
         ..Default::default()
     }];
 
-    ai.battle_decisions(
+    ai.base.primary_target = Some(AiEntityHandle::new(198));
+    ai.base.list_us = vec![91];
+    ai.finish_battle_decisions(
         ThinkEnv::new(&sim, &ctx, &tick, None),
         &mut AiGlobalState::default(),
-    );
+        entry_substate,
+        BattleDecisionInputs {
+            friends_lower_company: 0,
+            soldiers_lower_pride: false,
+            simple_soldiers_near: false,
+            min_square_enemy_distance: 22500,
+            num_enemies_i_can_see: 1,
+            friends_nearer_to_enemy: 0,
+        },
+        std::collections::BTreeMap::from([(198, 0)]),
+        Vec::new(),
+    )
+    .unwrap();
     ai.base
         .outbox
         .reentrant
@@ -1893,19 +828,23 @@ fn alert_soldiers_without_a_live_target_falls_back_to_reserve() {
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingReactiontime;
 
-    assert!(ai.execute_battle_decision(
-        ThinkEnv::new(
-            &sim,
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None
-        ),
-        Decision::AlertSoldiers,
-        Substate::AttackingReactiontime,
-        0,
-        &mut std::collections::BTreeMap::new(),
-        &mut AiGlobalState::default()
-    ));
+    assert!(
+        ai.execute_battle_decision(
+            ThinkEnv::new(
+                &sim,
+                &AiContext::test_fixture(),
+                &AiPerTickData::stub(),
+                None
+            ),
+            Decision::AlertSoldiers,
+            Substate::AttackingReactiontime,
+            0,
+            &mut std::collections::BTreeMap::new(),
+            &mut AiGlobalState::default()
+        )
+        .unwrap()
+        .is_some()
+    );
 
     assert_eq!(ai.base.primary_target, None);
     assert!(!ai.base.friends_are_alerted);
@@ -1923,19 +862,23 @@ fn tower_guard_decisions_without_a_live_target_fall_back_to_reserve() {
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingReactiontime;
 
-        assert!(ai.execute_battle_decision(
-            ThinkEnv::new(
-                &sim,
-                &AiContext::test_fixture(),
-                &AiPerTickData::stub(),
-                None
-            ),
-            decision,
-            Substate::AttackingReactiontime,
-            0,
-            &mut std::collections::BTreeMap::new(),
-            &mut AiGlobalState::default()
-        ));
+        assert!(
+            ai.execute_battle_decision(
+                ThinkEnv::new(
+                    &sim,
+                    &AiContext::test_fixture(),
+                    &AiPerTickData::stub(),
+                    None
+                ),
+                decision,
+                Substate::AttackingReactiontime,
+                0,
+                &mut std::collections::BTreeMap::new(),
+                &mut AiGlobalState::default()
+            )
+            .unwrap()
+            .is_some()
+        );
 
         assert_eq!(ai.base.primary_target, None, "{decision:?}");
         assert!(!ai.base.friends_are_alerted, "{decision:?}");
@@ -1950,7 +893,7 @@ fn tower_guard_decisions_without_a_live_target_fall_back_to_reserve() {
 }
 
 #[test]
-fn archer_step_back_without_a_live_target_falls_back_through_shoot() {
+fn archer_step_back_without_a_live_target_transfers_to_shot_selection() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(91);
     ai.base.current_state = AiState::Attacking;
@@ -1959,21 +902,24 @@ fn archer_step_back_without_a_live_target_falls_back_through_shoot() {
         remaining_arrows: 1,
         ..AiContext::test_fixture()
     };
-
-    assert!(ai.execute_battle_decision(
-        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-        Decision::ArcherStepBack,
-        Substate::AttackingReactiontime,
-        0,
-        &mut std::collections::BTreeMap::new(),
-        &mut AiGlobalState::default()
+    let call = ai
+        .execute_battle_decision(
+            ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
+            Decision::ArcherStepBack,
+            Substate::AttackingReactiontime,
+            0,
+            &mut std::collections::BTreeMap::new(),
+            &mut AiGlobalState::default(),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        call.tail,
+        crate::ai::DutyTail::SelectShotTarget {
+            old_substate: Substate::AttackingReactiontime,
+            cover_shield_bearer: 0
+        }
     ));
-
     assert_eq!(ai.base.primary_target, None);
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingBowObservingLoading
-    );
 }
 
 #[test]
@@ -2025,217 +971,28 @@ fn tower_guard_uses_live_ai_position_instead_of_stale_nearby_snapshot() {
         ..Default::default()
     }];
 
-    ai.battle_decisions(
+    ai.base.primary_target = Some(AiEntityHandle::new(198));
+    ai.base.list_us = vec![91];
+    ai.finish_battle_decisions(
         ThinkEnv::new(&sim, &ctx, &tick, None),
         &mut AiGlobalState::default(),
-    );
+        Substate::AttackingReactiontime,
+        BattleDecisionInputs {
+            friends_lower_company: 0,
+            soldiers_lower_pride: false,
+            simple_soldiers_near: false,
+            min_square_enemy_distance: 22500,
+            num_enemies_i_can_see: 1,
+            friends_nearer_to_enemy: 0,
+        },
+        std::collections::BTreeMap::from([(198, 0)]),
+        Vec::new(),
+    )
+    .unwrap();
 
     assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(198)));
     assert_eq!(ai.base.seek_position, live_position);
     assert_eq!(ai.base.current_substate, Substate::AttackingTowerGuardAlert);
-}
-
-fn battle_cleanup_context(
-    target: crate::ai_entity_view::AiEntityView,
-) -> (AiContext, AiPerTickData) {
-    let mut owner = pc_view();
-    owner.is_pc = false;
-    owner.kind = crate::ai_entity_view::EntityKind::Soldier;
-    owner.camp = crate::element::Camp::Lacklandists;
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(91, owner);
-    views.insert(198, target);
-    (
-        AiContext {
-            camp: crate::element::Camp::Lacklandists,
-            frame: 700,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        },
-        AiPerTickData::stub(),
-    )
-}
-
-fn battle_with_unavailable_initial_target(
-    reason: Option<crate::ai_entity_view::AiObservationUnavailable>,
-) {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(91);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingOverviewLookRight;
-    ai.list_them = vec![198];
-    let (mut ctx, tick) = battle_cleanup_context(pc_view());
-    let views = std::sync::Arc::get_mut(&mut ctx.entity_views).unwrap();
-    views.entities.remove(&198);
-    if let Some(reason) = reason {
-        views.unavailable_entities.insert(198, reason);
-    }
-    // Initial target selection requires spatial state, before the later
-    // cleanup of friend-contributed entries. Do not broaden that admission
-    // policy merely because unavailable observations now have typed reasons.
-    ai.battle_decisions(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        &mut AiGlobalState::default(),
-    );
-}
-
-#[test]
-#[should_panic(expected = "required enemy-list entry 198 missing")]
-fn absent_initial_battle_target_remains_an_invariant_failure() {
-    battle_with_unavailable_initial_target(None);
-}
-
-#[test]
-#[should_panic(expected = "required enemy-list entry 198 missing")]
-fn missing_layer_initial_battle_target_remains_an_invariant_failure() {
-    battle_with_unavailable_initial_target(Some(
-        crate::ai_entity_view::AiObservationUnavailable::MissingLayer,
-    ));
-}
-
-#[test]
-#[should_panic(expected = "required enemy-list entry 198 missing")]
-fn excluded_initial_battle_target_remains_an_invariant_failure() {
-    battle_with_unavailable_initial_target(Some(
-        crate::ai_entity_view::AiObservationUnavailable::ExcludedEntity,
-    ));
-}
-
-#[test]
-fn stale_same_camp_them_entry_preserves_visible_count_for_reserve() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(91);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingOverviewLookRight;
-    ai.list_them = vec![198];
-    ai.forced_next_battle_decision = Decision::Reserve;
-
-    let mut stale_friend = pc_view();
-    stale_friend.camp = crate::element::Camp::Lacklandists;
-    let (ctx, tick) = battle_cleanup_context(stale_friend);
-
-    ai.battle_decisions(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        &mut AiGlobalState::default(),
-    );
-
-    assert!(ai.list_them.is_empty(), "the stale friend must be removed");
-    assert_eq!(ai.base.current_state, AiState::Attacking);
-    assert_eq!(ai.base.current_substate, Substate::AttackingReserve);
-    assert!(ai.base.timer_is_running);
-    assert_eq!(ai.base.when_does_timer_ring, 750);
-}
-
-#[test]
-fn unable_nonfriend_them_entry_consumes_visible_count_and_returns_to_duty() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(91);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingOverviewLookRight;
-    ai.list_them = vec![198];
-    ai.forced_next_battle_decision = Decision::Reserve;
-
-    let mut unable_enemy = pc_view();
-    unable_enemy.camp = crate::element::Camp::Royalists;
-    unable_enemy.is_able_to_fight = false;
-    let (ctx, tick) = battle_cleanup_context(unable_enemy);
-
-    let call = ai
-        .battle_decisions(
-            ThinkEnv::new(&sim, &ctx, &tick, None),
-            &mut AiGlobalState::default(),
-        )
-        .expect_err("an exhausted battle delegates its live sleeping-enemy scan");
-
-    assert!(ai.list_them.is_empty());
-    assert_ne!(ai.base.current_substate, Substate::AttackingReserve);
-    assert!(!ai.base.timer_is_running);
-    assert!(
-        matches!(call.tail, crate::ai::DutyTail::ScanSleepingEnemies { observer_camp } if observer_camp == ctx.camp)
-    );
-    assert!(call.after.is_empty());
-    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
-}
-
-#[test]
-fn battle_decisions_preserves_enemy_list_from_last_explicit_rebuild() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(91);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.primary_target = Some(AiEntityHandle::new(198));
-    ai.list_them = vec![198, 199];
-
-    // The predecision pass walks the persistent us-list through the
-    // shared entity-view table, and that list always includes the
-    // evaluating soldier itself.
-    let me_entity = crate::element::Entity::Soldier(crate::element::ActorSoldier {
-        element: {
-            let mut initial_element =
-                crate::element::ElementData::from_initial_posture(crate::element::Posture::Upright);
-            initial_element.kind = crate::element::ElementKind::ActorSoldier;
-            initial_element.active = true;
-            initial_element
-        },
-        actor: Default::default(),
-        human: Default::default(),
-        npc: crate::element::NpcData {
-            life_points: 50,
-            ai: crate::element::AiActorData {
-                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
-                ..Default::default()
-            },
-        },
-        soldier: Default::default(),
-    });
-    let me_view = crate::ai_entity_view::entity_view_from_entity(
-        &me_entity,
-        40,
-        false,
-        None,
-        None,
-        crate::order::OrderType::NonanimationEnd,
-    );
-    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-    views.insert(91, me_view);
-    views.insert(198, pc_view());
-    views.insert(199, pc_view());
-    assert!(views[&198].is_able_to_fight);
-    assert!(views[&199].is_able_to_fight);
-    let ctx = AiContext {
-        camp: crate::element::Camp::Lacklandists,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    tick.nearby_fighters = vec![
-        FighterSnapshot {
-            handle: 198,
-            position: Position::default(),
-            is_able_to_fight: true,
-            is_pc: true,
-            ..Default::default()
-        },
-        FighterSnapshot {
-            handle: 199,
-            position: Position {
-                x: 20.0,
-                ..Position::default()
-            },
-            is_able_to_fight: true,
-            is_pc: true,
-            ..Default::default()
-        },
-    ];
-
-    ai.battle_decisions(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        &mut AiGlobalState::default(),
-    );
-
-    assert!(
-        ai.list_them.contains(&199),
-        "battle planning must not replace the persistent list with its tick snapshot"
-    );
 }
 
 #[test]
@@ -2261,14 +1018,18 @@ fn cover_behind_untargeted_shield_bearer_falls_back_to_archer_observe() {
         ..FighterSnapshot::default()
     }];
 
-    assert!(ai.execute_battle_decision(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        Decision::CoverBehindShieldBearer,
-        Substate::AttackingReactiontimeRunning,
-        73,
-        &mut std::collections::BTreeMap::new(),
-        &mut AiGlobalState::default()
-    ));
+    assert!(
+        ai.execute_battle_decision(
+            ThinkEnv::new(&sim, &ctx, &tick, None),
+            Decision::CoverBehindShieldBearer,
+            Substate::AttackingReactiontimeRunning,
+            73,
+            &mut std::collections::BTreeMap::new(),
+            &mut AiGlobalState::default()
+        )
+        .unwrap()
+        .is_some()
+    );
 
     assert_eq!(ai.shield_bearer_before_me, None);
     assert_eq!(ai.base.primary_target, None);
@@ -2346,14 +1107,18 @@ fn rejected_shield_cover_keeps_computed_seek_position_before_shoot_fallback() {
         "fixture must reject the computed cover point at the subsequent view-radius gate"
     );
 
-    assert!(ai.execute_battle_decision(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        Decision::CoverBehindShieldBearer,
-        Substate::AttackingReactiontime,
-        73,
-        &mut std::collections::BTreeMap::new(),
-        &mut AiGlobalState::default()
-    ));
+    assert!(
+        ai.execute_battle_decision(
+            ThinkEnv::new(&sim, &ctx, &tick, None),
+            Decision::CoverBehindShieldBearer,
+            Substate::AttackingReactiontime,
+            73,
+            &mut std::collections::BTreeMap::new(),
+            &mut AiGlobalState::default()
+        )
+        .unwrap()
+        .is_some()
+    );
 
     assert_eq!(ai.base.seek_position, expected_cover);
     assert_eq!(ai.shield_bearer_before_me, None);

@@ -3029,17 +3029,6 @@ impl EngineInner {
         self.orders
             .failed_path_requests
             .retain(|r| r.owner != owner);
-        // AI Move intents are the Rust pre-sequence form of Original
-        // not-yet-launched Move elements. Halt/Stop(PREFERENCE) cancels those
-        // elements before later movement is registered; retaining an older
-        // intent here would let the synchronous SetAIState barrier mistake it
-        // for the causal area-search Move. Keep this at the Halt boundary: the
-        // lower-level active-mechanics cleanup also serves postponement paths,
-        // where deleting a not-yet-launched intent would be too broad.
-        self.orders
-            .pending_move_requests
-            .retain(|(request_owner, _)| *request_owner != owner);
-
         self.orders.sequence_manager.set_halt_pending(false);
         if let Some(entity) = self.get_entity_mut(owner)
             && let Some(ai) = entity.ai_controller_mut()

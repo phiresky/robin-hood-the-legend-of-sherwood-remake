@@ -93,54 +93,13 @@ pub struct AiReentrantOutbox {
     /// them in one queue preserves statement order at the owner return barrier
     /// instead of rebuilding a frame-global speech batch.
     pub owner_work: Vec<AiOwnerWork>,
-    /// Enemy approach reconsideration has issued its synchronous movement, but its
-    /// post-call couldn't-reachpoint tail has not run yet. Path construction
-    /// is engine-owned in Rust, so completion delivery must retain the failure
-    /// latch for the typed owner continuation instead of translating it into
-    /// an independent `EVENT_COULDNT_REACHPOINT`.
-    pub reconsider_approach_completion_pending: bool,
-    /// The approach being settled replaced a live `MoveWaiting` element.
-    /// The original game's recursive roof fallback then reaches the movement request's still-true
-    /// path-computation tail and is halted after registration, before it
-    /// can be instructed.
-    #[serde(default)]
-    pub reconsider_approach_replaced_path_waiter: bool,
     /// `DECISION_OBSERVE` has issued its synchronous approach, but the
     /// following observation-approach state write and avenger-on-roof fallback
     /// have not run yet. Retain a deferred route failure for that exact owner
     /// continuation instead of surfacing an early EventCouldntReachPoint.
     #[serde(default)]
     pub battle_observe_completion_pending: bool,
-    /// Officer alerting has issued its synchronous approach, but the enclosing
-    /// `DECISION_LOOK_4_HELP` statement has not inspected the resulting
-    /// unreachable-point latch yet. The original game performs that test before
-    /// Battle decisions return to tick completion, so an engine-owned route
-    /// failure must not become an independent `EVENT_COULDNT_REACHPOINT`.
-    pub look_for_help_completion_pending: bool,
     pub waypoint_script_reach_point: Option<(PathId, u8)>,
-    /// Friendly soldier alerting is waiting for its synchronous approach
-    /// path result. The typed continuation consumes route failure and retries
-    /// with the door-path flag before the enclosing Think may see it.
-    #[serde(default)]
-    pub alert_soldier_completion_pending: bool,
-    /// A dead-body alert has issued the officer alert's synchronous approach, but
-    /// the enclosing soldier fallback has not inspected the route result.
-    /// Retain route failure for that typed continuation instead of surfacing
-    /// an independent `EVENT_COULDNT_REACHPOINT`.
-    #[serde(default)]
-    pub dead_body_alert_completion_pending: bool,
-    /// `CALL_TOWER_GUARD_CALLS_ME` ignores the officer-alert result, but
-    /// Officer alerting itself still consumes a synchronous approach route
-    /// failure before returning. Rust constructs that route at the owner
-    /// boundary, so retain the latch until the matching no-result tail can
-    /// clear it instead of emitting an independent couldn't-reach event.
-    #[serde(default)]
-    pub tower_guard_alert_officer_completion_pending: bool,
-    /// The soldier-report timer began officer alerting, whose synchronous
-    /// approach result decides whether the same statement falls back to
-    /// area search around the civilian's report position.
-    #[serde(default)]
-    pub civilian_report_alert_officer_completion_pending: bool,
     /// `WonderingBrawlHitting::EVENT_DONE` is suspended while the engine
     /// performs its inline civilian sweep and synchronous officer callback.
     /// The enclosing decision frame remains open until the brawler tail completes.
@@ -168,22 +127,10 @@ pub enum AiOwnerWork {
     /// both in one actor outbox would apply the halt-first drain policy and
     /// incorrectly launch the older move afterward.
     ActorEffects(AiActorOutbox),
-    /// Continue `DECISION_LOOK_4_HELP` after officer alerting's synchronous
-    /// approach movement has either constructed its route or set
-    /// the unreachable-point flag. The original game consumes that latch inside
-    /// officer alerting; only a successful route reaches the arm's success
-    /// remark, while failure falls through to `DECISION_CASSOS`.
-    ResumeBattleLookForHelpAfterAlertOfficer,
     /// Synchronous nearby-civilian panic callback. It shares the
     /// owner FIFO because callers can speak or change state immediately
     /// before/after it and those operations are observably ordered.
     NearbyCiviliansPanic,
-    /// Continue enemy approach reconsideration after its synchronous movement
-    /// construction has either succeeded or set the unreachable-point flag.
-    ResumeReconsiderEnemyApproachAfterGoNear {
-        target: HumanHandle,
-        target_position: Position,
-    },
     /// Continue `DECISION_OBSERVE` after its first approach has synchronously
     /// succeeded or set the unreachable-point flag. The continuation owns both the
     /// ordinary battle-decision log and the roof-fallback early return.
@@ -207,18 +154,6 @@ pub enum AiOwnerWork {
     ConsiderToBeginParade {
         attacker: HumanHandle,
     },
-    /// Resume friendly soldier alerting after synchronous route construction.
-    ResumeFriendlyAlertSoldierAfterGoNear {
-        center: Position,
-        check_door_path: bool,
-        failure: crate::ai_friendly::AlertSoldierFailureContinuation,
-    },
-    /// Continue the soldier dead-body alert after officer alerting's
-    /// synchronous approach has settled.
-    ResumeDeadBodyAlertAfterAlertOfficer {
-        center: Position,
-        radius: u16,
-    },
     /// Evaluate the `SUBSTATE_ATTACKING_TOO_PROUD_TO_ATTACK_OVERVIEW`
     /// `EVENT_TIMER` remark test that follows battle planning
     /// during the affected-character loop. The game reads
@@ -235,24 +170,10 @@ pub enum AiOwnerWork {
     ResumeSendCharlyAfterSpeech {
         charly: NpcHandle,
     },
-    /// Finish the ignored-result officer-alert call made by
-    /// `CALL_TOWER_GUARD_CALLS_ME`; its tail consumes route failure.
-    ConsumeTowerGuardAlertOfficerRouteFailure,
-    /// Continue the soldier branch of
-    /// `SUBSTATE_SEEKING_GET_ALERTING_REPORT_FROM_CIVILIAN_LOOK` after
-    /// officer alerting's synchronous route construction.
-    ResumeCivilianReportAfterAlertOfficer {
-        seek_position: Position,
-    },
     /// The money-brawl hit completion has a separate, inline civilian sweep
     /// which uses forward-half-plane detection, unlike the shared
     /// nearby-civilian panic callback's 360-degree detector.
     NearbyCiviliansPanic180,
-    /// Finish `DECISION_FIGHT` only after enemy approach reconsideration has
-    /// observed its synchronous movement result. A failed approach changes
-    /// the local decision to `DECISION_OBSERVE` before battle planning logs
-    /// or returns.
-    ResumeBattleFightAfterReconsider,
     /// Enter the engine-owned macro interpreter at this statement boundary.
     RunMacro,
 }
@@ -567,11 +488,6 @@ pub struct AiActorOutbox {
     pub look_sidewards: Option<LookDirection>,
     pub posture: Option<crate::element::Posture>,
     pub begin_panic: Option<PanicRequest>,
-    /// Resume swordfight observation reconsideration after the synchronous Panic
-    /// boundary has closed. The AI-side caller cannot run this continuation
-    /// before the engine has applied Panic's commands and recursive Think.
-    #[serde(default)]
-    pub observe_after_panic: bool,
     pub panic_seek_fallback: bool,
     pub script_seek_area: Option<ScriptSeekAreaRequest>,
     pub archery_reservation_release: ArcheryReservationRelease,
@@ -791,7 +707,6 @@ impl AiActorOutbox {
             || self.look_sidewards.is_some()
             || self.posture.is_some()
             || self.begin_panic.is_some()
-            || self.observe_after_panic
             || self.panic_seek_fallback
             || self.script_seek_area.is_some()
             || self.archery_reservation_release != ArcheryReservationRelease::default()

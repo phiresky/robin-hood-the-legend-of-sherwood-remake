@@ -19,7 +19,58 @@ pub(crate) struct DutyCall {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum DutyTail {
     None,
+    AlertOfficer {
+        caller: OfficerAlertCaller,
+    },
+    TowerGuardAlert {
+        center: super::Position,
+    },
+    OfficerLookForSoldier {
+        reason: super::ReportType,
+    },
+    RunAndAlertSoldiers {
+        center: super::Position,
+    },
+    BattleDecisions,
+    BattleOverview {
+        flags: u16,
+    },
+    SelectShotTarget {
+        old_substate: super::Substate,
+        cover_shield_bearer: super::HumanHandle,
+    },
+    ReconsiderEnemyApproach {
+        reachpoint: bool,
+    },
+    AttackEnemy {
+        target: super::HumanHandle,
+    },
+    RiderAttack {
+        fallback: RiderAttackFallback,
+    },
+    ReconsiderSwordfight {
+        enemy_weak: bool,
+    },
+    ReconsiderSwordfightObservation,
+    CommandSoldiersToAttack {
+        center: super::Position,
+    },
+    AlertSoldiers {
+        center: super::Position,
+        flags: u16,
+        failure: super::AlertSoldiersFailureContinuation,
+    },
+    MoneyFight {
+        operation: MoneyFightOperation,
+    },
     FinishSeek,
+    SeekArea {
+        center: super::Position,
+        standard_radius: u16,
+        flags: crate::ai_enemy::SeekFlags,
+        seek_direction: u16,
+    },
+    SeekNextPoint,
     ScanSleepingEnemies {
         observer_camp: crate::element::Camp,
     },
@@ -28,18 +79,54 @@ pub(crate) enum DutyTail {
     },
     SearchCharlyTimer,
     TooProudOverviewRemark,
-    FinalizeAlertSoldiers {
-        restore_check_timer: bool,
-    },
     AfterCombatInjury,
-    BroadcastPatrol {
-        stimulus: crate::ai::Stimulus,
-        members: Vec<u32>,
+    GotHitViewStatus,
+    FinishBattleFightAfterAttack,
+    DispatchPatrol {
+        stimulus: super::Stimulus,
     },
     Think {
         stimulus: crate::ai::Stimulus,
     },
     SwordfightInsult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum RiderAttackFallback {
+    Approach,
+    BattleDecisions,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum OfficerAlertCaller {
+    Ignore,
+    ReturnToDuty,
+    SeekBody {
+        center: super::Position,
+        radius: u16,
+    },
+    SeekHint {
+        center: super::Position,
+    },
+    SeekMissedCharly {
+        center: super::Position,
+    },
+    BattleLookForHelp,
+    TowerGuardCalled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum MoneyFightOperation {
+    FinishBrawl,
+    CleanUpAfterBrawl,
+    CollectOrLootAfterLook,
+    StolenMoney {
+        object: super::AiEntityHandle,
+        thief: super::AiEntityHandle,
+    },
+    FinishHitAfterOfficer,
+    RecoverBrawl,
+    AwakeNextVictim,
 }
 
 impl DutyCall {

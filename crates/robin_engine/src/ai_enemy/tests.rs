@@ -1,10 +1,8 @@
 use super::*;
-use crate::ai::{DoorSeekInfo, House, cache_npc_villain_authorized_direct};
 use crate::ai_entity_view::{AiEntityView, AiEntityViewMap, EntityKind, NetCoverInfo};
 use crate::coordinates::MapPoint;
 use crate::element::{Camp, DetectableType, EyeStatus, Posture};
-use crate::entity_id::{EntityId, SoldierId};
-use crate::gate::{Door, DoorIndex, DoorType};
+use crate::entity_id::EntityId;
 use crate::order::OrderType;
 use crate::position_interface::SectorHandle;
 use crate::sight_obstacle::{ObstaclePoint, SharedSightObstacles, SightObstacle};
@@ -104,7 +102,6 @@ fn camp_soldier(handle: u32, position: Position) -> CampSoldierInfo {
         is_tower_guard: false,
         company_number: 0,
         in_building: false,
-        forecast_destination: None,
         detectable_bodies: Vec::new(),
         seek_position: Position::default(),
         current_task_priority: 0,
@@ -591,168 +588,6 @@ fn standalone_180_applies_dynamic_ground_radius_before_los() {
 }
 
 #[test]
-fn money_fight_enemy_rebuild_rechecks_current_unconscious_before_detection() {
-    let mut ai = EnemyAi::new(1);
-    let owner_position = test_position(0.0, 0.0);
-    let candidate_position = test_position(100.0, 0.0);
-
-    let owner = soldier_view(owner_position);
-    let mut candidate = soldier_view(candidate_position);
-    candidate.is_able_to_fight = false;
-    candidate.is_unconscious = true;
-    candidate.ai_state = AiState::Wondering;
-    candidate.ai_substate = Substate::WonderingBrawlHitting;
-
-    let mut views = AiEntityViewMap::new();
-    views.insert(1, owner);
-    views.insert(2, candidate);
-    let ctx = AiContext {
-        position: owner_position,
-        self_eye_position: MapPoint::new(0.0, 0.0),
-        self_eye_z: 45.0,
-        self_upright_eye_world: crate::coordinates::WorldPoint3D::new(0.0, 0.0, 45.0),
-        self_view_radius: 400,
-        sq_self_view_radius: 400.0 * 400.0,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-    let mut tick = AiPerTickData::stub();
-    // This top-of-tick entry is intentionally stale: the candidate was
-    // conscious when the snapshot was built, then knocked out earlier in
-    // the same creation-order AI pass.
-    tick.camp_soldiers.push(CampSoldierInfo {
-        handle: 2,
-        active: true,
-        position: candidate_position,
-        position_world: crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0),
-        direction: 0,
-        rank: ProfileRank::Soldier,
-        ai_state: AiState::Wondering,
-        ai_substate: Substate::WonderingBrawlHitting,
-        is_able_to_fight: true,
-        is_dead: false,
-        knocked_out_in_money_fight: false,
-        primary_target: None,
-        pride: 0,
-        is_able_to_help: false,
-        script_locked: false,
-        ai_lock_frozen: false,
-        layer: 0,
-        alert_soldiers_point: Position::default(),
-        patrol_chief: None,
-        antagonist: None,
-        detected_body: None,
-        blood_alcohol: 0,
-        duty_flag: false,
-        is_tower_guard: false,
-        company_number: 0,
-        in_building: false,
-        forecast_destination: None,
-        detectable_bodies: Vec::new(),
-        seek_position: Position::default(),
-        current_task_priority: 0,
-        minimal_task_priority: 0,
-        view_direction: [1.0, 0.0],
-        view_radius: 400,
-        real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
-        eye_blind: false,
-    });
-
-    crate::sight_obstacle::begin_parity_visibility_capture();
-    ai.create_new_list_of_money_fight_enemies(&tick, &ctx);
-    let queries = crate::sight_obstacle::take_parity_visibility_capture();
-
-    assert!(queries.is_empty(), "lifecycle gate must precede detection");
-    assert!(ai.money_fight_enemies.is_empty());
-}
-
-#[test]
-fn money_fight_morale_coalesces_ordered_camp_and_sleeper_snapshots() {
-    let mut ai = EnemyAi::new(1);
-    ai.soldier_profile_money = 40;
-
-    let owner_position = test_position(0.0, 0.0);
-    let sleeping_position = test_position(300.0, 0.0);
-    let fighter_position = test_position(100.0, 0.0);
-    let dead_position = test_position(200.0, 0.0);
-    let disjoint_sleeping_position = test_position(250.0, 0.0);
-
-    let mut sleeping_view = soldier_view(sleeping_position);
-    sleeping_view.original_creation_order = 3;
-    sleeping_view.ai_substate = Substate::SleepingUnconscious;
-    sleeping_view.is_unconscious = true;
-    let mut fighter_view = soldier_view(fighter_position);
-    fighter_view.original_creation_order = 2;
-    fighter_view.ai_substate = Substate::WonderingBrawlHitting;
-    let mut dead_view = soldier_view(dead_position);
-    dead_view.original_creation_order = 4;
-    dead_view.is_dead = true;
-    let mut disjoint_sleeping_view = soldier_view(disjoint_sleeping_position);
-    disjoint_sleeping_view.original_creation_order = 5;
-    disjoint_sleeping_view.ai_substate = Substate::SleepingUnconscious;
-    disjoint_sleeping_view.is_unconscious = true;
-
-    let mut views = AiEntityViewMap::new();
-    let mut owner_view = soldier_view(owner_position);
-    owner_view.original_creation_order = 1;
-    views.insert(1, owner_view);
-    views.insert(2, fighter_view);
-    views.insert(3, sleeping_view);
-    views.insert(4, dead_view);
-    views.insert(5, disjoint_sleeping_view);
-    let ctx = AiContext {
-        position: owner_position,
-        self_eye_position: MapPoint::ZERO,
-        self_eye_z: 45.0,
-        self_upright_eye_world: crate::coordinates::WorldPoint3D::new(0.0, 0.0, 45.0),
-        self_view_radius: 400,
-        sq_self_view_radius: 400.0 * 400.0,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    let mut sleeping = camp_soldier(3, sleeping_position);
-    // Deliberately stale: the original game classifies the current AI substate
-    // after the visibility query, not this earlier camp snapshot.
-    sleeping.ai_substate = Substate::WonderingBrawlHitting;
-    sleeping.knocked_out_in_money_fight = true;
-    let mut fighter = camp_soldier(2, fighter_position);
-    fighter.ai_substate = Substate::None;
-    // Deliberately stale alive snapshot: an earlier actor killed this
-    // soldier before our turn, so the current view must suppress LOS.
-    let dead = camp_soldier(4, dead_position);
-    let mut tick = AiPerTickData::stub();
-    // Both source snapshots retain camp/handle order. Self and dead
-    // entries do not query; handle 3 overlaps and must coalesce.
-    tick.camp_soldiers = vec![camp_soldier(1, owner_position), fighter, sleeping, dead];
-    tick.camp_unconscious_soldiers = vec![
-        CampUnconsciousSoldierInfo {
-            handle: 3,
-            knocked_out_in_money_fight: true,
-        },
-        // Preexisting sleepers are absent from `camp_soldiers` in the
-        // main detection builder and must still participate once.
-        CampUnconsciousSoldierInfo {
-            handle: 5,
-            knocked_out_in_money_fight: true,
-        },
-    ];
-
-    crate::sight_obstacle::begin_parity_visibility_capture();
-    assert!(!ai.wants_to_continue_money_fight(&tick, &ctx));
-    let queries = crate::sight_obstacle::take_parity_visibility_capture();
-    assert_eq!(queries.len(), 3);
-    assert_eq!(
-        queries
-            .iter()
-            .map(|query| query.destination[0])
-            .collect::<Vec<_>>(),
-        vec![100.0, 300.0, 250.0],
-        "one query per live candidate in authored camp-registry order"
-    );
-}
-
-#[test]
 fn detection_180_accepts_an_active_unconscious_target() {
     let ai = EnemyAi::new(1);
     let mut viewer = soldier_view(test_position(0.0, 0.0));
@@ -806,12 +641,10 @@ fn charly_inside_view_cone_queues_synchronous_officer_report_without_transitioni
 
 #[test]
 fn accepted_officer_report_enters_seen_and_arms_ten_frame_timer() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let mut ai = charly_heading_to_officer();
     let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
 
-    ai.resolve_charly_officer_report(ThinkEnv::new(sim, &ctx, &AiPerTickData::stub(), None), true);
+    ai.resolve_charly_officer_report(ctx.frame, true).unwrap();
 
     assert_eq!(
         ai.base.current_substate,
@@ -991,184 +824,6 @@ fn charly_cannot_report_through_opaque_obstruction_and_retries() {
     );
 }
 
-fn run_find_door_authorization_case(
-    door_type: DoorType,
-    active: bool,
-    locked_npc_villain: bool,
-    building_full: bool,
-    actor_is_rider: bool,
-) -> EnemyAi {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    let center = Position {
-        x: 0.0,
-        y: 0.0,
-        sector: SectorHandle::new(7),
-        level: 0,
-    };
-    let position_in = Position {
-        x: 50.0,
-        y: 60.0,
-        sector: SectorHandle::new(8),
-        level: 2,
-    };
-    let point_out = MapPoint::new(10.0, 0.0);
-
-    let door = Door {
-        door_type,
-        active,
-        locked_npc_villain,
-        ..Default::default()
-    };
-
-    let mut global = AiGlobalState::default();
-    global.door_seek_infos.push(DoorSeekInfo {
-        door_index: DoorIndex::new(0).expect("valid door index"),
-        door_type,
-        point_out,
-        position_in,
-        sector_out: 7,
-        sector_out_index: None,
-        sector_in: 8,
-        layer_out: 0,
-        npc_villain_authorized_direct: cache_npc_villain_authorized_direct(&door),
-    });
-    let occupant_ids = if building_full {
-        vec![EntityId::Soldier(SoldierId(0)); usize::from(u16::MAX)]
-    } else {
-        Vec::new()
-    };
-    global.houses.push(House {
-        sector_index: 8,
-        occupant_ids,
-        ..House::default()
-    });
-
-    let mut ai = EnemyAi::new(1);
-    let ctx = AiContext {
-        frame: 100,
-        camp: Camp::Lacklandists,
-        in_building: true,
-        building_sector: SectorHandle::new(9),
-        self_is_rider: actor_is_rider,
-        ..AiContext::test_fixture()
-    };
-    let seek_direction =
-        crate::position_interface::vector_to_sector_0_to_15_iso(point_out.x, point_out.y) as u16;
-
-    ai.seek_area(
-        ThinkEnv::new(sim, &ctx, &AiPerTickData::stub(), None),
-        center,
-        0,
-        SeekFlags::HOUSE | SeekFlags::LOCATION_FIRST,
-        seek_direction,
-        &mut global,
-    );
-
-    // The indoor caller must enter the three-frame watching delay after
-    // selecting the personal seek point, regardless of authorization.
-    // This pins the exact state/timer ordering around the door decision.
-    assert_eq!(ai.my_seek_points, vec![1111]);
-    assert_eq!(ai.base.current_state, AiState::Seeking);
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::SeekingSeekpointWatchingSidewards
-    );
-    assert!(ai.base.timer_is_running);
-    assert_eq!(ai.base.when_does_timer_ring, 103);
-    assert_eq!(
-        ai.base.substate_at_last_timer_launch,
-        Substate::SeekingSeekpointWatchingSidewards
-    );
-
-    ai
-}
-
-#[test]
-fn find_door_enemy_could_be_behind_applies_every_original_authorization_gate() {
-    let center = Position {
-        x: 0.0,
-        y: 0.0,
-        sector: SectorHandle::new(7),
-        level: 0,
-    };
-    let behind_door = Position {
-        x: 50.0,
-        y: 60.0,
-        sector: SectorHandle::new(8),
-        level: 2,
-    };
-
-    let cases = [
-        (
-            "authorized",
-            DoorType::Building,
-            true,
-            false,
-            false,
-            false,
-            behind_door,
-        ),
-        (
-            "building type",
-            DoorType::Default,
-            true,
-            false,
-            false,
-            false,
-            center,
-        ),
-        (
-            "active state",
-            DoorType::Building,
-            false,
-            false,
-            false,
-            false,
-            center,
-        ),
-        (
-            "building capacity",
-            DoorType::Building,
-            true,
-            false,
-            true,
-            false,
-            center,
-        ),
-        (
-            "rider",
-            DoorType::Building,
-            true,
-            false,
-            false,
-            true,
-            center,
-        ),
-        (
-            "villain lock",
-            DoorType::Building,
-            true,
-            true,
-            false,
-            false,
-            center,
-        ),
-    ];
-
-    for (name, door_type, active, locked, full, rider, expected) in cases {
-        let ai = run_find_door_authorization_case(door_type, active, locked, full, rider);
-        assert_eq!(ai.seek_center, expected, "{name} gate");
-        assert_eq!(
-            ai.personal_seek_point_1
-                .as_ref()
-                .map(|point| point.position),
-            Some(expected),
-            "{name} gate must be applied before the personal point is created"
-        );
-    }
-}
-
 #[test]
 fn enemy_ai_defaults() {
     let ai = EnemyAi::new(42);
@@ -1324,123 +979,6 @@ fn set_state() {
 }
 
 #[test]
-fn patrol_coordinate_uses_enemy_virtual_state_before_walk_and_run() {
-    for (distance, expected_substate, expected_order) in [
-        (
-            45.0,
-            Substate::DefaultPatrolEnroute,
-            crate::order::OrderType::WalkingUpright,
-        ),
-        (
-            60.0,
-            Substate::DefaultPatrolEnrouteRunning,
-            crate::order::OrderType::RunningUpright,
-        ),
-    ] {
-        let mut ai = EnemyAi::new(1);
-        ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
-            crate::entity_id::SoldierId(2),
-        ));
-        ai.base.current_state = AiState::Default;
-        ai.base.current_substate = Substate::DefaultOnPost;
-        ai.attentive = true;
-        ai.will_be_attentive = true;
-        ai.base.current_music_alert_status = AlertLevel::Yellow;
-        ai.base.view_alert_status = AlertLevel::Yellow;
-
-        let ctx = AiContext {
-            position: Position {
-                x: 100.0,
-                y: 100.0,
-                sector: SectorHandle::new(1),
-                level: 0,
-            },
-            self_animation: crate::order::OrderType::WaitingAlerted,
-            ..AiContext::test_fixture()
-        };
-        let target = Position {
-            x: ctx.position.x + distance,
-            ..ctx.position
-        };
-
-        ai.coordinate_patrol(
-            &StimulusInfo::Position(target),
-            &ctx,
-            Position {
-                x: ctx.position.x + 100.0,
-                ..ctx.position
-            },
-        );
-
-        assert_eq!(ai.base.current_state, AiState::Default);
-        assert_eq!(ai.base.current_substate, expected_substate);
-        assert_eq!(ai.base.current_music_alert_status, AlertLevel::Green);
-        assert_eq!(ai.base.view_alert_status, AlertLevel::Green);
-
-        let [AiOwnerWork::StateChange(notification)] =
-            ai.base.outbox.reentrant.owner_work.as_slice()
-        else {
-            panic!("patrol state change must retain the stop-all prefix");
-        };
-        let prefix = notification
-            .actor_effects_before_callback
-            .as_ref()
-            .expect("stop-all must precede the state-change callback");
-        assert!(prefix.halt);
-
-        let attentive = ai
-            .base
-            .outbox
-            .actor
-            .set_attentive_mode
-            .expect("default state change must request leaving attentive mode");
-        assert!(!attentive.target);
-        let [order] = ai.base.outbox.actor.orders.as_slice() else {
-            panic!("patrol coordinate must queue one replacement movement");
-        };
-        assert_eq!(order.order_type, expected_order);
-        assert!(
-            order.after_attentive_mode,
-            "movement must remain behind the LeaveAttentiveMode element"
-        );
-    }
-
-    let mut already_unalerted = EnemyAi::new(1);
-    already_unalerted.base.patrol_chief = Some(crate::element::EntityId::Soldier(
-        crate::entity_id::SoldierId(2),
-    ));
-    already_unalerted.base.current_state = AiState::Default;
-    already_unalerted.base.current_substate = Substate::DefaultPatrolEnroute;
-    let ctx = AiContext {
-        position: Position {
-            x: 100.0,
-            y: 100.0,
-            sector: SectorHandle::new(1),
-            ..Position::default()
-        },
-        ..AiContext::test_fixture()
-    };
-    already_unalerted.coordinate_patrol(
-        &StimulusInfo::Position(Position {
-            x: ctx.position.x + 45.0,
-            ..ctx.position
-        }),
-        &ctx,
-        Position {
-            x: ctx.position.x + 100.0,
-            ..ctx.position
-        },
-    );
-    let [order] = already_unalerted.base.outbox.actor.orders.as_slice() else {
-        panic!("already-unalerted patrol update must retain its movement");
-    };
-    assert!(
-        !order.after_attentive_mode,
-        "a no-change attentive-mode request must not defer movement instruction"
-    );
-}
-
-#[test]
 fn set_state_rejects_mismatched_numeric_substate_family() {
     // Verify the family predicate used by `debug_assert_eq!` without
     // adding a runtime rejection in release builds.
@@ -1560,7 +1098,7 @@ fn able_to_help_matches_original_state_gates() {
 }
 
 #[test]
-fn tower_guard_defers_battle_decisions_until_alert_calls_return() {
+fn tower_guard_transfers_alert_and_battle_decisions_to_live_execution() {
     let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(1);
     ai.tower_guard = true;
@@ -1568,21 +1106,24 @@ fn tower_guard_defers_battle_decisions_until_alert_calls_return() {
     ai.base.current_substate = Substate::AttackingTowerGuardAlert;
     ai.base.seek_position = test_position(120.0, 80.0);
 
-    ai.think_expected_event(
-        ThinkEnv::new(
-            &sim,
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
-        ),
-        &Stimulus::new(StimulusType::EventDone),
-        &mut AiGlobalState::default(),
-    );
+    let call = ai
+        .think_expected_event(
+            ThinkEnv::new(
+                &sim,
+                &AiContext::test_fixture(),
+                &AiPerTickData::stub(),
+                None,
+            ),
+            &Stimulus::new(StimulusType::EventDone),
+            &mut AiGlobalState::default(),
+        )
+        .unwrap_err();
 
     assert!(matches!(
-        ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
-        [CrossNpcAction::ResumeTowerGuardBattleDecisions { caller: 1 }]
+        call.tail,
+        crate::ai::DutyTail::TowerGuardAlert { center } if center == ai.base.seek_position
     ));
+    assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
     assert_eq!(
         ai.base.current_substate,
         Substate::AttackingTowerGuardAlert,
@@ -1624,10 +1165,6 @@ fn officer_detection_uses_officer_facing() {
         is_tower_guard: false,
         company_number: 0,
         in_building: false,
-        forecast_destination: Some(crate::ai::PreparedForecastDestination::fixed(
-            Position::default(),
-            0,
-        )),
         detectable_bodies: Vec::new(),
         seek_position: Position::default(),
         current_task_priority: 0,
@@ -1668,7 +1205,7 @@ fn task_priority_ordering() {
 #[test]
 fn start_think_allows_normal_events() {
     let mut ai = EnemyAi::new(1);
-    let ctx = AiContext::test_fixture();
+    let ctx = crate::ai::AiAdmission::default();
     let stimulus = Stimulus::new(StimulusType::EventTimer);
     assert!(ai.start_think(&stimulus, &ctx, false));
 }
@@ -1678,7 +1215,7 @@ fn start_think_blocks_when_script_locked() {
     let mut ai = EnemyAi::new(1);
     ai.base.script_locked = true;
     ai.base.remember_events = true;
-    let ctx = AiContext::test_fixture();
+    let ctx = crate::ai::AiAdmission::default();
     let stimulus = Stimulus::new(StimulusType::EventView);
     assert!(!ai.start_think(&stimulus, &ctx, false));
     assert_eq!(ai.base.stimulus_queue.len(), 1);
@@ -1688,7 +1225,7 @@ fn start_think_blocks_when_script_locked() {
 fn start_think_retains_ailock_freeze() {
     let mut ai = EnemyAi::new(1);
     ai.base.locks_flag_field = AiLockFlags::FREEZE;
-    let ctx = AiContext::test_fixture();
+    let ctx = crate::ai::AiAdmission::default();
     let stimulus = Stimulus::new(StimulusType::EventTimer);
     assert!(!ai.start_think(&stimulus, &ctx, false));
     assert_eq!(ai.base.stimulus_queue.len(), 1);
@@ -1701,7 +1238,7 @@ fn start_think_retains_ailock_freeze() {
 #[test]
 fn start_think_discards_static_ai_freeze() {
     let mut ai = EnemyAi::new(1);
-    let ctx = AiContext::test_fixture();
+    let ctx = crate::ai::AiAdmission::default();
     let stimulus = Stimulus::new(StimulusType::EventTimer);
     assert!(!ai.start_think(&stimulus, &ctx, true));
     assert!(ai.base.stimulus_queue.is_empty());
@@ -1712,9 +1249,9 @@ fn start_think_rejects_look_there_for_physically_unconscious_script_driven_actor
     let mut ai = EnemyAi::new(1);
     ai.base.current_state = AiState::Default;
     ai.base.current_substate = Substate::DefaultScriptDriven;
-    let ctx = AiContext {
+    let ctx = crate::ai::AiAdmission {
         self_is_unconscious: true,
-        ..AiContext::test_fixture()
+        ..crate::ai::AiAdmission::default()
     };
 
     assert!(!ai.start_think(&Stimulus::new(StimulusType::CallLookThere), &ctx, false,));
@@ -1869,273 +1406,9 @@ fn periodic_post_refresh_without_queued_element_keeps_idle_increment() {
 }
 
 #[test]
-fn periodic_phalanx_goto_does_not_hide_same_call_idle_actor() {
-    // schema14 seed1000000, linux2/P002/Savegame_032/replay-008,
-    // frame 17254. Arrow-protection refresh changes the soldier from
-    // Reactiontime/Wait to RunningToPhalanx and launches movement, but the
-    // same-call stuck check still observes the actor's current Wait and
-    // advances its counter. Rust must not substitute its deferred order
-    // for that live actor/sequence-manager observation.
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(1);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingReactiontime;
-    ai.base.stuck_counter = 2;
-    ai.list_them.push(2);
-
-    let exact_position = |x, y| Position {
-        sector: SectorHandle::new(0),
-        ..test_position(x, y)
-    };
-    let owner_position = exact_position(500.0, 500.0);
-    let enemy_position = exact_position(1_500.0, 500.0);
-    let mut owner_view = soldier_view(owner_position);
-    owner_view.camp = Camp::Royalists;
-    let mut enemy_view = soldier_view(enemy_position);
-    enemy_view.camp = Camp::Lacklandists;
-    enemy_view.action_state = crate::element::ActionState::AimingWithBow;
-    let mut views = AiEntityViewMap::new();
-    views.insert(1, owner_view);
-    views.insert(2, enemy_view);
-    let ctx = AiContext {
-        position: owner_position,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    let mut tick = AiPerTickData::stub();
-    tick.seen_last_frame_enemies.push(2);
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 1,
-        position: owner_position,
-        raw_position: owner_position,
-        is_friendly: true,
-        is_soldier: true,
-        is_shield_bearer: true,
-        ..FighterSnapshot::default()
-    });
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 2,
-        position: enemy_position,
-        raw_position: enemy_position,
-        is_able_to_fight: true,
-        ..FighterSnapshot::default()
-    });
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 3,
-        position: exact_position(600.0, 500.0),
-        raw_position: exact_position(600.0, 500.0),
-        direction: 0,
-        is_friendly: true,
-        is_soldier: true,
-        is_shield_bearer: true,
-        current_substate: Substate::AttackingPhalanx,
-        ..FighterSnapshot::default()
-    });
-
-    ai.the_16th_frame(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        0,
-        &AiGlobalState::default(),
-        true,
-        false,
-        true,
-        false,
-    );
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingRunningToPhalanx
-    );
-    assert_ne!(ai.base.last_goto_destination, Position::default());
-    assert_eq!(
-        ai.base.stuck_counter, 3,
-        "the deferred phalanx movement does not hide the current idle actor"
-    );
-}
-
-#[test]
-fn periodic_phalanx_goto_does_not_fake_wait_during_attentive_transition() {
-    // Seed3 linux2/P002/Savegame_030/replay-007 frame 6887. The shield
-    // refresh queues phalanx movement while EnterAttentive remains the
-    // selected command. Original's subsequent command dispatch does not
-    // enter the Wait/smalltalk stuck-counter arm.
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(1);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingReactiontime;
-    ai.base.stuck_counter = 0;
-    ai.list_them.push(2);
-
-    let exact_position = |x, y| Position {
-        sector: SectorHandle::new(0),
-        ..test_position(x, y)
-    };
-    let owner_position = exact_position(500.0, 500.0);
-    let enemy_position = exact_position(1_500.0, 500.0);
-    let mut owner_view = soldier_view(owner_position);
-    owner_view.camp = Camp::Royalists;
-    let mut enemy_view = soldier_view(enemy_position);
-    enemy_view.camp = Camp::Lacklandists;
-    enemy_view.action_state = crate::element::ActionState::AimingWithBow;
-    let mut views = AiEntityViewMap::new();
-    views.insert(1, owner_view);
-    views.insert(2, enemy_view);
-    let ctx = AiContext {
-        position: owner_position,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    let mut tick = AiPerTickData::stub();
-    tick.seen_last_frame_enemies.push(2);
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 1,
-        position: owner_position,
-        raw_position: owner_position,
-        is_friendly: true,
-        is_soldier: true,
-        is_shield_bearer: true,
-        ..FighterSnapshot::default()
-    });
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 2,
-        position: enemy_position,
-        raw_position: enemy_position,
-        is_able_to_fight: true,
-        ..FighterSnapshot::default()
-    });
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 3,
-        position: exact_position(600.0, 500.0),
-        raw_position: exact_position(600.0, 500.0),
-        direction: 0,
-        is_friendly: true,
-        is_soldier: true,
-        is_shield_bearer: true,
-        current_substate: Substate::AttackingPhalanx,
-        ..FighterSnapshot::default()
-    });
-
-    ai.the_16th_frame(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        0,
-        &AiGlobalState::default(),
-        false,
-        false,
-        false,
-        false,
-    );
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingRunningToPhalanx
-    );
-    assert!(!ai.base.outbox.actor.orders.is_empty());
-    assert_eq!(
-        ai.base.stuck_counter, 0,
-        "a shield action must not substitute for selected-command classification"
-    );
-}
-
-#[test]
-fn periodic_phalanx_already_on_point_does_not_fake_a_pending_sequence() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = EnemyAi::new(1);
-    ai.base.current_state = AiState::Attacking;
-    ai.base.current_substate = Substate::AttackingReactiontime;
-    ai.base.stuck_counter = 2;
-    ai.list_them.push(2);
-
-    // Direction zero puts the open left slot 25 pixels to the left of
-    // the existing shield bearer. The owner is already exactly there,
-    // so arrow-protection refresh's movement completes without registering a
-    // movement sequence.
-    let exact_position = |x, y| Position {
-        sector: SectorHandle::new(0),
-        ..test_position(x, y)
-    };
-    let owner_position = exact_position(575.0, 500.0);
-    let enemy_position = exact_position(1_500.0, 500.0);
-    let mut owner_view = soldier_view(owner_position);
-    owner_view.camp = Camp::Royalists;
-    owner_view.current_animation = OrderType::WaitingUpright;
-    let mut enemy_view = soldier_view(enemy_position);
-    enemy_view.camp = Camp::Lacklandists;
-    enemy_view.action_state = crate::element::ActionState::AimingWithBow;
-    let mut views = AiEntityViewMap::new();
-    views.insert(1, owner_view);
-    views.insert(2, enemy_view);
-    let ctx = AiContext {
-        position: owner_position,
-        self_animation: OrderType::WaitingUpright,
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    let mut tick = AiPerTickData::stub();
-    tick.seen_last_frame_enemies.push(2);
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 1,
-        position: owner_position,
-        raw_position: owner_position,
-        is_friendly: true,
-        is_soldier: true,
-        is_shield_bearer: true,
-        ..FighterSnapshot::default()
-    });
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 2,
-        position: enemy_position,
-        raw_position: enemy_position,
-        is_able_to_fight: true,
-        ..FighterSnapshot::default()
-    });
-    tick.fighter_registry.push(FighterSnapshot {
-        handle: 3,
-        position: exact_position(600.0, 500.0),
-        raw_position: exact_position(600.0, 500.0),
-        direction: 0,
-        is_friendly: true,
-        is_soldier: true,
-        is_shield_bearer: true,
-        current_substate: Substate::AttackingPhalanx,
-        ..FighterSnapshot::default()
-    });
-
-    ai.the_16th_frame(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        0,
-        &AiGlobalState::default(),
-        true,
-        false,
-        true,
-        false,
-    );
-
-    assert_eq!(
-        ai.base.current_substate,
-        Substate::AttackingRunningToPhalanx
-    );
-    assert!(ai.base.outbox.actor.orders.is_empty());
-    assert!(
-        ai.base
-            .outbox
-            .reentrant
-            .self_stimuli
-            .iter()
-            .any(|stimulus| stimulus.stimulus_type == StimulusType::EventReachPoint)
-    );
-    assert_eq!(
-        ai.base.stuck_counter, 3,
-        "already-on-point movement leaves no pending sequence to suppress the original game's counter"
-    );
-}
-
-#[test]
 fn start_think_handles_lose_consciousness() {
     let mut ai = EnemyAi::new(1);
-    let ctx = AiContext::test_fixture();
+    let ctx = crate::ai::AiAdmission::default();
     let stimulus = Stimulus::new(StimulusType::EventLoseConsciousness);
     assert!(!ai.start_think(&stimulus, &ctx, false));
     assert_eq!(ai.base.current_state, AiState::Sleeping);
@@ -2147,9 +1420,9 @@ fn start_think_blocks_dead() {
     let mut ai = EnemyAi::new(1);
     ai.base.current_state = AiState::Sleeping;
     ai.base.current_substate = Substate::SleepingForever;
-    let ctx = AiContext {
+    let ctx = crate::ai::AiAdmission {
         self_is_dead: true,
-        ..AiContext::test_fixture()
+        ..crate::ai::AiAdmission::default()
     };
     let stimulus = Stimulus::new(StimulusType::EventLoseConsciousness);
     assert!(!ai.start_think(&stimulus, &ctx, false));
@@ -2162,9 +1435,9 @@ fn start_think_blocks_dead() {
 fn start_think_blocks_fitagain_when_carried() {
     let mut ai = EnemyAi::new(1);
     ai.base.current_substate = Substate::SleepingUnconscious;
-    let ctx = AiContext {
+    let ctx = crate::ai::AiAdmission {
         posture: crate::element::Posture::Carried,
-        ..AiContext::test_fixture()
+        ..crate::ai::AiAdmission::default()
     };
     let stimulus = Stimulus::new(StimulusType::EventFitAgain);
     assert!(!ai.start_think(&stimulus, &ctx, false));

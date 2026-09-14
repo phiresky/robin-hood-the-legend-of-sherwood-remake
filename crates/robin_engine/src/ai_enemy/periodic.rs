@@ -42,7 +42,8 @@ impl EnemyAi {
         sequence_null_about_to_launch: bool,
     ) {
         if !self.the_16th_frame_before_stuck(
-            env,
+            env.sim,
+            env.ctx,
             frame_phase,
             global,
             is_idle,
@@ -58,22 +59,19 @@ impl EnemyAi {
         );
     }
 
-    /// Run the every-16-frame update through the arrow-protection check.
+    /// Run the every-16-frame prefix before live arrow protection.
     ///
-    /// The engine-facing caller closes the actions authored by the refresh
-    /// before calling [`Self::the_16th_frame_after_refresh`]. Original does
-    /// the same work synchronously: its subsequent stuck guard queries the
-    /// live sequence-manager queue populated by movement requests, not the queue as it
-    /// stood on entry.
+    /// The engine executes protection and settles its movement before the
+    /// subsequent stuck guard reads the sequence queue.
     pub(crate) fn the_16th_frame_before_stuck(
         &mut self,
-        env: ThinkEnv<'_>,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
         frame_phase: u8,
         global: &AiGlobalState,
         is_idle: bool,
         receiving_wasp_sting: bool,
     ) -> bool {
-        let ThinkEnv { sim, ctx, .. } = env;
         // Scotch — wasp stuck recovery.  The gate is on the NPC no
         // longer running the sting command at all, not on it having
         // fallen back to Wait: any other command means the sting is
@@ -125,10 +123,6 @@ impl EnemyAi {
                 }
             }
         }
-
-        // Arrow protection — every-16-frame sweep
-        // that drives reactive shield-raising.
-        self.refresh_arrow_protection(true, env);
 
         // Gate the rest on `frame_phase & 63`.
         (frame_phase & 63) == 0

@@ -55,7 +55,17 @@ fn friendly_ai_defaults() {
 
 #[test]
 fn civilian_start_think_distinguishes_static_and_ailock_freeze() {
-    let ctx = AiContext::test_fixture();
+    let ctx = AiAdmission {
+        frame: 0,
+        original_creation_order: 0,
+        think_depth: 0,
+        in_building: false,
+        self_is_rider: false,
+        self_is_dead: false,
+        self_is_unconscious: false,
+        posture: crate::element::Posture::Upright,
+        position: Position::default(),
+    };
     let stimulus = Stimulus::new(StimulusType::EventTimer);
 
     let mut static_frozen = FriendlyAi::new(1);
@@ -96,117 +106,6 @@ fn civilian_set_state_alert_levels() {
 
     ai.set_state(AiState::Fleeing, Substate::FleeingPanic);
     assert_eq!(ai.base.current_music_alert_status, AlertLevel::Yellow);
-}
-
-#[test]
-fn patrol_coordinate_uses_friendly_virtual_state_before_walk_and_run() {
-    for (distance, expected_substate, expected_order) in [
-        (
-            45.0,
-            Substate::DefaultPatrolEnroute,
-            crate::order::OrderType::WalkingUpright,
-        ),
-        (
-            60.0,
-            Substate::DefaultPatrolEnrouteRunning,
-            crate::order::OrderType::RunningUpright,
-        ),
-    ] {
-        let mut ai = FriendlyAi::new(1);
-        ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
-            crate::entity_id::SoldierId(2),
-        ));
-        ai.base.current_state = AiState::Default;
-        ai.base.current_substate = Substate::DefaultOnPost;
-        ai.base.current_music_alert_status = AlertLevel::Yellow;
-        ai.base.view_alert_status = AlertLevel::Yellow;
-
-        let ctx = AiContext {
-            position: Position {
-                x: 100.0,
-                y: 100.0,
-                sector: SectorHandle::new(1),
-                level: 0,
-            },
-            ..AiContext::test_fixture()
-        };
-        let target = Position {
-            x: ctx.position.x + distance,
-            ..ctx.position
-        };
-        ai.coordinate_patrol(
-            &StimulusInfo::Position(target),
-            &ctx,
-            Position {
-                x: ctx.position.x + 100.0,
-                ..ctx.position
-            },
-        );
-
-        assert_eq!(ai.base.current_state, AiState::Default);
-        assert_eq!(ai.base.current_substate, expected_substate);
-        assert_eq!(ai.base.current_music_alert_status, AlertLevel::Green);
-        assert_eq!(ai.base.view_alert_status, AlertLevel::Green);
-        let [AiOwnerWork::StateChange(notification)] =
-            ai.base.outbox.reentrant.owner_work.as_slice()
-        else {
-            panic!("patrol coordinate must trigger friendly state change");
-        };
-        let prefix = notification
-            .actor_effects_before_callback
-            .as_ref()
-            .expect("StopAll must precede the friendly state callback");
-        assert!(prefix.halt);
-        let [order] = ai.base.outbox.actor.orders.as_slice() else {
-            panic!("patrol coordinate must queue one replacement movement");
-        };
-        assert_eq!(order.order_type, expected_order);
-    }
-}
-
-#[test]
-fn patrol_coordinate_same_substate_still_calls_friendly_state_without_stop_prefix() {
-    let mut ai = FriendlyAi::new(1);
-    ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
-        crate::entity_id::SoldierId(2),
-    ));
-    ai.base.current_state = AiState::Default;
-    ai.base.current_substate = Substate::DefaultPatrolEnroute;
-    ai.base.current_music_alert_status = AlertLevel::Yellow;
-    ai.base.view_alert_status = AlertLevel::Yellow;
-    let ctx = AiContext {
-        position: Position {
-            x: 100.0,
-            y: 100.0,
-            sector: SectorHandle::new(1),
-            level: 0,
-        },
-        ..AiContext::test_fixture()
-    };
-
-    ai.coordinate_patrol(
-        &StimulusInfo::Position(Position {
-            x: 145.0,
-            ..ctx.position
-        }),
-        &ctx,
-        Position {
-            x: 200.0,
-            ..ctx.position
-        },
-    );
-
-    assert_eq!(ai.base.current_music_alert_status, AlertLevel::Green);
-    assert_eq!(ai.base.view_alert_status, AlertLevel::Green);
-    let [AiOwnerWork::StateChange(notification)] = ai.base.outbox.reentrant.owner_work.as_slice()
-    else {
-        panic!("friendly state changes must notify even when the substate is unchanged");
-    };
-    assert!(notification.actor_effects_before_callback.is_none());
-    let [order] = ai.base.outbox.actor.orders.as_slice() else {
-        panic!("same-substate patrol update must queue its movement");
-    };
-    assert_eq!(order.order_type, crate::order::OrderType::WalkingUpright);
 }
 
 #[test]
@@ -258,7 +157,6 @@ fn apple_chase_does_not_replace_a_missing_chaser_with_undirected_panic() {
         &Stimulus::with_human(StimulusType::CallYouJustWait, 42),
         &mut global,
         &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
         None,
         None,
     )
@@ -423,7 +321,10 @@ fn after_script_queue_rebuilds_retained_view_antagonist() {
     let ai = friendly(&engine, owner);
     assert!(ai.base.stimulus_queue.is_empty());
     assert_eq!(ai.base.current_state, AiState::Fleeing);
-    assert!(ai.base.directed_panic);
+    assert!(
+        !ai.base.directed_panic,
+        "without an away-door, panic retries without a directional restriction"
+    );
     assert_eq!(ai.base.panic_center_x, 150.0);
     assert_eq!(ai.base.panic_center_y, 250.0);
 }
@@ -469,7 +370,6 @@ fn fit_again_returns_duty_after_ordered_resurrection_and_eye_prefix() {
             &stimulus,
             &mut global,
             &AiContext::test_fixture(),
-            &FriendlyPerTickData::without_patrol_chief(),
             None,
             None,
         )
@@ -628,7 +528,6 @@ fn think_unexpected_net_away_panics() {
         &stimulus,
         &mut global,
         &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
         None,
         None,
     )
@@ -636,76 +535,6 @@ fn think_unexpected_net_away_panics() {
 
     assert_eq!(ai.base.current_state, AiState::Fleeing);
     assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
-}
-
-#[test]
-fn patrol_coordinate_uses_real_chief_position_for_near_backwards_gate() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    let mut ai = FriendlyAi::new(1);
-    let mut global = AiGlobalState::default();
-    ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
-        crate::entity_id::SoldierId(2),
-    ));
-    ai.set_state(AiState::Default, Substate::DefaultPatrolEnroute);
-
-    let ctx = AiContext {
-        position: Position {
-            x: 0.0,
-            y: 0.0,
-            sector: SectorHandle::new(1),
-            level: 0,
-        },
-        direction: 0,
-        ..AiContext::test_fixture()
-    };
-    let tick = FriendlyPerTickData::with_patrol_chief(
-        Position {
-            x: 100.0,
-            y: 0.0,
-            ..ctx.position
-        },
-        AiState::Default,
-    );
-    let stimulus = Stimulus::with_position(
-        StimulusType::CallPatrolCoordinate,
-        Position {
-            x: -10.0,
-            y: 0.0,
-            ..ctx.position
-        },
-    );
-
-    ai.think_unexpected_event(sim, &stimulus, &mut global, &ctx, &tick, None, None)
-        .unwrap();
-    let orders = ai.base.take_pending_orders();
-
-    assert_eq!(orders.len(), 1);
-    assert_eq!(orders[0].order_type, crate::order::OrderType::Turning);
-    assert!(
-        !ai.base.already_on_point,
-        "near-backwards patrol coordinate must turn toward the chief, not walk to the slot"
-    );
-}
-
-#[test]
-#[should_panic(expected = "requires a live patrol-chief snapshot")]
-fn patrol_handler_cannot_silently_consume_missing_friendly_tick_data() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = FriendlyAi::new(1);
-    ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
-        crate::entity_id::SoldierId(2),
-    ));
-    ai.set_state(AiState::Default, Substate::DefaultPatrolEnrouteWaiting);
-    ai.think_expected_event(
-        &sim,
-        &Stimulus::new(StimulusType::EventTimer),
-        &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
-        None,
-        None,
-    )
-    .unwrap();
 }
 
 #[test]
@@ -748,41 +577,6 @@ fn think_alerting_event_sees_object_is_noop() {
 }
 
 #[test]
-fn expected_event_body_reactiontime_alert_fails_panics() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    let mut ai = FriendlyAi::new(1);
-    ai.set_state(
-        AiState::Wondering,
-        Substate::WonderingCivilianBodyReactiontime,
-    );
-
-    let stimulus = Stimulus::new(StimulusType::EventTimer);
-    ai.think_expected_event(
-        sim,
-        &stimulus,
-        &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
-        None,
-        None,
-    )
-    .unwrap();
-
-    // Soldier alerting fails (stub) → should panic
-    assert_eq!(ai.base.current_state, AiState::Fleeing);
-    assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
-    assert!(ai.base.outbox.reentrant.owner_work.iter().any(|work| {
-        matches!(
-            work,
-            AiOwnerWork::Speech(AiSpeechAttempt {
-                remark: Remark::CivPanic,
-                flags: 0,
-            })
-        )
-    }));
-}
-
-#[test]
 fn expected_event_whistling_child_approaches() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
@@ -790,15 +584,8 @@ fn expected_event_whistling_child_approaches() {
     ai.set_state(AiState::Wondering, Substate::WonderingWatchingWhistling);
 
     let stimulus = Stimulus::new(StimulusType::EventTimer);
-    ai.think_expected_event(
-        sim,
-        &stimulus,
-        &AiContext::test_fixture(),
-        &FriendlyPerTickData::without_patrol_chief(),
-        None,
-        None,
-    )
-    .unwrap();
+    ai.think_expected_event(sim, &stimulus, &AiContext::test_fixture(), None, None)
+        .unwrap();
 
     assert_eq!(ai.base.current_state, AiState::Wondering);
     assert_eq!(
@@ -904,437 +691,9 @@ fn make_soldier_view(
     }
 }
 
-#[test]
-fn alert_soldier_short_circuits_on_nearby_alerted_friend() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    // Any same-camp soldier in ATTACKING/MENACING/FLEEING
-    // within the 360° view radius short-circuits the alert —
-    // no point running to a second soldier when one next door
-    // is already alerted.
-    use crate::ai_entity_view::AiEntityViewMap;
-    use crate::element::Camp;
-    let mut ai = FriendlyAi::new(1);
-
-    let alerted_pos = Position {
-        x: 10.0,
-        y: 10.0,
-        sector: None,
-        level: 0,
-    };
-    let default_pos = Position {
-        x: 500.0,
-        y: 500.0,
-        sector: None,
-        level: 0,
-    };
-
-    let mut views = AiEntityViewMap::new();
-    views.insert(
-        10,
-        make_soldier_view(alerted_pos, Camp::Royalists, AiState::Attacking),
-    );
-    views.insert(
-        20,
-        make_soldier_view(default_pos, Camp::Royalists, AiState::Default),
-    );
-    let ctx = AiContext {
-        position: Position {
-            x: 0.0,
-            y: 0.0,
-            sector: None,
-            level: 0,
-        },
-        camp: Camp::Royalists,
-        // Large enough so the alerted soldier is "detected 360°"
-        sq_standard_view_radius: 1_000_000.0,
-        sq_self_view_radius: 1_000_000.0,
-        all_soldier_handles: std::sync::Arc::new(vec![10, 20]),
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    let ok = ai.alert_soldier(
-        sim,
-        ctx.position,
-        0,
-        AlertSoldierFailureContinuation::Panic,
-        &ctx,
-        None,
-        None,
-    );
-    assert!(
-        !ok,
-        "alert_soldier must return false when alerted friend nearby"
-    );
-    // State must not have switched to seeking.
-    assert_eq!(ai.base.current_state, AiState::Default);
-}
-
-#[test]
-fn alert_soldier_360_geometry_uses_raw_body_during_door_pass() {
-    use crate::coordinates::WorldPoint3D;
-    use crate::element::{Camp, Posture};
-
-    let planning_position = Position {
-        x: 805.0,
-        y: 930.0,
-        sector: None,
-        level: 0,
-    };
-    let mut target = make_soldier_view(planning_position, Camp::Lacklandists, AiState::Attacking);
-    // Door transit has committed Position(target) to the gate endpoint,
-    // while world position still exposes this interpolating sprite point.
-    target.detection_position_world = WorldPoint3D::new(800.752_6, 1_158.975_2, 177.907_58);
-    target.elevation = 177.907_58;
-    target.posture = Posture::Upright;
-
-    let ctx = AiContext {
-        position: Position {
-            x: 900.0,
-            y: 900.0,
-            ..Position::default()
-        },
-        self_body_position_world: WorldPoint3D::new(859.0, 1_138.735, 241.734_92),
-        ..AiContext::test_fixture()
-    };
-
-    let (viewer, detection, _) = alert_soldier_360_geometry(&ctx, &target);
-    assert_eq!(viewer, WorldPoint3D::new(859.0, 1_138.735, 286.734_92));
-    assert_eq!(
-        detection,
-        WorldPoint3D::new(800.752_6, 1_158.975_2, 222.907_58)
-    );
-    assert_ne!(detection.x, planning_position.x);
-    assert_ne!(detection.y, planning_position.y + target.elevation + 45.0);
-}
-
-#[test]
-fn alert_soldier_applies_layer_penalty() {
-    // +1000 maximum-norm penalty for soldiers on a different layer.
-    // A closer same-layer candidate should win over a nominally-
-    // nearer cross-layer one.
-    use crate::ai_entity_view::AiEntityViewMap;
-    use crate::element::Camp;
-    let mut ai = FriendlyAi::new(1);
-
-    let close_cross_layer = Position {
-        x: 100.0,
-        y: 0.0,
-        sector: None,
-        level: 1, // different layer → +1000 penalty
-    };
-    let farther_same_layer = Position {
-        x: 300.0,
-        y: 0.0,
-        sector: None,
-        level: 0,
-    };
-
-    let mut views = AiEntityViewMap::new();
-    views.insert(
-        10,
-        make_soldier_view(close_cross_layer, Camp::Royalists, AiState::Default),
-    );
-    views.insert(
-        20,
-        make_soldier_view(farther_same_layer, Camp::Royalists, AiState::Default),
-    );
-    let ctx = AiContext {
-        position: Position {
-            x: 0.0,
-            y: 0.0,
-            sector: None,
-            level: 0,
-        },
-        camp: Camp::Royalists,
-        sq_standard_view_radius: 1.0, // too small for short-circuit
-        sq_self_view_radius: 1.0,
-        all_soldier_handles: std::sync::Arc::new(vec![10, 20]),
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    crate::sim_rng::with_seed(1, |sim| {
-        let ok = ai.alert_soldier(
-            sim,
-            ctx.position,
-            0,
-            AlertSoldierFailureContinuation::Panic,
-            &ctx,
-            None,
-            None,
-        );
-        assert!(ok, "alert_soldier must succeed when at least one candidate");
-        // Antagonist must be the same-layer one despite being farther.
-        assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(20)));
-    });
-}
-
-#[test]
-fn alert_soldier_ranks_with_stretched_world_max_norm() {
-    use crate::ai_entity_view::AiEntityViewMap;
-    use crate::element::Camp;
-
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    let mut ai = FriendlyAi::new(1);
-    let owner = Position {
-        x: 1680.0,
-        y: 2065.0,
-        sector: crate::position_interface::SectorHandle::new(0),
-        level: 0,
-    };
-    // Raw projected map distance makes handle 141 look nearer:
-    // max(105, 379) < max(414, 213). Original stretches world Y,
-    // yielding 660 for handle 141 but only 414 for handle 130.
-    let mut views = AiEntityViewMap::new();
-    views.insert(
-        141,
-        make_soldier_view(
-            Position {
-                x: 1785.0,
-                y: 1686.0,
-                sector: crate::position_interface::SectorHandle::new(0),
-                level: 0,
-            },
-            Camp::Lacklandists,
-            AiState::Default,
-        ),
-    );
-    views.insert(
-        130,
-        make_soldier_view(
-            Position {
-                x: 1266.0,
-                y: 2278.0,
-                sector: crate::position_interface::SectorHandle::new(18),
-                level: 0,
-            },
-            Camp::Lacklandists,
-            AiState::Default,
-        ),
-    );
-    let ctx = AiContext {
-        position: owner,
-        self_body_position_world: crate::coordinates::WorldPoint3D::new(owner.x, owner.y, 0.0),
-        camp: Camp::Lacklandists,
-        all_soldier_handles: std::sync::Arc::new(vec![130, 141]),
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    assert!(ai.alert_soldier(
-        sim,
-        owner,
-        0,
-        AlertSoldierFailureContinuation::Panic,
-        &ctx,
-        None,
-        None,
-    ));
-    assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(130)));
-}
-
-#[test]
-fn alert_soldier_ranks_from_raw_body_when_planning_position_is_gate_snapped() {
-    use crate::ai_entity_view::AiEntityViewMap;
-    use crate::coordinates::WorldPoint3D;
-    use crate::element::Camp;
-
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    let mut ai = FriendlyAi::new(1);
-    let mut views = AiEntityViewMap::new();
-
-    let mut near_raw = make_soldier_view(
-        Position {
-            x: 300.0,
-            y: 0.0,
-            ..Position::default()
-        },
-        Camp::Lacklandists,
-        AiState::Default,
-    );
-    near_raw.detection_position_world = WorldPoint3D::new(300.0, 0.0, 500.0);
-    views.insert(10, near_raw);
-
-    let mut near_gate = make_soldier_view(
-        Position {
-            x: 900.0,
-            y: 0.0,
-            ..Position::default()
-        },
-        Camp::Lacklandists,
-        AiState::Default,
-    );
-    near_gate.detection_position_world = WorldPoint3D::new(900.0, 0.0, 100.0);
-    views.insert(20, near_gate);
-
-    let mut near_only_if_z_is_ignored = make_soldier_view(
-        Position {
-            x: 200.0,
-            y: 0.0,
-            ..Position::default()
-        },
-        Camp::Lacklandists,
-        AiState::Default,
-    );
-    near_only_if_z_is_ignored.detection_position_world = WorldPoint3D::new(200.0, 0.0, 1000.0);
-    views.insert(30, near_only_if_z_is_ignored);
-
-    let ctx = AiContext {
-        // AI Position() has already committed to the far gate endpoint,
-        // while world position still reports the interpolating body.
-        position: Position {
-            x: 1000.0,
-            y: 0.0,
-            ..Position::default()
-        },
-        self_body_position_world: WorldPoint3D::new(0.0, 0.0, 100.0),
-        camp: Camp::Lacklandists,
-        all_soldier_handles: std::sync::Arc::new(vec![10, 20, 30]),
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    assert!(ai.alert_soldier(
-        sim,
-        ctx.position,
-        0,
-        AlertSoldierFailureContinuation::Panic,
-        &ctx,
-        None,
-        None,
-    ));
-    // Raw 3D maximum-norm distances are 400, 900, and 900. Reconstructing the
-    // owner from the gate-snapped planning position would choose 20;
-    // dropping the nonzero Z component while retaining raw X would choose
-    // 30. Original's literal raw 3D operation must instead choose 10.
-    assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(10)));
-}
-
-#[test]
-fn alert_soldier_queues_friend_detectables_on_first_pass() {
-    // Every candidate soldier gets a DETECTABLE_FRIEND add on
-    // the non-door-path pass so later "is my ally still
-    // nearby?" checks light up.
-    use crate::ai_entity_view::AiEntityViewMap;
-    use crate::element::{Camp, DetectableType};
-    let mut ai = FriendlyAi::new(1);
-
-    let mut views = AiEntityViewMap::new();
-    views.insert(
-        20,
-        make_soldier_view(
-            Position {
-                x: 200.0,
-                y: 0.0,
-                sector: None,
-                level: 0,
-            },
-            Camp::Royalists,
-            AiState::Default,
-        ),
-    );
-    views.insert(
-        10,
-        make_soldier_view(
-            Position {
-                x: 100.0,
-                y: 0.0,
-                sector: None,
-                level: 0,
-            },
-            Camp::Royalists,
-            AiState::Default,
-        ),
-    );
-    let ctx = AiContext {
-        position: Position {
-            x: 0.0,
-            y: 0.0,
-            sector: None,
-            level: 0,
-        },
-        camp: Camp::Royalists,
-        sq_standard_view_radius: 1.0,
-        sq_self_view_radius: 1.0,
-        // Deliberately opposite the insertion order above: the Original
-        // observes registry order, not HashMap bucket order.
-        all_soldier_handles: std::sync::Arc::new(vec![20, 10]),
-        entity_views: crate::ai_entity_view::shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-
-    crate::sim_rng::with_seed(1, |sim| {
-        ai.alert_soldier(
-            sim,
-            ctx.position,
-            0,
-            AlertSoldierFailureContinuation::Panic,
-            &ctx,
-            None,
-            None,
-        );
-        let notification = ai
-            .base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .find_map(|work| match work {
-                AiOwnerWork::StateChange(notification) => Some(notification),
-                _ => None,
-            })
-            .expect("alerting a soldier must enter seeking through friendly state change");
-        let effects = notification
-            .actor_effects_before_callback
-            .as_ref()
-            .expect("friend detectables must precede the Friendly state callback");
-        let friends: Vec<_> = effects
-            .appended_detectables()
-            .iter()
-            .filter(|(_, t)| *t == DetectableType::Friend)
-            .map(|(entity, _)| entity.index())
-            .collect();
-        assert_eq!(
-            friends,
-            vec![20, 10],
-            "friend detectables must preserve the soldier registry order"
-        );
-    });
-}
-
 // ──────────────────────────────────────────────────────────
 // Soldier-alert synchronous route-result continuation
 // ──────────────────────────────────────────────────────────
-
-#[test]
-fn alert_soldier_first_route_success_delays_then_emits_success_remark() {
-    let sim = crate::sim_rng::test_context();
-    let mut ai = FriendlyAi::new(1);
-    ai.base.outbox.reentrant.alert_soldier_completion_pending = true;
-    ai.resume_alert_soldier_after_go_near(
-        &sim,
-        Position::default(),
-        false,
-        AlertSoldierFailureContinuation::PanicWithRemark,
-        &AiContext::test_fixture(),
-        None,
-        None,
-    )
-    .unwrap();
-    assert!(!ai.base.outbox.reentrant.alert_soldier_completion_pending);
-    assert!(ai.base.outbox.actor.begin_panic.is_none());
-    assert!(matches!(
-        ai.base.outbox.reentrant.owner_work.as_slice(),
-        [AiOwnerWork::Speech(AiSpeechAttempt {
-            remark: Remark::CivPanic,
-            ..
-        })]
-    ));
-}
 
 #[test]
 fn detectable_fifo_stays_inside_existing_state_change_boundaries() {
@@ -1343,7 +702,7 @@ fn detectable_fifo_stays_inside_existing_state_change_boundaries() {
     let target = crate::element::EntityId::Soldier(crate::entity_id::SoldierId(20));
     let mut ai = FriendlyAi::new(1);
     ai.base.outbox.actor.append_detectable((target, Friend));
-    ai.delete_all_friend_detectables();
+    ai.base.outbox.actor.delete_detectable_type(Friend);
     assert!(
         ai.base.outbox.reentrant.owner_work.is_empty(),
         "mutation queueing must not introduce owner fixed points"
@@ -1371,155 +730,6 @@ fn detectable_fifo_stays_inside_existing_state_change_boundaries() {
         robin_util::state_hash::compute(&restored),
         robin_util::state_hash::compute(&ai)
     );
-}
-
-#[test]
-fn alert_soldier_second_route_failure_runs_each_caller_tail_once() {
-    let sim = crate::sim_rng::test_context();
-    for failure in [
-        AlertSoldierFailureContinuation::PanicWithRemark,
-        AlertSoldierFailureContinuation::Panic,
-        AlertSoldierFailureContinuation::ReturnToDuty,
-    ] {
-        let mut ai = FriendlyAi::new(1);
-        ai.base.couldnt_reachpoint = true;
-        ai.base.outbox.reentrant.alert_soldier_completion_pending = true;
-        let flow = ai.resume_alert_soldier_after_go_near(
-            &sim,
-            Position::default(),
-            true,
-            failure,
-            &AiContext::test_fixture(),
-            None,
-            None,
-        );
-        assert!(!ai.base.outbox.reentrant.alert_soldier_completion_pending);
-        let live_deletes = ai
-            .base
-            .outbox
-            .actor
-            .deleted_detectable_types()
-            .iter()
-            .filter(|&&kind| kind == crate::element::DetectableType::Friend)
-            .count();
-        let callback_prefix_deletes = ai
-            .base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .filter_map(|work| match work {
-                AiOwnerWork::StateChange(change) => change.actor_effects_before_callback.as_ref(),
-                _ => None,
-            })
-            .flat_map(|effects| effects.deleted_detectable_types().into_iter())
-            .filter(|&kind| kind == crate::element::DetectableType::Friend)
-            .count();
-        assert_eq!(live_deletes + callback_prefix_deletes, 1);
-        match failure {
-            AlertSoldierFailureContinuation::PanicWithRemark => {
-                flow.unwrap();
-                assert!(ai.base.outbox.actor.begin_panic.is_some());
-                assert!(matches!(
-                    ai.base.outbox.reentrant.owner_work.first(),
-                    Some(AiOwnerWork::Speech(AiSpeechAttempt {
-                        remark: Remark::CivPanic,
-                        ..
-                    }))
-                ));
-            }
-            AlertSoldierFailureContinuation::Panic => {
-                flow.unwrap();
-                assert!(ai.base.outbox.actor.begin_panic.is_some());
-                assert!(
-                    !ai.base
-                        .outbox
-                        .reentrant
-                        .owner_work
-                        .iter()
-                        .any(|work| matches!(work, AiOwnerWork::Speech(_)))
-                );
-            }
-            AlertSoldierFailureContinuation::ReturnToDuty => {
-                let duty = flow.expect_err("failed alert returns to engine-owned duty");
-                assert!(ai.base.outbox.actor.begin_panic.is_none());
-                ai.fleeing_seen_enemy_counter = 7;
-                let (mut engine, assets, owner) = duty_fixture(ai);
-                engine.execute_ai_return_to_duty(&sim, &assets, owner, duty.flags);
-                let ai = friendly(&engine, owner);
-                assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
-                assert_eq!(ai.fleeing_seen_enemy_counter, 0);
-            }
-        }
-    }
-}
-
-#[test]
-fn alert_soldier_first_failure_then_retry_success_avoids_failure_tail() {
-    use crate::ai_entity_view::{AiEntityViewMap, shared_entity_views};
-    use crate::element::Camp;
-    let sim = crate::sim_rng::test_context();
-    let mut views = AiEntityViewMap::new();
-    views.insert(
-        20,
-        make_soldier_view(
-            Position {
-                x: 100.0,
-                y: 0.0,
-                ..Position::default()
-            },
-            Camp::Royalists,
-            AiState::Default,
-        ),
-    );
-    let ctx = AiContext {
-        camp: Camp::Royalists,
-        all_soldier_handles: std::sync::Arc::new(vec![20]),
-        entity_views: shared_entity_views(views),
-        ..AiContext::test_fixture()
-    };
-    let mut ai = FriendlyAi::new(1);
-    ai.base.couldnt_reachpoint = true;
-    ai.base.outbox.reentrant.alert_soldier_completion_pending = true;
-    ai.resume_alert_soldier_after_go_near(
-        &sim,
-        Position::default(),
-        false,
-        AlertSoldierFailureContinuation::Panic,
-        &ctx,
-        None,
-        None,
-    )
-    .unwrap();
-    assert!(ai.base.outbox.reentrant.alert_soldier_completion_pending);
-    assert!(ai.base.outbox.actor.begin_panic.is_none());
-    assert!(matches!(
-        ai.base.outbox.reentrant.owner_work.last(),
-        Some(AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
-            check_door_path: true,
-            ..
-        })
-    ));
-    ai.base.outbox.reentrant.owner_work.clear();
-    ai.resume_alert_soldier_after_go_near(
-        &sim,
-        Position::default(),
-        true,
-        AlertSoldierFailureContinuation::Panic,
-        &ctx,
-        None,
-        None,
-    )
-    .unwrap();
-    assert!(!ai.base.outbox.reentrant.alert_soldier_completion_pending);
-    assert!(ai.base.outbox.actor.begin_panic.is_none());
-    assert!(matches!(
-        ai.base.outbox.reentrant.owner_work.as_slice(),
-        [AiOwnerWork::Speech(AiSpeechAttempt {
-            remark: Remark::CivPanic,
-            ..
-        })]
-    ));
 }
 
 // ──────────────────────────────────────────────────────────

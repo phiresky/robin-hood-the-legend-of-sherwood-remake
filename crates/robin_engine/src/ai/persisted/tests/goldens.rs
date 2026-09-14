@@ -167,7 +167,6 @@ fn golden_friendly() -> FriendlyAi {
 
 fn golden_reentrant() -> AiReentrantOutbox {
     let mut value = populated_outbox().reentrant;
-    value.reconsider_approach_replaced_path_waiter = true;
     value.brawl_hitting_completion_pending = true;
     value
 }
@@ -300,12 +299,7 @@ const ENEMY_DEFAULTED_KEYS: &[&str] = &[
 ];
 
 const REENTRANT_DEFAULTED_KEYS: &[&str] = &[
-    "reconsider_approach_replaced_path_waiter",
     "battle_observe_completion_pending",
-    "alert_soldier_completion_pending",
-    "dead_body_alert_completion_pending",
-    "tower_guard_alert_officer_completion_pending",
-    "civilian_report_alert_officer_completion_pending",
     "brawl_hitting_completion_pending",
 ];
 
@@ -348,15 +342,10 @@ fn reentrant_outbox_missing_defaulted_fields_decode_to_type_defaults() {
     let decoded: AiReentrantOutbox = decode_without(json, REENTRANT_DEFAULTED_KEYS).unwrap();
     let mut expected = golden_reentrant();
     scrub_reentrant(&mut expected);
-    expected.reconsider_approach_replaced_path_waiter = false;
     expected.battle_observe_completion_pending = false;
-    expected.alert_soldier_completion_pending = false;
-    expected.dead_body_alert_completion_pending = false;
-    expected.tower_guard_alert_officer_completion_pending = false;
-    expected.civilian_report_alert_officer_completion_pending = false;
     expected.brawl_hitting_completion_pending = false;
     assert_eq!(format!("{decoded:?}"), format!("{expected:?}"));
-    for required in ["cross_npc_actions", "look_for_help_completion_pending"] {
+    for required in ["cross_npc_actions"] {
         assert!(
             decode_without::<AiReentrantOutbox>(json, &[required]).is_err(),
             "AiReentrantOutbox.{required} must stay required"

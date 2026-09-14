@@ -5,7 +5,6 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
     use crate::ai::{AiEntityHandle, Stimulus, StimulusInfo, StimulusType};
     use crate::engine::movement::{FailedPathRequest, PendingPathRequest, PendingPathRequestQueue};
     use crate::engine::seat::SeatState;
-    use crate::order::{AiOrderIntent, OrderType};
     use crate::sequence::SequenceId;
 
     let mut engine = EngineInner::new();
@@ -57,15 +56,6 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
         .into_iter()
         .map(|request| FailedPathRequest::from_pending(request, 10))
         .collect();
-    let intent = || AiOrderIntent::new(OrderType::WalkingUpright, 1.0, 2.0);
-    let mut targeted_intent = intent();
-    targeted_intent.target_actor = Some(removed.index());
-    engine.orders.pending_move_requests = vec![
-        (last, intent()),
-        (first, targeted_intent),
-        (removed, intent()),
-        (first, intent()),
-    ];
 
     engine.remove_entity(removed);
     engine.remove_entity(removed); // idempotent, including queue ordering
@@ -121,15 +111,6 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
             .map(|request| request.owner)
             .collect::<Vec<_>>(),
         [first, last]
-    );
-    assert_eq!(
-        engine
-            .orders
-            .pending_move_requests
-            .iter()
-            .map(|(owner, _)| *owner)
-            .collect::<Vec<_>>(),
-        [last, first]
     );
 }
 
@@ -603,13 +584,12 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
         .base
         .my_reconnaissance_report
         .clone();
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
+
     engine.dispatch_think_with_drain(
         &sim,
         officer_id,
         &Stimulus::with_human(StimulusType::CallReport, soldier_id.index()),
-        &ctx,
-        &tick,
+        None,
         &assets,
     );
 

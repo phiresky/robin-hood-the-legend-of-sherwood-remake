@@ -785,22 +785,11 @@ pub struct AiOrderIntent {
     #[serde(deserialize_with = "Option::deserialize")]
     pub target_actor: Option<u32>,
     pub compute_direction: bool,
-    /// Keep this ordinary actor command on `SequenceManager`'s deferred
-    /// instruction queue. Common AI handlers launch these turns inline in
-    /// the original game, but sequence-element launch does not execute it until the manager's
-    /// later update pass.
-    pub defer_instruction: bool,
     /// This movement request was reached through the tail of another while the actor
     /// still reported waiting movement. The original game launches the replacement and
     /// then immediately halts it because path computation is pending, which
     /// removes the just-registered movement before manager instruction.
     pub halt_after_launch_for_path_waiter: bool,
-    /// Earliest universal frame at which an engine-owned movement intent may
-    /// be promoted to a sequence. Runtime-authored intents normally leave
-    /// this unset; synchronous continuations use it to preserve a manager
-    /// boundary that has already passed in the current frame.
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub not_before_frame: Option<u32>,
     /// This facing request was authored after a same-call state change changed attentive
     /// mode. The engine must apply that attentive transition before
     /// instructing the Turn.
@@ -891,9 +880,7 @@ impl AiOrderIntent {
             source_target_sector_identity_differs: false,
             target_actor: None,
             compute_direction: true,
-            defer_instruction: false,
             halt_after_launch_for_path_waiter: false,
-            not_before_frame: None,
             after_attentive_mode: false,
             fast_turn: false,
             explicit_direction: None,

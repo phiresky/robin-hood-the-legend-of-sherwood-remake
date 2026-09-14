@@ -408,36 +408,15 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
         officer.set_state(officer_state, officer_substate);
     }
 
-    let scratch = engine.build_sim_scratch(&assets);
-    let ctx = {
-        let entity = engine
-            .get_entity(charly_id)
-            .expect("test Charly exists for context");
-        crate::engine::ai::build_ai_context_from_entity(
-            entity,
-            engine.control.frame_counter,
-            None,
-            engine.world.weather.is_forest_level,
-            engine.world.weather.ambiance,
-            engine.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &engine.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &engine.ai.global.all_soldier_handles,
-            engine.control.sim_config.difficulty,
-            engine.ai_think_depth(),
-        )
-    };
-    assert!(ctx.is_night_or_fog);
-    let tick = engine.build_npc_tick_data(sim, charly_id, &assets);
+    assert!(matches!(
+        engine.world.weather.ambiance,
+        crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
+    ));
     engine.dispatch_think_with_drain(
         sim,
         charly_id,
         &Stimulus::new(StimulusType::EventTimer),
-        &ctx,
-        &tick,
+        None,
         &assets,
     );
     engine
@@ -536,29 +515,6 @@ fn run_synchronous_civilian_alert(
 
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    let scratch = engine.build_sim_scratch(&assets);
-    let ctx = {
-        let entity = engine
-            .get_entity(civilian_id)
-            .expect("test civilian exists for context");
-        crate::engine::ai::build_ai_context_from_entity(
-            entity,
-            engine.control.frame_counter,
-            None,
-            engine.world.weather.is_forest_level,
-            engine.world.weather.ambiance,
-            engine.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &engine.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &engine.ai.global.all_soldier_handles,
-            engine.control.sim_config.difficulty,
-            engine.ai_think_depth(),
-        )
-    };
-    let tick = engine.build_npc_tick_data(sim, civilian_id, &assets);
     if direct_owner_self_stimulus {
         engine
             .get_entity_mut(civilian_id)
@@ -576,7 +532,7 @@ fn run_synchronous_civilian_alert(
         } else {
             Stimulus::new(trigger)
         };
-        engine.dispatch_think_with_drain(sim, civilian_id, &stimulus, &ctx, &tick, &assets);
+        engine.dispatch_think_with_drain(sim, civilian_id, &stimulus, None, &assets);
     }
     engine
 }
@@ -628,57 +584,21 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
     (engine, officer_id, soldier_id, assets)
 }
 
-fn review2_context_and_tick(
-    engine: &EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
-    id: EntityId,
-) -> (crate::ai::AiContext, crate::ai::AiPerTickData) {
-    let scratch = engine.build_sim_scratch(assets);
-    let ctx = crate::engine::ai::build_ai_context_from_entity(
-        engine.get_entity(id).expect("review2 context owner exists"),
-        engine.control.frame_counter,
-        None,
-        engine.world.weather.is_forest_level,
-        engine.world.weather.ambiance,
-        engine.ai.standard_view_polygon_radius,
-        &scratch.ai_entity_views,
-        &scratch.ai_sight_obstacles,
-        &engine.world.fast_grid,
-        &assets.navigation.hiking_paths,
-        &assets.navigation.hiking_waypoint_sectors,
-        &engine.ai.global.all_soldier_handles,
-        engine.control.sim_config.difficulty,
-        engine.ai_think_depth(),
-    );
-    let tick = engine.build_npc_tick_data(sim, id, assets);
-    (ctx, tick)
-}
-
 fn start_review_command_soldiers(
     engine: &mut EngineInner,
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
     officer_id: EntityId,
-) -> (
-    crate::ai_enemy::CommandSoldiersStart,
-    crate::ai::AiPerTickData,
-) {
-    use crate::ai::Position;
-
-    let (ctx, tick) = review2_context_and_tick(engine, sim, assets, officer_id);
-    let start = engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("review command caller has EnemyAi")
-        .command_soldiers_to_attack(
-            Position {
-                x: 300.0,
-                ..Default::default()
-            },
-            crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-        );
-    (start, tick)
+) -> bool {
+    engine.execute_ai_command_soldiers_to_attack(
+        sim,
+        assets,
+        officer_id,
+        crate::ai::Position {
+            x: 300.0,
+            ..Default::default()
+        },
+    )
 }
 
 fn queue_review2_wrong_kind_think(

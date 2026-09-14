@@ -491,14 +491,6 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
         .ai_controller_mut()
         .unwrap()
         .outbox
-        .reentrant
-        .reconsider_approach_completion_pending = true;
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .outbox
         .actor
         .orders
         .push(intent);
@@ -510,11 +502,7 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
         ai.couldnt_reachpoint,
         "movement construction's synchronous gate failure must reach decision completion"
     );
-    assert!(
-        ai.outbox.reentrant.reconsider_approach_replaced_path_waiter,
-        "the typed reconsider continuation must retain that its failed route replaced MoveWaiting"
-    );
-    assert!(engine.orders.pending_move_requests.is_empty());
+    assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
 }
 
 #[test]
@@ -556,20 +544,9 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
         .orders
         .push(AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0));
 
-    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
-
-    assert_eq!(engine.orders.pending_move_requests.len(), 1);
-    assert!(
-        engine.orders.pending_move_requests[0]
-            .1
-            .halt_after_launch_for_path_waiter,
-        "movement's tail halt must remain attached until the replacement sequence has been constructed"
-    );
-
     let sequence_count_before_drain = engine.orders.sequence_manager.sequence_count();
-    engine.drain_pending_move_requests(&sim);
-
-    assert!(engine.orders.pending_move_requests.is_empty());
+    let launched = engine.launch_pending_orders_for_npc(&sim, &assets, owner);
+    assert!(launched.is_empty());
     assert!(
         engine.orders.sequence_manager.sequence_count() > sequence_count_before_drain,
         "the replacement sequence must be constructed before movement applies its tail halt"
@@ -586,7 +563,7 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
 }
 
 #[test]
-fn deferred_ai_move_skips_recursive_owner_drain_then_promotes_globally() {
+fn ai_move_constructs_at_owner_boundary_and_waits_for_manager_instruction() {
     use crate::element::Posture;
     use crate::order::{AiOrderIntent, OrderType};
 
@@ -599,27 +576,16 @@ fn deferred_ai_move_skips_recursive_owner_drain_then_promotes_globally() {
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
     let owner = engine.add_test_entity(soldier);
 
-    let mut intent = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
-    intent.defer_instruction = true;
-    engine.launch_ai_move(owner, &intent);
-
-    assert!(
-        engine
-            .drain_pending_move_requests_for_owner(&sim, owner)
-            .is_empty(),
-        "recursive owner closure must not promote the deferred roof move"
-    );
-    assert_eq!(engine.orders.pending_move_requests.len(), 1);
-
-    engine.drain_pending_move_requests(&sim);
+    let mut first = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
+    let first_sequence = engine.launch_ai_move(&sim, owner, &mut first).unwrap();
+    let mut second = AiOrderIntent::new(OrderType::RunningUpright, 300.0, 400.0);
+    let second_sequence = engine.launch_ai_move(&sim, owner, &mut second).unwrap();
+    assert_ne!(first_sequence, second_sequence);
     assert_eq!(
-        engine.orders.pending_move_requests.len(),
-        1,
-        "the later global drain in the authored frame must also retain the move"
+        engine.orders.sequence_manager.deferred_elements_to_go(),
+        vec![(first_sequence, 0), (second_sequence, 0)],
+        "both same-owner movements register in call order before manager instruction"
     );
-    engine.control.frame_counter += 1;
-    engine.drain_pending_move_requests(&sim);
-    assert!(engine.orders.pending_move_requests.is_empty());
     assert!(
         engine
             .orders
@@ -650,14 +616,11 @@ fn path_waiter_tail_halts_registered_roof_move_before_instruction() {
 
     let mut intent = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
     intent.halt_after_launch_for_path_waiter = true;
-    engine.launch_ai_move(owner, &intent);
-
-    let launched = engine.drain_pending_move_requests_for_owner(&sim, owner);
+    let launched = engine.launch_ai_move(&sim, owner, &mut intent);
     assert!(
-        launched.is_empty(),
+        launched.is_none(),
         "the path-waiter tail must not expose the interrupted sequence for instruction"
     );
-    assert!(engine.orders.pending_move_requests.is_empty());
     assert!(
         engine
             .orders
@@ -670,7 +633,7 @@ fn path_waiter_tail_halts_registered_roof_move_before_instruction() {
 }
 
 #[test]
-fn fallback_staging_preserves_authored_path_waiter_tail_after_waiter_is_gone() {
+fn fallback_construction_applies_authored_path_waiter_tail_after_waiter_is_gone() {
     use crate::element::Posture;
     use crate::order::{AiOrderIntent, OrderType};
 
@@ -696,19 +659,19 @@ fn fallback_staging_preserves_authored_path_waiter_tail_after_waiter_is_gone() {
         .orders
         .push(fallback);
 
-    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
-
-    assert_eq!(engine.orders.pending_move_requests.len(), 1);
+    let launched = engine.launch_pending_orders_for_npc(&sim, &assets, owner);
+    assert!(launched.is_empty());
     assert!(
-        engine.orders.pending_move_requests[0]
-            .1
-            .halt_after_launch_for_path_waiter,
-        "roof-fallback staging must not erase the path-waiter tail after the outgoing waiter was halted"
+        engine
+            .orders
+            .sequence_manager
+            .pending_elements_for_owner(owner)
+            .is_empty()
     );
 }
 
 #[test]
-fn ordinary_move_staging_does_not_invent_path_waiter_tail() {
+fn ordinary_move_construction_does_not_invent_path_waiter_tail() {
     use crate::element::Posture;
     use crate::order::{AiOrderIntent, OrderType};
 
@@ -732,14 +695,14 @@ fn ordinary_move_staging_does_not_invent_path_waiter_tail() {
         .orders
         .push(AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0));
 
-    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
-
-    assert_eq!(engine.orders.pending_move_requests.len(), 1);
+    let launched = engine.launch_pending_orders_for_npc(&sim, &assets, owner);
+    assert_eq!(launched.len(), 1);
     assert!(
-        !engine.orders.pending_move_requests[0]
-            .1
-            .halt_after_launch_for_path_waiter,
-        "ordinary movement without a live or inherited path waiter must remain unmarked"
+        engine
+            .orders
+            .sequence_manager
+            .deferred_elements_to_go()
+            .contains(&(launched[0], 0))
     );
 }
 

@@ -8,57 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ai::*;
 use crate::coordinates::MapPoint;
-use crate::parameters_ai::{AI_FIRST_LOOK_TIME, AI_STANDARD_PANIC_RUNS, AI_TALK_DISTANCE};
-
-/// Caller tail to run only when both synchronous soldier-alert route
-/// attempts fail.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum AlertSoldierFailureContinuation {
-    PanicWithRemark,
-    Panic,
-    ReturnToDuty,
-}
-
-/// Geometry for NPC 360-degree detection as used when alerting a soldier.
-///
-/// Both original endpoints start from the actors' literal world positions
-/// values. In particular, AI actor position may
-/// already report a committed gate-side point while the actor's sprite is
-/// still interpolating through a door, so the AI planning position is not a
-/// valid substitute here.
-///
-/// The caller keeps its own `square_distance <= sq_view_radius && LOS` gate
-/// instead of routing through `ai_enemy::detects_360`: that core rejects on
-/// `sq_distance > radius`, which differs for a NaN distance.
-fn alert_soldier_360_geometry(
-    ctx: &AiContext,
-    target: &crate::ai_entity_view::AiEntityView,
-) -> (
-    crate::coordinates::WorldPoint3D,
-    crate::coordinates::WorldPoint3D,
-    f32,
-) {
-    let mut viewer_eye = ctx.self_body_position_world;
-    viewer_eye.z +=
-        crate::stealth::eye_z_for_posture(crate::element::Posture::Upright, ctx.self_is_rider);
-    let target_detection = crate::stealth::detection_point_world(
-        target.detection_position_world,
-        target.posture,
-        target.direction as i16,
-        target.is_rider,
-    );
-    let square_distance = crate::ai_enemy::sq_distance_360(viewer_eye, target_detection);
-    (viewer_eye, target_detection, square_distance)
-}
+use crate::parameters_ai::{AI_FIRST_LOOK_TIME, AI_STANDARD_PANIC_RUNS};
 
 // ---------------------------------------------------------------------------
 // Civilian-specific constants
@@ -66,38 +16,6 @@ fn alert_soldier_360_geometry(
 
 pub const APPLE_CHASE_IDEAL_DISTANCE: i32 = 300;
 pub const BEGGAR_NO_RANDOM_TALK_DISTANCE: i32 = 100;
-
-/// Truthful engine snapshot for the only cross-entity per-tick value consumed
-/// by Friendly AI. Deliberately has no `Default`/`stub`: handlers that require
-/// a patrol chief must demand the live snapshot contextually.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub(crate) struct FriendlyPerTickData {
-    patrol_chief: Option<FriendlyPatrolChief>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-struct FriendlyPatrolChief {
-    position: Position,
-    state: AiState,
-}
-
-impl FriendlyPerTickData {
-    pub(crate) fn without_patrol_chief() -> Self {
-        Self { patrol_chief: None }
-    }
-
-    pub(crate) fn with_patrol_chief(position: Position, state: AiState) -> Self {
-        Self {
-            patrol_chief: Some(FriendlyPatrolChief { position, state }),
-        }
-    }
-
-    fn required_patrol_chief(self, owner: NpcHandle) -> FriendlyPatrolChief {
-        self.patrol_chief.unwrap_or_else(|| {
-            panic!("Friendly AI owner {owner} requires a live patrol-chief snapshot")
-        })
-    }
-}
 
 // ---------------------------------------------------------------------------
 // FriendlyAi — extends AiController with civilian-specific state
@@ -310,7 +228,7 @@ impl FriendlyAi {
         _sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
+        ctx: &AiAdmission,
     ) -> bool {
         self.base.cached_frame = ctx.frame;
         self.base.cached_in_building = ctx.in_building;
@@ -339,7 +257,6 @@ impl FriendlyAi {
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
         ctx: &AiContext,
-        tick: &FriendlyPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         doors: Option<&[crate::gate::Door]>,
     ) -> AiFlow<bool> {
@@ -356,7 +273,7 @@ impl FriendlyAi {
             | StimulusType::EventMyTalk1
             | StimulusType::EventMyTalk2
             | StimulusType::EventMyTalk3 => {
-                self.think_expected_event(sim, stimulus, ctx, tick, grid, doors)?
+                self.think_expected_event(sim, stimulus, ctx, grid, doors)?
             }
 
             // Unexpected events
@@ -369,7 +286,7 @@ impl FriendlyAi {
             | StimulusType::CallYouJustWait
             | StimulusType::EventAppleChaseNear
             | StimulusType::EventNetAway => {
-                self.think_unexpected_event(sim, stimulus, global, ctx, tick, grid, doors)?
+                self.think_unexpected_event(sim, stimulus, global, ctx, grid, doors)?
             }
 
             // Alerting events
@@ -427,7 +344,7 @@ impl FriendlyAi {
     fn start_think(
         &mut self,
         stimulus: &Stimulus,
-        ctx: &AiContext,
+        ctx: &AiAdmission,
         static_ai_frozen: bool,
     ) -> bool {
         self.start_think_post_filter(stimulus, ctx, static_ai_frozen)
@@ -444,7 +361,7 @@ impl FriendlyAi {
     pub(crate) fn start_think_post_filter(
         &mut self,
         stimulus: &Stimulus,
-        ctx: &AiContext,
+        ctx: &AiAdmission,
         static_ai_frozen: bool,
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
@@ -509,9 +426,8 @@ impl FriendlyAi {
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         ctx: &AiContext,
-        tick: &FriendlyPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        doors: Option<&[crate::gate::Door]>,
+        _doors: Option<&[crate::gate::Door]>,
     ) -> AiFlow<bool> {
         debug_assert_eq!(
             self.base.current_substate.ai_state_family(),
@@ -568,26 +484,6 @@ impl FriendlyAi {
                 }
             }
 
-            Substate::DefaultPatrolEnrouteWaiting => {
-                if stimulus_type == StimulusType::EventTimer {
-                    // If the patrol chief is still in Default or
-                    // Wondering we re-arm the 200-frame waiting
-                    // timer; otherwise the chief is in trouble and
-                    // we abandon patrol and return to duty. The
-                    // engine caches the chief's AI state on
-                    // `tick.patrol_chief_state` each frame so we
-                    // don't need a second entity borrow.
-                    match tick.required_patrol_chief(self.base.me).state {
-                        AiState::Default | AiState::Wondering => {
-                            self.base.launch_timer(200, ctx.frame);
-                        }
-                        _ => {
-                            return Err(DutyCall::new(DutyFlags::empty(), false));
-                        }
-                    }
-                }
-            }
-
             Substate::DefaultChildApproachedWhistling => {
                 if stimulus_type == StimulusType::EventTimer {
                     return Err(DutyCall::new(DutyFlags::empty(), false));
@@ -598,44 +494,6 @@ impl FriendlyAi {
             Substate::WonderingCivilianAdmiringHero => {
                 if stimulus_type == StimulusType::EventTimer {
                     return Err(DutyCall::new(DutyFlags::empty(), false));
-                }
-            }
-
-            Substate::WonderingCivilianEnemyReactiontime => {
-                if stimulus_type == StimulusType::EventTimer {
-                    let seek_pos = self.base.seek_position;
-                    if !self.alert_soldier(
-                        sim,
-                        seek_pos,
-                        0,
-                        AlertSoldierFailureContinuation::PanicWithRemark,
-                        ctx,
-                        grid,
-                        doors,
-                    ) {
-                        self.base.say(Remark::CivPanic);
-                        let pos = self.base.seek_position;
-                        self.panic_from_point_at(pos, AI_STANDARD_PANIC_RUNS as u8);
-                    }
-                }
-            }
-
-            Substate::WonderingCivilianBodyReactiontime => {
-                if stimulus_type == StimulusType::EventTimer {
-                    let seek_pos = self.base.seek_position;
-                    if !self.alert_soldier(
-                        sim,
-                        seek_pos,
-                        0,
-                        AlertSoldierFailureContinuation::PanicWithRemark,
-                        ctx,
-                        grid,
-                        doors,
-                    ) {
-                        self.base.say(Remark::CivPanic);
-                        let pos = self.base.seek_position;
-                        self.panic_from_point_at(pos, AI_STANDARD_PANIC_RUNS as u8);
-                    }
                 }
             }
 
@@ -808,21 +666,12 @@ impl FriendlyAi {
         stimulus: &Stimulus,
         _global: &mut AiGlobalState,
         ctx: &AiContext,
-        tick: &FriendlyPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         _doors: Option<&[crate::gate::Door]>,
     ) -> AiFlow<bool> {
         let stimulus_type = stimulus.stimulus_type;
 
         match stimulus_type {
-            StimulusType::CallPatrolCoordinate => {
-                self.coordinate_patrol(
-                    &stimulus.info,
-                    ctx,
-                    tick.required_patrol_chief(self.base.me).position,
-                );
-            }
-
             StimulusType::EventAfterScriptGoOn => {
                 if self.base.outbox.reentrant.engine_drains_after_script_go_on {
                     return Ok(false);
@@ -998,11 +847,11 @@ impl FriendlyAi {
 
     fn think_alerting_event(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        _sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         ctx: &AiContext,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        doors: Option<&[crate::gate::Door]>,
+        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        _doors: Option<&[crate::gate::Door]>,
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
 
@@ -1079,22 +928,6 @@ impl FriendlyAi {
                         }
                         _ => {
                             // Other states: ignore bodies
-                        }
-                    }
-                }
-            }
-
-            StimulusType::EventHear => {
-                if let StimulusInfo::Noise(noise) = stimulus.info {
-                    match self.base.current_state {
-                        AiState::Sleeping
-                        | AiState::Default
-                        | AiState::Wondering
-                        | AiState::Seeking => {
-                            self.event_hear_standard_procedure(sim, &noise, ctx, grid, doors);
-                        }
-                        AiState::Menacing | AiState::Fleeing | AiState::Attacking => {
-                            // Ignore sounds while fighting/fleeing
                         }
                     }
                 }
@@ -1201,63 +1034,6 @@ impl FriendlyAi {
         }
     }
 
-    /// Standard procedure when a civilian hears something.
-    pub fn event_hear_standard_procedure(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        noise: &Noise,
-        ctx: &AiContext,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        doors: Option<&[crate::gate::Door]>,
-    ) {
-        match noise.noise_type {
-            // Whistling — only children react.
-            NoiseType::Pfiiit if ctx.self_is_child => {
-                self.base.set_emoticon(EmoticonType::QuestionMark);
-                self.set_state(AiState::Wondering, Substate::WonderingWatchingWhistling);
-                let origin = noise
-                    .origin
-                    .position()
-                    .expect("delivered whistle noise has no spatial layer");
-                self.base.seek_position = origin;
-                self.base
-                    .face_position_at_elevation_with_ctx(origin, noise.elevation as f32, ctx);
-                self.base.launch_timer(70, ctx.frame);
-            }
-            NoiseType::Aaargh => {
-                // Scream — try to alert a soldier
-                let origin = noise
-                    .origin
-                    .position()
-                    .expect("delivered scream noise has no spatial layer");
-                self.base.seek_position = origin;
-
-                // On a Royalist civilian's scream, the civilian
-                // panics directly instead of alerting a (nearby,
-                // also Royalist) soldier.
-                let is_royalist = ctx.is_player_aligned();
-
-                if is_royalist
-                    || !self.alert_soldier(
-                        sim,
-                        origin,
-                        0,
-                        AlertSoldierFailureContinuation::Panic,
-                        ctx,
-                        grid,
-                        doors,
-                    )
-                {
-                    let pos = self.base.seek_position;
-                    self.panic_from_point_at(pos, AI_STANDARD_PANIC_RUNS as u8);
-                }
-            }
-            _ => {
-                // Other noise types — civilians don't react
-            }
-        }
-    }
-
     /// Standard procedure when a civilian sees a body.
     pub fn event_sees_body_standard_procedure(&mut self, _dead_guy: HumanHandle, ctx: &AiContext) {
         // The engine resolves the body's live position into
@@ -1277,332 +1053,6 @@ impl FriendlyAi {
             .update(ReportType::Body, seek_pos);
         self.base.face_position_3d_with_ctx(seek_pos, ctx);
         self.base.launch_timer(AI_FIRST_LOOK_TIME as u32, ctx.frame);
-    }
-
-    /// Alert a nearby soldier.
-    ///
-    /// Algorithm:
-    /// 1. Walk every able-to-fight, non-script-locked soldier in the
-    ///    same camp.  Along the way:
-    ///    - Add each candidate to our `DETECTABLE_FRIEND` list (so
-    ///      later "is my alerted ally still nearby" checks work).
-    ///    - If any of them is in STATE_ATTACKING / STATE_MENACING /
-    ///      STATE_FLEEING *and* within our 360° detection radius,
-    ///      short-circuit: an alerted soldier is already close by,
-    ///      so alerting another one would be noise.
-    /// 2. Of the STATE_DEFAULT candidates, pick the maximum-norm-nearest
-    ///    with a +1000 layer-change penalty for soldiers on a
-    ///    different floor.
-    /// 3. When `ALERTFLAG_CHECK_DOOR_PATH` is set *and* we have a
-    ///    grid reference, reject candidates whose gate-graph path
-    ///    from our sector is unroutable (lifts / locked doors).
-    /// 4. Run to the picked soldier and transition to
-    ///    SEEKING_CIVILIAN_RUNNING_TO_SOLDIER.
-    pub const ALERTFLAG_CHECK_DOOR_PATH: u16 = 0x0001;
-
-    /// clearing all friend detectables as issued from
-    /// while alerting a soldier
-    /// in each alert branch.
-    ///
-    /// Every one of those deletes runs *after* the loop's inline
-    /// adding the soldier as a friend detectable
-    /// before route validation, so a failed alert always leaves the
-    /// FRIEND bucket empty. The actor outbox preserves that append/delete order,
-    /// including entries not yet applied at the existing drain boundary.
-    fn delete_all_friend_detectables(&mut self) {
-        self.base
-            .outbox
-            .actor
-            .delete_detectable_type(crate::element::DetectableType::Friend);
-    }
-
-    pub(crate) fn alert_soldier(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        center: Position,
-        flags: u16,
-        failure: AlertSoldierFailureContinuation,
-        ctx: &AiContext,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        doors: Option<&[crate::gate::Door]>,
-    ) -> bool {
-        let my_pos = ctx.position;
-        let my_layer = ctx.position.level;
-        let my_sector = ctx.position.sector;
-        let check_door_path = (flags & Self::ALERTFLAG_CHECK_DOOR_PATH) != 0;
-        let sq_view_radius = ctx.sq_standard_view_radius;
-        const OO: u32 = u32::MAX;
-
-        let mut best: Option<(NpcHandle, u32, Position)> = None;
-        let mut detectables_to_append: Vec<(
-            crate::element::EntityId,
-            crate::element::DetectableType,
-        )> = Vec::new();
-
-        // Soldier lookup walks the camp's soldier registry, and
-        // Detectable addition preserves that order. Hash-map iteration here made
-        // the FRIEND list nondeterministic even when its membership matched.
-        for &handle in ctx.all_soldier_handles.iter() {
-            let view = ctx.entity_view(handle).unwrap_or_else(|| {
-                panic!("alert-soldier registry handle {handle} has no live AI entity view")
-            });
-            if handle == self.base.me {
-                continue;
-            }
-            if !view.is_soldier() || !ctx.is_allied_with(view.camp) {
-                continue;
-            }
-            if !view.is_able_to_fight {
-                continue;
-            }
-            // Skip script-locked soldiers entirely so a
-            // scripted informative-wait guard isn't dragged off-
-            // script by an unrelated civilian alert.
-            if view.script_locked {
-                continue;
-            }
-
-            // On the non-door-path pass we register the soldier as
-            // a friend-detectable so the follow-up "someone alerted
-            // me" checks later find it.
-            if !check_door_path {
-                detectables_to_append.push((
-                    crate::element::EntityId::Soldier(crate::entity_id::SoldierId(handle)),
-                    crate::element::DetectableType::Friend,
-                ));
-            }
-
-            match view.ai_state {
-                AiState::Default => {
-                    // AI maximum-norm distance subtracts
-                    // the actors' literal 3D positions, stretches world Y
-                    // for the isometric projection, and only then takes the
-                    // Chebyshev norm. Both `ctx.position` and `view.position`
-                    // are AI planning positions that may be snapped through
-                    // a door, so use the raw body positions retained beside
-                    // them.
-                    let my_world = ctx.self_body_position_world;
-                    let dx = (view.detection_position_world.x - my_world.x).abs();
-                    let dy = ((view.detection_position_world.y - my_world.y)
-                        * crate::position_interface::INVERSE_ASPECT_RATIO)
-                        .abs();
-                    let dz = (view.detection_position_world.z - my_world.z).abs();
-                    let mut distance = dx.max(dy).max(dz) as u32;
-
-                    // +1000 layer-change penalty.
-                    if view.position.level != my_layer {
-                        distance = distance.saturating_add(1000);
-                    }
-
-                    let prev_best = best.map(|(_, d, _)| d).unwrap_or(OO);
-
-                    // On the door-path retry, perform a gate-graph
-                    // reachability check against the door table.
-                    // When unreachable, force `distance = OO` so the
-                    // candidate loses the maximum-norm comparison. Needs
-                    // `Door` slice + the actor's auth bitmask
-                    // (lockpick / climb / jump / posture / kind);
-                    // both arrive as parameters.  When `doors` /
-                    // `grid` aren't threaded (unit tests), skip the
-                    // reachability filter.
-                    let unreachable = if check_door_path
-                        && let (Some(doors_slice), Some(my_sec), Some(goal_sec)) =
-                            (doors, my_sector, view.position.sector)
-                        && my_sec != goal_sec
-                    {
-                        let auth = crate::gate::ActorAuthInfo {
-                            kind: crate::element::ElementKind::ActorCivilian,
-                            pc_auth_bit: 0,
-                            has_lockpick: false,
-                            has_climb: false,
-                            has_jump: false,
-                            is_rider: false,
-                            posture: ctx.posture,
-                        };
-                        crate::gate::find_path_gates(
-                            doors_slice,
-                            (my_pos.x, my_pos.y),
-                            u16::from(my_sec),
-                            (view.position.x, view.position.y),
-                            u16::from(goal_sec),
-                            Some(&auth),
-                            false,
-                            &|sector| ctx.entity_views.building_is_authorized(sector),
-                            &|sector| {
-                                let grid = grid.unwrap_or_else(|| {
-                                    panic!(
-                                        "alert_soldier gate path needs grid to resolve lift sector {sector}"
-                                    )
-                                });
-                                grid.level
-                                    .sector_number_map
-                                    .get(&sector)
-                                    .and_then(|&idx| grid.level.sectors.get(idx))
-                                    .and_then(|gs| gs.lift_type)
-                            },
-                        )
-                        .is_none()
-                    } else {
-                        false
-                    };
-                    if unreachable {
-                        continue;
-                    }
-
-                    if distance < prev_best {
-                        best = Some((
-                            handle,
-                            distance,
-                            view.forecasted_destination.resolve(sim).position,
-                        ));
-                    }
-                }
-                AiState::Attacking | AiState::Menacing | AiState::Fleeing => {
-                    // An alerted soldier is already nearby — no
-                    // need to alert another.
-                    if ctx.in_building || view.in_building {
-                        continue;
-                    }
-                    let (viewer_eye, target_detection, square_distance) =
-                        alert_soldier_360_geometry(ctx, view);
-                    if square_distance <= sq_view_radius
-                        && crate::sight_obstacle::is_reachable_3d(
-                            ctx.obstacle_list(),
-                            [viewer_eye.x, viewer_eye.y, viewer_eye.z],
-                            [target_detection.x, target_detection.y, target_detection.z],
-                            crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
-                        )
-                    {
-                        // Clear the friend list and return false.
-                        // We queue the clear — the engine drains it
-                        // post-think.
-                        self.delete_all_friend_detectables();
-                        return false;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // Queue the friend-detectable adds we accumulated above. Original
-        // adds detectables directly here: its uniqueness check is an
-        // assert, so the retail build appends even when the friend is already
-        // present. Keep these calls on the duplicate-preserving lane.
-        // Done here (not inline) so the early-return above doesn't
-        // add detectables we're about to drop.
-        self.base.outbox.actor.detectable_mutations.extend(
-            detectables_to_append
-                .into_iter()
-                .map(|(target, kind)| crate::ai::DetectableMutation::Append(target, kind)),
-        );
-
-        let Some((target_handle, _, target_pos)) = best else {
-            // No candidate found — clear friend list and give up.
-            self.delete_all_friend_detectables();
-            return false;
-        };
-
-        self.base.antagonist = Some(AiEntityHandle::new(target_handle));
-        self.base.seek_position = center;
-        self.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
-        // Run toward the picked soldier's forecasted destination
-        // (e.g. the far side of an in-flight door pass) rather
-        // than the animated mid-traversal position.  `target_pos`
-        // is resolved from `view.forecasted_destination` at this exact
-        // original-game decision point, so a building-exit choice owns its RNG draw.
-        self.base
-            .go_near(target_pos, AI_TALK_DISTANCE, GotoFlags::RUN, ctx);
-
-        // On `couldnt_reachpoint`, retry with the door-path flag
-        // set so unreachable candidates are filtered out.
-        // `couldnt_reachpoint` isn't set synchronously by `go_near`
-        // — pathfinding runs asynchronously — so this retry path
-        // can only fire if a previous tick's pathfinding already
-        // set the flag.  Keep the check for future parity.
-        if self.base.couldnt_reachpoint {
-            self.base.couldnt_reachpoint = false;
-            if !check_door_path {
-                return self.alert_soldier(
-                    sim,
-                    center,
-                    Self::ALERTFLAG_CHECK_DOOR_PATH,
-                    failure,
-                    ctx,
-                    grid,
-                    doors,
-                );
-            }
-            self.delete_all_friend_detectables();
-            return false;
-        }
-
-        // Original-game path construction is synchronous. Close the approach actor
-        // prefix, then let the engine-owned continuation inspect its result,
-        // retry with CHECK_DOOR_PATH on failure, and only then execute the
-        // caller's failure tail or the successful remark.
-        self.base
-            .outbox
-            .reentrant
-            .owner_work
-            .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                &mut self.base.outbox.actor,
-            )));
-        self.base.outbox.reentrant.alert_soldier_completion_pending = true;
-        self.base.outbox.reentrant.owner_work.push(
-            crate::ai::AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
-                center,
-                check_door_path,
-                failure,
-            },
-        );
-        true
-    }
-
-    pub(crate) fn resume_alert_soldier_after_go_near(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        center: Position,
-        check_door_path: bool,
-        failure: AlertSoldierFailureContinuation,
-        ctx: &AiContext,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        doors: Option<&[crate::gate::Door]>,
-    ) -> AiFlow<()> {
-        self.base.outbox.reentrant.alert_soldier_completion_pending = false;
-        if !self.base.couldnt_reachpoint {
-            self.base.say(Remark::CivPanic);
-            return Ok(());
-        }
-        self.base.couldnt_reachpoint = false;
-        if !check_door_path
-            && self.alert_soldier(
-                sim,
-                center,
-                Self::ALERTFLAG_CHECK_DOOR_PATH,
-                failure,
-                ctx,
-                grid,
-                doors,
-            )
-        {
-            return Ok(());
-        }
-        if check_door_path {
-            self.delete_all_friend_detectables();
-        }
-        match failure {
-            AlertSoldierFailureContinuation::PanicWithRemark => {
-                self.base.say(Remark::CivPanic);
-                self.panic_from_point_at(center, AI_STANDARD_PANIC_RUNS as u8);
-            }
-            AlertSoldierFailureContinuation::Panic => {
-                self.panic_from_point_at(center, AI_STANDARD_PANIC_RUNS as u8);
-            }
-            AlertSoldierFailureContinuation::ReturnToDuty => {
-                return Err(DutyCall::new(DutyFlags::empty(), false));
-            }
-        }
-        Ok(())
     }
 
     /// Random ambient speech for civilians.

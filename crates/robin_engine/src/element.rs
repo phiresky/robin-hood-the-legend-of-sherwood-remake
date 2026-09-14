@@ -1745,6 +1745,12 @@ impl robin_util::state_hash::StateHash for SwordfightOpponents {
 #[serde(into = "HumanDataWire", try_from = "HumanDataWire")]
 pub struct HumanData {
     pub carrier: Option<EntityId>,
+    /// Shared sorting key for nested coordination and target-selection calls.
+    /// Every owning operation writes its keys before reading them; a saved
+    /// frame never depends on values left by the preceding operation.
+    #[bitcode(skip)]
+    #[state_hash(skip)]
+    pub sorting_distance: f32,
 
     // Health & combat
     pub concussion_of_the_brain: u16,
@@ -1858,6 +1864,7 @@ impl TryFrom<HumanDataWire> for HumanData {
             SwordfightOpponents::try_from_parts(wire.opponents, wire.opponent_jump_lines)?;
         Ok(Self {
             carrier: wire.carrier,
+            sorting_distance: 0.0,
             concussion_of_the_brain: wire.concussion_of_the_brain,
             concussion_healing_timeout: wire.concussion_healing_timeout,
             tiredness: wire.tiredness,
@@ -1940,6 +1947,7 @@ impl Default for HumanData {
     fn default() -> Self {
         Self {
             carrier: None,
+            sorting_distance: 0.0,
             concussion_of_the_brain: 0,
             concussion_healing_timeout: 0,
             tiredness: 0,

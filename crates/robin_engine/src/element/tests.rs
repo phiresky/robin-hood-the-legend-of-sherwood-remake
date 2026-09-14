@@ -1392,6 +1392,7 @@ fn golden_human_fixture() -> HumanData {
 
     HumanData {
         carrier: Some(EntityId::Pc(PcId(3))),
+        sorting_distance: 0.0,
         concussion_of_the_brain: 11,
         concussion_healing_timeout: 12,
         tiredness: 13,

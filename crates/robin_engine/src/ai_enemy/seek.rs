@@ -62,38 +62,6 @@ fn legacy_seek_direction_delta(direction: u16, seek_direction: u16) -> u16 {
     direction.wrapping_add(16).wrapping_sub(seek_direction)
 }
 
-/// Reconstruct the sector identity carried by the original game's position when a
-/// compact Rust stimulus retained only the point and layer.
-///
-/// In particular, `CALL_INSTRUCTION` copies an officer's seek point into each
-/// group member. The original game copies the complete position; a sector-less
-/// Rust copy would make the personal seek point fail movement checks before route
-/// construction and recursively consume unrelated global seek points.
-fn resolve_seek_area_center_sector(mut center: Position, ctx: &AiContext) -> Position {
-    if center
-        .sector
-        .is_some_and(|sector| sector.arena_index().is_some())
-    {
-        return center;
-    }
-
-    let point = crate::coordinates::MapPoint::new(center.x, center.y);
-    let reference = crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y);
-    let hit = ctx.fast_grid.get_sector(point, reference, center.level);
-    if let Some(exact_sector) = hit.sector_handle()
-        && center
-            .sector
-            .is_none_or(|authored| authored == exact_sector)
-    {
-        // Tactic seek points and compact stimuli retain the public sector
-        // number but not the original game's sector reference. Recover the exact arena
-        // identity only when the spatial result agrees with that authored
-        // number; a conflicting authored sector remains authoritative.
-        center.sector = Some(exact_sector);
-    }
-    center
-}
-
 use super::util::{pos_distance, resolve_seek_point_id, resolve_seek_point_mut, vec_to_sector};
 use super::{
     AlertSoldiersFailureContinuation, EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION,
@@ -102,11 +70,11 @@ use super::{
 
 /// Immutable inputs shared by the candidate and personal-point phases.
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
-struct SeekAreaSpec {
-    center: Position,
-    standard_radius: u16,
-    flags: SeekFlags,
-    seek_direction: u16,
+pub(crate) struct SeekAreaSpec {
+    pub(crate) center: Position,
+    pub(crate) standard_radius: u16,
+    pub(crate) flags: SeekFlags,
+    pub(crate) seek_direction: u16,
 }
 
 /// Candidate indices retain global-array order for equal distances. In particular,
@@ -288,188 +256,46 @@ impl EnemyAi {
     /// visits them in an optimised order.
     pub(crate) fn seek_area(
         &mut self,
-        env: ThinkEnv<'_>,
+        _env: ThinkEnv<'_>,
         center: Position,
         standard_radius: u16,
         flags: SeekFlags,
         seek_direction: u16,
-        global: &mut AiGlobalState,
+        _global: &mut AiGlobalState,
     ) -> crate::ai::AiFlow<()> {
-        let ThinkEnv { sim, ctx, .. } = env;
-        let center = resolve_seek_area_center_sector(center, ctx);
-        tracing::trace!(
-            npc = self.base.me,
-            state = ?self.base.current_state,
-            substate = ?self.base.current_substate,
-            center_x = center.x,
-            center_y = center.y,
-            standard_radius,
-            ?flags,
-            seek_direction,
-            "starting area search"
-        );
-        self.base.stop_all();
-
-        // Clear any prior stare-at-target focus so the
-        // eye-tracking view cone doesn't stick on a stale primary
-        // target while we sweep seek points. Drained by `engine/ai.rs`
-        // → `unfocus`.
-        self.base.outbox.actor.set_unfocus();
-
-        // Royalists just return to duty.
-        if ctx.is_player_aligned() {
-            self.return_to_duty_default(env)?;
-            return Ok(());
-        }
-
-        // Company 100 (combat trainer dummy) just returns to duty.
-        if self.company_number == 100 {
-            self.return_to_duty_default(env)?;
-            return Ok(());
-        }
-
-        if !flags.contains(SeekFlags::CHARLY_SEEK) {
-            // Clear the target checkpoint through the helper so
-            // the `DETECTABLE_MISSED_FRIEND` list is cleared and
-            // `sorrow_level` is zeroed alongside the field write.
-            self.base.set_checkpoint_charly(None);
-        }
-
-        self.current_task_priority = task_priority::SEEKING;
-
-        // Before launching the seek-area proper, check whether any
-        // previously-seen body still needs investigating. If so, defer
-        // the seek entirely and let `run_to_examine_body` drive the NPC
-        // to the body. `examine_other_bodies` prunes recovered bodies
-        // from the queue automatically.
-        if self.examine_other_bodies(ThinkEnv { grid: None, ..env }) {
-            return Ok(());
-        }
-
-        self.rebuild_area_search_beggars(ctx);
-
-        // Store seek flags and center
-        self.seek_flags =
-            flags | (flags & (SeekFlags::LOOK_FOR_HELP_AFTER | SeekFlags::REPORT_OFFICER_AFTER));
-        self.seek_center = center;
-        self.my_seek_points.clear();
-        self.seek_point_view_directions.clear();
-
-        let spec = SeekAreaSpec {
-            center,
-            standard_radius,
-            flags,
-            seek_direction,
-        };
-
-        // ── Build seek point list from global array ──
-        // Gate on `standard_radius > 0 && !is_combat_trainer`. Combat
-        // trainers fall through to the `LOCATION_FIRST/END`
-        // assert/personal-seek-point branch.
-        if standard_radius > 0 && !self.combat_trainer {
-            self.append_global_area_seek_points(env, spec, global);
-        } else {
-            // standard_radius == 0: only personal seek points
-            debug_assert!(
-                flags.intersects(SeekFlags::LOCATION_FIRST | SeekFlags::LOCATION_END),
-                "area search with radius 0 must have LOCATION_FIRST or LOCATION_END"
-            );
-        }
-
-        self.append_personal_area_seek_points(sim, spec, global, ctx);
-
-        tracing::trace!(
-            npc = self.base.me,
-            frame = ctx.frame,
-            seek_flags = ?self.seek_flags,
-            list = ?self.my_seek_points,
-            "area search built its seek point list"
-        );
-
-        // Clear actual seek point (critical — missing caused memory
-        // bugs).
-        self.actual_seek_point = None;
-
-        assert!(
-            !self.my_seek_points.is_empty(),
-            "area search must produce at least one seek point"
-        );
-
-        if !ctx.in_building {
-            self.seek_next_point(env, global)?;
-        } else {
-            // Inside a building: delay before seeking.
-            self.seek_point_view_directions.clear();
-            self.set_state_with_timer(
-                AiState::Seeking,
-                Substate::SeekingSeekpointWatchingSidewards,
-                3,
-                ctx,
-            );
-        }
-        Ok(())
+        Err(crate::ai::DutyCall {
+            flags: DutyFlags::empty(),
+            think_result: false,
+            tail: crate::ai::DutyTail::SeekArea {
+                center,
+                standard_radius,
+                flags,
+                seek_direction,
+            },
+            after: Vec::new(),
+        })
     }
 
-    fn rebuild_area_search_beggars(&mut self, ctx: &AiContext) {
-        // For sufficiently intelligent non-trainer soldiers, the original game
-        // clears `DETECTABLE_BEGGAR` and immediately re-adds every actor for
-        // who is a real or disguised beggar. This is authoritative list
-        // state, not merely preparation for the next detection refresh: a
-        // frame dump taken after area-search setup already contains the rebuilt list.
-        if (self.get_iq(ctx) as i32) >= parameters_ai::CHECK_BEGGAR_MIN_IQ && !self.combat_trainer {
-            use crate::element::{DetectableType, Posture};
-
-            self.base
-                .outbox
-                .actor
-                .delete_detectable_type(DetectableType::Beggar);
-            let mut beggars: Vec<_> = ctx
-                .entity_views
-                .iter()
-                .filter_map(|(&handle, view)| {
-                    let is_true_or_false_beggar = (view.is_civilian() && view.is_beggar)
-                        || ((view.is_pc || view.is_soldier())
-                            && view.posture == Posture::SimulatingBeggar);
-                    is_true_or_false_beggar.then(|| {
-                        (
-                            view.original_creation_order,
-                            handle,
-                            view.entity_id(handle).unwrap_or_else(|| {
-                                panic!("beggar actor {handle} has no typed entity identity")
-                            }),
-                        )
-                    })
-                })
-                .collect();
-            beggars.sort_unstable_by_key(|&(creation_order, handle, _)| (creation_order, handle));
-            self.base
-                .outbox
-                .actor
-                .detectable_mutations
-                .extend(beggars.into_iter().map(|(_, _, entity_id)| {
-                    crate::ai::DetectableMutation::Add(entity_id, DetectableType::Beggar)
-                }));
-            self.beggar_to_examine = None;
-        }
-    }
-
-    fn append_global_area_seek_points(
+    pub(crate) fn append_global_area_seek_points(
         &mut self,
-        env: ThinkEnv<'_>,
+        sim: &SimulationContext,
+        frame: u32,
+        creation_order: Option<u32>,
+        seeking_friends: usize,
+        clears_help: bool,
         spec: SeekAreaSpec,
         global: &mut AiGlobalState,
     ) {
-        let ThinkEnv { ctx, .. } = env;
         let candidates = SeekAreaCandidates::new(spec, global);
         let square_norms = &candidates.square_norms;
         let near_sorted = &candidates.near_sorted;
         let obligatory_idx = candidates.obligatory_idx;
         let center = spec.center;
-        let current_frame = ctx.frame;
-        if seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order) {
+        let current_frame = frame;
+        if seek_area_selection_debug_matches(frame, creation_order) {
             for (i, sp) in global.seek_points.iter().enumerate() {
                 crate::ai_enemy::parity_trace::SeekareaPointDump {
-                    frame: &(ctx.frame),
+                    frame: &(frame),
                     index: &(i),
                     id: &(sp.id),
                     x: &(sp.position.x),
@@ -494,7 +320,16 @@ impl EnemyAi {
             self.seek_flags &= !SeekFlags::LOOK_FOR_HELP_AFTER;
         }
 
-        let selected_random = self.select_area_seek_points(env, spec, &candidates, global);
+        let selected_random = self.select_area_seek_points(
+            sim,
+            frame,
+            creation_order,
+            seeking_friends,
+            clears_help,
+            spec,
+            &candidates,
+            global,
+        );
         // ── Phase 5: reorder for optimal travel path ──
         for &idx in &selected_random {
             self.add_to_seek_point_list(idx, global);
@@ -512,12 +347,15 @@ impl EnemyAi {
 
     fn select_area_seek_points(
         &mut self,
-        env: ThinkEnv<'_>,
+        sim: &SimulationContext,
+        frame: u32,
+        creation_order: Option<u32>,
+        seeking_friends: usize,
+        clears_help: bool,
         spec: SeekAreaSpec,
         candidates: &SeekAreaCandidates,
         global: &mut AiGlobalState,
     ) -> Vec<usize> {
-        let ThinkEnv { sim, ctx, tick, .. } = env;
         let SeekAreaSpec {
             center,
             standard_radius,
@@ -529,7 +367,7 @@ impl EnemyAi {
         let obligatory_idx = candidates.obligatory_idx;
         let obligatory2_idx = candidates.obligatory2_idx;
         let expected_points_for_one = candidates.expected_points_for_one;
-        let current_frame = ctx.frame;
+        let current_frame = frame;
         // ── Phase 3: friend coordination ──
         // Walk every NPC and count visible friend soldiers within
         // 500 units in alert > Green. Each friend multiplies the
@@ -542,10 +380,10 @@ impl EnemyAi {
         // soldier is already running to); the friend count
         // determines how many points each soldier signs up for.
         let mut friend_factor: f32 = 1.0;
-        for _ in 0..tick.visible_seeking_friends {
+        for _ in 0..seeking_friends {
             friend_factor *= parameters_ai::SEEK_POINT_NUMBER_FACTOR;
         }
-        if tick.friend_seek_clears_help_flag {
+        if clears_help {
             self.seek_flags &= !SeekFlags::LOOK_FOR_HELP_AFTER;
         }
 
@@ -588,8 +426,7 @@ impl EnemyAi {
         let mut count_f: f32 = 0.0;
         let mut phase4_attempts = 0usize;
         let mut phase4_accepts = 0usize;
-        let debug_selection =
-            seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order);
+        let debug_selection = seek_area_selection_debug_matches(frame, creation_order);
 
         for &idx in near_sorted {
             if count_f >= expected_points as f32 {
@@ -634,9 +471,9 @@ impl EnemyAi {
                     value.map_or_else(|| "null".to_owned(), |value| value.to_string())
                 };
                 crate::ai_enemy::parity_trace::SeekareaPhase4Candidate {
-                    frame: &(ctx.frame),
+                    frame: &(frame),
                     owner_handle: &(self.base.me),
-                    owner_creation_order: &(optional_u32(ctx.original_creation_order)),
+                    owner_creation_order: &(optional_u32(creation_order)),
                     candidate_ordinal: &(phase4_attempts),
                     point_id: &(global.seek_points[idx].id),
                     point_index: &(idx),
@@ -658,16 +495,16 @@ impl EnemyAi {
 
         if debug_selection {
             crate::ai_enemy::parity_trace::SeekareaSelectionSummary {
-                frame: &(ctx.frame),
+                frame: &(frame),
                 owner_handle: &(self.base.me),
-                owner_creation_order: &(ctx.original_creation_order),
+                owner_creation_order: &(creation_order),
                 center_x: &(center.x),
                 center_y: &(center.y),
                 standard_radius: &(standard_radius),
                 near_points: &(near_sorted.len()),
                 expected_for_one: &(expected_points_for_one),
-                visible_friends: &(tick.visible_seeking_friends),
-                clears_help: &(tick.friend_seek_clears_help_flag),
+                visible_friends: &(seeking_friends),
+                clears_help: &(clears_help),
                 expected_before_help_random: &(expected_points_before_help_random),
                 expected_points: &(expected_points),
                 phase4_attempts: &(phase4_attempts),
@@ -679,8 +516,8 @@ impl EnemyAi {
             }
             .emit();
             crate::ai_enemy::parity_trace::SeekareaSelectionExtra {
-                frame: &(ctx.frame),
-                owner_creation_order: &(ctx.original_creation_order),
+                frame: &(frame),
+                owner_creation_order: &(creation_order),
                 flags: &(flags.bits()),
                 seek_direction: &(seek_direction),
                 center_level: &(center.level),
@@ -697,12 +534,12 @@ impl EnemyAi {
         selected_random
     }
 
-    fn append_personal_area_seek_points(
+    pub(crate) fn append_personal_area_seek_points(
         &mut self,
         sim: &SimulationContext,
         spec: SeekAreaSpec,
-        global: &mut AiGlobalState,
-        ctx: &AiContext,
+        frame: u32,
+        creation_order: Option<u32>,
     ) {
         let SeekAreaSpec {
             flags,
@@ -711,13 +548,12 @@ impl EnemyAi {
         } = spec;
         // ── Phase 6: personal seek points (postprocessing) ──
 
-        let debug_phase6 = seek_area_phase6_debug_matches(ctx.frame, ctx.original_creation_order);
+        let debug_phase6 = seek_area_phase6_debug_matches(frame, creation_order);
         if debug_phase6 {
             crate::ai_enemy::parity_trace::SeekAreaPhase6::Phase6Before {
-                frame: ctx.frame,
+                frame: frame,
                 owner_handle: self.base.me,
-                owner_creation_order: ctx
-                    .original_creation_order
+                owner_creation_order: creation_order
                     .expect("phase6 diagnostic matched an owner without creation order"),
                 state: self.base.current_state as u32,
                 substate: self.base.current_substate as u32,
@@ -737,8 +573,8 @@ impl EnemyAi {
             }
             .emit();
             crate::ai_enemy::parity_trace::SeekareaPhase6Center {
-                frame: &(ctx.frame),
-                owner_creation_order: &(ctx.original_creation_order),
+                frame: &(frame),
+                owner_creation_order: &(creation_order),
                 center_x: &(self.seek_center.x),
                 center_y: &(self.seek_center.y),
                 seek_position_x: &(self.base.seek_position.x),
@@ -748,17 +584,6 @@ impl EnemyAi {
         }
 
         if flags.contains(SeekFlags::LOCATION_FIRST) {
-            // Searching for a door updates seek_center in place.
-            // Copy the field out, update it, then
-            // writing back so any later reader of `seek_center` (e.g.
-            // `EventReachPoint` handlers, `personal_seek_point_2`
-            // below) sees the door-adjusted position.
-            if flags.contains(SeekFlags::HOUSE) {
-                let mut adjusted = self.seek_center;
-                self.find_door_enemy_could_be_behind(&mut adjusted, seek_direction, global, ctx);
-                self.seek_center = adjusted;
-            }
-
             let sp = if seek_direction != UNDEFINED_DIRECTION {
                 let dir = SeekPointDirection {
                     position: self.seek_center,
@@ -776,9 +601,8 @@ impl EnemyAi {
             self.my_seek_points.insert(0, 1111);
             if debug_phase6 {
                 crate::ai_enemy::parity_trace::SeekAreaPhase6::Phase6Personal1 {
-                    frame: ctx.frame,
-                    owner_creation_order: ctx
-                        .original_creation_order
+                    frame: frame,
+                    owner_creation_order: creation_order
                         .expect("phase6 diagnostic matched an owner without creation order"),
                     constructor: if seek_direction == UNDEFINED_DIRECTION {
                         "position"
@@ -804,9 +628,8 @@ impl EnemyAi {
         }
         if debug_phase6 {
             crate::ai_enemy::parity_trace::SeekAreaPhase6::Phase6After {
-                frame: ctx.frame,
-                owner_creation_order: ctx
-                    .original_creation_order
+                frame: frame,
+                owner_creation_order: creation_order
                     .expect("phase6 diagnostic matched an owner without creation order"),
                 personal2_inserted: insert_personal2,
                 personal2_constructor: if insert_personal2 { "position" } else { "none" },
@@ -894,291 +717,15 @@ impl EnemyAi {
     /// points.
     pub(crate) fn seek_next_point(
         &mut self,
-        env: ThinkEnv<'_>,
-        global: &mut AiGlobalState,
+        _env: ThinkEnv<'_>,
+        _global: &mut AiGlobalState,
     ) -> crate::ai::AiFlow<()> {
-        let ThinkEnv { sim, ctx, .. } = env;
-        let current_frame = ctx.frame;
-
-        // Unlock the previous seek point
-        // The original game unlocks the current seek point here but deliberately retains
-        // the pointer until a new candidate is assigned below.  In
-        // particular, a beggar detour returns with the old point identity;
-        // when seeking resumes, the next entry unlocks that shared point a
-        // second time.  Another soldier may have locked it during the detour.
-        if let Some(prev_id) = self.actual_seek_point
-            && let Some(sp) = resolve_seek_point_mut(
-                prev_id,
-                &mut self.personal_seek_point_1,
-                &mut self.personal_seek_point_2,
-                global,
-            )
-        {
-            sp.locked = false;
-        }
-
-        self.current_task_priority = task_priority::SEEKING;
-
-        // Strip empty entries as protection against a corrupt list.
-        self.my_seek_points.retain(|&id| {
-            resolve_seek_point_id(
-                id,
-                &self.personal_seek_point_1,
-                &self.personal_seek_point_2,
-                global,
-            )
-            .is_some()
-        });
-
-        // Check for beggars to examine. The reference gates only on
-        // `beggars_to_control.size() > 0`; the adjacent assert is just
-        // a sanity check that the previous beggar has been cleared,
-        // not a guard on entry. The reset to 0 happens in the substate
-        // exit path (mirroring the EVENT_DONE arm).
-        if !self.beggars_to_control.is_empty() {
-            debug_assert!(
-                !self
-                    .beggar_to_examine
-                    .is_some_and(|handle| self.beggars_to_control.contains(&handle.get()))
-            );
-            self.beggar_to_examine = self.beggars_to_control.pop().map(AiEntityHandle::new);
-            // The beggar list mixes civilian profession-beggars (real)
-            // and PCs in `Posture::SimulatingBeggar` (disguised). The
-            // identification phases at
-            // `SeekingSeekpointIdentifyingBeggar1/2` branch on
-            // `beggar_is_npc` to either play the BEGGAR_SHOW_FACE
-            // identify-and-resume sequence (real civilian) or commit
-            // to combat (disguised PC), so commit the discriminator
-            // here when the beggar is popped.
-            self.beggar_is_npc = ctx
-                .entity_view_logged(self.beggar_to_examine, "beggar to examine")
-                .is_some_and(|v| v.is_civilian());
-            if let Some(pos) = self.positions_of_beggars_to_control.pop() {
-                self.base.seek_position = pos;
-                self.go_near(
-                    AiState::Seeking,
-                    Substate::SeekingSeekpointApproachingBeggar,
-                    pos,
-                    50,
-                    GotoFlags::RUN,
-                    ctx,
-                );
-                return Ok(());
-            }
-        }
-
-        if self.my_seek_points.is_empty() {
-            return Err(crate::ai::DutyCall {
-                flags: DutyFlags::empty(),
-                think_result: false,
-                tail: crate::ai::DutyTail::FinishSeek,
-                after: Vec::new(),
-            });
-        }
-
-        // Pop the next seek point
-        let next_id = self.my_seek_points.remove(0);
-        // The original game assigns the current seek point before testing the candidate.
-        // When a locked or uninteresting point recurses into next-point selection,
-        // the recursive entry therefore unlocks that rejected candidate.
-        // Preserve this seemingly odd global side effect: other investigators
-        // can observe the lock release later in the same simulation frame.
-        self.actual_seek_point = Some(next_id);
-
-        // Check if locked or uninteresting — skip (recurse)
-        let is_locked = {
-            if let Some(sp) = resolve_seek_point_id(
-                next_id,
-                &self.personal_seek_point_1,
-                &self.personal_seek_point_2,
-                global,
-            ) {
-                sp.locked
-            } else {
-                // Invalid ID — skip
-                self.seek_next_point(env, global)?;
-                return Ok(());
-            }
-        };
-
-        let debug_next_point = seek_area_owner_position_debug_gate().enabled();
-
-        // The original game short-circuits on a locked candidate, which is
-        // skipped without recalculating its shared interest or consuming the
-        // acceptance draw. The recursive entry still unlocks it above.
-        if is_locked {
-            if debug_next_point {
-                crate::ai_enemy::parity_trace::SeekareaNextPointLocked {
-                    frame: &(ctx.frame),
-                    owner_handle: &(self.base.me),
-                    owner_creation_order: &(ctx.original_creation_order),
-                    point_id: &(next_id),
-                }
-                .emit();
-            }
-            self.seek_next_point(env, global)?;
-            return Ok(());
-        }
-
-        // Recalculate interest
-        let interest = resolve_seek_point_mut(
-            next_id,
-            &mut self.personal_seek_point_1,
-            &mut self.personal_seek_point_2,
-            global,
-        )
-        .unwrap_or_else(|| panic!("seek point {next_id} resolved immediately before mutation"))
-        .calculate_interest(current_frame);
-
-        let acceptance_roll =
-            crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100);
-        if debug_next_point {
-            crate::ai_enemy::parity_trace::SeekareaNextPointRoll {
-                frame: &(ctx.frame),
-                owner_handle: &(self.base.me),
-                owner_creation_order: &(ctx.original_creation_order),
-                point_id: &(next_id),
-                interest: &(interest),
-                roll: &(acceptance_roll),
-                accepted: &(acceptance_roll < interest),
-                remaining: &(self.my_seek_points),
-            }
-            .emit();
-        }
-        if acceptance_roll >= interest {
-            // Skip this point — try the next one
-            self.seek_next_point(env, global)?;
-            return Ok(());
-        }
-
-        // Subtract interest and lock this point
-        if let Some(sp) = resolve_seek_point_mut(
-            next_id,
-            &mut self.personal_seek_point_1,
-            &mut self.personal_seek_point_2,
-            global,
-        ) {
-            sp.subtract_interest(
-                parameters_ai::SEEK_POINT_EXAMINE_DELTA_INTEREST as u8,
-                current_frame,
-            );
-            sp.locked = true;
-        }
-
-        // Get position and go there
-        let seek_pos = resolve_seek_point_id(
-            next_id,
-            &self.personal_seek_point_1,
-            &self.personal_seek_point_2,
-            global,
-        )
-        .map(|sp| sp.position)
-        .expect("seek point resolved successfully above");
-        let seek_pos = resolve_seek_area_center_sector(seek_pos, ctx);
-
-        self.base.set_emoticon(EmoticonType::QuestionMark);
-
-        let goto_flags = if self.seek_flags.contains(SeekFlags::WALKING) {
-            GotoFlags::empty()
-        } else {
-            GotoFlags::RUN
-        };
-        self.go_to(
-            AiState::Seeking,
-            Substate::SeekingSeekpoint,
-            seek_pos,
-            goto_flags,
-            ctx,
-        );
-        Ok(())
-    }
-
-    // -----------------------------------------------------------------------
-    // Find a door the enemy could be behind
-    // -----------------------------------------------------------------------
-
-    /// When following an enemy that disappeared, check if they could
-    /// have fled through a nearby building door. If so, teleport the
-    /// seek center behind that door.
-    fn find_door_enemy_could_be_behind(
-        &self,
-        seek_center: &mut Position,
-        seek_direction: u16,
-        global: &AiGlobalState,
-        ctx: &AiContext,
-    ) {
-        let mut min_distance = parameters_ai::MAX_SEARCH_ENEMY_BEHIND_DOOR_DISTANCE;
-        let mut nearest_door: Option<&DoorSeekInfo> = None;
-
-        for door_info in &global.door_seek_infos {
-            if door_info.door_type != crate::gate::DoorType::Building {
-                continue;
-            }
-
-            // The original game compares the exact sector reference carried by position,
-            // not the public sector number. Duplicate public numbers occur
-            // in real levels; accepting a door from the wrong arena changes
-            // the personal seek point to that door's inside position and can
-            // immediately recurse through EVENT_COULDNT_REACHPOINT.
-            let Some(center_sector) = seek_center.sector else {
-                continue;
-            };
-            if door_info.sector_out != u16::from(center_sector) {
-                continue;
-            }
-            if let Some(center_index) = center_sector.arena_index() {
-                let door_index = door_info.sector_out_index.unwrap_or_else(|| {
-                    panic!(
-                        "building door {} exterior sector {} lacks exact arena identity required by seek center {center_index:?}",
-                        door_info.door_index, door_info.sector_out
-                    )
-                });
-                if door_index != center_index {
-                    continue;
-                }
-            }
-
-            // Must not be the building we're already in.
-            if ctx.in_building && Some(door_info.sector_in) == ctx.building_sector.map(u16::from) {
-                continue;
-            }
-
-            // Complete the cached static authorization with the original's
-            // two live gates: building capacity and rider state.
-            let building = global
-                .houses
-                .iter()
-                .find(|house| house.sector_index == u32::from(door_info.sector_in))
-                .unwrap_or_else(|| {
-                    panic!(
-                        "building door {} targets sector {} without an AI house",
-                        door_info.door_index, door_info.sector_in
-                    )
-                });
-            if !door_info
-                .is_npc_villain_authorized_direct(building.is_authorized(), ctx.self_is_rider)
-            {
-                continue;
-            }
-
-            let dx = door_info.point_out.x - seek_center.x;
-            let dy = door_info.point_out.y - seek_center.y;
-
-            // Check direction: door must be roughly in the seek direction
-            let door_dir = vec_to_sector(dx, dy);
-            let diff = legacy_seek_direction_delta(door_dir, seek_direction) & 15;
-            if matches!(diff, 15 | 0 | 1) {
-                let distance = (dx.abs().max(dy.abs())) as u16;
-                if distance < min_distance {
-                    min_distance = distance;
-                    nearest_door = Some(door_info);
-                }
-            }
-        }
-
-        if let Some(door) = nearest_door {
-            *seek_center = door.position_in;
-        }
+        Err(crate::ai::DutyCall {
+            flags: DutyFlags::empty(),
+            think_result: false,
+            tail: crate::ai::DutyTail::SeekNextPoint,
+            after: Vec::new(),
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -1226,40 +773,10 @@ impl EnemyAi {
                         global,
                     )?;
                 } else {
-                    let returns_to_instructed_group =
-                        self.alert_officer_returns_to_instructed_group(tick);
-                    let alerted = self.alert_officer(env, pos_center, flags.bits());
-                    if alerted && !returns_to_instructed_group {
-                        // Officer alerting requests an approach synchronously, and the original game
-                        // inspects the unreachable-point flag before corpse-alert processing
-                        // returns. Rust constructs that route at the owner
-                        // boundary, so close the actor prefix and resume the
-                        // enclosing statement there.
-                        self.base.outbox.reentrant.owner_work.push(
-                            crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                                &mut self.base.outbox.actor,
-                            )),
-                        );
-                        self.base
-                            .outbox
-                            .reentrant
-                            .dead_body_alert_completion_pending = true;
-                        self.base.outbox.reentrant.owner_work.push(
-                            crate::ai::AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer {
-                                center: pos_center,
-                                radius: duty_radius,
-                            },
-                        );
-                    } else if !alerted {
-                        self.seek_area(
-                            env,
-                            pos_center,
-                            duty_radius,
-                            SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
-                            UNDEFINED_DIRECTION,
-                            global,
-                        )?;
-                    }
+                    self.alert_officer(crate::ai::OfficerAlertCaller::SeekBody {
+                        center: pos_center,
+                        radius: duty_radius,
+                    })?;
                 }
             }
             ProfileRank::Officer => {
@@ -1277,7 +794,7 @@ impl EnemyAi {
                         center: pos_center,
                         radius: duty_radius,
                     },
-                ) {
+                )? {
                     self.seek_area(
                         env,
                         pos_center,
@@ -1307,27 +824,6 @@ impl EnemyAi {
     /// Resume soldier corpse-alert processing after its call to
     /// officer alerting. A failed approach is consumed synchronously and falls back to the
     /// corpse search; a successful route has no further tail.
-    pub(crate) fn resume_dead_body_alert_after_alert_officer(
-        &mut self,
-        env: ThinkEnv<'_>,
-        center: Position,
-        radius: u16,
-        global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<()> {
-        if !self.base.couldnt_reachpoint {
-            return Ok(());
-        }
-        self.base.couldnt_reachpoint = false;
-        self.seek_area(
-            env,
-            center,
-            radius,
-            SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
-            UNDEFINED_DIRECTION,
-            global,
-        )?;
-        Ok(())
-    }
     // -----------------------------------------------------------------------
     // Body examination
     // -----------------------------------------------------------------------
@@ -1585,13 +1081,18 @@ impl EnemyAi {
         }
 
         let alert_handled = match self.get_rank() {
-            ProfileRank::Soldier => self.alert_officer(env, my_pos, SeekFlags::CHARLY_SEEK.bits()),
+            ProfileRank::Soldier => {
+                self.alert_officer(crate::ai::OfficerAlertCaller::SeekMissedCharly {
+                    center: my_pos,
+                })?;
+                true
+            }
             ProfileRank::Officer => self.alert_soldiers(
                 my_pos,
                 SeekFlags::CHARLY_SEEK.bits(),
                 env,
                 AlertSoldiersFailureContinuation::SeekMissedCharly { center: my_pos },
-            ),
+            )?,
             ProfileRank::Knight | ProfileRank::None => false,
         };
         if alert_handled {

@@ -59,7 +59,6 @@ impl EngineInner {
             // A forced duty call does not close a Think frame. Keep its
             // close-post latch available for the actor's actual completion.
             self.drain_direct_ai_owner_boundary(sim, member, assets);
-            self.drain_pending_move_requests_for_owner(sim, member);
         }
 
         self.world
@@ -259,13 +258,8 @@ impl EngineInner {
             };
             let stimulus = Stimulus::with_noise(StimulusType::EventHear, subjective_noise);
 
-            // Listener N sees every mutation produced by listener N-1. Only
-            // the new hearing event is dispatched: the original game updates AI directly
-            // and does not consume unrelated deferred stimuli here.
-            let scratch = self.build_sim_scratch(assets);
-            let ctx = { self.ai_context_for(npc_id, self.control.frame_counter, &scratch, assets) };
-            let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
-            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
+            // Each listener observes all mutations from the preceding call.
+            self.execute_ai_callback(sim, assets, npc_id, &stimulus);
         }
         self.display_one_shot_noise(noise);
     }
@@ -274,12 +268,10 @@ impl EngineInner {
     //
     // After all AI think() calls, drain each NPC's pending cross-NPC
     // actions and apply them to the target NPCs. This covers:
-    // - InstructGatherPosition + CALL_INSTRUCTION delivery
-    // - BreakPhalanx propagation
     // - SendStimulus (e.g. CALL_COORDINATE to archers)
     // - left/right combat-neighbor assignment for phalanx linking
 
-    fn apply_update_left_combat_neighbour(
+    pub(super) fn apply_update_left_combat_neighbour(
         &mut self,
         target: u32,
         old_left: Option<crate::ai::AiEntityHandle>,
@@ -307,7 +299,7 @@ impl EngineInner {
         }
     }
 
-    fn apply_update_right_combat_neighbour(
+    pub(super) fn apply_update_right_combat_neighbour(
         &mut self,
         target: u32,
         old_right: Option<crate::ai::AiEntityHandle>,
@@ -391,12 +383,6 @@ impl EngineInner {
             return;
         }
 
-        // Preparing the AI view does not draw RNG; resolving a prepared
-        // building-exit forecast does. Keep this allocation after the empty
-        // fast path so a drain without cross-NPC actions avoids unused work.
-        let scratch = self.build_sim_scratch(assets);
-        let frame = self.control.frame_counter;
-
         for action in all_actions {
             match action {
                 crate::ai::CrossNpcAction::RequestAlert { caller, target, .. } => {
@@ -409,95 +395,11 @@ impl EngineInner {
                         "result-bearing Think request {caller}->{target} escaped its owner boundary"
                     )
                 }
-                crate::ai::CrossNpcAction::RequestPatrolDispatch { caller, chief, .. } => {
-                    panic!(
-                        "result-bearing patrol dispatch {caller}->{chief} escaped its owner boundary"
-                    )
-                }
-                crate::ai::CrossNpcAction::FinalizeAlertSoldiers { caller, .. } => {
-                    panic!(
-                        "AlertSoldiers finalization for caller {caller} escaped its owner boundary"
-                    )
-                }
-                crate::ai::CrossNpcAction::ResumeTowerGuardBattleDecisions { caller } => {
-                    panic!(
-                        "tower-guard battle continuation for caller {caller} escaped its owner boundary"
-                    )
-                }
                 crate::ai::CrossNpcAction::ResumeAfterLookThere { caller, .. } => {
                     panic!("look-there resume for caller {caller} escaped its owner boundary")
                 }
                 crate::ai::CrossNpcAction::BroadcastLookThere { caller, .. } => {
                     panic!("look-there broadcast for caller {caller} escaped its owner boundary")
-                }
-                crate::ai::CrossNpcAction::RelayStimulusToPatrolMembers {
-                    stimulus_type,
-                    members,
-                    ..
-                } => {
-                    panic!(
-                        "whole-patrol {stimulus_type:?} broadcast to {} members escaped its owner boundary",
-                        members.len()
-                    )
-                }
-                crate::ai::CrossNpcAction::InstructGatherPosition {
-                    target,
-                    position,
-                    direction,
-                    call_instruction,
-                    ..
-                } => {
-                    let target_id = self.expect_human_id_for_ai_handle(
-                        target,
-                        "deferred gather-instruction target",
-                    );
-                    tracing::trace!(
-                        target: "robin_engine::ai_enemy::phalanx",
-                        instructed = target,
-                        frame = self.control.frame_counter,
-                        ?position,
-                        direction,
-                        call_instruction,
-                        "InstructGatherPosition"
-                    );
-                    if call_instruction && !self.soldier_stands_in_phalanx(target_id) {
-                        continue;
-                    }
-                    let ctx = {
-                        let entity = self
-                            .world
-                            .entities
-                            .get(target_id)
-                            .expect("validated gather-instruction target vanished");
-                        let ctx =
-                            self.ai_context_from_entity(entity, frame, None, &scratch, assets);
-                        let enemy_ai = self.world.entities.expect_enemy_ai_mut(
-                            target_id,
-                            format_args!("deferred gather-instruction target human {target}"),
-                        );
-                        enemy_ai.gather_position = position;
-                        enemy_ai.gather_direction = direction;
-                        enemy_ai.gather_position_instructed = true;
-                        ctx
-                    };
-                    if !call_instruction {
-                        continue;
-                    }
-                    // CrossNpcAction::InstructGatherPosition: target
-                    // is an enemy soldier.  Build rich tick data so a
-                    // subsequent AI-decision-triggered battle planning
-                    // sees the target snapshot.
-                    let tick_data = self.build_npc_tick_data(sim, target_id, assets);
-                    let stimulus = crate::ai::Stimulus::new(StimulusType::CallInstruction);
-                    self.dispatch_filtered_stimulus(
-                        sim, assets, target_id, &stimulus, &ctx, &tick_data,
-                    );
-                }
-
-                crate::ai::CrossNpcAction::BreakPhalanx { target, .. } => {
-                    panic!(
-                        "synchronous break-phalanx target {target} escaped its source-owner boundary"
-                    )
                 }
 
                 crate::ai::CrossNpcAction::SendStimulus {
@@ -512,77 +414,34 @@ impl EngineInner {
                     stimulus.info = info;
                     stimulus.to_whole_patrol = to_whole_patrol;
 
-                    let ctx = {
-                        let Some(entity) = target_id
-                            .and_then(|target_id| self.world.entities.get(target_id))
-                            .filter(|entity| entity.ai_controller().is_some())
-                        else {
-                            // Target missing → try fallback directly below.
-                            if let Some(sender) = fallback_to_sender
-                                && let Some((sender_id, entity)) = self
-                                    .entity_id_for_index(sender)
-                                    .and_then(|sender_id| {
-                                        self.world
-                                            .entities
-                                            .get(sender_id)
-                                            .map(|entity| (sender_id, entity))
-                                    })
-                                    .filter(|(_, entity)| entity.ai_controller().is_some())
-                            {
-                                let ctx = self
-                                    .ai_context_from_entity(entity, frame, None, &scratch, assets);
-                                let fallback_tick =
-                                    self.build_npc_tick_data(sim, sender_id, assets);
-                                self.dispatch_filtered_stimulus(
-                                    sim,
-                                    assets,
-                                    sender_id,
-                                    &stimulus,
-                                    &ctx,
-                                    &fallback_tick,
-                                );
-                            }
-                            continue;
-                        };
-                        self.ai_context_from_entity(entity, frame, None, &scratch, assets)
-                    };
-                    let target_id = self.expect_human_id_for_ai_handle(
-                        target,
-                        "validated deferred stimulus target",
-                    );
-                    // SendStimulus → enemy soldier target: the
-                    // stimulus may be EVENT_VIEW / EVENT_REPORT /
-                    // alert-forwarding which feeds battle planning.
-                    let tick_data = self.build_npc_tick_data(sim, target_id, assets);
-                    let handled = self.dispatch_filtered_stimulus(
-                        sim, assets, target_id, &stimulus, &ctx, &tick_data,
-                    );
+                    let handled = target_id
+                        .filter(|id| {
+                            self.world
+                                .entities
+                                .get(*id)
+                                .and_then(Entity::ai_controller)
+                                .is_some()
+                        })
+                        .is_some_and(|id| {
+                            self.dispatch_filtered_stimulus(sim, assets, id, &stimulus, None)
+                        });
                     // Fallback: if target couldn't handle the stimulus,
                     // redeliver to the sender (e.g. conversation chains).
                     if !handled && let Some(sender) = fallback_to_sender {
                         let Some(sender_id) = self.entity_id_for_index(sender) else {
                             continue;
                         };
-                        let ctx2 = {
-                            let Some(entity) = self
-                                .world
-                                .entities
-                                .get(sender_id)
-                                .filter(|entity| entity.ai_controller().is_some())
-                            else {
-                                continue;
-                            };
-                            self.ai_context_from_entity(entity, frame, None, &scratch, assets)
-                        };
-                        let fallback_tick = self.build_npc_tick_data(sim, sender_id, assets);
-                        self.dispatch_filtered_stimulus(
-                            sim,
-                            assets,
-                            sender_id,
-                            &stimulus,
-                            &ctx2,
-                            &fallback_tick,
-                        );
+                        if self
+                            .world
+                            .entities
+                            .get(sender_id)
+                            .and_then(Entity::ai_controller)
+                            .is_some()
+                        {
+                            self.dispatch_filtered_stimulus(
+                                sim, assets, sender_id, &stimulus, None,
+                            );
+                        }
                     }
                 }
 
@@ -632,21 +491,6 @@ impl EngineInner {
                     new_right,
                 } => self.apply_update_right_combat_neighbour(target, old_right, new_right),
 
-                crate::ai::CrossNpcAction::SetPrimaryTarget {
-                    target,
-                    primary_target,
-                } => {
-                    self.required_cross_npc_enemy_mut(target, "set-primary-target")
-                        .base
-                        .primary_target = primary_target;
-                }
-
-                crate::ai::CrossNpcAction::SetPhalanxThemList {
-                    target,
-                    them,
-                    primary_target,
-                } => self.process_synchronous_set_phalanx_them_list(target, them, primary_target),
-
                 crate::ai::CrossNpcAction::Say { target, remark } => {
                     let target_id =
                         self.expect_human_id_for_ai_handle(target, "cross-NPC speech target");
@@ -692,36 +536,21 @@ impl EngineInner {
     ///
     /// Returns `dispatch_filtered_stimulus`'s handled bool — unchanged
     /// by the drain pass.
-    pub(in crate::engine) fn dispatch_think_with_drain<'tick>(
+    pub(in crate::engine) fn dispatch_think_with_drain(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         stimulus: &crate::ai::Stimulus,
-        ctx: &crate::ai::AiContext,
-        tick_data: impl Into<Option<&'tick crate::ai::AiPerTickData>>,
+        target: Option<EntityId>,
         assets: &LevelAssets,
     ) -> bool {
-        // The original game's cached view radius lives on the target surface, so a
-        // synchronous detection inside a decision tick must see a detection-refresh
-        // result produced earlier in this universal frame. Keep AiContext's
-        // immutable-handler facade bounded exactly by the synchronous Think
-        // call, then commit any newly computed surfaces before later callbacks.
-        ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
         let had_ai_at_entry = self
             .world
             .entities
             .get(npc_id)
             .and_then(Entity::ai_controller)
             .is_some();
-        let handled = self.dispatch_filtered_stimulus_inner(
-            sim,
-            assets,
-            npc_id,
-            stimulus,
-            ctx,
-            tick_data.into(),
-        );
-        ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
+        let handled = self.dispatch_filtered_stimulus_inner(sim, assets, npc_id, stimulus, target);
 
         // PCs can participate in direct swordfights but have no NPC AI
         // controller or AI-owned recovery effects to drain.
@@ -778,7 +607,6 @@ impl EngineInner {
             // of this fixed point, so late script-seek callbacks cannot leak
             // into a global batch or strand in the outbox.
             self.launch_pending_orders_for_npc(sim, assets, npc_id);
-            let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
 
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
 
@@ -856,89 +684,12 @@ impl EngineInner {
                 std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions)
             };
             let mut deferred = deferred;
-            let mut alert_formation_targets = Vec::new();
             for action in actions {
-                if let crate::ai::CrossNpcAction::RequestThinkResult {
-                    target,
-                    continuation:
-                        crate::ai::ThinkResultContinuation::OfficerAlertedSoldier { .. }
-                        | crate::ai::ThinkResultContinuation::OfficerCombatAlertedSoldier { .. },
-                    ..
-                } = &action
-                {
-                    alert_formation_targets.push(*target);
-                }
                 match action {
-                    crate::ai::CrossNpcAction::InstructGatherPosition {
-                        target,
-                        position,
-                        direction,
-                        call_instruction,
-                    } => {
-                        // Alert formations queue their result requests before
-                        // the sibling gather instructions. Remember those
-                        // exact targets while draining this saved batch, then
-                        // suppress an instruction if its direct Think result
-                        // pruned it. Phalanx instructions have no preceding
-                        // alert-result request and remain unconditional.
-                        let alert_formation = alert_formation_targets.contains(&target);
-                        let still_alerted = !alert_formation
-                            || self
-                                .world
-                                .entities
-                                .expect_enemy_ai(
-                                    source_id,
-                                    format_args!("alert InstructGatherPosition source"),
-                                )
-                                .alerted_us
-                                .contains(&target);
-                        if still_alerted {
-                            self.process_synchronous_gather_instruction(
-                                sim,
-                                target,
-                                position,
-                                direction,
-                                call_instruction,
-                                assets,
-                            );
-                        }
-                    }
-                    crate::ai::CrossNpcAction::BreakPhalanx {
-                        target,
-                        refresh_them_list,
-                    } => self.process_synchronous_break_phalanx(
-                        sim,
-                        target,
-                        refresh_them_list,
-                        assets,
-                    ),
                     crate::ai::CrossNpcAction::ConsiderReport { target, flags } => {
                         let target_id =
                             self.expect_human_id_for_ai_handle(target, "report transfer target");
                         self.consider_live_ai_report(sim, assets, target_id, source_id, flags);
-                    }
-                    crate::ai::CrossNpcAction::FinalizeAlertSoldiers {
-                        caller,
-                        use_formation,
-                        failure,
-                    } => self.process_synchronous_finalize_alert_soldiers(
-                        sim,
-                        source_id,
-                        caller,
-                        use_formation,
-                        failure,
-                        assets,
-                    ),
-                    crate::ai::CrossNpcAction::ResumeTowerGuardBattleDecisions { caller } => self
-                        .process_synchronous_tower_guard_battle_decisions(
-                            sim, source_id, caller, assets,
-                        ),
-                    crate::ai::CrossNpcAction::SetPhalanxThemList {
-                        target,
-                        them,
-                        primary_target,
-                    } => {
-                        self.process_synchronous_set_phalanx_them_list(target, them, primary_target)
                     }
                     crate::ai::CrossNpcAction::ResumeAfterLookThere {
                         caller,
@@ -1005,37 +756,12 @@ impl EngineInner {
                         )
                         .shield_bearer_before_me = shield_bearer;
                     }
-                    crate::ai::CrossNpcAction::SetPrimaryTarget {
-                        target,
-                        primary_target,
-                    } => {
-                        // Phalanx enemy-list rebuilding assigns every member's
-                        // primary target inline while its recursion unwinds.
-                        // Apply that direct setter before a later recursive
-                        // `BreakPhalanx` lets the member choose its own target.
-                        self.required_cross_npc_enemy_mut(
-                            target,
-                            "synchronous primary-target setter",
-                        )
-                        .base
-                        .primary_target = primary_target;
-                    }
                     crate::ai::CrossNpcAction::RegisterSynchronizingActor { target, actor } => {
                         self.register_synchronizing_actor(target, actor);
                     }
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_stimuli_for(sim, source_id, assets)
-                    }
-                    crate::ai::CrossNpcAction::RelayStimulusToPatrolMembers { .. } => {
-                        self.requeue_isolated_synchronous_action(source_id, action.clone());
-                        self.process_synchronous_patrol_member_relay_for(sim, source_id, assets)
-                    }
-                    crate::ai::CrossNpcAction::RequestPatrolDispatch { .. } => {
-                        self.requeue_isolated_synchronous_action(source_id, action.clone());
-                        self.process_synchronous_patrol_dispatch_requests_for(
-                            sim, source_id, assets,
-                        )
                     }
                     crate::ai::CrossNpcAction::RequestAlert { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
@@ -1104,253 +830,11 @@ impl EngineInner {
             .push(action);
     }
 
-    /// Install the completed phalanx them-list and its head target on one
-    /// member. This has to stay ordered against the `BreakPhalanx` batch:
-    /// the assignment happens while the rebuild recursion unwinds, before
-    /// any member's battle planning prunes entries that can no longer
-    /// fight.
-    fn process_synchronous_set_phalanx_them_list(
-        &mut self,
-        target: u32,
-        them: Vec<crate::ai::HumanHandle>,
-        primary_target: Option<crate::ai::AiEntityHandle>,
-    ) {
-        let enemy_ai = self.required_cross_npc_enemy_mut(target, "install-phalanx-them-list");
-        tracing::trace!(
-            target: "robin_engine::ai_enemy::phalanx",
-            member = target,
-            ?them,
-            ?primary_target,
-            "phalanx them-list: installing on member"
-        );
-        enemy_ai.list_them = them;
-        enemy_ai.base.primary_target = primary_target;
-    }
-
-    /// Execute one member of the original game's recursive
-    /// enemy phalanx-breaking call. Every neighbour clears its
-    /// links and immediately runs battle planning; delaying this to the
-    /// global cross-NPC batch moves swordfight entry and panic RNG by a frame.
-    fn process_synchronous_break_phalanx(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        target: u32,
-        refresh_them_list: bool,
-        assets: &LevelAssets,
-    ) {
-        let target_id =
-            self.expect_human_id_for_ai_handle(target, "cross-NPC break-phalanx target");
-        let scratch = self.build_sim_scratch(assets);
-        let entity = self
-            .world
-            .entities
-            .get(target_id)
-            .expect("validated cross-NPC break-phalanx target vanished");
-        assert!(
-            entity.enemy_ai().is_some(),
-            "cross-NPC break-phalanx target human {target} has no EnemyAi"
-        );
-        let mut ctx =
-            self.ai_context_from_entity(entity, self.control.frame_counter, None, &scratch, assets);
-        self.refresh_selected_default_wait_identity(target_id, &mut ctx);
-        // This is a direct recursive `BreakPhalanx` call rather than a typed
-        // AI dispatch, but its phalanx enemy-list rebuilding performs live
-        // forward-half-plane detection checks. Those checks share the original game's
-        // surface-owned view-radius memo with later detection refresh
-        // in the same frame, so bracket the direct AI call with the same
-        // cache handoff as the Think wrapper.
-        ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
-        let mut tick_data = self.build_npc_tick_data(sim, target_id, assets);
-
-        if refresh_them_list {
-            // The original game recursively installs the phalanx member list
-            // completed shared list and primary target on every member while
-            // unwinding, before BreakPhalanx enters any member's
-            // battle planning. Isolate exactly the setters emitted by the
-            // typed refresh and apply them now; leaving them in the ordinary
-            // owner-boundary drain lets the first member observe stale sibling
-            // targets and append them to its Them list.
-            let prior_action_count = self
-                .world
-                .entities
-                .get(target_id)
-                .and_then(Entity::ai_controller)
-                .expect("break-phalanx target lost its AI before refresh")
-                .outbox
-                .reentrant
-                .cross_npc_actions
-                .len();
-            {
-                let enemy_ai = self
-                    .world
-                    .entities
-                    .get_mut(target_id)
-                    .and_then(Entity::enemy_ai_mut)
-                    .expect("break-phalanx target lost EnemyAi during refresh");
-                enemy_ai.refresh_phalanx_from_neighbour(&ctx, &tick_data);
-            }
-            let assignments = self
-                .world
-                .entities
-                .get_mut(target_id)
-                .and_then(Entity::ai_controller_mut)
-                .expect("break-phalanx target lost its AI after refresh")
-                .outbox
-                .reentrant
-                .cross_npc_actions
-                .split_off(prior_action_count);
-            for assignment in assignments {
-                let crate::ai::CrossNpcAction::SetPhalanxThemList {
-                    target,
-                    them,
-                    primary_target,
-                } = assignment
-                else {
-                    panic!(
-                        "phalanx enemy-list rebuilding emitted non-assignment work before formation breakup: {assignment:?}"
-                    );
-                };
-                self.process_synchronous_set_phalanx_them_list(target, them, primary_target);
-            }
-            // Battle planning reads friends' live primary targets through its
-            // tick snapshot. Rebuild it after the synchronous member writes.
-            tick_data = self.build_npc_tick_data(sim, target_id, assets);
-        }
-
-        let flow = {
-            let ai_global = &mut self.ai.global;
-            let grid = &self.world.fast_grid;
-            let Entity::Soldier(soldier) = self
-                .world
-                .entities
-                .get_mut(target_id)
-                .expect("cross-NPC break-phalanx target vanished during dispatch")
-            else {
-                panic!("cross-NPC break-phalanx target {target} stopped being a soldier")
-            };
-            let enemy_ai = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
-                panic!("cross-NPC break-phalanx target soldier {target} has no enemy AI")
-            });
-            enemy_ai.break_phalanx_from_neighbour(
-                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick_data, Some(grid)),
-                ai_global,
-            )
-        };
-        ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
-        if let Err(call) = flow {
-            self.execute_ai_duty_call(sim, assets, target_id, call);
-        }
-        self.drain_direct_ai_owner_boundary(sim, target_id, assets);
-    }
-
     /// Resume the statement immediately following Original
     /// tower-guard alerts. The alert routine directly enters every
     /// recipient's Think before returning, so rebuilding the caller context
     /// here is necessary: battle planning can synchronously start an area search,
     /// whose nearby-friend multiplier reads the recipients' new alert status.
-    fn process_synchronous_tower_guard_battle_decisions(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        source_id: crate::element::EntityId,
-        caller: u32,
-        assets: &LevelAssets,
-    ) {
-        assert_eq!(
-            source_id.index(),
-            caller,
-            "tower-guard battle continuation caller must be its owner"
-        );
-        let scratch = self.build_sim_scratch(assets);
-        let building_sector = self
-            .world
-            .entities
-            .get(source_id)
-            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-            .unwrap_or_else(|| panic!("tower-guard caller {caller} disappeared"));
-        let mut ctx = {
-            let entity = self.expect_entity(source_id, "tower-guard caller");
-            self.ai_context_from_entity(
-                entity,
-                self.control.frame_counter,
-                building_sector,
-                &scratch,
-                assets,
-            )
-        };
-        self.refresh_selected_default_wait_identity(source_id, &mut ctx);
-        let tick = self.build_npc_tick_data(sim, source_id, assets);
-        let global = &mut self.ai.global;
-        let grid = &self.world.fast_grid;
-        let flow = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(
-                source_id,
-                format_args!("tower-guard caller {caller} lost its EnemyAi"),
-            )
-            .battle_decisions(
-                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, Some(grid)),
-                global,
-            );
-        if let Err(call) = flow {
-            self.execute_ai_duty_call(sim, assets, source_id, call);
-        }
-        // The enclosing decision still owns its completion latches.
-        self.drain_direct_ai_owner_boundary(sim, source_id, assets);
-    }
-
-    fn process_synchronous_finalize_alert_soldiers(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        source_id: crate::element::EntityId,
-        caller: u32,
-        use_formation: bool,
-        failure: crate::ai::AlertSoldiersFailureContinuation,
-        assets: &LevelAssets,
-    ) {
-        assert_eq!(
-            source_id.index(),
-            caller,
-            "AlertSoldiers finalization caller must be its owner"
-        );
-        let scratch = self.build_sim_scratch(assets);
-        let building_sector = self
-            .world
-            .entities
-            .get(source_id)
-            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-            .unwrap_or_else(|| panic!("AlertSoldiers caller {caller} disappeared"));
-        let mut ctx = {
-            let entity = self.expect_entity(source_id, "AlertSoldiers caller");
-            self.ai_context_from_entity(
-                entity,
-                self.control.frame_counter,
-                building_sector,
-                &scratch,
-                assets,
-            )
-        };
-        self.refresh_selected_default_wait_identity(source_id, &mut ctx);
-        let tick = self.build_npc_tick_data(sim, source_id, assets);
-        let global = &mut self.ai.global;
-        let grid = use_formation.then_some(&*self.world.fast_grid);
-        let flow = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(
-                source_id,
-                format_args!("AlertSoldiers caller {caller} lost its EnemyAi"),
-            )
-            .finalize_alert_soldiers(
-                crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, grid),
-                failure,
-                global,
-            );
-        if let Err(call) = flow {
-            self.execute_ai_duty_call(sim, assets, source_id, call);
-        }
-        self.drain_direct_ai_owner_boundary(sim, source_id, assets);
-    }
 
     fn process_synchronous_look_there_broadcast(
         &mut self,
@@ -1516,79 +1000,6 @@ impl EngineInner {
         self.drain_direct_ai_owner_boundary(sim, source_id, assets);
     }
 
-    /// Whether a soldier is still holding its place in a phalanx.
-    ///
-    /// The phalanx-correction loops re-read this for every member right before
-    /// announcing the new slot, because an earlier member's `CALL_INSTRUCTION`
-    /// can re-enter and pull later members out of the formation.
-    fn soldier_stands_in_phalanx(&self, target_id: EntityId) -> bool {
-        self.world
-            .entities
-            .get(target_id)
-            .and_then(Entity::enemy_ai)
-            .is_some_and(|enemy| {
-                enemy.base.current_substate == crate::ai::Substate::AttackingPhalanx
-            })
-    }
-
-    fn process_synchronous_gather_instruction(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        target: u32,
-        position: crate::ai::Position,
-        direction: u16,
-        call_instruction: bool,
-        assets: &LevelAssets,
-    ) {
-        let target_id = self.expect_human_id_for_ai_handle(target, "gather-instruction target");
-        tracing::trace!(
-            target: "robin_engine::ai_enemy::phalanx",
-            instructed = target,
-            frame = self.control.frame_counter,
-            ?position,
-            direction,
-            call_instruction,
-            "synchronous InstructGatherPosition"
-        );
-        if call_instruction && !self.soldier_stands_in_phalanx(target_id) {
-            return;
-        }
-        let enemy = self.world.entities.expect_enemy_ai_mut(
-            target_id,
-            format_args!("InstructGatherPosition target human {target} has no EnemyAi"),
-        );
-        enemy.gather_position = position;
-        enemy.gather_direction = direction;
-        enemy.gather_position_instructed = true;
-        if !call_instruction {
-            return;
-        }
-
-        let scratch = self.build_sim_scratch(assets);
-        let building_sector = self
-            .world
-            .entities
-            .get(target_id)
-            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-            .unwrap_or_else(|| panic!("gather-instruction target {target} disappeared"));
-        let ctx = self.ai_context_from_entity(
-            self.expect_entity(target_id, "gather-instruction target"),
-            self.control.frame_counter,
-            building_sector,
-            &scratch,
-            assets,
-        );
-        let tick = self.build_npc_tick_data(sim, target_id, assets);
-        self.dispatch_think_with_drain(
-            sim,
-            target_id,
-            &crate::ai::Stimulus::new(crate::ai::StimulusType::CallInstruction),
-            &ctx,
-            &tick,
-            assets,
-        );
-    }
-
     fn process_synchronous_stimuli_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1623,29 +1034,6 @@ impl EngineInner {
                 "synchronous {stimulus_type:?} target {target} is not a soldier"
             );
 
-            let scratch = self.build_sim_scratch(assets);
-            let building_sector = self
-                .world
-                .entities
-                .get(target_id)
-                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                .unwrap_or_else(|| {
-                    panic!("synchronous {stimulus_type:?} target {target} disappeared")
-                });
-            let ctx = {
-                let entity = self.world.entities.expect_entity(
-                    target_id,
-                    format_args!("synchronous {stimulus_type:?} target {target}"),
-                );
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    building_sector,
-                    &scratch,
-                    assets,
-                )
-            };
-            let tick_data = self.build_npc_tick_data(sim, target_id, assets);
             let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
             stimulus.info = info;
             stimulus.to_whole_patrol = to_whole_patrol;
@@ -1657,40 +1045,14 @@ impl EngineInner {
                 to_whole_patrol,
                 "synchronous SendStimulus drain"
             );
-            let handled =
-                self.dispatch_think_with_drain(sim, target_id, &stimulus, &ctx, &tick_data, assets);
+            let handled = self.dispatch_think_with_drain(sim, target_id, &stimulus, None, assets);
             if !handled && let Some(sender) = fallback_to_sender {
                 let sender_id = self.entity_id_for_index(sender).unwrap_or_else(|| {
                     panic!(
                         "synchronous {stimulus_type:?} fallback references missing sender {sender}"
                     )
                 });
-                let scratch = self.build_sim_scratch(assets);
-                let building_sector = self
-                    .world
-                    .entities
-                    .get(sender_id)
-                    .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                    .unwrap_or_else(|| panic!("synchronous fallback sender {sender} disappeared"));
-                let sender_ctx = {
-                    let entity = self.expect_entity(sender_id, "synchronous fallback sender");
-                    self.ai_context_from_entity(
-                        entity,
-                        self.control.frame_counter,
-                        building_sector,
-                        &scratch,
-                        assets,
-                    )
-                };
-                let sender_tick = self.build_npc_tick_data(sim, sender_id, assets);
-                self.dispatch_think_with_drain(
-                    sim,
-                    sender_id,
-                    &stimulus,
-                    &sender_ctx,
-                    &sender_tick,
-                    assets,
-                );
+                self.dispatch_think_with_drain(sim, sender_id, &stimulus, None, assets);
             }
         }
     }

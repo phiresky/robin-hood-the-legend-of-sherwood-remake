@@ -271,15 +271,7 @@ mod tests {
         ai.base.current_substate = Substate::SeekingCharlyGoToOfficer;
         ai.base.antagonist = Some(AiEntityHandle::new(officer.index()));
         let call = ai
-            .resolve_charly_officer_report(
-                crate::ai_enemy::ThinkEnv::new(
-                    &sim,
-                    &ctx,
-                    &crate::ai_enemy::AiPerTickData::stub(),
-                    None,
-                ),
-                false,
-            )
+            .resolve_charly_officer_report(ctx.frame, false)
             .expect_err("refused report requests duty");
         engine.execute_ai_duty_call(&sim, &assets, owner, call);
         let ai = enemy(&engine, owner);
@@ -796,6 +788,16 @@ impl EngineInner {
         flags: GotoFlags,
     ) {
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        self.world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("movement request owner"))
+            .begin_move_request(destination, flags);
+        let mut destination = destination;
+        if flags.contains(GotoFlags::FIND_ACCESSIBLE)
+            && !self.resolve_ai_accessible_destination(owner, &mut destination)
+        {
+            return;
+        }
         let position = self.live_ai_position(owner);
         let depth = self.ai_think_depth();
         let entity = self
@@ -810,23 +812,43 @@ impl EngineInner {
             .installed_order
             .map(|order| order.order_type)
             .unwrap_or(crate::order::OrderType::NonanimationEnd);
-        let action_state = actor.action_state;
         let civilian = entity.is_civilian();
-        entity
+        let admitted_flags = entity
             .ai_controller_mut()
             .expect("duty movement requires controller")
-            .request_move(
+            .prepare_move_request(
                 destination,
                 flags,
-                1.0,
                 position,
                 layer,
                 sector,
                 animation,
-                action_state,
                 civilian,
                 depth,
             );
+        if let Some(flags) = admitted_flags {
+            if !self.authorize_ai_destination(
+                owner,
+                destination,
+                true,
+                flags.contains(GotoFlags::ASK_OBSTACLE),
+            ) {
+                return;
+            }
+            let entity = self
+                .world
+                .entities
+                .expect_entity_mut(owner, format_args!("admitted movement owner"));
+            let action_state = entity
+                .actor_data()
+                .expect("movement requires actor")
+                .action_state;
+            entity
+                .ai_controller_mut()
+                .expect("movement requires controller")
+                .queue_prepared_move(destination, flags, 1.0, action_state);
+            self.launch_preflighted_ai_move(sim, assets, owner);
+        }
         self.drain_direct_ai_owner_boundary(sim, owner, assets);
     }
 

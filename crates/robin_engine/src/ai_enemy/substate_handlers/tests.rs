@@ -545,84 +545,21 @@ fn brawl_hitting_done_enqueues_only_180_degree_panic_sweep() {
 }
 
 #[test]
-fn brawl_hitting_stages_panic_then_officer_then_tail() {
-    let mut ai = EnemyAi::new(88);
-    ai.base.current_state = AiState::Wondering;
-    ai.base.current_substate = Substate::WonderingBrawlHitting;
-    ai.wondering_brawl_hitting(StimulusType::EventDone);
-    assert!(matches!(
-        ai.base.outbox.reentrant.owner_work.as_slice(),
-        [AiOwnerWork::NearbyCiviliansPanic180]
-    ));
-    assert!(ai.base.outbox.reentrant.brawl_hitting_completion_pending);
-
-    // Simulate the engine consuming the civilian-sweep owner work. The
-    // next stage may publish the officer call, but no brawler StateChange
-    // tail is allowed to exist until that cross-NPC call has settled.
-    ai.base.outbox.reentrant.owner_work.clear();
-    let mut officer = alert_candidate(89, Position::default());
-    officer.rank = ProfileRank::Officer;
-    officer.ai_state = AiState::Default;
-    officer.ai_substate = Substate::DefaultOnPost;
-    let mut tick = AiPerTickData::stub();
-    tick.camp_soldiers.push(officer);
-    ai.brawl_hitting_notify_officer(&AiContext::test_fixture(), &tick);
-    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
-    assert!(matches!(
-        ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
-        [CrossNpcAction::SendStimulus {
-            target: 89,
-            stimulus_type: StimulusType::EventSeesBrawl,
-            ..
-        }]
-    ));
-
-    ai.base.outbox.reentrant.cross_npc_actions.clear();
-    ai.resume_brawl_hitting_after_officer(&AiContext::test_fixture(), &AiPerTickData::stub());
-    assert!(
-        ai.base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .any(|work| matches!(work, AiOwnerWork::StateChange(_)))
-    );
-    ai.base.outbox.reentrant.brawl_hitting_completion_pending = false;
-}
-
-#[test]
-fn civilian_report_alert_officer_route_failure_seeks_retained_report_position() {
-    let sim = crate::sim_rng::test_context();
+fn civilian_report_alert_officer_retains_report_position_for_live_fallback() {
     let mut ai = EnemyAi::new(243);
-    ai.base.couldnt_reachpoint = true;
-    let report_position = Position {
+    let position = Position {
         x: 1440.3243,
         y: 1604.3259,
-        level: 0,
-        sector: crate::position_interface::SectorHandle::new(18),
+        ..Position::default()
     };
-    let ctx = AiContext {
-        frame: 44_683,
-        position: Position {
-            x: 1645.9982,
-            y: 1818.9901,
-            level: 0,
-            sector: crate::position_interface::SectorHandle::new(18),
-        },
-        ..AiContext::test_fixture()
-    };
-
-    ai.resume_civilian_report_after_alert_officer(
-        ThinkEnv::new(&sim, &ctx, &AiPerTickData::stub(), None),
-        report_position,
-        &mut AiGlobalState::default(),
-    )
-    .unwrap();
-
-    assert!(!ai.base.couldnt_reachpoint);
-    assert_eq!(ai.seek_center, report_position);
-    assert_ne!(ai.seek_center, ctx.position);
-    assert!(ai.seek_flags.contains(SeekFlags::LOCATION_FIRST));
+    let call = ai
+        .alert_officer(crate::ai::OfficerAlertCaller::SeekHint { center: position })
+        .unwrap_err();
+    assert!(matches!(call.tail, crate::ai::DutyTail::AlertOfficer {
+        caller: crate::ai::OfficerAlertCaller::SeekHint { center }
+    } if center == position));
+    assert!(call.after.is_empty());
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
 }
 
 #[test]
@@ -880,13 +817,8 @@ fn officer_group_instruction_retries_location_first_after_refusal() {
     let (first, first_flags, first_continuation) = take_instruction(&mut ai);
     assert_eq!(first, 148);
     assert!(SeekFlags::from_bits_retain(first_flags).contains(SeekFlags::LOCATION_FIRST));
-    ai.resolve_think_result(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        false,
-        first,
-        first_continuation,
-        &mut global,
-    );
+    ai.resolve_think_result(ctx.frame, false, first, first_continuation)
+        .unwrap();
 
     let (second, second_flags, second_continuation) = take_instruction(&mut ai);
     assert_eq!(second, 149);
@@ -894,13 +826,8 @@ fn officer_group_instruction_retries_location_first_after_refusal() {
         SeekFlags::from_bits_retain(second_flags).contains(SeekFlags::LOCATION_FIRST),
         "a refused index-zero member must not consume LOCATION_FIRST"
     );
-    ai.resolve_think_result(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        true,
-        second,
-        second_continuation,
-        &mut global,
-    );
+    ai.resolve_think_result(ctx.frame, true, second, second_continuation)
+        .unwrap();
 
     let (third, third_flags, third_continuation) = take_instruction(&mut ai);
     assert_eq!(third, 150);
@@ -908,13 +835,8 @@ fn officer_group_instruction_retries_location_first_after_refusal() {
         !SeekFlags::from_bits_retain(third_flags).contains(SeekFlags::LOCATION_FIRST),
         "everyone after the first accepted member searches only the area"
     );
-    ai.resolve_think_result(
-        ThinkEnv::new(&sim, &ctx, &tick, None),
-        true,
-        third,
-        third_continuation,
-        &mut global,
-    );
+    ai.resolve_think_result(ctx.frame, true, third, third_continuation)
+        .unwrap();
 
     assert_eq!(ai.alerted_us, vec![149, 150]);
     assert_eq!(
@@ -1592,7 +1514,6 @@ fn officer_wait_missed_soldier_does_not_relaunch_timer() {
         is_tower_guard: false,
         company_number: 0,
         in_building: false,
-        forecast_destination: None,
         detectable_bodies: Vec::new(),
         seek_position: Position::default(),
         current_task_priority: 0,
@@ -2002,7 +1923,6 @@ fn reaching_near_officer_redispatches_reachpoint_synchronously() {
         is_tower_guard: false,
         company_number: 0,
         in_building: false,
-        forecast_destination: None,
         detectable_bodies: Vec::new(),
         seek_position: Position::default(),
         current_task_priority: 0,
@@ -2172,7 +2092,6 @@ fn alert_candidate(handle: u32, position: Position) -> crate::ai_enemy::CampSold
         is_tower_guard: false,
         company_number: 0,
         in_building: false,
-        forecast_destination: None,
         detectable_bodies: Vec::new(),
         seek_position: Position::default(),
         current_task_priority: 0,
@@ -2582,7 +2501,6 @@ fn instructed_soldier_adds_officers_selected_body_after_speech() {
         is_tower_guard: false,
         company_number: 0,
         in_building: false,
-        forecast_destination: None,
         detectable_bodies: Vec::new(),
         seek_position: Position::default(),
         current_task_priority: 0,

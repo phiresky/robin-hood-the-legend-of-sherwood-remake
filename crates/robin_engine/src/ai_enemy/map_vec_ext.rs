@@ -16,7 +16,7 @@
 use crate::coordinates::MapVec;
 
 /// Enemy-AI extension methods for [`MapVec`].
-pub(super) trait AiMapVec: Sized {
+pub(crate) trait AiMapVec: Sized {
     /// Unit direction vector of a 0–15 compass sector (sector 0 = north
     /// `(0, -1)`, increasing clockwise), not aspect-compressed.
     fn from_sector(sector: u16) -> Self;

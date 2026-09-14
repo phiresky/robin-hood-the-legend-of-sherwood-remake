@@ -168,8 +168,6 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        let scratch = self.build_sim_scratch(assets);
-        let current_frame = self.control.frame_counter;
         // Panic text is asserted by `galopp_execute_callback_rejects_missing_selected_owner`.
         let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
             panic!("rider {entity_id:?} disappeared before its synchronous GALOPP Execute callback")
@@ -181,15 +179,12 @@ impl EngineInner {
             soldier.rider,
             "GALOPP Execute callback owner {entity_id:?} is not a rider"
         );
-        let ctx = self.ai_context_from_entity(entity, current_frame, None, &scratch, assets);
-
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventGaloppLoopEnd);
         // EventGaloppLoopEnd fires on enemy riders mid-charge towards their
         // primary target. Think and every order/script callback it creates
         // close here, before the actor update can complete this movement or
         // the mutable legacy walk can advance to the next owner.
-        let tick_data = self.build_npc_tick_data(sim, entity_id, assets);
-        self.dispatch_think_with_drain(sim, entity_id, &stimulus, &ctx, &tick_data, assets);
+        self.dispatch_think_with_drain(sim, entity_id, &stimulus, None, assets);
         self.observe_galopp_dispatch(entity_id);
     }
 
@@ -505,21 +500,8 @@ impl EngineInner {
                 ) else {
                     continue;
                 };
-                let scratch = engine.build_sim_scratch(assets);
-                let in_uninterruptible_command = engine.is_very_very_busy(owner);
-                let entity = engine.expect_entity(owner, "loaded-remark owner");
-                let building_sector = engine.entity_building_sector(entity.element_data().sector());
-                let mut ctx = engine.ai_context_from_entity(
-                    entity,
-                    engine.control.frame_counter,
-                    building_sector,
-                    &scratch,
-                    assets,
-                );
-                ctx.in_uninterruptible_command = in_uninterruptible_command;
-                let tick_data = engine.build_npc_tick_data(sim, owner, assets);
                 let stimulus = crate::ai::Stimulus::new(stimulus_type);
-                engine.dispatch_think_with_drain(sim, owner, &stimulus, &ctx, &tick_data, assets);
+                engine.dispatch_think_with_drain(sim, owner, &stimulus, None, assets);
             }
         });
     }
@@ -630,7 +612,7 @@ impl EngineInner {
             );
             ai.outbox.detection.stimuli = prefix_through_wake;
         }
-        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None);
+        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets);
 
         let ai = self
             .world

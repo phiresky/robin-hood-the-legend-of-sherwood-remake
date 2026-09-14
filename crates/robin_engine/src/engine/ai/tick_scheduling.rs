@@ -89,8 +89,8 @@ impl EngineInner {
         self.tick_enemy_ai_inner(sim, assets, true);
     }
 
-    /// Prepare the shared, RNG-free portion of the fused owner pass.
-    pub(in crate::engine) fn prepare_npc_owner_pass(&mut self) -> PreparedNpcOwnerPass {
+    /// Initialize transient actor counters before the fused owner pass.
+    pub(in crate::engine) fn prepare_npc_owner_pass(&mut self) {
         if !self.ai.global.primary_target_multiplicity_initialized {
             // The human actor's primary-target multiplicity is temporary initialization state and
             // is explicitly absent from the save stream. Loading a save into
@@ -99,7 +99,6 @@ impl EngineInner {
             self.ai.global.primary_target_multiplicity_scratch.clear();
             self.ai.global.primary_target_multiplicity_initialized = true;
         }
-        PreparedNpcOwnerPass { detection: None }
     }
 
     /// Run one NPC's complete post-human envelope using live inputs sampled at
@@ -108,7 +107,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        prepared: &mut PreparedNpcOwnerPass,
+        shield_links_need_refresh: &mut bool,
         npc_id: EntityId,
     ) {
         self.debug_refresh_view_lifecycle("npc_tail_enter", npc_id, None);
@@ -126,16 +125,13 @@ impl EngineInner {
             return;
         }
 
-        if prepared.detection.is_none() {
-            prepared.detection = Some(self.capture_detection_frame_state());
+        if *shield_links_need_refresh {
+            self.refresh_archer_shield_links();
+            *shield_links_need_refresh = false;
         }
-        let world = prepared
-            .detection
-            .as_ref()
-            .expect("prepared NPC owner pass lost its detection capture");
         self.tick_inform_my_friends_for_npc(npc_id);
         self.refresh_npc_view_for_npc(npc_id);
-        self.tick_enemy_ai_refresh_detection(sim, assets, world, npc_id);
+        self.tick_enemy_ai_refresh_detection(sim, assets, npc_id);
         self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
     }
 
@@ -172,9 +168,7 @@ impl EngineInner {
             self.ai.global.primary_target_multiplicity_initialized = true;
         }
 
-        // Capture detection inputs at the same point as the production owner
-        // pass. Tactical data is built live at each subsequent Think.
-        let world = self.capture_detection_frame_state();
+        self.refresh_archer_shield_links();
 
         // ── 2a. Listen/object blip work. ────────────────────────
         // NPC-owned SeesBlip remains inside its creation-ordered
@@ -196,7 +190,7 @@ impl EngineInner {
                 self.tick_inform_my_friends_for_npc(npc_id);
                 self.refresh_npc_view_for_npc(npc_id);
             }
-            self.tick_enemy_ai_refresh_detection(sim, assets, &world, npc_id);
+            self.tick_enemy_ai_refresh_detection(sim, assets, npc_id);
             if run_owner_envelope {
                 self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
             }
@@ -772,12 +766,6 @@ impl EngineInner {
             after
         };
         self.launch_pending_orders_for_npc_after_halt(sim, assets, npc_id, halt_count != 0);
-        // The original game constructs and launches its movement sequence inline
-        // inside the AI call. Promote this owner's queued intent now so path
-        // topology and any construction-time RNG are observed at this exact
-        // Think boundary. The returned sequence actions remain registered for
-        // the later sequence-manager instruction phase.
-        let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
 
         if !orders_after_attentive.is_empty() {
             let ai = self.world.entities.expect_ai_controller_mut(
@@ -794,14 +782,6 @@ impl EngineInner {
             // authored FIFO order instead of eagerly instructing the Turn
             // past the still-Todo attentive barrier.
             self.launch_pending_orders_for_npc_after_halt(sim, assets, npc_id, true);
-            // Entering the default state sets attentive mode and then the
-            // caller immediately requests movement in the original game. The attentive
-            // element must be registered first, but the movement request still constructs
-            // its route synchronously at this owner boundary (including any
-            // building-exit rand draws). Merely promoting the held intent
-            // here leaves construction to the later global drain and shifts
-            // those draws by a frame.
-            let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
         }
     }
 
@@ -1102,14 +1082,7 @@ impl EngineInner {
                         crate::ai::StimulusType::CallCharlyIsBack,
                         charly_handle,
                     );
-                    // The preceding drain work and earlier Charly recipients
-                    // may have synchronously changed entity state. The
-                    // recipient context above was built at this exact Think
-                    // boundary and is also the one used for dispatch.
-                    let tick_data = self.build_npc_tick_data(sim, other_id, assets);
-                    self.dispatch_think_with_drain(
-                        sim, other_id, &stimulus, &other_ctx, &tick_data, assets,
-                    );
+                    self.dispatch_think_with_drain(sim, other_id, &stimulus, None, assets);
                 }
             }
         }
@@ -1617,12 +1590,6 @@ impl EngineInner {
         // pushes a `PanicRequest` (e.g. from the fleeing arm of
         // `think_alerting_event(sim, EVENT_VIEW)` outdoors) stays wedged
         // in `FleeingPanic` with no door picked.
-        let observe_after_panic = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .is_some_and(|ai| std::mem::take(&mut ai.outbox.actor.observe_after_panic));
         let has_begin_panic = self
             .world
             .entities
@@ -1642,38 +1609,6 @@ impl EngineInner {
             );
             self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             self.process_pending_begin_panic_for(sim, assets, npc_id, &ctx);
-        }
-
-        if observe_after_panic {
-            let scratch = self.build_sim_scratch(assets);
-            let entity = self.expect_entity(npc_id, "panic continuation owner");
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = self.ai_context_from_entity(
-                entity,
-                self.control.frame_counter,
-                building_sector,
-                &scratch,
-                assets,
-            );
-            self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-            let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, assets);
-            let grid = &self.world.fast_grid;
-            self.world
-                .entities
-                .expect_enemy_ai_mut(
-                    npc_id,
-                    format_args!("panic continuation owner {npc_id:?} has no enemy AI"),
-                )
-                .observe_after_synchronous_panic(crate::ai_enemy::ThinkEnv::new(
-                    sim,
-                    &ctx,
-                    &tick,
-                    Some(grid),
-                ));
-            // The resumed tail contains state changes, focusing, and movement.
-            // Close their owner-local callbacks and actor effects before the
-            // enclosing synchronous Panic continuation returns.
-            self.drain_pending_for_npc(sim, npc_id, assets);
         }
 
         let has_panic_seek_fallback = self
@@ -1723,28 +1658,8 @@ impl EngineInner {
         if finish_lost_enemy_overview {
             // Swordfight exit's explicit sequence launch above has now
             // interrupted the old command and delivered its nested
-            // condolence. Resume the outer EVENT_OUTOFVIEW handler at the
-            // following battle-overview evaluation with a fresh live view.
-            let scratch = self.build_sim_scratch(assets);
-            let entity = self.expect_entity(npc_id, "lost-enemy overview owner");
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = self.ai_context_from_entity(
-                entity,
-                self.control.frame_counter,
-                building_sector,
-                &scratch,
-                assets,
-            );
-            self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-            let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, assets);
-            self.world
-                .entities
-                .expect_enemy_ai_mut(
-                    npc_id,
-                    format_args!("lost-enemy overview owner {npc_id:?} has no enemy AI"),
-                )
-                .get_battle_overview(0, crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None));
-            self.drain_pending_for_npc(sim, npc_id, assets);
+            // condolence. Resume the outer EVENT_OUTOFVIEW battle overview.
+            self.execute_ai_get_battle_overview(sim, assets, npc_id, 0);
         }
     }
 }

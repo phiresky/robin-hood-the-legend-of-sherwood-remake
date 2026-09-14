@@ -3,7 +3,6 @@ use super::*;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum AiObservationKind {
     Current,
-    PreparedDetection,
 }
 
 /// Non-authoritative measurement. Enable with
@@ -40,175 +39,6 @@ fn observe_view_build(
 }
 
 impl EngineInner {
-    #[inline(never)]
-    fn trace_seek_area_owner_position(
-        &self,
-        frame: u32,
-        npc_id: EntityId,
-        creation_order: u32,
-        me_pos: crate::coordinates::MapPoint,
-        doors: &[crate::gate::Door],
-    ) {
-        let owner_selected_door =
-            selected_pass_door_movement(&self.orders.sequence_manager, npc_id);
-        let owner_effective_position = seek_area_friend_position_map(
-            me_pos,
-            owner_selected_door.map(|(door_index, direction)| (door_index, direction != 0)),
-            doors,
-        );
-        eprintln!(
-            "SEEKAREA {{\"event\":\"owner_position\",\"frame\":{},\"owner\":{:?},\"owner_creation_order\":{},\"raw\":[{},{}],\"effective\":[{},{}],\"selected_door\":{:?}}}",
-            frame,
-            npc_id,
-            creation_order,
-            me_pos.x,
-            me_pos.y,
-            owner_effective_position.x,
-            owner_effective_position.y,
-            owner_selected_door,
-        );
-    }
-
-    /// `[frame, owner creation order]`. `contribution` is `None` for a green
-    /// (non-contributing) friend, otherwise the friend's contribution verdict.
-    #[inline(never)]
-    fn trace_seek_area_friend_contribution(
-        &self,
-        [frame, creation_order]: [u32; 2],
-        other_id: crate::entity_id::SoldierId,
-        alert_status: crate::ai::AlertLevel,
-        (friend_raw_position, doors): (crate::coordinates::MapPoint, &[crate::gate::Door]),
-        contribution: Option<Option<bool>>,
-    ) {
-        let friend_selected_door =
-            selected_pass_door_movement(&self.orders.sequence_manager, EntityId::Soldier(other_id));
-        let friend_effective_position = seek_area_friend_position_map(
-            friend_raw_position,
-            friend_selected_door.map(|(door_index, direction)| (door_index, direction != 0)),
-            doors,
-        );
-        let friend_creation_order = self
-            .world
-            .original_creation_order(EntityId::Soldier(other_id));
-        match contribution {
-            None => eprintln!(
-                "SEEKAREA {{\"event\":\"friend_contribution\",\"frame\":{},\"owner_creation_order\":{},\"friend\":{:?},\"friend_creation_order\":{},\"alert\":{:?},\"raw\":[{},{}],\"effective\":[{},{}],\"selected_door\":{:?},\"contributes\":false,\"reason\":\"green\"}}",
-                frame,
-                creation_order,
-                other_id,
-                friend_creation_order,
-                alert_status,
-                friend_raw_position.x,
-                friend_raw_position.y,
-                friend_effective_position.x,
-                friend_effective_position.y,
-                friend_selected_door,
-            ),
-            Some(contribution) => eprintln!(
-                "SEEKAREA {{\"event\":\"friend_contribution\",\"frame\":{},\"owner_creation_order\":{},\"friend\":{:?},\"friend_creation_order\":{},\"alert\":{:?},\"raw\":[{},{}],\"effective\":[{},{}],\"selected_door\":{:?},\"contributes\":{},\"clears_help\":{}}}",
-                frame,
-                creation_order,
-                other_id,
-                friend_creation_order,
-                alert_status,
-                friend_raw_position.x,
-                friend_raw_position.y,
-                friend_effective_position.x,
-                friend_effective_position.y,
-                friend_selected_door,
-                contribution.is_some(),
-                contribution.unwrap_or(false),
-            ),
-        }
-    }
-
-    #[inline(never)]
-    fn trace_seek_area_friend_summary(
-        [frame, creation_order]: [u32; 2],
-        visible_friends: impl std::fmt::Display,
-        clears_help: bool,
-    ) {
-        eprintln!(
-            "SEEKAREA {{\"event\":\"friend_summary\",\"frame\":{},\"owner_creation_order\":{},\"visible_friends\":{},\"clears_help\":{}}}",
-            frame, creation_order, visible_friends, clears_help,
-        );
-    }
-
-    /// Checks the reconsider-observation filters (the caller has checked the
-    /// gate is enabled) and dumps the observation fighter registry.
-    #[inline(never)]
-    fn trace_reconsider_observation_snapshot(
-        &self,
-        frame: u32,
-        npc_id: EntityId,
-        me_handle: u32,
-        ai_actor: &crate::element::AiActorData,
-        fighters: &[crate::ai::ReconsiderSwordfightObservationFighter],
-    ) {
-        let creation_order = self.world.original_creation_order(npc_id);
-        if !reconsider_observation_debug_matches(frame, creation_order, me_handle) {
-            return;
-        }
-        eprintln!(
-            "RECONSIDER {{\"event\":\"snapshot_begin\",\"frame\":{},\"owner\":{},\"owner_creation_order\":{},\"owner_state\":{:?},\"owner_substate\":{:?},\"registry_len\":{}}}",
-            frame,
-            me_handle,
-            creation_order,
-            ai_actor.ai_state(),
-            ai_actor.ai_substate(),
-            fighters.len(),
-        );
-        for (ordinal, fighter) in fighters.iter().enumerate() {
-            let fighter_id = self.entity_id_for_index(fighter.handle).unwrap_or_else(|| {
-                panic!(
-                    "RECONSIDER owner {npc_id:?} cannot resolve fighter {}",
-                    fighter.handle
-                )
-            });
-            let entity = self.world.entities.expect_entity(
-                fighter_id,
-                format_args!("RECONSIDER owner {npc_id:?} fighter"),
-            );
-            let current_sequence = self
-                .orders
-                .sequence_manager
-                .current_element_for_actor(fighter_id)
-                .and_then(|(sequence_id, element_index)| {
-                    self.orders
-                        .sequence_manager
-                        .get_element(sequence_id, element_index)
-                        .map(|element| (sequence_id, element_index, element.command, element.state))
-                });
-            let eligibility = match entity {
-                Entity::Soldier(other) => Some((
-                    other.npc.life_points <= 0,
-                    other.human.unconscious,
-                    other.element.posture() == crate::element::Posture::Tied,
-                    other.human.carrier.is_some(),
-                    other.element.active,
-                    other.npc.ai_state(),
-                    other.npc.ai_substate(),
-                )),
-                _ => None,
-            };
-            eprintln!(
-                "RECONSIDER {{\"event\":\"snapshot_fighter\",\"frame\":{},\"owner_creation_order\":{},\"ordinal\":{},\"fighter\":{},\"fighter_creation_order\":{},\"friendly\":{},\"able\":{},\"raw\":[{},{},{}],\"soldier_eligibility\":{:?},\"current_sequence\":{:?}}}",
-                frame,
-                creation_order,
-                ordinal,
-                fighter.handle,
-                self.world.original_creation_order(fighter_id),
-                fighter.is_friendly,
-                fighter.is_able_to_fight,
-                fighter.raw_world_position.x,
-                fighter.raw_world_position.y,
-                fighter.raw_world_position.z,
-                eligibility,
-                current_sequence,
-            );
-        }
-    }
-
     #[inline(never)]
     pub(in crate::engine) fn debug_building_exit_wait_event_view(
         &self,
@@ -401,33 +231,6 @@ impl EngineInner {
         self.build_ai_observation(assets)
     }
 
-    pub(in crate::engine) fn build_cached_detection_scratch(
-        &self,
-        assets: &LevelAssets,
-        cache: &mut PreparedAiEntityViewCache,
-    ) -> SimScratch {
-        let started = observation_build_started();
-        let rebuilt = refresh_prepared_entity_views(self, cache);
-        let scratch = SimScratch {
-            ai_entity_views: std::sync::Arc::clone(
-                cache
-                    .views
-                    .as_ref()
-                    .expect("prepared AI entity-view cache was not initialized"),
-            ),
-            ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
-        };
-        observe_view_build(
-            started,
-            self.control.frame_counter,
-            AiObservationKind::PreparedDetection,
-            self.world.entities.len(),
-            rebuilt,
-            &scratch,
-        );
-        scratch
-    }
-
     fn build_ai_observation(&self, assets: &LevelAssets) -> SimScratch {
         let started = observation_build_started();
         let views = build_entity_views(self);
@@ -534,54 +337,6 @@ impl EngineInner {
         self.build_npc_tick_data_for_target_mode(sim, npc_id, assets, None, false)
     }
 
-    /// Build the typed live value consumed by Friendly AI. The narrow type
-    /// has no stub/default fields for future handlers to read accidentally.
-    pub(in crate::engine) fn build_friendly_tick_data_without_forecasts(
-        &self,
-        npc_id: crate::element::EntityId,
-    ) -> crate::ai_friendly::FriendlyPerTickData {
-        let entity = self.world.entities.expect_entity(
-            npc_id,
-            format_args!("owner-local friendly tick context owner"),
-        );
-        let Entity::Civilian(civilian) = entity else {
-            panic!(
-                "owner-local friendly tick context owner {} is not a Civilian",
-                npc_id.index()
-            )
-        };
-        let ai = civilian.npc.ai_brain.friendly().unwrap_or_else(|| {
-            panic!(
-                "owner-local friendly tick context owner {} requires Friendly AI",
-                npc_id.index()
-            )
-        });
-
-        if let Some(chief_id) = ai.base.patrol_chief {
-            let chief =
-                self.expect_entity(chief_id, "owner-local friendly tick context patrol chief");
-            let chief_ai = self.world.entities.expect_ai_controller(
-                chief_id,
-                format_args!(
-                    "owner-local friendly tick context owner {} patrol chief",
-                    npc_id.index()
-                ),
-            );
-            let point = chief.element_data().position_map();
-            crate::ai_friendly::FriendlyPerTickData::with_patrol_chief(
-                crate::ai::Position {
-                    x: point.x,
-                    y: point.y,
-                    sector: chief.element_data().sector(),
-                    level: chief.element_data().layer(),
-                },
-                chief_ai.current_state,
-            )
-        } else {
-            crate::ai_friendly::FriendlyPerTickData::without_patrol_chief()
-        }
-    }
-
     fn build_npc_tick_data_for_target_mode(
         &self,
         sim: &crate::sim_rng::SimulationContext,
@@ -614,7 +369,6 @@ impl EngineInner {
             primary_target_handle.and_then(|handle| self.entity_id_for_index(handle.get()))
         });
         let my_camp = entity.camp();
-        let me_handle = ai.me;
         let me_pos = entity.element_data().position_map();
         let me_layer = entity.element_data().layer();
         let couldnt_reachpoint = enemy_ai.base.couldnt_reachpoint;
@@ -641,10 +395,8 @@ impl EngineInner {
             sector: entity.element_data().sector(),
             level: me_layer,
         });
-        let enemy_idx = DetectableType::Enemy as usize;
-        tick.seen_last_frame_enemies =
-            seen_last_frame_detectable_handles(&ai_actor.detectable_lists[enemy_idx]);
         tick.primary_target_snapshot_handle = primary_target_handle;
+        let enemy_idx = DetectableType::Enemy as usize;
         tick.profile_manager = Some(assets.profile_manager.clone());
         // Area search scans the live global NPC register at the call site.
         // Despite the old local name "visible friends", the Original applies
@@ -692,128 +444,7 @@ impl EngineInner {
                 ));
             }
         }
-        let frame = self.frame_counter();
-        // Keep the diagnostic entirely absent from the disabled path. In
-        // particular, do not resolve Original identity for an observation
-        // that production does not otherwise need here.
-        let seek_area_debug_enabled = seek_area_owner_position_debug_enabled();
-        let creation_order = if seek_area_debug_enabled {
-            self.world.original_creation_order(npc_id)
-        } else {
-            0
-        };
-        let seek_area_debug = seek_area_debug_enabled
-            && seek_area_owner_position_debug_matches(frame, creation_order);
-        if seek_area_debug {
-            self.trace_seek_area_owner_position(frame, npc_id, creation_order, me_pos, doors);
-        }
-        for (other_id, other) in self.world.entities.soldiers() {
-            if other_id == npc_id {
-                continue;
-            }
-            let Some(other_ai) = other.npc.ai_brain.enemy() else {
-                continue;
-            };
-            // Original-game NPC alert status reads
-            // `mViewParameters.ubAlertStatus`, not the independently tracked
-            // music alert. Forced-attentive and music-only transitions can
-            // deliberately make those values differ.
-            let alert_status = other_ai.base.view_alert_status;
-            let friend_raw_position = other.element.position_map();
-            if alert_status == crate::ai::AlertLevel::Green {
-                if seek_area_debug {
-                    self.trace_seek_area_friend_contribution(
-                        [frame, creation_order],
-                        other_id,
-                        alert_status,
-                        (friend_raw_position, doors),
-                        None,
-                    );
-                }
-                continue;
-            }
-            let friend_seeks_with_help = other_ai.base.current_substate.is_seek_area()
-                && other_ai
-                    .seek_flags
-                    .contains(crate::ai_enemy::SeekFlags::LOOK_FOR_HELP_AFTER);
-            let contribution = seek_area_friend_contribution(
-                &self.orders.sequence_manager,
-                EntityId::Soldier(other_id),
-                npc_id,
-                me_pos,
-                friend_raw_position,
-                doors,
-                friend_seeks_with_help,
-            );
-            if seek_area_debug {
-                self.trace_seek_area_friend_contribution(
-                    [frame, creation_order],
-                    other_id,
-                    alert_status,
-                    (friend_raw_position, doors),
-                    Some(contribution),
-                );
-            }
-            let Some(clears_help) = contribution else {
-                continue;
-            };
-            tick.visible_seeking_friends += 1;
-            if clears_help {
-                tick.friend_seek_clears_help_flag = true;
-            }
-        }
-        if seek_area_debug {
-            Self::trace_seek_area_friend_summary(
-                [frame, creation_order],
-                tick.visible_seeking_friends,
-                tick.friend_seek_clears_help_flag,
-            );
-        }
-        tick.camp_soldiers = self.build_camp_soldier_tick_infos(npc_id, my_camp, build_forecasts);
-        // Sequence/timer callbacks run outside detection refresh, but still
-        // need the live camp registry at their AI decision boundaries.
-        // Keep the parallel KO list live as well: money-fight victim scans
-        // must not inherit an empty `AiPerTickData::stub()` field merely
-        // because their EVENT_DONE came from sequence completion.
-        tick.camp_unconscious_soldiers = self
-            .ai
-            .global
-            .all_soldier_handles
-            .iter()
-            .filter_map(|&handle| {
-                if handle == npc_id.index() {
-                    return None;
-                }
-                // The authored handle list is the Original camp-array order.
-                // Resolve its current typed occupant so a removed soldier's
-                // recycled slot cannot turn a civilian/object into a soldier.
-                let current_id =
-                    crate::element::EntityId::Soldier(crate::entity_id::SoldierId(handle));
-                let Some(crate::element::Entity::Soldier(soldier)) =
-                    self.world.entities.get(current_id)
-                else {
-                    return None;
-                };
-                if !self.camps_are_allied(soldier.soldier.cached_camp, my_camp)
-                    || !soldier.element.active
-                    || soldier.npc.life_points <= 0
-                    || !soldier.human.unconscious
-                {
-                    return None;
-                }
-                let knocked_out_in_money_fight = soldier
-                    .npc
-                    .ai_brain
-                    .base()
-                    .map(|ai| ai.knocked_out_in_money_fight)
-                    .unwrap_or(false);
-                Some(crate::ai_enemy::CampUnconsciousSoldierInfo {
-                    handle,
-                    knocked_out_in_money_fight,
-                })
-            })
-            .collect();
-        tick.alert_soldier_candidates = self.build_alert_soldier_candidates(npc_id);
+        tick.camp_soldiers = self.build_camp_soldier_tick_infos(npc_id, my_camp);
         if build_forecasts
             && let Some(missed_handle) = enemy_ai.missed_pc
             && let Some(missed_id) = self.entity_id_for_index(missed_handle.get())
@@ -834,8 +465,7 @@ impl EngineInner {
             tick.missed_pc_forecast_handle = enemy_ai.missed_pc;
             tick.missed_pc_is_pc = matches!(missed_entity, Entity::Pc(_));
         }
-        // `fill_list_with_all_near_fighters` walks the global fighter
-        // registry on every call.  Populate `nearby_fighters` here so
+        // Populate the remaining borrowed tactical inputs here so
         // off-detection dispatch sites (timer events, reach-point
         // events, panic, patrol, cross-NPC actions, pending-stimuli
         // drain, …) see the same fighter view that the in-detection
@@ -846,63 +476,6 @@ impl EngineInner {
         // observe an empty list outside swordfight substates.
         tick.nearby_fighters = self.build_nearby_fighters_for(npc_id, assets);
         tick.fighter_registry = self.build_fighter_snapshots_for(npc_id, assets, None);
-        tick.reconsider_swordfight_observation_fighters = tick
-            .fighter_registry
-            .iter()
-            .map(|fighter| {
-                let id = self.entity_id_for_index(fighter.handle).unwrap_or_else(|| {
-                    panic!(
-                        "NPC {} observation fighter {} disappeared from the registry",
-                        npc_id.index(),
-                        fighter.handle
-                    )
-                });
-                let raw_world_position = self
-                    .world
-                    .entities
-                    .expect_entity(
-                        id,
-                        format_args!(
-                            "NPC {} observation fighter {}",
-                            npc_id.index(),
-                            fighter.handle
-                        ),
-                    )
-                    .element_data()
-                    .position();
-                crate::ai::ReconsiderSwordfightObservationFighter {
-                    handle: fighter.handle,
-                    raw_world_position,
-                    is_friendly: fighter.is_friendly,
-                    is_able_to_fight: fighter.is_able_to_fight,
-                    is_soldier: fighter.is_soldier,
-                    primary_target: fighter.primary_target,
-                    current_substate: fighter.current_substate,
-                }
-            })
-            .collect();
-        if reconsider_observation_debug_enabled() {
-            self.trace_reconsider_observation_snapshot(
-                frame,
-                npc_id,
-                me_handle,
-                ai_actor,
-                &tick.reconsider_swordfight_observation_fighters,
-            );
-        }
-        tick.reconsider_swordfight_enemies = tick
-            .fighter_registry
-            .iter()
-            .filter(|fighter| !fighter.is_friendly)
-            .cloned()
-            .collect();
-        tick.reconsider_swordfight_friends = self.build_reconsider_swordfight_friends_for(npc_id);
-
-        // Phalanx right-chain "them" snapshots — consumed by
-        // phalanx enemy-list rebuilding so the leftmost member can
-        // union each neighbour's enemies via the recursion.  Always
-        // populated; empty when this NPC has no right neighbour.
-        tick.phalanx_member_them_lists = self.build_phalanx_member_them_lists(npc_id);
 
         // Patrol-chief data is live per-dispatch context, not specific to
         // CALL_PATROL_COORDINATE. Returning to duty can synchronously enter
@@ -1068,78 +641,13 @@ impl EngineInner {
             |element| super::ai_view_position_sector(self, element),
         );
 
-        // Stashed-exit-door snapshot for the AlertSoldiers indoor
-        // branch and the merry-man flee path.  Always populated
-        // whenever the AI has stashed a door (irrespective of
-        // in-building status), so paths that reach the door's
-        // point_out through a sequence of substates still see the
-        // cached geometry.  No fallback when no door is stashed.
-        let stashed = ai.my_door_index;
-        if stashed.is_some() {
-            assert!(
-                self.scripts.mission.is_some(),
-                "stashed AI exit-door state requires an installed mission script"
-            );
-            let doors_slice = self.script_domains.interactables.doors.as_slice();
-            tick.my_exit_door = build_my_exit_door_info(stashed, doors_slice);
-        }
-
         tick
-    }
-
-    /// Rank-soldier NPCs of *every* camp, in NPC registry order.
-    ///
-    /// Officer attack commands walk the whole NPC array and gate each
-    /// entry on rank, body state and the candidate's own 360° detection of
-    /// the officer — no camp test anywhere. Feeding it the same-camp
-    /// snapshot dropped the opposing camp's soldiers from both the alert
-    /// broadcast and the observable detection-call stream.
-    fn build_alert_soldier_candidates(
-        &self,
-        npc_id: crate::element::EntityId,
-    ) -> Vec<crate::ai_enemy::AlertSoldierCandidate> {
-        let mut candidates = Vec::new();
-        for other_id in self.world.entities.npc_ids() {
-            if other_id == npc_id {
-                continue;
-            }
-            let Some(entity) = self.world.entities.get(other_id) else {
-                continue;
-            };
-            let crate::element::Entity::Soldier(s) = entity else {
-                continue;
-            };
-            let Some(enemy_ai) = s.npc.ai_brain.enemy() else {
-                continue;
-            };
-            if enemy_ai.soldier_profile_rank != crate::profiles::ProfileRank::Soldier
-                || !crate::element::Human::is_able_to_fight(s)
-            {
-                continue;
-            }
-            let position = s.element.position_map();
-            candidates.push(crate::ai_enemy::AlertSoldierCandidate {
-                handle: other_id.index(),
-                position: crate::ai::Position {
-                    x: position.x,
-                    y: position.y,
-                    sector: s.element.sector(),
-                    level: s.element.layer(),
-                },
-                elevation: s.element.sprite.position_iface.get_elevation(),
-                is_rider: s.soldier.rider,
-                view_radius: s.npc.view_radius,
-                in_building: self.entity_data_in_building_sector(&s.element),
-            });
-        }
-        candidates
     }
 
     fn build_camp_soldier_tick_infos(
         &self,
         npc_id: crate::element::EntityId,
         my_camp: crate::element::Camp,
-        forecast_destinations: bool,
     ) -> Vec<crate::ai_enemy::CampSoldierInfo> {
         let mut camp_soldiers =
             Vec::with_capacity(self.world.entities.soldiers().count().saturating_sub(1));
@@ -1169,49 +677,6 @@ impl EngineInner {
                 continue;
             };
             let in_building = self.entity_data_in_building_sector(&s.element);
-            let forecast_destination = if forecast_destinations {
-                // Missing scripts are a recoverable developer-data load path;
-                // `init_ai` warns once before these per-NPC snapshots are built.
-                let doors = self
-                    .scripts
-                    .mission
-                    .as_ref()
-                    .map(|_| self.script_domains.interactables.doors.as_slice())
-                    .unwrap_or(&[]);
-                let pos_now = s.element.position_map();
-                let live_door = s.element.sprite.position_iface.get_door();
-                let door_pass = selected_actor_is_passing_door(
-                    &self.orders.sequence_manager,
-                    EntityId::Soldier(other_id),
-                )
-                .then_some(live_door)
-                .flatten()
-                .map(|door| (door, s.actor.passing_door_directly));
-                let input = crate::ai::ForecastInput {
-                    position_map_x: pos_now.x,
-                    position_map_y: pos_now.y,
-                    sector: s.element.sector().map(u16::from).unwrap_or(0),
-                    sector_handle: s.element.sector(),
-                    layer: s.element.layer(),
-                    direction: s.element.direction() as u16,
-                    forecasted_movement_z: s
-                        .element
-                        .sprite
-                        .position_iface
-                        .get_forecasted_movement()
-                        .z,
-                    door_pass,
-                    passing_door_directly: s.actor.passing_door_directly,
-                };
-                Some(crate::ai::prepare_forecast_destination_for_ia(
-                    &input,
-                    doors,
-                    &self.world.fast_grid.level.sectors,
-                    &self.world.fast_grid.level.sector_number_map,
-                ))
-            } else {
-                None
-            };
             let position = s.element.position_map();
             // Snapshot the soldier's `DETECTABLE_BODY` list — handles of
             // corpses they have not yet reacted to.  Snapshotting the
@@ -1269,7 +734,6 @@ impl EngineInner {
                 is_tower_guard: enemy_ai.tower_guard,
                 company_number: enemy_ai.company_number,
                 in_building,
-                forecast_destination,
                 detectable_bodies,
                 seek_position: enemy_ai.base.seek_position,
                 current_task_priority: enemy_ai.current_task_priority,
@@ -1690,201 +1154,6 @@ impl EngineInner {
             }
         }
 
-        out
-    }
-
-    /// Build the friendly half of the original game's swordfight reconsideration
-    /// per-call camp-fighter scan.
-    ///
-    /// This cannot reuse `build_nearby_fighters_for`: that shared cache uses
-    /// projected map positions and filters non-self soldiers through
-    /// combat-readiness checks, while swordfight reconsideration walks every fighter in
-    /// the current camp's fighter list, tests only swordfighting state, and computes
-    /// maximum-axis distance from full 3D world positions.
-    fn build_reconsider_swordfight_friends_for(
-        &self,
-        npc_id: crate::element::EntityId,
-    ) -> Vec<crate::ai::ReconsiderSwordfightFriend> {
-        use crate::ai::ReconsiderSwordfightFriend;
-
-        let me = self.expect_entity(npc_id, "reconsider-swordfight friends owner");
-        let Some(me_ai) = me.enemy_ai() else {
-            // Enemy-brain capability; inapplicable to civilians and PCs.
-            return Vec::new();
-        };
-        let me_world = me.element_data().position();
-        let my_camp = me.camp();
-        let radius = crate::parameters_ai::MAX_SWORDFIGHT_CONSIDERATION_RADIUS as u16;
-        let mut out = Vec::new();
-
-        // Walk the registration order, matching the Original's append-only
-        // camp fighter arrays (including the PC/soldier interleaving
-        // established during level creation).
-        for id in self.world.fighter_registry_order() {
-            let Some(entity) = self.world.entities.get(id) else {
-                continue;
-            };
-            let Some(opponents) = entity.human_data().map(|human| &human.opponents) else {
-                continue;
-            };
-            let handle = id.index();
-            let world = entity.element_data().position();
-            let same_camp = self.camps_are_allied(entity.camp(), my_camp);
-            if handle == me_ai.base.me || !same_camp || opponents.is_empty() {
-                continue;
-            }
-
-            let dx = (world.x - me_world.x).abs();
-            let dy =
-                ((world.y - me_world.y) * crate::position_interface::INVERSE_ASPECT_RATIO).abs();
-            let dz = (world.z - me_world.z).abs();
-            // The original game explicitly narrows the floating-point result to 16 bits before
-            // comparing it with MAX_SWORDFIGHT_CONSIDERATION_RADIUS.
-            let max_norm_distance = dx.max(dy).max(dz) as u16;
-            if max_norm_distance >= radius {
-                continue;
-            }
-            out.push(ReconsiderSwordfightFriend {
-                handle,
-                max_norm_distance,
-                number_of_opponents: opponents.len().min(u16::MAX as usize) as u16,
-            });
-        }
-        out
-    }
-
-    /// Snapshot every right-chain phalanx member (including self) with
-    /// their live viewer state, persistent `list_them`, and current
-    /// detectable-enemy list. Phalanx enemy-list rebuilding replays the
-    /// original recursion over this data without borrowing sibling AI
-    /// brains while one member is mutable.
-    pub(in crate::engine) fn build_phalanx_member_them_lists(
-        &self,
-        npc_id: crate::element::EntityId,
-    ) -> Vec<crate::ai::PhalanxMemberThemList> {
-        use crate::ai::{PhalanxEnemySnapshot, PhalanxMemberThemList, Position};
-        use crate::element::Human;
-        let owner = self.expect_entity(npc_id, "phalanx them-list owner");
-        let Some(enemy_ai) = owner.enemy_ai() else {
-            // Enemy-brain capability; inapplicable to civilians and PCs.
-            return Vec::new();
-        };
-
-        let snapshot_enemy = |handle: u32, member_camp: Camp| -> PhalanxEnemySnapshot {
-            let entity_id = self.entity_id_for_index(handle).unwrap_or_else(|| {
-                panic!("phalanx member references missing enemy handle {handle}")
-            });
-            let entity = self.expect_entity(entity_id, "phalanx enemy handle");
-            let human = entity
-                .human_data()
-                .unwrap_or_else(|| panic!("phalanx enemy handle {handle} is not a human entity"));
-            let element = entity.element_data();
-            let map = element.position_map();
-            let able_to_fight = match entity {
-                Entity::Pc(pc) => pc.is_able_to_fight(),
-                Entity::Soldier(soldier) => soldier.is_able_to_fight(),
-                Entity::Civilian(civilian) => civilian.is_able_to_fight(),
-                _ => unreachable!("human_data returned Some for a non-human entity"),
-            };
-            PhalanxEnemySnapshot {
-                handle,
-                position: Position {
-                    x: map.x,
-                    y: map.y,
-                    sector: element.sector(),
-                    level: element.layer(),
-                },
-                world_position: entity.position_iface().get_position(),
-                direction: element.direction() as u16,
-                posture: element.posture(),
-                elevation: entity.position_iface().get_elevation(),
-                is_rider: entity.soldier_data().is_some_and(|data| data.rider),
-                active: element.active,
-                able_to_fight,
-                dead: entity.is_dead(),
-                unconscious: human.unconscious,
-                friend: self.camps_are_allied(entity.camp(), member_camp),
-                in_building: self.entity_data_in_building_sector(element),
-                obstacle: element.obstacle_index(),
-            }
-        };
-
-        let mut out: Vec<PhalanxMemberThemList> = Vec::new();
-        let mut current = enemy_ai.base.me;
-        // Cap at 16 like the consumer's right-chain walk; phalanxes are
-        // small and the cap guards against any cycle in cached neighbour
-        // links.
-        for _ in 0..16 {
-            if current == 0 {
-                break;
-            }
-            let member_id = self.expect_human_id_for_ai_handle(current, "phalanx member");
-            let member = self
-                .world
-                .entities
-                .get(member_id)
-                .expect("validated phalanx member vanished");
-            let ai_actor = member
-                .ai_actor_data()
-                .unwrap_or_else(|| panic!("phalanx member human {current} has no AI actor data"));
-            let neighbour_ai = member
-                .enemy_ai()
-                .unwrap_or_else(|| panic!("phalanx member human {current} has no EnemyAi"));
-            let element = member.element_data();
-            let pos = element.position_map();
-            let member_camp = member.camp();
-            let current_them_list = neighbour_ai
-                .list_them
-                .iter()
-                .map(|&handle| snapshot_enemy(handle, member_camp))
-                .collect();
-            let enemy_list = ai_actor
-                .detectable_lists
-                .get(crate::element::DetectableType::Enemy as usize)
-                .unwrap_or_else(|| panic!("phalanx member {current} has no detectable-enemy list"));
-            let detectable_enemies = enemy_list
-                .iter()
-                .map(|detectable| {
-                    let entity_id = detectable.element.unwrap_or_else(|| {
-                        panic!("phalanx member {current} has a null detectable enemy")
-                    });
-                    snapshot_enemy(entity_id.index(), member_camp)
-                })
-                .collect();
-            out.push(PhalanxMemberThemList {
-                handle: current,
-                entity: self.entity_id_for_index(current).unwrap_or_else(|| {
-                    panic!("phalanx member handle {current} is absent from the entity table")
-                }),
-                current_them_list,
-                detectable_enemies,
-                position: Position {
-                    x: pos.x,
-                    y: pos.y,
-                    sector: element.sector(),
-                    level: element.layer(),
-                },
-                world_position: member.position_iface().get_position(),
-                direction: element.direction() as u16,
-                posture: element.posture(),
-                elevation: member.position_iface().get_elevation(),
-                is_rider: member.soldier_data().is_some_and(|soldier| soldier.rider),
-                active: element.active,
-                in_building: self.entity_data_in_building_sector(element),
-                view_radius: ai_actor.view_radius,
-                view_direction: ai_actor.view_direction,
-                real_half_aperture: ai_actor.real_half_aperture,
-                sq_view_radius: (ai_actor.view_radius as f32) * (ai_actor.view_radius as f32),
-            });
-            let next = neighbour_ai.right_combat_neighbour;
-            let Some(next) = next else {
-                break;
-            };
-            if next.get() == current {
-                break;
-            }
-            current = next.get();
-        }
         out
     }
 }

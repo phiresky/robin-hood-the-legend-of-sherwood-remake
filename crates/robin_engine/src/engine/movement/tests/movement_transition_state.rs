@@ -143,8 +143,7 @@ mod suite {
             .ai_controller_mut()
             .unwrap()
             .run_to_map_exit(destination);
-        map_exit.launch_pending_orders_for_npc(&sim, &assets, map_owner);
-        let launched = map_exit.drain_pending_move_requests_for_owner(&sim, map_owner);
+        let launched = map_exit.launch_pending_orders_for_npc(&sim, &assets, map_owner);
         assert_eq!(
             launched.len(),
             1,
@@ -192,10 +191,9 @@ mod suite {
                     ordinary_destination.x,
                     ordinary_destination.y,
                 ));
-            ordinary.launch_pending_orders_for_npc(&sim, &assets, ordinary_owner);
             assert!(
                 ordinary
-                    .drain_pending_move_requests_for_owner(&sim, ordinary_owner)
+                    .launch_pending_orders_for_npc(&sim, &assets, ordinary_owner)
                     .is_empty(),
                 "ordinary movement at or outside the level must retain the existing rejection"
             );

@@ -8,6 +8,9 @@
 //!  - [`patrol_coordination`] and [`patrol_dispatch`] coordinate patrol members.
 //!  - [`cross_npc_actions`] closes synchronous interactions between NPCs.
 
+mod alert_execution;
+mod battle_approach;
+mod battle_execution;
 mod cross_npc_actions;
 mod detection;
 mod duty_callers;
@@ -19,11 +22,19 @@ mod execution;
 mod friend_check_execution;
 mod friendly_execution;
 mod initialization;
+mod live_visibility;
 mod macro_execution;
+mod money_execution;
 mod owner_scheduling;
 mod patrol_assembly;
 mod patrol_coordination;
 mod patrol_dispatch;
+mod phalanx_execution;
+mod protection_execution;
+mod seek_execution;
+mod shot_selection;
+mod swordfight_candidates;
+mod swordfight_execution;
 #[cfg(test)]
 pub(crate) use detection::capture_heard_callbacks;
 pub(crate) use detection::debug_detectable_mutation_load_snapshot;
@@ -38,7 +49,7 @@ pub(crate) use post_detection::{
 };
 
 use super::*;
-use crate::ai::{AiContext, AiPerTickData, StimulusType};
+use crate::ai::{AiContext, StimulusType};
 use crate::ai_entity_view::{self, AiEntityViewMap, AiEntityViews, SharedAiEntityViews};
 use crate::ai_vision;
 use crate::coordinates::MapPoint;
@@ -321,58 +332,6 @@ fn door_belongs_to_ai_house(door_type: crate::gate::DoorType) -> bool {
     )
 }
 
-/// Narrow, process-local diagnostics for the Save050 area-search point-count
-/// mismatch. Environment reads and stderr output must remain outside engine
-/// state so enabling this cannot affect snapshots, hashes, or simulation RNG.
-fn seek_area_owner_position_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
-    use crate::engine::diagnostics::ParityGate;
-    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
-    GATE.get_or_init(|| {
-        ParityGate::from_env(
-            "PARITY_DEBUG_SEEK_AREA_OWNER_POSITION",
-            [
-                "PARITY_DEBUG_SEEK_AREA_FRAME",
-                "PARITY_DEBUG_SEEK_AREA_CREATION_ORDER",
-            ],
-        )
-    })
-}
-
-fn seek_area_owner_position_debug_enabled() -> bool {
-    seek_area_owner_position_debug_gate().enabled()
-}
-
-fn seek_area_owner_position_debug_matches(frame: u32, creation_order: u32) -> bool {
-    seek_area_owner_position_debug_gate().matches([Some(frame), Some(creation_order)])
-}
-
-/// Opt-in, stderr-only provenance for the Save024
-/// swordfight observation reconsideration fighter-list mismatch. Keep the enable
-/// check ahead of identity lookup so the disabled path performs no additional
-/// world reads.
-fn reconsider_observation_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<3> {
-    use crate::engine::diagnostics::ParityGate;
-    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
-    GATE.get_or_init(|| {
-        ParityGate::from_env(
-            "PARITY_DEBUG_RECONSIDER_OBSERVATION",
-            [
-                "PARITY_DEBUG_RECONSIDER_OBSERVATION_FRAME",
-                "PARITY_DEBUG_RECONSIDER_OBSERVATION_CREATION_ORDER",
-                "PARITY_DEBUG_RECONSIDER_OBSERVATION_OWNER_HANDLE",
-            ],
-        )
-    })
-}
-
-fn reconsider_observation_debug_enabled() -> bool {
-    reconsider_observation_debug_gate().enabled()
-}
-
-fn reconsider_observation_debug_matches(frame: u32, creation_order: u32, handle: u32) -> bool {
-    reconsider_observation_debug_gate().matches([Some(frame), Some(creation_order), Some(handle)])
-}
-
 /// `[frame, creation order]`, both required.
 fn civilian_random_speech_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
     use crate::engine::diagnostics::ParityGate;
@@ -615,43 +574,6 @@ pub(in crate::engine) struct GalloppOwnedElement {
 thread_local! {
     static GALOPP_DISPATCH_PROBE: crate::engine::test_support::Probe<GalloppProbeEvent> =
         const { crate::engine::test_support::Probe::new() };
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct AiEntityViewStamp {
-    entity_generation: u64,
-    position_dependency_generation: u64,
-    current_animation: crate::order::OrderType,
-    selected_door: Option<(crate::gate::DoorIndex, i16)>,
-    building_sector: Option<crate::position_interface::SectorHandle>,
-    in_coma: bool,
-    nets_generation: u64,
-}
-
-#[derive(Debug, Clone, Default)]
-pub(super) struct PreparedAiEntityViewCache {
-    views: Option<SharedAiEntityViews>,
-    stamps: std::collections::HashMap<u32, AiEntityViewStamp>,
-    live_slots: Vec<bool>,
-}
-
-/// Immutable, RNG-free inputs prepared lazily at the first NPC owner slot.
-///
-/// Retains detection capture timing and the reusable entity-view cache.
-/// Volatile optical geometry and tactical data are read at their owner/Think
-/// boundaries; there is no second all-soldier tactical world projection here.
-#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub(super) struct PreparedNpcOwnerPass {
-    detection: Option<snapshots::DetectionFrameState>,
-}
-
-impl PreparedNpcOwnerPass {
-    /// A player's human-update tail refreshes its produced-noise record in
-    /// creation order. Later NPC slots must not retain the earlier detection
-    /// capture: the original game reads that live record directly during detection refresh.
-    pub(super) fn invalidate_after_pc_noise_refresh(&mut self) {
-        self.detection = None;
-    }
 }
 
 /// Exact frame phase computed by the NPC update.
@@ -1198,16 +1120,6 @@ fn subjective_hear_volume(modified_volume: f32, distance: f32, deafness: u16) ->
     }
     let truncated = remainder as u16;
     truncated.saturating_sub(deafness)
-}
-
-/// Project Original's live Enemy detectable list into the ordered handle list
-/// consumed by arrow-protection refresh.
-fn seen_last_frame_detectable_handles(detectables: &[Detectable]) -> Vec<u32> {
-    detectables
-        .iter()
-        .filter(|detectable| detectable.seen_last_frame)
-        .filter_map(|detectable| detectable.element.map(EntityId::index))
-        .collect()
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -2066,27 +1978,6 @@ mod parity_tests {
     }
 
     #[test]
-    fn seen_last_frame_enemy_projection_preserves_detectable_order() {
-        let detectable = |element, seen_last_frame| Detectable {
-            element,
-            detectable_type: DetectableType::Enemy,
-            seen_last_frame,
-            ..Detectable::default()
-        };
-        let detectables = vec![
-            detectable(Some(EntityId::Pc(PcId(12))), true),
-            detectable(Some(EntityId::Soldier(SoldierId(7))), false),
-            detectable(None, true),
-            detectable(Some(EntityId::Soldier(SoldierId(3))), true),
-        ];
-
-        assert_eq!(
-            seen_last_frame_detectable_handles(&detectables),
-            vec![12, 3]
-        );
-    }
-
-    #[test]
     fn generic_owner_zero_context_may_lack_an_ai_entity_view() {
         let views = crate::ai_entity_view::shared_entity_views(
             crate::ai_entity_view::AiEntityViewMap::new(),
@@ -2365,236 +2256,6 @@ pub(super) fn extract_exact_forecast_input(
     let mut input = extract_forecast_input(entity, is_passing_door)?;
     input.sector_handle = ai_view_position_sector(engine, entity.element_data());
     Some(input)
-}
-
-/// Map the position returned by the original game's AI position query during
-/// Area search's nearby-friend scan. A PassDoor sequence reports its committed
-/// destination side even while the sprite is still interpolating along the
-/// door rail.
-fn seek_area_friend_position_map(
-    raw_position: MapPoint,
-    door_pass: Option<(crate::gate::DoorIndex, bool)>,
-    doors: &[crate::gate::Door],
-) -> MapPoint {
-    let Some((door_index, direct)) = door_pass else {
-        return raw_position;
-    };
-    let door = doors.get(usize::from(door_index)).unwrap_or_else(|| {
-        panic!(
-            "area-search friend references missing door {}",
-            door_index.0
-        )
-    });
-    if direct {
-        door.point_in
-    } else {
-        door.point_out
-    }
-}
-
-/// Resolve one soldier's contribution to the original game's nearby-NPC area search
-/// scan. Both `Position(...)` calls are owned by their currently selected
-/// PassDoor movement elements, not the sprites' runtime door-pass choreography
-/// latches.
-fn seek_area_friend_contribution(
-    sequence_manager: &crate::sequence::SequenceManager,
-    friend_id: EntityId,
-    owner_id: EntityId,
-    owner_raw_position: MapPoint,
-    friend_raw_position: MapPoint,
-    doors: &[crate::gate::Door],
-    friend_seeks_with_help: bool,
-) -> Option<bool> {
-    let owner_selected_door = selected_pass_door_movement(sequence_manager, owner_id)
-        .map(|(door_index, direction)| (door_index, direction != 0));
-    let owner_position =
-        seek_area_friend_position_map(owner_raw_position, owner_selected_door, doors);
-    let selected_door_pass = selected_pass_door_movement(sequence_manager, friend_id)
-        .map(|(door_index, direction)| (door_index, direction != 0));
-    let friend_position =
-        seek_area_friend_position_map(friend_raw_position, selected_door_pass, doors);
-    let delta = friend_position - owner_position;
-    (delta.x * delta.x + delta.y * delta.y < 500.0 * 500.0).then_some(friend_seeks_with_help)
-}
-
-#[cfg(test)]
-mod seek_area_friend_position_tests {
-    use super::*;
-    use crate::element::{Command, EntityIdKind};
-    use crate::order::OrderType;
-    use crate::sequence::{SequenceElement, SequenceElementData, SequenceManager};
-
-    #[test]
-    fn door_passing_friend_uses_committed_side_for_radius_gate() {
-        let owner = MapPoint::new(1155.7197, 1421.6211);
-        let raw_friend = MapPoint::new(727.0, 1168.0);
-        let doors = [crate::gate::Door {
-            point_out: MapPoint::new(718.0, 1179.0),
-            point_in: MapPoint::new(735.0, 1156.0),
-            ..Default::default()
-        }];
-        let distance_squared = |point: MapPoint| {
-            let delta = point - owner;
-            delta.x * delta.x + delta.y * delta.y
-        };
-
-        assert!(distance_squared(raw_friend) < 500.0 * 500.0);
-        let indirect = seek_area_friend_position_map(
-            raw_friend,
-            Some((
-                crate::gate::DoorIndex::new(0).expect("valid door index"),
-                false,
-            )),
-            &doors,
-        );
-        assert_eq!(indirect, doors[0].point_out);
-        assert!(distance_squared(indirect) >= 500.0 * 500.0);
-
-        let direct = seek_area_friend_position_map(
-            raw_friend,
-            Some((
-                crate::gate::DoorIndex::new(0).expect("valid door index"),
-                true,
-            )),
-            &doors,
-        );
-        assert_eq!(direct, doors[0].point_in);
-        assert_eq!(
-            seek_area_friend_position_map(raw_friend, None, &doors),
-            raw_friend
-        );
-    }
-
-    #[test]
-    fn selected_pass_door_controls_seek_area_friend_count_and_help() {
-        let owner = MapPoint::new(1155.7197, 1421.6211);
-        let raw_friend = MapPoint::new(727.0, 1168.0);
-        let friend = EntityId::new(2, EntityIdKind::Soldier);
-        let doors = [crate::gate::Door {
-            point_out: MapPoint::new(718.0, 1179.0),
-            point_in: MapPoint::new(735.0, 1156.0),
-            ..Default::default()
-        }];
-
-        let mut sequences = SequenceManager::new();
-        let mut pass = SequenceElement::new_movement(
-            1,
-            Command::PassDoor,
-            Some(friend),
-            OrderType::WalkingUpright,
-        );
-        let SequenceElementData::Movement {
-            gate_id, direction, ..
-        } = &mut pass.data
-        else {
-            panic!("PassDoor test element changed kind")
-        };
-        *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
-        *direction = 0;
-        let sequence_id = sequences.launch_element(pass);
-        sequences.element_in_progress(sequence_id, 0);
-
-        // Raw friend coordinates are inside the radius, but the selected
-        // indirect PassDoor destination is outside. Pre-fix production used
-        // the absent runtime ActiveDoorPass latch and returned `Some(true)`.
-        assert_eq!(
-            seek_area_friend_contribution(
-                &sequences,
-                friend,
-                EntityId::new(1, EntityIdKind::Soldier),
-                owner,
-                raw_friend,
-                &doors,
-                true,
-            ),
-            None
-        );
-
-        let SequenceElementData::Movement { direction, .. } = &mut sequences
-            .get_element_mut(sequence_id, 0)
-            .expect("selected PassDoor exists")
-            .data
-        else {
-            panic!("PassDoor test element changed kind")
-        };
-        *direction = 1;
-        assert_eq!(
-            seek_area_friend_contribution(
-                &sequences,
-                friend,
-                EntityId::new(1, EntityIdKind::Soldier),
-                owner,
-                raw_friend,
-                &doors,
-                true,
-            ),
-            Some(true)
-        );
-
-        // Without a selected PassDoor, stale/runtime door state is irrelevant
-        // and the raw nearby position contributes to both aggregate outputs.
-        sequences.element_terminated(sequence_id, 0);
-        let contributions = [seek_area_friend_contribution(
-            &sequences,
-            friend,
-            EntityId::new(1, EntityIdKind::Soldier),
-            owner,
-            raw_friend,
-            &doors,
-            true,
-        )];
-        let visible_seeking_friends = contributions.iter().flatten().count();
-        let friend_seek_clears_help_flag = contributions.into_iter().flatten().any(|help| help);
-        assert_eq!(visible_seeking_friends, 1);
-        assert!(friend_seek_clears_help_flag);
-    }
-
-    #[test]
-    fn selected_pass_door_controls_seek_area_owner_radius_position() {
-        let owner = EntityId::new(1, EntityIdKind::Soldier);
-        let friend = EntityId::new(2, EntityIdKind::Soldier);
-        let raw_owner = MapPoint::new(0.0, 0.0);
-        let raw_friend = MapPoint::new(100.0, 0.0);
-        let doors = [crate::gate::Door {
-            point_out: MapPoint::new(1_000.0, 0.0),
-            point_in: MapPoint::new(1_000.0, 0.0),
-            ..Default::default()
-        }];
-        let mut sequences = SequenceManager::new();
-
-        assert_eq!(
-            seek_area_friend_contribution(
-                &sequences, friend, owner, raw_owner, raw_friend, &doors, false,
-            ),
-            Some(false),
-            "raw owner position keeps the friend inside the 500-unit radius"
-        );
-
-        let mut pass = SequenceElement::new_movement(
-            1,
-            Command::PassDoor,
-            Some(owner),
-            OrderType::WalkingUpright,
-        );
-        let SequenceElementData::Movement {
-            gate_id, direction, ..
-        } = &mut pass.data
-        else {
-            panic!("PassDoor test element changed kind")
-        };
-        *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
-        *direction = 1;
-        let sequence_id = sequences.launch_element(pass);
-        sequences.element_in_progress(sequence_id, 0);
-
-        assert_eq!(
-            seek_area_friend_contribution(
-                &sequences, friend, owner, raw_owner, raw_friend, &doors, false,
-            ),
-            None,
-            "Original Position(owner) publishes the committed PassDoor side"
-        );
-    }
 }
 
 impl EngineInner {
@@ -3021,7 +2682,7 @@ fn context_original_creation_order(
 /// engine entity table. Returns `(position, posture, current
 /// animation, optional carrier position when the target is on
 /// another entity's shoulders)`. Used by the per-tick caller to
-/// populate [`AiPerTickData::primary_target_position`] and its
+/// populate [`crate::ai::AiPerTickData::primary_target_position`] and its
 /// siblings so [`EnemyAi::reconsider_enemy_approach`] sees the live
 /// target's position, posture, and current order.
 ///
@@ -3356,49 +3017,6 @@ pub(super) fn precompute_avenger_on_roof_wait_position(
     })
 }
 
-/// Build a `MyExitDoorInfo` snapshot from the AI's stashed
-/// `my_door_index`.  Strict semantics: returns `None` when no door has
-/// been stashed upstream.  The stash is set by paths that explicitly
-/// choose an exit door (MerryMan flee, RunAndAlertSoldiers); a
-/// directly-invoked indoor AlertSoldiers without an upstream stash
-/// refuses to project gather slots.
-pub(super) fn build_my_exit_door_info(
-    stashed_index: Option<crate::gate::DoorIndex>,
-    doors: &[crate::gate::Door],
-) -> Option<crate::ai::MyExitDoorInfo> {
-    use crate::ai::MyExitDoorInfo;
-    let idx = stashed_index?;
-    let door = doors.get(usize::from(idx))?;
-    let sector_out = crate::position_interface::SectorHandle::new(u16::from(door.sector_out));
-    let position_out = crate::ai::Position {
-        x: door.point_out.x,
-        y: door.point_out.y,
-        sector: sector_out,
-        level: door.layer_out,
-    };
-    Some(MyExitDoorInfo {
-        point_out: door.point_out,
-        point_mid: door.point_mid,
-        layer_out: door.layer_out,
-        sector_out,
-        position_out,
-    })
-}
-
-/// Build the per-tick [`SharedAiEntityViews`] map from the live
-/// entity store.
-///
-/// Called by [`EngineInner::build_sim_scratch`] at the start of each
-/// AI dispatch pass so the map reflects current entity
-/// positions / states. Includes every PC, soldier, civilian, and active
-/// object-hierarchy entity. Human views include inactive actors because normal
-/// Human detection ignores activity in its same-building branch; inactive
-/// objects remain excluded. All views require a populated layer; the shared
-/// snapshot separately records present entities excluded by that requirement.
-pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
-    build_entity_views_and_stamps(engine, None)
-}
-
 impl EngineInner {
     /// Read AI Position directly, including selected door endpoints
     /// and carried-PC substitution, without constructing an entity-view world.
@@ -3435,83 +3053,30 @@ impl EngineInner {
     }
 }
 
-fn entity_views_nets_generation(engine: &EngineInner) -> u64 {
-    engine.world.entities.nets().fold(0_u64, |stamp, (id, _)| {
-        stamp.rotate_left(7) ^ u64::from(id.index()) ^ engine.world.entities.generation(id)
-    })
-}
-
-fn pc_in_coma_for_view(engine: &EngineInner, entity: &Entity) -> bool {
-    let Entity::Pc(pc) = entity else {
-        return false;
-    };
-    let description_index = pc
-        .pc
-        .campaign_description_index
-        .unwrap_or_else(|| panic!("live PC is missing its required campaign-description identity"));
-    engine
-        .mission_domain
-        .campaign
-        .characters
-        .get(description_index as usize)
-        .unwrap_or_else(|| {
-            panic!(
-                "live PC campaign-description index {description_index} is outside the campaign character table"
-            )
-        })
-        .status
-        .in_coma
-}
-
-fn entity_view_stamp(
-    engine: &EngineInner,
-    entity_id: EntityId,
-    entity: &Entity,
-    nets_generation: u64,
-) -> AiEntityViewStamp {
-    let position_dependency_generation = match entity {
-        Entity::Pc(pc) if pc.element.posture() == crate::element::Posture::OnShoulders => pc
-            .human
-            .carrier
-            .map(|carrier| engine.world.entities.generation(carrier))
-            .unwrap_or_else(|| {
-                panic!("on-shoulders PC {entity_id:?} has no carrier for AI Position")
-            }),
-        _ => 0,
-    };
-    AiEntityViewStamp {
-        entity_generation: engine.world.entities.generation(entity_id),
-        position_dependency_generation,
-        current_animation: engine
-            .live_actor_animation(entity_id)
-            .unwrap_or(crate::order::OrderType::NonanimationEnd),
-        selected_door: matches!(
-            entity,
-            Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
-        )
-        .then(|| selected_pass_door_movement(&engine.orders.sequence_manager, entity_id))
-        .flatten(),
-        building_sector: engine.entity_building_sector(entity.element_data().sector()),
-        in_coma: pc_in_coma_for_view(engine, entity),
-        nets_generation,
-    }
-}
-
 fn build_one_entity_view(
     engine: &EngineInner,
     doors_ref: &[crate::gate::Door],
     nets_by_victim: &mut std::collections::HashMap<u32, Vec<ai_entity_view::NetCoverInfo>>,
     entity_id: EntityId,
     entity: &Entity,
-    stamp: AiEntityViewStamp,
 ) -> ai_entity_view::AiEntityView {
+    let building_sector = engine.entity_building_sector(entity.element_data().sector());
+    let current_animation = engine
+        .live_actor_animation(entity_id)
+        .unwrap_or(crate::order::OrderType::NonanimationEnd);
+    let selected_door = matches!(
+        entity,
+        Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
+    )
+    .then(|| selected_pass_door_movement(&engine.orders.sequence_manager, entity_id))
+    .flatten();
     let mut view = ai_entity_view::entity_view_from_entity(
         entity,
         engine.world.original_creation_order(entity_id),
-        stamp.building_sector.is_some(),
-        stamp.building_sector,
+        building_sector.is_some(),
+        building_sector,
         Some(&engine.mission_domain.campaign),
-        stamp.current_animation,
+        current_animation,
     );
 
     if matches!(
@@ -3522,7 +3087,7 @@ fn build_one_entity_view(
             &engine.world.entities,
             doors_ref,
             entity_id,
-            stamp.selected_door,
+            selected_door,
             |position_id| {
                 let position_element = engine
                     .expect_entity(position_id, "AI entity-view position owner")
@@ -3547,8 +3112,7 @@ fn build_one_entity_view(
     if matches!(
         entity,
         Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
-    ) && let Some(input) =
-        extract_exact_forecast_input(engine, entity, stamp.selected_door.is_some())
+    ) && let Some(input) = extract_exact_forecast_input(engine, entity, selected_door.is_some())
     {
         view.forecasted_destination = crate::ai::prepare_forecast_destination_for_ia(
             &input,
@@ -3980,10 +3544,8 @@ fn build_nets_by_victim(
     nets_by_victim
 }
 
-fn build_entity_views_and_stamps(
-    engine: &EngineInner,
-    mut stamps: Option<&mut std::collections::HashMap<u32, AiEntityViewStamp>>,
-) -> AiEntityViewMap {
+/// Capture spatial entities for callers that still need a complete observation.
+pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     let _detail =
         super::tick::entity_system_detail_guard(super::tick::EntitySystemDetail::BuildEntityViews);
     // Scratch views are also built by empty/pre-script engine fixtures.  Door
@@ -4005,33 +3567,17 @@ fn build_entity_views_and_stamps(
     // Net radius: 10 when crumpled, else 40.
     let mut nets_by_victim = build_nets_by_victim(engine);
 
-    let nets_generation = entity_views_nets_generation(engine);
     let mut map = ai_entity_view::take_entity_view_map(engine.world.entities.len());
-    if let Some(stamps) = stamps.as_mut() {
-        stamps.clear();
-        stamps.reserve(engine.world.entities.len());
-    }
     for (entity_id, entity) in engine.world.entities.occupied() {
         if !entity_has_ai_view(entity) {
             continue;
         }
-        let stamp = entity_view_stamp(engine, entity_id, entity, nets_generation);
-        let view = build_one_entity_view(
-            engine,
-            doors_ref,
-            &mut nets_by_victim,
-            entity_id,
-            entity,
-            stamp,
-        );
+        let view = build_one_entity_view(engine, doors_ref, &mut nets_by_victim, entity_id, entity);
 
         // AI handle == entity slot index (see `FighterSnapshot.handle =
         // target_id.index()` elsewhere, and `self.world.entities.get_mut(target as
         // usize)` for `CrossNpcAction` handlers).
         map.insert(entity_id.index(), view);
-        if let Some(stamps) = stamps.as_mut() {
-            stamps.insert(entity_id.index(), stamp);
-        }
     }
     map
 }
@@ -4042,308 +3588,6 @@ fn entity_has_ai_view(entity: &Entity) -> bool {
     // by loaded actor state; neither has a valid AI Position until a real
     // layer is installed again.
     crate::ai_entity_view::entity_view_unavailable(entity).is_none()
-}
-
-fn refresh_prepared_entity_views(
-    engine: &EngineInner,
-    cache: &mut PreparedAiEntityViewCache,
-) -> usize {
-    let _detail =
-        super::tick::entity_system_detail_guard(super::tick::EntitySystemDetail::BuildEntityViews);
-    if cache.views.is_none() {
-        let entities = build_entity_views_and_stamps(engine, Some(&mut cache.stamps));
-        cache.views = Some(engine.share_ai_entity_views(entities));
-        let rebuilt = cache.stamps.len();
-        return rebuilt;
-    }
-
-    let doors_ref = engine
-        .scripts
-        .mission
-        .as_ref()
-        .map(|_| engine.script_domains.interactables.doors.as_slice())
-        .unwrap_or(&[]);
-    let nets_generation = entity_views_nets_generation(engine);
-    let mut nets_by_victim = build_nets_by_victim(engine);
-    let live_slots = &mut cache.live_slots;
-    live_slots.clear();
-    live_slots.resize(engine.world.entities.len(), false);
-    let shared = cache
-        .views
-        .as_mut()
-        .expect("prepared AI entity-view cache disappeared");
-    let views = std::sync::Arc::get_mut(shared).unwrap_or_else(|| {
-        panic!("prepared AI entity views escaped their synchronous owner dispatch")
-    });
-
-    views.unavailable_entities.clear();
-    let mut rebuilt = 0;
-    for (entity_id, entity) in engine.world.entities.occupied() {
-        if let Some(reason) = crate::ai_entity_view::entity_view_unavailable(entity) {
-            views.unavailable_entities.insert(entity_id.index(), reason);
-            continue;
-        }
-        let index = entity_id.index();
-        live_slots[index as usize] = true;
-        let stamp = entity_view_stamp(engine, entity_id, entity, nets_generation);
-        if cache.stamps.get(&index) == Some(&stamp) {
-            continue;
-        }
-        let view = build_one_entity_view(
-            engine,
-            doors_ref,
-            &mut nets_by_victim,
-            entity_id,
-            entity,
-            stamp,
-        );
-        views.entities.insert(index, view);
-        cache.stamps.insert(index, stamp);
-        rebuilt += 1;
-    }
-    views
-        .entities
-        .retain(|index, _| live_slots.get(*index as usize).copied().unwrap_or(false));
-    cache
-        .stamps
-        .retain(|index, _| live_slots.get(*index as usize).copied().unwrap_or(false));
-    views.building_authorizations = engine.building_authorizations_for_ai_views();
-    views.diplomacy = engine.mission_domain.diplomacy.clone();
-    rebuilt
-}
-
-#[cfg(test)]
-mod prepared_entity_view_cache_tests {
-    use super::*;
-    use crate::coordinates::MapPoint;
-    use crate::element::{
-        ActorData, ActorSoldier, AiBrain, ElementBonus, ElementData, ElementKind,
-        ElementProjectile, HumanData, NpcData, ObjectData, ProjectileData, SoldierData,
-    };
-    use crate::element_kinds::ObjectType;
-
-    fn active_bonus(x: f32) -> Entity {
-        let mut element = {
-            let mut initial_element = ElementData::default();
-            initial_element.active = true;
-            initial_element
-        };
-        element.set_position_map(MapPoint::new(x, 0.0));
-        Entity::Bonus(ElementBonus {
-            element,
-            object: ObjectData::default(),
-        })
-    }
-
-    fn active_coin_projectile(x: f32) -> Entity {
-        let mut element = {
-            let mut initial_element = ElementData::default();
-            initial_element.active = true;
-            initial_element
-        };
-        element.set_position_map(MapPoint::new(x, 0.0));
-        Entity::Projectile(ElementProjectile {
-            element,
-            object: ObjectData {
-                object_type: ObjectType::Coin,
-                ..Default::default()
-            },
-            projectile: ProjectileData::default(),
-        })
-    }
-
-    fn active_soldier_without_layer() -> Entity {
-        let mut element = {
-            let mut initial_element = ElementData::default();
-            initial_element.kind = ElementKind::ActorSoldier;
-            initial_element.active = true;
-            initial_element
-        };
-        element.clear_layer();
-        Entity::Soldier(ActorSoldier {
-            element,
-            actor: ActorData::default(),
-            human: HumanData::default(),
-            npc: NpcData {
-                ai: crate::element::AiActorData {
-                    ai_brain: AiBrain::Enemy(Box::default()),
-                    ..Default::default()
-                },
-                ..NpcData::default()
-            },
-            soldier: SoldierData::default(),
-        })
-    }
-
-    #[test]
-    fn observation_classification_tracks_layer_admission_and_removal() {
-        use crate::ai_entity_view::AiObservationUnavailable as Unavailable;
-        let mut engine = EngineInner::new();
-        let observed = engine.add_test_entity(active_bonus(10.0));
-        let missing_layer = engine.add_test_entity(active_soldier_without_layer());
-        let mut excluded = active_bonus(20.0);
-        excluded.element_data_mut().active = false;
-        let excluded = engine.add_test_entity(excluded);
-        let mut cache = PreparedAiEntityViewCache::default();
-        refresh_prepared_entity_views(&engine, &mut cache);
-
-        {
-            let ctx = AiContext {
-                entity_views: cache.views.as_ref().unwrap().clone(),
-                ..AiContext::test_fixture()
-            };
-            assert!(ctx.entity_observation(observed.index()).is_ok());
-            assert_eq!(
-                ctx.entity_observation(missing_layer.index()).unwrap_err(),
-                Unavailable::MissingLayer
-            );
-            assert_eq!(
-                ctx.entity_observation(excluded.index()).unwrap_err(),
-                Unavailable::ExcludedEntity
-            );
-            assert_eq!(
-                ctx.entity_observation(u32::MAX).unwrap_err(),
-                Unavailable::EntityAbsent
-            );
-            assert_eq!(
-                ctx.entity_observation(None::<crate::ai::AiEntityHandle>)
-                    .unwrap_err(),
-                Unavailable::NoHandle
-            );
-        }
-
-        engine
-            .world
-            .entities
-            .get_mut(missing_layer)
-            .unwrap()
-            .element_data_mut()
-            .set_layer(0);
-        engine
-            .world
-            .entities
-            .get_mut(observed)
-            .unwrap()
-            .element_data_mut()
-            .clear_layer();
-        engine.world.entities.remove(excluded).unwrap();
-        refresh_prepared_entity_views(&engine, &mut cache);
-        {
-            let ctx = AiContext {
-                entity_views: cache.views.as_ref().unwrap().clone(),
-                ..AiContext::test_fixture()
-            };
-            assert!(ctx.entity_observation(missing_layer.index()).is_ok());
-            assert_eq!(
-                ctx.entity_observation(observed.index()).unwrap_err(),
-                Unavailable::MissingLayer
-            );
-            assert_eq!(
-                ctx.entity_observation(excluded.index()).unwrap_err(),
-                Unavailable::EntityAbsent
-            );
-        }
-        engine.world.entities.remove(observed).unwrap();
-        refresh_prepared_entity_views(&engine, &mut cache);
-        let ctx = AiContext {
-            entity_views: cache.views.as_ref().unwrap().clone(),
-            ..AiContext::test_fixture()
-        };
-        assert_eq!(
-            ctx.entity_observation(observed.index()).unwrap_err(),
-            Unavailable::EntityAbsent
-        );
-    }
-
-    #[test]
-    fn unchanged_views_are_reused_and_mutable_slot_access_invalidates_only_that_slot() {
-        let mut engine = EngineInner::new();
-        let first = engine.add_test_entity(active_bonus(10.0));
-        let second = engine.add_test_entity(active_bonus(20.0));
-        let mut cache = PreparedAiEntityViewCache::default();
-
-        assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 2);
-        assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 0);
-
-        engine
-            .world
-            .entities
-            .get_mut(first)
-            .expect("first bonus")
-            .element_data_mut()
-            .set_position_map(MapPoint::new(30.0, 0.0));
-        assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 1);
-        let views = cache.views.as_ref().expect("cached views");
-        assert_eq!(views[&first.index()].position.x, 30.0);
-        assert_eq!(views[&second.index()].position.x, 20.0);
-    }
-
-    #[test]
-    fn active_projectile_coin_is_available_to_ai_object_handle_lookups() {
-        let mut engine = EngineInner::new();
-        let coin = engine.add_test_entity(active_coin_projectile(42.0));
-        let mut cache = PreparedAiEntityViewCache::default();
-
-        assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 1);
-        let views = cache.views.as_ref().expect("cached views");
-        assert_eq!(views[&coin.index()].position.x, 42.0);
-        assert_eq!(views[&coin.index()].object_type, ObjectType::Coin);
-        assert_eq!(
-            views[&coin.index()].entity_id(coin.index()),
-            Some(coin),
-            "AI object handles must preserve the projectile-derived entity identity"
-        );
-
-        engine
-            .world
-            .entities
-            .get_mut(coin)
-            .expect("coin projectile")
-            .element_data_mut()
-            .active = false;
-        assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 0);
-        assert!(
-            !cache
-                .views
-                .as_ref()
-                .expect("cached views")
-                .contains_key(&coin.index())
-        );
-    }
-
-    #[test]
-    fn active_projectile_without_layer_is_not_published_to_spatial_ai() {
-        let mut engine = EngineInner::new();
-        let mut coin = active_coin_projectile(42.0);
-        coin.element_data_mut().clear_layer();
-        let coin = engine.add_test_entity(coin);
-        let mut cache = PreparedAiEntityViewCache::default();
-
-        assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 0);
-        assert!(
-            !cache
-                .views
-                .as_ref()
-                .expect("cached views")
-                .contains_key(&coin.index())
-        );
-    }
-
-    #[test]
-    fn loaded_actor_without_layer_is_not_published_to_spatial_ai() {
-        let mut engine = EngineInner::new();
-        let soldier = engine.add_test_entity(active_soldier_without_layer());
-        let mut cache = PreparedAiEntityViewCache::default();
-
-        assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 0);
-        assert!(
-            !cache
-                .views
-                .as_ref()
-                .expect("cached views")
-                .contains_key(&soldier.index())
-        );
-    }
 }
 
 impl EngineInner {
@@ -4678,14 +3922,7 @@ impl EngineInner {
                 crate::ai::StimulusType::EventPanic,
                 panic_center,
             );
-            self.dispatch_think_with_drain(
-                sim,
-                npc_id,
-                &stimulus,
-                &ctx,
-                &AiPerTickData::stub(),
-                assets,
-            );
+            self.dispatch_think_with_drain(sim, npc_id, &stimulus, None, assets);
         }
     }
 
@@ -4815,27 +4052,10 @@ impl EngineInner {
                 continue;
             }
 
-            // Build per-civilian AiContext and dispatch EVENT_PANIC.
-            let ctx = {
-                let Some(entity) = self.world.entities.get(npc_id) else {
-                    continue;
-                };
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    None,
-                    &scratch,
-                    assets,
-                )
-            };
-
             let stimulus = crate::ai::Stimulus::with_position(
                 crate::ai::StimulusType::EventPanic,
                 panic_center,
             );
-            // Civilian EventPanic: FriendlyAi — no combat tick data
-            // consumed, stub is correct.
-            let tick_data = AiPerTickData::stub();
             // nearby-civilian panic directly sends the stimulus to the NPC.
             // Close that recipient's complete owner-local Think boundary:
             // EVENT_PANIC chooses a door and queues movement, whose
@@ -4843,7 +4063,7 @@ impl EngineInner {
             // caller resumes. A raw dispatch plus manual PanicRequest drain
             // left the movement stranded in the civilian outbox until its next
             // owner slot.
-            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
+            self.dispatch_think_with_drain(sim, npc_id, &stimulus, None, assets);
         }
     }
 
@@ -4960,7 +4180,6 @@ impl EngineInner {
         // with the still-active VM stack, so the replacement transition is
         // constructed from this call frame's position just like Original.
         self.launch_pending_orders_for_npc(sim, assets, npc_id);
-        let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
     }
 
     /// Drain a queued [`PanicRequest`] on a single NPC.
@@ -5201,7 +4420,6 @@ impl EngineInner {
             // the same call. Resolve this owner's queued move before reading
             // `couldnt_reachpoint`.
             self.launch_pending_orders_for_npc(sim, assets, npc_id);
-            self.drain_pending_move_requests_for_owner(sim, npc_id);
             let couldnt_reachpoint = self
                 .world
                 .entities
@@ -5232,7 +4450,6 @@ impl EngineInner {
                         ai.go_to(retry_door, crate::ai::GotoFlags::RUN, ctx);
                     }
                     self.launch_pending_orders_for_npc(sim, assets, npc_id);
-                    self.drain_pending_move_requests_for_owner(sim, npc_id);
                     let retry_failed = self
                         .world
                         .entities

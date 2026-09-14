@@ -485,7 +485,7 @@ impl EnemyAi {
             }
 
             Substate::WonderingBrawlRecovering => {
-                self.wondering_brawl_recovering(stimulus_type, ctx, tick)
+                self.wondering_brawl_recovering(stimulus_type, ctx, tick)?
             }
 
             Substate::WonderingApproachingToLoot => {
@@ -501,7 +501,7 @@ impl EnemyAi {
             }
 
             Substate::WonderingOfficerApproachingBrawl => {
-                self.wondering_officer_approaching_brawl(stimulus_type, ctx, tick)
+                self.wondering_officer_approaching_brawl(stimulus_type, ctx, tick)?
             }
 
             Substate::WonderingOfficerFinishingBrawl => {
@@ -724,49 +724,16 @@ impl EnemyAi {
 
     fn wondering_watching_for_more_money(
         &mut self,
-        env: ThinkEnv<'_>,
+        _env: ThinkEnv<'_>,
         stimulus_type: StimulusType,
-    ) -> crate::ai::AiFlow<bool> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        match stimulus_type {
-            StimulusType::EventTimer => {
-                self.return_to_duty_default(env)?;
-            }
-            // When the sideways-look sequence finishes, scan for
-            // nearby KO'd money-fight victims and either approach
-            // to loot or return to duty.
-            StimulusType::EventDone => {
-                self.create_list_of_near_money_fight_victims(ctx, tick);
-
-                while self.money_fight_victims.first().is_some_and(|h| {
-                    ctx.expect_entity_view(*h as HumanHandle, "money-fight victim")
-                        .looted_after_money_fight
-                }) {
-                    self.money_fight_victims.remove(0);
-                }
-
-                if !self.money_fight_victims.is_empty() {
-                    let next = self.money_fight_victims.remove(0);
-                    self.base.detected_body = Some(AiEntityHandle::new(next));
-                    self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::SetLootedAfterMoneyFight {
-                            target: next,
-                            looted: true,
-                        },
-                    );
-                    self.set_state(AiState::Wondering, Substate::WonderingApproachingToLoot);
-                    let view = ctx.expect_entity_view(next as HumanHandle, "money-fight victim");
-                    self.base.go_near(
-                        view.position,
-                        parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
-                        crate::ai::GotoFlags::empty(),
-                        ctx,
-                    );
-                } else {
-                    self.return_to_duty_default(env)?;
-                }
-            }
-            _ => {}
+    ) -> AiFlow<bool> {
+        if stimulus_type == StimulusType::EventDone {
+            return Err(DutyCall {
+                tail: crate::ai::DutyTail::MoneyFight {
+                    operation: crate::ai::MoneyFightOperation::CollectOrLootAfterLook,
+                },
+                ..DutyCall::new(DutyFlags::empty(), false)
+            });
         }
         Ok(false)
     }
@@ -1356,65 +1323,6 @@ impl EnemyAi {
         false
     }
 
-    pub(crate) fn brawl_hitting_notify_officer(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
-        self.maybe_officer_sees_me_fighting(ctx, tick);
-    }
-
-    pub(crate) fn resume_brawl_hitting_after_officer(
-        &mut self,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) {
-        // Remove KO'd target from the enemy list.
-        if let Some(friend_in_trouble) = self.base.friend_in_trouble {
-            let fit = friend_in_trouble.get();
-            let is_unconscious = ctx
-                .expect_entity_view(fit as HumanHandle, "brawl-hitting friend")
-                .is_unconscious;
-            if is_unconscious {
-                self.money_fight_enemies.retain(|h| *h != fit);
-            }
-        }
-
-        // Refresh the enemy list if we've run out —
-        // picks up any same-camp soldier that joined the
-        // brawl after our initial snapshot.
-        if self.money_fight_enemies.is_empty() {
-            self.create_new_list_of_money_fight_enemies(tick, ctx);
-        }
-
-        // Morale-gated continue-or-stop.
-        if !self.wants_to_continue_money_fight(tick, ctx) {
-            self.money_fight_enemies.clear();
-            // stop_brawling_and_collect_money().
-            self.stop_brawling_and_collect_money(ctx);
-        } else {
-            // Handle 0 ("no brawl partner") deliberately
-            // fails this gate and falls through to picking
-            // the nearest remaining enemy.
-            let fit_ok = self.base.friend_in_trouble.is_some_and(|friend| {
-                !ctx.expect_entity_view(friend, "brawl-hitting friend")
-                    .is_unconscious
-            });
-            if fit_ok {
-                self.set_state(AiState::Wondering, Substate::WonderingBrawlReactiontime);
-                self.base.face_entity(self.base.friend_in_trouble, ctx);
-                self.base.launch_timer(30, ctx.frame);
-            } else if let Some(next) = self.get_nearest_money_fight_enemy(ctx) {
-                self.base.friend_in_trouble = Some(AiEntityHandle::new(next));
-                self.set_state_with_timer(
-                    AiState::Wondering,
-                    Substate::WonderingBrawlReactiontime,
-                    10,
-                    ctx,
-                );
-            } else {
-                // stop_brawling_and_collect_money().
-                self.stop_brawling_and_collect_money(ctx);
-            }
-        }
-    }
-
     // Brawl-got-hit: pivot to BrawlRecovering, register
     // attacker as new money-fight enemy, set thunderstorm
     // emoticon. If the NPC is lying, queue StandUp; otherwise
@@ -1469,29 +1377,18 @@ impl EnemyAi {
     fn wondering_brawl_recovering(
         &mut self,
         stimulus_type: StimulusType,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> bool {
+        _ctx: &AiContext,
+        _tick: &AiPerTickData,
+    ) -> AiFlow<bool> {
         if stimulus_type == StimulusType::EventDone {
-            // Pick nearest money-fight enemy and approach.
-            if let Some(next) = self.get_nearest_money_fight_enemy(ctx) {
-                self.base.friend_in_trouble = Some(AiEntityHandle::new(next));
-                self.set_state(AiState::Wondering, Substate::WonderingBrawlApproaching);
-                let view = ctx.expect_entity_view(next as HumanHandle, "brawl-recovering enemy");
-                self.base.go_near(
-                    view.position,
-                    parameters_ai::AI_HIT_DISTANCE,
-                    crate::ai::GotoFlags::RUN,
-                    ctx,
-                );
-                // maybe_officer_sees_me_fighting().
-                self.maybe_officer_sees_me_fighting(ctx, tick);
-            } else {
-                // stop_brawling_and_collect_money().
-                self.stop_brawling_and_collect_money(ctx);
-            }
+            return Err(DutyCall {
+                tail: crate::ai::DutyTail::MoneyFight {
+                    operation: crate::ai::MoneyFightOperation::RecoverBrawl,
+                },
+                ..DutyCall::new(DutyFlags::empty(), false)
+            });
         }
-        false
+        Ok(false)
     }
 
     // Reached looting body.  Either re-transition to loot
@@ -1692,23 +1589,24 @@ impl EnemyAi {
         &mut self,
         stimulus_type: StimulusType,
         ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> bool {
-        match stimulus_type {
-            StimulusType::EventReachPoint => {
-                // If already talking, delay finish.
-                if self.base.current_remark != Remark::TheSoundOfSilence {
-                    self.base.launch_timer(50, ctx.frame);
-                } else {
-                    self.begin_finishing_brawl(ctx, tick);
-                }
-            }
-            StimulusType::EventTimer => {
-                self.begin_finishing_brawl(ctx, tick);
-            }
-            _ => {}
+        _tick: &AiPerTickData,
+    ) -> AiFlow<bool> {
+        if stimulus_type == StimulusType::EventReachPoint
+            && self.base.current_remark != Remark::TheSoundOfSilence
+        {
+            self.base.launch_timer(50, ctx.frame);
+        } else if matches!(
+            stimulus_type,
+            StimulusType::EventReachPoint | StimulusType::EventTimer
+        ) {
+            return Err(DutyCall {
+                tail: crate::ai::DutyTail::MoneyFight {
+                    operation: crate::ai::MoneyFightOperation::FinishBrawl,
+                },
+                ..DutyCall::new(DutyFlags::empty(), false)
+            });
         }
-        false
+        Ok(false)
     }
 
     // Finishing-brawl orchestration: chain CallYourTalk1..3,
@@ -1891,7 +1789,7 @@ impl EnemyAi {
                 self.base.launch_timer(100, ctx.frame);
             } else if look_for_soldiers {
                 // Find a soldier to investigate the noise report.
-                self.officer_look_for_soldier(ReportType::Noise, ctx, tick);
+                self.officer_look_for_soldier(ReportType::Noise)?;
             } else {
                 // Search around seek_position with radius
                 // (MAX_WHISTLE_SEEK_RADIUS * (whistle - 2)) / 98,
@@ -2014,7 +1912,9 @@ impl EnemyAi {
                 self.seeking_just_watching_sidewards(env, stimulus_type)?
             }
 
-            Substate::SeekingBodyReactiontime => self.seeking_body_reactiontime(stimulus_type, env),
+            Substate::SeekingBodyReactiontime => {
+                self.seeking_body_reactiontime(stimulus_type, env)?
+            }
 
             Substate::SeekingBody => self.seeking_body(stimulus_type, global, env)?,
 
@@ -2780,7 +2680,7 @@ impl EnemyAi {
                     self.return_to_duty_default(env)?;
                 }
                 ProfileRank::Officer => {
-                    self.officer_look_for_soldier(ReportType::Noise, ctx, tick);
+                    self.officer_look_for_soldier(ReportType::Noise)?;
                 }
                 ProfileRank::Knight | ProfileRank::None => {}
             }
@@ -2792,7 +2692,7 @@ impl EnemyAi {
         &mut self,
         stimulus_type: StimulusType,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         let ThinkEnv { ctx, tick, .. } = env;
         if stimulus_type == StimulusType::EventTimer {
             // Body-reactiontime expiry branches on rank:
@@ -2876,13 +2776,13 @@ impl EnemyAi {
                 self.base.launch_timer(100, ctx.frame);
             } else if look_for_soldiers {
                 // Find a soldier to investigate the body report.
-                self.officer_look_for_soldier(ReportType::Body, ctx, tick);
+                self.officer_look_for_soldier(ReportType::Body)?;
             } else {
                 // Run to examine the body.
                 self.run_to_examine_body(body.get(), env);
             }
         }
-        false
+        Ok(false)
     }
 
     fn seeking_body(
@@ -2963,7 +2863,7 @@ impl EnemyAi {
                                 0,
                                 env,
                                 AlertSoldiersFailureContinuation::SeekMissingInstructedSoldier,
-                            ) {
+                            )? {
                                 self.seek_area(
                                     env,
                                     ctx.position,
@@ -3171,7 +3071,7 @@ impl EnemyAi {
                     flags,
                     env,
                     AlertSoldiersFailureContinuation::ReturnToDuty,
-                ) {
+                )? {
                     self.return_to_duty_default(env)?;
                 }
             }
@@ -3344,7 +3244,7 @@ impl EnemyAi {
                         0,
                         env,
                         AlertSoldiersFailureContinuation::ReturnToDuty,
-                    ) {
+                    )? {
                         self.return_to_duty_default(env)?;
                     }
                 }
@@ -3359,40 +3259,9 @@ impl EnemyAi {
                             global,
                         )?;
                     } else {
-                        let returns_to_instructed_group =
-                            self.alert_officer_returns_to_instructed_group(tick);
-                        let alerted = self.alert_officer(env, seek_pos, 0);
-                        if alerted && !returns_to_instructed_group {
-                            // The original game constructs the officer-alert approach route
-                            // inline, then its returned bool controls this
-                            // statement's area-search fallback. Close the actor
-                            // prefix so the engine can construct that route,
-                            // and resume this exact tail before decision completion can
-                            // translate failure into an independent event.
-                            self.base.outbox.reentrant.owner_work.push(
-                                crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                                    &mut self.base.outbox.actor,
-                                )),
-                            );
-                            self.base
-                                .outbox
-                                .reentrant
-                                .civilian_report_alert_officer_completion_pending = true;
-                            self.base.outbox.reentrant.owner_work.push(
-                                crate::ai::AiOwnerWork::ResumeCivilianReportAfterAlertOfficer {
-                                    seek_position: seek_pos,
-                                },
-                            );
-                        } else if !alerted {
-                            self.seek_area(
-                                env,
-                                seek_pos,
-                                parameters_ai::AI_HINT_SEEK_RADIUS as u16,
-                                SeekFlags::LOCATION_FIRST,
-                                UNDEFINED_DIRECTION,
-                                global,
-                            )?;
-                        }
+                        self.alert_officer(crate::ai::OfficerAlertCaller::SeekHint {
+                            center: seek_pos,
+                        })?;
                     }
                 }
                 ProfileRank::Knight => {
@@ -3414,26 +3283,6 @@ impl EnemyAi {
     /// Resume the statement after the soldier-report branch's synchronous
     /// officer-alert call. A failed route is consumed by officer alerting and
     /// makes the caller seek around the retained civilian report position.
-    pub(crate) fn resume_civilian_report_after_alert_officer(
-        &mut self,
-        env: ThinkEnv<'_>,
-        seek_position: Position,
-        global: &mut AiGlobalState,
-    ) -> crate::ai::AiFlow<()> {
-        if !self.base.couldnt_reachpoint {
-            return Ok(());
-        }
-        self.base.couldnt_reachpoint = false;
-        self.seek_area(
-            env,
-            seek_position,
-            parameters_ai::AI_HINT_SEEK_RADIUS as u16,
-            SeekFlags::LOCATION_FIRST,
-            UNDEFINED_DIRECTION,
-            global,
-        )?;
-        Ok(())
-    }
 
     // ============ OFFICER-SOLDIER COORDINATION ============
 
@@ -3614,7 +3463,7 @@ impl EnemyAi {
                                 0,
                                 env,
                                 AlertSoldiersFailureContinuation::SeekMissingInstructedSoldier,
-                            ) {
+                            )? {
                                 self.seek_area(
                                     env,
                                     ctx.position,
@@ -3635,7 +3484,7 @@ impl EnemyAi {
                             0,
                             env,
                             AlertSoldiersFailureContinuation::SeekMissingInstructedSoldier,
-                        ) {
+                        )? {
                             self.seek_area(
                                 env,
                                 ctx.position,
@@ -3921,7 +3770,7 @@ impl EnemyAi {
                 self.seek_flags.bits(),
                 env,
                 AlertSoldiersFailureContinuation::ReturnToDuty,
-            )
+            )?
         {
             self.return_to_duty_default(env)?;
         }
@@ -4488,9 +4337,7 @@ impl EnemyAi {
                     }
                 } else {
                     // Officer busy — look for another
-                    if !self.alert_officer(env, self.base.seek_position, 0) {
-                        self.return_to_duty_default(env)?;
-                    }
+                    self.alert_officer(crate::ai::OfficerAlertCaller::ReturnToDuty)?;
                 }
             }
             _ => {}
@@ -4564,7 +4411,7 @@ impl EnemyAi {
                     0,
                     env,
                     AlertSoldiersFailureContinuation::ReturnToDuty,
-                ) =>
+                )? =>
             {
                 self.return_to_duty_default(env)?;
             }
@@ -5648,7 +5495,7 @@ impl EnemyAi {
                         seek_flags_bits,
                         env,
                         AlertSoldiersFailureContinuation::FleeingRunToDoor,
-                    );
+                    )?;
                     if !alerted {
                         // Fire a self-stimulus so the re-delivery happens
                         // on the next think rather than recursing here
@@ -5677,7 +5524,7 @@ impl EnemyAi {
                 }) {
                     self.battle_decisions(env, global)?;
                 } else {
-                    self.get_battle_overview(0, env);
+                    self.get_battle_overview(0, env)?;
                 }
             }
 

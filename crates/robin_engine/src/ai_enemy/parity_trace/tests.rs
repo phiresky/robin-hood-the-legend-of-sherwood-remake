@@ -65,24 +65,6 @@ fn seekarea_selection_summary_line_is_byte_stable() {
 }
 
 #[test]
-fn reconsider_them_candidate_line_is_byte_stable() {
-    let line = super::ReconsiderThemCandidate {
-        frame: &3u32,
-        owner: &42u32,
-        fighter: &17u32,
-        friendly: &true,
-        able: &false,
-        distance: &(-0.0f32),
-        result: &"not\"detected\n",
-    }
-    .to_string();
-    assert_eq!(
-        line,
-        r#"RECONSIDER {"event":"them_candidate","frame":3,"owner":42,"fighter":17,"friendly":true,"able":false,"distance":-0,"result":"not\"detected\n"}"#
-    );
-}
-
-#[test]
 fn seekarea_caller_line_is_byte_stable() {
     let line = super::SeekAreaCaller {
         frame: 11,
@@ -140,24 +122,6 @@ fn seekarea_phase6_lines_are_byte_stable() {
             r#"SEEKAREA {"event":"phase6_personal1","frame":11,"owner_creation_order":5,"constructor":"direction","inserted_id":1111,"list_size":1}"#,
             r#"SEEKAREA {"event":"phase6_after","frame":11,"owner_creation_order":5,"personal2_inserted":false,"personal2_constructor":"none","list_size":3}"#,
         ]
-    );
-}
-
-#[test]
-fn reconsider_us_candidate_line_is_byte_stable() {
-    let line = super::ReconsiderJson::UsCandidate {
-        frame: 3,
-        owner: 42,
-        fighter: 17,
-        friendly: true,
-        able: true,
-        distance_uword: 65535,
-        result: "self",
-    }
-    .to_string();
-    assert_eq!(
-        line,
-        r#"RECONSIDER {"event":"us_candidate","frame":3,"owner":42,"fighter":17,"friendly":true,"able":true,"distance_uword":65535,"result":"self"}"#
     );
 }
 

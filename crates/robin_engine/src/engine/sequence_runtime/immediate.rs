@@ -296,7 +296,6 @@ impl EngineInner {
                     // Registering a sequence element to go queues
                     // that ordinary Move for its manager-update phase.
                     self.drain_direct_ai_owner_boundary(sim, owner, assets);
-                    self.drain_pending_move_requests_for_owner(sim, owner);
                 }
                 self.orders
                     .sequence_manager

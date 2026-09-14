@@ -7009,8 +7009,8 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
-    ) {
-        self.launch_pending_orders_for_npc_after_halt(sim, assets, entity_id, false);
+    ) -> Vec<crate::sequence::SequenceId> {
+        self.launch_pending_orders_for_npc_after_halt(sim, assets, entity_id, false)
     }
 
     pub(super) fn launch_pending_orders_for_npc_after_halt(
@@ -7019,7 +7019,28 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
         halt_already_applied: bool,
-    ) {
+    ) -> Vec<crate::sequence::SequenceId> {
+        self.launch_ai_orders(sim, assets, entity_id, halt_already_applied, false)
+    }
+
+    /// Launch the single movement admitted by the live movement call.
+    pub(in crate::engine) fn launch_preflighted_ai_move(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) -> Vec<crate::sequence::SequenceId> {
+        self.launch_ai_orders(sim, assets, entity_id, false, true)
+    }
+
+    fn launch_ai_orders(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        halt_already_applied: bool,
+        movement_preflighted: bool,
+    ) -> Vec<crate::sequence::SequenceId> {
         let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
             && crate::ai_enemy::decision_path_debug_matches_raw(
                 self.control.frame_counter,
@@ -7039,10 +7060,10 @@ impl EngineInner {
         // `Think(EventDone)`.
         let (has_pending_orders, take_halt) = {
             let Some(entity) = self.world.entities.get_mut(entity_id) else {
-                return;
+                return Vec::new();
             };
             let Some(ai) = entity.ai_controller_mut() else {
-                return;
+                return Vec::new();
             };
             let halt = ai.outbox.actor.halt;
             ai.outbox.actor.halt = false;
@@ -7053,17 +7074,24 @@ impl EngineInner {
         }
         let had_explicit_halt = halt_already_applied || take_halt;
         if !has_pending_orders {
-            return;
+            return Vec::new();
         }
         let intents: Vec<crate::order::AiOrderIntent> = {
             let Some(entity) = self.world.entities.get_mut(entity_id) else {
-                return;
+                return Vec::new();
             };
             let Some(ai) = entity.ai_controller_mut() else {
-                return;
+                return Vec::new();
             };
             ai.take_pending_orders()
         };
+        if movement_preflighted {
+            assert_eq!(
+                intents.len(),
+                1,
+                "live movement must launch its own single order"
+            );
+        }
         if debug_decision_path {
             let (couldnt_reachpoint, already_on_point, owner_work) = self
                 .world
@@ -7090,12 +7118,7 @@ impl EngineInner {
                 owner_work,
             );
         }
-        // Once authorized movement has deferred the live path-waiter's tail
-        // halt, later movement requests in the same authored batch observe the
-        // post-Halt state. The request drain preserves FIFO, so the marked
-        // first replacement is constructed and cancelled before those later
-        // moves are built.
-        let mut path_waiter_tail_deferred = false;
+        let mut launched_moves = Vec::new();
         for intent in intents {
             let is_movement = matches!(
                 intent.order_type,
@@ -7119,42 +7142,25 @@ impl EngineInner {
                 | OrderType::WalkingCrouched
                 | OrderType::WalkingAlerted
                 | OrderType::RiderCharging => {
-                    let was_computing_path = !path_waiter_tail_deferred
-                        && self
-                            .orders
-                            .sequence_manager
-                            .current_element_for_actor(entity_id)
-                            .and_then(|(sequence_id, element_index)| {
-                                self.orders
-                                    .sequence_manager
-                                    .get_element(sequence_id, element_index)
-                            })
-                            .is_some_and(|element| {
-                                element.command == crate::element::Command::MoveWaiting
-                            });
-                    if was_computing_path {
-                        let ai = self
-                            .world
-                            .entities
-                            .get_mut(entity_id)
-                            .and_then(Entity::ai_controller_mut)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "movement owner {} lost AI while preserving path-waiter provenance",
-                                    entity_id.index()
-                                )
-                            });
-                        if ai.outbox.reentrant.reconsider_approach_completion_pending {
-                            ai.outbox.reentrant.reconsider_approach_replaced_path_waiter = true;
-                        }
-                    }
+                    let was_computing_path = self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(entity_id)
+                        .and_then(|(sequence_id, element_index)| {
+                            self.orders
+                                .sequence_manager
+                                .get_element(sequence_id, element_index)
+                        })
+                        .is_some_and(|element| {
+                            element.command == crate::element::Command::MoveWaiting
+                        });
                     // `find_accessible` / `ask_obstacle` pre-flight
                     // gates.  Run them before the halt so a failure
                     // leaves the outgoing sequence in place rather
                     // than tearing it down only to abandon the new
                     // move.
                     let mut intent = intent;
-                    if !self.preflight_ai_goto(entity_id, &mut intent) {
+                    if !movement_preflighted && !self.preflight_ai_goto(entity_id, &mut intent) {
                         continue;
                     }
                     // A generated locomotion transition continues to own its
@@ -7196,28 +7202,9 @@ impl EngineInner {
                     // zero: ordinary movement never halts here. Keep explicit
                     // stop-all/halt effects at their own call sites instead of
                     // "fixing" the legacy bug.
-                    let route_rejected_before_launch = was_computing_path
-                        && !self.ai_move_gate_route_is_authorized(entity_id, &intent);
-                    if route_rejected_before_launch {
-                        self.set_ai_couldnt_reachpoint(entity_id);
-                    } else {
-                        // `launch_ai_move` only stages the intent; the actual
-                        // Movement construction happens in the
-                        // pending-request drain below. Preserve the effective
-                        // movement-request tail until that drain so an existing
-                        // MOVE_WAITING does not erase the replacement before
-                        // its gate sequence (and building-exit random waits)
-                        // has been constructed. Original constructs and
-                        // launches first, then observes path-computation status and
-                        // halts.
-                        // A synchronous continuation may already carry the
-                        // outgoing path-waiter's movement-request tail after that waiter
-                        // has been halted. Preserve that authored provenance;
-                        // the current manager command can only add the same
-                        // requirement, never revoke it.
-                        intent.halt_after_launch_for_path_waiter |= was_computing_path;
-                        self.launch_ai_move(entity_id, &intent);
-                        path_waiter_tail_deferred |= was_computing_path;
+                    intent.halt_after_launch_for_path_waiter |= was_computing_path;
+                    if let Some(sequence_id) = self.launch_ai_move(sim, entity_id, &mut intent) {
+                        launched_moves.push(sequence_id);
                     }
                     if debug_decision_path {
                         let ai = self
@@ -7243,23 +7230,6 @@ impl EngineInner {
                             ai.already_on_point,
                             ai.outbox.reentrant.owner_work,
                         );
-                    }
-
-                    // Movement setup has a separate, effective tail check after
-                    // launching its sequence: an actor whose old movement is
-                    // still waiting on the pathfinder is halted. The halt
-                    // also cancels the just-registered replacement, matching
-                    // stopping not-yet-launched sequence elements.
-                    if was_computing_path {
-                        self.check_shape1_contract(entity_id);
-                        if route_rejected_before_launch {
-                            // No replacement sequence exists on this branch,
-                            // so the tail can halt the outgoing waiter now.
-                            // Authorized routes carry the halt marker through
-                            // `do_launch_ai_move` and are halted immediately
-                            // after construction by the request drain.
-                            self.halt_actor(entity_id);
-                        }
                     }
                 }
                 OrderType::Turning => {
@@ -7343,6 +7313,7 @@ impl EngineInner {
                 }
             }
         }
+        launched_moves
     }
 
     /// Prepare a Move / Seek sequence element for dispatch.

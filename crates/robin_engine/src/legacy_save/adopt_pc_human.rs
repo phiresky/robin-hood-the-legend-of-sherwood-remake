@@ -285,6 +285,7 @@ fn convert_human(
     );
     Ok(HumanData {
         carrier,
+        sorting_distance: 0.0,
         concussion_of_the_brain: saved.concussion,
         concussion_healing_timeout: saved.concussion_healing_timeout,
         tiredness: saved.tiredness,

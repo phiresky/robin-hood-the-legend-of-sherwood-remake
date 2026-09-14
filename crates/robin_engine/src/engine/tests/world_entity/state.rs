@@ -26,7 +26,6 @@ fn removal_revalidates_stimuli_detached_across_a_synchronous_boundary() {
         &crate::sim_rng::test_context(),
         observer,
         &LevelAssets::new(),
-        None,
     );
     let ai = engine
         .get_entity(observer)
@@ -997,23 +996,6 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let scratch = engine.build_sim_scratch(&assets);
-    let ctx = crate::engine::ai::build_ai_context_from_entity(
-        engine.get_entity(owner_id).expect("owner exists"),
-        engine.control.frame_counter,
-        None,
-        engine.world.weather.is_forest_level,
-        engine.world.weather.ambiance,
-        engine.ai.standard_view_polygon_radius,
-        &scratch.ai_entity_views,
-        &scratch.ai_sight_obstacles,
-        &engine.world.fast_grid,
-        &assets.navigation.hiking_paths,
-        &assets.navigation.hiking_waypoint_sectors,
-        &engine.ai.global.all_soldier_handles,
-        engine.control.sim_config.difficulty,
-        engine.ai_think_depth(),
-    );
     let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
     let stale_friend = tick
         .camp_soldiers
@@ -1043,8 +1025,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         &sim,
         owner_id,
         &Stimulus::new(StimulusType::EventTimer),
-        &ctx,
-        &tick,
+        None,
         &assets,
     );
 
@@ -1395,7 +1376,6 @@ fn resumed_return_to_duty_publishes_goto_after_attentive_inline() {
         commands.contains(&Command::Move),
         "different exact arenas with the same public number can only publish Move after the gate graph accepts the route"
     );
-    assert!(engine.orders.pending_move_requests.is_empty());
     assert!(
         !engine
             .get_entity(owner)
@@ -1595,57 +1575,8 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
 }
 
 #[test]
-fn phalanx_primary_target_propagation_precedes_later_member_assignment() {
-    use crate::ai::CrossNpcAction;
-
-    let sim = crate::sim_rng::test_context();
-    let (mut engine, source_id, member_id, assets) = setup_review2_officer_and_soldier();
-    let propagated_target = 89;
-    let member_target = 90;
-    let source = engine
-        .get_entity_mut(source_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("phalanx propagation source has AI");
-    source.outbox.reentrant.cross_npc_actions.extend([
-        CrossNpcAction::SetPrimaryTarget {
-            target: member_id.index(),
-            primary_target: Some(crate::ai::AiEntityHandle::new(propagated_target)),
-        },
-        CrossNpcAction::SetPhalanxThemList {
-            target: member_id.index(),
-            them: vec![member_target],
-            primary_target: Some(crate::ai::AiEntityHandle::new(member_target)),
-        },
-    ]);
-
-    engine.drain_direct_ai_owner_boundary(&sim, source_id, &assets);
-
-    let member = engine
-        .get_entity(member_id)
-        .and_then(Entity::enemy_ai)
-        .expect("phalanx member retains EnemyAi");
-    assert_eq!(member.list_them, vec![member_target]);
-    assert_eq!(
-        member.base.primary_target,
-        Some(crate::ai::AiEntityHandle::new(member_target)),
-        "the later inline member decision must win over propagated phalanx target"
-    );
-    assert!(
-        engine
-            .get_entity(source_id)
-            .and_then(Entity::ai_controller)
-            .expect("phalanx propagation source retains AI")
-            .outbox
-            .reentrant
-            .cross_npc_actions
-            .is_empty(),
-        "the direct target setter must not escape to the next-frame global batch"
-    );
-}
-
-#[test]
 fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() {
-    use crate::ai::{AiState, CrossNpcAction, StimulusType, Substate};
+    use crate::ai::{AiState, StimulusType, Substate};
     use crate::element::Camp;
 
     let sim = crate::sim_rng::test_context();
@@ -1660,19 +1591,6 @@ fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() 
     // Keep battle planning on its active-enemy path; the empty synthetic
     // patrol fixture otherwise recurses through unrelated patrol setup.
     source_soldier.soldier.cached_camp = Camp::Royalists;
-    let source = source_soldier
-        .npc
-        .ai_brain
-        .base_mut()
-        .expect("phalanx-break source has AI");
-    source
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::BreakPhalanx {
-            target: member_id.index(),
-            refresh_them_list: false,
-        });
     {
         let member = engine
             .get_entity_mut(member_id)
@@ -1688,7 +1606,7 @@ fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() 
         member.base.already_on_point = true;
     }
 
-    engine.process_synchronous_reentrant_actions_for(&sim, source_id, &assets);
+    engine.execute_ai_break_phalanx(&sim, &assets, member_id, false, false);
 
     let member = engine
         .get_entity(member_id)
@@ -1713,34 +1631,27 @@ fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() 
 
 #[test]
 fn phalanx_gather_instruction_skips_a_member_who_already_left_the_formation() {
-    use crate::ai::{CrossNpcAction, Position};
+    use crate::ai::Position;
 
     let sim = crate::sim_rng::test_context();
-    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    let (mut engine, _officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
     let before = engine
         .get_entity(soldier_id)
         .and_then(Entity::enemy_ai)
         .expect("phalanx gather target has EnemyAi")
         .gather_position;
-    engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("phalanx gather source has AI")
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::InstructGatherPosition {
-            target: soldier_id.index(),
-            position: Position {
-                x: 55.0,
-                y: 12.0,
-                ..Default::default()
-            },
-            direction: 7,
-            call_instruction: true,
-        });
-
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+    engine.instruct_live_phalanx(
+        &sim,
+        &assets,
+        &[soldier_id],
+        Position {
+            x: 55.0,
+            y: 12.0,
+            ..Default::default()
+        },
+        crate::coordinates::MapVec::new(25.0, 0.0),
+        7,
+    );
 
     // The target stands in DefaultOnPost, so the phalanx-correction loop
     // passes over it entirely: neither the slot nor the instruction lands.

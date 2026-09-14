@@ -1059,38 +1059,6 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
         ordinary_ko.index(),
     ]);
     engine.ai.standard_view_polygon_radius = 400;
-    let scratch = engine.build_sim_scratch(&assets);
-    let ctx = crate::engine::ai::build_ai_context_from_entity(
-        engine.get_entity(owner_id).expect("owner exists"),
-        engine.control.frame_counter,
-        None,
-        engine.world.weather.is_forest_level,
-        engine.world.weather.ambiance,
-        engine.ai.standard_view_polygon_radius,
-        &scratch.ai_entity_views,
-        &scratch.ai_sight_obstacles,
-        &engine.world.fast_grid,
-        &assets.navigation.hiking_paths,
-        &assets.navigation.hiking_waypoint_sectors,
-        &engine.ai.global.all_soldier_handles,
-        engine.control.sim_config.difficulty,
-        engine.ai_think_depth(),
-    );
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
-
-    assert_eq!(
-        tick.camp_unconscious_soldiers
-            .iter()
-            .map(|candidate| (candidate.handle, candidate.knocked_out_in_money_fight))
-            .collect::<Vec<_>>(),
-        vec![
-            (victim_middle.index(), true),
-            (victim_far.index(), true),
-            (victim_near.index(), true),
-            (ordinary_ko.index(), false),
-        ],
-        "off-detection data keeps authored registry order and excludes stale-slot, inactive, dead, raw-conscious, and wrong-camp entries"
-    );
 
     crate::sight_obstacle::begin_parity_visibility_capture();
     let (_, draws) = with_draw_trace(|| {
@@ -1098,8 +1066,7 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
             &sim,
             owner_id,
             &Stimulus::new(StimulusType::EventDone),
-            &ctx,
-            &tick,
+            None,
             &assets,
         );
     });

@@ -668,7 +668,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
 
 #[test]
 fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
-    use crate::ai::{AiState, CrossNpcAction, Position, StimulusInfo, StimulusType, Substate};
+    use crate::ai::{AiState, Position, Stimulus, StimulusInfo, StimulusType, Substate};
     use crate::element::{Camp, Entity};
 
     let mut engine = EngineInner::new();
@@ -698,24 +698,19 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine
         .get_entity_mut(subordinate_id)
-        .and_then(Entity::ai_controller_mut)
         .unwrap()
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::RequestPatrolDispatch {
-            chief: chief_id.index(),
-            caller: subordinate_id.index(),
-            stimulus_type: StimulusType::EventSeesShadow,
-            info: StimulusInfo::Position(Position {
-                x: 100.0,
-                y: 0.0,
-                ..Position::default()
-            }),
-        });
+        .ai_controller_mut()
+        .unwrap()
+        .patrol_chief = Some(chief_id);
+    let mut stimulus = Stimulus::new(StimulusType::EventSeesShadow);
+    stimulus.info = StimulusInfo::Position(Position {
+        x: 100.0,
+        y: 0.0,
+        ..Position::default()
+    });
 
     crate::sim_rng::with_seed(0xA013_2640, |sim| {
-        engine.process_synchronous_reentrant_actions_for(sim, subordinate_id, &assets);
+        engine.execute_ai_dispatch_patrol_event(sim, &assets, subordinate_id, stimulus);
     });
 
     let chief = engine

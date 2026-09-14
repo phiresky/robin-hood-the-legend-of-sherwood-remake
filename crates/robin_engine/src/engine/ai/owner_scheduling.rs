@@ -72,27 +72,13 @@ impl EngineInner {
                 break;
             }
 
-            let scratch = self.build_sim_scratch(assets);
-            let frame = self.control.frame_counter;
-            let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-            let ctx = {
-                let entity = self.expect_entity(npc_id, "re-entrant self-decision NPC");
-                let building_sector = self.entity_building_sector(entity.element_data().sector());
-                let mut ctx =
-                    self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
-                ctx.in_uninterruptible_command = in_uninterruptible_command;
-                ctx
-            };
             let stimulus = crate::ai::Stimulus::from_queued_self(queued_stimulus);
             match self.world.entities.get(npc_id) {
                 Some(entity) if entity.enemy_ai().is_some() => {
-                    let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
-                    self.dispatch_filtered_stimulus(
-                        sim, assets, npc_id, &stimulus, &ctx, &tick_data,
-                    );
+                    self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, None);
                 }
                 Some(entity) if entity.friendly_ai().is_some() => {
-                    self.dispatch_filtered_friendly_stimulus(sim, assets, npc_id, &stimulus, &ctx);
+                    self.dispatch_filtered_friendly_stimulus(sim, assets, npc_id, &stimulus);
                 }
                 Some(other) => panic!(
                     "owner-local self-stimulus recipient {} has invalid kind {:?}",
@@ -122,8 +108,7 @@ impl EngineInner {
             // stimulus so a newly launched sequence participates in
             // arbitration before the next sibling stimulus is delivered.
             self.drain_pending_for_npc(sim, npc_id, assets);
-            self.launch_pending_orders_for_npc(sim, assets, npc_id);
-            launched_moves.extend(self.drain_pending_move_requests_for_owner(sim, npc_id));
+            launched_moves.extend(self.launch_pending_orders_for_npc(sim, assets, npc_id));
 
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             self.dispatch_condolations(sim, assets);
@@ -199,6 +184,7 @@ impl EngineInner {
         wp_idx: u8,
     ) {
         let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
+        let move_boundary = self.orders.sequence_manager.sequence_launch_boundary();
         tracing::trace!(
             frame = self.control.frame_counter,
             owner = npc_id.index(),
@@ -223,10 +209,7 @@ impl EngineInner {
             );
         }
 
-        // The script may have spawned or deactivated entities, so rebuild the
-        // context only after its VM call returns.
-        let scratch = self.build_sim_scratch(assets);
-        let frame = self.control.frame_counter;
+        // The script may change the owner's state before this continuation.
         let script_driven = self
             .world
             .entities
@@ -236,16 +219,9 @@ impl EngineInner {
         if script_driven {
             return;
         }
-        let ctx = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            self.ai_context_from_entity(entity, frame, None, &scratch, assets)
-        };
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterScriptGoOn);
-        let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
-        self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
-        self.dispatch_synchronous_owner_moves(sim, assets, npc_id, &mut Vec::new())
+        self.dispatch_think_with_drain(sim, npc_id, &stimulus, None, assets);
+        self.dispatch_synchronous_owner_moves(sim, assets, npc_id, move_boundary, &mut Vec::new())
             .unwrap_or_else(|error| {
                 panic!(
                     "waypoint-script owner {} synchronous Move dispatch failed: {error:?}",
@@ -263,30 +239,20 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
-        ctx: &crate::ai::AiContext,
-        enemy_tick: Option<&crate::ai::AiPerTickData>,
     ) -> bool {
+        let admission = self.ai_admission(owner);
         let admitted = {
             let entity = self
                 .world
                 .entities
                 .expect_entity_mut(owner, format_args!("patrol arrival"));
             if let Some(enemy) = entity.enemy_ai_mut() {
-                enemy.begin_think(
-                    crate::ai_enemy::ThinkEnv::new(
-                        sim,
-                        ctx,
-                        enemy_tick.expect("enemy patrol tick"),
-                        Some(&self.world.fast_grid),
-                    ),
-                    stimulus,
-                    &mut self.ai.global,
-                )
+                enemy.begin_think(&admission, stimulus, &mut self.ai.global)
             } else {
                 entity
                     .friendly_ai_mut()
                     .expect("patrol arrival requires an AI role")
-                    .begin_think(sim, stimulus, &mut self.ai.global, ctx)
+                    .begin_think(sim, stimulus, &mut self.ai.global, &admission)
             }
         };
         if !admitted {
@@ -330,22 +296,12 @@ impl EngineInner {
             ai.current_substate = crate::ai::Substate::DefaultGotoRouteTurn;
         }
         self.initialize_patrol_for_npc(assets, owner);
-        let scratch = self.build_sim_scratch(assets);
-        let entity = self.expect_entity(owner, "patrol after callback");
-        let mut fresh_ctx = self.ai_context_from_entity(
-            entity,
-            self.control.frame_counter,
-            self.entity_building_sector(entity.element_data().sector()),
-            &scratch,
-            assets,
-        );
-        fresh_ctx.in_uninterruptible_command = self.is_very_very_busy(owner);
-        self.refresh_selected_default_wait_identity(owner, &mut fresh_ctx);
+        let position = self.live_ai_position(owner);
         let direction = self
             .world
             .entities
             .expect_ai_controller_mut(owner, format_args!("patrol path"))
-            .route_arrival_turn_direction(fresh_ctx.position, &fresh_ctx.hiking_paths);
+            .route_arrival_turn_direction(position, &assets.navigation.hiking_paths);
         if let Some(direction) = direction {
             let mut turn = crate::sequence::SequenceElement::new_generic(
                 1,
@@ -363,18 +319,17 @@ impl EngineInner {
                 assets,
                 owner,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventDone),
-                &fresh_ctx,
-                enemy_tick,
+                None,
             );
             self.drain_direct_ai_owner_boundary(sim, owner, assets);
         }
+        self.execute_ai_end_think(sim, assets, owner);
         let entity = self
             .world
             .entities
             .expect_entity_mut(owner, format_args!("patrol Think completion"));
         let ai = entity.ai_controller_mut().expect("patrol completion AI");
         ai.outbox.reentrant.self_stimuli.extend(later_stimuli);
-        self.execute_ai_end_think(sim, assets, owner);
         false
     }
 
@@ -423,47 +378,71 @@ impl EngineInner {
         theoretical: &[EntityId],
     ) {
         let chief_position = self.live_ai_position(chief_id);
-        let geometry = |id| {
-            self.expect_entity(id, "patrol assembly member")
-                .element_data()
-                .position()
-        };
-        let (sorted, missed) = patrol_assembly::assemble_patrol(
-            theoretical
-                .iter()
-                .copied()
-                .filter(|&id| id != chief_id)
-                .map(|id| (id, self.live_ai_position(id))),
-            |&(id, _)| {
-                let entity = self.expect_entity(id, "patrol assembly member");
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller(id, format_args!("patrol assembly member"));
-                let able_to_fight = match entity {
-                    Entity::Soldier(soldier) => crate::element::Human::is_able_to_fight(soldier),
-                    Entity::Pc(pc) => crate::element::Human::is_able_to_fight(pc),
-                    _ => false,
-                };
-                let admit = patrol_member_admitted(
-                    true,
-                    || self.patrol_member_visible(assets, chief_id, id),
-                    ai.current_state,
-                    entity.is_civilian(),
-                    able_to_fight,
-                );
-                (admit, !entity.is_dead())
-            },
-            |&(id, position)| (geometry(id), position),
-            geometry(chief_id),
-            chief_position,
-        );
-        let patrol: Vec<_> = sorted.into_iter().map(|(id, _)| id).collect();
-        for &member in &patrol {
+        let chief_world = self
+            .expect_entity(chief_id, "patrol assembly chief")
+            .element_data()
+            .position();
+        let mut patrol = Vec::new();
+        let mut missed = Vec::new();
+        for &id in theoretical {
+            if id == chief_id {
+                continue;
+            }
+            let entity = self.expect_entity(id, "patrol assembly member");
+            let world = entity.element_data().position();
+            let dx = world.x - chief_world.x;
+            let dy = (world.y - chief_world.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let dz = world.z - chief_world.z;
+            let distance = dx * dx + dy * dy + dz * dz;
             self.world
                 .entities
-                .expect_ai_controller_mut(member, format_args!("admitted patrol member"))
-                .patrol_chief = Some(chief_id);
+                .expect_entity_mut(id, format_args!("patrol sorting key"))
+                .human_data_mut()
+                .expect("patrol member human data")
+                .sorting_distance = distance;
+            let visible = self.patrol_member_visible(assets, chief_id, id);
+            let entity = self.expect_entity(id, "patrol member admission");
+            let state = self
+                .world
+                .entities
+                .expect_ai_controller(id, format_args!("patrol member admission"))
+                .current_state;
+            let able = match entity {
+                Entity::Soldier(soldier) => crate::element::Human::is_able_to_fight(soldier),
+                Entity::Pc(pc) => crate::element::Human::is_able_to_fight(pc),
+                _ => false,
+            };
+            if visible && state == crate::ai::AiState::Default && (entity.is_civilian() || able) {
+                let index = patrol
+                    .iter()
+                    .position(|&prior| {
+                        !(distance
+                            > self
+                                .expect_entity(prior, "prior patrol sorting key")
+                                .human_data()
+                                .expect("patrol member human data")
+                                .sorting_distance)
+                    })
+                    .unwrap_or(patrol.len());
+                patrol.insert(index, id);
+                self.world
+                    .entities
+                    .expect_ai_controller_mut(id, format_args!("admitted patrol member"))
+                    .patrol_chief = Some(chief_id);
+            } else if !entity.is_dead() {
+                missed.push(id);
+            }
+        }
+        for pair_end in (1..patrol.len()).step_by(2) {
+            let even = self.live_ai_position(patrol[pair_end - 1]);
+            let odd = self.live_ai_position(patrol[pair_end]);
+            let ex = even.x - chief_position.x;
+            let ey = even.y - chief_position.y;
+            let ox = odd.x - chief_position.x;
+            let oy = odd.y - chief_position.y;
+            if ex * oy - ey * ox < 0.0 {
+                patrol.swap(pair_end - 1, pair_end);
+            }
         }
         let ai = self
             .world
@@ -471,7 +450,7 @@ impl EngineInner {
             .expect_ai_controller_mut(chief_id, format_args!("patrol assembly chief"));
         ai.needs_patrol_reinit = false;
         ai.patrol = patrol;
-        ai.missed_patrol_members = missed.into_iter().map(|(id, _)| id).collect();
+        ai.missed_patrol_members = missed;
     }
 
     /// Patrol visibility borrows authoritative geometry only for the duration
@@ -534,7 +513,6 @@ impl EngineInner {
         for iter in 0..MAX_ITERS {
             self.drain_pending_for_npc(sim, npc_id, assets);
             self.launch_pending_orders_for_npc(sim, assets, npc_id);
-            let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             // All foreign cards that predated this direct boundary are held
             // aside above. Any foreign-owner card visible here was therefore
@@ -673,17 +651,6 @@ impl EngineInner {
         // the actor update reaches periodic tasks; in that window `Sprite::last_action`
         // still names the transition.
         let scratch = self.build_sim_scratch(assets);
-        // The periodic update's only combat-context consumer is
-        // arrow-protection refresh. Original gathers its live fighter data
-        // without AI destination forecasts, so resolving door exits here
-        // would consume unrelated BuildingExitGate RNG merely because an
-        // idle soldier reached its staggered periodic slot.
-        let tick_data = if entity.enemy_ai().is_some() {
-            self.build_npc_tick_data_without_forecasts(sim, npc_id, assets)
-        } else {
-            crate::ai::AiPerTickData::stub()
-        };
-
         let building_sector = self
             .world
             .entities
@@ -711,18 +678,16 @@ impl EngineInner {
                         panic!("periodic soldier {} has no enemy AI", npc_id.index())
                     })
                     .the_16th_frame_before_stuck(
-                        crate::ai_enemy::ThinkEnv::new(
-                            sim,
-                            &ctx,
-                            &tick_data,
-                            Some(&self.world.fast_grid),
-                        ),
+                        sim,
+                        &ctx,
                         frame_phase,
                         &self.ai.global,
                         is_idle,
                         receiving_wasp_sting,
                     );
 
+                self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
+                self.refresh_ai_arrow_protection(sim, assets, npc_id, true);
                 if has_stuck_suffix {
                     self.finish_enemy_periodic_stuck_suffix_after_refresh(
                         sim,
@@ -741,9 +706,6 @@ impl EngineInner {
                         panic!("periodic civilian {} has no friendly AI", npc_id.index())
                     })
                     .the_16th_frame(frame_phase, &ctx, is_idle, sequence_null_about_to_launch);
-                // `tick_data` is only used for enemies; civilians
-                // don't need it.
-                let _ = &tick_data;
             }
             _ => unreachable!("post-detection owner must remain an AI actor"),
         }

@@ -1,7 +1,8 @@
-//! Civilian reporting calls execute with actor borrows confined to statements.
+//! Civilian decisions query live actors and complete callbacks between short borrows.
 
 use super::*;
 use crate::ai::{AiState, GotoFlags, Remark, Stimulus, StimulusInfo, Substate};
+use crate::element::Human as _;
 use crate::parameters_ai::{AI_STANDARD_PANIC_RUNS, AI_TALK_DISTANCE};
 
 impl EngineInner {
@@ -11,8 +12,8 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
         stimulus: &Stimulus,
-        ctx: &AiContext,
     ) -> Option<bool> {
+        let frame = self.control.frame_counter;
         let substate = self
             .world
             .entities
@@ -21,6 +22,26 @@ impl EngineInner {
             .base
             .current_substate;
         let event = stimulus.stimulus_type;
+        if event == StimulusType::CallPatrolCoordinate {
+            self.execute_ai_coordinate_patrol(sim, assets, owner, &stimulus.info);
+            return Some(false);
+        }
+        if event == StimulusType::EventHear {
+            let state = self
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("civilian hearing"))
+                .current_state;
+            if matches!(
+                state,
+                AiState::Sleeping | AiState::Default | AiState::Wondering | AiState::Seeking
+            ) {
+                if let StimulusInfo::Noise(noise) = stimulus.info {
+                    self.civilian_hear(sim, assets, owner, &noise);
+                }
+            }
+            return Some(false);
+        }
         if event == StimulusType::EventSeesSoldier
             && substate == Substate::SeekingCivilianRunningToSoldier
         {
@@ -29,7 +50,7 @@ impl EngineInner {
             };
             self.reporting_civilian_mut(owner).base.antagonist = Some(target);
             self.clear_reporting_friends(sim, assets, owner);
-            self.civilian_call_alert(sim, assets, owner, ctx, false);
+            self.civilian_call_alert(sim, assets, owner, false);
             return Some(false);
         }
         if !matches!(
@@ -47,6 +68,48 @@ impl EngineInner {
             return None;
         }
         match substate {
+            Substate::DefaultPatrolEnrouteWaiting => {
+                if event == StimulusType::EventTimer {
+                    let chief = self
+                        .world
+                        .entities
+                        .expect_ai_controller(owner, format_args!("waiting civilian"))
+                        .patrol_chief
+                        .expect("waiting civilian requires a patrol chief");
+                    let state = self
+                        .world
+                        .entities
+                        .expect_ai_controller(chief, format_args!("civilian patrol chief"))
+                        .current_state;
+                    if matches!(state, AiState::Default | AiState::Wondering) {
+                        let frame = self.control.frame_counter;
+                        self.reporting_civilian_mut(owner)
+                            .base
+                            .launch_timer(200, frame);
+                    } else {
+                        self.execute_ai_return_to_duty(
+                            sim,
+                            assets,
+                            owner,
+                            crate::ai::DutyFlags::empty(),
+                        );
+                    }
+                }
+            }
+            Substate::WonderingCivilianEnemyReactiontime
+            | Substate::WonderingCivilianBodyReactiontime => {
+                if event == StimulusType::EventTimer
+                    && !self.civilian_alert_soldier(sim, assets, owner, false)
+                {
+                    self.reporting_civilian_mut(owner)
+                        .base
+                        .say(Remark::CivPanic);
+                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
+                    let center = self.reporting_civilian_mut(owner).base.seek_position;
+                    self.reporting_civilian_mut(owner)
+                        .panic_from_point_at(center, AI_STANDARD_PANIC_RUNS as u8);
+                }
+            }
             Substate::SeekingCivilianRunningToSoldier => {
                 if event == StimulusType::EventReachPoint {
                     let target = self.reporting_target(owner);
@@ -63,26 +126,10 @@ impl EngineInner {
                         if dx * dx + dy * dy > (AI_TALK_DISTANCE as f32).powi(2) {
                             self.approach_reporting_soldier(sim, assets, owner);
                         } else {
-                            self.civilian_call_alert(sim, assets, owner, ctx, true);
+                            self.civilian_call_alert(sim, assets, owner, true);
                         }
                     } else {
-                        let grid = &self.world.fast_grid;
-                        let doors = self.script_domains.interactables.doors.as_slice();
-                        let civilian = self
-                            .world
-                            .entities
-                            .get_mut(owner)
-                            .and_then(Entity::friendly_ai_mut)
-                            .expect("civilian alert caller");
-                        if !civilian.alert_soldier(
-                            sim,
-                            civilian.base.seek_position,
-                            0,
-                            crate::ai_friendly::AlertSoldierFailureContinuation::ReturnToDuty,
-                            ctx,
-                            Some(grid),
-                            Some(doors),
-                        ) {
+                        if !self.civilian_alert_soldier(sim, assets, owner, false) {
                             self.execute_ai_return_to_duty(
                                 sim,
                                 assets,
@@ -115,7 +162,7 @@ impl EngineInner {
                     } else if event == StimulusType::EventTimer {
                         self.reporting_civilian_mut(owner)
                             .base
-                            .launch_timer(20, ctx.frame);
+                            .launch_timer(20, frame);
                     } else {
                         self.reporting_state(
                             sim,
@@ -125,7 +172,7 @@ impl EngineInner {
                         );
                         self.reporting_civilian_mut(owner)
                             .base
-                            .launch_timer(10, ctx.frame);
+                            .launch_timer(10, frame);
                     }
                 }
             }
@@ -195,6 +242,250 @@ impl EngineInner {
         Some(false)
     }
 
+    fn civilian_hear(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        noise: &crate::ai::Noise,
+    ) {
+        match noise.noise_type {
+            crate::ai::NoiseType::Pfiiit => {
+                let Entity::Civilian(civilian) = self.expect_entity(owner, "civilian whistle")
+                else {
+                    unreachable!("friendly owner is not civilian")
+                };
+                if civilian.civilian.cached_civilian_type != crate::profiles::CivilianType::Child {
+                    return;
+                }
+                self.reporting_civilian_mut(owner)
+                    .base
+                    .set_emoticon(crate::ai::EmoticonType::QuestionMark);
+                self.duty_set_state(
+                    sim,
+                    assets,
+                    owner,
+                    AiState::Wondering,
+                    Substate::WonderingWatchingWhistling,
+                );
+                let origin = noise
+                    .origin
+                    .position()
+                    .expect("delivered whistle has no spatial layer");
+                self.reporting_civilian_mut(owner).base.seek_position = origin;
+                self.duty_face_position_at_elevation(
+                    sim,
+                    assets,
+                    owner,
+                    origin,
+                    f32::from(noise.elevation),
+                );
+                let frame = self.control.frame_counter;
+                self.reporting_civilian_mut(owner)
+                    .base
+                    .launch_timer(70, frame);
+            }
+            crate::ai::NoiseType::Aaargh => {
+                let origin = noise
+                    .origin
+                    .position()
+                    .expect("delivered scream has no spatial layer");
+                self.reporting_civilian_mut(owner).base.seek_position = origin;
+                if self.expect_entity(owner, "screaming civilian").camp()
+                    == crate::element::Camp::Royalists
+                    || !self.civilian_alert_soldier(sim, assets, owner, false)
+                {
+                    let center = self.reporting_civilian_mut(owner).base.seek_position;
+                    self.reporting_civilian_mut(owner)
+                        .panic_from_point_at(center, AI_STANDARD_PANIC_RUNS as u8);
+                }
+            }
+            _ => {}
+        }
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+    }
+
+    /// Select in registry order, then finish the route before evaluating its result.
+    pub(in crate::engine) fn civilian_alert_soldier(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        check_door_path: bool,
+    ) -> bool {
+        let Some(target) = self.select_civilian_alert_soldier(assets, owner, check_door_path)
+        else {
+            return false;
+        };
+        self.reporting_state(
+            sim,
+            assets,
+            owner,
+            Substate::SeekingCivilianRunningToSoldier,
+        );
+        self.reporting_civilian_mut(owner).base.antagonist =
+            Some(crate::ai::AiEntityHandle::new(target.index()));
+        self.approach_reporting_soldier(sim, assets, owner);
+        if std::mem::take(&mut self.reporting_civilian_mut(owner).base.couldnt_reachpoint) {
+            if !check_door_path {
+                return self.civilian_alert_soldier(sim, assets, owner, true);
+            }
+            self.clear_civilian_alert_friends(owner);
+            return false;
+        }
+        self.reporting_civilian_mut(owner)
+            .base
+            .say(Remark::CivPanic);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+        true
+    }
+
+    fn select_civilian_alert_soldier(
+        &mut self,
+        assets: &LevelAssets,
+        owner: EntityId,
+        check_door_path: bool,
+    ) -> Option<EntityId> {
+        let camp = self.expect_entity(owner, "civilian alert owner").camp();
+        let registry = std::sync::Arc::clone(&self.ai.global.all_soldier_handles);
+        let mut best = None;
+        let mut best_distance = u32::MAX;
+        for &handle in registry.iter() {
+            let target = EntityId::Soldier(crate::entity_id::SoldierId(handle));
+            let Entity::Soldier(soldier) = self.expect_entity(target, "civilian alert registry")
+            else {
+                unreachable!("soldier ID resolves to non-soldier")
+            };
+            if soldier.camp() != camp
+                || !soldier.is_able_to_fight()
+                || soldier
+                    .npc
+                    .ai_brain
+                    .base()
+                    .expect("alert candidate lacks AI")
+                    .ai_is_script_locked()
+            {
+                continue;
+            }
+            if !check_door_path {
+                append_detectable(
+                    &mut self
+                        .world
+                        .entities
+                        .expect_entity_mut(owner, format_args!("alert friend registration"))
+                        .npc_data_mut()
+                        .expect("civilian lacks NPC data")
+                        .detectable_lists[crate::element::DetectableType::Friend as usize],
+                    target,
+                    crate::element::DetectableType::Friend,
+                    true,
+                );
+            }
+            match self
+                .world
+                .entities
+                .expect_ai_controller(target, format_args!("alert candidate"))
+                .current_state
+            {
+                AiState::Default => {
+                    let source = self
+                        .expect_entity(owner, "alert distance owner")
+                        .element_data();
+                    let destination = self
+                        .expect_entity(target, "alert distance candidate")
+                        .element_data();
+                    let here = source.position();
+                    let there = destination.position();
+                    let mut distance = (there.x - here.x)
+                        .abs()
+                        .max(
+                            ((there.y - here.y) * crate::position_interface::INVERSE_ASPECT_RATIO)
+                                .abs(),
+                        )
+                        .max((there.z - here.z).abs())
+                        as u32;
+                    if source.layer() != destination.layer() {
+                        distance = distance.wrapping_add(1000);
+                    }
+                    if distance < best_distance
+                        && (!check_door_path || self.civilian_alert_route_authorized(owner, target))
+                    {
+                        best = Some(target);
+                        best_distance = distance;
+                    }
+                }
+                AiState::Attacking | AiState::Menacing | AiState::Fleeing => {
+                    if self.patrol_member_visible(assets, owner, target) {
+                        self.clear_civilian_alert_friends(owner);
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if best.is_none() {
+            self.clear_civilian_alert_friends(owner);
+        }
+        best
+    }
+
+    fn clear_civilian_alert_friends(&mut self, owner: EntityId) {
+        self.world
+            .entities
+            .expect_entity_mut(owner, format_args!("alert friend cleanup"))
+            .npc_data_mut()
+            .expect("civilian lacks NPC data")
+            .detectable_lists[crate::element::DetectableType::Friend as usize]
+            .clear();
+    }
+
+    fn civilian_alert_route_authorized(&self, owner: EntityId, target: EntityId) -> bool {
+        let source = self
+            .expect_entity(owner, "alert route owner")
+            .element_data();
+        let destination = self
+            .expect_entity(target, "alert route target")
+            .element_data();
+        if source.sector() == destination.sector() {
+            return true;
+        }
+        let source_sector = source.sector().expect("alert route owner has no sector");
+        let destination_sector = destination
+            .sector()
+            .expect("alert route target has no sector");
+        let here = source.position_map();
+        let there = destination.position_map();
+        let auth = crate::gate::ActorAuthInfo {
+            kind: crate::element::ElementKind::ActorCivilian,
+            pc_auth_bit: 0,
+            has_lockpick: false,
+            has_climb: false,
+            has_jump: false,
+            is_rider: false,
+            posture: source.posture(),
+        };
+        crate::gate::find_path_gates(
+            &self.script_domains.interactables.doors,
+            (here.x, here.y),
+            u16::from(source_sector),
+            (there.x, there.y),
+            u16::from(destination_sector),
+            Some(&auth),
+            false,
+            &|sector| self.building_sector_is_authorized(sector),
+            &|sector| {
+                self.world
+                    .fast_grid
+                    .level
+                    .sector_number_map
+                    .get(&sector)
+                    .and_then(|&index| self.world.fast_grid.level.sectors.get(index))
+                    .and_then(|sector| sector.lift_type)
+            },
+        )
+        .is_some()
+    }
+
     fn reporting_civilian_mut(&mut self, owner: EntityId) -> &mut crate::ai_friendly::FriendlyAi {
         self.world
             .entities
@@ -245,9 +536,9 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-        ctx: &AiContext,
         reached: bool,
     ) {
+        let frame = self.control.frame_counter;
         let target = self.reporting_target(owner);
         let accepted = self.execute_ai_callback(
             sim,
@@ -285,7 +576,7 @@ impl EngineInner {
             self.approach_reporting_soldier(sim, assets, owner);
             self.reporting_civilian_mut(owner)
                 .base
-                .launch_timer(20, ctx.frame);
+                .launch_timer(20, frame);
         }
     }
 
@@ -341,6 +632,411 @@ mod tests {
         (engine, owner, soldier)
     }
 
+    fn alert_fixture() -> (EngineInner, LevelAssets, EntityId, [EntityId; 2]) {
+        let (mut engine, owner, first) = reporting_pair(Substate::DefaultOnPost);
+        let second = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+        engine.world.fast_grid_mut().size_map(128, 128);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        let index = engine.world.fast_grid_mut().add_sector(
+            crate::engine::test_support::square_sector(
+                1,
+                0,
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(2000.0, 2000.0),
+            ),
+            0,
+        );
+        let sector = crate::ai::SectorHandle::new(1)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
+        for (id, x) in [(owner, 100.0), (first, 250.0), (second, 400.0)] {
+            let entity = engine.world.entities.get_mut(id).unwrap();
+            entity.element_data_mut().active = true;
+            entity
+                .element_data_mut()
+                .set_position_map(MapPoint::new(x, 100.0));
+            entity.element_data_mut().set_sector(Some(sector));
+            entity.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
+            let npc = entity.npc_data_mut().unwrap();
+            npc.life_points = 100;
+            npc.view_radius = 500;
+            npc.view_radius_base = 500;
+            npc.view_radius_goal = 500;
+            let ai = npc.ai_brain.base_mut().unwrap();
+            ai.current_state = AiState::Default;
+            ai.current_substate = Substate::DefaultOnPost;
+        }
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        (engine, assets, owner, [first, second])
+    }
+
+    #[test]
+    fn alert_route_finishes_before_emitting_success_remark() {
+        let (mut engine, assets, owner, [first, _]) = alert_fixture();
+        let sim = crate::sim_rng::test_context();
+        assert!(engine.civilian_alert_soldier(&sim, &assets, owner, false));
+        let ai = engine.reporting_civilian_mut(owner);
+        assert_eq!(
+            ai.base.antagonist,
+            Some(crate::ai::AiEntityHandle::new(first.index()))
+        );
+        assert_eq!(ai.base.current_remark, Remark::CivPanic);
+        assert!(!ai.base.couldnt_reachpoint);
+        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+        assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+    }
+
+    #[test]
+    fn alert_retry_consumes_route_failure_before_returning_to_caller() {
+        let (mut engine, assets, owner, [first, _]) = alert_fixture();
+        engine.reporting_civilian_mut(owner).base.couldnt_reachpoint = true;
+        let sim = crate::sim_rng::test_context();
+        assert!(engine.civilian_alert_soldier(&sim, &assets, owner, false));
+        let ai = engine.reporting_civilian_mut(owner);
+        assert_eq!(
+            ai.base.antagonist,
+            Some(crate::ai::AiEntityHandle::new(first.index()))
+        );
+        assert_eq!(ai.base.current_remark, Remark::CivPanic);
+        assert!(!ai.base.couldnt_reachpoint);
+        assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+        let friends = &engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .npc_data()
+            .unwrap()
+            .detectable_lists[crate::element::DetectableType::Friend as usize];
+        assert_eq!(
+            friends.len(),
+            2,
+            "door-path retry must not append the registry again"
+        );
+    }
+
+    #[test]
+    fn failed_reaction_alert_completes_panic_without_route_failure_event() {
+        let (mut engine, assets, owner, soldiers) = alert_fixture();
+        for soldier in soldiers {
+            engine
+                .world
+                .entities
+                .expect_ai_controller_mut(soldier, format_args!("locked route candidate"))
+                .script_locked = true;
+        }
+        let position = engine.live_ai_position(owner);
+        let ai = engine.reporting_civilian_mut(owner);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingCivilianBodyReactiontime;
+        ai.base.seek_position = crate::ai::Position {
+            x: 200.0,
+            y: 100.0,
+            ..position
+        };
+        engine.execute_friendly_callback(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            &Stimulus::new(StimulusType::EventTimer),
+        );
+        let ai = engine.reporting_civilian_mut(owner);
+        assert_eq!(ai.base.current_state, AiState::Fleeing);
+        assert_eq!(ai.base.current_remark, Remark::CivPanic);
+        assert!(!ai.base.couldnt_reachpoint);
+        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+        assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+    }
+
+    #[test]
+    fn alert_selection_reads_world_distance_and_live_layer_without_entity_views() {
+        let (mut engine, assets, owner, [first, second]) = alert_fixture();
+        engine
+            .world
+            .entities
+            .get_mut(second)
+            .unwrap()
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(100.0, 200.0, 0.0));
+        engine
+            .world
+            .entities
+            .get_mut(first)
+            .unwrap()
+            .element_data_mut()
+            .set_position_map_preserving_3d(MapPoint::new(1600.0, 1600.0));
+        assert_eq!(
+            engine.select_civilian_alert_soldier(&assets, owner, false),
+            Some(first)
+        );
+        engine
+            .world
+            .entities
+            .get_mut(first)
+            .unwrap()
+            .element_data_mut()
+            .set_layer(1);
+        assert_eq!(
+            engine.select_civilian_alert_soldier(&assets, owner, false),
+            Some(second)
+        );
+    }
+
+    #[test]
+    fn alert_selection_preserves_registry_ties_and_duplicate_friend_order() {
+        let (mut engine, assets, owner, [first, second]) = alert_fixture();
+        let position = engine
+            .world
+            .entities
+            .get(first)
+            .unwrap()
+            .element_data()
+            .position();
+        engine
+            .world
+            .entities
+            .get_mut(second)
+            .unwrap()
+            .element_data_mut()
+            .set_position(position);
+        engine.ai.global.all_soldier_handles =
+            std::sync::Arc::new(vec![second.index(), first.index()]);
+        for _ in 0..2 {
+            assert_eq!(
+                engine.select_civilian_alert_soldier(&assets, owner, false),
+                Some(second)
+            );
+        }
+        let friends = &engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .npc_data()
+            .unwrap()
+            .detectable_lists[crate::element::DetectableType::Friend as usize];
+        assert_eq!(
+            friends
+                .iter()
+                .map(|friend| friend.element.unwrap())
+                .collect::<Vec<_>>(),
+            vec![second, first, second, first]
+        );
+        engine.select_civilian_alert_soldier(&assets, owner, true);
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .npc_data()
+                .unwrap()
+                .detectable_lists[crate::element::DetectableType::Friend as usize]
+                .len(),
+            4
+        );
+    }
+
+    #[test]
+    fn alert_selection_excludes_other_camps_and_script_locked_soldiers() {
+        let (mut engine, assets, owner, [first, second]) = alert_fixture();
+        let Entity::Soldier(soldier) = engine.world.entities.get_mut(first).unwrap() else {
+            unreachable!()
+        };
+        soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+        assert_eq!(
+            engine.select_civilian_alert_soldier(&assets, owner, false),
+            Some(second)
+        );
+        engine
+            .world
+            .entities
+            .expect_ai_controller_mut(second, format_args!("locked alert candidate"))
+            .script_locked = true;
+        assert_eq!(
+            engine.select_civilian_alert_soldier(&assets, owner, false),
+            None
+        );
+        assert!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .npc_data()
+                .unwrap()
+                .detectable_lists[crate::element::DetectableType::Friend as usize]
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn alerted_friend_uses_current_activity_and_real_view_radius() {
+        let (mut engine, assets, owner, [first, second]) = alert_fixture();
+        engine
+            .world
+            .entities
+            .expect_ai_controller_mut(second, format_args!("alerted friend"))
+            .current_state = AiState::Attacking;
+        engine
+            .world
+            .entities
+            .get_mut(second)
+            .unwrap()
+            .element_data_mut()
+            .active = false;
+        assert_eq!(
+            engine.select_civilian_alert_soldier(&assets, owner, false),
+            Some(first)
+        );
+        engine
+            .world
+            .entities
+            .get_mut(second)
+            .unwrap()
+            .element_data_mut()
+            .active = true;
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .npc_data_mut()
+            .unwrap()
+            .view_radius = 1;
+        assert_eq!(
+            engine.select_civilian_alert_soldier(&assets, owner, false),
+            Some(first)
+        );
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .npc_data_mut()
+            .unwrap()
+            .view_radius = 500;
+        assert_eq!(
+            engine.select_civilian_alert_soldier(&assets, owner, false),
+            None
+        );
+        assert!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .npc_data()
+                .unwrap()
+                .detectable_lists[crate::element::DetectableType::Friend as usize]
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn civilian_patrol_reads_live_chief_for_walk_run_and_backwards_facing() {
+        for (distance, prior, expected) in [
+            (
+                45.0,
+                Substate::DefaultOnPost,
+                Substate::DefaultPatrolEnroute,
+            ),
+            (
+                60.0,
+                Substate::DefaultOnPost,
+                Substate::DefaultPatrolEnrouteRunning,
+            ),
+            (
+                45.0,
+                Substate::DefaultPatrolEnroute,
+                Substate::DefaultPatrolEnroute,
+            ),
+            (
+                -10.0,
+                Substate::DefaultPatrolEnroute,
+                Substate::DefaultPatrolEnroute,
+            ),
+        ] {
+            let (mut engine, assets, owner, [chief, _]) = alert_fixture();
+            let position = engine.live_ai_position(owner);
+            let ai = engine.reporting_civilian_mut(owner);
+            ai.base.patrol_chief = Some(chief);
+            ai.base.current_substate = prior;
+            ai.base.current_music_alert_status = crate::ai::AlertLevel::Yellow;
+            ai.base.view_alert_status = crate::ai::AlertLevel::Yellow;
+            engine.execute_friendly_callback(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                &Stimulus::with_position(
+                    StimulusType::CallPatrolCoordinate,
+                    crate::ai::Position {
+                        x: position.x + distance,
+                        ..position
+                    },
+                ),
+            );
+            let ai = engine.reporting_civilian_mut(owner);
+            assert_eq!(ai.base.current_substate, expected);
+            if distance > 0.0 {
+                assert_eq!(
+                    ai.base.current_music_alert_status,
+                    crate::ai::AlertLevel::Green
+                );
+                assert_eq!(ai.base.view_alert_status, crate::ai::AlertLevel::Green);
+                let order = if distance > 50.0 {
+                    crate::order::OrderType::RunningUpright
+                } else {
+                    crate::order::OrderType::WalkingUpright
+                };
+                assert!(engine.orders.sequence_manager.sequences_iter().any(|sequence|
+                    sequence.elements.iter().any(|element| element.owner == Some(owner)
+                        && matches!(element.data, crate::sequence::SequenceElementData::Movement { action, .. } if action == order))));
+            } else {
+                assert!(!ai.base.already_on_point);
+                assert!(ai.base.outbox.actor.orders.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn patrol_waiting_queries_chief_state_at_delivery() {
+        let (mut engine, assets, owner, [chief, _]) = alert_fixture();
+        engine.reporting_civilian_mut(owner).base.patrol_chief = Some(chief);
+        engine.reporting_civilian_mut(owner).base.current_substate =
+            Substate::DefaultPatrolEnrouteWaiting;
+        let frame = engine.control.frame_counter;
+        engine.execute_friendly_callback(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            &Stimulus::new(StimulusType::EventTimer),
+        );
+        assert!(engine.reporting_civilian_mut(owner).base.timer_is_running);
+        assert_eq!(
+            engine
+                .reporting_civilian_mut(owner)
+                .base
+                .when_does_timer_ring,
+            frame + 200
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "waiting civilian requires a patrol chief")]
+    fn patrol_waiting_requires_live_chief() {
+        let (mut engine, assets, owner, _) = alert_fixture();
+        engine.reporting_civilian_mut(owner).base.current_substate =
+            Substate::DefaultPatrolEnrouteWaiting;
+        engine.execute_friendly_callback(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            &Stimulus::new(StimulusType::EventTimer),
+        );
+    }
+
     #[test]
     #[should_panic(expected = "reporting civilian antagonist: missing entity")]
     fn running_to_soldier_requires_live_antagonist() {
@@ -352,7 +1048,6 @@ mod tests {
             &LevelAssets::default(),
             owner,
             &Stimulus::new(StimulusType::EventReachPoint),
-            &AiContext::test_fixture(),
         );
     }
 
@@ -365,15 +1060,12 @@ mod tests {
             .entities
             .expect_ai_controller_mut(soldier, format_args!("test report listener"))
             .current_substate = Substate::SeekingWaitForAlertingCivilian;
-        let ctx = AiContext::test_fixture();
-        assert!(ctx.entity_view(soldier.index()).is_none());
         assert_eq!(
             engine.execute_friendly_callback(
                 &crate::sim_rng::test_context(),
                 &LevelAssets::default(),
                 owner,
                 &Stimulus::new(StimulusType::EventReachPoint),
-                &ctx
             ),
             Some(false)
         );
@@ -401,7 +1093,6 @@ mod tests {
                     &LevelAssets::default(),
                     owner,
                     &Stimulus::new(event),
-                    &AiContext::test_fixture()
                 ),
                 None
             );
@@ -412,21 +1103,17 @@ mod tests {
     fn report_point_done_faces_live_target_then_launches_timer() {
         let (mut engine, owner, _) =
             reporting_pair(Substate::SeekingCivilianGiveAlertingReportToSoldierPoint);
-        let mut ctx = AiContext::test_fixture();
-        ctx.position = engine.live_ai_position(owner);
-        ctx.direction = crate::position_interface::vector_to_sector_0_to_15_iso(0.0, 0.0) as u16;
-        ctx.self_action_state = crate::element::ActionState::Waiting;
+        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(0.0, 0.0);
         let entity = engine.world.entities.get_mut(owner).unwrap();
         entity
             .element_data_mut()
-            .set_direction_instantly(ctx.direction as i16);
+            .set_direction_instantly(direction as i16);
         entity.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
         engine.execute_friendly_callback(
             &crate::sim_rng::test_context(),
             &LevelAssets::default(),
             owner,
             &Stimulus::new(StimulusType::EventDone),
-            &ctx,
         );
         let ai = engine.reporting_civilian_mut(owner);
         assert_eq!(

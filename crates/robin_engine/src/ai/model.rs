@@ -1414,13 +1414,11 @@ impl Decision {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-NPC actions (phalanx coordination, stimulus forwarding)
+// Cross-NPC actions (neighbour updates, stimulus forwarding)
 // ---------------------------------------------------------------------------
 
 /// Actions that one NPC's AI emits to affect another NPC. The engine
 /// drains these after each think() and applies them to the targets.
-/// Used for patterns like calling `InstructGatherPosition` then
-/// delivering `CALL_INSTRUCTION`, and recursive `BreakPhalanx`.
 #[derive(
     Debug,
     Clone,
@@ -1450,39 +1448,6 @@ pub enum CrossNpcAction {
         info: StimulusInfo,
         continuation: ThinkResultContinuation,
     },
-    /// Synchronously call a patrol chief's
-    /// patrol-wide stimulus dispatch and resume the subordinate
-    /// according to that routine's actual boolean result. This is deliberately
-    /// not a `Think` call: an eligible chief with an empty patrol returns false
-    /// without handling the stimulus, so the subordinate must handle it
-    /// locally.
-    RequestPatrolDispatch {
-        chief: NpcHandle,
-        caller: NpcHandle,
-        stimulus_type: StimulusType,
-        info: StimulusInfo,
-    },
-    /// Set gather position and gather direction on the target NPC.
-    ///
-    /// The gather instruction itself is a plain setter: the alert paths that
-    /// hand out formation slots only stash the slot, and the recipient reads
-    /// it whenever its own behaviour next needs a gather point. Only the
-    /// phalanx-correction paths follow the setter with a `CALL_INSTRUCTION`
-    /// Think, and they do so exclusively for members still standing in the
-    /// phalanx — hence `call_instruction`, which re-checks that substate at
-    /// delivery time because an earlier member's Think may have moved this one.
-    InstructGatherPosition {
-        target: NpcHandle,
-        position: Position,
-        direction: u16,
-        call_instruction: bool,
-    },
-    /// Propagate break-phalanx to target: clear their combat neighbours,
-    /// set `phalanx_aborted = true`, and trigger battle planning.
-    BreakPhalanx {
-        target: NpcHandle,
-        refresh_them_list: bool,
-    },
     /// Deliver a stimulus to the target NPC (e.g. `CALL_COORDINATE`).
     SendStimulus {
         target: NpcHandle,
@@ -1502,26 +1467,6 @@ pub enum CrossNpcAction {
         /// member side and re-delegates back to the chief, producing an
         /// unbounded chief↔member ping-pong loop.
         to_whole_patrol: bool,
-    },
-    /// Broadcast a whole-patrol stimulus from a chief to its subordinates.
-    ///
-    /// The chief feeds the stimulus back into its own `think` first, and that
-    /// self-call may cascade arbitrarily far (a standard-procedure handler can
-    /// call a subordinate, who relays back to the chief, who broadcasts again).
-    /// Only once that cascade has fully drained does the chief walk its
-    /// members, and each member's 360-degree detection gate is evaluated
-    /// immediately before that member's own `think`. Both effects are
-    /// observable in the visibility-query stream, so the member walk cannot be
-    /// resolved into per-member `SendStimulus` entries at push time: the
-    /// detection queries would run before the self-call's cascade instead of
-    /// interleaved with the member dispatches.
-    ///
-    /// `members` is the chief's patrol snapshot taken before the self-call, so
-    /// a cascade that changes patrol membership does not alter this broadcast.
-    RelayStimulusToPatrolMembers {
-        members: Vec<NpcHandle>,
-        stimulus_type: StimulusType,
-        info: StimulusInfo,
     },
     /// Set the target NPC's left combat neighbour link (one-way).
     /// Bare setter, no reciprocal cleanup. Use
@@ -1575,22 +1520,6 @@ pub enum CrossNpcAction {
         #[serde(with = "optional_ai_handle")]
         new_right: Option<AiEntityHandle>,
     },
-    /// Propagate primary target to a phalanx member during
-    /// the phalanx reassessment's member walk.
-    SetPrimaryTarget {
-        target: NpcHandle,
-        primary_target: Option<AiEntityHandle>,
-    },
-    /// Install the merged phalanx them-list and its head target on one
-    /// member. Shared enemy-list rebuilding recurses to the right end and
-    /// then, as the recursion unwinds, assigns the completed shared list
-    /// and its first element to every member it passed through — not just
-    /// to the member that started the walk.
-    SetPhalanxThemList {
-        target: NpcHandle,
-        them: Vec<HumanHandle>,
-        primary_target: Option<AiEntityHandle>,
-    },
     /// Make the target NPC say a remark.
     Say { target: NpcHandle, remark: Remark },
     /// Write `AiController::looted_after_money_fight` on a target soldier.
@@ -1606,20 +1535,6 @@ pub enum CrossNpcAction {
         /// Report merge flags (e.g. `UPDATE_CHARLY | UPDATE_TYPE = 2|4 = 6`).
         flags: u16,
     },
-    /// Resume the outer AlertSoldiers call after the final accepted
-    /// soldier's ConsiderReport call and all of its owner-side effects have
-    /// closed. A refused final Think has no report boundary and finalizes
-    /// directly in the result continuation.
-    FinalizeAlertSoldiers {
-        caller: NpcHandle,
-        use_formation: bool,
-        failure: AlertSoldiersFailureContinuation,
-    },
-    /// Resume a tower guard's battle planning only after every direct
-    /// `CALL_TOWER_GUARD_ALERT`/`CALL_TOWER_GUARD_CALLS_ME` has returned.
-    /// Those recipients can change alert status synchronously, which the
-    /// guard's immediately following area-search friend scan must observe.
-    ResumeTowerGuardBattleDecisions { caller: NpcHandle },
     /// Push `actor` onto `target`'s `synchronizing_actors` list. Used by
     /// PC-sighting processing when the reuniting soldier
     /// still needs to wait at the sync waypoint for its macro friend.
@@ -1711,18 +1626,7 @@ pub enum LookThereContinuation {
 pub enum ThinkResultContinuation {
     OfficerCalledSoldier,
     OfficerSentCharlyToOfficer,
-    OfficerInstructedGroupSoldier {
-        last: bool,
-    },
-    OfficerAlertedSoldier {
-        last: bool,
-        use_formation: bool,
-        failure: AlertSoldiersFailureContinuation,
-    },
-    OfficerCombatAlertedSoldier {
-        last: bool,
-        use_formation: bool,
-    },
+    OfficerInstructedGroupSoldier { last: bool },
 }
 
 // ---------------------------------------------------------------------------

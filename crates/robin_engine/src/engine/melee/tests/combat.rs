@@ -608,6 +608,15 @@ fn scroll_civilian_hit_keeps_immunity_but_still_translates_reaction() {
 
 #[test]
 fn conscious_hit_applies_ai_eye_status_synchronously() {
+    check_conscious_hit_eye_status(50, EyeStatus::DieOrGetUnconscious);
+}
+
+#[test]
+fn conscious_hit_failed_approach_completes_before_returning() {
+    check_conscious_hit_eye_status(0, EyeStatus::LookForward);
+}
+
+fn check_conscious_hit_eye_status(standard_range: u16, expected_eye_status: EyeStatus) {
     let mut engine = make_engine();
     let null_slot = engine.add_test_entity(make_soldier(WorldPoint3D::default(), None));
     engine
@@ -626,7 +635,9 @@ fn conscious_hit_applies_ai_eye_status_synchronously() {
         .hth_weapon_id = 1;
     let damage = crate::sequence::SequenceElement::new(1, Command::ReceiveHitDamage, Some(victim));
     let seq_id = engine.launch_element(damage);
-    let assets = assets_with_sword_profile(1, 50);
+    let mut assets = assets_with_sword_profile(1, 50);
+    std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
+        [crate::weapons::WeaponDistance::Default as usize] = standard_range;
 
     engine.apply_hit_damage(
         &crate::sim_rng::test_context(),
@@ -640,7 +651,9 @@ fn conscious_hit_applies_ai_eye_status_synchronously() {
 
     // EVENT_GOTHIT first stops actions (which queues Unfocus) and only
     // then sets EYES_DIE_OR_GET_UNCONSCIOUS. Exercise the complete
-    // fixed-point drain: applying the tail eye write through the earlier
+    // fixed-point drain. A failed approach then completes its nested overview,
+    // whose look-sideways action releases focus after the hit's eye write.
+    // Applying the tail eye write through the earlier
     // recovery channel made this pass immediately after Translate but
     // regress to LookForward once the queued Unfocus was drained.
     engine.drain_pending_for_npc(&crate::sim_rng::test_context(), victim, &assets);
@@ -648,8 +661,15 @@ fn conscious_hit_applies_ai_eye_status_synchronously() {
     let victim_entity = engine.get_entity(victim).unwrap();
     assert_eq!(
         victim_entity.npc_data().unwrap().eye_status,
-        EyeStatus::DieOrGetUnconscious
+        expected_eye_status
     );
+    if standard_range == 0 {
+        assert_eq!(
+            victim_entity.ai_controller().unwrap().current_substate,
+            crate::ai::Substate::AttackingOverviewLookLeft
+        );
+        assert!(engine.ai.think_call_stack.is_empty());
+    }
     assert_eq!(
         victim_entity
             .ai_controller()
@@ -689,7 +709,9 @@ fn conscious_lying_hit_applies_concussion_and_got_hit_before_terminating() {
         3,
     );
     let seq_id = engine.launch_element(damage);
-    let assets = assets_with_sword_profile(1, 50);
+    let mut assets = assets_with_sword_profile(1, 50);
+    std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
+        [crate::weapons::WeaponDistance::Default as usize] = 50;
 
     engine.dispatch_receive_damage(&crate::sim_rng::test_context(), &assets, victim, seq_id, 0);
 

@@ -403,7 +403,7 @@ impl EngineInner {
                 // Original-game net removal sends the net-away event
                 // synchronously, even when the victim's creation slot has
                 // already run this frame.
-                self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, victim_id, assets, None);
+                self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, victim_id, assets);
 
                 // Skip the body-detectable cleanup for dead/unconscious
                 // victims — their body is genuinely a body to detect.

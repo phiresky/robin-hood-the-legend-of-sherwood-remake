@@ -187,30 +187,6 @@ const NOT_YET_COMPUTED: i16 = 6666;
 // FighterSnapshot — engine-provided state for combat position evaluation
 // ---------------------------------------------------------------------------
 
-/// Snapshot of a fighter's state for combat AI evaluation.
-/// The engine populates these before think() for NPCs in swordfight states.
-/// Same-camp soldier who is currently unconscious but alive.  These are
-/// absent from [`CampSoldierInfo`], which skips unconscious entries, so
-/// the money-fight scans merge the two lists by handle to walk the camp
-/// registry in its natural order.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CampUnconsciousSoldierInfo {
-    pub handle: NpcHandle,
-    pub knocked_out_in_money_fight: bool,
-}
-
-/// One rank-soldier NPC considered for an officer's attack command, in NPC
-/// registry order and without any camp filter.
-#[derive(Debug, Clone)]
-pub struct AlertSoldierCandidate {
-    pub handle: NpcHandle,
-    pub position: Position,
-    pub elevation: f32,
-    pub is_rider: bool,
-    pub view_radius: u16,
-    pub in_building: bool,
-}
-
 /// Lightweight snapshot of a same-camp soldier used by alert functions
 /// (`alert_officer`, `alert_soldiers`).  Populated by the engine each tick
 /// for all soldiers in the same camp, regardless of combat state.
@@ -284,13 +260,6 @@ pub struct CampSoldierInfo {
     /// Whether this soldier is currently inside a building sector.
     /// Used by officer alerting to gate the layer-change penalty.
     pub in_building: bool,
-    /// Forecasted destination for this soldier. Used by
-    /// officer alerting so the alerting soldier homes on where the
-    /// officer will be, not where the officer currently is.
-    /// Present only when the caller explicitly evaluated
-    /// AI destination forecasting; owner-local brackets may omit it to avoid
-    /// drawing unrelated building-exit RNG.
-    pub forecast_destination: Option<crate::ai::PreparedForecastDestination>,
     /// Body handles still on this soldier's detectable-body list —
     /// i.e. corpses they have *not yet* reacted to.  An officer
     /// who has *already* processed a body has dropped it from this
@@ -1009,6 +978,71 @@ impl<'a> FighterView<'a> {
     }
 }
 
+/// Borrowed combat facts used by the shared candidate damage calculation.
+pub(crate) trait CombatFighterAccess: Copy {
+    fn position(self, handle: HumanHandle) -> Position;
+    fn protection_ground_position(self, handle: HumanHandle) -> crate::coordinates::GroundPoint {
+        let position = self.position(handle);
+        crate::coordinates::GroundPoint::new(position.x, position.y + self.elevation(handle))
+    }
+    fn elevation(self, handle: HumanHandle) -> f32;
+    fn direction(self, handle: HumanHandle) -> u16;
+    fn hth_weapon_id(self, handle: HumanHandle) -> u32;
+    fn sword_range_maximal(self, handle: HumanHandle) -> u16;
+    fn fighting_ability(self, handle: HumanHandle) -> u16;
+    fn rank(self, handle: HumanHandle) -> ProfileRank;
+    fn is_pc(self, handle: HumanHandle) -> bool;
+    fn is_friendly(self, handle: HumanHandle) -> bool;
+}
+
+impl CombatFighterAccess for FighterView<'_> {
+    fn position(self, handle: HumanHandle) -> Position {
+        self.get(handle)
+            .expect("combat fighter is absent from tactical registry")
+            .position
+    }
+    fn elevation(self, handle: HumanHandle) -> f32 {
+        self.get(handle)
+            .expect("combat fighter is absent from tactical registry")
+            .elevation
+    }
+    fn direction(self, handle: HumanHandle) -> u16 {
+        self.get(handle)
+            .expect("combat fighter is absent from tactical registry")
+            .direction
+    }
+    fn hth_weapon_id(self, handle: HumanHandle) -> u32 {
+        self.get(handle)
+            .expect("combat fighter is absent from tactical registry")
+            .hth_weapon_id
+    }
+    fn sword_range_maximal(self, handle: HumanHandle) -> u16 {
+        self.get(handle)
+            .expect("combat fighter is absent from tactical registry")
+            .sword_range_maximal
+    }
+    fn fighting_ability(self, handle: HumanHandle) -> u16 {
+        self.get(handle)
+            .expect("combat fighter is absent from tactical registry")
+            .fighting_ability
+    }
+    fn rank(self, handle: HumanHandle) -> ProfileRank {
+        self.get(handle)
+            .expect("combat fighter is absent from tactical registry")
+            .rank
+    }
+    fn is_pc(self, handle: HumanHandle) -> bool {
+        self.get(handle)
+            .expect("combat fighter is absent from tactical registry")
+            .is_pc
+    }
+    fn is_friendly(self, handle: HumanHandle) -> bool {
+        self.get(handle)
+            .expect("combat fighter is absent from tactical registry")
+            .is_friendly
+    }
+}
+
 /// Estimates damage the attacker can deal to the target in the
 /// given combat position.
 ///
@@ -1019,7 +1053,7 @@ impl<'a> FighterView<'a> {
 fn estimate_damage(
     evaluator: HumanHandle,
     cp: &mut CombatPosition,
-    all_fighters: FighterView<'_>,
+    all_fighters: impl CombatFighterAccess,
     profile_manager: &crate::profiles::ProfileManager,
     iq: u16,
 ) -> i16 {
@@ -1042,24 +1076,8 @@ fn estimate_damage(
     let attacker_handle = cp
         .attacker
         .unwrap_or_else(|| panic!("combat position with target {target_handle} has no attacker"));
-    let attacker = all_fighters.get(attacker_handle.get()).unwrap_or_else(|| {
-        panic!(
-            "combat position attacker {} is absent from the per-tick fighter view",
-            attacker_handle
-        )
-    });
-    let target = all_fighters.get(target_handle.get()).unwrap_or_else(|| {
-        panic!(
-            "combat position target {} is absent from the per-tick fighter view",
-            target_handle
-        )
-    });
-    let evaluator = all_fighters.get(evaluator).unwrap_or_else(|| {
-        panic!(
-            "combat position evaluator {} is absent from the per-tick fighter view",
-            evaluator
-        )
-    });
+    let attacker = attacker_handle.get();
+    let target = target_handle.get();
 
     // Vector from attacker to target.  `dy_iso` applies the isometric
     // Y-stretch for Euclidean distance math; `dy_raw` stays raw for the
@@ -1071,7 +1089,7 @@ fn estimate_damage(
     let sq_dist = dx * dx + dy_iso * dy_iso;
 
     // Short-circuit: out of maximal range → 0 damage.
-    let max_range = attacker.sword_range_maximal as f32;
+    let max_range = all_fighters.sword_range_maximal(attacker) as f32;
     if sq_dist > max_range * max_range {
         cp.estimated_damage = 0;
         return 0;
@@ -1082,40 +1100,46 @@ fn estimate_damage(
     // A valid weapon profile and sword are required to obtain the standard range.
     // Do not turn missing required weapon data into fabricated flat damage.
     let att_prof = profile_manager
-        .get_hth_weapon(attacker.hth_weapon_id)
+        .get_hth_weapon(all_fighters.hth_weapon_id(attacker))
         .unwrap_or_else(|| {
             panic!(
                 "fighter {} requires missing HtH weapon profile {}",
-                attacker.handle, attacker.hth_weapon_id
+                attacker,
+                all_fighters.hth_weapon_id(attacker)
             )
         });
     let def_prof = profile_manager
-        .get_hth_weapon(target.hth_weapon_id)
+        .get_hth_weapon(all_fighters.hth_weapon_id(target))
         .unwrap_or_else(|| {
             panic!(
                 "fighter {} requires missing HtH weapon profile {}",
-                target.handle, target.hth_weapon_id
+                target,
+                all_fighters.hth_weapon_id(target)
             )
         });
     let evaluator_prof = profile_manager
-        .get_hth_weapon(evaluator.hth_weapon_id)
+        .get_hth_weapon(all_fighters.hth_weapon_id(evaluator))
         .unwrap_or_else(|| {
             panic!(
                 "fighter {} requires missing HtH weapon profile {}",
-                evaluator.handle, evaluator.hth_weapon_id
+                evaluator,
+                all_fighters.hth_weapon_id(evaluator)
             )
         });
     {
-        let is_rank_soldier = attacker.rank == ProfileRank::Soldier && !attacker.is_pc;
+        let is_rank_soldier =
+            all_fighters.rank(attacker) == ProfileRank::Soldier && !all_fighters.is_pc(attacker);
         // Protection calculation does not use the proposed
         // combat-position coordinates: it dereferences both actors and
         // computes the defender-to-attacker sector from their *live*
         // ground-space coordinates. Rust stores projected map Y in
         // `position`, so recover the Original world Y by adding elevation.
         // Range still uses the hypothetical coordinates above.
+        let attacker_ground = all_fighters.protection_ground_position(attacker);
+        let target_ground = all_fighters.protection_ground_position(target);
         let target_to_attacker_sector = vec_to_sector(
-            attacker.position.x - target.position.x,
-            (attacker.position.y + attacker.elevation) - (target.position.y + target.elevation),
+            attacker_ground.x - target_ground.x,
+            attacker_ground.y - target_ground.y,
         ) as i16;
 
         use crate::weapons::SwordStrike;
@@ -1146,7 +1170,7 @@ fn estimate_damage(
             let cutting = crate::combat::get_strike_cutting_effect(
                 att_prof,
                 strike,
-                attacker.fighting_ability,
+                all_fighters.fighting_ability(attacker),
                 is_rank_soldier,
             );
             // Original-game quirk: damage estimation uses the sword (the combat
@@ -1159,11 +1183,11 @@ fn estimate_damage(
             let strike_dir = crate::combat::get_strike_direction(evaluator_prof, strike);
             let protection = crate::combat::get_sword_protection(
                 def_prof,
-                target.direction as i16,
+                all_fighters.direction(target) as i16,
                 target_to_attacker_sector,
                 strike_dir,
-                attacker.elevation,
-                target.elevation,
+                all_fighters.elevation(attacker),
+                all_fighters.elevation(target),
             );
             let cutting_eff = (cutting as f32 * 0.01 * (100.0 - protection as f32).max(0.0)) as i32;
 
@@ -1188,7 +1212,7 @@ fn estimate_damage(
     let target_look = MapVec::from_sector(cp.target_direction);
     let from_behind = target_look.dot(MapVec::new(dx, dy_iso)) > 0.0;
     if from_behind {
-        if attacker.is_friendly {
+        if all_fighters.is_friendly(attacker) {
             if iq > combat::ATTACK_FROM_BEHIND_MIN_IQ {
                 overall_damage += combat::ATTACK_FROM_BEHIND_BONUS;
             }
@@ -1207,7 +1231,7 @@ fn evaluate_single_position(
     evaluator: HumanHandle,
     cp: &mut CombatPosition,
     enemy_positions: &mut [CombatPosition],
-    all_fighters: FighterView<'_>,
+    all_fighters: impl CombatFighterAccess,
     profile_manager: &crate::profiles::ProfileManager,
     iq: u16,
 ) -> i32 {
@@ -1225,14 +1249,14 @@ fn evaluate_single_position(
 
 /// Full evaluation of a combat position considering own damage,
 /// friends' damage, and unengaged enemies.
-pub(super) fn evaluate_combat_position_full(
+pub(crate) fn evaluate_combat_position_full(
     me_handle: HumanHandle,
     me_pos: &Position,
     them_handles: &[HumanHandle],
     cp: &mut CombatPosition,
     friend_positions: &mut [CombatPosition],
     enemy_positions: &mut [CombatPosition],
-    all_fighters: FighterView<'_>,
+    all_fighters: impl CombatFighterAccess,
     profile_manager: &crate::profiles::ProfileManager,
     iq: u16,
 ) -> i32 {

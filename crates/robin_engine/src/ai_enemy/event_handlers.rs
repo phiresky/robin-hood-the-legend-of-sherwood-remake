@@ -314,7 +314,7 @@ impl EnemyAi {
                 // here can leave a soldier's swordfight opponent list intact
                 // while its AI state falls back to patrol.
                 if self.base.current_substate == Substate::AttackingKillingSleepingEnemy {
-                    self.get_battle_overview(0, env);
+                    self.get_battle_overview(0, env)?;
                 } else {
                     let done = Stimulus::new(StimulusType::EventDone);
                     let mut call = DutyCall::new(DutyFlags::empty(), false);
@@ -369,7 +369,7 @@ impl EnemyAi {
             }
 
             StimulusType::CallAlert => {
-                return Ok(self.on_unexpected_call_alert(stimulus, env));
+                return self.on_unexpected_call_alert(stimulus, env);
             }
 
             StimulusType::CallCombatAlert => {
@@ -511,28 +511,17 @@ impl EnemyAi {
             }
 
             StimulusType::EventObjectAway => {
-                // Dispatch on object type. `StolenObject` carries the
-                // object handle but not its type; we match PURSE/COIN by
-                // checking whether the stolen object is tracked as
-                // money-of-interest (`interesting_object` or appears in
-                // `other_seen_money`). Anything else — including the ALE
-                // branch and the default return-to-duty fallback — falls
-                // through to `return_to_duty`.
                 if let StimulusInfo::Stolen(stolen) = stimulus.info {
-                    let obj = stolen.object;
-                    let thief = stolen.thief;
-                    let is_money_of_interest = self.base.interesting_object == Some(obj)
-                        || self.other_seen_money.contains(&obj.get());
-                    if is_money_of_interest {
-                        self.stolen_money_standard_procedure(thief.get(), ctx, tick);
-                    } else {
-                        return Err(DutyCall::new(DutyFlags::empty(), false));
-                    }
+                    return Err(DutyCall {
+                        tail: crate::ai::DutyTail::MoneyFight {
+                            operation: crate::ai::MoneyFightOperation::StolenMoney {
+                                object: stolen.object,
+                                thief: stolen.thief,
+                            },
+                        },
+                        ..DutyCall::new(DutyFlags::empty(), false)
+                    });
                 }
-            }
-
-            StimulusType::CallPatrolCoordinate => {
-                self.coordinate_patrol(&stimulus.info, ctx, tick.patrol_chief_position);
             }
 
             // The officer who
@@ -542,8 +531,12 @@ impl EnemyAi {
                 if self.base.current_substate
                     == Substate::WonderingSoldierLookingOfficerWhoFinishedBrawl
                 {
-                    self.create_list_of_near_money_fight_victims(ctx, tick);
-                    self.awake_next_money_fight_victim_if_any(env)?;
+                    return Err(DutyCall {
+                        tail: crate::ai::DutyTail::MoneyFight {
+                            operation: crate::ai::MoneyFightOperation::CleanUpAfterBrawl,
+                        },
+                        ..DutyCall::new(DutyFlags::empty(), false)
+                    });
                 }
             }
 
@@ -800,7 +793,7 @@ impl EnemyAi {
                 if let StimulusInfo::Hint(ref hint) = stimulus.info {
                     match self.base.current_state {
                         AiState::Default | AiState::Wondering => {
-                            self.call_tower_guard_calls_me_standard_procedure(env, hint);
+                            self.call_tower_guard_calls_me_standard_procedure(env, hint)?;
                         }
                         _ => {}
                     }
@@ -808,7 +801,7 @@ impl EnemyAi {
             }
 
             StimulusType::EventGotHit => {
-                return Ok(self.on_alerting_got_hit(stimulus, env));
+                return self.on_alerting_got_hit(stimulus, env);
             }
 
             StimulusType::EventApple => {
@@ -1718,7 +1711,11 @@ impl EnemyAi {
         self.base.launch_timer(100, ctx.frame);
     }
 
-    fn call_tower_guard_calls_me_standard_procedure(&mut self, env: ThinkEnv<'_>, hint: &Hint) {
+    fn call_tower_guard_calls_me_standard_procedure(
+        &mut self,
+        env: ThinkEnv<'_>,
+        hint: &Hint,
+    ) -> crate::ai::AiFlow<()> {
         let ThinkEnv { tick, .. } = env;
         self.base.seek_position = hint.seek_point;
         self.base
@@ -1727,31 +1724,7 @@ impl EnemyAi {
 
         match self.get_rank() {
             ProfileRank::Soldier => {
-                let returns_to_instructed_group =
-                    self.alert_officer_returns_to_instructed_group(tick);
-                let alerted = self.alert_officer(env, self.base.seek_position, 0);
-                if alerted && !returns_to_instructed_group {
-                    // The original game's officer alert constructs the nearby route and
-                    // consumes the unreachable-point flag before returning, even
-                    // though this caller ignores its bool result. Close the
-                    // actor prefix first, then clear only that route failure
-                    // at the typed owner tail.
-                    self.base.outbox.reentrant.owner_work.push(
-                        crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                            &mut self.base.outbox.actor,
-                        )),
-                    );
-                    self.base
-                        .outbox
-                        .reentrant
-                        .tower_guard_alert_officer_completion_pending = true;
-                    self.base
-                        .outbox
-                        .reentrant
-                        .owner_work
-                        .push(crate::ai::AiOwnerWork::ConsumeTowerGuardAlertOfficerRouteFailure);
-                }
-                self.current_task_priority = task_priority::ALERT_IGNORE_ENEMY;
+                self.alert_officer(crate::ai::OfficerAlertCaller::TowerGuardCalled)?;
             }
             ProfileRank::Officer => {
                 self.alert_soldiers(
@@ -1759,13 +1732,14 @@ impl EnemyAi {
                     0,
                     env,
                     AlertSoldiersFailureContinuation::None,
-                );
+                )?;
             }
             ProfileRank::Knight => {
                 unreachable!("RANK_KNIGHT is never eligible for tower-guard call-me dispatch")
             }
             ProfileRank::None => {}
         }
+        Ok(())
     }
 
     fn call_combat_alert_standard_procedure(
@@ -1906,7 +1880,7 @@ impl EnemyAi {
                         ctx,
                     );
                 } else {
-                    self.get_battle_overview(0, ThinkEnv { grid: None, ..env });
+                    self.get_battle_overview(0, ThinkEnv { grid: None, ..env })?;
                 }
             }
         }
@@ -2077,7 +2051,7 @@ impl EnemyAi {
                             global,
                         )?;
                     } else {
-                        self.get_battle_overview(0, env);
+                        self.get_battle_overview(0, env)?;
                     }
                 }
 
@@ -2118,81 +2092,6 @@ impl EnemyAi {
             }
             Substate::AttackingObserve => {
                 // Ignore.
-            }
-            Substate::AttackingRunningToLadder
-                if stimulus.self_origin == crate::ai::SelfStimulusOrigin::EngineCompletion
-                    && self.base.timer_is_running
-                    && self.base.substate_at_last_timer_launch
-                        == Substate::AttackingRunningToLadder
-                    && self.base.when_does_timer_ring == ctx.frame.saturating_add(30) =>
-            {
-                // This is specifically the engine-completion bridge,
-                // not an Original movement condolation. The latter
-                // enters this handler with Condolation provenance and
-                // must take the generic default arm below.
-                //
-                // The lift-entry movement during enemy approach reconsideration is
-                // followed immediately by timer launch and return
-                // immediately afterward. Control then
-                // returns through enemy attack to DECISION_FIGHT, whose
-                // couldn't-reachpoint arm switches to DECISION_OBSERVE
-                // in the failed-reach branch. The failed
-                // observe route takes the inline avenger-on-roof
-                // fallback at lines 7973-7990. DECISION_FIGHT has not
-                // registered its log line at this source point; the
-                // lift branch's 30-frame timer is its exact surviving
-                // provenance. Rust learns the first route result only
-                // at this owner boundary, so resume that source-ordered
-                // failure tail here.
-                let target_position = ctx
-                    .entity_view(self.base.primary_target)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "ladder route-failure target {:?} disappeared",
-                            self.base.primary_target
-                        )
-                    })
-                    .position;
-                let target = self.required(
-                    self.base.primary_target,
-                    "a primary target",
-                    "resuming a failed ladder route",
-                );
-                let avenger_wait_position =
-                    tick.avenger_wait_position_for(self.base.primary_target);
-                self.base.couldnt_reachpoint = true;
-                if avenger_wait_position.is_some() {
-                    self.resume_reconsider_enemy_approach_after_go_near(
-                        target_position,
-                        avenger_wait_position,
-                        ctx,
-                    );
-                    // The original game constructs and settles this roof approach
-                    // before DECISION_OBSERVE returns. Route the typed
-                    // actor effects through the existing synchronous
-                    // owner boundary so its actual verdict is visible
-                    // to this frame's decision-tick completion.
-                    if self.base.outbox.actor.has_boundary_work() {
-                        self.base.outbox.reentrant.owner_work.push(
-                            crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                                &mut self.base.outbox.actor,
-                            )),
-                        );
-                    }
-                } else {
-                    // DECISION_FIGHT clears the failed lift approach
-                    // and changes to DECISION_OBSERVE. Its observe
-                    // Approach movement fails synchronously too in this no-roof
-                    // case, so the following source tail installs
-                    // observation approach/timer 50 while retaining the
-                    // failure latch for tick completion's generic overview.
-                    self.resume_battle_observe_after_go_near(
-                        target.get(),
-                        target_position,
-                        None,
-                        ctx,
-                    );
-                }
             }
             Substate::AttackingApproachToObserve
                 if self.base.ai_log.iter().rev().any(|line| {
@@ -2394,7 +2293,11 @@ impl EnemyAi {
         false
     }
 
-    fn on_unexpected_call_alert(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
+    fn on_unexpected_call_alert(
+        &mut self,
+        stimulus: &Stimulus,
+        env: ThinkEnv<'_>,
+    ) -> crate::ai::AiFlow<bool> {
         let ThinkEnv { ctx, tick, .. } = env;
         match stimulus.info {
             StimulusInfo::Hint(ref hint) => {
@@ -2411,7 +2314,7 @@ impl EnemyAi {
                             0,
                             env,
                             AlertSoldiersFailureContinuation::None,
-                        );
+                        )?;
                     }
                     _ => {
                         self.current_task_priority = task_priority::ALERT;
@@ -2441,7 +2344,7 @@ impl EnemyAi {
                 self.base.antagonist = Some(civilian);
                 if caller.is_civilian() {
                     if self.base.current_state != AiState::Default {
-                        return false;
+                        return Ok(false);
                     }
                     // The original game's civilian alert branch uses the actor's
                     // actor halt directly, not AI stop-all. The actor work
@@ -2458,7 +2361,7 @@ impl EnemyAi {
                     );
                     self.base
                         .set_transient_emoticon(EmoticonType::QuestionMark, 20, ctx.frame);
-                    return true;
+                    return Ok(true);
                 }
                 match self.get_rank() {
                     ProfileRank::Soldier => {
@@ -2474,7 +2377,7 @@ impl EnemyAi {
                                     | Substate::SeekingSoldierGiveAlertingReportToOfficerEnd
                             );
                         if !react || !self.answer_question(Question::HasTheNewTaskPriority, ctx) {
-                            return false;
+                            return Ok(false);
                         }
                         assert_eq!(
                             caller.rank,
@@ -2499,7 +2402,7 @@ impl EnemyAi {
                         );
                         self.base
                             .set_transient_emoticon(EmoticonType::QuestionMark, 20, ctx.frame);
-                        return true;
+                        return Ok(true);
                     }
                     ProfileRank::Officer => {
                         let react = self.base.current_state == AiState::Default
@@ -2510,7 +2413,7 @@ impl EnemyAi {
                                         | Substate::SeekingOfficerWaitForInstructedSoldier
                                 );
                         if !react {
-                            return false;
+                            return Ok(false);
                         }
                         assert_eq!(
                             caller.rank,
@@ -2532,7 +2435,7 @@ impl EnemyAi {
                         );
                         self.base
                             .set_transient_emoticon(EmoticonType::QuestionMark, 20, ctx.frame);
-                        return true;
+                        return Ok(true);
                     }
                     ProfileRank::Knight | ProfileRank::None => {
                         panic!(
@@ -2544,7 +2447,7 @@ impl EnemyAi {
             }
             _ => {}
         }
-        false
+        Ok(false)
     }
 
     fn on_unexpected_call_hey(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
@@ -2892,9 +2795,12 @@ impl EnemyAi {
                             // charge, else fall back to
                             // battle planning.
                             self.reinitialize_them_list(ctx);
-                            if !self.maybe_make_rider_attack(env) {
-                                self.battle_decisions(env, global)?;
-                            }
+                            return Err(crate::ai::DutyCall {
+                                tail: crate::ai::DutyTail::RiderAttack {
+                                    fallback: crate::ai::RiderAttackFallback::BattleDecisions,
+                                },
+                                ..crate::ai::DutyCall::new(DutyFlags::empty(), false)
+                            });
                         }
 
                         _ => {}
@@ -2983,7 +2889,7 @@ impl EnemyAi {
         false
     }
 
-    fn on_alerting_got_hit(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
+    fn on_alerting_got_hit(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> AiFlow<bool> {
         let ThinkEnv { ctx, tick, .. } = env;
         // Three arms: (1) swordfighting → add opponent if
         // cross-camp & not already engaged; (2) MenacingPcInComa →
@@ -3069,7 +2975,10 @@ impl EnemyAi {
                     // Non-soldier human attacker — retarget and
                     // attack.
                     self.base.primary_target = Some(attacker);
-                    self.attack_enemy(attacker.get(), env);
+                    self.attack_enemy(attacker.get(), env).map_err(|call| {
+                        call.with_think_result(false)
+                            .then(crate::ai::DutyTail::GotHitViewStatus)
+                    })?;
                 }
                 // Dead-or-unconscious view-status assignment
                 // applies whenever the attacker info was human,
@@ -3101,7 +3010,7 @@ impl EnemyAi {
                 self.base.primary_target = None;
             }
         }
-        false
+        Ok(false)
     }
 
     fn on_alerting_apple(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {

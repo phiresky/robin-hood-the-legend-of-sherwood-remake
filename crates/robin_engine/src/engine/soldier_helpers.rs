@@ -499,6 +499,7 @@ impl EngineInner {
             .into();
         while let Some(dispatch) = pending.pop_front() {
             let owner = dispatch.card.owner;
+            let move_boundary = self.orders.sequence_manager.sequence_launch_boundary();
             let from_halt = dispatch.card.from_halt;
             let diagnostic = damage_parry_handoff_debug_config()
                 .map(|_| (dispatch.card, dispatch.cross_postponed_successor()));
@@ -538,7 +539,13 @@ impl EngineInner {
                 // tail only after the recursive drain's ordinary order pass.
                 // Original remains inside removal notification here.
                 self.launch_pending_orders_for_npc(sim, assets, owner);
-                self.dispatch_synchronous_owner_moves(sim, assets, owner, active_scripts)?;
+                self.dispatch_synchronous_owner_moves(
+                    sim,
+                    assets,
+                    owner,
+                    move_boundary,
+                    active_scripts,
+                )?;
             }
             self.orders
                 .sequence_manager
@@ -631,6 +638,7 @@ impl EngineInner {
         resumed_cross_successors: &mut Vec<(crate::sequence::SequenceId, usize)>,
     ) {
         let card_owner = dispatch.card.owner;
+        let move_boundary = self.orders.sequence_manager.sequence_launch_boundary();
         let from_halt = dispatch.card.from_halt;
         let diagnostic = damage_parry_handoff_debug_config()
             .map(|_| (dispatch.card, dispatch.cross_postponed_successor()));
@@ -669,18 +677,24 @@ impl EngineInner {
         // A condolence handler can issue movement for the next patrol leg. The original game
         // Sequence-element launch immediately reaches the owner's instruction
         // path inside removal notification, before the terminating element's
-        // Ready() continuation resumes. Promote only this owner's newly
-        // queued move and drive its exact deferred InstructOwner action at
+        // Ready() continuation resumes. Select only this owner's newly
+        // registered movement and drive its exact deferred InstructOwner action at
         // the same boundary. Other owners' FIFO positions remain untouched.
         let mut active_scripts = Vec::new();
         if !from_halt {
-            self.dispatch_synchronous_owner_moves(sim, assets, card_owner, &mut active_scripts)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "condolation owner {} synchronous Move dispatch failed: {error:?}",
-                        card_owner.index()
-                    )
-                });
+            self.dispatch_synchronous_owner_moves(
+                sim,
+                assets,
+                card_owner,
+                move_boundary,
+                &mut active_scripts,
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "condolation owner {} synchronous Move dispatch failed: {error:?}",
+                    card_owner.index()
+                )
+            });
         }
 
         // A state change reached re-entrantly from a removal notification belongs
@@ -719,18 +733,21 @@ impl EngineInner {
         }
     }
 
-    /// Promote and synchronously instruct Move elements launched re-entrantly
-    /// by an owner's condolence-card Think call. In the Original this entire
-    /// chain remains inside removal notification; unrelated owners keep their
-    /// established queue positions.
+    /// Synchronously instruct movement registered by an owner's condolence
+    /// callback. The chain remains inside removal notification; unrelated
+    /// owners keep their established queue positions.
     pub(super) fn dispatch_synchronous_owner_moves(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
+        move_boundary: u32,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     ) -> Result<(), crate::engine::script::ScriptDriverError> {
-        let launched_moves = self.drain_pending_move_requests_for_owner(sim, owner);
+        let launched_moves = self
+            .orders
+            .sequence_manager
+            .deferred_owner_moves_since(owner, move_boundary);
         self.dispatch_synchronous_owner_move_sequences(
             sim,
             assets,

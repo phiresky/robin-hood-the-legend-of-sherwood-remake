@@ -145,95 +145,6 @@ fn speech_snapshot_roundtrip_and_hash_cover_fifo_live_identity_and_global_state(
 }
 
 #[test]
-fn specialized_ai_continuation_snapshot_roundtrip_and_hash_cover_pending_barrier() {
-    use crate::ai::{
-        AlertSoldiersFailureContinuation, CrossNpcAction, Position, StimulusInfo, StimulusType,
-        ThinkResultContinuation,
-    };
-
-    let mut engine = EngineInner::new();
-    let caller = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let target = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    engine
-        .get_entity_mut(caller)
-        .and_then(Entity::ai_controller_mut)
-        .expect("snapshot caller has AI")
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .extend([
-            CrossNpcAction::RequestAlert {
-                target: target.index(),
-                caller: caller.index(),
-            },
-            CrossNpcAction::RequestThinkResult {
-                target: target.index(),
-                caller: caller.index(),
-                stimulus_type: StimulusType::CallAlert,
-                info: StimulusInfo::Human(crate::ai::AiEntityHandle::new(target.index())),
-                continuation: ThinkResultContinuation::OfficerAlertedSoldier {
-                    last: true,
-                    use_formation: true,
-                    failure: AlertSoldiersFailureContinuation::SeekBody {
-                        center: Position {
-                            x: 8.0,
-                            y: 16.0,
-                            ..Default::default()
-                        },
-                        radius: 160,
-                    },
-                },
-            },
-            CrossNpcAction::FinalizeAlertSoldiers {
-                caller: caller.index(),
-                use_formation: true,
-                failure: AlertSoldiersFailureContinuation::SeekBody {
-                    center: Position {
-                        x: target.index() as f32 + 12.5,
-                        y: -7.0,
-                        ..Default::default()
-                    },
-                    radius: 320,
-                },
-            },
-        ]);
-
-    let json = serde_json::to_string(&engine).expect("serialize AI continuation snapshot");
-    let restored: EngineInner =
-        serde_json::from_str(&json).expect("deserialize AI continuation snapshot");
-    assert_eq!(
-        serde_json::to_value(&restored).unwrap(),
-        serde_json::to_value(&engine).unwrap()
-    );
-    assert_eq!(
-        robin_util::state_hash::compute(&restored),
-        robin_util::state_hash::compute(&engine)
-    );
-
-    let mut changed_continuation_payload = engine.clone();
-    let actions = &mut changed_continuation_payload
-        .get_entity_mut(caller)
-        .and_then(Entity::ai_controller_mut)
-        .expect("snapshot caller retains AI")
-        .outbox
-        .reentrant
-        .cross_npc_actions;
-    let CrossNpcAction::RequestThinkResult {
-        continuation: ThinkResultContinuation::OfficerAlertedSoldier { last, .. },
-        ..
-    } = &mut actions[1]
-    else {
-        panic!("snapshot test lost its result-bearing continuation")
-    };
-    *last = false;
-    assert_ne!(
-        robin_util::state_hash::compute(&changed_continuation_payload),
-        robin_util::state_hash::compute(&engine),
-        "the nested continuation payload must participate in the deterministic hash"
-    );
-}
-
-#[test]
 fn detectable_mutations_preserve_statement_order_through_snapshot_and_drain() {
     // Native actor decoding needs more than libtest's 2 MiB thread stack for
     // this complete three-actor snapshot. Keep the adjustment local to this
@@ -894,25 +805,6 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let scratch = engine.build_sim_scratch(&assets);
-    let ctx = crate::engine::ai::build_ai_context_from_entity(
-        engine
-            .get_entity(owner_id)
-            .expect("observation owner exists"),
-        engine.control.frame_counter,
-        None,
-        engine.world.weather.is_forest_level,
-        engine.world.weather.ambiance,
-        engine.ai.standard_view_polygon_radius,
-        &scratch.ai_entity_views,
-        &scratch.ai_sight_obstacles,
-        &engine.world.fast_grid,
-        &assets.navigation.hiking_paths,
-        &assets.navigation.hiking_waypoint_sectors,
-        &engine.ai.global.all_soldier_handles,
-        engine.control.sim_config.difficulty,
-        engine.ai_think_depth(),
-    );
     let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
 
     assert!(
@@ -928,22 +820,12 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
             .any(|fighter| fighter.handle == raw_far_id.index()),
         "generic nearby scan must retain the raw-far fighter at its door-resolved near side"
     );
-    let observation_position = |handle| {
-        tick.reconsider_swordfight_observation_fighters
-            .iter()
-            .find(|fighter| fighter.handle == handle)
-            .expect("fighter exists in complete observation registry")
-            .raw_world_position
-    };
-    assert_eq!(observation_position(raw_near_id.index()).x, 20.0);
-    assert_eq!(observation_position(raw_far_id.index()).x, 600.0);
 
     engine.dispatch_think_with_drain(
         &sim,
         owner_id,
         &Stimulus::new(StimulusType::EventTimer),
-        &ctx,
-        &tick,
+        None,
         &assets,
     );
 
@@ -959,7 +841,7 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
 
 #[test]
 fn closure_review_alert_soldiers_keeps_inactive_soldier_in_live_camp_scan() {
-    use crate::ai::{AlertSoldiersFailureContinuation, CrossNpcAction, Position};
+    use crate::ai::Position;
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
@@ -971,36 +853,13 @@ fn closure_review_alert_soldiers_keeps_inactive_soldier_in_live_camp_scan() {
     };
     soldier.element.active = false;
 
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    let candidate = tick
-        .camp_soldiers
-        .iter()
-        .find(|candidate| candidate.handle == soldier_id.index())
-        .expect("inactive soldier remains in the direct-owner camp population");
-    assert!(!candidate.is_able_to_fight);
-    assert!(candidate.is_able_to_help);
-
-    assert!(
+    assert!(engine.execute_ai_alert_soldiers(&sim, &assets, officer_id, Position::default(), 0));
+    assert_eq!(
         engine
-            .get_entity_mut(officer_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("inactive-help officer has EnemyAi")
-            .alert_soldiers(
-                Position::default(),
-                0,
-                crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-                AlertSoldiersFailureContinuation::None,
-            )
+            .world
+            .entities
+            .expect_enemy_ai(officer_id, format_args!("inactive-help caller"))
+            .alerted_us,
+        vec![soldier_id.index()]
     );
-    assert!(matches!(
-        engine
-            .get_entity(officer_id)
-            .and_then(Entity::ai_controller)
-            .expect("inactive-help officer retains AI")
-            .outbox
-            .reentrant
-            .cross_npc_actions
-            .as_slice(),
-        [CrossNpcAction::RequestThinkResult { target, .. }] if *target == soldier_id.index()
-    ));
 }

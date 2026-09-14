@@ -2079,11 +2079,6 @@ impl Engine {
             .map_err(|detail| SnapshotRestoreError::AttachmentFailure { detail })?;
         saved
             .inner
-            .orders
-            .validate_invariants()
-            .map_err(|detail| SnapshotRestoreError::OrderInvariantViolation { detail })?;
-        saved
-            .inner
             .mission_domain
             .campaign
             .validate_history_schema()

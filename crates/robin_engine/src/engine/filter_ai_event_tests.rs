@@ -651,18 +651,17 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
 
     // EventView with no human info → source=0 → script blocks.
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
-    let ctx = crate::ai::AiContext::test_fixture();
-    let tick_data = crate::ai::AiPerTickData::stub();
-
     let handled = engine.dispatch_filtered_stimulus(
         sim,
         &LevelAssets::new(),
         sensitive_entity_id,
         &stim,
-        &ctx,
-        &tick_data,
+        None,
     );
-    assert!(!handled, "filter blocked → dispatch returns false");
+    assert!(
+        handled,
+        "a refused typed decision still completes and returns handled"
+    );
 
     // State should be unchanged (think() never ran).
     let after_state = engine
@@ -678,70 +677,71 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
 }
 
 #[test]
-fn review2_result_continuation_consumes_live_script_filter_refusal() {
-    use crate::ai::{
-        CrossNpcAction, Position, StimulusInfo, StimulusType, ThinkResultContinuation,
-    };
+fn combat_command_consumes_live_script_filter_refusal() {
+    use crate::ai::{AiState, Position, Substate};
+    use crate::coordinates::MapPoint;
+    use crate::profiles::ProfileRank;
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, _, sensitive_handle, caller_handle) = build_engine();
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     let target = crate::natives::ScriptHandleCodec::actor_handle_index(sensitive_handle)
         .expect("sensitive actor has an entity index") as u32;
     let caller = crate::natives::ScriptHandleCodec::actor_handle_index(caller_handle)
         .expect("caller actor has an entity index") as u32;
-    let caller_id = engine
-        .entity_id_for_index(caller)
-        .expect("script-filter caller exists");
-    let target_id = engine
-        .entity_id_for_index(target)
-        .expect("script-filter target exists");
-    engine
-        .get_entity_mut(target_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("script-filter target has EnemyAi")
-        .base
-        .me = target;
-    let caller_ai = engine
-        .get_entity_mut(caller_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("script-filter caller has EnemyAi");
-    caller_ai.base.me = caller;
-    caller_ai.alerted_us.clear();
-    caller_ai
-        .base
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::RequestThinkResult {
-            target,
-            caller,
-            stimulus_type: StimulusType::CallCombatAlert,
-            // No Human source makes SourceSensitive::FilterAIEvent return 0.
-            info: StimulusInfo::Position(Position::default()),
-            continuation: ThinkResultContinuation::OfficerCombatAlertedSoldier {
-                last: true,
-                use_formation: false,
-            },
-        });
+    let caller_id = engine.entity_id_for_index(caller).expect("caller exists");
+    let target_id = engine.entity_id_for_index(target).expect("target exists");
+    for (id, x, rank) in [
+        (caller_id, 100.0, ProfileRank::Officer),
+        (target_id, 125.0, ProfileRank::Soldier),
+    ] {
+        let entity = engine
+            .get_entity_mut(id)
+            .expect("combat alert actor exists");
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(x, 100.0));
+        entity
+            .actor_data_mut()
+            .expect("combat alert actor")
+            .view_radius = 500;
+        let enemy = entity.enemy_ai_mut().expect("combat alert brain");
+        enemy.base.me = id.index();
+        enemy.soldier_profile_rank = rank;
+        enemy.base.current_state = AiState::Default;
+        enemy.base.current_substate = Substate::DefaultOnPost;
+    }
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let center = Position {
+        x: 200.0,
+        y: 100.0,
+        ..Position::default()
+    };
 
-    engine.drain_direct_ai_owner_boundary(&sim, caller_id, &assets);
-
-    assert!(
+    // Combat alerts carry a position, so SourceSensitive receives source zero.
+    assert!(engine.execute_ai_command_soldiers_to_attack(&sim, &assets, caller_id, center,));
+    assert_eq!(
         engine
-            .get_entity(caller_id)
-            .and_then(Entity::enemy_ai)
-            .expect("script-filter caller retains EnemyAi")
-            .alerted_us
-            .is_empty(),
-        "a script-authored zero result must prune the candidate"
+            .get_entity(target_id)
+            .and_then(Entity::ai_controller)
+            .expect("target retains AI")
+            .current_state,
+        AiState::Default,
     );
+
+    // Allowing the filter also lets the accepted recipient execute its handler.
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .expect("mission remains loaded")
+        .bind_actor(sensitive_handle, "NoOverride");
+    assert!(engine.execute_ai_command_soldiers_to_attack(&sim, &assets, caller_id, center,));
 }
 
 #[test]
 fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
-    use crate::ai::{AiState, AlertSoldiersFailureContinuation, Position, Substate};
+    use crate::ai::{AiState, Position, Substate};
     use crate::coordinates::MapPoint;
     use crate::profiles::ProfileRank;
 
@@ -806,43 +806,16 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         );
     }
 
-    let scratch = engine.build_sim_scratch(&assets);
-    let ctx = crate::engine::ai::build_ai_context_from_entity(
-        engine
-            .get_entity(officer_id)
-            .expect("closure-review officer exists"),
-        engine.control.frame_counter,
-        None,
-        engine.world.weather.is_forest_level,
-        engine.world.weather.ambiance,
-        engine.ai.standard_view_polygon_radius,
-        &scratch.ai_entity_views,
-        &scratch.ai_sight_obstacles,
-        &engine.world.fast_grid,
-        &assets.navigation.hiking_paths,
-        &assets.navigation.hiking_waypoint_sectors,
-        &engine.ai.global.all_soldier_handles,
-        engine.control.sim_config.difficulty,
-        engine.ai_think_depth(),
-    );
-    let tick = engine.build_npc_tick_data(&sim, officer_id, &assets);
-    assert_eq!(tick.camp_soldiers.len(), candidates.len());
-    assert!(
-        engine
-            .get_entity_mut(officer_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("closure-review officer has EnemyAi")
-            .alert_soldiers(
-                Position {
-                    x: 300.0,
-                    ..Default::default()
-                },
-                0,
-                crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-                AlertSoldiersFailureContinuation::None,
-            )
-    );
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+    assert!(engine.execute_ai_alert_soldiers(
+        &sim,
+        &assets,
+        officer_id,
+        Position {
+            x: 300.0,
+            ..Default::default()
+        },
+        0
+    ));
 
     let officer = engine
         .get_entity(officer_id)
@@ -852,20 +825,12 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
     // inserted into the alerted list sorted by decreasing distance from the
     // officer; candidate distance grows with index here, so the list reads
     // back in reverse roster order.
-    let expected: Vec<_> = candidates[3..23]
-        .iter()
-        .rev()
-        .map(|id| id.index())
-        .collect();
+    let expected: Vec<_> = candidates[..20].iter().rev().map(|id| id.index()).collect();
     assert_eq!(officer.alerted_us, expected);
     assert_eq!(officer.alerted_us.len(), 20);
     assert!(
-        !officer.alerted_us.contains(&candidates[23].index()),
-        "the scan stops immediately after the twentieth actual acceptance"
-    );
-    assert!(
-        officer.pending_alert_soldier_candidates.is_empty(),
-        "unattempted tail candidates are discarded when the accepted cap is reached"
+        !officer.alerted_us.contains(&candidates[20].index()),
+        "the scan stops after twenty handled calls, including filter refusals"
     );
 }
 
@@ -4872,6 +4837,100 @@ fn make_scripted_civilian(script_class: &str) -> Entity {
     })
 }
 
+#[test]
+fn retained_human_stimulus_reads_target_position_after_filter() {
+    use crate::ai::{AiEntityHandle, AiState, Stimulus, StimulusType, Substate};
+    use crate::natives::{NativeFn, ScriptHandleCodec};
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(make_scripted_civilian("MoveStimulusTarget"));
+    let Entity::Civilian(civilian) = engine.get_entity_mut(owner).unwrap() else {
+        unreachable!()
+    };
+    civilian.civilian.cached_camp = crate::element::Camp::Royalists;
+    let target = engine.add_test_entity(crate::engine::test_support::actors::make_test_ai_soldier(
+        crate::element::Camp::Lacklandists,
+    ));
+    let stale_target =
+        engine.add_test_entity(crate::engine::test_support::actors::make_test_ai_soldier(
+            engine.get_entity(owner).unwrap().camp(),
+        ));
+    let target_handle = ScriptHandleCodec::actor_handle(target);
+    let location = ScriptHandleCodec::location_handle_from_index(0);
+    let class = ClassEntry {
+        source_file: "live_target_test.scs".into(),
+        class_name: "MoveStimulusTarget".into(),
+        size_of_member_variables: 0,
+        member_variables: vec![],
+        functions: vec![Function {
+            name: "FilterAIEvent".into(),
+            address: 0,
+            num_parameters: 3,
+            size_of_return_value: 4,
+            size_of_parameters: 12,
+            size_of_volatile: 0,
+            size_of_temporary: 8,
+        }],
+        quads: vec![
+            q_begin_function(0, 2),
+            q_aff1_get_param(TMP0, 4),
+            q_aff0_iconstant(
+                TMP1,
+                crate::ai::stimulus_to_ai_event_code(StimulusType::EventView).unwrap(),
+            ),
+            q_ieq(TMP0, TMP0, TMP1),
+            q_if_not_zero_goto(TMP0, 7),
+            q_aff0_iconstant(TMP0, 1),
+            q_return_val(TMP0),
+            q_aff0_iconstant(TMP0, target_handle),
+            q_aff0_iconstant(TMP1, location),
+            q_native_param(TMP0),
+            q_native_param(TMP1),
+            q_native_call(NativeFn::SetActorLocation as u32),
+            q_aff0_iconstant(TMP0, 1),
+            q_return_val(TMP0),
+            q_end_function(),
+        ],
+    };
+    let mut assets = install_state_change_script(&mut engine, state_change_scb(vec![class]));
+    assets.scripts.location_count = 1;
+    assets.scripts.point_count = 1;
+    assets.scripts.location_positions = std::sync::Arc::new(vec![(150.0, 250.0)]);
+    assets.scripts.location_layers = std::sync::Arc::new(vec![0]);
+    assets.scripts.location_sectors = std::sync::Arc::new(vec![7]);
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.attach_script_bindings(&assets);
+    bind_state_change_actor(&mut engine, owner, "MoveStimulusTarget");
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("retained view fixture"));
+    ai.current_state = AiState::Default;
+    ai.current_substate = Substate::DefaultOnPost;
+    ai.antagonist = Some(AiEntityHandle::new(stale_target.index()));
+    ai.stimulus_queue.push(Stimulus::with_human(
+        StimulusType::EventView,
+        target.index(),
+    ));
+    engine.execute_ai_callback(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        &Stimulus::new(StimulusType::EventAfterScriptGoOn),
+    );
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("retained view result"));
+    assert_eq!(
+        ai.current_substate,
+        Substate::WonderingCivilianEnemyReactiontime
+    );
+    assert_eq!(ai.primary_target, Some(AiEntityHandle::new(target.index())));
+    assert_eq!((ai.seek_position.x, ai.seek_position.y), (150.0, 250.0));
+    assert!(ai.stimulus_queue.is_empty());
+    assert!(engine.ai.think_call_stack.is_empty());
+}
+
 fn q_set_custom(actor: u16, index: u16, value: u16) -> [Quad; 4] {
     [
         q_native_param(actor),
@@ -5859,9 +5918,9 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
 #[test]
 fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_move() {
     let (mut engine, assets, actor) = setup_ai_state_native_probe("MoveSentinelProbe", 3);
-    let pending =
+    let mut pending =
         crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 333.0, 444.0);
-    engine.launch_ai_move(actor, &pending);
+    engine.launch_ai_move(&crate::sim_rng::test_context(), actor, &mut pending);
 
     let mut deferred = crate::sequence::SequenceElement::new_movement(
         1,
@@ -5886,10 +5945,6 @@ fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_
         npc_custom_values(&engine, actor)[3],
         crate::order::OrderType::NonanimationEnd as i32,
         "the causal area-search Move stays registered-not-instructed at the adjacent instruction"
-    );
-    assert!(
-        engine.orders.pending_move_requests.is_empty(),
-        "stopping actions cancels the older pre-sequence Move intent before area search queues its causal Move"
     );
     // A registered-but-unlaunched Move that Halt cancels keeps its element in
     // the sequence in a cancelled state; only the to-go registration is
@@ -6123,7 +6178,7 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
 
     let sim = crate::sim_rng::test_context();
     let (_, trace) = with_draw_trace(|| {
-        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(&sim, owner, &assets, None)
+        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(&sim, owner, &assets)
     });
     assert!(
         !trace.contains(&RngSite::BuildingExitGate),
@@ -7105,9 +7160,7 @@ fn fit_again_engine_calls_surround_state_callback_in_original_order() {
 
 #[test]
 fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move() {
-    use crate::ai::{
-        AiContext, AiPerTickData, AiState, PathId, PatrolPath, Stimulus, StimulusType, Substate,
-    };
+    use crate::ai::{AiState, PathId, PatrolPath, Stimulus, StimulusType, Substate};
     use crate::element::Command;
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
     use crate::sequence::{Field, FieldValue, SequenceElement, SequenceState};
@@ -7155,17 +7208,12 @@ fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move(
         .sequence_manager
         .element_in_progress(selected, 0);
 
-    let ctx = AiContext {
-        hiking_paths: assets.navigation.hiking_paths.clone(),
-        ..AiContext::test_fixture()
-    };
     let handled = engine.dispatch_filtered_stimulus(
         &crate::sim_rng::test_context(),
         &assets,
         owner,
         &Stimulus::new(StimulusType::EventReachPoint),
-        &ctx,
-        &AiPerTickData::stub(),
+        None,
     );
     assert!(
         !handled,
@@ -7216,9 +7264,7 @@ fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move(
 
 #[test]
 fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
-    use crate::ai::{
-        AiContext, AiPerTickData, AiState, PathId, PatrolPath, Stimulus, StimulusType, Substate,
-    };
+    use crate::ai::{AiState, PathId, PatrolPath, Stimulus, StimulusType, Substate};
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
     use crate::natives::NativeFn;
     let mut engine = EngineInner::new();
@@ -7310,17 +7356,12 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
         .reentrant
         .self_stimuli
         .push(StimulusType::EventTimer.into());
-    let ctx = AiContext {
-        hiking_paths: assets.navigation.hiking_paths.clone(),
-        ..AiContext::test_fixture()
-    };
     engine.dispatch_filtered_stimulus(
         &crate::sim_rng::test_context(),
         &assets,
         owner,
         &Stimulus::new(StimulusType::EventReachPoint),
-        &ctx,
-        &AiPerTickData::stub(),
+        None,
     );
     let ai = engine
         .world

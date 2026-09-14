@@ -1,10 +1,8 @@
-//! Detection capture and per-observer optical inputs.
-//! Tactical decisions query live state; only inputs with an explicit detection
-//! capture lifetime are retained here.
+//! Per-entry live optical inputs and archer/shield-link reconciliation.
 
 use super::*;
 use crate::coordinates::{GroundPoint, MapPoint};
-use crate::element::{Camp, Entity, EntityId};
+use crate::element::{Entity, EntityId};
 use serde::{Deserialize, Serialize};
 
 /// Enemy archer detection is exactly whether a bow is present.
@@ -13,27 +11,18 @@ pub(super) fn is_archer_from_bow(bow: Option<&crate::profiles::BowProfile>) -> b
     bow.is_some()
 }
 
-/// Per-tick read-only snapshot of a human-typed detection target —
-/// shared across the `DetectableType::Body / Friend / MissedFriend /
-/// Beggar` per-type passes since all four feed `compute_visibility`
-/// against a human target.  Captures the per-target gate inputs each
-/// kind needs (e.g. `able_to_help` for Friend, dead/unconscious flags
-/// for MissedFriend / Beggar, `is_true_or_false_beggar` for the
-/// Beggar cleanup-detectables predicate).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub(super) struct HumanTarget {
+/// Geometry and gates for one live human lookup, consumed before the next entry.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(super) struct HumanDetectionInput {
     pub(super) position: MapPoint,
     /// Original-game ground position, i.e. stored world-space X/Y. This is
     /// distinct from projected map position whenever ground Z is non-zero.
     pub(super) ground_position: GroundPoint,
     pub(super) sector: Option<crate::position_interface::SectorHandle>,
     pub(super) layer: u16,
-    pub(super) eye_z: f32,
     /// Detection point in world space, taken verbatim as the endpoint
     /// of opaque-reachability queries.
     pub(super) detection_point: crate::coordinates::WorldPoint3D,
-    /// Exact ground Z for projected-map to world-horizontal conversion.
-    pub(super) ground_z: f32,
     pub(super) posture: crate::element::Posture,
     /// 16-sector facing.  Used for the `LeaningOut` arm of
     /// `compute_detection_point`: the detection point projects
@@ -51,11 +40,6 @@ pub(super) struct HumanTarget {
     /// state-machine arms that mean "busy with current task".
     /// Used to gate the Friend pass.
     pub(super) able_to_help: bool,
-    /// True for a civilian whose profile flags it as a beggar OR
-    /// a PC currently in `Posture::SimulatingBeggar`.  Used by
-    /// the cleanup-detectables Beggar predicate — entries lose
-    /// detectability the moment the target stops being a beggar.
-    pub(super) is_true_or_false_beggar: bool,
     /// Whether the target is mid-door-pass.  Used by the
     /// same-building visibility short-circuit.
     pub(super) passing_door: bool,
@@ -72,20 +56,15 @@ pub(super) struct HumanTarget {
     pub(super) obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
 }
 
-/// Per-tick read-only snapshot of an object target — anything that may
-/// appear in an NPC's `DetectableType::Object` list (coins, ales,
-/// money bags, etc.).  Captures the data the object-visibility
-/// computation reads.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub(super) struct ObjectTarget {
+/// Geometry for one live object lookup, consumed by its visibility calculation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(super) struct ObjectDetectionInput {
     pub(super) position: MapPoint,
     /// Original-game ground position used by the outer detection-refresh box.
     pub(super) ground_position: GroundPoint,
     /// Original-game object point after the detection path raises Z by one.
     pub(super) world_position: crate::coordinates::WorldPoint3D,
-    pub(super) layer: u16,
     pub(super) belongs_to_beggar: bool,
-    pub(super) active: bool,
 }
 
 fn object_detection_world_position(
@@ -94,62 +73,16 @@ fn object_detection_world_position(
     crate::coordinates::WorldPoint3D::new(position.x, position.y, position.z + 1.0)
 }
 
-/// Shared occupancy inputs retained across NPC detection refreshes.
-#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub(super) struct DetectionFrameState {
-    /// Optical target selection uses this captured occupancy; tactical target
-    /// selectors use Original's separately ordered 16-bit scratch counters.
-    pub(super) detection_target_multiplicity: std::collections::BTreeMap<EntityId, u32>,
-    pub(super) unconscious_soldiers: Vec<(EntityId, Camp, bool)>,
-}
-
 impl EngineInner {
-    /// Refresh shared detection occupancy and reconcile archer/shield links.
-    pub(super) fn capture_detection_frame_state(&mut self) -> DetectionFrameState {
-        let _detail = super::super::tick::entity_system_detail_guard(
-            super::super::tick::EntitySystemDetail::BuildWorldView,
-        );
-        let detection_target_multiplicity = self.tick_enemy_ai_build_primary_target_multiplicity();
-        self.refresh_archer_shield_links();
-        let unconscious_soldiers = self.tick_enemy_ai_build_unconscious_soldiers();
-        DetectionFrameState {
-            detection_target_multiplicity,
-            unconscious_soldiers,
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn ai_pc_snapshot_ids_for_test(&mut self, _assets: &LevelAssets) -> Vec<EntityId> {
         self.world.original_pc_registry().to_vec()
     }
 
-    /// Build the live-derived target multiplicity used by optical detection.
-    /// This is deliberately separate from Original's nonserialized human
-    /// scratch counters, which start at zero after load and are mutated only
-    /// by the source AI routines that reset/increment them.
-    pub(super) fn tick_enemy_ai_build_primary_target_multiplicity(
-        &self,
-    ) -> std::collections::BTreeMap<EntityId, u32> {
-        let mut primary_target_multiplicity = std::collections::BTreeMap::new();
-        for (_, soldier) in self.world.entities.soldiers() {
-            if let Some(ai) = soldier.npc.ai_brain.base()
-                && let Some(primary_target) = ai.primary_target
-                && ai.current_substate.is_any_swordfight()
-                && let Some(target_id) = self.world.entities.id_at_legacy_slot(primary_target.get())
-            {
-                let count = primary_target_multiplicity
-                    .entry(target_id)
-                    .or_insert(0_u32);
-                *count = u32::from((*count as u16).wrapping_add(1));
-            }
-        }
-        primary_target_multiplicity
-    }
-
     /// Publish reverse archer links at the established detection-capture point.
     /// Read every claimant before writing: inactive reciprocal links refer to
     /// the pre-refresh state, and the last eligible claimant in registry order wins.
-    fn refresh_archer_shield_links(&mut self) {
+    pub(super) fn refresh_archer_shield_links(&mut self) {
         let mut reverse = std::collections::HashMap::new();
         let mut active_owners = Vec::new();
         for (archer_id, archer) in self.world.entities.soldiers() {
@@ -206,237 +139,101 @@ impl EngineInner {
                 .archer_behind_me = reverse.remove(&crate::ai::AiEntityHandle::new(id.index()));
         }
     }
+}
 
-    /// Capture active, unconscious-but-alive soldiers for money-fight scans.
-    /// The `knocked_out_in_money_fight` flag rides along
-    /// because only the victim scan filters on it; the morale scan
-    /// merely classifies with it.
-    pub(super) fn tick_enemy_ai_build_unconscious_soldiers(&self) -> Vec<(EntityId, Camp, bool)> {
-        let mut unconscious_soldiers: Vec<(EntityId, Camp, bool)> =
-            Vec::with_capacity(self.world.entities.soldiers().count());
-        for (npc_id, s) in self.world.entities.soldiers() {
-            if !s.element.active {
-                continue;
-            }
-            if s.npc.life_points <= 0 {
-                continue;
-            }
-            if !s.human.unconscious {
-                continue;
-            }
-            let knocked_out_in_money_fight = s
-                .npc
-                .ai_brain
-                .base()
-                .map(|ai| ai.knocked_out_in_money_fight)
-                .unwrap_or(false);
-            unconscious_soldiers.push((
-                npc_id.into(),
-                s.soldier.cached_camp,
-                knocked_out_in_money_fight,
-            ));
-        }
-        unconscious_soldiers
-    }
-
-    /// Snapshot every potential human + object target referenced by one
-    /// NPC's per-type detectable lists at that NPC's creation-order boundary.
-    /// The resulting maps let the body / friend / missed-friend / beggar /
-    /// object passes run without re-borrowing `self.world.entities` for each lookup.
-    ///
-    /// Captures the targets the per-type detection-refresh loop
-    /// dereferences from each detectable list.  Hashing by
-    /// `EntityId` means a non-trivial detectable list size doesn't
-    /// blow up to a linear scan per lookup.
-    ///
-    /// Body / Friend / MissedFriend / Beggar share the `HumanTarget`
-    /// shape — all four feed `compute_visibility` against a human
-    /// target, so the per-target metadata is identical (position /
-    /// posture / unconscious / etc) plus a couple of per-kind
-    /// predicate fields (`able_to_help` for Friend,
-    /// `is_true_or_false_beggar` for the Beggar cleanup-detectables
-    /// predicate).  Object stays in its own snapshot map because it
-    /// uses `compute_object_visibility`, which has a different query
-    /// shape.
-    pub(super) fn tick_enemy_ai_build_human_object_targets_for_npc(
-        &self,
-        npc_id: EntityId,
-    ) -> (
-        std::collections::HashMap<EntityId, HumanTarget>,
-        std::collections::HashMap<EntityId, ObjectTarget>,
-    ) {
-        use crate::element::DetectableType;
-
-        let npc = self.world.entities.expect_ai_actor_data(
-            npc_id,
-            format_args!("creation-ordered NPC before its live detection target snapshot"),
+/// Read the current entry's geometry before borrowing the observer to update
+/// its detection latches. No target data survives this entry.
+pub(super) fn human_detection_input(
+    entities: &crate::entities::Entities,
+    id: EntityId,
+    grid: &crate::fast_find_grid::FastFindGrid,
+) -> Option<HumanDetectionInput> {
+    let entity = entities.get(id)?;
+    let element = entity.element_data();
+    let human = entity
+        .human_data()
+        .unwrap_or_else(|| panic!("human detectable target {id:?} has no human data"));
+    let actor = entity
+        .actor_data()
+        .unwrap_or_else(|| panic!("human detectable target {id:?} has no actor data"));
+    let position = element.position_map();
+    let stored_world = element.position();
+    let posture = element.posture();
+    let direction = element.direction();
+    let is_rider = matches!(entity, Entity::Soldier(s) if s.soldier.rider);
+    let building_sector = element.sector().filter(|&sector| {
+        let Some(grid_sector) =
+            crate::engine::movement::grid_sector_for_position_handle(&grid.level, sector)
+        else {
+            return false;
+        };
+        assert_eq!(
+            grid_sector.sector_number,
+            crate::sector::SectorNumber::new(i16::from(sector)),
+            "exact sector arena identity disagrees with its public number",
         );
-        let mut human_ids: std::collections::HashSet<EntityId> = std::collections::HashSet::new();
-        let mut object_ids: std::collections::HashSet<EntityId> = std::collections::HashSet::new();
-        for kind in [
-            DetectableType::Body,
-            DetectableType::Friend,
-            DetectableType::MissedFriend,
-            DetectableType::Beggar,
-        ] {
-            for detectable in &npc.detectable_lists[kind as usize] {
-                if let Some(id) = detectable.element {
-                    human_ids.insert(id);
-                }
-            }
+        grid_sector.sector_type.is_building()
+    });
+    // A carried body's stored point retains its own obstacle elevation.
+    let able_to_help = matches!(entity, Entity::Soldier(s) if
+        crate::ai_enemy::soldier_is_able_to_help_state(
+            element.active && !s.human.unconscious && s.npc.life_points > 0,
+            s.npc.ai_state(),
+            s.npc.ai_substate(),
+        )
+    );
+    Some(HumanDetectionInput {
+        position,
+        ground_position: GroundPoint::from_map_and_z(position, stored_world.z),
+        sector: element.sector(),
+        layer: element.layer(),
+        detection_point: crate::stealth::detection_point_world(
+            stored_world,
+            posture,
+            direction,
+            is_rider,
+        ),
+        posture,
+        direction,
+        action_state: actor.action_state,
+        building_sector,
+        dead: entity.is_dead(),
+        unconscious: human.unconscious,
+        active: element.active,
+        is_pc: matches!(entity, Entity::Pc(_)),
+        able_to_help,
+        passing_door: actor.active_door_pass.is_some(),
+        guarded: matches!(entity, Entity::Pc(pc) if pc.pc.guard.is_some()),
+        obstacle_idx: element.obstacle_index(),
+    })
+}
+
+pub(super) fn is_live_beggar(entity: &Entity) -> bool {
+    match entity {
+        Entity::Civilian(c) => {
+            c.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar
         }
-        for detectable in &npc.detectable_lists[DetectableType::Object as usize] {
-            if let Some(id) = detectable.element {
-                object_ids.insert(id);
-            }
-        }
-
-        let mut human_targets: std::collections::HashMap<EntityId, HumanTarget> =
-            std::collections::HashMap::with_capacity(human_ids.len());
-        for id in human_ids {
-            let Some(entity) = self.world.entities.get(id) else {
-                continue;
-            };
-            // The original game's corpse-carrying movement synchronizes the carried human
-            // immediately after the carrier's motion processing
-            // during the carrying action. The carrier therefore
-            // decides whether the body has moved at this actor boundary, but
-            // the position bytes still belong to the body: Original copies
-            // the carrier's map point, then computes the body's 3-D point on
-            // the body's own obstacle. Using the carrier's world point here
-            // incorrectly gives a ground-level corpse the carrier's stair
-            // elevation.
-            let human = entity.human_data().unwrap_or_else(|| {
-                panic!("human detectable target {} has no human data", id.index())
-            });
-            let stored_map = (entity.element_data()).position_map();
-            let stored_world = (entity.element_data()).position();
-            let position = stored_map;
-            let layer = entity.element_data().layer();
-            let posture = entity.element_data().posture();
-            // These IDs came from a human-only detectable list.
-            // A non-human entry is corrupt data, not
-            // a waiting/conscious human.
-            let actor = entity.actor_data().unwrap_or_else(|| {
-                panic!("human detectable target {} has no actor data", id.index())
-            });
-            let action_state = actor.action_state;
-            let dead = entity.is_dead();
-            let unconscious = human.unconscious;
-            let active = entity.element_data().active;
-            let passing_door = actor.active_door_pass.is_some();
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            // HumanTarget's `eye_z` is consumed as the *detection*
-            // point Z by `VisibilityQuery::target_eye_z` (the target
-            // side of `compute_detection_point`), so use
-            // `detection_z_for_posture` not `eye_z_for_posture` —
-            // they differ for Lying (+2 vs +5) and Carried (+25 vs
-            // default).
-            let is_rider = matches!(entity, Entity::Soldier(s) if s.soldier.rider);
-            let ground_z = entity.element_data().position().z;
-            let ground_position = GroundPoint::from_map_and_z(position, ground_z);
-            let eye_z = ground_z + crate::stealth::detection_z_for_posture(posture, is_rider);
-            let direction = entity.element_data().direction();
-            let detection_point =
-                crate::stealth::detection_point_world(stored_world, posture, direction, is_rider);
-            let is_pc = matches!(entity, Entity::Pc(_));
-            // Only PCs carry a guard; everything else is unguarded
-            // by definition.
-            let guarded = if let Entity::Pc(p) = entity {
-                p.pc.guard.is_some()
-            } else {
-                false
-            };
-
-            // Soldier `is_able_to_help`.
-            let able_to_help = if let Entity::Soldier(s) = entity {
-                // This HumanTarget is a detection/visibility projection, not
-                // AlertSoldiers' camp population. Preserve its independent
-                // active visibility gate here.
-                let able_to_fight = active && !s.human.unconscious && s.npc.life_points > 0;
-                crate::ai_enemy::soldier_is_able_to_help_state(
-                    able_to_fight,
-                    s.npc.ai_state(),
-                    s.npc.ai_substate(),
-                )
-            } else {
-                // Civilians and PCs are never able to help — the
-                // predicate is soldier-only.
-                false
-            };
-
-            // True for a civilian whose profile is a beggar, or any
-            // human in `Posture::SimulatingBeggar`.
-            let is_true_or_false_beggar = if let Entity::Civilian(c) = entity {
-                c.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar
-            } else {
-                posture == crate::element::Posture::SimulatingBeggar
-            };
-
-            let obstacle_idx = entity.element_data().obstacle_index();
-            human_targets.insert(
-                id,
-                HumanTarget {
-                    position,
-                    ground_position,
-                    sector: entity.element_data().sector(),
-                    layer,
-                    eye_z,
-                    detection_point,
-                    ground_z,
-                    posture,
-                    direction,
-                    action_state,
-                    building_sector,
-                    dead,
-                    unconscious,
-                    active,
-                    is_pc,
-                    able_to_help,
-                    is_true_or_false_beggar,
-                    passing_door,
-                    guarded,
-                    obstacle_idx,
-                },
-            );
-        }
-
-        let mut object_targets: std::collections::HashMap<EntityId, ObjectTarget> =
-            std::collections::HashMap::with_capacity(object_ids.len());
-        for id in object_ids {
-            let Some(entity) = self.world.entities.get(id) else {
-                continue;
-            };
-            let stored_map = (entity.element_data()).position_map();
-            let stored_world = (entity.element_data()).position();
-            let position = stored_map;
-            let world_position = object_detection_world_position(stored_world);
-            let ground_position = GroundPoint::new(world_position.x, world_position.y);
-            let layer = entity.element_data().layer();
-            let active = entity.element_data().active;
-            // The original game's detection refresh treats detectable-object entries as
-            // an object-element reference before reading beggar ownership.
-            let belongs_to_beggar = entity
-                .object_data()
-                .unwrap_or_else(|| {
-                    panic!("object detectable target {} has no object data", id.index())
-                })
-                .belongs_to_beggar;
-            object_targets.insert(
-                id,
-                ObjectTarget {
-                    position,
-                    ground_position,
-                    world_position,
-                    layer,
-                    belongs_to_beggar,
-                    active,
-                },
-            );
-        }
-
-        (human_targets, object_targets)
+        _ => entity.element_data().posture() == crate::element::Posture::SimulatingBeggar,
     }
+}
+
+/// Read only the object currently being scanned.
+pub(super) fn object_detection_input(
+    entities: &crate::entities::Entities,
+    id: EntityId,
+) -> Option<ObjectDetectionInput> {
+    let entity = entities.get(id)?;
+    let element = entity.element_data();
+    let world_position = object_detection_world_position(element.position());
+    Some(ObjectDetectionInput {
+        position: element.position_map(),
+        ground_position: GroundPoint::new(world_position.x, world_position.y),
+        world_position,
+        belongs_to_beggar: entity
+            .object_data()
+            .unwrap_or_else(|| panic!("object detectable target {id:?} has no object data"))
+            .belongs_to_beggar,
+    })
 }
 
 #[cfg(test)]

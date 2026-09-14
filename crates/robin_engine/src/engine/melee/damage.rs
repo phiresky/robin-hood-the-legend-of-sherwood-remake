@@ -1527,7 +1527,7 @@ impl EngineInner {
                     }
                 }
                 self.dispatch_ai_stimulus(atk_id, crate::ai::Stimulus::new(stimulus_type));
-                self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, atk_id, assets, None);
+                self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, atk_id, assets);
             }
 
             // Original-game sword-damage translation sends

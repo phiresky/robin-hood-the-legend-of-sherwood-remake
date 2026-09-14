@@ -582,9 +582,13 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
         old_goal
     );
     assert_eq!(
-        engine.orders.pending_move_requests.len(),
+        engine
+            .orders
+            .sequence_manager
+            .deferred_elements_to_go()
+            .len(),
         1,
-        "movement remains queued behind the preserved stop transition"
+        "movement remains registered behind the preserved stop transition"
     );
 }
 

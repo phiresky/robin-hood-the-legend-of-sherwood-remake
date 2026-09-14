@@ -121,10 +121,6 @@ fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
 
     engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
-    assert!(
-        engine.orders.pending_move_requests.is_empty(),
-        "movement following an attentive-mode change must construct inline, not wait for the global movement drain"
-    );
     let commands = engine
         .orders
         .sequence_manager
@@ -786,10 +782,6 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     assert_eq!(owner.base.outbox.actor.orders.len(), 1);
     assert_eq!(owner.base.outbox.actor.orders[0].target_x, 100.0);
     assert_eq!(owner.base.outbox.actor.orders[0].target_y, 100.0);
-    assert!(
-        !owner.base.outbox.actor.orders[0].defer_instruction,
-        "an ordinary route failure registers before this frame's manager boundary"
-    );
 
     engine
         .orders
@@ -875,7 +867,6 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
     use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequenceElementData};
 
-    let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     // Preserve Original's null AI-handle slot.
     engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
@@ -969,22 +960,21 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
-    assert_eq!(tick.visible_seeking_friends, 0);
-    assert!(!tick.friend_seek_clears_help_flag);
-    let tick_owner = tick
-        .owner_live_position
-        .expect("owner position is populated");
-    assert_eq!(tick_owner.x, owner_position.x);
-    assert_eq!(tick_owner.y, owner_position.y);
+    let live_owner = engine.live_ai_position(owner_id).map_point();
+    assert_eq!(live_owner, owner_position);
+    let live_friend = engine.live_ai_position(friend_id).map_point();
+    assert_eq!(live_friend, MapPoint::new(718.0, 1179.0));
+    let distance = live_friend - live_owner;
+    assert!(distance.x * distance.x + distance.y * distance.y >= 500.0 * 500.0);
 
     engine
         .orders
         .sequence_manager
         .element_terminated(sequence_id, 0);
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
-    assert_eq!(tick.visible_seeking_friends, 1);
-    assert!(tick.friend_seek_clears_help_flag);
+    let live_friend = engine.live_ai_position(friend_id).map_point();
+    assert_eq!(live_friend, friend_raw_position);
+    let distance = live_friend - live_owner;
+    assert!(distance.x * distance.x + distance.y * distance.y < 500.0 * 500.0);
 }
 
 #[test]
@@ -1055,49 +1045,6 @@ fn optical_ai_position_follows_carrier_but_detects_target_stored_world_point() {
     let (moved_ai, unmoved_optical) = engine.enemy_optical_geometry_for_test(&assets, target);
     assert_eq!((moved_ai.x, moved_ai.y), (999.0, 999.0));
     assert_eq!(unmoved_optical, expected_optical_point);
-}
-
-#[test]
-fn review2_instruct_gather_position_closes_at_owner_boundary() {
-    use crate::ai::{CrossNpcAction, Position};
-
-    let sim = crate::sim_rng::test_context();
-    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    let gather = Position {
-        x: 55.0,
-        y: 12.0,
-        ..Default::default()
-    };
-    engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("review2 gather source has AI")
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::InstructGatherPosition {
-            target: soldier_id.index(),
-            position: gather,
-            direction: 7,
-            call_instruction: false,
-        });
-
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
-
-    let soldier = engine
-        .get_entity(soldier_id)
-        .and_then(Entity::enemy_ai)
-        .expect("review2 gather target retains EnemyAi");
-    assert_eq!(soldier.gather_position, gather);
-    assert_eq!(soldier.gather_direction, 7);
-    assert!(soldier.gather_position_instructed);
-    assert!(
-        !engine
-            .get_entity(officer_id)
-            .and_then(Entity::ai_controller)
-            .expect("review2 gather source retains AI")
-            .has_pending_synchronous_cross_npc_actions()
-    );
 }
 
 #[test]

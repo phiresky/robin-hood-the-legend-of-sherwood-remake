@@ -852,7 +852,6 @@ impl EngineInner {
             .expect_entity(initiator, "enter_swordfight initiator")
             .is_pc();
 
-        let scratch = self.build_sim_scratch(assets);
         // PC initiators clear shield-protection before entering the
         // fight to unlink any active shield-protection.  NPC
         // sword-fights don't carry the protection link.
@@ -930,28 +929,16 @@ impl EngineInner {
                     Entity::Soldier(_)
                 );
                 if is_soldier {
-                    let ctx = {
-                        let entity = self
-                            .world
-                            .entities
-                            .get(opponent)
-                            .expect("opponent existence checked above");
-                        self.ai_context_from_entity(
-                            entity,
-                            self.control.frame_counter,
-                            None,
-                            &scratch,
-                            assets,
-                        )
-                    };
                     let stimulus = crate::ai::Stimulus::with_human(
                         crate::ai::StimulusType::EventEnterSwordfight,
                         initiator.index(),
                     );
-                    let tick_data =
-                        self.build_npc_tick_data_for_target(sim, opponent, assets, Some(initiator));
                     self.dispatch_think_with_drain(
-                        sim, opponent, &stimulus, &ctx, &tick_data, assets,
+                        sim,
+                        opponent,
+                        &stimulus,
+                        Some(initiator),
+                        assets,
                     );
                 }
             });

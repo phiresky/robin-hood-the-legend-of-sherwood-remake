@@ -109,7 +109,7 @@ pub(crate) fn battle_friend_is_nearer(
 
 /// Increment primary-target multiplicity: every nearby friend in the
 /// broad swordfight family adds another `UNOCCUPIED_PREFERRED` penalty.
-fn increment_battle_target_multiplicity(
+pub(crate) fn increment_battle_target_multiplicity(
     multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
     target: HumanHandle,
 ) {
@@ -122,7 +122,7 @@ fn increment_battle_target_multiplicity(
 /// reset pass. Original resets multiplicity only for the enemies already in
 /// enemy list; a nearby friend's previously unseen target retains its live
 /// global value when it is inserted later in the same decision.
-fn seed_appended_battle_target_multiplicity(
+pub(crate) fn seed_appended_battle_target_multiplicity(
     multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
     target: HumanHandle,
     shared_multiplicity: &std::collections::BTreeMap<HumanHandle, u32>,
@@ -165,73 +165,8 @@ fn battle_friend_primary_target(
         .map(AiEntityHandle::get)
 }
 
-/// The original game's fighter lookup preserves the camp registry's append
-/// order, including PC/soldier interleaving. Keep the cheap pre-visibility
-/// predicates here; the soldier AI-state switch belongs after the 360 gate.
-fn battle_fighter_candidates(
-    fighters: &[FighterSnapshot],
-    me: HumanHandle,
-) -> impl Iterator<Item = &FighterSnapshot> {
-    fighters.iter().filter(move |fighter| {
-        fighter.handle != me && fighter.is_friendly && fighter.is_able_to_fight
-    })
-}
-
-#[track_caller]
-fn battle_friend_detected_360(
-    ctx: &AiContext,
-    me: HumanHandle,
-    friend: HumanHandle,
-    friend_position_world: crate::coordinates::WorldPoint3D,
-    friend_direction: u16,
-    target: &crate::ai_entity_view::AiEntityView,
-) -> bool {
-    // The NPC 360-degree detection check returns before even
-    // issuing the sight query unless both elements are active and outside a
-    // building. Battle planning can still be reached synchronously while a
-    // phalanx member is inactive (for example during PLAY_ANIM_FROZEN), so
-    // the fact that its AI handler is running does not imply this predicate.
-    if !ctx.self_is_active || ctx.in_building || !target.active || target.in_building {
-        return false;
-    }
-    let detection_point = crate::stealth::detection_point_world(
-        friend_position_world,
-        target.posture,
-        friend_direction as i16,
-        target.is_rider,
-    );
-    let detected = super::soldier_detects_detection_point_360(
-        ctx.self_upright_eye_world,
-        ctx.self_view_radius,
-        ctx.in_building,
-        detection_point,
-        target.in_building,
-        ctx.obstacle_list(),
-    );
-    tracing::trace!(
-        frame = ctx.frame,
-        me,
-        friend,
-        viewer_in_building = ctx.in_building,
-        viewer_radius = ctx.self_view_radius,
-        viewer_x = ctx.self_upright_eye_world.x,
-        viewer_y = ctx.self_upright_eye_world.y,
-        viewer_z = ctx.self_upright_eye_world.z,
-        friend_in_building = target.in_building,
-        friend_posture = ?target.posture,
-        friend_x = detection_point.x,
-        friend_y = detection_point.y,
-        friend_z = detection_point.z,
-        sq_distance = super::sq_distance_360(ctx.self_upright_eye_world, detection_point),
-        sq_radius = (ctx.self_view_radius as f32).powi(2),
-        detected,
-        "battle-planning ally-list all-around detection check"
-    );
-    detected
-}
-
 impl EnemyAi {
-    pub(super) fn enter_battle_reserve(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
+    pub(crate) fn enter_battle_reserve(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
         self.enter_battle_reserve_with_multiplicity(ctx, tick, None);
     }
 
@@ -269,88 +204,20 @@ impl EnemyAi {
     }
 
     // -----------------------------------------------------------------------
-    // Collect nearby fighters
-    //
-    // Fills `list` with fighters from `tick.nearby_fighters` that belong
-    // to the requested camp side relative to `me` and are within the
-    // MAX_SWORDFIGHT_CONSIDERATION_RADIUS (=500 maximum-norm units) — the radius
-    // filter was already applied when the snapshot was built.
-    //
-    // When `is_my_camp` is true we seed the list with `me` and require
-    // `is_swordfighting` on other entries. When false (enemy camp) any
-    // able-to-fight opponent counts. Returns `true` iff the list is
-    // non-empty.
-    // -----------------------------------------------------------------------
-    fn fill_list_with_all_near_fighters(
-        list: &mut Vec<HumanHandle>,
-        me: HumanHandle,
-        is_my_camp: bool,
-        tick: &AiPerTickData,
-    ) -> bool {
-        list.clear();
-
-        let must_be_swordfighting = is_my_camp;
-        if is_my_camp {
-            list.push(me);
-        }
-
-        for f in &tick.nearby_fighters {
-            // `is_friendly` in the snapshot reflects same-camp
-            // membership relative to the scanning NPC.
-            if f.is_friendly != is_my_camp {
-                continue;
-            }
-            if f.handle == me {
-                continue;
-            }
-            if !f.is_able_to_fight {
-                continue;
-            }
-            if must_be_swordfighting && !f.is_swordfighting {
-                continue;
-            }
-            list.push(f.handle);
-        }
-
-        !list.is_empty()
-    }
-
-    // -----------------------------------------------------------------------
     // Battle overview
     // -----------------------------------------------------------------------
 
-    pub(crate) fn get_battle_overview(&mut self, flags: u16, env: ThinkEnv<'_>) {
-        let ThinkEnv { ctx, tick, .. } = env;
-        const FAST_OVERVIEW: u16 = 0x0001;
-
-        if (flags & FAST_OVERVIEW) != 0 {
-            // Nearby enemy-fighter collection uses
-            // `must_be_swordfighting = false`, i.e. the FAST gate fires
-            // whenever *any* able-to-fight enemy is within the 500-
-            // maximum-norm radius, regardless of swordfighting state.
-            let me = self.base.me;
-            if Self::fill_list_with_all_near_fighters(&mut self.list_them, me, false, tick) {
-                // Rebuild our-list with swordfighting-only friends on the
-                // same camp (self is seeded first).
-                Self::fill_list_with_all_near_fighters(&mut self.base.list_us, me, true, tick);
-
-                let target = self.get_new_primary_target(PrimaryTargetFlags::empty(), ctx, tick);
-                if let Some(target) = target {
-                    self.base.primary_target = Some(target);
-                    self.attack_enemy(target.get(), ThinkEnv { grid: None, ..env });
-                    return;
-                }
-            }
-        }
-
-        self.reinitialize_them_list(ctx);
-        self.current_task_priority = self.minimal_task_priority;
-
-        self.set_state(AiState::Attacking, Substate::AttackingOverviewLookLeft);
-        self.base.stop_all();
-        // LOOK_LEFT kicks off the overview glance sequence before the
-        // right-glance transition.
-        self.base.outbox.actor.look_sidewards = Some(LookDirection::Left);
+    pub(crate) fn get_battle_overview(
+        &mut self,
+        flags: u16,
+        _env: ThinkEnv<'_>,
+    ) -> crate::ai::AiFlow<()> {
+        Err(crate::ai::DutyCall {
+            flags: DutyFlags::empty(),
+            think_result: false,
+            tail: DutyTail::BattleOverview { flags },
+            after: Vec::new(),
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -373,7 +240,7 @@ impl EnemyAi {
         // The original game walks the persistent ally list at this exact point.
         // Deriving the aggregate while constructing generic tick snapshots
         // both made stale list assumptions and used to trigger eager LOS.
-        let mut us_points = 0_u32;
+        let mut us_points = 0_u16;
         let mut there_is_an_officer = false;
         for &friend_handle in &self.base.list_us {
             let friend = ctx.entity_view(friend_handle).unwrap_or_else(|| {
@@ -383,7 +250,7 @@ impl EnemyAi {
                 )
             });
             if friend.is_pc {
-                us_points = us_points.saturating_add(100);
+                us_points = us_points.wrapping_add(100);
                 continue;
             }
             let (pride, rank) = if friend_handle == self.base.me {
@@ -401,52 +268,49 @@ impl EnemyAi {
                     });
                 (soldier.pride, soldier.rank)
             };
-            us_points = us_points.saturating_add(100 + u32::from(pride));
+            us_points = us_points.wrapping_add(100_u16.wrapping_add(pride));
             there_is_an_officer |= friend_handle != self.base.me && rank == ProfileRank::Officer;
         }
 
-        // --------- THEM ---------
-        // Enemies contribute 100 each. Zero-enemy case never reaches
-        // here (battle_decisions returns early), so no .max(1) needed.
-        let them_points: u32 = self.list_them.len() as u32 * 100;
+        self.battle_predecision_from_points(
+            sim,
+            us_points,
+            self.list_them.len() as u16,
+            there_is_an_officer,
+            ctx.self_life_points,
+            ctx.self_max_life_points,
+        )
+    }
 
-        // --------- EVALUATION ---------
-        // relation_times_100 = (us_points * 100) / (them_points + 1)
-        let relation_times_100 = (us_points * 100) / (them_points + 1);
-        let mut odds: i16 = if relation_times_100 >= 100 {
-            let raw = 50
-                + (50 * (relation_times_100 - 100) as i32)
-                    / parameters_ai::AI_BEST_BATTLE_RELATION_MINUS_100;
-            raw.min(100) as i16
+    pub(crate) fn battle_predecision_from_points(
+        &self,
+        sim: &SimulationContext,
+        us_points: u16,
+        enemies: u16,
+        there_is_an_officer: bool,
+        life_points: i16,
+        max_life_points: i16,
+    ) -> Decision {
+        let them_points = enemies.wrapping_mul(100).wrapping_add(1);
+        let relation = (u32::from(us_points) * 100 / u32::from(them_points)) as u16;
+        let mut odds = if relation >= 100 {
+            let raw =
+                (50 + 50 * (i32::from(relation) - 100)
+                    / parameters_ai::AI_BEST_BATTLE_RELATION_MINUS_100) as i16;
+            raw.min(100)
         } else {
-            let raw = (50 * (relation_times_100 as i32 - parameters_ai::AI_WORST_BATTLE_RELATION))
-                / parameters_ai::AI_100_MINUS_WORST_BATTLE_RELATION;
-            raw.max(0) as i16
+            let raw = (50 * (i32::from(relation) - parameters_ai::AI_WORST_BATTLE_RELATION)
+                / parameters_ai::AI_100_MINUS_WORST_BATTLE_RELATION) as i16;
+            raw.max(0)
         };
-
-        // Wounded soldiers are more pessimistic. Both operands are read
-        // live off the element: the AI-side `old_life_points` snapshot
-        // trails the real value by an entire damage exchange, and
-        // `initial_life_points` is the spawn value, not the profile
-        // maximum, so a soldier at 20/120 was scoring as unhurt.
-        let max_lp = ctx.self_max_life_points.max(1);
-        let cur_lp = ctx.self_life_points;
-        if cur_lp < max_lp {
-            odds = (odds as i32 * cur_lp as i32 / max_lp as i32) as i16;
+        if life_points < max_life_points {
+            odds = (i32::from(odds) * i32::from(life_points) / i32::from(max_life_points)) as i16;
         }
-
-        // Officer nearby bonus (multiplicative): with OFFICER_ODDS_BONUS
-        // = 30, soldiers with an officer nearby almost always choose
-        // offensive behaviour.
         if self.get_rank() == ProfileRank::Soldier && there_is_an_officer {
-            odds = (odds as i32 * combat::OFFICER_ODDS_BONUS).min(i16::MAX as i32) as i16;
+            odds = (i32::from(odds) * combat::OFFICER_ODDS_BONUS) as i16;
         }
-
-        self.old_odds = odds;
-
-        // Decision based on odds and courage.
         let courage = self.get_courage();
-        if odds < (50 - courage as i16 / 2)
+        if i32::from(odds) < (50 - i32::from(courage) / 2)
             && crate::sim_rng::u16(sim, crate::sim_rng::RngSite::BattleCourage, 0..100) > courage
         {
             Decision::PredecisionDefensive
@@ -461,98 +325,32 @@ impl EnemyAi {
 
     pub(crate) fn battle_decisions(
         &mut self,
+        _env: ThinkEnv<'_>,
+        _global: &mut AiGlobalState,
+    ) -> crate::ai::AiFlow<()> {
+        let mut call = crate::ai::DutyCall::new(crate::ai::DutyFlags::empty(), false);
+        call.tail = crate::ai::DutyTail::BattleDecisions;
+        Err(call)
+    }
+
+    pub(crate) fn finish_battle_decisions(
+        &mut self,
         env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
+        old_substate: Substate,
+        inputs: BattleDecisionInputs,
+        mut decision_target_multiplicity: std::collections::BTreeMap<HumanHandle, u32>,
+        unconscious_enemies_from_them: Vec<HumanHandle>,
     ) -> crate::ai::AiFlow<()> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        if let Err(reason) = ctx.entity_observation(self.base.me) {
-            // TODO: establish Original invalid-layer timer-tail behavior before
-            // changing this existing skip policy.
-            tracing::warn!(
-                me = self.base.me,
-                ?reason,
-                "battle planning skipped: owner spatial observation unavailable"
-            );
-            return Ok(());
-        }
-        // Battle planning does not use the shared nearby-fighter list. The original game
-        // scans the complete same-camp fighter registry and gates each entry
-        // with the owner's omnidirectional detection (whose radius is profile /
-        // posture dependent and may exceed the 500-unit swordfight radius).
-        // Compute decision-local aggregates in this registry scan. They are
-        // not caller inputs: nearby-fighter geometry keeps its separate
-        // combat-position and swordfight semantics, without cloning the tick.
-        let debug_them = super::them_lifecycle_debug_matches(ctx);
-        let BattleFriendSummary {
+        let ctx = env.ctx;
+        let BattleDecisionInputs {
             friends_lower_company,
             soldiers_lower_pride,
             simple_soldiers_near,
-        } = self.prepare_battle_friends(ctx, tick, debug_them);
-
-        // The original game's battle decision snapshots the current substate into a
-        // stack-local `oldSubstate` before performing any decision work.
-        // Do not use `self.previous_substate` here: that is the unrelated,
-        // serialized `mPreviousSubstate` used by the Charly-reunion flow.
-        let old_substate = self.base.current_substate;
-        tracing::trace!(
-            me = self.base.me,
-            state = ?self.base.current_state,
-            substate = ?self.base.current_substate,
-            "battle_decisions: entry"
-        );
-        // Focus clearing at battle-decision entry. The decision tree will
-        // re-focus on a freshly chosen primary target later (via
-        // `pending_focus`) if it picks Fight / Shoot / etc.
-        self.base.outbox.actor.set_unfocus();
-
-        // Battle planning consumes the persistent enemy list. The original game only
-        // rebuilds that list at explicit perception/state-machine call sites
-        // (for example EVENT_VIEW and TooProud entry); it does not refresh it
-        // here. This matters when a deferred timer snapshot contains fewer
-        // enemies than the last view event.
-        self.list_them.retain(|&h| h != 0); // basic cleanup
-
-        if debug_them {
-            crate::ai_enemy::parity_trace::ThemBattleEntry {
-                frame: &(ctx.frame),
-                co: &(ctx.original_creation_order),
-                me: &(self.base.me),
-                list: &(self.list_them),
-            }
-            .emit();
-        }
-
-        // `num_enemies_i_can_see` is captured BEFORE friend-seen enemies
-        // are injected. This count gates the offensive-decision block;
-        // the merged total (personal + friend-seen) gates the
-        // friend-seen-only seek arm.
-        //
-        // Enemy-list initialization includes unconscious enemies; the cleanup
-        // pass below removes them and decrements
-        // `num_enemies_i_can_see` for each one that fell within the
-        // pre-cleanup window. Both halves of that pass run AFTER the
-        // friend-seen injection.
-        let mut num_enemies_i_can_see = self.list_them.len();
-
-        // Battle planning owns a fresh, local multiplicity calculation in
-        // the original game. It first resets every enemy currently in the enemy list,
-        // then increments targets claimed by every nearby swordfighting-family
-        // friend and finally ensures every enemy already in a swordfight has
-        // at least one claimant. The engine-wide snapshot is deliberately not
-        // equivalent: it still contains claims from actors outside this
-        // decision's rebuilt us/them lists.
-        let (mut decision_target_multiplicity, friends_nearer_to_enemy) =
-            self.battle_select_primary_target(env, global);
-        self.battle_inject_friend_seen_targets(env, global, &mut decision_target_multiplicity);
-        let (min_square_enemy_distance, unconscious_enemies_from_them) = self
-            .battle_cleanup_them_list(
-                env,
-                global,
-                &mut decision_target_multiplicity,
-                &mut num_enemies_i_can_see,
-                debug_them,
-            );
-
+            min_square_enemy_distance,
+            num_enemies_i_can_see,
+            friends_nearer_to_enemy,
+        } = inputs;
         if num_enemies_i_can_see == 0 {
             self.battle_no_visible_enemies(env, global, unconscious_enemies_from_them)?;
             return Ok(());
@@ -597,304 +395,18 @@ impl EnemyAi {
         // Carry out decision (with possible fallback loop). The Observe
         // arm's avenger-on-roof fallback returns from the whole routine
         // before the log line is registered; every other path logs.
-        if self.execute_battle_decision(
+        if let Some(decision) = self.execute_battle_decision(
             env,
             decision,
             old_substate,
             cover_shield_bearer,
             &mut decision_target_multiplicity,
             global,
-        ) {
+        )? {
             self.base
                 .register_log_line(LogLineType::BattleDecision, decision as u16);
         }
         Ok(())
-    }
-
-    /// Battle-planning local target multiplicity reset, primary-target
-    /// selection, and the friends-nearer-to-enemy count.
-    fn battle_select_primary_target(
-        &mut self,
-        env: ThinkEnv<'_>,
-        global: &mut AiGlobalState,
-    ) -> (std::collections::BTreeMap<HumanHandle, u32>, u16) {
-        let ThinkEnv { ctx, tick, .. } = env;
-        let mut decision_target_multiplicity = std::collections::BTreeMap::new();
-        for &enemy in &self.list_them {
-            decision_target_multiplicity.insert(enemy, 0_u32);
-            global.primary_target_multiplicity_scratch.insert(enemy, 0);
-        }
-        // Original chooses the primary target from the persistent personal
-        // Them list before walking nearby friends and appending the enemies
-        // they are attacking. Those appended entries broaden later tactical
-        // scans, but must not retroactively replace this decision's primary
-        // target merely because one is nearer.
-        self.base.primary_target = self.get_new_primary_target_with_mult_override(
-            PrimaryTargetFlags::empty(),
-            ctx,
-            tick,
-            Some(&decision_target_multiplicity),
-        );
-        if super::primary_swap_debug_enabled()
-            && super::primary_swap_debug_matches(ctx.frame, self.base.me)
-        {
-            crate::ai_enemy::parity_trace::PrimarySwapBattlePrimarySelected {
-                frame: &(ctx.frame),
-                co: &(ctx.original_creation_order),
-                owner: &(self.base.me),
-                list_them: &(self.list_them),
-                selected: &(self.base.primary_target),
-            }
-            .emit();
-        }
-
-        // Continue the same Original friend loop after primary-target
-        // selection: attacking friends already committed to a swordfight
-        // always count as nearer; other attacking friends count when their
-        // position is closer to our chosen target than ours is.
-        let mut friends_nearer_to_enemy = 0_u16;
-        if let Some(target) = ctx.entity_view(self.base.primary_target) {
-            // Original deliberately mixes two position APIs here.  The
-            // reference distance is squared distance to the primary target, which
-            // compares the actors' literal 3D sprite positions with the
-            // isometric Y stretch, includes Z, and truncates to 32 bits. Each
-            // friend is then compared through
-            // `Position(friend) - Position(primary_target)`: those calls
-            // apply the committed door-side override and use the raw map
-            // norm. Projecting the literal positions to map space before the
-            // reference comparison can substantially enlarge the threshold
-            // when the actors stand at different elevations.
-            let owner = ctx.entity_view(self.base.me).unwrap_or_else(|| {
-                panic!(
-                    "battle-planning owner {} is absent from its live entity view",
-                    self.base.me
-                )
-            });
-            let my_target_sq = battle_owner_target_square_distance(
-                owner.detection_position_world,
-                target.detection_position_world,
-            );
-            for friend in &tick.camp_soldiers {
-                if !self.base.list_us.contains(&friend.handle) {
-                    continue;
-                }
-                let Some(_friend_target) =
-                    battle_friend_primary_target(friend.ai_state, friend.primary_target)
-                else {
-                    continue;
-                };
-                if friend.ai_substate.is_any_swordfight() {
-                    friends_nearer_to_enemy = friends_nearer_to_enemy.saturating_add(1);
-                    continue;
-                }
-                let friend_position = ctx
-                    .entity_view(friend.handle)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "battle-planning friend {} disappeared from the AI entity view",
-                            friend.handle
-                        )
-                    })
-                    .position;
-                let target_position = target.position;
-                if battle_friend_is_nearer(friend_position, target_position, my_target_sq) {
-                    friends_nearer_to_enemy = friends_nearer_to_enemy.saturating_add(1);
-                }
-            }
-        }
-        (decision_target_multiplicity, friends_nearer_to_enemy)
-    }
-
-    /// Battle-planning friend-seen enemy injection into the Them list.
-    fn battle_inject_friend_seen_targets(
-        &mut self,
-        env: ThinkEnv<'_>,
-        global: &mut AiGlobalState,
-        decision_target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
-    ) {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Walk same-camp soldiers in STATE_ATTACKING and inject their
-        // primary target into list_them so we hunt where they are
-        // fighting. Skip self, missing primary_target, and anything
-        // already in our list. The injection happens AFTER
-        // num_enemies_i_can_see is captured.
-        {
-            let me = self.base.me;
-            let mut friend_seen: Vec<HumanHandle> = Vec::new();
-            for cs in &tick.camp_soldiers {
-                // Original performs this inside the same friend loop that
-                // first requires omnidirectional detection and inserts the
-                // soldier into the ally list. A distant or occluded attacking ally
-                // must not contribute its primary target merely because it
-                // exists in the camp snapshot.
-                if cs.handle == me || !self.base.list_us.contains(&cs.handle) {
-                    continue;
-                }
-                // The owner-local world view samples earlier soldiers' live
-                // AI controllers. Use that strict primary-target value;
-                // an earlier enemy-attack claim can already be stale after a
-                // later battle-planning retarget in the same owner envelope.
-                let Some(target) = battle_friend_primary_target(cs.ai_state, cs.primary_target)
-                else {
-                    continue;
-                };
-                tracing::trace!(
-                    frame = ctx.frame,
-                    me,
-                    friend = cs.handle,
-                    friend_state = ?cs.ai_state,
-                    friend_substate = ?cs.ai_substate,
-                    snapshot_target = ?cs.primary_target,
-                    target,
-                    already_listed = self.list_them.contains(&target),
-                    "battle-planning friend-seen enemy-list insertion candidate"
-                );
-                if target == me {
-                    continue;
-                }
-                // The initial Them entries were reset to zero above. A
-                // target introduced only by this friend was not part of
-                // Original's reset loop, so retain its shared counter before
-                // applying this decision's possible increment.
-                seed_appended_battle_target_multiplicity(
-                    decision_target_multiplicity,
-                    target,
-                    &global.primary_target_multiplicity_scratch,
-                );
-                if cs.ai_substate.is_any_swordfight() {
-                    increment_battle_target_multiplicity(decision_target_multiplicity, target);
-                    increment_battle_target_multiplicity(
-                        &mut global.primary_target_multiplicity_scratch,
-                        target,
-                    );
-                }
-                // The Them list rejects duplicates on insertion, so a target
-                // an earlier entry or friend already contributed is dropped
-                // here rather than appended a second time. A same-camp target
-                // is deliberately not filtered: the cleanup pass below is what
-                // removes friends from the list.
-                if self.list_them.contains(&target) || friend_seen.contains(&target) {
-                    continue;
-                }
-                friend_seen.push(target);
-            }
-            self.list_them.extend(friend_seen);
-        }
-    }
-
-    /// Battle-planning Them-list cleanup: drops friends and unable-to-fight
-    /// entries, collects unconscious enemies and measures the nearest enemy.
-    fn battle_cleanup_them_list(
-        &mut self,
-        env: ThinkEnv<'_>,
-        global: &mut AiGlobalState,
-        decision_target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
-        num_enemies_i_can_see: &mut usize,
-        debug_them: bool,
-    ) -> (u32, Vec<HumanHandle>) {
-        let ctx = env.ctx;
-        // Clean up the Them list. Walk each entry: if it's not
-        // able-to-fight, drop it. Each removal that falls within
-        // `num_enemies_i_can_see` decrements the personally-visible
-        // counter. Friends accidentally on the list are also dropped.
-        // The same pass measures the nearest surviving enemy.
-        let owner_world = ctx
-            .entity_view(self.base.me)
-            .unwrap_or_else(|| {
-                panic!(
-                    "battle-planning owner {} is absent from its live entity view",
-                    self.base.me
-                )
-            })
-            .detection_position_world;
-        let mut min_square_enemy_distance = u32::MAX;
-        let mut unconscious_enemies_from_them = Vec::new();
-        {
-            let mut idx = 0;
-            while idx < self.list_them.len() {
-                let h = self.list_them[idx];
-                let (drop_entry, decrement_visible_count) = match ctx.entity_observation(h) {
-                    Ok(view) => {
-                        let is_friend = ctx.is_allied_with(view.camp);
-                        if !is_friend && !view.is_dead && view.is_unconscious && !view.is_carried {
-                            // Original builds listUnconsciousEnemies from
-                            // entries removed from the persistent enemy list
-                            // during this exact cleanup pass.  A fresh
-                            // detection snapshot is not equivalent: an enemy
-                            // can stop being detectable as soon as it falls
-                            // unconscious while its authoritative Them-list
-                            // entry remains until battle planning consumes it.
-                            unconscious_enemies_from_them.push(h);
-                        }
-                        if !is_friend && view.is_able_to_fight {
-                            // The minimum enemy distance is measured over
-                            // the surviving Them list — which by now also
-                            // holds the targets contributed by nearby
-                            // attacking allies, so a fight raging next to
-                            // us counts even when our own nearest enemy is
-                            // far away. Squared distance compares literal 3D
-                            // sprite positions, stretches world Y, includes
-                            // Z, and then truncates the result to 32 bits.
-                            let sq = battle_owner_target_square_distance(
-                                owner_world,
-                                view.detection_position_world,
-                            );
-                            if sq < min_square_enemy_distance {
-                                min_square_enemy_distance = sq;
-                            }
-                        }
-                        if !is_friend
-                            && view.is_able_to_fight
-                            && view.is_swordfighting
-                            && decision_target_multiplicity.get(&h).copied().unwrap_or(0) == 0
-                        {
-                            decision_target_multiplicity.insert(h, 1);
-                            global.primary_target_multiplicity_scratch.insert(h, 1);
-                        }
-                        (
-                            is_friend || !view.is_able_to_fight,
-                            !is_friend && !view.is_able_to_fight,
-                        )
-                    }
-                    Err(reason) => {
-                        tracing::warn!(
-                            me = self.base.me,
-                            target = h,
-                            ?reason,
-                            "battle_decisions: dropping them-list entry with unavailable spatial observation"
-                        );
-                        (true, true)
-                    }
-                };
-                if drop_entry {
-                    // Original only decrements the captured visible count in
-                    // the non-friend unable-to-fight branch. A stale friend
-                    // is deleted by the separate friend branch without
-                    // consuming that count,
-                    // battle-planning cleanup), which can intentionally
-                    // leave a positive visible count with an empty Them list.
-                    if decrement_visible_count && idx < *num_enemies_i_can_see {
-                        *num_enemies_i_can_see -= 1;
-                    }
-                    self.list_them.remove(idx);
-                    continue;
-                }
-                idx += 1;
-            }
-        }
-
-        if debug_them {
-            crate::ai_enemy::parity_trace::ThemBattleCleanupAfter {
-                frame: &(ctx.frame),
-                co: &(ctx.original_creation_order),
-                me: &(self.base.me),
-                visible_count: &(*num_enemies_i_can_see),
-                list: &(self.list_them),
-                unconscious: &unconscious_enemies_from_them,
-            }
-            .emit();
-        }
-        (min_square_enemy_distance, unconscious_enemies_from_them)
     }
 
     /// Battle planning with no personally visible enemies.
@@ -1354,7 +866,7 @@ impl EnemyAi {
     /// the Observe arm's avenger-on-roof fallback skips it, while deferred
     /// Looking for help registers exactly one final decision after officer alerting's
     /// route result is known. Every other path returns `true`.
-    fn execute_battle_decision(
+    pub(crate) fn execute_battle_decision(
         &mut self,
         env: ThinkEnv<'_>,
         mut decision: Decision,
@@ -1362,17 +874,17 @@ impl EnemyAi {
         cover_shield_bearer: HumanHandle,
         target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
         global: &mut AiGlobalState,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<Option<Decision>> {
         let ThinkEnv { sim, ctx, tick, .. } = env;
         // Allow up to 5 fallback decision changes to prevent infinite loops
         for _ in 0..5 {
             match decision {
-                Decision::Fight => match self.execute_fight_decision(target_multiplicity, env) {
+                Decision::Fight => match self.execute_fight_decision(target_multiplicity, env)? {
                     std::ops::ControlFlow::Continue(next) => {
                         decision = next;
                         continue;
                     }
-                    std::ops::ControlFlow::Break(result) => return result,
+                    std::ops::ControlFlow::Break(result) => return Ok(result.then_some(decision)),
                 },
 
                 Decision::Reserve => {
@@ -1389,7 +901,9 @@ impl EnemyAi {
                             decision = next;
                             continue;
                         }
-                        std::ops::ControlFlow::Break(result) => return result,
+                        std::ops::ControlFlow::Break(result) => {
+                            return Ok(result.then_some(decision));
+                        }
                     }
                 }
 
@@ -1399,18 +913,26 @@ impl EnemyAi {
                             decision = next;
                             continue;
                         }
-                        std::ops::ControlFlow::Break(result) => return result,
+                        std::ops::ControlFlow::Break(result) => {
+                            return Ok(result.then_some(decision));
+                        }
                     }
                 }
 
                 Decision::Shoot => {
-                    match self.execute_shoot_decision(target_multiplicity, global, env) {
-                        std::ops::ControlFlow::Continue(next) => {
-                            decision = next;
-                            continue;
-                        }
-                        std::ops::ControlFlow::Break(result) => return result,
+                    if ctx.remaining_arrows == 0 {
+                        decision = Decision::RunForNewArrows;
+                        continue;
                     }
+                    return Err(crate::ai::DutyCall {
+                        flags: crate::ai::DutyFlags::empty(),
+                        think_result: false,
+                        tail: crate::ai::DutyTail::SelectShotTarget {
+                            old_substate,
+                            cover_shield_bearer,
+                        },
+                        after: Vec::new(),
+                    });
                 }
 
                 Decision::Cassos => {
@@ -1443,20 +965,20 @@ impl EnemyAi {
                     }
                 }
 
-                Decision::LookForHelp => match self.execute_look_for_help_decision(env) {
+                Decision::LookForHelp => match self.execute_look_for_help_decision(env)? {
                     std::ops::ControlFlow::Continue(next) => {
                         decision = next;
                         continue;
                     }
-                    std::ops::ControlFlow::Break(result) => return result,
+                    std::ops::ControlFlow::Break(result) => return Ok(result.then_some(decision)),
                 },
 
-                Decision::AlertSoldiers => match self.execute_alert_soldiers_decision(env) {
+                Decision::AlertSoldiers => match self.execute_alert_soldiers_decision(env)? {
                     std::ops::ControlFlow::Continue(next) => {
                         decision = next;
                         continue;
                     }
-                    std::ops::ControlFlow::Break(result) => return result,
+                    std::ops::ControlFlow::Break(result) => return Ok(result.then_some(decision)),
                 },
 
                 Decision::RunAndAlertSoldiers => {
@@ -1470,18 +992,12 @@ impl EnemyAi {
                             "run-and-alert-soldiers primary target",
                         )
                         .position;
-                    if !self.run_and_alert_soldiers(center, ctx, tick, global) {
-                        decision = Decision::Cassos;
-                        continue;
-                    } else {
-                        // Random Cassos/Panic remark.
-                        // The original game randomly chooses between the two panic variants.
-                        if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
-                            self.base.say(Remark::Cassos);
-                        } else {
-                            self.base.say(Remark::Panic);
-                        }
-                    }
+                    return Err(crate::ai::DutyCall {
+                        flags: crate::ai::DutyFlags::empty(),
+                        think_result: false,
+                        tail: crate::ai::DutyTail::RunAndAlertSoldiers { center },
+                        after: Vec::new(),
+                    });
                 }
 
                 Decision::TowerGuardAlert => {
@@ -1536,7 +1052,9 @@ impl EnemyAi {
                             decision = next;
                             continue;
                         }
-                        std::ops::ControlFlow::Break(result) => return result,
+                        std::ops::ControlFlow::Break(result) => {
+                            return Ok(result.then_some(decision));
+                        }
                     }
                 }
 
@@ -1546,7 +1064,9 @@ impl EnemyAi {
                             decision = next;
                             continue;
                         }
-                        std::ops::ControlFlow::Break(result) => return result,
+                        std::ops::ControlFlow::Break(result) => {
+                            return Ok(result.then_some(decision));
+                        }
                     }
                 }
 
@@ -1556,7 +1076,9 @@ impl EnemyAi {
                             decision = next;
                             continue;
                         }
-                        std::ops::ControlFlow::Break(result) => return result,
+                        std::ops::ControlFlow::Break(result) => {
+                            return Ok(result.then_some(decision));
+                        }
                     }
                 }
 
@@ -1566,7 +1088,9 @@ impl EnemyAi {
                             decision = next;
                             continue;
                         }
-                        std::ops::ControlFlow::Break(result) => return result,
+                        std::ops::ControlFlow::Break(result) => {
+                            return Ok(result.then_some(decision));
+                        }
                     }
                 }
 
@@ -1591,7 +1115,9 @@ impl EnemyAi {
                             decision = next;
                             continue;
                         }
-                        std::ops::ControlFlow::Break(result) => return result,
+                        std::ops::ControlFlow::Break(result) => {
+                            return Ok(result.then_some(decision));
+                        }
                     }
                 }
 
@@ -1601,7 +1127,9 @@ impl EnemyAi {
                             decision = next;
                             continue;
                         }
-                        std::ops::ControlFlow::Break(result) => return result,
+                        std::ops::ControlFlow::Break(result) => {
+                            return Ok(result.then_some(decision));
+                        }
                     }
                 }
 
@@ -1613,7 +1141,7 @@ impl EnemyAi {
             }
             break; // Decision executed successfully
         }
-        true
+        Ok(Some(decision))
     }
 
     /// Resume the `DECISION_FIGHT` tail after its nested
@@ -1622,11 +1150,11 @@ impl EnemyAi {
         &mut self,
         env: ThinkEnv<'_>,
         global: &mut AiGlobalState,
-    ) {
+    ) -> crate::ai::AiFlow<()> {
         if !self.base.couldnt_reachpoint {
             self.base
                 .register_log_line(LogLineType::BattleDecision, Decision::Fight as u16);
-            return;
+            return Ok(());
         }
 
         // Enemy battle decisions clear the failed fight
@@ -1664,11 +1192,12 @@ impl EnemyAi {
             0,
             &mut target_multiplicity,
             global,
-        );
-        if completed_inline {
+        )?;
+        if let Some(decision) = completed_inline {
             self.base
-                .register_log_line(LogLineType::BattleDecision, Decision::Observe as u16);
+                .register_log_line(LogLineType::BattleDecision, decision as u16);
         }
+        Ok(())
     }
 
     /// Execute the original game's two panic variants after primary-target
@@ -1713,13 +1242,14 @@ impl EnemyAi {
     /// this tail must run at the owner boundary. In Original, a failed route
     /// is consumed by officer alerting itself and changes the decision to
     /// `CASSOS`; it is not delivered as `EVENT_COULDNT_REACHPOINT`.
-    pub(crate) fn resume_battle_look_for_help_after_alert_officer(
+    pub(crate) fn finish_battle_look_for_help(
         &mut self,
         env: ThinkEnv<'_>,
+        accepted: bool,
         global: &mut AiGlobalState,
     ) {
         let ThinkEnv { sim, ctx, tick, .. } = env;
-        if !self.base.couldnt_reachpoint {
+        if accepted {
             if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
                 self.base.say(Remark::Cassos);
             } else {
@@ -1732,7 +1262,6 @@ impl EnemyAi {
 
         // Officer alerting clears the latch before returning false. The enclosing
         // decision loop then executes the ordinary CASSOS arm.
-        self.base.couldnt_reachpoint = false;
         if !self.is_merry_man_forest(ctx) || !self.merry_man_forest_cassos(ctx, global) {
             if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
                 self.base.say(Remark::Cassos);
@@ -1751,61 +1280,14 @@ impl EnemyAi {
     // Engage an enemy
     // -----------------------------------------------------------------------
 
-    pub(super) fn attack_enemy(&mut self, enemy: HumanHandle, env: ThinkEnv<'_>) {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Rider charge wins before any state is committed. Run the charge
-        // attempt first and early-return; only if it bails do we mutate
-        // primary_target / seek_position / emoticon. Otherwise a
-        // successful charge would leave the soldier with an X-mark
-        // emoticon and a primary_target the reference never sets here.
-        if ctx.self_is_rider && self.maybe_make_rider_attack(env) {
-            return;
-        }
-
-        // Unconditionally copy the enemy planning position into the seek target. When the
-        // selected enemy is the target for which this tick was built, the
-        // target-specific snapshot is the authoritative result of that exact
-        // call (including door/carrier semantics). A generic fighter snapshot
-        // may have been sampled at an earlier owner boundary and must not win
-        // merely because it contains the same handle.
-        let enemy_pos = if Some(AiEntityHandle::new(enemy)) == tick.primary_target_snapshot_handle {
-            tick.primary_target_position.unwrap_or_else(|| {
-                panic!("enemy-attack target {enemy} has no AI position snapshot")
-            })
-        } else {
-            // Battle planning can select a target appended from a nearby
-            // friend's live primary target after the dedicated target
-            // snapshot was built. Original immediately evaluates
-            // enemy positioning, including that actor's exact sector reference.
-            // The broad fighter snapshot is detection geometry sampled at an
-            // earlier owner boundary and can retain only the duplicate public
-            // sector number, so the live entity view must win here.
-            ctx.entity_view(enemy)
-                .map(|view| view.position)
-                .or_else(|| {
-                    tick.nearby_fighters
-                        .iter()
-                        .find(|fighter| fighter.handle == enemy)
-                        .map(|fighter| fighter.position)
-                })
-                .unwrap_or_else(|| panic!("enemy-attack target {enemy} disappeared"))
-        };
-        self.base.seek_position = enemy_pos;
-
-        // primary_target then emoticon.
-        self.base.primary_target = Some(AiEntityHandle::new(enemy));
-        // The target's presence was already required above (entity view or
-        // nearby-fighter snapshot); the camp check needs the view.
-        if let Some(view) = ctx.entity_view(enemy) {
-            debug_assert!(
-                ctx.is_hostile_with(view.camp),
-                "attack_enemy: target is a friend"
-            );
-        }
-        self.base.set_emoticon(EmoticonType::XMark);
-
-        // Compute distance from `seek_position` (which is now fresh).
-        self.reconsider_enemy_approach(false, env);
+    pub(crate) fn attack_enemy(
+        &mut self,
+        enemy: HumanHandle,
+        _env: ThinkEnv<'_>,
+    ) -> crate::ai::AiFlow<()> {
+        let mut call = crate::ai::DutyCall::new(crate::ai::DutyFlags::empty(), false);
+        call.tail = crate::ai::DutyTail::AttackEnemy { target: enemy };
+        Err(call)
     }
 
     // -----------------------------------------------------------------------
@@ -1823,599 +1305,14 @@ impl EnemyAi {
     /// Rider charge is handled by `maybe_make_rider_attack` (called
     /// from `attack_enemy`). Line-jump data is precomputed by the engine
     /// in `AiPerTickData::primary_target_jump_line`.
-    pub(crate) fn reconsider_enemy_approach(&mut self, reachpoint: bool, env: ThinkEnv<'_>) {
-        let ThinkEnv {
-            ctx, tick, grid, ..
-        } = env;
-        let debug_decision_path = super::decision_path_debug_enabled()
-            && super::decision_path_debug_matches(ctx.frame, self.base.me);
-        if debug_decision_path {
-            crate::ai_enemy::parity_trace::AidecisionReconsiderEnter {
-                frame: &(ctx.frame),
-                owner: &(self.base.me),
-                co: &(ctx.original_creation_order),
-                reachpoint: &(reachpoint),
-                state: &(self.base.current_state),
-                substate: &(self.base.current_substate),
-                primary: &(self.base.primary_target),
-                seek_x_bits: &(self.base.seek_position.x.to_bits()),
-                seek_y_bits: &(self.base.seek_position.y.to_bits()),
-                seek_sector: &(self.base.seek_position.sector),
-                seek_level: &(self.base.seek_position.level),
-                rider: &(ctx.self_is_rider),
-                couldnt: &(self.base.couldnt_reachpoint),
-                already: &(self.base.already_on_point),
-                owner_work: &(self.base.outbox.reentrant.owner_work),
-            }
-            .emit();
-        }
-        // Already swordfighting? stay.
-        if ctx.is_swordfighting {
-            self.set_state_with_timer(AiState::Attacking, Substate::AttackingSwordfight, 30, ctx);
-            return;
-        }
-
-        // Arrow-protection branch claims the decision.
-        if self.refresh_arrow_protection(false, env) {
-            return;
-        }
-
-        // The original game reads the standard sword range from the actor's
-        // live sword here and again for each approach tolerance. Do not use
-        // EnemyAi's compatibility cache: old replay/save snapshots can carry
-        // a range written with the former zero-based weapon-id convention.
-        let standard_sword_range = self
-            .required_fighter(
-                self.base.me,
-                tick,
-                format_args!(
-                    "enemy-approach reconsideration owner {} missing from fighter registry",
-                    self.base.me
-                ),
-            )
-            .sword_range_default;
-        // sword_range = standard sword range + 10.
-        let sword_range: f32 = (standard_sword_range + 10) as f32;
-        let mut run_distance = self.compute_enemy_run_distance(standard_sword_range) as f32;
-        let standard_sword_range = standard_sword_range as f32;
-
-        let mut b_reconsider = false;
-
-        let ApproachTargetSnapshot {
-            position: live_target_pos,
-            distance,
-            jump_line: my_line_jump,
-            animation: target_animation,
-        } = self.prepare_approach_target(env);
-
-        let SwappedApproachTarget {
-            handle: working_target,
-            position: working_target_pos,
-            distance: working_distance,
-        } = self.swap_approach_target_with_friends(live_target_pos, distance, ctx, tick);
-
-        // The original game tests the primary-target position that remains after every
-        // synchronous target substitution and friend swap. Resolve lift
-        // metadata lazily from that final AI `Position(...)`; tick lift data
-        // belongs only to the target snapshotted before this owner callback.
-        let final_target_lift = AiContext::enemy_lift_approach_for_position(
-            &ctx.fast_grid,
-            working_target_pos,
-            tick.owner_live_position.map(|position| position.level),
-        );
-        let target_in_lift = final_target_lift.is_some();
-
-        // Primary target is in a non-stairs lift: run to the entry
-        // point matching the evaluating NPC's layer.
-        if let Some(Some(entry)) = final_target_lift {
-            self.base.outbox.actor.set_focus(working_target);
-            self.base.seek_position = entry;
-            self.go_near(
-                AiState::Attacking,
-                Substate::AttackingRunningToLadder,
-                entry,
-                30,
-                GotoFlags::RUN,
-                ctx,
-            );
-            self.base.launch_timer(30, ctx.frame);
-            return;
-        }
-
-        // Substate-derived charge / first_consideration flags.
-        let (mut b_charge, b_first_consideration) = match self.base.current_substate {
-            Substate::AttackingRunningToEnemy | Substate::AttackingWalkingToEnemy => (false, false),
-            Substate::AttackingChargingEnemy => {
-                if my_line_jump.is_none() && !target_in_lift {
-                    (true, false)
-                } else {
-                    b_reconsider = true;
-                    (false, false)
-                }
-            }
-            Substate::AttackingReactiontime | Substate::AttackingReactiontimeRunning => {
-                let mut c = self.sword_is_charge_weapon;
-                c &= self.get_courage() >= crate::ai_enemy::combat::CHARGE_MIN_COURAGE;
-                c &= (working_distance as i32) >= crate::ai_enemy::combat::CHARGE_MIN_DISTANCE;
-                c &= my_line_jump.is_none();
-                c &= !ctx.self_is_rider;
-                c &= !target_in_lift;
-                tracing::trace!(
-                    target: "robin_engine::ai_enemy::charge",
-                    frame = ctx.frame,
-                    me = self.base.me,
-                    charge_weapon = self.sword_is_charge_weapon,
-                    courage = self.get_courage(),
-                    working_distance,
-                    has_line_jump = my_line_jump.is_some(),
-                    is_rider = ctx.self_is_rider,
-                    target_in_lift,
-                    charge = c,
-                    "charge consideration: reaction-time charge decision"
-                );
-                if c {
-                    self.base.say(crate::ai::Remark::Warcry);
-                }
-                (c, true)
-            }
-            _ => (false, true),
-        };
-
-        // Lock eye-tracking onto the primary target.
-        self.base.outbox.actor.set_focus(working_target);
-
-        // Riders try charge attack first.
-        if ctx.self_is_rider && self.maybe_make_rider_attack(env) {
-            return;
-        }
-
-        if debug_decision_path {
-            crate::ai_enemy::parity_trace::AidecisionReconsiderCloseEnough {
-                frame: &(ctx.frame),
-                owner: &(self.base.me),
-                working_distance_bits: &(working_distance.to_bits()),
-                working_distance: &(working_distance),
-                sword_range: &(sword_range),
-                run_distance: &(run_distance),
-                b_charge: &(b_charge),
-                b_first: &(b_first_consideration),
-                my_line_jump: &(my_line_jump),
-                target_in_lift: &(target_in_lift),
-                working_target: &(working_target),
-            }
-            .emit();
-        }
-        // Close enough to fight? Charging units defer until the
-        // reachpoint has been hit; everyone else engages immediately.
-        if working_distance <= sword_range && (!b_charge || reachpoint) {
-            self.begin_swordfight(ctx);
-            return;
-        }
-
-        // First-consideration / reachpoint force reconsider.
-        b_reconsider = b_reconsider || reachpoint || b_first_consideration;
-
-        let mut b_below_run_distance;
-        if b_charge {
-            // Charge: 10 sq-norm target-moved threshold.
-            let target_moved = {
-                let dx = working_target_pos.x - self.base.seek_position.x;
-                let dy = working_target_pos.y - self.base.seek_position.y;
-                dx * dx + dy * dy > 10.0
-            };
-            b_reconsider = b_reconsider || (target_moved && !self.pc_missed);
-            b_below_run_distance = false;
-        } else {
-            // Normal: 100 sq-norm target-moved threshold.
-            let target_moved = {
-                let dx = working_target_pos.x - self.base.seek_position.x;
-                let dy = working_target_pos.y - self.base.seek_position.y;
-                dx * dx + dy * dy > 100.0
-            };
-            b_reconsider = b_reconsider || (target_moved && !self.pc_missed);
-            // Drop to walk once already running + near enough.
-            b_below_run_distance = working_distance < (run_distance + 10.0);
-            b_reconsider = b_reconsider
-                || (self.base.current_substate == Substate::AttackingRunningToEnemy
-                    && b_below_run_distance);
-        }
-
-        // Riders always run.
-        b_below_run_distance &= !ctx.self_is_rider;
-
-        // "A walking circus pyramid!" override.
-        // The comparison excludes only the shoulder-carrying walk command,
-        // so it's true for every normal target. Effect: drop charge +
-        // below-run-distance, force reconsider, shrink run distance to
-        // plain sword range. The carry-on-shoulders branch is the
-        // quiet path where charge / close-walk are preserved.
-        if !matches!(
-            target_animation,
-            Some(crate::order::OrderType::WalkingCarryingOnShoulders)
-        ) {
-            b_charge = false;
-            b_below_run_distance = false;
-            b_reconsider = true;
-            run_distance = standard_sword_range;
-        }
-
-        if !b_reconsider {
-            self.base.launch_timer(10, ctx.frame);
-            return;
-        }
-
-        // Commit new seek goal.
-        let mut pos_prim_target = working_target_pos;
-        if let Some(line_idx) = my_line_jump
-            && let Some(g) = grid
-            && let Some(on_line) = self.compute_jump_line_target(g, line_idx, pos_prim_target)
-        {
-            pos_prim_target = on_line;
-        }
-        self.base.seek_position = pos_prim_target;
-
-        // Re-focus (redundant but mirrored for parity).
-        self.base.outbox.actor.set_focus(working_target);
-
-        // Only a StateChange appended by the approach selected below may own
-        // this approach prefix. An older matching notification can legitimately
-        // still be queued by a recursive caller.
-        let owner_work_before_approach = self.base.outbox.reentrant.owner_work.len();
-        let mut same_substate_route_split = false;
-
-        // The original game has finished constructing (or rejecting) the nearby route
-        // before the following state change starts. A changed substate
-        // captures that prefix in its StateChange notification. A
-        // same-substate update has no notification, so split the prefix here
-        // instead; otherwise its later attentive-mode tail gets batched in
-        // front of the movement by Rust's field-oriented actor drain.
-        let split_same_substate_route_before_set_state =
-            |this: &mut Self, incoming_substate: Substate| {
-                if this.base.current_state != AiState::Attacking
-                    || this.base.current_substate != incoming_substate
-                {
-                    return false;
-                }
-                assert!(
-                    this.base.outbox.actor.has_boundary_work(),
-                    "same-substate approach reassessment lost its movement prefix"
-                );
-                this.base
-                    .outbox
-                    .reentrant
-                    .owner_work
-                    .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                        &mut this.base.outbox.actor,
-                    )));
-                true
-            };
-
-        // Not below run distance: charge or run.
-        if !b_below_run_distance {
-            if b_charge {
-                // Charge to within sword range of the target.
-                self.base.go_near(
-                    pos_prim_target,
-                    standard_sword_range as i32,
-                    GotoFlags::RUN | GotoFlags::CHARGE,
-                    ctx,
-                );
-                if self.base.already_on_point {
-                    self.base.already_on_point = false;
-                    self.begin_swordfight(ctx);
-                    return;
-                }
-                same_substate_route_split |= split_same_substate_route_before_set_state(
-                    self,
-                    Substate::AttackingChargingEnemy,
-                );
-                self.set_state_with_timer(
-                    AiState::Attacking,
-                    Substate::AttackingChargingEnemy,
-                    10,
-                    ctx,
-                );
-            } else {
-                // Run to within run_distance of the target without stopping first.
-                self.base.go_near(
-                    pos_prim_target,
-                    run_distance as i32,
-                    GotoFlags::RUN | GotoFlags::DONT_STOP,
-                    ctx,
-                );
-                if self.base.already_on_point {
-                    self.base.already_on_point = false;
-                    self.begin_swordfight(ctx);
-                    return;
-                }
-                same_substate_route_split |= split_same_substate_route_before_set_state(
-                    self,
-                    Substate::AttackingRunningToEnemy,
-                );
-                self.set_state_with_timer(
-                    AiState::Attacking,
-                    Substate::AttackingRunningToEnemy,
-                    10,
-                    ctx,
-                );
-            }
-        } else {
-            // Below run distance: walk, or run if target is running.
-            let target_is_running = matches!(
-                tick.primary_target_animation,
-                Some(crate::order::OrderType::RunningUpright)
-            );
-            if target_is_running {
-                if my_line_jump.is_none() {
-                    // Run to within sword range of the target without stopping first.
-                    self.base.go_near(
-                        pos_prim_target,
-                        standard_sword_range as i32,
-                        GotoFlags::RUN | GotoFlags::DONT_STOP,
-                        ctx,
-                    );
-                } else {
-                    // Run to the target without stopping first.
-                    self.base
-                        .go_to(pos_prim_target, GotoFlags::RUN | GotoFlags::DONT_STOP, ctx);
-                }
-                if self.base.already_on_point {
-                    self.base.already_on_point = false;
-                    self.begin_swordfight(ctx);
-                    return;
-                }
-                same_substate_route_split |= split_same_substate_route_before_set_state(
-                    self,
-                    Substate::AttackingRunningToEnemy,
-                );
-                self.set_state_with_timer(
-                    AiState::Attacking,
-                    Substate::AttackingRunningToEnemy,
-                    10,
-                    ctx,
-                );
-            } else {
-                if my_line_jump.is_none() {
-                    // Walk to within sword range of the target.
-                    self.base.go_near(
-                        pos_prim_target,
-                        standard_sword_range as i32,
-                        GotoFlags::empty(),
-                        ctx,
-                    );
-                } else {
-                    // Walk to the target on the jump line.
-                    self.base.go_to(pos_prim_target, GotoFlags::empty(), ctx);
-                }
-                if self.base.already_on_point {
-                    self.base.already_on_point = false;
-                    self.begin_swordfight(ctx);
-                    return;
-                }
-                same_substate_route_split |= split_same_substate_route_before_set_state(
-                    self,
-                    Substate::AttackingWalkingToEnemy,
-                );
-                self.set_state_with_timer(
-                    AiState::Attacking,
-                    Substate::AttackingWalkingToEnemy,
-                    10,
-                    ctx,
-                );
-            }
-        }
-
-        // Original path construction is synchronous, so the
-        // unreachable-point test immediately after the approach observes this
-        // attempt's result. Rust settles the queued route after releasing the
-        // AI borrow. Resume that exact statement only after the engine has
-        // constructed the route; do not turn its failure into an independent
-        // unexpected event first.
-        let avenger_wait_position = tick.avenger_wait_position_for(self.base.primary_target);
-        if self.base.couldnt_reachpoint {
-            self.resume_reconsider_enemy_approach_after_go_near(
-                working_target_pos,
-                avenger_wait_position,
-                ctx,
-            );
-        } else {
-            // The original game constructs its nearby route before control reaches the
-            // following state change and the unreachable-point test
-            // before entering the next state. The state change captures that
-            // actor prefix for its callback barrier; lift it into an explicit
-            // earlier owner boundary so route construction is not deferred
-            // with ordinary sequence instruction.
-            let state_change_index = if same_substate_route_split {
-                None
-            } else {
-                self.base
-                    .outbox
-                    .reentrant
-                    .owner_work
-                    .iter()
-                    .enumerate()
-                    .skip(owner_work_before_approach)
-                    .rev()
-                    .find_map(|(index, work)| {
-                        matches!(
-                            work,
-                            crate::ai::AiOwnerWork::StateChange(notification)
-                                if notification.incoming_state == self.base.current_state
-                                    && notification.incoming_substate
-                                        == self.base.current_substate
-                        )
-                        .then_some(index)
-                    })
-            };
-            if let Some(state_change_index) = state_change_index {
-                let route_effects =
-                    match &mut self.base.outbox.reentrant.owner_work[state_change_index] {
-                        crate::ai::AiOwnerWork::StateChange(notification) => notification
-                            .actor_effects_before_callback
-                            .take()
-                            .expect("reconsidered approach was not captured before state change"),
-                        _ => unreachable!(),
-                    };
-                self.base.outbox.reentrant.owner_work.insert(
-                    state_change_index,
-                    crate::ai::AiOwnerWork::ActorEffects(route_effects),
-                );
-            } else if !same_substate_route_split {
-                // State changes deliberately omit AI-event filtering when the selected
-                // substate is unchanged. Approach movement therefore remains in the live
-                // actor outbox, but Original still constructs it synchronously
-                // before testing whether the point was unreachable.
-                assert!(
-                    self.base.outbox.actor.has_boundary_work(),
-                    "same-substate approach reassessment lost its movement actor effects"
-                );
-                self.base
-                    .outbox
-                    .reentrant
-                    .owner_work
-                    .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                        &mut self.base.outbox.actor,
-                    )));
-            }
-            // The state change's attentive-mode tail also precedes the return
-            // to the unreachable-point flag.
-            if self.base.outbox.actor.has_boundary_work() {
-                self.base
-                    .outbox
-                    .reentrant
-                    .owner_work
-                    .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                        &mut self.base.outbox.actor,
-                    )));
-            }
-            self.base
-                .outbox
-                .reentrant
-                .reconsider_approach_completion_pending = true;
-            self.base.outbox.reentrant.owner_work.push(
-                crate::ai::AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear {
-                    target: self
-                        .base
-                        .primary_target
-                        .expect("deferred enemy approach requires a target")
-                        .get(),
-                    target_position: working_target_pos,
-                },
-            );
-            if debug_decision_path {
-                crate::ai_enemy::parity_trace::AidecisionReconsiderDeferred {
-                    frame: &(ctx.frame),
-                    owner: &(self.base.me),
-                    state: &(self.base.current_state),
-                    substate: &(self.base.current_substate),
-                    primary: &(self.base.primary_target),
-                    target_x_bits: &(working_target_pos.x.to_bits()),
-                    target_y_bits: &(working_target_pos.y.to_bits()),
-                    target_sector: &(working_target_pos.sector),
-                    target_level: &(working_target_pos.level),
-                    couldnt: &(self.base.couldnt_reachpoint),
-                    already: &(self.base.already_on_point),
-                    owner_work: &(self.base.outbox.reentrant.owner_work),
-                }
-                .emit();
-            }
-        }
-    }
-
-    pub(crate) fn resume_reconsider_enemy_approach_after_go_near(
+    pub(crate) fn reconsider_enemy_approach(
         &mut self,
-        target_position: Position,
-        avenger_wait_position: Option<Position>,
-        ctx: &AiContext,
-    ) {
-        let halt_roof_fallback_after_launch = std::mem::take(
-            &mut self
-                .base
-                .outbox
-                .reentrant
-                .reconsider_approach_replaced_path_waiter,
-        );
-        let debug_decision_path = super::decision_path_debug_enabled()
-            && super::decision_path_debug_matches(ctx.frame, self.base.me);
-        if debug_decision_path {
-            crate::ai_enemy::parity_trace::AidecisionReconsiderResumeEnter {
-                frame: &(ctx.frame),
-                owner: &(self.base.me),
-                co: &(ctx.original_creation_order),
-                state: &(self.base.current_state),
-                substate: &(self.base.current_substate),
-                couldnt: &(self.base.couldnt_reachpoint),
-                already: &(self.base.already_on_point),
-                target_x_bits: &(target_position.x.to_bits()),
-                target_y_bits: &(target_position.y.to_bits()),
-                target_sector: &(target_position.sector),
-                target_level: &(target_position.level),
-                avenger_wait: &(avenger_wait_position),
-                owner_work: &(self.base.outbox.reentrant.owner_work),
-            }
-            .emit();
-        }
-        if !self.base.couldnt_reachpoint {
-            if debug_decision_path {
-                crate::ai_enemy::parity_trace::AidecisionReconsiderResumeResultRouteOk {
-                    frame: &(ctx.frame),
-                    owner: &(self.base.me),
-                    state: &(self.base.current_state),
-                    substate: &(self.base.current_substate),
-                }
-                .emit();
-            }
-            return;
-        }
-        let Some(wait_pos) = avenger_wait_position else {
-            // The original game returns without clearing the unreachable-point flag when the
-            // reverse gate walk cannot find a blocking gate.
-            if debug_decision_path {
-                crate::ai_enemy::parity_trace::AidecisionReconsiderResumeResultFailedWithoutWaitPosition {
-                    frame: &(ctx.frame),
-                    owner: &(self.base.me),
-                }
-                .emit();
-            }
-            return;
-        };
-
-        self.base.couldnt_reachpoint = false;
-        self.set_state(AiState::Attacking, Substate::AttackingRunToAvengerOnRoof);
-        let pending_orders_before = self.base.outbox.actor.orders.len();
-        self.base.go_near(wait_pos, 50, GotoFlags::RUN, ctx);
-        // When the failed approach replaced a live MoveWaiting, Original still
-        // observes that command in this recursive movement request's final
-        // path-computation check. It launches the roof sequence and then
-        // Halt removes it from the manager FIFO before instruction. A failure
-        // constructed from an ordinary Wait skips that tail Halt and the roof
-        // sequence starts this frame.
-        // An approach can succeed synchronously without launching a sequence when
-        // the actor is already within the 50-unit tolerance. Original leaves
-        // the already-on-point flag set for the enclosing decision end in that case, then
-        // recursively enters EVENT_REACHPOINT in the roof-run substate. Only
-        // an actually launched replacement sequence can inherit the
-        // path-waiter's trailing Halt.
-        if self.base.outbox.actor.orders.len() > pending_orders_before
-            && let Some(order) = self.base.outbox.actor.orders.last_mut()
-        {
-            order.halt_after_launch_for_path_waiter = halt_roof_fallback_after_launch;
-        }
-        // The wait position is only the reachable staging point. Original
-        // keeps the actual avenger position for the later face/wait behavior.
-        self.base.seek_position = target_position;
-        if debug_decision_path {
-            crate::ai_enemy::parity_trace::AidecisionReconsiderResumeResultAvengerFallback {
-                frame: &(ctx.frame),
-                owner: &(self.base.me),
-                state: &(self.base.current_state),
-                substate: &(self.base.current_substate),
-                couldnt: &(self.base.couldnt_reachpoint),
-                already: &(self.base.already_on_point),
-                owner_work: &(self.base.outbox.reentrant.owner_work),
-            }
-            .emit();
-        }
+        reachpoint: bool,
+        _env: ThinkEnv<'_>,
+    ) -> crate::ai::AiFlow<()> {
+        let mut call = crate::ai::DutyCall::new(crate::ai::DutyFlags::empty(), false);
+        call.tail = crate::ai::DutyTail::ReconsiderEnemyApproach { reachpoint };
+        Err(call)
     }
 
     /// Resume the original game's observation decision immediately after its
@@ -2466,7 +1363,7 @@ impl EnemyAi {
     /// Compute the approach point on `line_idx` closest to the victim.
     /// Returns the point on the aggressor's jump-line B-end mirrored
     /// from the victim's nearest-point projection on the paired line.
-    fn compute_jump_line_target(
+    pub(crate) fn compute_jump_line_target(
         &self,
         grid: &FastFindGrid,
         line_idx: u32,
@@ -2509,457 +1406,11 @@ impl EnemyAi {
     /// Try to initiate a rider charge attack against any visible enemy.
     ///
     /// Returns `true` if a charge was initiated, `false` otherwise.
-    pub(crate) fn maybe_make_rider_attack(&mut self, env: ThinkEnv<'_>) -> bool {
-        let ThinkEnv { ctx, tick, .. } = env;
-        let debug_decision_path = super::decision_path_debug_enabled()
-            && super::decision_path_debug_matches(ctx.frame, self.base.me);
-        if debug_decision_path {
-            crate::ai_enemy::parity_trace::AidecisionRiderAttackEnter {
-                frame: &(ctx.frame),
-                owner: &(self.base.me),
-                co: &(ctx.original_creation_order),
-                state: &(self.base.current_state),
-                substate: &(self.base.current_substate),
-                primary: &(self.base.primary_target),
-                rider: &(ctx.self_is_rider),
-                position_x_bits: &(ctx.position.x.to_bits()),
-                position_y_bits: &(ctx.position.y.to_bits()),
-                position_sector: &(ctx.position.sector),
-                position_level: &(ctx.position.level),
-                direction: &(ctx.direction),
-                list_them: &(self.list_them),
-                fighters: &(tick.nearby_fighters.len()),
-            }
-            .emit();
-        }
-        assert!(ctx.self_is_rider);
-
-        let my_pos = ctx.position;
-        let my_dir = ctx.direction;
-
-        // Try primary target first.
-        let mut target = self.base.primary_target;
-        let mut dest = Position::default();
-        let mut begin_charge = false;
-        let mut ok = false;
-
-        // Find the primary target from fighter snapshots. Original
-        // Rider-attack destination selection reads the enemy's map position,
-        // not the door/carrier-aware enemy planning position, so charge
-        // geometry consumes the raw element position. The persistent target
-        // pointer is not radius-limited, so fall back to the full fighter
-        // registry when it is outside the 500-unit `nearby_fighters` window.
-        // The original game tries the persistent primary-target reference without a
-        // camp check. The maintained target/list relationship is authoritative
-        // here: transient camp classification can disagree during combat
-        // ownership changes, but must not suppress a rider's current target.
-        let target_snapshot = self.find_fighter(target, tick);
-
-        if target.is_some()
-            && let Some(target_snapshot) = target_snapshot
-        {
-            // The original game checks exactly alive, conscious, and untied.
-            // Do not substitute combat readiness: that broader helper
-            // rejects temporary hit/recovery substates which remain valid
-            // primary targets for a rider charge.
-            // Same (pure) lookup as `target_snapshot`, which is present here.
-            let target_alive = !target_snapshot.is_dead
-                && !target_snapshot.is_unconscious
-                && !target_snapshot.is_tied;
-
-            if target_alive
-                && let Some((d, bc)) = self.get_good_rider_attack_destination(
-                    target.expect("rider target presence was checked").get(),
-                    my_pos,
-                    my_dir,
-                    target_snapshot.raw_position,
-                    env,
-                    &tick.fighter_registry,
-                )
-            {
-                dest = d;
-                begin_charge = bc;
-                ok = true;
-            }
-        }
-
-        // If primary target is unreachable, scan other enemies.
-        if !ok {
-            for enemy in &self.list_them {
-                if Some(AiEntityHandle::new(*enemy)) == target {
-                    continue;
-                }
-                // The original game's fallback scan walks the enemy list and calls
-                // rider-attack destination selection on every non-primary entry
-                // with no liveness or radius prefilter — the list is already
-                // maintained as the fight-capable enemy set. Resolve the
-                // entry through the full fighter registry so enemies beyond
-                // the 500-unit `nearby_fighters` window still get evaluated,
-                // and preserve its direct map-position read.
-                let epos = match self.find_fighter(*enemy, tick).map(|f| f.raw_position) {
-                    Some(p) => p,
-                    None => continue,
-                };
-                if let Some((d, bc)) = self.get_good_rider_attack_destination(
-                    *enemy,
-                    my_pos,
-                    my_dir,
-                    epos,
-                    env,
-                    &tick.fighter_registry,
-                ) {
-                    target = Some(AiEntityHandle::new(*enemy));
-                    self.base.primary_target = target;
-                    dest = d;
-                    begin_charge = bc;
-                    ok = true;
-                    break;
-                }
-            }
-        }
-
-        tracing::trace!(
-            target: "robin_engine::ai_enemy::charge",
-            frame = ctx.frame,
-            me = self.base.me,
-            ok,
-            ?target,
-            begin_charge,
-            "RiderCharge: destination search"
-        );
-        if !ok {
-            if debug_decision_path {
-                crate::ai_enemy::parity_trace::AidecisionRiderAttackResultNoDestination {
-                    frame: &(ctx.frame),
-                    owner: &(self.base.me),
-                    final_primary: &(self.base.primary_target),
-                    couldnt: &(self.base.couldnt_reachpoint),
-                    already: &(self.base.already_on_point),
-                    owner_work: &(self.base.outbox.reentrant.owner_work),
-                }
-                .emit();
-            }
-            return false;
-        }
-
-        // The original game's optional rider attack unconditionally requires the
-        // selected primary target here. The target search above already
-        // uses the full fighter registry because the pointer is not limited
-        // to the 500-unit nearby snapshot; preserve that same scope when
-        // publishing the seek position for the later rider-return facing step.
-        let target = target.expect("successful rider charge search has no target");
-        self.base.seek_position = self
-            .required_fighter(
-                target.get(),
-                tick,
-                format_args!(
-                    "selected rider charge target {target:?} disappeared from the fighter registry"
-                ),
-            )
-            .position;
-
-        // Original focuses the selected target before choosing between the
-        // approach and immediate-charge arms. The immediate-charge arm then
-        // deliberately replaces this by clearing focus, while the approach
-        // keeps EYES_FOLLOW. Besides steering the gaze, Follow bypasses the
-        // Lacklandist optical cadence so visibility refreshes immediately.
-        self.base.outbox.actor.set_focus(target);
-
-        if !begin_charge {
-            // Approach phase — ride toward enemy.
-            self.set_state(
-                AiState::Attacking,
-                Substate::AttackingRiderChargingApproaching,
-            );
-            self.base
-                .go_to(dest, GotoFlags::RUN | GotoFlags::RIDER_CHARGE, ctx);
-        } else {
-            // Close enough to charge — begin charge pass. Drop stare
-            // lock so the rider's cone follows the charge direction, not
-            // the fleeing target.
-            self.base.outbox.actor.set_unfocus();
-            self.base.say(crate::ai::Remark::Warcry);
-            self.go_to(
-                AiState::Attacking,
-                Substate::AttackingRiderChargingPassing,
-                dest,
-                GotoFlags::RUN | GotoFlags::RIDER_CHARGE | GotoFlags::RIDER_CHARGE_HIT,
-                ctx,
-            );
-        }
-
-        if debug_decision_path {
-            crate::ai_enemy::parity_trace::AidecisionRiderAttackResultAccepted {
-                frame: &(ctx.frame),
-                owner: &(self.base.me),
-                target: &(target),
-                destination_x_bits: &(dest.x.to_bits()),
-                destination_y_bits: &(dest.y.to_bits()),
-                destination_sector: &(dest.sector),
-                destination_level: &(dest.level),
-                begin_charge: &(begin_charge),
-                state: &(self.base.current_state),
-                substate: &(self.base.current_substate),
-                couldnt: &(self.base.couldnt_reachpoint),
-                already: &(self.base.already_on_point),
-                owner_work: &(self.base.outbox.reentrant.owner_work),
-            }
-            .emit();
-        }
-
-        true
-    }
 
     /// Compute the charge destination for a rider attacking a specific enemy.
     ///
     /// The rider charges past the enemy at a lateral offset, so the hit zone
     /// polygon sweeps across the enemy. Returns `(destination, begin_charge_anim)`.
-    fn get_good_rider_attack_destination(
-        &self,
-        candidate: HumanHandle,
-        my_pos: Position,
-        my_dir: u16,
-        enemy_pos: Position,
-        env: ThinkEnv<'_>,
-        fighter_registry: &[FighterSnapshot],
-    ) -> Option<(Position, bool)> {
-        let ThinkEnv { ctx, grid, .. } = env;
-        let debug_decision_path = super::decision_path_debug_enabled()
-            && super::decision_path_debug_matches(ctx.frame, self.base.me);
-        if debug_decision_path {
-            crate::ai_enemy::parity_trace::AidecisionRiderCandidateEnter {
-                frame: &(ctx.frame),
-                owner: &(self.base.me),
-                candidate: &(candidate),
-                me_x_bits: &(my_pos.x.to_bits()),
-                me_y_bits: &(my_pos.y.to_bits()),
-                me_level: &(my_pos.level),
-                enemy_x_bits: &(enemy_pos.x.to_bits()),
-                enemy_y_bits: &(enemy_pos.y.to_bits()),
-                enemy_level: &(enemy_pos.level),
-                direction: &(my_dir),
-                move_box: &(ctx.move_box),
-            }
-            .emit();
-        }
-        let geometry = match rider_charge_goal_geometry(
-            (my_pos.x, my_pos.y),
-            my_dir,
-            (enemy_pos.x, enemy_pos.y),
-        ) {
-            Ok(geometry) => geometry,
-            Err(reject) => {
-                if debug_decision_path {
-                    match reject {
-                        RiderChargeReject::Behind { forward_dot } => {
-                            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectBehind {
-                                frame: &(ctx.frame),
-                                owner: &(self.base.me),
-                                candidate: &(candidate),
-                                forward_dot_bits: &(forward_dot.to_bits()),
-                            }
-                            .emit()
-                        }
-                        RiderChargeReject::TooNear { norm, sq_norm } => {
-                            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectTooNear {
-                                frame: &(ctx.frame),
-                                owner: &(self.base.me),
-                                candidate: &(candidate),
-                                norm_bits: &(norm.to_bits()),
-                                sq_norm_bits: &(sq_norm.to_bits()),
-                            }
-                            .emit()
-                        }
-                        RiderChargeReject::ZeroOrthogonal { ortho_len } => {
-                            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectZeroOrthogonal {
-                                frame: &(ctx.frame),
-                                owner: &(self.base.me),
-                                candidate: &(candidate),
-                                ortho_len_bits: &(ortho_len.to_bits()),
-                            }
-                            .emit()
-                        }
-                        RiderChargeReject::ZeroHitVector { hp_len } => {
-                            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectZeroHitVector {
-                                frame: &(ctx.frame),
-                                owner: &(self.base.me),
-                                candidate: &(candidate),
-                                hp_len_bits: &(hp_len.to_bits()),
-                            }
-                            .emit()
-                        }
-                        RiderChargeReject::ZeroHitNorm { hit_norm_len } => {
-                            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectZeroHitNorm {
-                                frame: &(ctx.frame),
-                                owner: &(self.base.me),
-                                candidate: &(candidate),
-                                hit_norm_bits: &(hit_norm_len.to_bits()),
-                            }
-                            .emit()
-                        }
-                    }
-                }
-                return None;
-            }
-        };
-        let RiderChargeGeometry {
-            forward_dot,
-            sq_norm,
-            cos_alpha,
-            me_to_hit,
-            hit_dir,
-            hit_norm_len,
-            goal: (goal_x, goal_y),
-        } = geometry;
-
-        // Check if straight movement from me to goal is clear.
-        if let Some(g) = grid {
-            let pt_me = crate::coordinates::MapPoint::new(my_pos.x, my_pos.y);
-            let pt_goal = crate::coordinates::MapPoint::new(goal_x, goal_y);
-            if !g.is_straight_movement_authorized(pt_me, pt_goal, my_pos.level, &ctx.move_box) {
-                if debug_decision_path {
-                    crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectStraight {
-                        frame: &(ctx.frame),
-                        owner: &(self.base.me),
-                        candidate: &(candidate),
-                        goal_x_bits: &(goal_x.to_bits()),
-                        goal_y_bits: &(goal_y.to_bits()),
-                        forward_dot_bits: &(forward_dot.to_bits()),
-                        sq_norm_bits: &(sq_norm.to_bits()),
-                        cos_bits: &(cos_alpha.to_bits()),
-                    }
-                    .emit();
-                }
-                return None;
-            }
-        }
-
-        // Check if charge would hit friendlies.
-        // Build the strike zone polygon (4 corners of the charge sweep).
-        {
-            let me_to_hit_norm = hit_norm_len;
-            // How far before the hit point does the strike begin?
-            let mut strike_begins_before = me_to_hit_norm;
-            while strike_begins_before > Self::RIDER_CHARGE_LOOP_DISTANCE {
-                strike_begins_before -= Self::RIDER_CHARGE_LOOP_DISTANCE;
-            }
-            let dir_norm = (hit_dir.0, hit_dir.1);
-            // Aspect-corrected normal — (-y / aspect_ratio, x * aspect_ratio). Does NOT
-            // re-normalize the result before scaling by RIDER_CHARGE_MAX_LATERAL_DISTANCE
-            // so the polygon width depends on hit_dir.
-            let normal = (-hit_dir.1 * INVERSE_ASPECT_RATIO, hit_dir.0 * ASPECT_RATIO);
-            {
-                let first_corner = (
-                    my_pos.x + me_to_hit.0 - dir_norm.0 * strike_begins_before,
-                    my_pos.y + me_to_hit.1 - dir_norm.1 * strike_begins_before,
-                );
-                let loop_d = Self::RIDER_CHARGE_LOOP_DISTANCE;
-                let lat_d = Self::RIDER_CHARGE_MAX_LATERAL_DISTANCE;
-
-                let p0 = (first_corner.0, first_corner.1);
-                let p1 = (
-                    first_corner.0 + dir_norm.0 * loop_d,
-                    first_corner.1 + dir_norm.1 * loop_d,
-                );
-                let p2 = (
-                    first_corner.0 + dir_norm.0 * loop_d + normal.0 * lat_d,
-                    first_corner.1 + dir_norm.1 * loop_d + normal.1 * lat_d,
-                );
-                let p3 = (
-                    first_corner.0 + normal.0 * lat_d,
-                    first_corner.1 + normal.1 * lat_d,
-                );
-
-                let poly = geo::Polygon::new(
-                    geo::LineString::from(vec![
-                        (p0.0 as f64, p0.1 as f64),
-                        (p1.0 as f64, p1.1 as f64),
-                        (p2.0 as f64, p2.1 as f64),
-                        (p3.0 as f64, p3.1 as f64),
-                        (p0.0 as f64, p0.1 as f64),
-                    ]),
-                    vec![],
-                );
-
-                use geo::Contains;
-                // Friendly-polygon occupancy walks every same-camp
-                // fighter, skipping self and requiring the fighter to be
-                // alive and conscious (not the broader combat-readiness
-                // predicate). The strike polygon's first corner
-                // collapses onto `pt_me` when `me_to_hit_norm <=
-                // RIDER_CHARGE_LOOP_DISTANCE`, so without the self
-                // exclusion `geo::Contains` can trip on the rider itself.
-                // The original game's same-polygon friend query scans the engine's
-                // complete same-camp fighter registry. A friend can block the
-                // far end of this charge corridor while being outside the
-                // rider-centered nearby-fighter window. Its polygon test also
-                // reads each friend's raw map position, not its AI-facing position.
-                for f in fighter_registry {
-                    if !f.is_friendly || f.handle == 0 {
-                        continue;
-                    }
-                    if f.handle == self.base.me {
-                        continue;
-                    }
-                    if f.is_dead || f.is_unconscious {
-                        continue;
-                    }
-                    if f.raw_position.level != my_pos.level {
-                        continue;
-                    }
-                    let fp = geo::Point::new(f.raw_position.x as f64, f.raw_position.y as f64);
-                    if poly.contains(&fp) {
-                        if debug_decision_path {
-                            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultRejectFriendly {
-                                frame: &(ctx.frame),
-                                owner: &(self.base.me),
-                                candidate: &(candidate),
-                                friendly: &(f.handle),
-                                friendly_x_bits: &(f.raw_position.x.to_bits()),
-                                friendly_y_bits: &(f.raw_position.y.to_bits()),
-                                friendly_level: &(f.raw_position.level),
-                                goal_x_bits: &(goal_x.to_bits()),
-                                goal_y_bits: &(goal_y.to_bits()),
-                            }
-                            .emit();
-                        }
-                        return None;
-                    }
-                }
-            }
-        }
-
-        let destination = Position {
-            x: goal_x,
-            y: goal_y,
-            sector: my_pos.sector,
-            level: my_pos.level,
-        };
-
-        // Near enough to begin strike?
-        let sq_hit_dist = me_to_hit.0 * me_to_hit.0 + me_to_hit.1 * me_to_hit.1;
-        let begin_charge_anim = sq_hit_dist < Self::RIDER_CHARGE_SQR_LOOP_DISTANCE;
-
-        if debug_decision_path {
-            crate::ai_enemy::parity_trace::AidecisionRiderCandidateResultAccepted {
-                frame: &(ctx.frame),
-                owner: &(self.base.me),
-                candidate: &(candidate),
-                goal_x_bits: &(destination.x.to_bits()),
-                goal_y_bits: &(destination.y.to_bits()),
-                goal_sector: &(destination.sector),
-                goal_level: &(destination.level),
-                forward_dot_bits: &(forward_dot.to_bits()),
-                sq_norm_bits: &(sq_norm.to_bits()),
-                cos_bits: &(cos_alpha.to_bits()),
-                sq_hit_bits: &(sq_hit_dist.to_bits()),
-                begin_charge: &(begin_charge_anim),
-            }
-            .emit();
-        }
-
-        Some((destination, begin_charge_anim))
-    }
 
     /// Compute a retreat position for a rider after a charge pass.
     ///
@@ -3368,44 +1819,20 @@ impl EnemyAi {
         &mut self,
         target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
         env: ThinkEnv<'_>,
-    ) -> std::ops::ControlFlow<bool, Decision> {
-        let ThinkEnv { ctx, tick, .. } = env;
+    ) -> crate::ai::AiFlow<std::ops::ControlFlow<bool, Decision>> {
         let target = self.get_new_primary_target_with_mult_override(
             PrimaryTargetFlags::UNOCCUPIED_PREFERRED,
-            ctx,
-            tick,
+            env.ctx,
+            env.tick,
             Some(target_multiplicity),
         );
-        if let Some(target) = target {
-            self.base.primary_target = Some(target);
-            self.attack_enemy(target.get(), env);
-            if self
-                .base
-                .outbox
-                .reentrant
-                .reconsider_approach_completion_pending
-            {
-                // Attacking an enemy reconsiders the approach.
-                // The original game constructs that approach synchronously,
-                // so this couldn't-reach test runs only after its
-                // typed route continuation. Keep the enclosing
-                // decision loop on the same owner FIFO instead of
-                // prematurely accepting/logging DECISION_FIGHT.
-                self.base
-                    .outbox
-                    .reentrant
-                    .owner_work
-                    .push(crate::ai::AiOwnerWork::ResumeBattleFightAfterReconsider);
-                return std::ops::ControlFlow::Break(false);
-            }
-            if self.base.couldnt_reachpoint {
-                self.base.couldnt_reachpoint = false;
-                return std::ops::ControlFlow::Continue(Decision::Observe);
-            }
-        } else {
-            return std::ops::ControlFlow::Continue(Decision::Observe);
-        }
-        std::ops::ControlFlow::Break(true)
+        let Some(target) = target else {
+            return Ok(std::ops::ControlFlow::Continue(Decision::Observe));
+        };
+        self.base.primary_target = Some(target);
+        self.attack_enemy(target.get(), env)
+            .map_err(|call| call.then(crate::ai::DutyTail::FinishBattleFightAfterAttack))?;
+        unreachable!("attack operation returns to its engine caller")
     }
 
     fn execute_last_reserve_decision(
@@ -3539,61 +1966,15 @@ impl EnemyAi {
         std::ops::ControlFlow::Break(true)
     }
 
-    fn execute_shoot_decision(
+    pub(crate) fn resume_battle_shot_selection(
         &mut self,
-        target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
-        global: &mut AiGlobalState,
+        target: Option<AiEntityHandle>,
+        old_substate: Substate,
+        cover_shield_bearer: HumanHandle,
         env: ThinkEnv<'_>,
-    ) -> std::ops::ControlFlow<bool, Decision> {
-        let ThinkEnv { ctx, tick, .. } = env;
-        if ctx.remaining_arrows == 0 {
-            return std::ops::ControlFlow::Continue(Decision::RunForNewArrows);
-        }
-        // Pick best shot target.
-        let target = self.propose_shot_target(env);
-        // Shot-target selection uses the actors' shared multiplicity
-        // scratch field: it resets every current Them entry, then
-        // rebuilds claims from nearby friends in bow substates.
-        // Preserve that side effect for a failed-shot fallback to
-        // Observe/Fight, which immediately reuses the field in
-        // primary-target replacement.
-        let bow_targets: Vec<_> = self
-            .base
-            .list_us
-            .iter()
-            .copied()
-            .filter(|&friend_handle| friend_handle != self.base.me)
-            .filter_map(|friend_handle| {
-                let friend = self.required_fighter(
-                    friend_handle,
-                    tick,
-                    format_args!(
-                        "friend {friend_handle} in list_us is absent from fighter snapshot"
-                    ),
-                );
-                (friend.is_soldier
-                    && matches!(
-                        friend.current_substate,
-                        x if x == Substate::AttackingBowShooting
-                            || x == Substate::AttackingBowLoading
-                            || x == Substate::AttackingBowAiming
-                    )
-                    && friend.primary_target.is_some())
-                .then(|| friend.primary_target.map(AiEntityHandle::get))
-                .flatten()
-            })
-            .collect();
-        rebuild_battle_target_multiplicity_for_shot(
-            target_multiplicity,
-            &self.list_them,
-            bow_targets.iter().copied(),
-        );
-        for target in self.list_them.iter().chain(bow_targets.iter()) {
-            let count = target_multiplicity.get(target).copied().unwrap_or(0);
-            global
-                .primary_target_multiplicity_scratch
-                .insert(*target, count);
-        }
+        global: &mut AiGlobalState,
+    ) -> crate::ai::AiFlow<()> {
+        let ThinkEnv { ctx, .. } = env;
         if let Some(target) = target {
             self.base.primary_target = Some(target);
             self.base.outbox.actor.set_focus(target.get());
@@ -3630,71 +2011,41 @@ impl EnemyAi {
             }
         } else {
             // No valid target — fall back to observe
-            return std::ops::ControlFlow::Continue(Decision::ArcherObserve);
+            let mut multiplicity = global.primary_target_multiplicity_scratch.clone();
+            if let Some(decision) = self.execute_battle_decision(
+                env,
+                Decision::ArcherObserve,
+                old_substate,
+                cover_shield_bearer,
+                &mut multiplicity,
+                global,
+            )? {
+                self.base
+                    .register_log_line(LogLineType::BattleDecision, decision as u16);
+            }
+            return Ok(());
         }
-        std::ops::ControlFlow::Break(true)
+        self.base
+            .register_log_line(LogLineType::BattleDecision, Decision::Shoot as u16);
+        Ok(())
     }
 
     fn execute_look_for_help_decision(
         &mut self,
         env: ThinkEnv<'_>,
-    ) -> std::ops::ControlFlow<bool, Decision> {
+    ) -> crate::ai::AiFlow<std::ops::ControlFlow<bool, Decision>> {
         let ThinkEnv { ctx, tick, .. } = env;
         let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
         self.base.primary_target = target;
         self.base.friends_are_alerted = true;
-        // The original game immediately evaluates the primary target's position
-        // for officer alerting. The selected target must still
-        // resolve in the live entity view; neither cached fighter
-        // geometry nor an older seek point can substitute for it.
-        let center = ctx
-            .expect_entity_view(
-                target.expect("LookForHelp requires a primary target"),
-                "LookForHelp primary target",
-            )
-            .position;
-        // The original game derives this while building the ally list; reuse
-        // that admission result rather than issuing a second set
-        // of 360-degree visibility queries.
-        let alerting_soldier_near = has_nearby_alerting_soldier(
-            self.base.me,
-            &self.base.list_us,
-            tick.camp_soldiers
-                .iter()
-                .map(|cs| (cs.handle, cs.ai_substate)),
-        );
-        if alerting_soldier_near || !self.alert_officer(env, center, 0) {
-            return std::ops::ControlFlow::Continue(Decision::Cassos);
-        } else {
-            // Officer alerting requests an approach synchronously. Its route
-            // construction can consume the paired random building
-            // exit wait before control returns here to draw the
-            // Cassos/Panic remark. Close the approach actor prefix
-            // and resume this statement at the owner boundary so
-            // Rust preserves that call-stack ordering.
-            self.base
-                .outbox
-                .reentrant
-                .owner_work
-                .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                    &mut self.base.outbox.actor,
-                )));
-            self.base.outbox.reentrant.look_for_help_completion_pending = true;
-            self.base
-                .outbox
-                .reentrant
-                .owner_work
-                .push(crate::ai::AiOwnerWork::ResumeBattleLookForHelpAfterAlertOfficer);
-            // The continuation owns the single final battle log:
-            // LookForHelp after success, Cassos after route failure.
-            return std::ops::ControlFlow::Break(false);
-        }
+        self.alert_officer(crate::ai::OfficerAlertCaller::BattleLookForHelp)?;
+        unreachable!("officer coordination transfers to the engine")
     }
 
     fn execute_alert_soldiers_decision(
         &mut self,
         env: ThinkEnv<'_>,
-    ) -> std::ops::ControlFlow<bool, Decision> {
+    ) -> crate::ai::AiFlow<std::ops::ControlFlow<bool, Decision>> {
         let ThinkEnv { ctx, tick, .. } = env;
         let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
         self.base.primary_target = target;
@@ -3708,7 +2059,7 @@ impl EnemyAi {
                 me = self.base.me,
                 "alert-soldiers decision lost its primary target; reserving instead"
             );
-            return std::ops::ControlFlow::Continue(Decision::Reserve);
+            return Ok(std::ops::ControlFlow::Continue(Decision::Reserve));
         };
         self.base.friends_are_alerted = true;
         // DECISION_ALERT_SOLDIERS issues officer attack commands,
@@ -3716,14 +2067,12 @@ impl EnemyAi {
         let center = ctx
             .expect_entity_view(target, "alert-soldiers primary target")
             .position;
-        match self.command_soldiers_to_attack(center, env) {
-            super::alert::CommandSoldiersStart::Pending => {
-                return std::ops::ControlFlow::Break(true);
-            }
-            super::alert::CommandSoldiersStart::Rejected => {
-                return std::ops::ControlFlow::Continue(Decision::Reserve);
-            }
-        }
+        Err(crate::ai::DutyCall {
+            flags: crate::ai::DutyFlags::empty(),
+            think_result: false,
+            tail: crate::ai::DutyTail::CommandSoldiersToAttack { center },
+            after: Vec::new(),
+        })
     }
 
     fn execute_run_for_new_arrows_decision(
@@ -4248,420 +2597,14 @@ impl EnemyAi {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct BattleFriendSummary {
-    friends_lower_company: u16,
-    soldiers_lower_pride: bool,
-    simple_soldiers_near: bool,
-}
-
 /// Decision-local aggregates handed from `battle_decisions` to the
 /// decision-tree pieces.
 #[derive(Clone, Copy)]
-struct BattleDecisionInputs {
-    friends_lower_company: u16,
-    soldiers_lower_pride: bool,
-    simple_soldiers_near: bool,
-    min_square_enemy_distance: u32,
-    num_enemies_i_can_see: usize,
-    friends_nearer_to_enemy: u16,
-}
-
-impl EnemyAi {
-    /// Rebuild the admitted camp-fighter list in original registry order.
-    fn prepare_battle_friends(
-        &mut self,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        debug_them: bool,
-    ) -> BattleFriendSummary {
-        let mut friends_lower_company = 0_u16;
-        let mut soldiers_lower_pride = false;
-        let mut simple_soldiers_near = false;
-
-        self.base.list_us.clear();
-        self.base.list_us.push(self.base.me);
-        // Fighter lookup walks the camp's single append-only fighter
-        // registry. PCs and soldiers therefore have to remain interleaved:
-        // every admitted candidate performs an opaque visibility query, and
-        // changing that query order changes the spatial visibility cache.
-        for fighter in battle_fighter_candidates(&tick.fighter_registry, self.base.me) {
-            let target = ctx.entity_view(fighter.handle).unwrap_or_else(|| {
-                panic!(
-                    "battle-planning camp fighter {} is absent from the AI entity view",
-                    fighter.handle
-                )
-            });
-            let (position_world, direction) = if fighter.is_soldier {
-                let friend = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|friend| friend.handle == fighter.handle)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "able camp soldier {} is absent from camp_soldiers",
-                            fighter.handle
-                        )
-                    });
-                (friend.position_world, friend.direction)
-            } else {
-                (target.detection_position_world, target.direction)
-            };
-            // The original game evaluates full-circle detection here,
-            // after the cheap able-to-fight gate and before the soldier-state
-            // switch, and only when
-            // battle planning actually runs. Do not use the historical
-            // snapshot bit: populating it eagerly issued O(N²) opaque-LOS
-            // queries on every detection-refresh pass and changed both trace
-            // ordering and the visibility cache before any battle decision.
-            if !battle_friend_detected_360(
-                ctx,
-                self.base.me,
-                fighter.handle,
-                position_world,
-                direction,
-                target,
-            ) {
-                continue;
-            }
-            if fighter.is_pc {
-                self.base.list_us.push(fighter.handle);
-                if self.company_number > 0 {
-                    friends_lower_company = friends_lower_company.saturating_add(1);
-                }
-                continue;
-            }
-            let friend = tick
-                .camp_soldiers
-                .iter()
-                .find(|friend| friend.handle == fighter.handle)
-                .expect("soldier metadata was resolved above");
-            if !matches!(
-                friend.ai_state,
-                AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
-            ) {
-                continue;
-            }
-            if debug_them {
-                crate::ai_enemy::parity_trace::ThemBattleFriendAfter360 {
-                    frame: &(ctx.frame),
-                    co: &(ctx.original_creation_order),
-                    me: &(self.base.me),
-                    friend: &(friend.handle),
-                    state: &(friend.ai_state),
-                    substate: &(friend.ai_substate),
-                    primary_target: &(friend.primary_target),
-                }
-                .emit();
-            }
-            self.base.list_us.push(friend.handle);
-            if self.company_number > friend.company_number
-                && (self.base.current_substate == Substate::AttackingReactiontime
-                    || friend.ai_state == AiState::Attacking)
-            {
-                friends_lower_company = friends_lower_company.saturating_add(1);
-            }
-            soldiers_lower_pride |= self.soldier_profile_pride > friend.pride;
-            simple_soldiers_near |= friend.rank == ProfileRank::Soldier;
-        }
-
-        BattleFriendSummary {
-            friends_lower_company,
-            soldiers_lower_pride,
-            simple_soldiers_near,
-        }
-    }
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct ApproachTargetSnapshot {
-    position: Position,
-    distance: f32,
-    jump_line: Option<u32>,
-    animation: Option<crate::order::OrderType>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct SwappedApproachTarget {
-    handle: Option<AiEntityHandle>,
-    position: Position,
-    distance: f32,
-}
-
-impl EnemyAi {
-    /// Resolve carry substitution and target geometry before friend swaps.
-    fn prepare_approach_target(&mut self, env: ThinkEnv<'_>) -> ApproachTargetSnapshot {
-        let ThinkEnv {
-            ctx, tick, grid, ..
-        } = env;
-        // Target on another entity's shoulders: re-point `primary_target`
-        // to the carrier so every downstream read (friend-swap
-        // comparison, focusing, swordfight entry's
-        // `pending_enter_swordfight`) sees the carrier rather than the
-        // carried entity. The original game does
-        // replacement of the primary target by its carrier, persisting
-        // across ticks because `primary_target` is a member.
-        let target_snapshot_is_current =
-            tick.primary_target_snapshot_handle == self.base.primary_target;
-        let target_on_shoulders = if target_snapshot_is_current {
-            matches!(
-                tick.primary_target_posture,
-                Some(crate::element::Posture::OnShoulders)
-            )
-        } else {
-            ctx.entity_view(self.base.primary_target)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "enemy-approach reconsideration target {:?} disappeared after synchronous retarget",
-                        self.base.primary_target
-                    )
-                })
-                .posture
-                == crate::element::Posture::OnShoulders
-        };
-        if target_on_shoulders {
-            if !target_snapshot_is_current {
-                // TODO: expose the carrier handle in AiEntityView so a target
-                // changed synchronously to a carried human can be resolved
-                // here without rebuilding the whole tick snapshot.
-                panic!(
-                    "enemy-approach reconsideration synchronously retargeted to carried human {:?}; carrier identity is unavailable",
-                    self.base.primary_target
-                );
-            }
-            let carrier_handle = tick.primary_target_carrier_handle.unwrap_or_else(|| {
-                panic!(
-                    "enemy-approach reconsideration target {:?} is on shoulders without a carrier snapshot",
-                    self.base.primary_target
-                )
-            });
-            self.base.primary_target = Some(carrier_handle);
-        }
-
-        // Position(primary_target) after the substitution resolves to
-        // the carrier's position when the carry path fired.
-        let live_target_pos = if target_snapshot_is_current {
-            if target_on_shoulders && let Some(carrier) = tick.primary_target_carrier_position {
-                carrier
-            } else {
-                tick.primary_target_position.unwrap_or_else(|| {
-                    panic!(
-                        "enemy-approach reconsideration target {:?} has no position snapshot",
-                        self.base.primary_target
-                    )
-                })
-            }
-        } else {
-            // The original game reads the primary target position after the timer/event
-            // callback has synchronously changed that pointer. Resolve the
-            // replacement handle through the shared per-frame entity view;
-            // using `tick.primary_target_position` here couples the new
-            // identity to the old target's coordinates.
-            ctx.entity_view(self.base.primary_target)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "enemy-approach reconsideration target {:?} disappeared after synchronous retarget",
-                        self.base.primary_target
-                    )
-                })
-                .position
-        };
-
-        // This original-game behavior uses the raw map-coordinate norm and
-        // truncates it to an unsigned 16-bit value. Do not use the usual
-        // isometric Y stretch.
-        let distance = reconsider_approach_distance(live_target_pos, ctx.position);
-
-        // The table-swordfight check runs live against the
-        // primary target as it stands on entry — after any synchronous
-        // retarget by the calling decision, and before the friend-swap loop
-        // below can change the target again.
-        //
-        // The per-tick snapshot answers exactly that question while it still
-        // describes the same target. After a synchronous retarget it belongs
-        // to the previous target, so recompute the pair for the replacement
-        // instead of dropping the line: the original game keeps the jump-line
-        // reference available when the target changes, and a dropped line sends the
-        // approach at the victim's own sector across the level topology.
-        let my_line_jump = if target_snapshot_is_current {
-            tick.primary_target_jump_line
-        } else {
-            // Table-swordfight eligibility measures with the aggressor's maximal
-            // hand-to-hand weapon range (`weapon.distance[Maximal]`), which the
-            // fighter snapshot carries as `sword_range_maximal`.
-            let my_max_range = self
-                .find_fighter(self.base.me, tick)
-                .map(|f| f.sword_range_maximal)
-                .unwrap_or(self.sword_range);
-            grid.and_then(|g| {
-                crate::engine::melee::table_swordfight_jump_line(
-                    g,
-                    ctx.position.sector.map(i16::from).unwrap_or(-1),
-                    live_target_pos.sector.map(i16::from).unwrap_or(-1),
-                    crate::coordinates::MapPoint::new(live_target_pos.x, live_target_pos.y),
-                    my_max_range as f32,
-                )
-            })
-        };
-        // The jump-line reference receives the live table-swordfight result
-        // in the original game writes the AI
-        // MEMBER, not a local: the answer persists after this decision
-        // returns and is read again by swordfight entry
-        // during target reconsideration, by the "too far to adversary" gate
-        // in swordfight reconsideration and — the case that matters
-        // here — by surrounding combat-position generation's
-        // position proposals depend on the jump-line reference being absent, while
-        // the scotched branch requires that reference to be present.
-        // Rust only computed a local, so a fighter standing on a jump
-        // line still looked line-less once the fight started and fell
-        // through to the 16-direction surround ring the Original never
-        // generates.
-        self.my_line_jump = my_line_jump;
-        let target_animation = if target_snapshot_is_current {
-            tick.primary_target_animation
-        } else {
-            Some(
-                ctx.entity_view(self.base.primary_target)
-                    .expect("replacement primary target view was resolved above")
-                    .current_animation,
-            )
-        };
-
-        ApproachTargetSnapshot {
-            position: live_target_pos,
-            distance,
-            jump_line: my_line_jump,
-            animation: target_animation,
-        }
-    }
-
-    /// Visit every friend once, publishing each strictly improving swap in order.
-    fn swap_approach_target_with_friends(
-        &mut self,
-        live_target_pos: Position,
-        distance: f32,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> SwappedApproachTarget {
-        // Target-swap with a same-camp friend if the swap shortens the
-        // total travel distance. `friend_swap_candidates` is the
-        // engine's enumeration of same-camp soldiers currently
-        // approaching an enemy; we walk them in enumeration order and
-        // commit the first strict improvement.
-        let mut working_target = self.base.primary_target;
-        let mut working_target_pos = live_target_pos;
-        let mut working_distance = distance;
-        let debug_primary_swap = super::primary_swap_debug_enabled()
-            && super::primary_swap_debug_matches(ctx.frame, self.base.me);
-        // Iterate friends only when we have our own target —
-        // Reading the primary target position would crash when absent. Skip
-        // the swap heuristic if our primary_target is unset so we never
-        // hand 0 to a friend via `friend_primary_target_swaps`.
-        for cand in &tick.friend_swap_candidates {
-            if working_target.is_none() {
-                if debug_primary_swap {
-                    crate::ai_enemy::parity_trace::PrimarySwapSwapStopZero {
-                        frame: &(ctx.frame),
-                        co: &(ctx.original_creation_order),
-                        owner: &(self.base.me),
-                        friend: &(cand.friend_id),
-                    }
-                    .emit();
-                }
-                break;
-            }
-            if cand.friend_primary_target == working_target {
-                if debug_primary_swap {
-                    crate::ai_enemy::parity_trace::PrimarySwapSwapSkipSame {
-                        frame: &(ctx.frame),
-                        co: &(ctx.original_creation_order),
-                        owner: &(self.base.me),
-                        friend: &(cand.friend_id),
-                        owner_target: &(working_target),
-                        friend_target: &(cand.friend_primary_target),
-                    }
-                    .emit();
-                }
-                continue;
-            }
-            let me_to_friend_target = {
-                let dx = ctx.position.x - cand.friend_primary_target_position.x;
-                let dy = ctx.position.y - cand.friend_primary_target_position.y;
-                (dx * dx + dy * dy).sqrt()
-            };
-            let friend_to_my_target = {
-                let dx = cand.friend_position.x - working_target_pos.x;
-                let dy = cand.friend_position.y - working_target_pos.y;
-                (dx * dx + dy * dy).sqrt()
-            };
-            let friend_to_friend_target = {
-                let dx = cand.friend_position.x - cand.friend_primary_target_position.x;
-                let dy = cand.friend_position.y - cand.friend_primary_target_position.y;
-                (dx * dx + dy * dy).sqrt()
-            };
-            let left = me_to_friend_target + friend_to_my_target;
-            let right = working_distance + friend_to_friend_target;
-            let swap = left < right;
-            if debug_primary_swap {
-                crate::ai_enemy::parity_trace::PrimarySwapSwapTest {
-                    frame: &(ctx.frame),
-                    co: &(ctx.original_creation_order),
-                    owner: &(self.base.me),
-                    friend: &(cand.friend_id),
-                    owner_target: &(working_target),
-                    friend_target: &(cand.friend_primary_target),
-                    owner_x_bits: &(ctx.position.x.to_bits()),
-                    owner_y_bits: &(ctx.position.y.to_bits()),
-                    owner_target_x_bits: &(working_target_pos.x.to_bits()),
-                    owner_target_y_bits: &(working_target_pos.y.to_bits()),
-                    friend_x_bits: &(cand.friend_position.x.to_bits()),
-                    friend_y_bits: &(cand.friend_position.y.to_bits()),
-                    friend_target_x_bits: &(cand.friend_primary_target_position.x.to_bits()),
-                    friend_target_y_bits: &(cand.friend_primary_target_position.y.to_bits()),
-                    working_distance: &(working_distance.to_bits()),
-                    me_to_friend_target: &(me_to_friend_target.to_bits()),
-                    friend_to_my_target: &(friend_to_my_target.to_bits()),
-                    friend_to_friend_target: &(friend_to_friend_target.to_bits()),
-                    left: &(left.to_bits()),
-                    right: &(right.to_bits()),
-                    swap: &(swap),
-                }
-                .emit();
-            }
-            if swap {
-                // Each improving friend is retargeted immediately: the
-                // original game writes the friend's new primary target on the
-                // spot, so several friends can be swapped in a single
-                // reconsider pass. Each friend is visited once, so the
-                // handed-off target is always the pre-swap working target.
-                self.base.outbox.actor.friend_primary_target_swaps.push((
-                    cand.friend_id,
-                    working_target.expect("friend swap requires current primary target"),
-                ));
-                working_target = cand.friend_primary_target;
-                working_target_pos = cand.friend_primary_target_position;
-                working_distance =
-                    reconsider_approach_distance(ctx.position, cand.friend_primary_target_position);
-                self.base.primary_target = working_target;
-            }
-        }
-        if debug_primary_swap {
-            crate::ai_enemy::parity_trace::PrimarySwapSwapFinal {
-                frame: &(ctx.frame),
-                co: &(ctx.original_creation_order),
-                owner: &(self.base.me),
-                target: &(working_target),
-                target_x_bits: &(working_target_pos.x.to_bits()),
-                target_y_bits: &(working_target_pos.y.to_bits()),
-                distance: &(working_distance.to_bits()),
-                queued_swaps: &(self.base.outbox.actor.friend_primary_target_swaps),
-            }
-            .emit();
-        }
-
-        SwappedApproachTarget {
-            handle: working_target,
-            position: working_target_pos,
-            distance: working_distance,
-        }
-    }
+pub(crate) struct BattleDecisionInputs {
+    pub(crate) friends_lower_company: u16,
+    pub(crate) soldiers_lower_pride: bool,
+    pub(crate) simple_soldiers_near: bool,
+    pub(crate) min_square_enemy_distance: u32,
+    pub(crate) num_enemies_i_can_see: usize,
+    pub(crate) friends_nearer_to_enemy: u16,
 }

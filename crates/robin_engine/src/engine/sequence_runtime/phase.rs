@@ -776,13 +776,6 @@ impl EngineInner {
             .filter(|element_ref| !manager_fifo_before_condolations.contains(element_ref))
             .collect::<Vec<_>>();
 
-        // AI decisions reached from an entity/NPC slot can launch movement after the
-        // pre-entity order drain. Original registers that Move immediately,
-        // so the sequence-manager update below still instructs it in this
-        // frame. It reaches pathfinding only at next frame's earlier Paths
-        // phase and therefore remains MoveWaiting meanwhile.
-        self.drain_pending_move_requests(sim);
-
         // Release cross-actor shoulder-climb dependencies from canonical
         // gameplay state rather than the optional UI action callback. The
         // helping transition publishes HelpingToClimb on its DONE edge, but

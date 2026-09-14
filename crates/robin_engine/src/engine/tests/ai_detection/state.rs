@@ -203,7 +203,7 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
 #[test]
 #[should_panic(expected = "missing its required AI controller while applying recovery state")]
 fn think_with_drain_rejects_a_soldier_missing_its_required_ai() {
-    use crate::ai::{AiContext, AiPerTickData, Stimulus, StimulusType};
+    use crate::ai::{Stimulus, StimulusType};
 
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
@@ -213,8 +213,7 @@ fn think_with_drain_rejects_a_soldier_missing_its_required_ai() {
         sim,
         npc_id,
         &Stimulus::new(StimulusType::EventDone),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
+        None,
         &LevelAssets::new(),
     );
 }
@@ -827,7 +826,7 @@ fn restored_quit_lose_quit_fifo_commits_unconscious_eyes_inline() {
     ];
 
     crate::sim_rng::with_seed(0xA013_105E, |sim| {
-        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, &assets, None)
+        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, &assets)
     });
 
     let entity = engine.get_entity(npc_id).unwrap();
@@ -996,7 +995,7 @@ fn nonserialized_primary_target_multiplicity_starts_empty_after_restore() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let _prepared = engine.prepare_npc_owner_pass();
+    engine.prepare_npc_owner_pass();
 
     assert!(engine.ai.global.primary_target_multiplicity_initialized);
     assert!(

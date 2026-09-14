@@ -52,14 +52,14 @@ mod contexts;
 pub(crate) use contexts::ai_position_to_point_3d;
 pub use contexts::{
     AI_DOOR_RALLY_POINT_DISTANCE, AiContext, AiGlobalState, AiPerTickData, AntagonistInfo,
-    DoorRallyPoint, FriendSwapCandidate, House, MyExitDoorInfo, PhalanxEnemySnapshot,
-    PhalanxMemberThemList, ReconsiderSwordfightFriend, ReconsiderSwordfightObservationFighter,
-    ReinforcementDoorInfo,
+    DoorRallyPoint, FriendSwapCandidate, House, ReinforcementDoorInfo,
 };
 
 mod duty;
 mod effects;
-pub(crate) use duty::{AiFlow, DutyCall, DutyTail};
+pub(crate) use duty::{
+    AiFlow, DutyCall, DutyTail, MoneyFightOperation, OfficerAlertCaller, RiderAttackFallback,
+};
 pub(crate) use effects::{AiActorCoreEffects, AiActorPreemptionEffects};
 pub use effects::{
     AiActorOutbox, AiDetectionOutbox, AiMusicOutbox, AiOutbox, AiOwnerWork, AiPatrolOutbox,
@@ -71,11 +71,10 @@ pub use effects::{
 mod controller;
 pub mod persisted;
 mod role;
-pub(crate) use controller::PatrolCoordinateAction;
 pub(crate) use controller::WillStopCaller;
 pub(crate) use controller::consider_report_debug_matches;
 pub use controller::{AiController, ConsiderationAccumulator};
-pub(crate) use role::AiRole;
+pub(crate) use role::{AiAdmission, AiRole};
 
 #[cfg(test)]
 mod tests;

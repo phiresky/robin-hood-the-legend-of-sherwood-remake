@@ -842,133 +842,219 @@ fn live_this_type_forbid_candidate_requires_contextual_speech_profile() {
 }
 
 #[test]
-fn tower_guard_alert_officer_tail_consumes_ignored_route_failure() {
-    use crate::ai::{AiOwnerWork, StimulusType};
-
-    let sim = crate::sim_rng::test_context();
-    let mut engine = EngineInner::new();
-    let assets = LevelAssets::new();
-    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    {
-        let ai = engine
-            .get_entity_mut(owner)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("tower-guard call-me owner has Enemy AI");
-        ai.base.couldnt_reachpoint = true;
-        ai.base
-            .outbox
-            .reentrant
-            .tower_guard_alert_officer_completion_pending = true;
-        ai.base
-            .outbox
-            .reentrant
-            .owner_work
-            .push(AiOwnerWork::ConsumeTowerGuardAlertOfficerRouteFailure);
-    }
-
-    engine.drain_ai_owner_work_for(&sim, &assets, owner);
-    let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("tower-guard call-me owner retains Enemy AI after tail");
-    assert!(!ai.base.couldnt_reachpoint);
-    assert!(
-        !ai.base
-            .outbox
-            .reentrant
-            .tower_guard_alert_officer_completion_pending
+fn tower_guard_officer_call_consumes_ignored_route_failure_before_priority_tail() {
+    let (mut engine, assets, owner, _officer, _center) = corpse_officer_fixture(true);
+    engine.execute_ai_alert_officer_for_caller(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        crate::ai::OfficerAlertCaller::TowerGuardCalled,
     );
-    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+    let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+    assert!(!ai.base.couldnt_reachpoint);
+    assert_eq!(
+        ai.current_task_priority,
+        crate::ai_enemy::task_priority::ALERT_IGNORE_ENEMY
+    );
     assert!(
         !ai.base
             .outbox
             .reentrant
             .self_stimuli
             .iter()
-            .any(|queued| queued.stimulus_type == StimulusType::EventCouldntReachPoint)
+            .any(|stimulus| stimulus.stimulus_type
+                == crate::ai::StimulusType::EventCouldntReachPoint)
     );
 }
 
-#[test]
-fn dead_body_alert_tail_consumes_route_failure_before_generic_event_surface() {
-    use crate::ai::{AiOwnerWork, StimulusType};
-    use crate::ai_enemy::SeekFlags;
-
-    let sim = crate::sim_rng::test_context();
-    let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
-    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.scripts.mission = Some(
-        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
-            version: crate::scb::SCB_VERSION,
-            classes: vec![crate::scb::ClassEntry {
-                source_file: "dead_body_alert_continuation_test.scs".into(),
-                class_name: "StartUp".into(),
-                size_of_member_variables: 0,
-                member_variables: Vec::new(),
-                functions: Vec::new(),
-                quads: Vec::new(),
-            }],
-        })
-        .expect("minimal mission supports owner-local movement settlement"),
+fn corpse_officer_fixture(
+    disconnected: bool,
+) -> (
+    EngineInner,
+    LevelAssets,
+    EntityId,
+    EntityId,
+    crate::ai::Position,
+) {
+    let (mut engine, officer, owner, mut assets) = setup_review2_officer_and_soldier();
+    engine.world.fast_grid_mut().size_map(128, 128);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    let first = engine.world.fast_grid_mut().add_sector(
+        crate::engine::test_support::square_sector(
+            1,
+            0,
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(if disconnected { 250.0 } else { 1000.0 }, 1000.0),
+        ),
+        0,
     );
+    let sector = crate::ai::SectorHandle::new(1)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(first).unwrap());
+    let destination_sector = if disconnected {
+        let index = engine.world.fast_grid_mut().add_sector(
+            crate::engine::test_support::square_sector(
+                2,
+                0,
+                MapPoint::new(350.0, 0.0),
+                MapPoint::new(1000.0, 1000.0),
+            ),
+            0,
+        );
+        crate::ai::SectorHandle::new(2)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap())
+    } else {
+        sector
+    };
+    for (id, x, sector) in [(owner, 100.0, sector), (officer, 400.0, destination_sector)] {
+        let entity = engine.get_entity_mut(id).unwrap();
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(x, 100.0));
+        entity.element_data_mut().set_sector(Some(sector));
+        entity.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
+    }
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+        "corpse_officer_test.scs",
+    ));
     let center = crate::ai::Position {
         x: 175.0,
         y: 225.0,
-        ..Default::default()
+        sector: Some(sector),
+        level: 0,
     };
-    {
-        let ai = engine
-            .get_entity_mut(owner)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("dead-body-alert owner has Enemy AI");
-        ai.base.couldnt_reachpoint = true;
-        ai.base.outbox.reentrant.dead_body_alert_completion_pending = true;
-        ai.base.outbox.reentrant.owner_work.push(
-            AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer {
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .enemy_ai_mut()
+        .unwrap()
+        .base
+        .my_reconnaissance_report
+        .update(crate::ai::ReportType::DeadBody, center);
+    (engine, assets, owner, officer, center)
+}
+
+#[test]
+fn corpse_officer_alert_success_keeps_search_fallback_unstarted() {
+    let (mut engine, assets, owner, officer, center) = corpse_officer_fixture(false);
+    engine.execute_ai_alert_officer_for_caller(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        crate::ai::OfficerAlertCaller::SeekBody {
+            center,
+            radius: 300,
+        },
+    );
+    let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+    assert_eq!(
+        ai.base.antagonist,
+        Some(crate::ai::AiEntityHandle::new(officer.index()))
+    );
+    assert_eq!(
+        ai.base.current_substate,
+        crate::ai::Substate::SeekingRunningToOfficer
+    );
+    assert!(!ai.base.couldnt_reachpoint);
+    assert!(ai.personal_seek_point_2.is_none());
+    assert!(ai.my_seek_points.is_empty());
+}
+
+#[test]
+fn corpse_officer_alert_missing_or_unreachable_officer_starts_body_search() {
+    for disconnected in [false, true] {
+        let (mut engine, assets, owner, officer, center) = corpse_officer_fixture(disconnected);
+        if !disconnected {
+            engine
+                .get_entity_mut(officer)
+                .unwrap()
+                .enemy_ai_mut()
+                .unwrap()
+                .soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
+        }
+        engine.execute_ai_alert_officer_for_caller(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            crate::ai::OfficerAlertCaller::SeekBody {
                 center,
                 radius: 300,
             },
         );
+        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        assert_eq!(
+            ai.seek_flags,
+            crate::ai_enemy::SeekFlags::LOCATION_END | crate::ai_enemy::SeekFlags::BODY_SEEK
+        );
+        assert_eq!(
+            ai.personal_seek_point_2
+                .as_ref()
+                .expect("failed officer alert creates body-search endpoint")
+                .position,
+            center
+        );
+        assert!(!ai.base.couldnt_reachpoint);
+        assert!(
+            !ai.base
+                .outbox
+                .reentrant
+                .self_stimuli
+                .iter()
+                .any(|stimulus| stimulus.stimulus_type
+                    == crate::ai::StimulusType::EventCouldntReachPoint)
+        );
     }
+}
 
-    engine.drain_ai_owner_work_for(&sim, &assets, owner);
-    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
-
+#[test]
+fn corpse_officer_instructed_group_return_ignores_route_failure_without_search_fallback() {
+    let (mut engine, assets, owner, officer, center) = corpse_officer_fixture(true);
     let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("dead-body-alert owner retains Enemy AI");
-    assert!(!ai.base.couldnt_reachpoint);
-    assert!(!ai.base.outbox.reentrant.dead_body_alert_completion_pending);
-    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
-    assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+        .get_entity_mut(officer)
+        .unwrap()
+        .enemy_ai_mut()
+        .unwrap();
+    ai.base.current_state = crate::ai::AiState::Seeking;
+    ai.base.current_substate = crate::ai::Substate::SeekingOfficerWaitForInstructedGroup;
+    let ai = engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .enemy_ai_mut()
+        .unwrap();
+    ai.base.antagonist = Some(crate::ai::AiEntityHandle::new(officer.index()));
+    ai.seek_flags = crate::ai_enemy::SeekFlags::REPORT_OFFICER_AFTER;
+    engine.execute_ai_alert_officer_for_caller(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        crate::ai::OfficerAlertCaller::SeekBody {
+            center,
+            radius: 300,
+        },
+    );
+    let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+    assert_eq!(
+        ai.base.current_substate,
+        crate::ai::Substate::SeekingSoldierReturnToOfficer
+    );
     assert!(
-        !ai.base
-            .outbox
-            .reentrant
-            .self_stimuli
-            .iter()
-            .any(|queued| queued.stimulus_type == StimulusType::EventCouldntReachPoint)
+        !ai.seek_flags
+            .contains(crate::ai_enemy::SeekFlags::REPORT_OFFICER_AFTER)
     );
-    assert_eq!(
-        ai.seek_flags,
-        SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK
+    assert!(
+        ai.base.couldnt_reachpoint,
+        "instructed-group return leaves completion to its enclosing Think"
     );
-    assert_eq!(
-        ai.personal_seek_point_2
-            .as_ref()
-            .expect("failed officer route creates the personal endpoint")
-            .position,
-        center
-    );
+    assert!(ai.personal_seek_point_2.is_none());
+    assert!(ai.my_seek_points.is_empty());
 }
 
 #[test]
 #[should_panic(expected = "non-enemy AI brain")]
 fn dead_body_alert_tail_fails_loud_for_wrong_ai_owner() {
-    use crate::ai::{AiOwnerWork, Position};
+    use crate::ai::{OfficerAlertCaller, Position};
     use crate::element::AiBrain;
 
     let sim = crate::sim_rng::test_context();
@@ -983,171 +1069,17 @@ fn dead_body_alert_tail_fails_loud_for_wrong_ai_owner() {
     };
     soldier.npc.ai_brain =
         AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(owner.index())));
-    soldier
-        .npc
-        .ai_brain
-        .base_mut()
-        .expect("friendly AI has base")
-        .outbox
-        .reentrant
-        .owner_work
-        .push(AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer {
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine.execute_ai_alert_officer_for_caller(
+        &sim,
+        &assets,
+        owner,
+        OfficerAlertCaller::SeekBody {
             center: Position::default(),
             radius: 300,
-        });
-    complete_test_runtime_fixture(&mut engine, &mut assets);
-
-    engine.drain_ai_owner_work_for(&sim, &assets, owner);
-}
-
-#[test]
-fn alert_soldier_owner_boundary_first_route_success_runs_success_tail() {
-    use crate::ai::{AiOwnerWork, Remark};
-    use crate::ai_friendly::AlertSoldierFailureContinuation;
-
-    let sim = crate::sim_rng::test_context();
-    let mut engine = EngineInner::new();
-    let owner = make_alert_soldier_owner(&mut engine);
-    let mut assets = LevelAssets::new();
-    std::sync::Arc::make_mut(&mut assets.profile_manager)
-        .civilians
-        .push(crate::profiles::CivilianProfile::default());
-    complete_test_runtime_fixture(&mut engine, &mut assets);
-    let ai = engine
-        .get_entity_mut(owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("soldier-alert owner has AI");
-    ai.outbox.reentrant.alert_soldier_completion_pending = true;
-    ai.outbox
-        .reentrant
-        .owner_work
-        .push(AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
-            center: Default::default(),
-            check_door_path: false,
-            failure: AlertSoldierFailureContinuation::Panic,
-        });
-
-    engine.drain_ai_owner_work_for(&sim, &assets, owner);
-
-    let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::ai_controller)
-        .expect("soldier-alert owner retains AI");
-    assert_eq!(ai.current_remark, Remark::CivPanic);
-    assert!(!ai.outbox.reentrant.alert_soldier_completion_pending);
-    assert!(ai.outbox.reentrant.owner_work.is_empty());
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
-}
-
-#[test]
-fn alert_soldier_owner_boundary_first_failure_retries_and_consumes_success() {
-    use crate::ai::{AiOwnerWork, Remark};
-    use crate::ai_friendly::AlertSoldierFailureContinuation;
-    use crate::coordinates::MapPoint;
-    use crate::element::Camp;
-    use crate::position_interface::SectorHandle;
-
-    let sim = crate::sim_rng::test_context();
-    let mut engine = EngineInner::new();
-    let owner = make_alert_soldier_owner(&mut engine);
-    let soldier = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    for (id, x) in [(owner, 0.0), (soldier, 100.0)] {
-        let entity = engine
-            .get_entity_mut(id)
-            .expect("soldier-alert route actor exists");
-        entity.element_data_mut().active = true;
-        entity
-            .element_data_mut()
-            .set_position_map(MapPoint::new(x, 0.0));
-        entity.element_data_mut().set_sector(SectorHandle::new(1));
-        entity.element_data_mut().set_layer(0);
-        entity
-            .npc_data_mut()
-            .expect("route actor is NPC")
-            .life_points = 100;
-    }
-    engine.ai.global.all_soldier_handles = std::sync::Arc::new(vec![soldier.index()]);
-    let mut assets = LevelAssets::new();
-    std::sync::Arc::make_mut(&mut assets.profile_manager)
-        .civilians
-        .push(crate::profiles::CivilianProfile::default());
-    complete_test_runtime_fixture(&mut engine, &mut assets);
-    let ai = engine
-        .get_entity_mut(owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("soldier-alert owner has AI");
-    ai.couldnt_reachpoint = true;
-    ai.outbox.reentrant.alert_soldier_completion_pending = true;
-    ai.outbox
-        .reentrant
-        .owner_work
-        .push(AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
-            center: Default::default(),
-            check_door_path: false,
-            failure: AlertSoldierFailureContinuation::Panic,
-        });
-
-    engine.drain_ai_owner_work_for(&sim, &assets, owner);
-
-    let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::ai_controller)
-        .expect("soldier-alert owner retains AI");
-    assert_eq!(
-        ai.antagonist,
-        Some(crate::ai::AiEntityHandle::new(soldier.index()))
+        },
     );
-    assert_eq!(ai.current_remark, Remark::CivPanic);
-    assert!(!ai.couldnt_reachpoint);
-    assert!(!ai.outbox.reentrant.alert_soldier_completion_pending);
-    assert!(ai.outbox.reentrant.owner_work.is_empty());
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
-    assert!(ai.outbox.actor.begin_panic.is_none());
-}
-
-#[test]
-fn alert_soldier_owner_boundary_second_failure_runs_typed_tail_without_event4() {
-    use crate::ai::{AiOwnerWork, AiState};
-    use crate::ai_friendly::AlertSoldierFailureContinuation;
-
-    let sim = crate::sim_rng::test_context();
-    let mut engine = EngineInner::new();
-    let owner = make_alert_soldier_owner(&mut engine);
-    let mut assets = LevelAssets::new();
-    std::sync::Arc::make_mut(&mut assets.profile_manager)
-        .civilians
-        .push(crate::profiles::CivilianProfile::default());
-    complete_test_runtime_fixture(&mut engine, &mut assets);
-    let ai = engine
-        .get_entity_mut(owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("soldier-alert owner has AI");
-    ai.couldnt_reachpoint = true;
-    ai.outbox.reentrant.alert_soldier_completion_pending = true;
-    ai.outbox
-        .reentrant
-        .owner_work
-        .push(AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
-            center: Default::default(),
-            check_door_path: false,
-            failure: AlertSoldierFailureContinuation::Panic,
-        });
-
-    // Soldier alerting and its caller's panic tail are one synchronous original-game
-    // call stack. Exercise the complete direct-owner boundary so the staged
-    // `begin_panic` request performs its engine-owned door lookup and sole
-    // final state change before asserting the outcome.
-    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
-
-    let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::ai_controller)
-        .expect("soldier-alert owner retains AI");
-    assert_eq!(ai.current_state, AiState::Fleeing);
-    assert!(!ai.couldnt_reachpoint);
-    assert!(!ai.outbox.reentrant.alert_soldier_completion_pending);
-    assert!(ai.outbox.reentrant.owner_work.is_empty());
-    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
 }
 
 #[test]
@@ -1347,36 +1279,12 @@ fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
         .push(crate::profiles::CivilianProfile::default());
     complete_test_runtime_fixture(&mut accepted, &mut assets);
     let sim_context = crate::sim_rng::test_context();
-    let scratch = accepted.build_sim_scratch(&assets);
-    let ctx = {
-        let entity = accepted
-            .get_entity(EntityId::Civilian(civilian_id))
-            .expect("reporting civilian exists for context");
-        crate::engine::ai::build_ai_context_from_entity(
-            entity,
-            accepted.control.frame_counter,
-            None,
-            accepted.world.weather.is_forest_level,
-            accepted.world.weather.ambiance,
-            accepted.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &accepted.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &accepted.ai.global.all_soldier_handles,
-            accepted.control.sim_config.difficulty,
-            engine.ai_think_depth(),
-        )
-    };
     let civilian_entity_id = EntityId::Civilian(civilian_id);
-    let tick = accepted.build_npc_tick_data(&sim_context, civilian_entity_id, &assets);
     accepted.dispatch_think_with_drain(
         &sim_context,
         civilian_entity_id,
         &crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
-        &ctx,
-        &tick,
+        None,
         &assets,
     );
     let soldier = accepted
@@ -1523,30 +1431,11 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
         .antagonist = Some(crate::ai::AiEntityHandle::new(soldier_id.index()));
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    let scratch = engine.build_sim_scratch(&assets);
-    let ctx = crate::engine::ai::build_ai_context_from_entity(
-        engine.get_entity(officer_id).expect("officer exists"),
-        engine.control.frame_counter,
-        None,
-        engine.world.weather.is_forest_level,
-        engine.world.weather.ambiance,
-        engine.ai.standard_view_polygon_radius,
-        &scratch.ai_entity_views,
-        &scratch.ai_sight_obstacles,
-        &engine.world.fast_grid,
-        &assets.navigation.hiking_paths,
-        &assets.navigation.hiking_waypoint_sectors,
-        &engine.ai.global.all_soldier_handles,
-        engine.control.sim_config.difficulty,
-        engine.ai_think_depth(),
-    );
-    let tick = engine.build_npc_tick_data(&sim, officer_id, &assets);
     engine.dispatch_think_with_drain(
         &sim,
         officer_id,
         &Stimulus::new(StimulusType::EventDone),
-        &ctx,
-        &tick,
+        None,
         &assets,
     );
 
@@ -1585,30 +1474,11 @@ fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
         enemy.set_state(AiState::Default, Substate::DefaultOnPost);
     }
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let scratch = engine.build_sim_scratch(&assets);
-    let ctx = crate::engine::ai::build_ai_context_from_entity(
-        engine.get_entity(officer_id).expect("officer exists"),
-        engine.control.frame_counter,
-        None,
-        engine.world.weather.is_forest_level,
-        engine.world.weather.ambiance,
-        engine.ai.standard_view_polygon_radius,
-        &scratch.ai_entity_views,
-        &scratch.ai_sight_obstacles,
-        &engine.world.fast_grid,
-        &assets.navigation.hiking_paths,
-        &assets.navigation.hiking_waypoint_sectors,
-        &engine.ai.global.all_soldier_handles,
-        engine.control.sim_config.difficulty,
-        engine.ai_think_depth(),
-    );
-    let tick = engine.build_npc_tick_data(&sim, officer_id, &assets);
     engine.dispatch_think_with_drain(
         &sim,
         officer_id,
         &Stimulus::with_human(StimulusType::EventSeesSoldier, target_id.index()),
-        &ctx,
-        &tick,
+        None,
         &assets,
     );
 }
@@ -1682,35 +1552,11 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
             to_whole_patrol: false,
         });
 
-    let scratch = engine.build_sim_scratch(&assets);
-    let ctx = {
-        let entity = engine
-            .get_entity(reporter_id)
-            .expect("reporter exists for context");
-        crate::engine::ai::build_ai_context_from_entity(
-            entity,
-            engine.control.frame_counter,
-            None,
-            engine.world.weather.is_forest_level,
-            engine.world.weather.ambiance,
-            engine.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &engine.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &engine.ai.global.all_soldier_handles,
-            engine.control.sim_config.difficulty,
-            engine.ai_think_depth(),
-        )
-    };
-    let tick = engine.build_npc_tick_data(sim, reporter_id, &assets);
     engine.dispatch_think_with_drain(
         sim,
         reporter_id,
         &Stimulus::with_human(StimulusType::EventSeesSoldier, officer_id.index()),
-        &ctx,
-        &tick,
+        None,
         &assets,
     );
 
@@ -1775,13 +1621,11 @@ fn blipped_report_speech_callback_precedes_give_report_state_and_timer() {
         reporter.set_state(AiState::Seeking, Substate::SeekingSoldierReturnToOfficer);
     }
 
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, soldier_id);
     engine.dispatch_think_with_drain(
         &sim,
         soldier_id,
         &Stimulus::new(StimulusType::EventReachPoint),
-        &ctx,
-        &tick,
+        None,
         &assets,
     );
 
@@ -1836,13 +1680,12 @@ fn review2_call_instruction_uses_refusal_to_prune_group_synchronously() {
         );
         officer.alerted_us = vec![soldier_id.index()];
     }
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
+
     engine.dispatch_think_with_drain(
         &sim,
         officer_id,
         &Stimulus::new(StimulusType::EventDone),
-        &ctx,
-        &tick,
+        None,
         &assets,
     );
 
@@ -1880,13 +1723,11 @@ fn review2_accepted_group_instruction_closes_officer_state_callback() {
             Substate::SeekingGroupGetInstructedByOfficer,
         );
 
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
     engine.dispatch_think_with_drain(
         &sim,
         officer_id,
         &Stimulus::new(StimulusType::EventDone),
-        &ctx,
-        &tick,
+        None,
         &assets,
     );
 
@@ -1906,7 +1747,7 @@ fn review2_accepted_group_instruction_closes_officer_state_callback() {
 
 #[test]
 fn review2_alert_soldiers_uses_state_refusal_and_does_not_consider_report() {
-    use crate::ai::{AiState, CrossNpcAction, Position, ReportType, Substate};
+    use crate::ai::{AiState, Position, ReportType, Substate};
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
@@ -1922,44 +1763,21 @@ fn review2_alert_soldiers_uses_state_refusal_and_does_not_consider_report() {
             ..Default::default()
         };
     }
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("review2 officer has EnemyAi")
-        .alert_soldiers(
-            Position {
-                x: 100.0,
-                ..Default::default()
-            },
-            0,
-            crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-            crate::ai::AlertSoldiersFailureContinuation::None,
-        );
-    // The candidate snapshot admitted this soldier, but the live recipient
-    // changes before the direct call and refuses it.
     engine
         .get_entity_mut(soldier_id)
         .and_then(Entity::enemy_ai_mut)
         .expect("review2 alerted soldier has EnemyAi")
         .set_state(AiState::Attacking, Substate::AttackingSwordfight);
-    engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("review2 officer retains AI")
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::InstructGatherPosition {
-            target: soldier_id.index(),
-            position: Position {
-                x: 33.0,
-                ..Default::default()
-            },
-            direction: 4,
-            call_instruction: false,
-        });
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+    assert!(!engine.execute_ai_alert_soldiers(
+        &sim,
+        &assets,
+        officer_id,
+        Position {
+            x: 100.0,
+            ..Default::default()
+        },
+        0
+    ));
 
     let officer = engine
         .get_entity(officer_id)
@@ -2265,29 +2083,23 @@ fn final_review_alert_all_refused_resumes_caller_failure() {
         .and_then(Entity::enemy_ai_mut)
         .expect("alert caller has EnemyAi")
         .set_state(AiState::Seeking, Substate::SeekingArrowJustWatching);
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    assert!(
-        engine
-            .get_entity_mut(officer_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("alert caller has EnemyAi")
-            .alert_soldiers(
-                Position {
-                    x: 100.0,
-                    ..Default::default()
-                },
-                0,
-                crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-                AlertSoldiersFailureContinuation::ReturnToDuty,
-            ),
-        "an admitted candidate suspends the outer AlertSoldiers call"
-    );
     engine
         .get_entity_mut(soldier_id)
         .and_then(Entity::enemy_ai_mut)
         .expect("alert recipient has EnemyAi")
         .set_state(AiState::Attacking, Substate::AttackingSwordfight);
 
+    engine.execute_ai_alert_soldiers_with_failure(
+        &sim,
+        &assets,
+        officer_id,
+        Position {
+            x: 100.0,
+            ..Default::default()
+        },
+        0,
+        AlertSoldiersFailureContinuation::ReturnToDuty,
+    );
     engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 
     let officer = engine
@@ -2356,34 +2168,23 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
             -5.0, -5.0, 5.0, 5.0,
         ));
 
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    let grid = &engine.world.fast_grid;
-    engine
-        .world
-        .entities
-        .get_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("partial alert caller has EnemyAi")
-        .alert_soldiers(
-            Position {
-                x: 300.0,
-                ..Default::default()
-            },
-            0,
-            crate::ai_enemy::ThinkEnv::new(
-                &crate::sim_rng::test_context(),
-                &ctx,
-                &tick,
-                Some(grid),
-            ),
-            AlertSoldiersFailureContinuation::ReturnToDuty,
-        );
     engine
         .get_entity_mut(refused_id)
         .and_then(Entity::enemy_ai_mut)
         .expect("partial alert rejector has EnemyAi")
         .set_state(AiState::Attacking, Substate::AttackingSwordfight);
 
+    engine.execute_ai_alert_soldiers_with_failure(
+        &sim,
+        &assets,
+        officer_id,
+        Position {
+            x: 300.0,
+            ..Default::default()
+        },
+        0,
+        AlertSoldiersFailureContinuation::ReturnToDuty,
+    );
     engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 
     let officer = engine
@@ -2412,7 +2213,7 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
 }
 
 #[test]
-fn search_charly_caller_timer_follows_deferred_alert_finalization() {
+fn search_charly_caller_timer_follows_inline_alert_completion() {
     use crate::ai::{AiState, AlertSoldiersFailureContinuation, Substate};
 
     let sim = crate::sim_rng::test_context();
@@ -2426,30 +2227,24 @@ fn search_charly_caller_timer_follows_deferred_alert_finalization() {
             .and_then(Entity::enemy_ai_mut)
             .expect("alert caller has EnemyAi")
             .set_state(AiState::Default, suspended_substate);
-        let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-        {
-            let officer = engine
-                .get_entity_mut(officer_id)
-                .and_then(Entity::enemy_ai_mut)
-                .expect("alert caller has EnemyAi");
-            assert!(officer.alert_soldiers(
-                ctx.position,
-                0,
-                crate::ai_enemy::ThinkEnv::new(&crate::sim_rng::test_context(), &ctx, &tick, None),
-                AlertSoldiersFailureContinuation::SeekMissedCharly {
-                    center: ctx.position,
-                },
-            ));
-            // This is the caller tail authored immediately after missing-PC search
-            // in DEFAULT_LOOKING_FOR_CHARLY. Its random-look prelude can have
-            // changed the suspended substate to the sidewards variant.
-            officer.base.launch_timer(
+        let position = engine.live_ai_position(officer_id);
+        let frame = engine.control.frame_counter;
+        engine.execute_ai_alert_soldiers_with_failure(
+            &sim,
+            &assets,
+            officer_id,
+            position,
+            0,
+            AlertSoldiersFailureContinuation::SeekMissedCharly { center: position },
+        );
+        engine
+            .world
+            .entities
+            .expect_ai_controller_mut(officer_id, format_args!("search timer tail"))
+            .launch_timer(
                 crate::parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32,
-                ctx.frame,
+                frame,
             );
-        }
-
-        engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 
         let officer = engine
             .get_entity(officer_id)
@@ -2461,8 +2256,7 @@ fn search_charly_caller_timer_follows_deferred_alert_finalization() {
         );
         assert_eq!(
             officer.base.when_does_timer_ring,
-            ctx.frame
-                .wrapping_add(crate::parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32),
+            frame.wrapping_add(crate::parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32),
             "the synchronous caller's timer write must follow AlertSoldiers' 20-frame timer"
         );
         assert_eq!(
@@ -2475,7 +2269,7 @@ fn search_charly_caller_timer_follows_deferred_alert_finalization() {
 
 #[test]
 fn closure_review_alert_soldiers_keeps_tied_and_carried_able_to_help() {
-    use crate::ai::{AlertSoldiersFailureContinuation, CrossNpcAction, Position};
+    use crate::ai::Position;
     use crate::element::Posture;
 
     let sim = crate::sim_rng::test_context();
@@ -2493,51 +2287,27 @@ fn closure_review_alert_soldiers_keeps_tied_and_carried_able_to_help() {
             soldier.element.publish_order_posture(Posture::Tied);
         }
 
-        let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-        let candidate = tick
-            .camp_soldiers
-            .iter()
-            .find(|candidate| candidate.handle == soldier_id.index())
-            .expect("tied/carried soldier remains in the owner camp snapshot");
-        assert!(!candidate.is_able_to_fight);
-        assert!(candidate.is_able_to_help);
-        assert!(
-            engine
-                .get_entity_mut(officer_id)
-                .and_then(Entity::enemy_ai_mut)
-                .expect("help-eligibility officer has EnemyAi")
-                .alert_soldiers(
-                    Position::default(),
-                    0,
-                    crate::ai_enemy::ThinkEnv::new(
-                        &crate::sim_rng::test_context(),
-                        &ctx,
-                        &tick,
-                        None
-                    ),
-                    AlertSoldiersFailureContinuation::None,
-                )
-        );
-        assert!(matches!(
-            engine
-                .get_entity(officer_id)
-                .and_then(Entity::ai_controller)
-                .expect("help-eligibility officer retains AI")
-                .outbox
-                .reentrant
-                .cross_npc_actions
-                .as_slice(),
-            [CrossNpcAction::RequestThinkResult { target, .. }] if *target == soldier_id.index()
+        assert!(engine.execute_ai_alert_soldiers(
+            &sim,
+            &assets,
+            officer_id,
+            Position::default(),
+            0
         ));
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .expect_enemy_ai(officer_id, format_args!("help caller"))
+                .alerted_us,
+            vec![soldier_id.index()]
+        );
     }
 }
 
 #[test]
 fn closure_review_final_alert_report_boundary_precedes_formation() {
-    use crate::ai::{
-        AlertSoldiersFailureContinuation, CrossNpcAction, ReportType, Substate,
-        ThinkResultContinuation,
-    };
+    use crate::ai::{ReportType, Substate};
     use crate::element::{Detectable, DetectableType, Posture};
 
     let sim = crate::sim_rng::test_context();
@@ -2581,44 +2351,13 @@ fn closure_review_final_alert_report_boundary_precedes_formation() {
             .push(body_id.index());
     }
 
-    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    let global = &mut engine.ai.global;
-    let grid = &engine.world.fast_grid;
-    engine
-        .world
-        .entities
-        .get_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("final-alert officer has EnemyAi")
-        .resolve_think_result(
-            crate::ai_enemy::ThinkEnv::new(&sim, &ctx, &tick, Some(grid)),
-            true,
-            soldier_id.index(),
-            ThinkResultContinuation::OfficerAlertedSoldier {
-                last: true,
-                use_formation: true,
-                failure: AlertSoldiersFailureContinuation::None,
-            },
-            global,
-        );
-
-    let officer = engine
-        .get_entity(officer_id)
-        .and_then(Entity::enemy_ai)
-        .expect("final-alert officer retains EnemyAi");
-    assert!(matches!(
-        officer.base.outbox.reentrant.cross_npc_actions.as_slice(),
-        [
-            CrossNpcAction::ConsiderReport { target, .. },
-            CrossNpcAction::FinalizeAlertSoldiers { caller, .. }
-        ] if *target == soldier_id.index() && *caller == officer_id.index()
+    assert!(engine.execute_ai_alert_soldiers(
+        &sim,
+        &assets,
+        officer_id,
+        crate::ai::Position::default(),
+        0
     ));
-    assert!(
-        officer.base.current_substate != Substate::SeekingOfficerWaitForGroup,
-        "formation must remain suspended behind the report boundary"
-    );
-
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 
     let recipient = engine
         .get_entity(soldier_id)
@@ -2652,10 +2391,7 @@ fn closure_review_final_alert_report_boundary_precedes_formation() {
 
 #[test]
 fn review2_alert_result_and_report_finish_before_next_soldier_call() {
-    use crate::ai::{
-        AlertSoldiersFailureContinuation, CrossNpcAction, Position, ReconnaissanceReport,
-        ReportType, StimulusInfo, StimulusType, ThinkResultContinuation,
-    };
+    use crate::ai::{CrossNpcAction, Position, ReconnaissanceReport, ReportType};
     use crate::profiles::ProfileRank;
 
     let sim = crate::sim_rng::test_context();
@@ -2694,38 +2430,6 @@ fn review2_alert_result_and_report_finish_before_next_soldier_call() {
     officer.alerted_us.clear();
     officer.base.my_reconnaissance_report.report_type = ReportType::Enemy;
     officer.base.my_reconnaissance_report.seek_position = first_position;
-    officer
-        .base
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::RequestThinkResult {
-            target: soldier_id.index(),
-            caller: officer_id.index(),
-            stimulus_type: StimulusType::CallAlert,
-            info: StimulusInfo::Human(crate::ai::AiEntityHandle::new(officer_id.index())),
-            continuation: ThinkResultContinuation::OfficerAlertedSoldier {
-                last: false,
-                use_formation: false,
-                failure: AlertSoldiersFailureContinuation::None,
-            },
-        });
-    officer
-        .base
-        .outbox
-        .reentrant
-        .cross_npc_actions
-        .push(CrossNpcAction::RequestThinkResult {
-            target: second_id.index(),
-            caller: officer_id.index(),
-            stimulus_type: StimulusType::CallAlert,
-            info: StimulusInfo::Human(crate::ai::AiEntityHandle::new(officer_id.index())),
-            continuation: ThinkResultContinuation::OfficerAlertedSoldier {
-                last: true,
-                use_formation: false,
-                failure: AlertSoldiersFailureContinuation::None,
-            },
-        });
     let second = engine
         .get_entity_mut(second_id)
         .and_then(Entity::ai_controller_mut)
@@ -2744,7 +2448,7 @@ fn review2_alert_result_and_report_finish_before_next_soldier_call() {
             flags: crate::ai_enemy::ReportUpdateFlags::UPDATE_TYPE.bits(),
         });
 
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+    assert!(engine.execute_ai_alert_soldiers(&sim, &assets, officer_id, Position::default(), 0));
     let report = &engine
         .get_entity(soldier_id)
         .and_then(Entity::enemy_ai)

@@ -30,7 +30,7 @@ impl EnemyAi {
             Substate::AttackingRunningToEnemy
             | Substate::AttackingWalkingToEnemy
             | Substate::AttackingChargingEnemy => {
-                self.attacking_running_to_enemy(stimulus_type, env)
+                self.attacking_running_to_enemy(stimulus_type, env)?
             }
 
             Substate::AttackingOverviewLookLeft => self.attacking_overview_look_left(stimulus_type),
@@ -42,13 +42,13 @@ impl EnemyAi {
             Substate::AttackingRiderChargingApproaching
                 if stimulus_type == StimulusType::EventGaloppLoopEnd =>
             {
-                self.attacking_rider_charging_approaching_on_event_galopp_loop_end(env)
+                self.attacking_rider_charging_approaching_on_event_galopp_loop_end(env)?
             }
 
             Substate::AttackingRiderChargingApproaching
                 if stimulus_type == StimulusType::EventReachPoint =>
             {
-                self.attacking_rider_charging_approaching_on_event_reach_point(env)
+                self.attacking_rider_charging_approaching_on_event_reach_point(env)?
             }
 
             Substate::AttackingRiderChargingPassing
@@ -90,7 +90,7 @@ impl EnemyAi {
             }
 
             Substate::AttackingQuittingSwordfight => {
-                self.attacking_quitting_swordfight(stimulus_type, env)
+                self.attacking_quitting_swordfight(stimulus_type, env)?
             }
 
             Substate::AttackingReserve => self.attacking_reserve(stimulus_type, ctx, tick),
@@ -103,10 +103,10 @@ impl EnemyAi {
                 self.attacking_approach_to_observe(stimulus_type, ctx)
             }
 
-            Substate::AttackingObserve => self.attacking_observe(stimulus_type, global, env),
+            Substate::AttackingObserve => self.attacking_observe(stimulus_type, global, env)?,
 
             Substate::AttackingObserveAndMove => {
-                self.attacking_observe_and_move(stimulus_type, global, env)
+                self.attacking_observe_and_move(stimulus_type, global, env)?
             }
 
             Substate::AttackingTooProudToAttack => {
@@ -114,11 +114,11 @@ impl EnemyAi {
             }
 
             Substate::AttackingTowerGuardAlert => {
-                self.attacking_tower_guard_alert(stimulus_type, ctx, tick)
+                self.attacking_tower_guard_alert(stimulus_type)?
             }
 
             Substate::AttackingTowerGuardObserve => {
-                self.attacking_tower_guard_observe(stimulus_type, env)
+                self.attacking_tower_guard_observe(stimulus_type, env)?
             }
 
             Substate::AttackingBowShooting => {
@@ -156,11 +156,11 @@ impl EnemyAi {
             }
 
             Substate::AttackingDoorFightWaiting => {
-                self.attacking_door_fight_waiting(stimulus_type, env)
+                self.attacking_door_fight_waiting(stimulus_type, env)?
             }
 
             Substate::AttackingProtectingWithShield => {
-                self.attacking_protecting_with_shield(env, stimulus_type)
+                self.attacking_protecting_with_shield(env, stimulus_type)?
             }
 
             Substate::AttackingAdvancingWithShield => {
@@ -171,7 +171,7 @@ impl EnemyAi {
                 self.attacking_running_to_phalanx(stimulus_type, global, env)?
             }
 
-            Substate::AttackingPhalanx => self.attacking_phalanx(stimulus_type, env),
+            Substate::AttackingPhalanx => false,
 
             Substate::AttackingReserveOverview => {
                 self.attacking_reserve_overview(stimulus_type, global, env)?
@@ -182,7 +182,7 @@ impl EnemyAi {
             }
 
             Substate::AttackingKillingSleepingEnemy => {
-                self.attacking_killing_sleeping_enemy(stimulus_type, env)
+                self.attacking_killing_sleeping_enemy(stimulus_type, env)?
             }
 
             Substate::AttackingArcherRetireFromCombat => {
@@ -253,11 +253,11 @@ impl EnemyAi {
             }
 
             Substate::AttackingRunningToLadder => {
-                self.attacking_running_to_ladder(stimulus_type, env)
+                self.attacking_running_to_ladder(stimulus_type, env)?
             }
 
             Substate::AttackingWaitingAtLadder => {
-                self.attacking_waiting_at_ladder(stimulus_type, env)
+                self.attacking_waiting_at_ladder(stimulus_type, env)?
             }
 
             Substate::AttackingRunToAvengerOnRoof => {
@@ -433,14 +433,17 @@ impl EnemyAi {
         &mut self,
         stimulus_type: StimulusType,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         match stimulus_type {
             StimulusType::EventReachPoint | StimulusType::EventTimer => {
-                self.reconsider_enemy_approach(stimulus_type == StimulusType::EventReachPoint, env);
+                self.reconsider_enemy_approach(
+                    stimulus_type == StimulusType::EventReachPoint,
+                    env,
+                )?;
             }
             _ => {}
         }
-        false
+        Ok(false)
     }
 
     fn attacking_overview_look_left(&mut self, stimulus_type: StimulusType) -> bool {
@@ -481,23 +484,22 @@ impl EnemyAi {
 
     fn attacking_rider_charging_approaching_on_event_galopp_loop_end(
         &mut self,
-        env: ThinkEnv<'_>,
-    ) -> bool {
-        // If can't charge, fall back to normal attack
-        if !self.maybe_make_rider_attack(env) {
-            self.set_state(AiState::Attacking, Substate::AttackingRunningToEnemy);
-            self.reconsider_enemy_approach(true, env);
-        }
-        false
+        _env: ThinkEnv<'_>,
+    ) -> crate::ai::AiFlow<bool> {
+        let mut call = crate::ai::DutyCall::new(DutyFlags::empty(), false);
+        call.tail = crate::ai::DutyTail::RiderAttack {
+            fallback: crate::ai::RiderAttackFallback::Approach,
+        };
+        Err(call)
     }
 
     fn attacking_rider_charging_approaching_on_event_reach_point(
         &mut self,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         // Arrived at approach point
-        self.get_battle_overview(0, env);
-        false
+        self.get_battle_overview(0, env)?;
+        Ok(false)
     }
 
     // Passing: rider is doing the actual charge pass through the enemy.
@@ -781,7 +783,7 @@ impl EnemyAi {
         &mut self,
         stimulus_type: StimulusType,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         let ThinkEnv { ctx, .. } = env;
         if stimulus_type == StimulusType::EventTimer {
             // The original game checks for a sword-action state, not whether
@@ -800,10 +802,10 @@ impl EnemyAi {
                 self.base.launch_timer(3, ctx.frame);
             } else {
                 // Left sword state — proceed to battle overview.
-                self.get_battle_overview(0x0000, env);
+                self.get_battle_overview(0x0000, env)?;
             }
         }
-        false
+        Ok(false)
     }
 
     fn attacking_reserve(
@@ -917,11 +919,11 @@ impl EnemyAi {
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         if stimulus_type == StimulusType::EventTimer {
-            self.reconsider_swordfight_observation(env, global);
+            self.reconsider_swordfight_observation(env, global)?;
         }
-        false
+        Ok(false)
     }
 
     // Swordfight observation reconsideration: reached the observe-and-move
@@ -932,11 +934,11 @@ impl EnemyAi {
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         if stimulus_type == StimulusType::EventReachPoint {
-            self.reconsider_swordfight_observation(env, global);
+            self.reconsider_swordfight_observation(env, global)?;
         }
-        false
+        Ok(false)
     }
 
     // TooProud entry: reinit list, clear emoticon, transition
@@ -968,30 +970,25 @@ impl EnemyAi {
     fn attacking_tower_guard_alert(
         &mut self,
         stimulus_type: StimulusType,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         if stimulus_type == StimulusType::EventDone {
-            self.tower_guard_call_alert(self.base.seek_position, ctx, tick);
-            // Tower-guard alert processing is synchronous;
-            // suspend this tail until every recipient has handled the
-            // cry. Their Think calls can change alert status, and the
-            // guard's next battle decision may start an area search and scan
-            // those live recipient states immediately.
-            self.base.outbox.reentrant.cross_npc_actions.push(
-                CrossNpcAction::ResumeTowerGuardBattleDecisions {
-                    caller: self.base.me,
+            return Err(crate::ai::DutyCall {
+                flags: crate::ai::DutyFlags::empty(),
+                think_result: false,
+                tail: crate::ai::DutyTail::TowerGuardAlert {
+                    center: self.base.seek_position,
                 },
-            );
+                after: Vec::new(),
+            });
         }
-        false
+        Ok(false)
     }
 
     fn attacking_tower_guard_observe(
         &mut self,
         stimulus_type: StimulusType,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         if stimulus_type == StimulusType::EventTimer {
             // The observing tower guard takes a fresh battle
             // overview rather than re-deciding directly: that
@@ -999,9 +996,9 @@ impl EnemyAi {
             // to the minimum and starts the look-left/look-right
             // sweep instead of immediately re-entering the same
             // observe substate.
-            self.get_battle_overview(0, env);
+            self.get_battle_overview(0, env)?;
         }
-        false
+        Ok(false)
     }
 
     // Shooting state:
@@ -1221,7 +1218,7 @@ impl EnemyAi {
         &mut self,
         stimulus_type: StimulusType,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         let ThinkEnv { ctx, .. } = env;
         if stimulus_type == StimulusType::EventTimer {
             if super::super::them_lifecycle_debug_matches(ctx) {
@@ -1239,9 +1236,9 @@ impl EnemyAi {
             // sequence. Going directly to battle decisions skips those
             // observation states and can synchronously start an area search,
             // consuming selection RNG which Original has not requested yet.
-            self.get_battle_overview(0, env);
+            self.get_battle_overview(0, env)?;
         }
-        false
+        Ok(false)
     }
 
     // ============ PHALANX / SHIELD-BEARER ============
@@ -1250,7 +1247,7 @@ impl EnemyAi {
         &mut self,
         env: ThinkEnv<'_>,
         stimulus_type: StimulusType,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         let ThinkEnv { sim, ctx, tick, .. } = env;
         // Stand in place with shield, timer-driven re-evaluation
         if stimulus_type == StimulusType::EventTimer {
@@ -1318,8 +1315,8 @@ impl EnemyAi {
                         soldier = self.base.me,
                         "shield bearer protecting an archer has no primary target"
                     );
-                    self.get_battle_overview(0, env);
-                    return false;
+                    self.get_battle_overview(0, env)?;
+                    return Ok(false);
                 }
                 let target_pos = self
                     .required_fighter(
@@ -1372,14 +1369,14 @@ impl EnemyAi {
                         }
                     } else {
                         // Danger is over
-                        self.get_battle_overview(0, env);
+                        self.get_battle_overview(0, env)?;
                     }
                 } else {
-                    self.get_battle_overview(0, env);
+                    self.get_battle_overview(0, env)?;
                 }
             }
         }
-        false
+        Ok(false)
     }
 
     fn attacking_advancing_with_shield(
@@ -1408,9 +1405,6 @@ impl EnemyAi {
                     ctx,
                 );
                 self.base.launch_timer(10, ctx.frame);
-            }
-            StimulusType::EventTimer if !self.refresh_arrow_protection(false, env) => {
-                self.get_battle_overview(0x0001, env);
             }
             _ => {}
         }
@@ -1469,148 +1463,6 @@ impl EnemyAi {
         Ok(false)
     }
 
-    pub(super) fn attacking_phalanx(
-        &mut self,
-        stimulus_type: StimulusType,
-        env: ThinkEnv<'_>,
-    ) -> bool {
-        let ThinkEnv { ctx, tick, .. } = env;
-        // Stand in formation, reconsider periodically
-        match stimulus_type {
-            StimulusType::EventTimer => {
-                let my_action = self
-                    .required_fighter(
-                        self.base.me,
-                        tick,
-                        format_args!(
-                            "phalanx soldier {} is missing its required fighter snapshot",
-                            self.base.me
-                        ),
-                    )
-                    .action_state;
-
-                tracing::trace!(
-                    target: "robin_engine::ai_enemy::phalanx",
-                    me = self.base.me,
-                    frame = ctx.frame,
-                    ?my_action,
-                    primary = ?self.base.primary_target,
-                    "phalanx timer"
-                );
-                let phalanx_debug = crate::ai_enemy::battle_decision_debug_enabled();
-                if phalanx_debug {
-                    crate::ai_enemy::parity_trace::PhalanxTimer {
-                        frame: &(ctx.frame),
-                        me: &(self.base.me),
-                        action: &(my_action),
-                        left: &(self.left_combat_neighbour),
-                        right: &(self.right_combat_neighbour),
-                        target: &(self.base.primary_target),
-                        archer_behind: &(self.archer_behind_me),
-                    }
-                    .emit();
-                }
-                if !my_action.is_shield() && self.base.primary_target.is_some() {
-                    // Reestablish shield state
-                    let target = self.required_fighter(
-                        self.base.primary_target,
-                        tick,
-                        format_args!(
-                            "phalanx soldier {} requires primary target {:?} in the fighter registry",
-                            self.base.me, self.base.primary_target
-                        ),
-                    );
-                    let (target_pos, target_elevation) = (target.raw_position, target.elevation);
-                    self.base.raise_shield(target_pos, target_elevation);
-                    self.base.launch_timer(20, ctx.frame);
-                } else if !self.reconsider_phalanx(env) {
-                    if self.base.primary_target.is_some() {
-                        // No phalanx correction — maybe correct direction
-                        let target_pos = self
-                            .required_fighter(
-                                self.base.primary_target,
-                                tick,
-                                format_args!(
-                                    "phalanx soldier {} requires primary target {:?} in the fighter registry",
-                                    self.base.me, self.base.primary_target
-                                ),
-                            )
-                            .position;
-                        let dx = target_pos.x - ctx.position.x;
-                        let dy = target_pos.y - ctx.position.y;
-                        let dir = vec_to_sector(dx, dy);
-                        self.base.set_direction_goal(dir);
-                        self.base.outbox.actor.refresh_shield = true;
-                        self.base.launch_timer(20, ctx.frame);
-                    } else {
-                        // No flags: a phalanx member that lost its
-                        // primary target takes the plain overview,
-                        // not the fast swordfight-neighbours one.
-                        self.get_battle_overview(0, env);
-                    }
-                }
-                // else: reconsider_phalanx changed substate
-                if phalanx_debug {
-                    crate::ai_enemy::parity_trace::PhalanxTimerExit {
-                        frame: &(ctx.frame),
-                        me: &(self.base.me),
-                        substate: &(self.base.current_substate),
-                    }
-                    .emit();
-                }
-            }
-            StimulusType::CallInstruction => {
-                // Received new position instruction from phalanx leader
-                tracing::trace!(
-                    target: "robin_engine::ai_enemy::phalanx",
-                    me = self.base.me,
-                    frame = ctx.frame,
-                    gather = ?self.gather_position,
-                    direction = self.gather_direction,
-                    "phalanx CallInstruction: leaving AttackingPhalanx to run to new slot"
-                );
-                self.shield_bearer_direction = self.gather_direction;
-                self.base.seek_position = self.gather_position;
-                self.set_state(AiState::Attacking, Substate::AttackingRunningToPhalanx);
-                self.base
-                    .go_to(self.base.seek_position, GotoFlags::RUN, ctx);
-
-                // Notify archer behind us to re-evaluate, but
-                // only if they're actively shooting/loading/aiming.
-                if let Some(archer_behind_me) = self.archer_behind_me {
-                    let archer_in_bow = {
-                        let s = self
-                            .required_fighter(
-                                archer_behind_me,
-                                tick,
-                                format_args!(
-                                    "phalanx soldier {} requires protected archer {} in the fighter registry",
-                                    self.base.me, archer_behind_me
-                                ),
-                            )
-                            .current_substate;
-                        s == Substate::AttackingBowShooting
-                            || s == Substate::AttackingBowLoading
-                            || s == Substate::AttackingBowAiming
-                    };
-                    if archer_in_bow {
-                        self.base.outbox.reentrant.cross_npc_actions.push(
-                            CrossNpcAction::SendStimulus {
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                                target: archer_behind_me.get(),
-                                stimulus_type: StimulusType::CallCoordinate,
-                                info: StimulusInfo::None,
-                            },
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-        false
-    }
-
     // ============ FLEEING ============
     // The malignity arm adds a single tweak (reset of
     // `fleeing_seen_enemy_counter` on the PANIC arm when the
@@ -1662,7 +1514,7 @@ impl EnemyAi {
                 let target_guard = view.guard;
 
                 if !target_unconscious {
-                    self.get_battle_overview(0, env);
+                    self.get_battle_overview(0, env)?;
                 } else if target_is_pc && target_in_coma && target_guard.is_none() {
                     // Coma/menace branch — PC is in coma and not yet
                     // guarded.
@@ -1778,7 +1630,7 @@ impl EnemyAi {
                         self.base.outbox.actor.launch_sequences.push(seq);
                     }
                 } else {
-                    self.get_battle_overview(0, env);
+                    self.get_battle_overview(0, env)?;
                 }
             }
             _ => {}
@@ -1793,12 +1645,12 @@ impl EnemyAi {
         &mut self,
         stimulus_type: StimulusType,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         if stimulus_type == StimulusType::EventDone {
             self.base.say(Remark::KilledAdversary);
-            self.get_battle_overview(0, env);
+            self.get_battle_overview(0, env)?;
         }
-        false
+        Ok(false)
     }
 
     // Archer retires from combat, then turns (fast) to primary
@@ -1854,7 +1706,7 @@ impl EnemyAi {
                 }
                 self.battle_decisions(env, global)?;
             } else {
-                self.get_battle_overview(0, env);
+                self.get_battle_overview(0, env)?;
             }
         }
         Ok(false)
@@ -2004,7 +1856,7 @@ impl EnemyAi {
             {
                 self.battle_decisions(env, global)?;
             } else {
-                self.get_battle_overview(0, env);
+                self.get_battle_overview(0, env)?;
             }
         }
         Ok(false)
@@ -2028,7 +1880,7 @@ impl EnemyAi {
             {
                 self.battle_decisions(env, global)?;
             } else {
-                self.get_battle_overview(0, env);
+                self.get_battle_overview(0, env)?;
             }
         }
         Ok(false)
@@ -2190,7 +2042,7 @@ impl EnemyAi {
                 self.enemy_seen_below = true;
                 self.battle_decisions(env, global)?;
             } else {
-                self.get_battle_overview(0, env);
+                self.get_battle_overview(0, env)?;
             }
         }
         Ok(false)
@@ -2291,7 +2143,7 @@ impl EnemyAi {
         &mut self,
         stimulus_type: StimulusType,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         let ctx = env.ctx;
         match stimulus_type {
             StimulusType::EventReachPoint => {
@@ -2307,11 +2159,11 @@ impl EnemyAi {
                 );
             }
             StimulusType::EventTimer => {
-                self.reconsider_enemy_approach(false, env);
+                self.reconsider_enemy_approach(false, env)?;
             }
             _ => {}
         }
-        false
+        Ok(false)
     }
 
     // Waiting at ladder: if enemy still on lift, reface & rearm;
@@ -2321,7 +2173,7 @@ impl EnemyAi {
         &mut self,
         stimulus_type: StimulusType,
         env: ThinkEnv<'_>,
-    ) -> bool {
+    ) -> crate::ai::AiFlow<bool> {
         let ThinkEnv {
             ctx, tick, grid, ..
         } = env;
@@ -2353,10 +2205,10 @@ impl EnemyAi {
                 self.base.outbox.actor.set_focus(self.base.primary_target);
                 self.base.launch_timer(20, ctx.frame);
             } else {
-                self.reconsider_enemy_approach(false, env);
+                self.reconsider_enemy_approach(false, env)?;
             }
         }
-        false
+        Ok(false)
     }
 
     // Avenger on roof: reached pos, face seek & wait.

@@ -2,6 +2,41 @@
 use super::*;
 
 impl SequenceManager {
+    /// Mark the next registration ID before a synchronous owner operation.
+    pub(crate) fn sequence_launch_boundary(&self) -> u32 {
+        self.next_sequence_id
+    }
+
+    /// Read newly registered movement sequences from the canonical dispatch FIFO.
+    /// The first instruction may prepare swordfight state or a door traversal.
+    pub(crate) fn deferred_owner_moves_since(
+        &self,
+        owner: EntityId,
+        boundary: u32,
+    ) -> Vec<SequenceId> {
+        let launched = self.next_sequence_id.wrapping_sub(boundary);
+        self.elements_to_go
+            .iter()
+            .filter_map(|&(id, index)| {
+                if index != 0 || id.0.wrapping_sub(boundary) >= launched {
+                    return None;
+                }
+                let sequence = self
+                    .sequences
+                    .get(&id)
+                    .expect("deferred sequence must exist");
+                let first = &sequence.elements[0];
+                (first.owner == Some(owner)
+                    && matches!(first.state, SequenceState::Todo | SequenceState::Postponed)
+                    && sequence.elements.iter().any(|element| {
+                        element.owner == Some(owner)
+                            && matches!(element.command, Command::Move | Command::PassDoor)
+                    }))
+                .then_some(id)
+            })
+            .collect()
+    }
+
     // ─── Element dispatch registration ──────────────────────────
 
     /// Run the original game's per-element registration loop.
@@ -722,5 +757,68 @@ impl SequenceManager {
             }
         }
         Ok(actions)
+    }
+}
+
+#[cfg(test)]
+mod movement_boundary_tests {
+    use super::*;
+
+    fn launch(manager: &mut SequenceManager, owner: EntityId, commands: &[Command]) -> SequenceId {
+        let mut sequence = Sequence::new();
+        for (index, command) in commands.iter().copied().enumerate() {
+            sequence.append_element(SequenceElement::new(index as u16 + 1, command, Some(owner)));
+        }
+        manager.launch_sequence(sequence)
+    }
+
+    #[test]
+    fn boundary_selects_only_new_owner_movements_and_keeps_prefix_instruction() {
+        let mut manager = SequenceManager::new();
+        let owner = EntityId::Pc(crate::entity_id::PcId(1));
+        let other = EntityId::Pc(crate::entity_id::PcId(2));
+        let old = launch(&mut manager, owner, &[Command::Move]);
+        let boundary = manager.sequence_launch_boundary();
+        let foreign = launch(&mut manager, other, &[Command::Move]);
+        let unrelated = launch(&mut manager, owner, &[Command::Turn]);
+        let prefixed = launch(
+            &mut manager,
+            owner,
+            &[Command::QuitSwordfight, Command::Move],
+        );
+        let door_only = launch(
+            &mut manager,
+            owner,
+            &[Command::AssertPosition, Command::PassDoor],
+        );
+        assert_eq!(
+            manager.deferred_owner_moves_since(owner, boundary),
+            vec![prefixed, door_only]
+        );
+        assert!(
+            matches!(manager.take_deferred_owner_action(owner, prefixed, 0).unwrap(),
+            Some(SequenceAction::InstructOwner { sequence_id, element_index: 0, .. }) if sequence_id == prefixed)
+        );
+        assert_eq!(
+            manager.deferred_owner_moves_since(owner, boundary),
+            vec![door_only]
+        );
+        for id in [old, foreign, unrelated] {
+            assert!(manager.elements_to_go.contains(&(id, 0)));
+        }
+    }
+
+    #[test]
+    fn launch_boundary_survives_counter_wrap() {
+        let mut manager = SequenceManager::new();
+        let owner = EntityId::Pc(crate::entity_id::PcId(1));
+        manager.next_sequence_id = u32::MAX;
+        let boundary = manager.sequence_launch_boundary();
+        let first = launch(&mut manager, owner, &[Command::Move]);
+        let second = launch(&mut manager, owner, &[Command::Move]);
+        assert_eq!(
+            manager.deferred_owner_moves_since(owner, boundary),
+            vec![first, second]
+        );
     }
 }

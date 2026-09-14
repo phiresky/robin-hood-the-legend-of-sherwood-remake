@@ -1,6 +1,228 @@
 use super::*;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::{AiState, AlertLevel, Position, StimulusInfo, Substate};
+    use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
+
+    #[test]
+    fn patrol_coordinate_commits_role_state_before_walk_and_run() {
+        for (distance, attentive, expected_substate, expected_action) in [
+            (
+                45.0,
+                true,
+                Substate::DefaultPatrolEnroute,
+                crate::order::OrderType::WalkingUpright,
+            ),
+            (
+                60.0,
+                true,
+                Substate::DefaultPatrolEnrouteRunning,
+                crate::order::OrderType::RunningUpright,
+            ),
+            (
+                45.0,
+                false,
+                Substate::DefaultPatrolEnroute,
+                crate::order::OrderType::WalkingUpright,
+            ),
+        ] {
+            let mut engine = EngineInner::new();
+            engine.world.fast_grid_mut().size_map(128, 128);
+            engine.world.fast_grid_mut().allocate_layers(1);
+            let index = engine.world.fast_grid_mut().add_sector(
+                square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(2000.0, 2000.0)),
+                0,
+            );
+            let sector = crate::ai::SectorHandle::new(1)
+                .unwrap()
+                .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
+            let mut ids = Vec::new();
+            for x in [100.0, 200.0] {
+                let mut entity = make_test_ai_soldier(crate::element::Camp::Lacklandists);
+                entity
+                    .element_data_mut()
+                    .set_position_map(MapPoint::new(x, 100.0));
+                entity
+                    .element_data_mut()
+                    .set_position(crate::coordinates::WorldPoint3D::new(x, 100.0, 0.0));
+                entity.element_data_mut().set_sector(Some(sector));
+                entity.actor_data_mut().unwrap().action_state =
+                    crate::element::ActionState::Waiting;
+                ids.push(engine.add_test_entity(entity));
+            }
+            let [owner, chief] = ids.as_slice() else {
+                unreachable!()
+            };
+            let (owner, chief) = (*owner, *chief);
+            let mut assets = LevelAssets::new();
+            crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("coordinate test"));
+            ai.base.patrol_chief = Some(chief);
+            ai.base.current_state = AiState::Default;
+            ai.base.current_substate = if attentive {
+                Substate::DefaultOnPost
+            } else {
+                Substate::DefaultPatrolEnroute
+            };
+            ai.attentive = attentive;
+            ai.will_be_attentive = attentive;
+            ai.base.current_music_alert_status = AlertLevel::Yellow;
+            ai.base.view_alert_status = AlertLevel::Yellow;
+
+            engine.execute_ai_coordinate_patrol(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                &StimulusInfo::Position(Position {
+                    x: 100.0 + distance,
+                    y: 100.0,
+                    sector: Some(sector),
+                    level: 0,
+                }),
+            );
+
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("coordinate test"));
+            assert_eq!(ai.base.current_state, AiState::Default);
+            assert_eq!(ai.base.current_substate, expected_substate);
+            assert_eq!(ai.base.current_music_alert_status, AlertLevel::Green);
+            assert_eq!(ai.base.view_alert_status, AlertLevel::Green);
+            assert!(!ai.will_be_attentive);
+            assert!(engine.orders.sequence_manager.sequences_iter().any(|sequence| {
+                sequence.elements.iter().any(|element| element.owner == Some(owner)
+                    && matches!(element.data, crate::sequence::SequenceElementData::Movement { action, .. } if action == expected_action))
+            }), "patrol movement must survive the preceding state transition");
+        }
+    }
+}
+
 impl EngineInner {
+    pub(in crate::engine) fn execute_ai_coordinate_patrol(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        info: &crate::ai::StimulusInfo,
+    ) {
+        use crate::ai::{AiState, GotoFlags, StimulusInfo, Substate};
+
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("patrol coordinate owner"));
+        if ai.patrol_chief.is_none() {
+            return;
+        }
+        let StimulusInfo::Position(target) = *info else {
+            return;
+        };
+        match ai.current_substate {
+            Substate::DefaultInMacro
+            | Substate::DefaultEnroute
+            | Substate::DefaultGotoPost
+            | Substate::DefaultGotoPostTurn
+            | Substate::DefaultOnPost
+            | Substate::DefaultGotoChief
+            | Substate::DefaultOnPostLookingSidewards => {
+                self.world
+                    .entities
+                    .expect_ai_controller_mut(owner, format_args!("patrol stop owner"))
+                    .stop_all();
+                self.drain_direct_ai_owner_boundary(sim, owner, assets);
+            }
+            Substate::DefaultPatrolEnroute
+            | Substate::DefaultPatrolEnrouteRunning
+            | Substate::DefaultPatrolEnrouteWaiting => {}
+            _ => return,
+        }
+
+        let position = self.live_ai_position(owner);
+        let chief = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("patrol coordinate owner"))
+            .patrol_chief
+            .expect("patrol chief disappeared during stop");
+        let chief_position = self.live_ai_position(chief);
+        let to_point = [target.x - position.x, target.y - position.y];
+        let to_chief = [chief_position.x - position.x, chief_position.y - position.y];
+        let distance = (to_point[0] * to_point[0] + to_point[1] * to_point[1]).sqrt();
+        let speed = crate::ai::PATROL_SPEED_BASE + distance / crate::ai::PATROL_SPEED_DIVISOR;
+        let inverse_aspect = crate::position_interface::INVERSE_ASPECT_RATIO;
+        if distance <= 30.0
+            && to_chief[0] * to_point[0]
+                + to_chief[1] * inverse_aspect * to_point[1] * inverse_aspect
+                < 0.0
+        {
+            let direction = crate::position_interface::vector_to_sector_0_to_15(
+                to_chief[0] * crate::position_interface::ASPECT_RATIO,
+                to_chief[1],
+            ) as u16;
+            self.duty_face_direction(sim, assets, owner, direction);
+            return;
+        }
+
+        let walking = speed <= 2.0;
+        let substate = if walking {
+            Substate::DefaultPatrolEnroute
+        } else {
+            Substate::DefaultPatrolEnrouteRunning
+        };
+        self.duty_set_state(sim, assets, owner, AiState::Default, substate);
+        let (flags, speed) = if walking {
+            let flags = self
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("patrol walking flags"))
+                .default_path_walking_flags;
+            (GotoFlags::NO_HALT | GotoFlags::DONT_STOP | flags, speed)
+        } else {
+            (
+                GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
+                1.0,
+            )
+        };
+        let position = self.live_ai_position(owner);
+        let depth = self.ai_think_depth();
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(owner, format_args!("patrol moving owner"));
+        let element = entity.element_data();
+        let layer = element.layer();
+        let sector = element.sector();
+        let actor = entity.actor_data().expect("patrol member requires actor");
+        let animation = actor
+            .installed_order
+            .map(|order| order.order_type)
+            .unwrap_or(crate::order::OrderType::NonanimationEnd);
+        let action_state = actor.action_state;
+        let civilian = entity.is_civilian();
+        entity
+            .ai_controller_mut()
+            .expect("patrol member requires controller")
+            .request_move(
+                target,
+                flags,
+                speed,
+                position,
+                layer,
+                sector,
+                animation,
+                action_state,
+                civilian,
+                depth,
+            );
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
+    }
+
     /// Apply facing from the two actor values it actually reads. In particular,
     /// this runs after coordinate Think, so callback changes are visible.
     fn instruct_patrol_direction(&mut self, member: EntityId, direction: u16) {
@@ -143,16 +365,11 @@ impl EngineInner {
             {
                 continue;
             }
-            let entity = self.expect_entity(member, "patrol coordinate member");
-            let scratch = self.build_sim_scratch(assets);
-            let ctx = self.ai_context_from_entity(entity, frame, None, &scratch, assets);
-            let tick = self.build_npc_tick_data(sim, member, assets);
             let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, target);
             self.debug_patrol_turn_lifecycle("before_coordinate_think", member);
-            self.dispatch_think_with_drain(sim, member, &stimulus, &ctx, &tick, assets);
+            self.execute_ai_callback(sim, assets, member, &stimulus);
             // Construct Move before applying direction, but leave its deferred
             // InstructOwner for the normal sequence-manager phase.
-            self.drain_pending_move_requests_for_owner(sim, member);
             self.debug_patrol_turn_lifecycle("after_coordinate_think", member);
             let member = *self
                 .world
@@ -170,14 +387,14 @@ impl EngineInner {
     }
 
     fn reacquire_patrol_members(&mut self, assets: &LevelAssets, owner: EntityId) {
-        let missed = self
+        let mut index = 0;
+        while let Some(&member) = self
             .world
             .entities
             .expect_ai_controller(owner, format_args!("patrol chief"))
             .missed_patrol_members
-            .clone();
-        let mut reacquired = Vec::new();
-        for (index, member) in missed.into_iter().enumerate() {
+            .get(index)
+        {
             let entity = self.expect_entity(member, "missed patrol member");
             let npc = entity
                 .ai_actor_data()
@@ -196,24 +413,19 @@ impl EngineInner {
                 able_to_help,
                 npc.ai_state(),
             ) {
+                let ai = self
+                    .world
+                    .entities
+                    .expect_ai_controller_mut(owner, format_args!("patrol chief"));
+                ai.missed_patrol_members.remove(index);
+                ai.patrol.push(member);
                 self.world
                     .entities
                     .expect_ai_controller_mut(member, format_args!("reacquired patrol member"))
                     .patrol_chief = Some(owner);
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("patrol chief"))
-                    .patrol
-                    .push(member);
-                reacquired.push(index);
+            } else {
+                index += 1;
             }
-        }
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("patrol chief"));
-        for index in reacquired.into_iter().rev() {
-            ai.missed_patrol_members.remove(index);
         }
     }
 }

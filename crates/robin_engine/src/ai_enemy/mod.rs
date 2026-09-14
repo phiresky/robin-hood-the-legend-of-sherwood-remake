@@ -7,21 +7,32 @@
 mod alert;
 mod archer_combat;
 mod battle;
+pub(crate) use battle::rider_charge_goal_geometry;
+pub(crate) use battle::{
+    BattleDecisionInputs, battle_friend_is_nearer, battle_owner_target_square_distance,
+};
+pub(crate) use battle::{
+    increment_battle_target_multiplicity, seed_appended_battle_target_multiplicity,
+};
 mod combat_positions;
 mod detection;
+pub(crate) use combat_positions::{SwordfightLists, is_facing_swordfight_target};
+pub(crate) use combat_positions::{combat_neighbour_distance_ulong, drunk_combat_freezes};
+pub(crate) use map_vec_ext::AiMapVec;
+pub(crate) use util::{CombatFighterAccess, evaluate_combat_position_full};
 mod event_handlers;
 mod money_fight;
 pub(crate) use detection::context_detects_180_degrees;
+pub(crate) use detection::{Target180, Viewer180, detects_180_degrees_live};
 mod map_vec_ext;
 mod parity_trace;
 mod periodic;
 pub(crate) use periodic::AmbushPointContext;
 mod seek;
+pub(crate) use seek::SeekAreaSpec;
 mod substate_handlers;
 mod util;
 
-#[cfg(test)]
-pub(crate) use alert::CommandSoldiersStart;
 pub use util::*;
 
 use crate::ai::*;
@@ -304,10 +315,6 @@ pub struct EnemyAi {
     /// Soldiers this officer has called to a group.
     /// Populated by `alert_soldiers`, read by group coordination substates.
     pub alerted_us: Vec<HumanHandle>,
-    /// AlertSoldiers candidates not yet called. The Original stops scanning
-    /// at 20 successful Think returns, not 20 attempts, so calls advance one
-    /// result at a time through this live continuation queue.
-    pub pending_alert_soldier_candidates: Vec<HumanHandle>,
     /// Group members still awaiting the officer's synchronous
     /// `CALL_INSTRUCTION`, paired with the seek point authored for that
     /// particular attempt. The original game deletes a refusing member from the live
@@ -471,12 +478,6 @@ impl AiRole for EnemyAi {
     /// Soldier alert setter: threads the forced-attentive view override.
     fn role_set_alert_status(&mut self, level: AlertLevel) {
         EnemyAi::set_alert_status(self, level);
-    }
-
-    /// Hold the patrol-coordinate movement behind the leave-attentive
-    /// element authored by the default-state transition.
-    fn after_patrol_move(&mut self, first_new_order: usize) {
-        self.hold_new_orders_behind_attentive(first_new_order);
     }
 }
 
@@ -898,120 +899,21 @@ impl EnemyAi {
         }
     }
 
-    /// Decide patrol forwarding, releasing the brain before recursive delivery.
+    /// Release the brain before evaluating live patrol forwarding.
     pub(crate) fn dispatch_stimulus_to_whole_patrol(
         &mut self,
-        env: ThinkEnv<'_>,
+        _env: ThinkEnv<'_>,
         stimulus: &Stimulus,
         _global: &mut AiGlobalState,
     ) -> AiFlow<bool> {
-        let ThinkEnv { ctx, .. } = env;
-        tracing::trace!(
-            target: "patrol_relay",
-            frame = ctx.frame,
-            me = self.base.me as i32,
-            stimulus_type = ?stimulus.stimulus_type,
-            to_whole_patrol = stimulus.to_whole_patrol,
-            state = ?self.base.current_state,
-            substate = ?self.base.current_substate,
-            chief = ?self.base.patrol_chief.map(|c| c.index()),
-            patrol_size = self.base.patrol.len(),
-            "dispatch enter"
-        );
-        // Already dispatched to whole patrol — skip
         if stimulus.to_whole_patrol {
             return Ok(false);
         }
-
-        // Dedup gate — only consults
-        // `last_stimulus_dispatched_to_patrol` for these three event
-        // types, and returns `true` ("ignore this stimulus") on a
-        // match so the caller stops processing.  All other event
-        // types skip the dedup entirely.
-        if matches!(
-            stimulus.stimulus_type,
-            StimulusType::EventSeesObject | StimulusType::EventHear | StimulusType::EventSeesBody
-        ) && let Some(ref last) = self.last_stimulus_dispatched_to_patrol
-            && last.is_similar(stimulus)
-        {
-            tracing::trace!(
-                target: "patrol_relay",
-                me = self.base.me as i32,
-                "dispatch dedup hit"
-            );
-            return Ok(true);
-        }
-
-        // Only dispatch from DEFAULT (excluding
-        // DefaultPatrolEnrouteRunning — too far from patrol) or
-        // WONDERING.
-        match self.base.current_state {
-            AiState::Default => {
-                if self.base.current_substate == Substate::DefaultPatrolEnrouteRunning {
-                    return Ok(false);
-                }
-            }
-            AiState::Wondering => {}
-            _ => return Ok(false),
-        }
-
-        // Delegate to the chief only when the chief exists, is a
-        // soldier, and we currently 360°-detect them.  Otherwise we
-        // proceed as a would-be chief ourselves.
-        if let Some(chief_id) = self.base.patrol_chief {
-            let chief = chief_id.index();
-            let chief_is_soldier = ctx
-                .entity_view_logged(chief, "patrol chief")
-                .is_some_and(|v| v.is_soldier());
-            // Short-circuit: a non-soldier chief never reaches the LOS
-            // query, so no visibility-cache traffic is generated for it.
-            if chief_is_soldier && self.is_detecting_360_degrees(chief as HumanHandle, ctx) {
-                self.base.outbox.reentrant.cross_npc_actions.push(
-                    CrossNpcAction::RequestPatrolDispatch {
-                        chief,
-                        caller: self.base.me,
-                        stimulus_type: stimulus.stimulus_type,
-                        info: stimulus.info,
-                    },
-                );
-                tracing::trace!(
-                    target: "patrol_relay",
-                    me = self.base.me as i32,
-                    chief,
-                    "dispatch relay to chief"
-                );
-                return Ok(true);
-            }
-        }
-
-        // Record on the would-be chief regardless of whether the
-        // patrol member loop will run.  Preserves the dedup
-        // side-effect for the empty-patrol case below.
-        let mut forwarded_stimulus = *stimulus;
-        forwarded_stimulus.to_whole_patrol = true;
-        self.last_stimulus_dispatched_to_patrol = Some(*stimulus);
-
-        // Empty patrol — nothing to relay; return `false` so our
-        // caller still runs its local handler.
-        if self.base.patrol.is_empty() {
-            return Ok(false);
-        }
-
-        // Snapshot the patrol before the self-call below: the broadcast walks
-        // this copy even if the cascade adds or drops members.
-        let members: Vec<NpcHandle> = self
-            .base
-            .patrol
-            .iter()
-            .map(|member_id| member_id.index())
-            .collect();
-
         Err(DutyCall {
             flags: DutyFlags::empty(),
             think_result: false,
-            tail: crate::ai::DutyTail::BroadcastPatrol {
-                stimulus: forwarded_stimulus,
-                members,
+            tail: crate::ai::DutyTail::DispatchPatrol {
+                stimulus: *stimulus,
             },
             after: Vec::new(),
         })
@@ -1159,7 +1061,7 @@ impl EnemyAi {
     /// and queue a `PanicRequest` so the engine's
     /// `process_pending_begin_panic_for` can pick a door on the far
     /// side of the center (or fall back to a random escape vector).
-    fn panic_from_position(&mut self, center: Position, runs: u8) {
+    pub(crate) fn panic_from_position(&mut self, center: Position, runs: u8) {
         let was_already_fleeing = matches!(
             self.base.current_substate,
             Substate::FleeingPanic | Substate::FleeingRunToDoor
@@ -1438,7 +1340,7 @@ impl EnemyAi {
                     // into battle-overview evaluation.
                     self.base.outbox.actor.lost_enemy_overview_after_quit = true;
                 } else {
-                    self.get_battle_overview(0, env);
+                    self.get_battle_overview(0, env)?;
                 }
             }
         }
@@ -2089,29 +1991,8 @@ impl EnemyAi {
     // move without naming the new substate.
     // -----------------------------------------------------------------------
 
-    // The wrappers themselves (`go_to`, `go_to_speed`, `go_near`) and
-    // `coordinate_patrol` are shared with the friendly role: see
-    // [`AiRole`] (`crate::ai::role`). The enemy-specific
-    // `hold_new_orders_behind_attentive` bracket runs through
-    // `AiRole::after_patrol_move`: Original's default-state transition
-    // clears alert and authors the leave-attentive element before the
-    // following movement.
-
-    /// Entering the default state disables attentive mode before the
-    /// following movement request. Only hold the movement when that call actually
-    /// changes `will_be_attentive`; Original's no-change call returns without
-    /// launching a transition element.
-    fn hold_new_orders_behind_attentive(&mut self, first_new_order: usize) {
-        let launches_transition = self
-            .base
-            .outbox
-            .actor
-            .set_attentive_mode
-            .is_some_and(|request| request.target != self.will_be_attentive);
-        for order in &mut self.base.outbox.actor.orders[first_new_order..] {
-            order.after_attentive_mode = launches_transition;
-        }
-    }
+    // Movement wrappers (`go_to`, `go_to_speed`, `go_near`) are shared
+    // with the friendly role through [`AiRole`].
 
     // -----------------------------------------------------------------------
     // Think — main stimulus dispatcher
@@ -2121,11 +2002,10 @@ impl EnemyAi {
     /// The engine completes both admitted and rejected calls after this borrow.
     pub(crate) fn begin_think(
         &mut self,
-        env: ThinkEnv<'_>,
+        ctx: &crate::ai::AiAdmission,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
     ) -> bool {
-        let ThinkEnv { ctx, .. } = env;
         // Cache engine state for say() / forbidden remarks
         self.base.cached_frame = ctx.frame;
         self.base.cached_in_building = ctx.in_building;
@@ -2152,8 +2032,12 @@ impl EnemyAi {
         }
 
         let stimulus_type = stimulus.stimulus_type;
-        self.base
-            .debug_macro_lifecycle(ctx, "think_enter", stimulus_type);
+        self.base.debug_macro_lifecycle_at(
+            ctx.frame,
+            ctx.original_creation_order,
+            "think_enter",
+            stimulus_type,
+        );
 
         tracing::trace!(
             me = self.base.me,
@@ -2169,8 +2053,12 @@ impl EnemyAi {
             if stimulus_type == StimulusType::EventAfterScriptGoOn {
                 self.base.outbox.reentrant.engine_drains_after_script_go_on = false;
             }
-            self.base
-                .debug_macro_lifecycle(ctx, "think_rejected_return", stimulus_type);
+            self.base.debug_macro_lifecycle_at(
+                ctx.frame,
+                ctx.original_creation_order,
+                "think_rejected_return",
+                stimulus_type,
+            );
             return false;
         }
 
@@ -2285,7 +2173,7 @@ impl EnemyAi {
     fn start_think(
         &mut self,
         stimulus: &Stimulus,
-        ctx: &AiContext,
+        ctx: &crate::ai::AiAdmission,
         static_ai_frozen: bool,
     ) -> bool {
         self.start_think_post_filter(stimulus, ctx, static_ai_frozen)
@@ -2301,7 +2189,7 @@ impl EnemyAi {
     pub(crate) fn start_think_post_filter(
         &mut self,
         stimulus: &Stimulus,
-        ctx: &AiContext,
+        ctx: &crate::ai::AiAdmission,
         static_ai_frozen: bool,
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
@@ -2349,7 +2237,8 @@ impl EnemyAi {
                 if self.base.current_substate.is_take_money()
                     || self.base.current_substate.is_fight_for_money()
                 {
-                    self.forget_all_nearby_coins(ctx);
+                    self.base.outbox.actor.forget_nearby_coins = Some(ctx.position);
+                    self.other_seen_money.clear();
                 }
                 self.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
                 self.base.outbox.recovery.set_eye_status =

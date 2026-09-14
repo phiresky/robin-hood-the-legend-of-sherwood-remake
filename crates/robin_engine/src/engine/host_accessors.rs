@@ -1196,7 +1196,6 @@ impl EngineInner {
         self.script_domains.mission_ui.force_check = false;
         self.control.chorus_timer = 0;
         self.control.fast_forward = false;
-        self.orders.pending_move_requests.clear();
         self.orders.pending_path_requests.clear();
         self.orders.failed_path_requests.clear();
 
