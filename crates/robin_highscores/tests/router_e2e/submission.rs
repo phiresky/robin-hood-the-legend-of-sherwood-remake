@@ -1,6 +1,56 @@
 use crate::support::*;
 
 #[tokio::test]
+async fn recorded_replay_upload_does_not_require_a_preflight_or_saved_admission() {
+    let rig = TestRig::new().await;
+    let owner = SigningKey::from_bytes(&[72; 32]);
+    rig.rename(&owner, "Replay Uploader", Ipv4Addr::LOCALHOST)
+        .await;
+    let replay = compact_replay_fixture("recorded-upload");
+    let mut request = rig.offer_request(&owner, 72);
+    let genesis = &mut request.session_genesis;
+    genesis.host_signature = None;
+    genesis.claim.fresh_run_preflight_grant = None;
+    genesis.claim.ranked_session.recorded_replay = Some(replay_artifact(&replay));
+    genesis.claim.replay_session_id = Digest32::digest_bytes(&replay);
+    genesis
+        .claim
+        .ranked_session
+        .prepared_inputs_projection_sha256 = None;
+    genesis
+        .claim
+        .ranked_session
+        .prepared_mission_inputs_seal_sha256 = None;
+    request.validate().unwrap();
+    let response = rig
+        .app
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/submission-offers",
+            &request,
+            Ipv4Addr::LOCALHOST,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let offer: SubmissionOfferV1 = json_body(response).await;
+    let signed = signed_submission(&owner, offer, &replay, &rig.starting_campaign);
+    let response = rig
+        .app
+        .clone()
+        .oneshot(multipart_request(&signed, &replay, &rig.starting_campaign))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let accepted: SubmissionAcceptedV1 = json_body(response).await;
+    assert_eq!(
+        rig.owner_status(&accepted, &owner).await.state,
+        SubmissionLifecycleV1::Queued
+    );
+}
+
+#[tokio::test]
 async fn signed_rename_offer_upload_status_and_verified_publication_cross_the_real_router() {
     let rig = TestRig::new().await;
     let owner = SigningKey::from_bytes(&[7; 32]);
@@ -1032,8 +1082,10 @@ async fn ranked_submission_rejects_session_network_protocol_mismatch_before_rese
     );
     let mut request = rig.offer_request(&owner, 96);
     request.session_genesis.claim.network_protocol_version = mismatched_network;
-    request.session_genesis.host_signature =
-        sign(&owner, &request.session_genesis.signing_bytes().unwrap());
+    request.session_genesis.host_signature = Some(sign(
+        &owner,
+        &request.session_genesis.signing_bytes().unwrap(),
+    ));
     let offer = rig.issue_offer(&owner, request, 96).await;
     assert_eq!(
         offer.session_genesis.claim.network_protocol_version,

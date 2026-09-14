@@ -26,6 +26,10 @@ pub use robin_run_types::session::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RankedSessionConfigV1 {
+    /// A replay selected for upload after recording. Its contents, rather than
+    /// pre-game admission, supply the conditions checked by the verifier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_replay: Option<crate::ReplayArtifactV1>,
     pub schema_version: u32,
     pub mission_id: String,
     pub content_edition: OfficialContentEditionV1,
@@ -38,10 +42,10 @@ pub struct RankedSessionConfigV1 {
     /// Digest of the canonical run-specific engine-input projection. This
     /// binds team, inventory, reinforcement and dependency closure derived
     /// from the exact starting campaign, not just static official content.
-    pub prepared_inputs_projection_sha256: Digest32,
+    pub prepared_inputs_projection_sha256: Option<Digest32>,
     /// Digest of `PreparedMissionInputsSealV1`, cross-binding the projection
     /// with every engine-input authority below.
-    pub prepared_mission_inputs_seal_sha256: Digest32,
+    pub prepared_mission_inputs_seal_sha256: Option<Digest32>,
     pub build_manifest_sha256: Digest32,
     pub content_manifest_sha256: Digest32,
     pub campaign_content_manifest_sha256: Option<Digest32>,
@@ -73,8 +77,6 @@ impl Validate for RankedSessionConfigV1 {
         }
         if [
             self.starting_campaign_sha256,
-            self.prepared_inputs_projection_sha256,
-            self.prepared_mission_inputs_seal_sha256,
             self.build_manifest_sha256,
             self.content_manifest_sha256,
             self.rules_config_sha256,
@@ -93,6 +95,31 @@ impl Validate for RankedSessionConfigV1 {
             return Err(ValidationError::Zero {
                 field: "ranked_session.identity_digest",
             });
+        }
+        match &self.recorded_replay {
+            Some(replay) => {
+                replay.validate()?;
+                if self.prepared_inputs_projection_sha256.is_some()
+                    || self.prepared_mission_inputs_seal_sha256.is_some()
+                {
+                    return Err(ValidationError::ClaimMismatch {
+                        field: "recorded_replay.prepared_inputs",
+                    });
+                }
+            }
+            None => {
+                if self
+                    .prepared_inputs_projection_sha256
+                    .is_none_or(|digest| digest.is_zero())
+                    || self
+                        .prepared_mission_inputs_seal_sha256
+                        .is_none_or(|digest| digest.is_zero())
+                {
+                    return Err(ValidationError::Zero {
+                        field: "ranked_session.prepared_inputs",
+                    });
+                }
+            }
         }
         if self.spellforge_content_sha256.is_some() {
             return Err(ValidationError::ClaimMismatch {
@@ -194,8 +221,12 @@ impl RankedSessionConfigV1 {
             .map_err(|_| ValidationError::ClaimMismatch {
                 field: "ranked_session.prepared_mission_inputs_seal",
             })?;
-        if seal_digest != self.prepared_mission_inputs_seal_sha256
-            || seal.prepared_inputs_projection_sha256 != self.prepared_inputs_projection_sha256
+        if self
+            .prepared_mission_inputs_seal_sha256
+            .is_some_and(|expected| seal_digest != expected)
+            || self
+                .prepared_inputs_projection_sha256
+                .is_some_and(|expected| seal.prepared_inputs_projection_sha256 != expected)
             || seal.content_manifest_sha256 != self.content_manifest_sha256
             || seal.content_edition != self.content_edition
             || seal.content_subject != self.content_subject
@@ -353,7 +384,7 @@ impl Validate for ReplaySessionGenesisClaimV1 {
 pub struct ReplaySessionGenesisV1 {
     pub claim: ReplaySessionGenesisClaimV1,
     pub algorithm: SignatureAlgorithmV1,
-    pub host_signature: Signature64,
+    pub host_signature: Option<Signature64>,
 }
 
 impl ReplaySessionGenesisV1 {
@@ -365,7 +396,22 @@ impl ReplaySessionGenesisV1 {
 impl Validate for ReplaySessionGenesisV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.claim.validate()?;
-        crate::validation::nonzero("session_genesis.host_signature", &self.host_signature)?;
+        if self.claim.ranked_session.recorded_replay.is_some() {
+            if self.host_signature.is_some()
+                || self.claim.fresh_run_preflight_grant.is_some()
+                || self.claim.campaign_continuation_preflight_grant.is_some()
+                || self.claim.competition_run_grant.is_some()
+            {
+                return Err(ValidationError::ClaimMismatch {
+                    field: "recorded_replay.pre_game_admission",
+                });
+            }
+        } else {
+            let signature = self.host_signature.as_ref().ok_or(ValidationError::Zero {
+                field: "session_genesis.host_signature",
+            })?;
+            crate::validation::nonzero("session_genesis.host_signature", signature)?;
+        }
         Ok(())
     }
 }

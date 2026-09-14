@@ -1,357 +1,185 @@
-//! Mission-lifetime inputs for the post-mission leaderboard surface.
-//!
-//! Ranked authority must exist before simulation begins. This module therefore
-//! captures the exact pre-mission campaign and owns an explicit admission
-//! state instead of trying to reconstruct a signed genesis at debrief time.
-//! Native, browser, and multiplayer frontends all resolve the same prepared
-//! authority before frame zero. Multiplayer transports retain the signed
-//! lifecycle; this module never creates a second replay or identity lane.
-
-use crate::leaderboard_browse::{LeaderboardBrowseEvent, LeaderboardBrowser};
-use crate::leaderboard_mission_end::{
-    ActiveMissionReplayExporter, HttpMissionEndLeaderboardBackend,
-    LocalMissionEndSubmissionAuthorizer, MissionEndBoard, MissionEndLeaderboardAction,
-    MissionEndLeaderboardController, MissionEndLeaderboardEvent, MissionEndOutcome,
-    MissionEndPeerCoSigner, MissionEndReplayExporter, MissionEndRunBundle,
-    MissionEndSubmissionAuthorizer, MissionEndSubmissionInput, MissionEndTask,
-    ParticipantSigningProgress, PeerCoSignPoll, SubmissionAuthorizationRequest,
-    SubmissionAuthorizationTask,
-};
-use crate::leaderboard_preferences::{LeaderboardPreferences, LeaderboardScope, LeaderboardTab};
-use crate::leaderboard_service::{DEFAULT_BOARD_PAGE_LIMIT, LeaderboardApi};
-use robin_engine::campaign::Campaign;
-use robin_run_protocol::{
-    BoardCategoryV1, BoardMetricV1, CampaignContentManifestV1, CampaignContinuationAuthorizationV1,
-    CanonicalDocument as _, CompetitionStateV1, ContentManifestV1, Digest32, LeaderboardMetadataV1,
-    LeaderboardQuerySubjectV1, LeaderboardQueryV1, LeaderboardSubjectV1, ParticipantSignatureV1,
-    PublishedRulesetV1, RulesConfigIdentityV1, RulesetBoardScopeV1, RulesetOperationalStatusV1,
-    RunContentIdentityV1, SCHEMA_VERSION_V1, ScopeRequestV1, Signature64, SignatureAlgorithmV1,
-    SignedSubmissionV1, SimulationSpeechTimingSourceV1, SpeechTimingAuthorityV1,
-    SubmissionOfferRequestV1, Validate as _, VersionedBuildManifest,
-    official_content_manifest_name_v1, official_content_subjects_v1,
-};
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
-
-use crate::leaderboard_ranked_session::{
-    CampaignContinuationReceiptSelectionRequestV1, CampaignContinuationReceiptSelectionResponseV1,
-    CampaignContinuationReceiptSelectionV1, OfficialRankedSessionExpectationV1,
-    OfficialRankedSessionSetupV1, OfficialRankedSessionWireSetupV1, RankedPreflightLobbyV1,
-    RankedRunPreflightAdmissionV1,
-};
-
+//! Prepare mission-end leaderboard uploads from the recording itself.
 use crate::ingame_menu::layout::{
     MenuTransform, dim_screen, draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
 };
 use crate::ingame_menu::widget_bridge::ModalCursor;
 use crate::ingame_menu::{IngameMenuResources, MissionEndLeaderboardScreen};
+use crate::leaderboard_mission_end::{
+    HttpMissionEndLeaderboardBackend, LocalMissionEndSubmissionAuthorizer, MissionEndBoard,
+    MissionEndLeaderboardAction, MissionEndLeaderboardController, MissionEndLeaderboardEvent,
+    MissionEndOutcome, MissionEndRunBundle, MissionEndSubmissionInput, RecordedReplayExporter,
+};
+use crate::leaderboard_preferences::{LeaderboardPreferences, LeaderboardTab};
+use crate::leaderboard_service::{DEFAULT_BOARD_PAGE_LIMIT, LeaderboardApi};
 use crate::renderer::Renderer;
-
+use robin_engine::campaign::Campaign;
+use robin_run_protocol::{
+    BoardCategoryV1, BoardMetricV1, CanonicalDocument as _, ContentManifestV1, Digest32,
+    LeaderboardMetadataV1, LeaderboardQuerySubjectV1, LeaderboardQueryV1, PublishedRulesetV1,
+    RulesConfigIdentityV1, RulesetBoardScopeV1, RulesetOperationalStatusV1, RunContentIdentityV1,
+    SCHEMA_VERSION_V1, ScopeRequestV1, SignatureAlgorithmV1, SpeechTimingAuthorityV1,
+    SubmissionOfferRequestV1, VersionedBuildManifest,
+};
+use std::sync::Arc;
 mod error;
 use error::RankedError;
-
 mod admission;
-pub(super) use admission::{
-    PreparedRankedAdmission, RankedPreFramePlan, fetch_single_player_authority,
-};
-
-/// Whether this client can submit to `build` as its verifier: replay schema
-/// and network protocol versions must match; source commit and save-format
-/// identities are artifact provenance, not compatibility gates.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn verifier_build_matches_runtime(
-    build: &robin_run_protocol::VersionedBuildManifest,
-) -> Result<bool, String> {
-    admission::build_matches_runtime(build).map_err(|error| error.to_string())
-}
-
-/// Authority fixed before the first simulation frame.
-///
-/// `BrowseOnly` is a deliberate state, not a failed attempt to invent the
-/// missing signatures later. The authorized arm is the sole integration seam
-/// for the ranked-session setup flow.
-#[derive(Clone)]
-pub(crate) enum RankedMissionAdmission {
-    BrowseOnly { reason: String },
-    Authorized(MissionEndSubmissionInput),
-    Signed(SignedRankedMissionAdmission),
-}
-
-#[derive(Clone)]
-pub(crate) struct SignedRankedMissionAdmission {
-    lifecycle: crate::leaderboard_ranked_session::SharedRankedSessionLifecycle,
-    scope_request: ScopeRequestV1,
-    requested_metrics: Vec<BoardMetricV1>,
-    campaign_controller_public_key: Option<robin_run_protocol::PublicKey32>,
-}
-
-impl RankedMissionAdmission {
-    /// Public signed documents only; no private signer or live transport state.
-    pub(crate) fn archive_input(
-        &self,
-        replay: &robin_engine::replay::ReplayData,
-    ) -> Result<Option<MissionEndSubmissionInput>, RankedError> {
-        let mut copy = self.clone();
-        copy.materialize_terminal_from_replay(
-            &replay.header().mission_id,
-            replay.header().campaign.clone().into(),
-            replay,
-        )?;
-        match copy {
-            Self::Authorized(input) => Ok(Some(input)),
-            Self::BrowseOnly { .. } => Ok(None),
-            Self::Signed(_) => Err(RankedError::lifecycle(
-                "ranked evidence remained unresolved",
-            )),
-        }
-    }
-
-    fn browse_only(reason: impl Into<String>) -> Self {
-        let reason = reason.into();
-        assert!(!reason.is_empty(), "browse-only admission needs a reason");
-        Self::BrowseOnly { reason }
-    }
-
-    fn materialize_terminal(
-        &mut self,
-        mission_id: &str,
-        starting_campaign_bytes: Arc<[u8]>,
-        replay_exports: &crate::replay_service::ReplayExports,
-    ) -> Result<(), RankedError> {
-        if !matches!(self, Self::Signed(_)) {
-            return Ok(());
-        }
-        // TODO(10/F11): leaf returns String (replay exports).
-        let replay = replay_exports
-            .snapshot()
-            .map_err(RankedError::evidence)?
-            .parse_sync()
-            .map_err(RankedError::evidence)?;
-        self.materialize_terminal_from_replay(mission_id, starting_campaign_bytes, &replay)
-    }
-
-    fn materialize_terminal_from_replay(
-        &mut self,
-        mission_id: &str,
-        starting_campaign_bytes: Arc<[u8]>,
-        replay: &robin_engine::replay::ReplayData,
-    ) -> Result<(), RankedError> {
-        let Self::Signed(signed) = self else {
-            return Ok(());
-        };
-        let evidence = signed
-            .lifecycle
-            .lock()
-            .map_err(|_| RankedError::lifecycle("ranked session lifecycle lock was poisoned"))?
-            .evidence_for_replay(replay)?
-            .ok_or_else(|| {
-                RankedError::lifecycle("ranked session was downgraded before terminal evidence")
-            })?;
-        if evidence.session_genesis.claim.ranked_session.mission_id != mission_id {
-            return Err(RankedError::rejected(
-                "ranked session evidence names a different mission",
-            ));
-        }
-        let claim_count = u16::try_from(evidence.participant_claims.len()).map_err(|_| {
-            RankedError::rejected("ranked participant roster exceeds protocol bounds")
-        })?;
-        let (participant_instance_count, max_concurrent_players) = evidence
-            .replay_session_transcript
-            .validate_and_derive_counts()?;
-        if claim_count != participant_instance_count {
-            return Err(RankedError::rejected(format!(
-                "ranked participant claim count {claim_count} differs from authenticated transcript count {participant_instance_count}"
-            )));
-        }
-        let ruleset_manifest_sha256 = evidence
-            .session_genesis
-            .claim
-            .ranked_session
-            .ruleset_manifest_sha256;
-        let competition_manifest_sha256 = evidence
-            .session_genesis
-            .claim
-            .ranked_session
-            .competition_manifest_sha256;
-        let offer_request = SubmissionOfferRequestV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            max_concurrent_players,
-            participant_instance_count,
-            participant_claims: evidence.participant_claims,
-            session_genesis: evidence.session_genesis,
-            mission_id: mission_id.to_owned(),
-            scope_request: signed.scope_request.clone(),
-            ruleset_manifest_sha256,
-            competition_manifest_sha256,
-        };
-        offer_request.validate()?;
-        let input = MissionEndSubmissionInput {
-            offer_request,
-            replay_session_transcript: evidence.replay_session_transcript,
-            requested_metrics: signed.requested_metrics.clone(),
-            campaign_controller_public_key: signed.campaign_controller_public_key,
-            starting_campaign_bytes,
-        };
-        // Use the public bundle validator as the final cross-document gate;
-        // no partially constructed terminal evidence becomes submittable.
-        let probe = MissionEndRunBundle {
-            outcome: MissionEndOutcome::Won,
-            multiplayer: false,
-            boards: authorized_boards(&input, None)?,
-            eligible_submission: Some(input.clone()),
-            submission_unavailable_reason: None,
-        };
-        probe.validate()?;
-        *self = Self::Authorized(input);
-        Ok(())
-    }
-}
-
-/// Restored files carry signed evidence, not permission to invent a genesis.
-/// Submission still passes the normal authorizer and server preflight checks.
-pub(crate) fn validate_archived_ranked_input(
-    input: &MissionEndSubmissionInput,
+mod presentation;
+pub(super) use presentation::{MissionEndLeaderboardTaskProgress, MissionEndLeaderboardTaskState};
+/// Prepare an upload from the selected recording, without a saved admission file.
+pub(crate) async fn prepare_recorded_submission(
     replay: &robin_engine::replay::ReplayData,
-) -> Result<(), RankedError> {
-    input.validate()?;
-    if input.starting_campaign_bytes.as_ref() != replay.header().campaign.as_slice()
-        || input.offer_request.mission_id != replay.header().mission_id
-    {
-        return Err(RankedError::rejected(
-            "archived ranked admission does not match the mission recording root",
-        ));
-    }
-    let genesis = &input.offer_request.session_genesis;
-    crate::leaderboard_ranked_session::validate_session_genesis(
-        genesis,
-        *genesis.claim.host_public_key.as_bytes(),
-        &genesis.claim.ranked_session,
-    )?;
-    crate::leaderboard_ranked_session::validate_transcript_against_local_replay(
-        replay,
-        genesis,
-        &input.offer_request.participant_claims,
-        &input.replay_session_transcript,
-    )?;
-    replay
-        .ranked_submission_verdict()
-        .map_err(|error| RankedError::evidence(format!("mission replay is ineligible: {error:?}")))
+    preferences: &LeaderboardPreferences,
+) -> Result<(MissionEndSubmissionInput, Arc<[u8]>), String> {
+    use crate::leaderboard_signing::{GameIdentitySigner as _, PlatformSigner};
+    use robin_run_protocol::{
+        ArtifactRefV1, ReplayArtifactV1, ReplaySessionGenesisClaimV1, ReplaySessionGenesisV1,
+    };
+    let header = replay.header();
+    let bytes: Arc<[u8]> =
+        crate::replay_format::encode_compact(replay, robin_replay_format::ENGINE_VERSION_HASH)
+            .map_err(|error| error.to_string())?
+            .into_bytes()
+            .into();
+    let artifact = ReplayArtifactV1 {
+        artifact: ArtifactRefV1 {
+            sha256: Digest32::digest_bytes(&bytes),
+            byte_length: bytes.len() as u64,
+            media_type: robin_run_protocol::RANKED_REPLAY_MEDIA_TYPE_V1.to_owned(),
+        },
+        replay_schema_version: header.version,
+    };
+    let authority =
+        admission::fetch_replay_authority(&header.mission_id, header.sim_config, preferences)
+            .await
+            .map_err(|error| error.to_string())?;
+    let uploader = PlatformSigner::public_key()
+        .await
+        .map_err(|error| error.to_string())?;
+    let replay_id = replay.submission_id();
+    // Session identifiers describe this upload's anonymous seat events. They
+    // confer no authority over the replay or over another player's account.
+    let mut transcript = replay.submission_transcript(replay_id, replay_id)?;
+    let starting_campaign = ArtifactRefV1 {
+        sha256: Digest32::digest_bytes(&header.campaign),
+        byte_length: header.campaign.len() as u64,
+        media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
+    };
+    let custom = authority.published_ruleset.manifest.rules_config_constraint
+        == robin_run_protocol::RulesConfigConstraintV1::AnyCanonicalSimConfig;
+    let content = &authority.content_manifest;
+    let genesis = ReplaySessionGenesisV1 {
+        claim: ReplaySessionGenesisClaimV1 {
+            schema_version: 1,
+            network_protocol_version: robin_engine::multiplayer::NET_PROTOCOL_VERSION,
+            host_public_key: uploader,
+            replay_session_id: replay_id,
+            host_participant_instance_id: transcript.host_participant_instance_id,
+            host_nonce: robin_run_protocol::ChallengeNonce32::from_bytes(replay_id.into_bytes()),
+            ranked_session: robin_run_protocol::RankedSessionConfigV1 {
+                recorded_replay: Some(artifact),
+                schema_version: 1,
+                mission_id: header.mission_id.clone(),
+                content_edition: content.edition,
+                content_subject: content.subject.clone(),
+                simulation_seed: robin_run_protocol::SimulationSeed64::new(header.rng_seed),
+                starting_campaign_sha256: starting_campaign.sha256,
+                starting_campaign_byte_length: starting_campaign.byte_length,
+                prepared_inputs_projection_sha256: None,
+                prepared_mission_inputs_seal_sha256: None,
+                build_manifest_sha256: authority.build_manifest_sha256,
+                content_manifest_sha256: content
+                    .canonical_digest()
+                    .map_err(|error| error.to_string())?,
+                campaign_content_manifest_sha256: None,
+                rules_config_sha256: authority
+                    .rules_config
+                    .canonical_digest()
+                    .map_err(|error| error.to_string())?,
+                custom_rules_config: custom.then_some(authority.rules_config),
+                custom_canonical_campaign: custom.then_some(starting_campaign),
+                ruleset_manifest_sha256: authority.published_ruleset.ruleset_manifest_sha256,
+                competition_manifest_sha256: None,
+                spellforge_content_sha256: None,
+                resource_locale_root: content.resource_locale_root.clone(),
+                speech_timing: SpeechTimingAuthorityV1::CoreAudioDurationsV1,
+            },
+            fresh_run_preflight_grant: None,
+            campaign_continuation_preflight_grant: None,
+            competition_run_grant: None,
+        },
+        algorithm: SignatureAlgorithmV1::Ed25519,
+        host_signature: None,
+    };
+    transcript.session_genesis_sha256 = genesis
+        .canonical_digest()
+        .map_err(|error| error.to_string())?;
+    let input = MissionEndSubmissionInput {
+        offer_request: SubmissionOfferRequestV1 {
+            schema_version: 1,
+            max_concurrent_players: transcript.max_concurrent_players,
+            participant_instance_count: transcript.participant_instance_count,
+            participant_claims: vec![robin_run_protocol::ParticipantClaimV1 {
+                seat: 0,
+                participant_instance_id: transcript.host_participant_instance_id,
+                public_key: uploader,
+                public_disclosure: robin_run_protocol::ParticipantPublicDisclosureV1::NamedProfile,
+                join_attestation: None,
+            }],
+            session_genesis: genesis,
+            mission_id: header.mission_id.clone(),
+            scope_request: ScopeRequestV1::IndividualLevel,
+            ruleset_manifest_sha256: authority.published_ruleset.ruleset_manifest_sha256,
+            competition_manifest_sha256: None,
+        },
+        replay_session_transcript: transcript,
+        requested_metrics: authority.requested_metrics,
+        campaign_controller_public_key: None,
+        starting_campaign_bytes: header.campaign.clone().into(),
+    };
+    input.validate().map_err(|error| error.to_string())?;
+    Ok((input, bytes))
 }
 
-enum MetadataLoad {
-    Loading(LeaderboardBrowser),
-    Ready(LeaderboardMetadataV1),
-    Failed(String),
-}
-
-/// State constructed at mission bootstrap and consumed exactly once when the
-/// engine first reports a terminal result.
+/// One presentation per completed attempt; no network work runs at mission launch.
 pub(super) struct MissionLeaderboardRuntime {
     preparation: Option<MissionEndPreparation>,
-    mission_id: String,
-    multiplayer: bool,
 }
-
 impl MissionLeaderboardRuntime {
-    pub(super) fn new(
-        starting_campaign: &Campaign,
-        mission_id: String,
-        multiplayer: bool,
-        admission: RankedMissionAdmission,
-        ranked_multiplayer_port: Option<crate::multiplayer::RankedMultiplayerPort>,
-    ) -> Self {
-        assert!(!mission_id.is_empty(), "leaderboard mission id is required");
-        let starting_campaign_bytes: Arc<[u8]> = bitcode::encode(starting_campaign).into();
-        assert!(
-            !starting_campaign_bytes.is_empty(),
-            "bitcode campaign encoding cannot be empty"
-        );
-        let (preferences, metadata) = match crate::leaderboard_preferences::load() {
-            Ok(preferences) => match LeaderboardApi::from_preferences(&preferences) {
-                Ok(api) => {
-                    let mut browser = LeaderboardBrowser::new(api);
-                    let metadata = match browser.begin_metadata() {
-                        Ok(()) => MetadataLoad::Loading(browser),
-                        Err(error) => MetadataLoad::Failed(error.to_string()),
-                    };
-                    (preferences, metadata)
-                }
-                Err(error) => (
-                    preferences,
-                    MetadataLoad::Failed(format!("leaderboard endpoint unavailable: {error}")),
-                ),
-            },
-            Err(error) => (
-                LeaderboardPreferences::default(),
-                MetadataLoad::Failed(format!(
-                    "leaderboard preferences could not be loaded: {error}"
-                )),
-            ),
+    pub(super) fn new() -> Self {
+        let (preferences, error) = match crate::leaderboard_preferences::load() {
+            Ok(preferences) => (preferences, None),
+            Err(error) => (LeaderboardPreferences::default(), Some(error.to_string())),
         };
         Self {
-            mission_id: mission_id.clone(),
-            multiplayer,
             preparation: Some(MissionEndPreparation {
-                mission_id,
-                multiplayer,
-                starting_campaign_bytes,
-                admission,
-                ranked_multiplayer_port,
                 preferences,
-                metadata,
-                outcome: None,
+                upload: error.map(|error| {
+                    crate::leaderboard::task::PollTask::start(async move { Err(error) })
+                }),
             }),
         }
     }
-
-    /// Restoring state after terminal presentation starts a new local attempt.
-    /// Its frozen export belongs to the completed attempt. The next export
-    /// adopts the original signed admission only after validating the resumed
-    /// mission archive. Mid-mission loads keep the existing preparation.
-    pub(super) fn after_state_restore(&mut self, campaign: &Campaign) {
-        if self.preparation.is_some() {
-            return;
+    pub(super) fn after_state_restore(&mut self, _campaign: &Campaign) {
+        if self.preparation.is_none() {
+            *self = Self::new();
         }
-        *self = Self::new(
-            campaign,
-            self.mission_id.clone(),
-            self.multiplayer,
-            RankedMissionAdmission::browse_only(
-                "restored mission requires its original archived ranked admission",
-            ),
-            None,
-        );
     }
-
-    /// Freeze the terminal outcome and transfer the prestarted metadata task
-    /// to the cooperative UI owner. The caller invokes this before recorder
-    /// finalization; the returned task must not be polled until the next outer
-    /// frame, after the terminal replay record has been flushed.
     pub(super) fn capture_terminal(
         &mut self,
-        outcome: MissionEndOutcome,
+        _outcome: MissionEndOutcome,
     ) -> Result<MissionEndPreparation, RankedError> {
-        let mut preparation = self.preparation.take().ok_or_else(|| {
+        self.preparation.take().ok_or_else(|| {
             RankedError::lifecycle("mission-end leaderboard was captured more than once")
-        })?;
-        preparation.outcome = Some(outcome);
-        Ok(preparation)
+        })
     }
 }
-
-/// Frame-polled work required before a validated [`MissionEndRunBundle`] can
-/// be handed to the existing controller.
 pub(super) struct MissionEndPreparation {
-    mission_id: String,
-    multiplayer: bool,
-    starting_campaign_bytes: Arc<[u8]>,
-    admission: RankedMissionAdmission,
-    ranked_multiplayer_port: Option<crate::multiplayer::RankedMultiplayerPort>,
     preferences: LeaderboardPreferences,
-    metadata: MetadataLoad,
-    outcome: Option<MissionEndOutcome>,
+    upload: Option<
+        crate::leaderboard::task::PollTask<Result<(MissionEndRunBundle, Arc<[u8]>), String>>,
+    >,
 }
-
 impl MissionEndPreparation {
     pub(super) fn preferences(&self) -> &LeaderboardPreferences {
         &self.preferences
@@ -361,373 +189,43 @@ impl MissionEndPreparation {
     pub(super) fn poll_bundle(
         &mut self,
         replay_exports: &crate::replay_service::ReplayExports,
-    ) -> Option<Result<MissionEndRunBundle, RankedError>> {
-        if let Some(restored) = replay_exports.restored_ranked_input() {
-            // TODO(10/F11): leaf returns String (replay exports).
-            match restored.map_err(RankedError::evidence).and_then(|input| {
-                let replay = replay_exports
-                    .snapshot()
-                    .map_err(RankedError::evidence)?
-                    .parse_sync()
-                    .map_err(RankedError::evidence)?;
-                validate_archived_ranked_input(&input, &replay)?;
-                Ok(input)
-            }) {
-                Ok(input) => {
-                    self.starting_campaign_bytes = input.starting_campaign_bytes.clone();
-                    self.admission = RankedMissionAdmission::Authorized(input);
-                }
-                Err(error) => {
-                    // The browse-only reason is retained admission data.
-                    self.admission = RankedMissionAdmission::browse_only(error.to_string());
-                }
-            }
-        }
-        let authors_submission = self
-            .ranked_multiplayer_port
-            .as_ref()
-            .is_none_or(|port| port.role() == crate::multiplayer::RankedMultiplayerRole::Host);
-        if authors_submission
-            && matches!(self.admission, RankedMissionAdmission::Signed(_))
-            && let Err(error) = self.admission.materialize_terminal(
-                &self.mission_id,
-                self.starting_campaign_bytes.clone(),
-                replay_exports,
-            )
-        {
-            self.admission = RankedMissionAdmission::browse_only(format!(
-                "terminal ranked evidence could not be sealed: {error}"
-            ));
-        }
-        // Signed admission already fixes all submission and query facets.
-        // Metadata is only browse/display authority and must never block or
-        // suppress an eligible always-submit flow.
-        if matches!(self.admission, RankedMissionAdmission::Authorized(_)) {
-            let metadata = poll_metadata_once(&mut self.metadata).ok().flatten();
-            return Some(build_bundle(
-                &self.mission_id,
-                self.multiplayer,
-                self.starting_campaign_bytes.clone(),
-                self.outcome
-                    .expect("terminal preparation must freeze an outcome before polling"),
-                &self.admission,
-                &self.preferences,
-                metadata.as_ref(),
-            ));
-        }
-        if matches!(self.admission, RankedMissionAdmission::Signed(_)) {
-            return Some(build_bundle(
-                &self.mission_id,
-                self.multiplayer,
-                self.starting_campaign_bytes.clone(),
-                self.outcome
-                    .expect("terminal preparation must freeze an outcome before polling"),
-                &self.admission,
-                &self.preferences,
-                None,
-            ));
-        }
-        let metadata = match poll_metadata_once(&mut self.metadata) {
-            Ok(Some(metadata)) => metadata,
-            Ok(None) => return None,
-            Err(error) => return Some(Err(error)),
-        };
-        Some(build_bundle(
-            &self.mission_id,
-            self.multiplayer,
-            self.starting_campaign_bytes.clone(),
-            self.outcome
-                .expect("terminal preparation must freeze an outcome before polling"),
-            &self.admission,
-            &self.preferences,
-            Some(&metadata),
-        ))
-    }
-}
-
-fn poll_metadata_once(
-    metadata: &mut MetadataLoad,
-) -> Result<Option<LeaderboardMetadataV1>, RankedError> {
-    match metadata {
-        MetadataLoad::Loading(browser) => match browser.poll() {
-            None => Ok(None),
-            Some(Ok(LeaderboardBrowseEvent::Metadata(loaded))) => {
-                *metadata = MetadataLoad::Ready(loaded.clone());
-                Ok(Some(loaded))
-            }
-            Some(Err(error)) => Err(error.into()),
-        },
-        MetadataLoad::Ready(metadata) => Ok(Some(metadata.clone())),
-        // The failure reason was rendered once when metadata loading could
-        // not start; every later poll reports that same stored reason.
-        MetadataLoad::Failed(error) => Err(RankedError::unavailable(error.clone())),
-    }
-}
-
-mod signing;
-use signing::{MultiplayerHostSubmissionAuthorizer, MultiplayerPeerCoSigner};
-
-mod presentation;
-pub(super) use presentation::{MissionEndLeaderboardTaskProgress, MissionEndLeaderboardTaskState};
-
-fn build_bundle(
-    mission_id: &str,
-    multiplayer: bool,
-    starting_campaign_bytes: Arc<[u8]>,
-    outcome: MissionEndOutcome,
-    admission: &RankedMissionAdmission,
-    preferences: &LeaderboardPreferences,
-    metadata: Option<&LeaderboardMetadataV1>,
-) -> Result<MissionEndRunBundle, RankedError> {
-    if let Some(metadata) = metadata {
-        metadata
-            .validate()
-            .map_err(|error| RankedError::from(error).context("leaderboard metadata is invalid"))?;
-    }
-    let (boards, eligible_submission, unavailable_reason) = match admission {
-        RankedMissionAdmission::Authorized(input) => {
-            if input.offer_request.mission_id != mission_id {
-                return Err(RankedError::rejected(format!(
-                    "ranked admission mission `{}` does not match loaded mission `{mission_id}`",
-                    input.offer_request.mission_id
-                )));
-            }
-            if input.starting_campaign_bytes.as_ref() != starting_campaign_bytes.as_ref() {
-                return Err(RankedError::rejected(
-                    "ranked admission starting campaign differs from the exact engine input",
-                ));
-            }
-            let boards = authorized_boards(input, metadata)?;
-            if outcome.can_submit() {
-                (boards, Some(input.clone()), None)
-            } else {
-                (
-                    boards,
-                    None,
-                    Some("only won missions can be submitted".to_owned()),
-                )
-            }
-        }
-        RankedMissionAdmission::BrowseOnly { reason } => {
-            tracing::warn!(reason = %reason, "mission-end ranked submission unavailable");
-            let metadata = metadata.ok_or_else(|| {
-                RankedError::unavailable(
-                    "leaderboard metadata is required to browse a run without ranked admission",
-                )
-            })?;
-            (
-                browse_boards(mission_id, multiplayer, preferences, metadata)?,
-                None,
-                Some(submission_unavailable_message(reason)),
-            )
-        }
-        RankedMissionAdmission::Signed(signed) => {
-            (
-                signed_admission_boards(mission_id, signed)?,
-                None,
-                Some(
-                    "this peer retained ranked evidence; the host controls submission and requests each participant's co-signature"
-                        .to_owned(),
-                ),
-            )
-        }
-    };
-    let bundle = MissionEndRunBundle {
-        outcome,
-        multiplayer,
-        boards,
-        eligible_submission,
-        submission_unavailable_reason: unavailable_reason,
-    };
-    bundle.validate()?;
-    // Cross-check the immutable campaign bytes even for browse-only sessions.
-    // This catches accidental replacement of the bootstrap capture before a
-    // future admission implementation can make the run eligible.
-    if starting_campaign_bytes.is_empty() {
-        return Err(RankedError::evidence("captured starting campaign is empty"));
-    }
-    Ok(bundle)
-}
-
-/// Keep diagnostics readable within the mission-end bundle's display limits.
-fn submission_unavailable_message(reason: &str) -> String {
-    let single_line: String = reason
-        .chars()
-        .map(|ch| if ch.is_control() { ' ' } else { ch })
-        .collect();
-    let message = single_line.trim();
-    if message.is_empty() {
-        return "Ranked submission is unavailable; see the logs for details.".to_owned();
-    }
-    if message.len() <= 500 {
-        return message.to_owned();
-    }
-    let mut end = 497;
-    while !message.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}...", &message[..end])
-}
-
-fn signed_admission_boards(
-    mission_id: &str,
-    signed: &SignedRankedMissionAdmission,
-) -> Result<Vec<MissionEndBoard>, RankedError> {
-    let lifecycle = signed
-        .lifecycle
-        .lock()
-        .map_err(|_| RankedError::lifecycle("ranked multiplayer lifecycle lock is poisoned"))?;
-    let config = if let Some(host) = lifecycle.ranked_session() {
-        &host.genesis().claim.ranked_session
-    } else if let Some(client) = lifecycle.ranked_client() {
-        &client.session_genesis.claim.ranked_session
-    } else if let Some(reason) = lifecycle.browse_only_reason() {
-        return Err(RankedError::lifecycle(format!(
-            "ranked multiplayer was downgraded: {reason}"
-        )));
-    } else {
-        return Err(RankedError::lifecycle(
-            "ranked multiplayer admission is unresolved at mission end",
-        ));
-    };
-    if config.mission_id != mission_id {
-        return Err(RankedError::rejected(
-            "ranked multiplayer config names another mission",
-        ));
-    }
-    let category = match signed.scope_request {
-        ScopeRequestV1::IndividualLevel => BoardCategoryV1::IndividualLevel,
-        ScopeRequestV1::CampaignGenesis | ScopeRequestV1::CampaignContinuation { .. } => {
-            BoardCategoryV1::Campaign
-        }
-    };
-    let boards = metric_boards(
-        BoardQueryIdentity {
-            subject_kind: LeaderboardQuerySubjectV1::Mission,
-            mission_id: Some(mission_id.to_owned()),
-            mission_scope: Some(category),
-            content_identity_sha256: config.content_manifest_sha256,
-            rules_config_sha256: config.rules_config_sha256,
-            ruleset_manifest_sha256: config.ruleset_manifest_sha256,
-            competition_manifest_sha256: config.competition_manifest_sha256,
-            max_concurrent_players: None,
-        },
-        &signed.requested_metrics,
-    );
-    if boards.is_empty() {
-        return Err(RankedError::unavailable(
-            "ranked multiplayer admission exposes no supported board metrics",
-        ));
-    }
-    Ok(boards)
-}
-
-fn browse_boards(
-    mission_id: &str,
-    multiplayer: bool,
-    preferences: &LeaderboardPreferences,
-    metadata: &LeaderboardMetadataV1,
-) -> Result<Vec<MissionEndBoard>, RankedError> {
-    let mission = metadata
-        .missions
-        .iter()
-        .find(|mission| mission.mission_id == mission_id)
-        .ok_or_else(|| {
-            RankedError::unavailable(format!(
-                "mission `{mission_id}` is not published for leaderboards"
-            ))
-        })?;
-    let category = match preferences.preferred_scope {
-        LeaderboardScope::IndividualLevel => BoardCategoryV1::IndividualLevel,
-        LeaderboardScope::Campaign => BoardCategoryV1::Campaign,
-        LeaderboardScope::FullCampaign => {
-            return Err(RankedError::unavailable(
-                "full-campaign boards require a verified campaign-chain context",
-            ));
-        }
-    };
-    let ruleset = metadata
-        .rulesets
-        .iter()
-        .filter(|ruleset| {
-            ruleset.categories.contains(&category)
-                && ruleset.content
-                    == RunContentIdentityV1::Mission {
-                        content_manifest_sha256: mission.content_manifest_sha256,
-                    }
-                && preferences
-                    .preferred_preset_id
-                    .as_deref()
-                    .is_none_or(|id| ruleset.preset_id.as_str() == id)
-                && preferences
-                    .preferred_difficulty_id
-                    .as_deref()
-                    .is_none_or(|id| ruleset.difficulty_id.as_str() == id)
-        })
-        .min_by_key(|ruleset| ruleset.ruleset_manifest_sha256)
-        .ok_or_else(|| {
-            RankedError::unavailable(format!(
-                "no published {:?} ruleset matches mission `{mission_id}` and the selected board facets",
-                preferences.preferred_scope
-            ))
-        })?;
-    // The current transport does not expose an authenticated final roster to
-    // this layer. A multiplayer browse query therefore leaves player count
-    // unfiltered instead of falsely presenting the single-player default as
-    // the just-played composition.
-    let max_players = (!multiplayer)
-        .then_some(preferences.preferred_max_concurrent_players)
-        .flatten();
-    let subject = LeaderboardQuerySubjectV1::Mission;
-    let mut boards = metric_boards(
-        BoardQueryIdentity {
-            subject_kind: subject,
-            mission_id: Some(mission_id.to_owned()),
-            mission_scope: Some(category),
-            content_identity_sha256: mission.content_manifest_sha256,
-            rules_config_sha256: ruleset.rules_config_sha256,
-            ruleset_manifest_sha256: ruleset.ruleset_manifest_sha256,
-            competition_manifest_sha256: None,
-            max_concurrent_players: max_players,
-        },
-        &ruleset.metrics,
-    );
-    if let Some(competition) = select_competition(
-        metadata,
-        mission_id,
-        category,
-        ruleset.content,
-        ruleset.rules_config_sha256,
-        ruleset.ruleset_manifest_sha256,
-        max_players,
-        preferences.preferred_competition_id.as_deref(),
-    ) {
-        boards.push(MissionEndBoard {
-            tab: LeaderboardTab::Challenge,
-            label: competition.manifest.display_name.clone(),
-            query: query(
-                BoardQueryIdentity {
-                    subject_kind: subject,
-                    mission_id: Some(mission_id.to_owned()),
-                    mission_scope: Some(category),
-                    content_identity_sha256: mission.content_manifest_sha256,
-                    rules_config_sha256: competition.manifest.rules_config_sha256,
-                    ruleset_manifest_sha256: competition.manifest.ruleset_manifest_sha256,
-                    competition_manifest_sha256: Some(competition.competition_manifest_sha256),
-                    max_concurrent_players: max_players,
+    ) -> Option<Result<(MissionEndRunBundle, Arc<[u8]>), RankedError>> {
+        if self.upload.is_none() {
+            let snapshot = match replay_exports.snapshot() {
+                Ok(snapshot) => snapshot,
+                Err(error) => return Some(Err(RankedError::evidence(error))),
+            };
+            let preferences = self.preferences.clone();
+            let task = crate::leaderboard::task::PollTask::spawn_background(
+                "prepare-replay-upload",
+                move || async move {
+                    let replay = snapshot.parse_sync()?;
+                    let (input, bytes) = prepare_recorded_submission(&replay, &preferences).await?;
+                    let boards =
+                        authorized_boards(&input, None).map_err(|error| error.to_string())?;
+                    let bundle = MissionEndRunBundle {
+                        outcome: MissionEndOutcome::from_replay(&replay),
+                        multiplayer: input.offer_request.max_concurrent_players > 1,
+                        boards,
+                        eligible_submission: Some(input),
+                        submission_unavailable_reason: None,
+                    };
+                    bundle.validate().map_err(|error| error.to_string())?;
+                    Ok((bundle, bytes))
                 },
-                competition.manifest.metric,
-            ),
-        });
+            );
+            self.upload = match task {
+                Ok(task) => Some(task),
+                Err(error) => return Some(Err(RankedError::unavailable(error.to_string()))),
+            };
+        }
+        self.upload
+            .as_ref()
+            .expect("upload task initialized")
+            .poll(|| "Replay upload preparation stopped unexpectedly".to_owned())
+            .map(|result| result.map_err(RankedError::unavailable))
     }
-    if boards.is_empty() {
-        return Err(RankedError::unavailable(
-            "selected ruleset publishes no score or time boards",
-        ));
-    }
-    Ok(boards)
 }
-
 pub(crate) fn authorized_boards(
     input: &MissionEndSubmissionInput,
     metadata: Option<&LeaderboardMetadataV1>,
@@ -844,720 +342,5 @@ fn query(identity: BoardQueryIdentity, metric: BoardMetricV1) -> LeaderboardQuer
         player_public_key: None,
         limit: DEFAULT_BOARD_PAGE_LIMIT,
         cursor: None,
-    }
-}
-
-fn select_competition<'a>(
-    metadata: &'a LeaderboardMetadataV1,
-    mission_id: &str,
-    category: BoardCategoryV1,
-    content: RunContentIdentityV1,
-    rules_config_sha256: robin_run_protocol::Digest32,
-    ruleset_manifest_sha256: robin_run_protocol::Digest32,
-    max_players: Option<u16>,
-    preferred_id: Option<&str>,
-) -> Option<&'a robin_run_protocol::CompetitionSummaryV1> {
-    metadata
-        .competitions
-        .iter()
-        .filter(|competition| {
-            competition.state == CompetitionStateV1::Active
-                && competition.manifest.subject
-                    == LeaderboardSubjectV1::Mission {
-                        mission_id: mission_id.to_owned(),
-                        category,
-                    }
-                && competition.manifest.content == content
-                && competition.manifest.rules_config_sha256 == rules_config_sha256
-                && competition.manifest.ruleset_manifest_sha256 == ruleset_manifest_sha256
-                && max_players.is_none_or(|players| {
-                    competition
-                        .manifest
-                        .participant_composition
-                        .max_concurrent_players()
-                        == players
-                })
-                && preferred_id.is_none_or(|id| competition.manifest.competition_id.as_str() == id)
-        })
-        .min_by_key(|competition| competition.competition_manifest_sha256)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::admission::*;
-    use super::*;
-    use ed25519_dalek::{Signer as _, SigningKey};
-    use robin_engine::campaign::Campaign;
-    use robin_engine::engine::{SimConfig, SimulationFrameInput};
-    use robin_engine::replay::{ReplayFile, ReplayFrame, ReplayHeader};
-    use robin_engine::replay_rankability::ReplayRankability;
-    use robin_run_protocol::DomainSignedClaim as _;
-    use robin_run_protocol::{
-        ArtifactRefV1, CampaignChainReceiptV1, CampaignChainStateV1, CampaignRosterContinuityV1,
-        ChallengeNonce32, Digest32, FreshRunPreflightGrantClaimV1, FreshRunPreflightGrantV1,
-        FreshRunPreflightRequestClaimV1, FreshRunPreflightRequestV1, FreshRunScopeV1,
-        MissionFacetV1, OfficialContentEditionV1, OfficialContentSubjectV1, OpaqueId, PublicKey32,
-        RANKED_CAMPAIGN_MEDIA_TYPE_V1, RankedSessionConfigV1, ResourceLocaleRootV1, RulesetFacetV1,
-        RunContentIdentityV1, Signature64, SimulationSeed64, SpeechTimingAuthorityV1,
-    };
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn terminal_restore_terminal_owns_a_fresh_unranked_preparation() {
-        let mut assets = robin_engine::engine::LevelAssets::new();
-        let mut engine = robin_engine::engine::Engine::new_for_test(
-            800.0,
-            600.0,
-            Campaign::default(),
-            &mut assets,
-        )
-        .unwrap();
-        let mut host = crate::host::Host::scratch(800.0, 600.0);
-        let mut game = crate::game::Game::default();
-        let checkpoint =
-            crate::save_file::GameRuntimeSnapshot::capture(&engine, &host, &game).unwrap();
-        let mut runtime = MissionLeaderboardRuntime::new(
-            engine.campaign(),
-            "RestartTest".into(),
-            false,
-            RankedMissionAdmission::browse_only("initial fixture admission"),
-            None,
-        );
-        runtime.after_state_restore(engine.campaign());
-        let first = runtime.capture_terminal(MissionEndOutcome::Lost).unwrap();
-        assert!(
-            matches!(&first.admission, RankedMissionAdmission::BrowseOnly { reason } if reason == "initial fixture admission")
-        );
-        assert!(runtime.capture_terminal(MissionEndOutcome::Lost).is_err());
-        engine.test_set_frame_counter(123);
-        checkpoint
-            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
-            .unwrap();
-        runtime.after_state_restore(engine.campaign());
-        let second = runtime.capture_terminal(MissionEndOutcome::Lost).unwrap();
-        assert_eq!(first.mission_id, second.mission_id);
-        assert_eq!(
-            second.starting_campaign_bytes.as_ref(),
-            bitcode::encode(engine.campaign())
-        );
-        assert!(
-            matches!(second.admission, RankedMissionAdmission::BrowseOnly { ref reason } if reason.contains("original archived ranked admission"))
-        );
-        assert!(second.ranked_multiplayer_port.is_none());
-        assert!(runtime.capture_terminal(MissionEndOutcome::Lost).is_err());
-    }
-
-    fn digest(byte: u8) -> Digest32 {
-        Digest32::from_bytes([byte; 32])
-    }
-
-    fn metadata() -> LeaderboardMetadataV1 {
-        LeaderboardMetadataV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            missions: vec![MissionFacetV1 {
-                mission_id: "H01".to_owned(),
-                display_name: "Huntingdon".to_owned(),
-                content_manifest_sha256: digest(1),
-            }],
-            rulesets: vec![RulesetFacetV1 {
-                ruleset_manifest_sha256: digest(3),
-                rules_config_sha256: digest(2),
-                display_name: "Original".to_owned(),
-                preset_id: OpaqueId::new("original").unwrap(),
-                preset_name: "Original".to_owned(),
-                difficulty_id: OpaqueId::new("normal").unwrap(),
-                difficulty_name: "Normal".to_owned(),
-                content: RunContentIdentityV1::Mission {
-                    content_manifest_sha256: digest(1),
-                },
-                categories: vec![BoardCategoryV1::IndividualLevel, BoardCategoryV1::Campaign],
-                metrics: vec![BoardMetricV1::OriginalScore, BoardMetricV1::FastestSuccess],
-                supports_full_campaign_boards: false,
-            }],
-            competitions: Vec::new(),
-            full_campaign: None,
-        }
-    }
-
-    fn official_fresh_setup(
-        host_key: &SigningKey,
-        ranked_session: RankedSessionConfigV1,
-    ) -> OfficialRankedSessionSetupV1 {
-        fn public_key(key: &SigningKey) -> PublicKey32 {
-            PublicKey32::from_bytes(key.verifying_key().to_bytes())
-        }
-        fn signature(key: &SigningKey, bytes: &[u8]) -> Signature64 {
-            Signature64::from_bytes(key.sign(bytes).to_bytes())
-        }
-
-        let authority_key = SigningKey::from_bytes(&[0x7a; 32]);
-        let request_claim = FreshRunPreflightRequestClaimV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            request_nonce: ChallengeNonce32::from_bytes([0x31; 32]),
-            host_public_key: public_key(host_key),
-            replay_session_id: digest(0x32),
-            host_participant_instance_id: digest(0x33),
-            host_nonce: ChallengeNonce32::from_bytes([0x34; 32]),
-            scope: FreshRunScopeV1::IndividualLevel,
-            starting_campaign: ArtifactRefV1 {
-                sha256: ranked_session.starting_campaign_sha256,
-                byte_length: ranked_session.starting_campaign_byte_length,
-                media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
-            },
-            ranked_session: ranked_session.clone(),
-        };
-        let request = FreshRunPreflightRequestV1 {
-            host_signature: signature(host_key, &request_claim.signing_bytes().unwrap()),
-            claim: request_claim,
-            algorithm: SignatureAlgorithmV1::Ed25519,
-        };
-        let grant_claim = FreshRunPreflightGrantClaimV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            grant_id: OpaqueId::new("runtime-fresh-grant-test").unwrap(),
-            grant_nonce: ChallengeNonce32::from_bytes([0x35; 32]),
-            grant_authority_public_key: public_key(&authority_key),
-            host_public_key: public_key(host_key),
-            grant_request_sha256: request.canonical_digest().unwrap(),
-            ranked_session_sha256: ranked_session.canonical_digest().unwrap(),
-            replay_session_id: request.claim.replay_session_id,
-            host_participant_instance_id: request.claim.host_participant_instance_id,
-            host_nonce: request.claim.host_nonce,
-            scope: request.claim.scope,
-            starting_campaign: request.claim.starting_campaign.clone(),
-            admitted_at_unix_ms: 1_000,
-            expires_at_unix_ms: 2_000,
-        };
-        let grant = FreshRunPreflightGrantV1 {
-            authority_signature: signature(&authority_key, &grant_claim.signing_bytes().unwrap()),
-            claim: grant_claim,
-            algorithm: SignatureAlgorithmV1::Ed25519,
-        };
-        OfficialRankedSessionSetupV1 {
-            ranked_session,
-            custom_package_present: false,
-            run_preflight: RankedRunPreflightAdmissionV1::Fresh { request, grant },
-            run_preflight_grant_public_key: public_key(&authority_key),
-            trusted_now_unix_ms: 1_500,
-        }
-    }
-
-    fn test_ranked_config(campaign_bytes: &[u8]) -> RankedSessionConfigV1 {
-        let mission_id = "Dem_Lei_MP";
-        RankedSessionConfigV1 {
-            custom_rules_config: None,
-            custom_canonical_campaign: None,
-            schema_version: SCHEMA_VERSION_V1,
-            mission_id: mission_id.to_owned(),
-            content_edition: OfficialContentEditionV1::Demo,
-            content_subject: OfficialContentSubjectV1::FieldMission {
-                mission_id: mission_id.to_owned(),
-            },
-            simulation_seed: SimulationSeed64::new(7),
-            starting_campaign_sha256: Digest32::digest_bytes(campaign_bytes),
-            starting_campaign_byte_length: u64::try_from(campaign_bytes.len()).unwrap(),
-            prepared_inputs_projection_sha256: digest(2),
-            prepared_mission_inputs_seal_sha256: digest(3),
-            build_manifest_sha256: digest(4),
-            content_manifest_sha256: digest(5),
-            campaign_content_manifest_sha256: None,
-            rules_config_sha256: digest(6),
-            ruleset_manifest_sha256: digest(7),
-            competition_manifest_sha256: None,
-            spellforge_content_sha256: None,
-            resource_locale_root: ResourceLocaleRootV1::new("1033").unwrap(),
-            speech_timing: SpeechTimingAuthorityV1::BaseInstallation,
-        }
-    }
-
-    pub(super) fn signed_single_player_admission(
-        campaign_bytes: &[u8],
-    ) -> (RankedMissionAdmission, robin_engine::replay::ReplayData) {
-        signed_single_player_admission_for_key(
-            campaign_bytes,
-            &ed25519_dalek::SigningKey::from_bytes(&[0x44; 32]),
-        )
-    }
-
-    pub(super) fn signed_single_player_admission_for_key(
-        campaign_bytes: &[u8],
-        key: &ed25519_dalek::SigningKey,
-    ) -> (RankedMissionAdmission, robin_engine::replay::ReplayData) {
-        let mission_id = "Dem_Lei_MP";
-        let config = test_ranked_config(campaign_bytes);
-        let host = crate::leaderboard_ranked_session::RankedSessionHost::new_official(
-            key,
-            robin_engine::multiplayer::NET_PROTOCOL_VERSION,
-            official_fresh_setup(key, config),
-        )
-        .unwrap();
-        let replay = ReplayFile {
-            header: ReplayHeader {
-                mission_id: mission_id.to_owned(),
-                mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
-                    mission_id, mission_id, mission_id,
-                )
-                .expect("valid built-in leaderboard-runtime test descriptor"),
-                rng_seed: 7,
-                sim_config: SimConfig::default(),
-                spellforge_package: None,
-                version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
-                total_frames: 1,
-                rankability: ReplayRankability::rankable(),
-                campaign: campaign_bytes.to_vec(),
-            },
-            frames: BTreeMap::from([(
-                0,
-                ReplayFrame {
-                    timeline_before: 0,
-                    timeline_after: 1,
-                    input: SimulationFrameInput::default(),
-                    host_controls: Vec::new(),
-                },
-            )]),
-            hashes: BTreeMap::new(),
-            save_markers: BTreeMap::new(),
-            load_backs: BTreeMap::new(),
-        }
-        .try_into()
-        .expect("valid replay fixture");
-        (
-            RankedMissionAdmission::Signed(SignedRankedMissionAdmission {
-                lifecycle: Arc::new(Mutex::new(
-                    crate::leaderboard_ranked_session::RankedSessionLifecycle::ranked(host),
-                )),
-                scope_request: ScopeRequestV1::IndividualLevel,
-                requested_metrics: vec![BoardMetricV1::OriginalScore],
-                campaign_controller_public_key: None,
-            }),
-            replay,
-        )
-    }
-
-    #[test]
-    fn multiplayer_host_proposal_may_only_change_published_board_documents() {
-        let local = test_ranked_config(b"campaign");
-        let mut board_only = local.clone();
-        board_only.ruleset_manifest_sha256 = digest(0xa1);
-        board_only.campaign_content_manifest_sha256 = Some(digest(0xa2));
-        validate_host_proposal_against_local_prepared(&local, &board_only).unwrap();
-
-        let mut changed_simulation = board_only;
-        changed_simulation.simulation_seed = SimulationSeed64::new(8);
-        assert!(
-            validate_host_proposal_against_local_prepared(&local, &changed_simulation).is_err()
-        );
-    }
-
-    #[test]
-    fn early_client_progress_survives_a_late_peer_without_becoming_unbounded() {
-        // An early client may spend almost one full phase waiting for the last
-        // authenticated peer. Fresh setup therefore gets one composed initial
-        // interval; a valid campaign selection then resets inactivity, while
-        // the independent total bound continues to advance.
-        assert_eq!(
-            ranked_preflight_timeout(
-                RANKED_PREFLIGHT_PHASE_TIMEOUT_MS + 1,
-                RANKED_PREFLIGHT_PHASE_TIMEOUT_MS + 1,
-                RANKED_PREFLIGHT_INITIAL_CLIENT_TIMEOUT_MS,
-            ),
-            None
-        );
-        assert_eq!(
-            ranked_preflight_timeout(
-                2 * RANKED_PREFLIGHT_PHASE_TIMEOUT_MS + 1,
-                1,
-                RANKED_PREFLIGHT_PHASE_TIMEOUT_MS,
-            ),
-            None
-        );
-        assert_eq!(
-            ranked_preflight_timeout(
-                RANKED_PREFLIGHT_TOTAL_TIMEOUT_MS,
-                1,
-                RANKED_PREFLIGHT_INITIAL_CLIENT_TIMEOUT_MS,
-            ),
-            Some(RankedPreflightTimeout::Total)
-        );
-    }
-
-    #[test]
-    fn ranked_preflight_no_progress_times_out_per_phase() {
-        assert_eq!(
-            ranked_preflight_timeout(
-                RANKED_PREFLIGHT_PHASE_TIMEOUT_MS - 1,
-                RANKED_PREFLIGHT_PHASE_TIMEOUT_MS,
-                RANKED_PREFLIGHT_PHASE_TIMEOUT_MS,
-            ),
-            Some(RankedPreflightTimeout::PhaseInactivity)
-        );
-        assert_eq!(
-            ranked_preflight_timeout(
-                RANKED_PREFLIGHT_INITIAL_CLIENT_TIMEOUT_MS,
-                RANKED_PREFLIGHT_INITIAL_CLIENT_TIMEOUT_MS,
-                RANKED_PREFLIGHT_INITIAL_CLIENT_TIMEOUT_MS,
-            ),
-            Some(RankedPreflightTimeout::PhaseInactivity)
-        );
-    }
-
-    fn continuation_selection_fixture() -> (
-        CampaignContinuationReceiptSelectionRequestV1,
-        CampaignChainReceiptV1,
-        PublicKey32,
-        PublicKey32,
-    ) {
-        let host = PublicKey32::from_bytes([1; 32]);
-        let controller = PublicKey32::from_bytes([2; 32]);
-        let mut config = test_ranked_config(b"campaign");
-        config.content_edition = OfficialContentEditionV1::Full;
-        config.campaign_content_manifest_sha256 = Some(digest(8));
-        let request = CampaignContinuationReceiptSelectionRequestV1::from_lobby(
-            RankedPreflightLobbyV1 {
-                host_public_key: host,
-                max_concurrent_players: 2,
-                participant_public_keys: vec![host, controller],
-            },
-            config.clone(),
-            CampaignRosterContinuityV1::ExactSameAuthenticatedKeysEverySession,
-        )
-        .unwrap();
-        let receipt = CampaignChainReceiptV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            chain_id: OpaqueId::new("chain-runtime-test").unwrap(),
-            predecessor_run_id: OpaqueId::new("run-runtime-test").unwrap(),
-            predecessor_verification_sha256: digest(9),
-            expected_starting_campaign: request.starting_campaign.clone(),
-            rules_config_sha256: config.rules_config_sha256,
-            ruleset_manifest_sha256: config.ruleset_manifest_sha256,
-            competition_manifest_sha256: config.competition_manifest_sha256,
-            campaign_content_manifest_sha256: config.campaign_content_manifest_sha256.unwrap(),
-            expected_max_concurrent_players: 2,
-            participant_public_keys: vec![host, controller],
-            campaign_controller_public_key: controller,
-            state: CampaignChainStateV1::Active,
-        };
-        (request, receipt, host, controller)
-    }
-
-    #[test]
-    fn transport_lobby_discovers_exact_multiplayer_receipt_without_pretransport_snapshot() {
-        let (request, receipt, _, controller) = continuation_selection_fixture();
-        let mut store = crate::leaderboard_chains::CampaignChainStore::empty();
-        store.accepted(receipt.clone()).unwrap();
-        assert!(
-            select_campaign_receipt_from_store(&store, &request, controller)
-                .unwrap()
-                .is_some()
-        );
-
-        let mut different_cap = receipt;
-        different_cap.expected_max_concurrent_players = 3;
-        let mut different_store = crate::leaderboard_chains::CampaignChainStore::empty();
-        different_store.accepted(different_cap).unwrap();
-        assert!(
-            select_campaign_receipt_from_store(&different_store, &request, controller)
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn controller_signs_only_the_exact_selected_continuation_claim() {
-        let (request, receipt, host, controller) = continuation_selection_fixture();
-        let selection = CampaignContinuationReceiptSelectionV1 { request, receipt };
-        let mut claim = crate::leaderboard_ranked_session::RankedSessionHost::prepare_campaign_continuation_preflight_claim(
-            host,
-            selection.request.ranked_session.clone(),
-            selection.preflight_setup().unwrap(),
-        )
-        .unwrap();
-        validate_controller_preflight_claim(&claim, &selection, host, controller).unwrap();
-
-        claim.predecessor_verification_sha256 = digest(0xaa);
-        assert!(validate_controller_preflight_claim(&claim, &selection, host, controller).is_err());
-    }
-
-    #[test]
-    fn archived_admission_survives_process_restart_and_uses_the_normal_board() {
-        use crate::replay_archive::MissionArchive;
-        use crate::replay_recording::SharedReplayRecorder;
-        use crate::save_file::{GameSaveFile, SaveProvenance};
-        use robin_engine::replay::ReplayRecorder;
-
-        let directory = tempfile::tempdir().unwrap();
-        let mut assets = robin_engine::engine::LevelAssets::new();
-        let mut engine = robin_engine::engine::Engine::new_for_test(
-            1024.0,
-            768.0,
-            Campaign::default(),
-            &mut assets,
-        )
-        .unwrap();
-        let campaign_bytes = bitcode::encode(engine.campaign());
-        let (admission, replay) = signed_single_player_admission(&campaign_bytes);
-        let service = Arc::new(crate::replay_service::ReplayService::default());
-        let archive = MissionArchive::create(&directory.path().join("original")).unwrap();
-        let recorder = ReplayRecorder::with_writer(
-            crate::game_session::replay_init::root_writer(
-                archive.writer().unwrap(),
-                service.recording().begin_recording(),
-            ),
-            replay.header().mission_id.clone(),
-            replay.header().mission_assets.clone(),
-            7,
-            engine.sim_config(),
-            engine.campaign(),
-        )
-        .unwrap();
-        let recorder = SharedReplayRecorder::archived(recorder, archive);
-        service
-            .recording()
-            .install_capture_recorder(Some(recorder.clone()));
-        service.recording().set_ranked_source(admission);
-        let mut host = crate::host::Host::scratch(1024.0, 768.0);
-        let mut game = crate::game::Game::default();
-        let mut save = GameSaveFile::capture_with_game(
-            &engine,
-            &host,
-            &game,
-            1,
-            replay.header().mission_assets.clone(),
-            "ranked checkpoint".into(),
-            SaveProvenance::new("Mission".into(), 0, "Player".into()).unwrap(),
-        )
-        .unwrap();
-        service.recording().attach_save_boundary(&mut save).unwrap();
-        let original: MissionEndSubmissionInput = serde_json::from_slice(
-            &std::fs::read(directory.path().join("original/ranked.json")).unwrap(),
-        )
-        .unwrap();
-        drop(recorder);
-        drop(service);
-
-        let service = Arc::new(crate::replay_service::ReplayService::default());
-        let archive = MissionArchive::create(&directory.path().join("new-process")).unwrap();
-        let recorder = ReplayRecorder::with_writer(
-            crate::game_session::replay_init::root_writer(
-                archive.writer().unwrap(),
-                service.recording().begin_recording(),
-            ),
-            replay.header().mission_id.clone(),
-            replay.header().mission_assets.clone(),
-            7,
-            engine.sim_config(),
-            engine.campaign(),
-        )
-        .unwrap();
-        let recorder = SharedReplayRecorder::archived(recorder, archive);
-        service
-            .recording()
-            .install_capture_recorder(Some(recorder.clone()));
-        save.clone()
-            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
-            .unwrap();
-        let crate::replay_recording::ReplayRestoreBoundary {
-            ordinal,
-            timeline_frame: timeline,
-            marker_ordinal: target,
-        } = recorder.restore(&save, &service.recording()).unwrap();
-        recorder.write_load_back(ordinal, target.unwrap(), false);
-        recorder
-            .commit_restore_boundary(
-                timeline,
-                robin_engine::replay::state_hash(&engine),
-                &crate::mission_replays::RecordingIndex::disabled(),
-            )
-            .unwrap();
-        let restored = service.exports().restored_ranked_input().unwrap().unwrap();
-        assert_eq!(
-            restored, original,
-            "the original signatures and campaign must survive, without minting new admission"
-        );
-        let data = service.exports().snapshot().unwrap().parse_sync().unwrap();
-        validate_archived_ranked_input(&restored, &data).unwrap();
-        let mut preparation = MissionEndPreparation {
-            mission_id: replay.header().mission_id.clone(),
-            multiplayer: false,
-            starting_campaign_bytes: Arc::from(b"unrelated fresh startup".as_slice()),
-            admission: RankedMissionAdmission::browse_only("fresh process has no admission"),
-            ranked_multiplayer_port: None,
-            preferences: LeaderboardPreferences::default(),
-            metadata: MetadataLoad::Failed("metadata must not block signed submission".into()),
-            outcome: Some(MissionEndOutcome::Won),
-        };
-        let bundle = preparation
-            .poll_bundle(&service.exports())
-            .unwrap()
-            .unwrap();
-        assert_eq!(bundle.eligible_submission.unwrap(), original);
-        assert!(
-            bundle.boards.iter().all(|board| matches!(
-                board.query.subject_kind,
-                LeaderboardQuerySubjectV1::Mission
-            ))
-        );
-        let mut forged = restored;
-        forged.offer_request.session_genesis.host_signature = Signature64::from_bytes([0x55; 64]);
-        assert!(validate_archived_ranked_input(&forged, &data).is_err());
-    }
-
-    #[test]
-    fn signed_single_player_win_materializes_exact_terminal_submission() {
-        let campaign_bytes = bitcode::encode(&Campaign::default());
-        let (mut admission, replay) = signed_single_player_admission(&campaign_bytes);
-        admission
-            .materialize_terminal_from_replay(
-                "Dem_Lei_MP",
-                Arc::from(campaign_bytes.clone()),
-                &replay,
-            )
-            .unwrap();
-
-        let bundle = build_bundle(
-            "Dem_Lei_MP",
-            false,
-            Arc::from(campaign_bytes),
-            MissionEndOutcome::Won,
-            &admission,
-            &LeaderboardPreferences::default(),
-            None,
-        )
-        .unwrap();
-        let input = bundle.eligible_submission.unwrap();
-        assert_eq!(input.offer_request.max_concurrent_players, 1);
-        assert_eq!(input.offer_request.participant_instance_count, 1);
-        assert_eq!(input.replay_session_transcript.max_concurrent_players, 1);
-    }
-
-    #[test]
-    fn signed_lost_and_interrupted_runs_keep_boards_but_cannot_submit() {
-        for outcome in [MissionEndOutcome::Lost, MissionEndOutcome::Interrupted] {
-            let campaign_bytes = bitcode::encode(&Campaign::default());
-            let (mut admission, replay) = signed_single_player_admission(&campaign_bytes);
-            admission
-                .materialize_terminal_from_replay(
-                    "Dem_Lei_MP",
-                    Arc::from(campaign_bytes.clone()),
-                    &replay,
-                )
-                .unwrap();
-            let bundle = build_bundle(
-                "Dem_Lei_MP",
-                false,
-                Arc::from(campaign_bytes),
-                outcome,
-                &admission,
-                &LeaderboardPreferences::default(),
-                None,
-            )
-            .unwrap();
-            assert_eq!(bundle.boards.len(), 1);
-            assert!(bundle.eligible_submission.is_none());
-            assert_eq!(
-                bundle.submission_unavailable_reason.as_deref(),
-                Some("only won missions can be submitted")
-            );
-        }
-    }
-
-    #[test]
-    fn browse_only_builds_real_server_facets_but_never_submission_authority() {
-        let bundle = build_bundle(
-            "H01",
-            false,
-            Arc::from([1_u8, 2, 3]),
-            MissionEndOutcome::Won,
-            &RankedMissionAdmission::browse_only("missing signed genesis"),
-            &LeaderboardPreferences::default(),
-            Some(&metadata()),
-        )
-        .unwrap();
-
-        assert_eq!(bundle.boards.len(), 2);
-        assert!(bundle.eligible_submission.is_none());
-        assert_eq!(
-            bundle.submission_unavailable_reason.as_deref(),
-            Some("missing signed genesis")
-        );
-        assert!(
-            bundle
-                .boards
-                .iter()
-                .all(|board| board.query.content_identity_sha256 == digest(1))
-        );
-    }
-
-    #[test]
-    fn browse_only_diagnostics_cannot_suppress_leaderboards() {
-        for reason in [
-            String::new(),
-            "\n\r\t\0".to_owned(),
-            "ranked setup failed:\n\tconnection closed\r\n".to_owned(),
-            "x".repeat(501),
-            "界".repeat(200),
-        ] {
-            let bundle = build_bundle(
-                "H01",
-                false,
-                Arc::from([1_u8, 2, 3]),
-                MissionEndOutcome::Won,
-                &RankedMissionAdmission::BrowseOnly { reason },
-                &LeaderboardPreferences::default(),
-                Some(&metadata()),
-            )
-            .unwrap();
-            assert_eq!(bundle.boards.len(), 2);
-            assert!(bundle.eligible_submission.is_none());
-            let message = bundle.submission_unavailable_reason.unwrap();
-            assert!(!message.is_empty());
-            assert!(message.len() <= 500);
-            assert!(!message.chars().any(char::is_control));
-        }
-        assert_eq!(
-            submission_unavailable_message("error:\nconnection closed"),
-            "error: connection closed"
-        );
-        assert_eq!(
-            submission_unavailable_message(&"界".repeat(200)),
-            format!("{}...", "界".repeat(165))
-        );
-    }
-
-    #[test]
-    fn every_terminal_outcome_gets_the_same_browse_boards() {
-        for outcome in [
-            MissionEndOutcome::Won,
-            MissionEndOutcome::Lost,
-            MissionEndOutcome::Interrupted,
-        ] {
-            let bundle = build_bundle(
-                "H01",
-                true,
-                Arc::from([9_u8]),
-                outcome,
-                &RankedMissionAdmission::browse_only("no authority"),
-                &LeaderboardPreferences::default(),
-                Some(&metadata()),
-            )
-            .unwrap();
-            assert_eq!(bundle.boards.len(), 2);
-            assert!(bundle.multiplayer);
-        }
-    }
-
-    #[test]
-    fn missing_published_mission_fails_instead_of_fabricating_query_digests() {
-        let error = build_bundle(
-            "unknown",
-            false,
-            Arc::from([1_u8]),
-            MissionEndOutcome::Won,
-            &RankedMissionAdmission::browse_only("no authority"),
-            &LeaderboardPreferences::default(),
-            Some(&metadata()),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(error.contains("not published"), "{error}");
     }
 }

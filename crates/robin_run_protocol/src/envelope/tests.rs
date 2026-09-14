@@ -12,6 +12,7 @@ fn submission_artifacts() -> crate::SubmissionArtifactsV1 {
 
 fn ranked_session() -> RankedSessionConfigV1 {
     RankedSessionConfigV1 {
+        recorded_replay: None,
         custom_rules_config: None,
         custom_canonical_campaign: None,
         schema_version: 1,
@@ -23,8 +24,8 @@ fn ranked_session() -> RankedSessionConfigV1 {
         simulation_seed: SimulationSeed64::new(42),
         starting_campaign_sha256: Digest32::from_bytes([8; 32]),
         starting_campaign_byte_length: 321,
-        prepared_inputs_projection_sha256: Digest32::from_bytes([18; 32]),
-        prepared_mission_inputs_seal_sha256: Digest32::from_bytes([19; 32]),
+        prepared_inputs_projection_sha256: Some(Digest32::from_bytes([18; 32])),
+        prepared_mission_inputs_seal_sha256: Some(Digest32::from_bytes([19; 32])),
         build_manifest_sha256: Digest32::from_bytes([4; 32]),
         content_manifest_sha256: Digest32::from_bytes([5; 32]),
         campaign_content_manifest_sha256: None,
@@ -115,7 +116,7 @@ fn session_genesis() -> ReplaySessionGenesisV1 {
             competition_run_grant: None,
         },
         algorithm: SignatureAlgorithmV1::Ed25519,
-        host_signature: Signature64::from_bytes([14; 64]),
+        host_signature: Some(Signature64::from_bytes([14; 64])),
     }
 }
 
@@ -911,7 +912,7 @@ fn offer_binding_rejects_each_substituted_request_field() {
         );
     }
     let mut changed = request.clone();
-    changed.session_genesis.host_signature = Signature64::from_bytes([99; 64]);
+    changed.session_genesis.host_signature = Some(Signature64::from_bytes([99; 64]));
     assert_eq!(
         crate::validate_offer_binding(&changed, &offer),
         Err(ValidationError::ClaimMismatch {
@@ -985,6 +986,45 @@ fn submission() -> SubmissionEnvelopeV1 {
         campaign_continuation_authorization: None,
         requested_metrics: vec![BoardMetricV1::OriginalScore],
     }
+}
+
+#[test]
+fn recorded_upload_needs_no_pre_game_signature_grant_or_input_seal() {
+    let mut submission = submission();
+    let genesis = &mut submission.offer.session_genesis;
+    genesis.host_signature = None;
+    genesis.claim.fresh_run_preflight_grant = None;
+    genesis.claim.ranked_session.recorded_replay = Some(submission.artifacts.replay.clone());
+    genesis.claim.replay_session_id = submission.artifacts.replay.artifact.sha256;
+    submission.replay_session_transcript.replay_session_id = genesis.claim.replay_session_id;
+    genesis
+        .claim
+        .ranked_session
+        .prepared_inputs_projection_sha256 = None;
+    genesis
+        .claim
+        .ranked_session
+        .prepared_mission_inputs_seal_sha256 = None;
+    submission.replay_session_transcript.session_genesis_sha256 =
+        genesis.canonical_digest().unwrap();
+    submission.validate().unwrap();
+    let request = SubmissionOfferRequestV1 {
+        schema_version: 1,
+        max_concurrent_players: submission.offer.max_concurrent_players,
+        participant_instance_count: submission.offer.participant_instance_count,
+        participant_claims: submission.offer.participant_claims.clone(),
+        session_genesis: submission.offer.session_genesis.clone(),
+        mission_id: submission.offer.mission_id.clone(),
+        scope_request: ScopeRequestV1::IndividualLevel,
+        ruleset_manifest_sha256: submission.offer.ruleset_manifest_sha256,
+        competition_manifest_sha256: None,
+    };
+    request.validate().unwrap();
+    submission.artifacts.replay.artifact.sha256 = Digest32::from_bytes([91; 32]);
+    assert!(
+        submission.validate().is_err(),
+        "the upload must still bind the selected replay"
+    );
 }
 
 #[test]
@@ -1067,7 +1107,7 @@ fn ranked_session_cross_binds_exact_prepared_inputs_seal() {
     let mut ranked = session_genesis().claim.ranked_session;
     let mut seal = PreparedMissionInputsSealV1 {
         schema_version: 1,
-        prepared_inputs_projection_sha256: ranked.prepared_inputs_projection_sha256,
+        prepared_inputs_projection_sha256: ranked.prepared_inputs_projection_sha256.unwrap(),
         content_manifest_sha256: ranked.content_manifest_sha256,
         content_edition: ranked.content_edition,
         content_subject: ranked.content_subject.clone(),
@@ -1080,7 +1120,7 @@ fn ranked_session_cross_binds_exact_prepared_inputs_seal() {
         spellforge_content_sha256: None,
         original_rng_replay_sha256: None,
     };
-    ranked.prepared_mission_inputs_seal_sha256 = seal.canonical_digest().unwrap();
+    ranked.prepared_mission_inputs_seal_sha256 = Some(seal.canonical_digest().unwrap());
     assert!(ranked.validate_prepared_inputs_seal(&seal).is_ok());
 
     seal.starting_campaign_byte_length += 1;
@@ -1093,7 +1133,7 @@ fn ranked_session_cross_binds_exact_prepared_inputs_seal() {
 
     seal.prepared_inputs_projection_sha256 = Digest32::from_bytes([99; 32]);
     assert!(ranked.validate_prepared_inputs_seal(&seal).is_err());
-    seal.prepared_inputs_projection_sha256 = ranked.prepared_inputs_projection_sha256;
+    seal.prepared_inputs_projection_sha256 = ranked.prepared_inputs_projection_sha256.unwrap();
     seal.original_rng_replay_sha256 = Some(Digest32::from_bytes([98; 32]));
     assert!(matches!(
         ranked.validate_prepared_inputs_seal(&seal),
@@ -1413,7 +1453,7 @@ fn named_guest_join_is_bound_to_genesis_transcript_and_final_claim() {
     assert!(validate_participant_session_context(&genesis, &claim_only).is_err());
 
     let mut substituted_signature = genesis.clone();
-    substituted_signature.host_signature = Signature64::from_bytes([0xfe; 64]);
+    substituted_signature.host_signature = Some(Signature64::from_bytes([0xfe; 64]));
     assert!(substituted_signature.validate().is_ok());
     assert!(validate_participant_session_context(&substituted_signature, &claims).is_err());
 

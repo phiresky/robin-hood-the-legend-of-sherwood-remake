@@ -38,6 +38,30 @@ pub enum MissionEndOutcome {
 }
 
 impl MissionEndOutcome {
+    pub(crate) fn from_replay(replay: &robin_engine::replay::ReplayData) -> Self {
+        use robin_engine::{game_operation::GameCode, player_command::PlayerCommand};
+        for ordinal in (0..replay.frame_count()).rev() {
+            let frame = replay.frame(ordinal).expect("validated replay frame");
+            for input in frame
+                .input
+                .commands
+                .iter()
+                .chain(&frame.input.post_commands)
+                .rev()
+            {
+                if let PlayerCommand::ApplyQuitMissionUpdates { exit_code, .. } =
+                    &input.player_input().command
+                {
+                    return if *exit_code == GameCode::LevelSucceeded {
+                        Self::Won
+                    } else {
+                        Self::Lost
+                    };
+                }
+            }
+        }
+        Self::Interrupted
+    }
     pub const fn can_submit(self) -> bool {
         matches!(self, Self::Won)
     }
@@ -163,6 +187,19 @@ pub struct MissionEndRunBundle {
 }
 
 impl MissionEndRunBundle {
+    fn can_submit(&self) -> bool {
+        self.outcome.can_submit()
+            || self.eligible_submission.as_ref().is_some_and(|input| {
+                input
+                    .offer_request
+                    .session_genesis
+                    .claim
+                    .ranked_session
+                    .recorded_replay
+                    .is_some()
+            })
+    }
+
     pub fn validate(&self) -> Result<(), MissionEndLeaderboardError> {
         if self.boards.is_empty() {
             return Err(MissionEndLeaderboardError::InvalidRunBundle(
@@ -180,7 +217,7 @@ impl MissionEndRunBundle {
             tabs.push(board.tab);
         }
         if let Some(input) = &self.eligible_submission {
-            if !self.outcome.can_submit() {
+            if !self.can_submit() {
                 return Err(MissionEndLeaderboardError::InvalidRunBundle(
                     "only won missions may expose a submission".to_owned(),
                 ));
@@ -295,6 +332,19 @@ pub trait MissionEndPeerCoSigner {
 
 pub trait MissionEndReplayExporter {
     fn begin(&mut self) -> Result<Box<dyn MissionEndTask<Arc<[u8]>>>, String>;
+}
+
+#[derive(Serialize)]
+pub(crate) struct RecordedReplayExporter(#[serde(skip)] pub(crate) Arc<[u8]>);
+robin_util::deny_deserialize!(
+    RecordedReplayExporter,
+    "archive exporters require validated recording bytes"
+);
+impl MissionEndReplayExporter for RecordedReplayExporter {
+    fn begin(&mut self) -> Result<Box<dyn MissionEndTask<Arc<[u8]>>>, String> {
+        let mut bytes = Some(self.0.clone());
+        Ok(Box::new(move || bytes.take().map(Ok)))
+    }
 }
 
 pub trait MissionEndLeaderboardBackend {
@@ -701,7 +751,7 @@ impl MissionEndLeaderboardController {
             .or_else(|| run.boards.first())
             .expect("run validation requires one board")
             .tab;
-        let submission_state = if !run.outcome.can_submit() {
+        let submission_state = if !run.can_submit() {
             MissionSubmissionState::WonMissionRequired
         } else if run.eligible_submission.is_some() {
             MissionSubmissionState::AwaitingConsent
@@ -731,7 +781,7 @@ impl MissionEndLeaderboardController {
         }
         if controller
             .preferences
-            .automatically_submit(controller.run.outcome.can_submit())
+            .automatically_submit(controller.run.can_submit())
             && controller.run.eligible_submission.is_some()
         {
             controller.start_submission();
@@ -759,15 +809,14 @@ impl MissionEndLeaderboardController {
         )?;
         controller.peer_co_signer = Some(peer_co_signer);
         controller.peer_receipt_controller_public_key = receipt_controller_public_key;
-        controller.submission_task =
-            SubmissionTask::Dormant(if controller.run.outcome.can_submit() {
-                MissionSubmissionState::AwaitingConsent
-            } else {
-                MissionSubmissionState::WonMissionRequired
-            });
+        controller.submission_task = SubmissionTask::Dormant(if controller.run.can_submit() {
+            MissionSubmissionState::AwaitingConsent
+        } else {
+            MissionSubmissionState::WonMissionRequired
+        });
         if controller
             .preferences
-            .automatically_submit(controller.run.outcome.can_submit())
+            .automatically_submit(controller.run.can_submit())
         {
             controller.start_submission();
         }
@@ -1033,7 +1082,7 @@ impl MissionEndLeaderboardController {
 
     fn start_submission(&mut self) {
         if let Some(peer) = self.peer_co_signer.as_mut() {
-            if !self.run.outcome.can_submit() {
+            if !self.run.can_submit() {
                 self.submission_task =
                     SubmissionTask::Dormant(MissionSubmissionState::WonMissionRequired);
                 return;
@@ -1056,7 +1105,7 @@ impl MissionEndLeaderboardController {
             ));
             return;
         };
-        if !self.run.outcome.can_submit() {
+        if !self.run.can_submit() {
             self.submission_task =
                 SubmissionTask::Dormant(MissionSubmissionState::WonMissionRequired);
             return;
@@ -1278,7 +1327,7 @@ pub(crate) fn canonical_replay_artifact(
     bytes: &[u8],
     expected_starting_campaign: &[u8],
     expected_mission_id: &str,
-    transcript: &ReplaySessionTranscriptV1,
+    _transcript: &ReplaySessionTranscriptV1,
 ) -> Result<ReplayArtifactV1, MissionEndLeaderboardError> {
     let text = std::str::from_utf8(bytes).map_err(|_| {
         MissionEndLeaderboardError::ReplayExport("compact replay is not UTF-8".to_owned())
@@ -1304,15 +1353,6 @@ pub(crate) fn canonical_replay_artifact(
                 .to_owned(),
         ));
     }
-    replay.ranked_submission_verdict().map_err(|reason| {
-        MissionEndLeaderboardError::ReplayExport(format!(
-            "compact replay is not eligible for ranked submission: {}",
-            reason.stable_code()
-        ))
-    })?;
-    replay
-        .validate_ranked_command_admission(transcript)
-        .map_err(MissionEndLeaderboardError::ReplayExport)?;
     Ok(ReplayArtifactV1 {
         artifact: ArtifactRefV1 {
             sha256: Digest32::digest_bytes(bytes),
@@ -1495,8 +1535,7 @@ impl MissionEndReplayExporter for ActiveMissionReplayExporter {
     }
 }
 
-/// Single-player production authorizer. Multiplayer uses the same exact
-/// request type through an authenticated co-sign transport adapter.
+/// Authenticate the uploader of a recorded run. Other seats remain anonymous.
 pub struct LocalMissionEndSubmissionAuthorizer;
 
 /// Local single-participant authorization. The signer future starts in
@@ -2113,6 +2152,45 @@ mod tests {
     }
 
     #[test]
+    fn recorded_attempts_can_be_uploaded_regardless_of_local_outcome() {
+        for outcome in [MissionEndOutcome::Lost, MissionEndOutcome::Interrupted] {
+            let mut fixture = fixture(MissionEndOutcome::Won);
+            fixture.bundle.outcome = outcome;
+            let input = fixture.bundle.eligible_submission.as_mut().unwrap();
+            let genesis = &mut input.offer_request.session_genesis;
+            genesis.host_signature = None;
+            genesis.claim.fresh_run_preflight_grant = None;
+            genesis.claim.ranked_session.recorded_replay = Some(ReplayArtifactV1 {
+                artifact: ArtifactRefV1 {
+                    sha256: Digest32::digest_bytes(&fixture.compact),
+                    byte_length: fixture.compact.len() as u64,
+                    media_type: RANKED_REPLAY_MEDIA_TYPE_V1.to_owned(),
+                },
+                replay_schema_version: robin_run_protocol::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1,
+            });
+            genesis
+                .claim
+                .ranked_session
+                .prepared_inputs_projection_sha256 = None;
+            genesis
+                .claim
+                .ranked_session
+                .prepared_mission_inputs_seal_sha256 = None;
+            input.replay_session_transcript.session_genesis_sha256 =
+                genesis.canonical_digest().unwrap();
+            let controller = controller(
+                fixture,
+                LeaderboardPreferences::default(),
+                Arc::new(Mutex::new(BackendCalls::default())),
+            );
+            assert_eq!(
+                controller.submission_state(),
+                &MissionSubmissionState::AwaitingConsent
+            );
+        }
+    }
+
+    #[test]
     fn presentation_toggle_hides_only_the_board_and_does_not_invent_work() {
         let calls = Arc::new(Mutex::new(BackendCalls::default()));
         let preferences = LeaderboardPreferences {
@@ -2422,7 +2500,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_artifact_rejects_tainted_rankability_evidence() {
+    fn canonical_artifact_preserves_taints_for_server_verification() {
         let fixture = fixture(MissionEndOutcome::Won);
         let input = fixture.bundle.eligible_submission.as_ref().unwrap();
         let text = std::str::from_utf8(&fixture.compact).unwrap();
@@ -2437,14 +2515,18 @@ mod tests {
             .unwrap();
         let tainted = robin_replay_format::encode_compact(&replay, &engine_hash).unwrap();
 
-        let error = canonical_replay_artifact(
+        let artifact = canonical_replay_artifact(
             tainted.as_bytes(),
             &input.starting_campaign_bytes,
             "Dem_Lei_MP",
             &input.replay_session_transcript,
         )
-        .unwrap_err();
-        assert!(error.to_string().contains("http_player_command"));
+        .unwrap();
+        assert_eq!(
+            artifact.artifact.sha256,
+            Digest32::digest_bytes(tainted.as_bytes())
+        );
+        assert!(replay.ranked_submission_verdict().is_err());
     }
 
     #[test]

@@ -60,7 +60,7 @@ impl MissionEndLeaderboardTaskState {
                     render_preparing(renderer, resources, cursor);
                     return MissionEndLeaderboardTaskProgress::Pending;
                 };
-                let bundle = match result {
+                let (bundle, bytes) = match result {
                     Ok(bundle) => bundle,
                     Err(error) => {
                         tracing::warn!("mission-end leaderboards unavailable: {error}");
@@ -85,83 +85,13 @@ impl MissionEndLeaderboardTaskState {
                         return MissionEndLeaderboardTaskProgress::Finished;
                     }
                 };
-                let peer_co_signer = if preparation.ranked_multiplayer_port.as_ref().is_some_and(
-                    |port| port.role() == crate::multiplayer::RankedMultiplayerRole::Client,
-                ) {
-                    let Some(port) = preparation.ranked_multiplayer_port.take() else {
-                        unreachable!("ranked client port was present")
-                    };
-                    let RankedMissionAdmission::Signed(signed) = &preparation.admission else {
-                        tracing::warn!(
-                            "ranked client port reached mission end without retained signed admission"
-                        );
-                        self.phase = MissionEndLeaderboardTaskPhase::Finished;
-                        return MissionEndLeaderboardTaskProgress::Finished;
-                    };
-                    match MultiplayerPeerCoSigner::new(
-                        port,
-                        signed,
-                        preparation.mission_id.clone(),
-                        preparation.starting_campaign_bytes.clone(),
-                        replay_exports.clone(),
-                    ) {
-                        Ok(peer) => {
-                            let receipt_controller_public_key =
-                                peer.receipt_controller_public_key();
-                            Some((
-                                Box::new(peer) as Box<dyn MissionEndPeerCoSigner>,
-                                receipt_controller_public_key,
-                            ))
-                        }
-                        Err(error) => {
-                            tracing::warn!("ranked peer co-signing unavailable: {error}");
-                            self.phase = MissionEndLeaderboardTaskPhase::Finished;
-                            return MissionEndLeaderboardTaskProgress::Finished;
-                        }
-                    }
-                } else {
-                    None
-                };
-                let authorizer: Box<dyn MissionEndSubmissionAuthorizer> = if bundle.multiplayer
-                    && bundle.eligible_submission.is_some()
-                {
-                    let Some(port) = preparation.ranked_multiplayer_port.take() else {
-                        tracing::error!(
-                            "ranked multiplayer admission reached mission end without its authenticated authorization port"
-                        );
-                        self.phase = MissionEndLeaderboardTaskPhase::Finished;
-                        return MissionEndLeaderboardTaskProgress::Finished;
-                    };
-                    match MultiplayerHostSubmissionAuthorizer::new(port) {
-                        Ok(authorizer) => Box::new(authorizer),
-                        Err(error) => {
-                            tracing::error!("ranked multiplayer authorizer unavailable: {error}");
-                            self.phase = MissionEndLeaderboardTaskPhase::Finished;
-                            return MissionEndLeaderboardTaskProgress::Finished;
-                        }
-                    }
-                } else {
-                    Box::new(LocalMissionEndSubmissionAuthorizer)
-                };
-                let controller = if let Some((peer, receipt_controller_public_key)) = peer_co_signer
-                {
-                    MissionEndLeaderboardController::new_peer(
-                        bundle,
-                        preferences,
-                        Box::new(HttpMissionEndLeaderboardBackend::new(api)),
-                        peer,
-                        receipt_controller_public_key,
-                        replay_exports,
-                    )
-                } else {
-                    MissionEndLeaderboardController::new(
-                        bundle,
-                        preferences,
-                        Box::new(HttpMissionEndLeaderboardBackend::new(api)),
-                        authorizer,
-                        Box::new(ActiveMissionReplayExporter::new(replay_exports)),
-                    )
-                };
+                let controller = MissionEndLeaderboardController::new(
+                    bundle,
+                    preferences,
+                    Box::new(HttpMissionEndLeaderboardBackend::new(api)),
+                    Box::new(LocalMissionEndSubmissionAuthorizer),
+                    Box::new(RecordedReplayExporter(bytes)),
+                );
                 let mut controller = match controller {
                     Ok(controller) => controller,
                     Err(error) => {

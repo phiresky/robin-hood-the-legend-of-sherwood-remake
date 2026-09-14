@@ -732,6 +732,7 @@ fn ranked_identity(byte: u8) -> super::RankedPeerIdentity {
 
 fn official_ranked_setup(host_key: &iroh::SecretKey) -> OfficialRankedSessionSetupV1 {
     let ranked_session = RankedSessionConfigV1 {
+        recorded_replay: None,
         custom_rules_config: None,
         custom_canonical_campaign: None,
         schema_version: SCHEMA_VERSION_V1,
@@ -743,8 +744,8 @@ fn official_ranked_setup(host_key: &iroh::SecretKey) -> OfficialRankedSessionSet
         simulation_seed: SimulationSeed64::new(7),
         starting_campaign_sha256: Digest32::from_bytes([1; 32]),
         starting_campaign_byte_length: 1,
-        prepared_inputs_projection_sha256: Digest32::from_bytes([2; 32]),
-        prepared_mission_inputs_seal_sha256: Digest32::from_bytes([3; 32]),
+        prepared_inputs_projection_sha256: Some(Digest32::from_bytes([2; 32])),
+        prepared_mission_inputs_seal_sha256: Some(Digest32::from_bytes([3; 32])),
         build_manifest_sha256: Digest32::from_bytes([4; 32]),
         content_manifest_sha256: Digest32::from_bytes([5; 32]),
         campaign_content_manifest_sha256: None,

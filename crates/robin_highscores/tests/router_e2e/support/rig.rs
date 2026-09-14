@@ -865,8 +865,10 @@ impl TestRig {
         let grant: FreshRunPreflightGrantV1 = json_body(response).await;
         grant.validate_request(&preflight).unwrap();
         request.session_genesis.claim.fresh_run_preflight_grant = Some(grant);
-        request.session_genesis.host_signature =
-            sign(owner, &request.session_genesis.signing_bytes().unwrap());
+        request.session_genesis.host_signature = Some(sign(
+            owner,
+            &request.session_genesis.signing_bytes().unwrap(),
+        ));
         request.validate().unwrap();
     }
 
@@ -959,8 +961,10 @@ impl TestRig {
             .session_genesis
             .claim
             .campaign_continuation_preflight_grant = Some(grant);
-        request.session_genesis.host_signature =
-            sign(host, &request.session_genesis.signing_bytes().unwrap());
+        request.session_genesis.host_signature = Some(sign(
+            host,
+            &request.session_genesis.signing_bytes().unwrap(),
+        ));
         request.validate().unwrap();
     }
 
@@ -1422,6 +1426,7 @@ impl TestRig {
                 host_participant_instance_id: participant_instance_id,
                 host_nonce: ChallengeNonce32::from_bytes([sequence.wrapping_add(80); 32]),
                 ranked_session: robin_run_protocol::RankedSessionConfigV1 {
+                    recorded_replay: None,
                     custom_rules_config: None,
                     custom_canonical_campaign: None,
                     schema_version: SCHEMA_VERSION_V1,
@@ -1431,12 +1436,12 @@ impl TestRig {
                     simulation_seed: SimulationSeed64::new(u64::from(sequence)),
                     starting_campaign_sha256,
                     starting_campaign_byte_length,
-                    prepared_inputs_projection_sha256: Digest32::from_bytes(
+                    prepared_inputs_projection_sha256: Some(Digest32::from_bytes(
                         [sequence.wrapping_add(1); 32],
-                    ),
-                    prepared_mission_inputs_seal_sha256: Digest32::from_bytes(
+                    )),
+                    prepared_mission_inputs_seal_sha256: Some(Digest32::from_bytes(
                         [sequence.wrapping_add(2); 32],
-                    ),
+                    )),
                     build_manifest_sha256: self.build_sha256,
                     content_manifest_sha256,
                     campaign_content_manifest_sha256: self.campaign_content_sha256,
@@ -1452,9 +1457,9 @@ impl TestRig {
                 competition_run_grant: None,
             },
             algorithm: SignatureAlgorithmV1::Ed25519,
-            host_signature: Signature64::default(),
+            host_signature: Some(Signature64::default()),
         };
-        session_genesis.host_signature = sign(key, &session_genesis.signing_bytes().unwrap());
+        session_genesis.host_signature = Some(sign(key, &session_genesis.signing_bytes().unwrap()));
 
         SubmissionOfferRequestV1 {
             schema_version: SCHEMA_VERSION_V1,
@@ -1523,7 +1528,7 @@ impl TestRig {
         grant.validate_request(&grant_request).unwrap();
         offer.session_genesis.claim.competition_run_grant = Some(grant);
         offer.session_genesis.host_signature =
-            sign(key, &offer.session_genesis.signing_bytes().unwrap());
+            Some(sign(key, &offer.session_genesis.signing_bytes().unwrap()));
         self.authorize_fresh_request(key, &mut offer, sequence)
             .await;
         offer
@@ -1546,6 +1551,7 @@ impl TestRig {
                 host_participant_instance_id: participant_instance_id,
                 host_nonce: ChallengeNonce32::from_bytes([sequence.wrapping_add(80); 32]),
                 ranked_session: robin_run_protocol::RankedSessionConfigV1 {
+                    recorded_replay: None,
                     custom_rules_config: None,
                     custom_canonical_campaign: None,
                     schema_version: SCHEMA_VERSION_V1,
@@ -1560,12 +1566,12 @@ impl TestRig {
                     ),
                     starting_campaign_sha256: self.starting_campaign_sha256,
                     starting_campaign_byte_length: self.starting_campaign.len() as u64,
-                    prepared_inputs_projection_sha256: Digest32::from_bytes(
+                    prepared_inputs_projection_sha256: Some(Digest32::from_bytes(
                         [sequence.wrapping_add(1); 32],
-                    ),
-                    prepared_mission_inputs_seal_sha256: Digest32::from_bytes(
+                    )),
+                    prepared_mission_inputs_seal_sha256: Some(Digest32::from_bytes(
                         [sequence.wrapping_add(2); 32],
-                    ),
+                    )),
                     build_manifest_sha256: self.build_sha256,
                     content_manifest_sha256: self.content_sha256,
                     campaign_content_manifest_sha256: None,
@@ -1581,9 +1587,9 @@ impl TestRig {
                 competition_run_grant: None,
             },
             algorithm: SignatureAlgorithmV1::Ed25519,
-            host_signature: Signature64::default(),
+            host_signature: Some(Signature64::default()),
         };
-        session_genesis.host_signature = sign(key, &session_genesis.signing_bytes().unwrap());
+        session_genesis.host_signature = Some(sign(key, &session_genesis.signing_bytes().unwrap()));
 
         SubmissionOfferRequestV1 {
             schema_version: SCHEMA_VERSION_V1,

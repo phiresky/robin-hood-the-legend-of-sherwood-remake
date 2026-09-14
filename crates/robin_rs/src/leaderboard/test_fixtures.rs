@@ -58,6 +58,7 @@ pub(crate) struct RankedConfigSpec {
 /// content / rules / ruleset manifest digests `[4..=7]`.
 pub(crate) fn ranked_session_config(spec: RankedConfigSpec) -> RankedSessionConfigV1 {
     RankedSessionConfigV1 {
+        recorded_replay: None,
         custom_rules_config: None,
         custom_canonical_campaign: None,
         schema_version: SCHEMA_VERSION_V1,
@@ -69,8 +70,8 @@ pub(crate) fn ranked_session_config(spec: RankedConfigSpec) -> RankedSessionConf
         simulation_seed: SimulationSeed64::new(spec.simulation_seed),
         starting_campaign_sha256: spec.starting_campaign_sha256,
         starting_campaign_byte_length: spec.starting_campaign_byte_length,
-        prepared_inputs_projection_sha256: spec.prepared_inputs_projection_sha256,
-        prepared_mission_inputs_seal_sha256: spec.prepared_mission_inputs_seal_sha256,
+        prepared_inputs_projection_sha256: Some(spec.prepared_inputs_projection_sha256),
+        prepared_mission_inputs_seal_sha256: Some(spec.prepared_mission_inputs_seal_sha256),
         build_manifest_sha256: digest(4),
         content_manifest_sha256: digest(5),
         campaign_content_manifest_sha256: None,
@@ -166,7 +167,7 @@ pub(crate) fn unsigned_session_genesis(
             competition_run_grant: None,
         },
         algorithm: SignatureAlgorithmV1::Ed25519,
-        host_signature: Signature64::from_bytes([14; 64]),
+        host_signature: Some(Signature64::from_bytes([14; 64])),
     }
 }
 

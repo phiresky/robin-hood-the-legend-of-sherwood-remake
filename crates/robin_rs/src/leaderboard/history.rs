@@ -1,4 +1,4 @@
-//! Host-only replay submission links. Signed admission and engine history remain immutable.
+//! Replay uploads and durable verification links, keyed by recording content.
 use super::{mission_end::*, preferences::LeaderboardPreferences};
 use robin_run_protocol::{Digest32, SubmissionAcceptedV1};
 use serde::{Deserialize, Serialize};
@@ -45,10 +45,9 @@ pub(crate) fn persist_link(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn load_link(
-    input: &MissionEndSubmissionInput,
+    session: Digest32,
     preferences: &LeaderboardPreferences,
 ) -> Result<Option<SubmissionLink>, String> {
-    let session = input.replay_session_transcript.replay_session_id;
     let api_base = preferences
         .effective_api_base_url()
         .map_err(|e| e.to_string())?
@@ -316,14 +315,9 @@ mod native {
             }
         }
     }
-    fn input(path: &Path) -> Result<MissionEndSubmissionInput, String> {
-        let directory = if path.is_dir() {
-            path
-        } else {
-            path.parent().ok_or("Recording has no directory")?
-        };
-        crate::replay_archive::MissionArchive::read_ranked_input_from(directory)
-            .map_err(|e| format!("Cannot read original ranked admission: {e:#}"))
+    fn recording(path: &Path) -> Result<robin_engine::replay::ReplayData, String> {
+        crate::replay_format::load_replay_spec(path.to_str().ok_or("Recording path is not UTF-8")?)
+            .map_err(|error| format!("Cannot read replay: {error}"))
     }
     fn submitted(link: SubmissionLink, preferences: &LeaderboardPreferences) -> Completion {
         Ok((
@@ -339,30 +333,10 @@ mod native {
         ))
     }
     fn inspect(path: &Path) -> Completion {
-        let input = match input(path) {
-            Ok(input) => input,
-            Err(error) => {
-                tracing::warn!(recording = %path.display(), "{error}");
-                return Ok((
-                    ReplaySubmissionInfo::unavailable(
-                        "Submission unavailable: original ranked evidence is missing or invalid.",
-                    ),
-                    None,
-                ));
-            }
-        };
+        let replay = recording(path)?;
         let preferences = super::super::preferences::load().map_err(|e| e.to_string())?;
-        if let Some(link) = load_link(&input, &preferences)? {
+        if let Some(link) = load_link(replay.submission_id(), &preferences)? {
             return submitted(link, &preferences);
-        }
-        if input.offer_request.participant_instance_count > 1 {
-            // TODO: retain reusable co-sign authorization for offline multiplayer submissions.
-            return Ok((
-                ReplaySubmissionInfo::unavailable(
-                    "Not submitted: multiplayer submission requires the original co-signers.",
-                ),
-                None,
-            ));
         }
         Ok((
             ReplaySubmissionInfo {
@@ -373,16 +347,63 @@ mod native {
             None,
         ))
     }
-    #[derive(Serialize)]
-    struct Exporter(#[serde(skip)] Arc<[u8]>);
-    robin_util::deny_deserialize!(
-        Exporter,
-        "archive exporters require validated recording bytes"
-    );
-    impl MissionEndReplayExporter for Exporter {
-        fn begin(&mut self) -> Result<Box<dyn MissionEndTask<Arc<[u8]>>>, String> {
-            let mut bytes = Some(self.0.clone());
-            Ok(Box::new(move || bytes.take().map(Ok)))
+    #[test]
+    fn recording_without_ranked_sidecar_is_submittable_even_without_a_win() {
+        let replay = crate::leaderboard::test_fixtures::single_frame_replay(bitcode::encode(
+            &robin_engine::campaign::Campaign::default(),
+        ));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("recording.rhrec");
+        let bytes =
+            crate::replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
+                .unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        assert!(!directory.path().join("ranked.json").exists());
+        assert_eq!(
+            MissionEndOutcome::from_replay(&replay),
+            MissionEndOutcome::Interrupted
+        );
+        let (info, receipt) = inspect(&path).unwrap();
+        assert!(info.can_submit);
+        assert!(receipt.is_none());
+    }
+
+    #[test]
+    fn upload_identity_and_multiplayer_counts_come_from_the_recording() {
+        use robin_engine::player_command::{PlayerCommand, PlayerId};
+        let replay = crate::leaderboard::test_fixtures::single_frame_replay(bitcode::encode(
+            &robin_engine::campaign::Campaign::default(),
+        ));
+        let mut file = robin_engine::replay::ReplayFile::from(&replay);
+        file.frames.get_mut(&0).unwrap().input.commands = vec![
+            PlayerCommand::ConnectSeat {
+                player_id: PlayerId(1),
+                nickname: "Guest".into(),
+            }
+            .into(),
+            PlayerCommand::DisconnectSeat {
+                player_id: PlayerId(1),
+            }
+            .into(),
+            PlayerCommand::ConnectSeat {
+                player_id: PlayerId(1),
+                nickname: "Another guest".into(),
+            }
+            .into(),
+        ];
+        let replay = robin_engine::replay::ReplayData::try_from(file).unwrap();
+        let transcript = replay
+            .submission_transcript(replay.submission_id(), Digest32::from_bytes([1; 32]))
+            .unwrap();
+        assert_eq!(transcript.max_concurrent_players, 2);
+        assert_eq!(transcript.participant_instance_count, 3);
+        replay
+            .validate_ranked_command_admission(&transcript)
+            .unwrap();
+        for build in ["123456789abc", "abcdef012345"] {
+            let text = crate::replay_format::encode_compact(&replay, build).unwrap();
+            let (_, decoded) = robin_replay_format::decode_compact(&text).unwrap();
+            assert_eq!(decoded.submission_id(), replay.submission_id());
         }
     }
     fn submit(
@@ -390,81 +411,29 @@ mod native {
         expected: Identity,
         progress: &std::sync::Mutex<ReplaySubmissionInfo>,
     ) -> Completion {
-        let input = input(path)?;
-        let mut preferences = super::super::preferences::load().map_err(|e| e.to_string())?;
-        if let Some(link) = load_link(&input, &preferences)? {
-            return submitted(link, &preferences);
-        }
-        if input.offer_request.participant_instance_count > 1 {
-            return Err("Multiplayer submission requires the original co-signers".into());
-        }
-        let api = super::super::service::LeaderboardApi::from_preferences(&preferences)
-            .map_err(|e| e.to_string())?;
-        let build_digest = input
-            .offer_request
-            .session_genesis
-            .claim
-            .ranked_session
-            .build_manifest_sha256;
-        let task = api
-            .build_manifest(build_digest)
-            .map_err(|e| e.to_string())?;
-        let response = pollster::block_on(task.take()).map_err(|e| e.to_string())?;
-        let build = super::super::service::decode_build_manifest(Ok(response), build_digest)
-            .map_err(|e| e.to_string())?;
-        // Replay/network versions, not source commits, decide whether this
-        // client can hand the recording to the session's verifier build.
-        if !crate::game_session::leaderboard_runtime::verifier_build_matches_runtime(&build)? {
-            return Err(
-                "This recording's replay or network version is not supported by its verifier build."
-                    .into(),
-            );
-        }
-        let replay = crate::replay_format::load_replay_spec(
-            path.to_str().ok_or("Recording path is not UTF-8")?,
-        )
-        .map_err(|e| e.to_string())?;
+        let replay = recording(path)?;
         if crate::mission_replays::replay_attempt_identity(&replay)? != Some(expected) {
             return Err("Recording does not match the selected campaign attempt".into());
         }
-        let exit_code = (0..replay.frame_count())
-            .rev()
-            .find_map(|ordinal| {
-                let frame = replay
-                    .frame(ordinal)
-                    .expect("validated replay contains every frame");
-                frame
-                    .input
-                    .commands
-                    .iter()
-                    .chain(&frame.input.post_commands)
-                    .filter_map(|input| match &input.player_input().command {
-                        robin_engine::player_command::PlayerCommand::ApplyQuitMissionUpdates {
-                            exit_code,
-                            ..
-                        } => Some(*exit_code),
-                        _ => None,
-                    })
-                    .last()
-            })
-            .ok_or("Recording has no completed mission outcome")?;
-        if exit_code != robin_engine::game_operation::GameCode::LevelSucceeded {
-            return Err("Only successful mission recordings can be submitted".into());
+        let mut preferences = super::super::preferences::load().map_err(|e| e.to_string())?;
+        if let Some(link) = load_link(replay.submission_id(), &preferences)? {
+            return submitted(link, &preferences);
         }
-        crate::game_session::leaderboard_runtime::validate_archived_ranked_input(&input, &replay)
+        let (input, bytes) = pollster::block_on(
+            crate::game_session::leaderboard_runtime::prepare_recorded_submission(
+                &replay,
+                &preferences,
+            ),
+        )?;
+        let api = super::super::service::LeaderboardApi::from_preferences(&preferences)
             .map_err(|e| e.to_string())?;
         let boards = crate::game_session::leaderboard_runtime::authorized_boards(&input, None)
             .map_err(|e| e.to_string())?;
-        let bytes: Arc<[u8]> =
-            crate::replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
-                .map_err(|e| e.to_string())?
-                .into_bytes()
-                .into();
         preferences.show_mission_end_boards = false;
         preferences.always_submit_eligible_runs = false;
         let bundle = MissionEndRunBundle {
-            outcome: MissionEndOutcome::Won,
-            multiplayer: false,
+            outcome: MissionEndOutcome::from_replay(&replay),
+            multiplayer: input.offer_request.max_concurrent_players > 1,
             boards,
             eligible_submission: Some(input.clone()),
             submission_unavailable_reason: None,
@@ -474,7 +443,7 @@ mod native {
             preferences.clone(),
             Box::new(HttpMissionEndLeaderboardBackend::new(api)),
             Box::new(LocalMissionEndSubmissionAuthorizer),
-            Box::new(Exporter(bytes)),
+            Box::new(RecordedReplayExporter(bytes)),
         )
         .map_err(|e| e.to_string())?;
         controller.enable_history_tracking();
@@ -508,8 +477,11 @@ mod native {
                             }
                         }
                     }
-                    let link = load_link(&input, &preferences)?
-                        .ok_or("Uploaded replay lost its durable submission link")?;
+                    let link = load_link(
+                        input.replay_session_transcript.replay_session_id,
+                        &preferences,
+                    )?
+                    .ok_or("Uploaded replay lost its durable submission link")?;
                     return submitted(link, &preferences);
                 }
                 MissionSubmissionState::Failed(error)

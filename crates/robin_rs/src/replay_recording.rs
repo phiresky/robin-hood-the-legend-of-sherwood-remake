@@ -54,16 +54,6 @@ impl From<ReplayRecorder> for SharedReplayRecorder {
 }
 
 impl SharedReplayRecorder {
-    pub(crate) fn persist_ranked_input(
-        &self,
-        input: &crate::leaderboard_mission_end::MissionEndSubmissionInput,
-    ) -> Result<()> {
-        lock(&self.0)
-            .archive
-            .as_ref()
-            .context("ranked archive requires mission storage")?
-            .write_ranked_input(input)
-    }
     pub(crate) fn archived(recorder: ReplayRecorder, archive: MissionArchive) -> Self {
         Self(Arc::new(Mutex::new(Recording {
             recorder,
@@ -152,7 +142,6 @@ impl SharedReplayRecorder {
     ) -> Result<ReplayRestoreBoundary> {
         // Include signed participant events from abandoned gameplay before
         // adopting the original archive's authority.
-        control.checkpoint_ranked_input();
         let mut recording = lock(&self.0);
         recording.recorder.flush()?;
         let link = save.header.replay.as_ref();
@@ -193,9 +182,6 @@ impl SharedReplayRecorder {
         let archive = recording.archive.as_mut().expect("checked archive");
         archive.stage_continuation(ordinal, link.cloned())?;
         let primary = archive.writer()?;
-        let ranked_input = archive
-            .read_ranked_input()
-            .map_err(|error| format!("original ranked admission unavailable: {error:#}"));
         let mut mirror = control.begin_recording();
         mirror.write_all(&prefix)?;
         mirror.flush()?;
@@ -203,7 +189,6 @@ impl SharedReplayRecorder {
         recording.recorder = ReplayRecorder::continue_recording(writer, root, ordinal)?;
         recording.timeline = timeline;
         recording.captured.clear();
-        control.restore_ranked_input(ranked_input);
         Ok(ReplayRestoreBoundary {
             ordinal,
             timeline_frame: timeline,

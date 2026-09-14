@@ -718,7 +718,6 @@ impl ReplayLifecycle {
     }
 
     pub(in crate::game_session) fn seal(&mut self) {
-        self.control.checkpoint_ranked_input();
         self.recording = match std::mem::replace(&mut self.recording, RecordingState::Inactive) {
             RecordingState::Recording(recorder) => {
                 RecordingState::Sealed(recorder.into_recording_header())
