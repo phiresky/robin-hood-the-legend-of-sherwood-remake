@@ -59,6 +59,7 @@ mod tests {
             .world
             .entities
             .expect_enemy_ai_mut(owner, format_args!("forced tower"));
+        ai.base.owner_entity_id = Some(owner);
         ai.tower_guard = true;
         ai.forced_next_battle_decision = Decision::TowerGuardAlert;
         for (x, y) in [(650.0, 100.0), (610.0, 130.0)] {

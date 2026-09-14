@@ -33,6 +33,13 @@ fn fixture(points: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
         .collect();
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    for &id in &ids {
+        engine
+            .get_entity_mut(id)
+            .unwrap()
+            .element_data_mut()
+            .set_sector_topology(Some(sector), sector.arena_index());
+    }
     std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
         [crate::weapons::WeaponDistance::Maximal as usize] = 50;
     let ai = engine

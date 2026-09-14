@@ -309,6 +309,13 @@ fn fixture(positions: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>
     }
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    for &id in &ids {
+        let entity = engine.get_entity_mut(id).unwrap();
+        entity
+            .element_data_mut()
+            .set_sector_topology(Some(sector), sector.arena_index());
+        entity.enemy_ai_mut().unwrap().base.owner_entity_id = Some(id);
+    }
     std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].shield = true;
     (engine, assets, ids)
 }
