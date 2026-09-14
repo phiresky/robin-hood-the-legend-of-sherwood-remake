@@ -54,6 +54,11 @@ use smallvec::SmallVec;
 ///   `reserve_rehash` churn over large `Ctx` values;
 /// - there is no per-lookup `entry` machinery.
 ///
+/// Measured negative result: holding `(key, Ctx)` entries inline in the
+/// probe array (load <= 5/8, one cache line per hit) was slower on both
+/// targets on Dem_Lei_MP — native +6% instructions / +27-45% cache misses,
+/// wasm +2.6% instructions / +3-7% cycles — so the slot + arena split stays.
+///
 /// Iteration order is never observed and contexts are addressed only by
 /// key, so the coded bitstream is independent of the table layout.
 struct CtxTable {
