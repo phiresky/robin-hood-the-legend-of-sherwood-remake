@@ -993,9 +993,23 @@ impl EngineInner {
                     )
                 });
 
-                // Low-priority Wait element to re-park the victim's AI
-                // in the default loop.
+                // Wait instructs the victim before the freeze is released and
+                // EventGotHit can start another decision. Preserve the caller's
+                // pending work while closing this nested instruction boundary.
+                let continuation = self
+                    .orders
+                    .sequence_manager
+                    .take_pending_synchronous_actions();
                 self.actor_wait(victim_id);
+                self.drain_script_synchronous_actions(sim, assets, active_scripts)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "Strangle condolation for {owner:?} failed to instruct victim {victim_id:?}: {error:?}"
+                        )
+                    });
+                self.orders
+                    .sequence_manager
+                    .restore_pending_synchronous_actions(continuation);
                 #[cfg(test)]
                 observe_strangle_condolation_step("Wait");
 
