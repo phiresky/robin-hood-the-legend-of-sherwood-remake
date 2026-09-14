@@ -4257,8 +4257,11 @@ libopusenc always creates the libopus encoder at 48 kHz with
 resampler (quality 5), so the 22,050 Hz game WAVs now code at 48 kHz with
 bandwidth chosen by libopus (hybrid SWB/FB for speech) instead of FFmpeg's
 24 kHz encoder rate (SILK WB / hybrid SWB). Bandwidth and SILK/CELT/hybrid
-selection stay automatic. Bitrates: voice 24 kbit/s, effects 48 → 40 kbit/s,
-music 48 → 40 kbit/s. The `OpusHead` records the source rate.
+selection stay automatic. Bitrates (`AudioKind::bitrate_tenths_kbps`): voice
+21.5 kbit/s, effects 37 kbit/s, music 40 kbit/s — chosen so opusenc's Demo
+bytes match the FFmpeg libopus 1.6.1 build at 24/40/40 (see "Size-matched
+opusenc bitrates" below; before libopus 1.6.1: voice 24, effects 48, music
+48). The `OpusHead` records the source rate.
 
 ### Voice mode choice (listening, 2026-09-14)
 
@@ -4359,10 +4362,59 @@ and 205/451 effect items. Flagged regressions to listen to: effect
 `/tmp/opus-comparison/effect-flag-opusenc-jingle_03`), voice
 `X_PC_FT_E07_V01` (0.586 → 2.256), `X_SD_BW_E49_V00` (0.500 → 1.969),
 `X_CV_CH_E02_V00` (0.453 → 1.750); music is effectively unchanged
-(`Leicester_Night` 6.367 → 6.421). TODO: if the +9% voice/effect bytes
-matter, test feeding opusenc at a lower `--bitrate` or capping bandwidth
-(`OPUS_SET_MAX_BANDWIDTH` is not exposed by opusenc 0.2) rather than
-returning to FFmpeg.
+(`Leicester_Night` 6.367 → 6.421).
+
+### Size-matched opusenc bitrates (voice 21.5, effects 37 kbit/s)
+
+To win back the +6.7%, opusenc auto stays and the voice/effect bitrates drop
+until the Demo corpus matches the FFmpeg-24/40 bytes (music stays at 40,
+already within 0.1%). opusenc `--bitrate` accepts fractional kbit/s; sweep in
+0.5 kbit/s steps (exact converter bytes, same 606 voice / 485 effect assets):
+
+| kbit/s | Voice bytes (target 3,372,238) | kbit/s | Effect bytes (target 2,161,300) |
+|---|---|---|---|
+| 21.0 | 3,270,288 (−3.02%) | 36.0 | 2,108,905 (−2.42%) |
+| **21.5** | **3,339,404 (−0.97%)** | 36.5 | 2,132,978 (−1.31%) |
+| 22.0 | 3,412,119 (+1.18%) | **37.0** | **2,160,895 (−0.02%)** |
+| 22.5 | 3,479,038 (+3.17%) | 37.5 | 2,185,062 (+1.10%) |
+| 24.0 | 3,688,708 (+9.39%) | 40.0 | 2,322,502 (+7.46%) |
+
+Quality at the chosen rates (opus_compare error, lower is better; SI-SDR):
+
+| Kind | Build | Bytes | err median / p95 / worst | SI-SDR median / p5 |
+|---|---|---|---|---|
+| Voice | FFmpeg 24 | 3,372,238 | 0.541 / 1.471 / 4.975 | 12.99 / 9.03 dB |
+| Voice | opusenc 24 | 3,688,708 | 0.524 / 1.311 / 3.917 | 12.99 / 8.99 dB |
+| Voice | **opusenc 21.5** | **3,339,404** | 0.568 / 1.328 / 5.044 | 12.15 / 8.25 dB |
+| Effect | FFmpeg 40 | 2,161,300 | 0.450 / 3.024 / 21.604 | 11.51 / 3.94 dB |
+| Effect | opusenc 40 | 2,322,502 | 0.441 / 2.887 / 21.405 | 12.95 / 3.93 dB |
+| Effect | **opusenc 37** | **2,160,895** | 0.456 / 2.858 / 21.418 | 11.93 / 3.50 dB |
+
+Voice at 21.5 has a slightly higher median error than both 24 kbit/s builds
+but a better p95 than FFmpeg; it is worse than FFmpeg-24 on 365/605 items and
+than opusenc-24 on 414/606. Effects at 37 are close to FFmpeg-40 on median and
+better on p95; worse than FFmpeg-40 on 288/451 and than opusenc-40 on 314/485.
+Largest regressions vs FFmpeg-24/40:
+
+- Voice: `X_CV_CH_E08_V00` 0.712 → 2.243, `X_SD_BW_E08_V01` 0.660 → 2.033,
+  `X_PC_LJ_E15_V00` 0.537 → 1.583, `X_SD_HL_E32_V00` 0.514 → 1.478,
+  `X_SD_BW_E49_V00` 0.500 → 1.327, `X_SD_SW_E48_V00` 0.361 → 1.171,
+  `X_SD_SW_E16_V00` 0.716 → 1.510, `X_PC_WS_E04_V00` 0.452 → 1.078,
+  `X_PC_WS_E14_V02` 0.572 → 1.174, `X_PC_LM_E13_V00` 0.518 → 1.105. Worst
+  absolute: `X_PC_FT_E12_V02` 5.044 (FFmpeg 4.975, opusenc-24 3.413).
+- Effect: **`jingle_03` 0.738 → 7.673** (opusenc-40 was already 7.540; the
+  regression is opusenc on this 44.1 kHz stereo jingle, not the bitrate),
+  `fx_0263` 0.573 → 1.843, `fx_0140` 0.910 → 1.455, `iha_swlt` 1.806 → 2.277,
+  `ila_swlt` 0.930 → 1.371, `fx_0233`, `slp1wost`, `fx_0315`, `fx_0036`,
+  `fx_0258` (+0.32…+0.40).
+- Previously flagged voice items improve against opusenc-24 even at lower
+  rate: `X_PC_FT_E07_V01` 2.256 → 0.916 (FFmpeg 0.586), `X_SD_BW_E49_V00`
+  1.969 → 1.327 (0.500), `X_CV_CH_E02_V00` 1.750 → 1.024 (0.453).
+
+The 5 largest regressions per kind are in `/tmp/opus-comparison/lowrate-*`
+(source, FFmpeg-24/40, opusenc-24/40, opusenc-21.5/37), indexed in its
+`INDEX.md`. TODO: listen to `jingle_03` and `X_CV_CH_E08_V00`
+/`X_SD_BW_E08_V01` before release.
 
 ### Lossless music remaster mapping
 
@@ -4406,19 +4458,20 @@ and need their own verified sections.
 ### Demo web conversion
 
 `scripts/build_web_shipping_datadir.sh` on the Demo with the shipped path
-(opusenc auto on libopus 1.6.1, 24/40/40 kbit/s, corrected mapping): `audio/`
-7,410,463 B vs published v16r2 7,168,560 B (+241,903 B, +3.4%). 1,095
-encodes; 19 bundles hold 1,054 files (6,259,959 B); two standalone assets
-remain: `Leicester_Day` (588,505 B, shared content-addressed by `Musics/Menu`
-and `Musics/Leicester_D`) and `Leicester_Night` (554,555 B). The `menu` bundle
-is 4,914 B and holds only the eight `Sounds/Menu` effects (v16r2: 3,452 B);
-the menu music is the shared `Leicester_Day` asset. The `music` bundle
-(447,108 B) holds `Cast_orange` and `Castles_red - Alternative`.
-`datadir.bin` 3,698,289 B.
+(opusenc auto on libopus 1.6.1, voice 21.5 / effects 37 / music 40 kbit/s,
+corrected mapping): `audio/` **6,913,562 B** vs published v16r2 7,168,560 B
+(−254,998 B, −3.6%) and vs the FFmpeg libopus 1.6.1 build 6,944,920 B
+(−31,358 B, −0.5%). 1,095 encodes; 19 bundles hold 1,054 files
+(5,763,058 B); two standalone assets remain: `Leicester_Day` (588,505 B,
+shared content-addressed by `Musics/Menu` and `Musics/Leicester_D`) and
+`Leicester_Night` (554,555 B). The `menu` bundle is 3,659 B and holds only the
+eight `Sounds/Menu` effects (v16r2: 3,452 B); the menu music is the shared
+`Leicester_Day` asset. The `music` bundle (447,108 B) holds `Cast_orange` and
+`Castles_red - Alternative`. `datadir.bin` 3,698,921 B.
 
-Intermediate runs on this branch: FFmpeg libopus 1.6.1 with the same bitrates
-and corrected mapping gave 6,944,920 B (−3.1% vs v16r2); the opusenc switch
-costs +465,543 B (+6.7%, matching the per-asset comparison above). FFmpeg with
-the old file-name mapping gave 6,549,473 B, because the 47 s
-`Menü-Soundtrack` (241,774 B) stood in for the 114 s menu piece and the 36.9 s
-`Castles_red` for the 49.8 s castle fight.
+Intermediate runs on this branch (all corrected mapping unless noted): FFmpeg
+libopus 1.6.1 at 24/40/40 gave 6,944,920 B; opusenc at 24/40/40 gave
+7,410,463 B (+6.7%, matching the per-asset comparison above); FFmpeg with the
+old file-name mapping gave 6,549,473 B, because the 47 s `Menü-Soundtrack`
+(241,774 B) stood in for the 114 s menu piece and the 36.9 s `Castles_red` for
+the 49.8 s castle fight.

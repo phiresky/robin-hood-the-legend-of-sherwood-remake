@@ -373,9 +373,9 @@ already have moved `DEMO_ROOT` to a new generation directory. Credentials come
 from the main checkout's `.env`, tools from
 `~/.local/share/robin_hood/deployment-toolchain` (static `cjxl` in its `bin/`;
 libopus 1.6.1 in `libopus-1.6.1/`, and opus-tools 0.2 / libopusenc 0.3 built
-against it in `opus-tools-0.2/`, whose `opusenc` encodes all web Opus audio and
-which the converter verifies before any encode, see `docs/COMPRESSION.md`,
-2026-09-14).
+against it in `opus-tools-0.2/`, whose `opusenc` encodes all web Opus audio —
+voice 21.5, effects 37, music 40 kbit/s, signal auto — and which the converter
+verifies before any encode, see `docs/COMPRESSION.md`, 2026-09-14).
 `--dry-run` prints every command without running it. On failure the script
 prints the rollback for the failed stage. Logs go to
 `~/.local/share/robin_hood/release-logs/`. Stub test: `bash scripts/test_release.sh`.

@@ -46,18 +46,30 @@ pub(super) enum AudioKind {
 }
 
 impl AudioKind {
-    /// Target opusenc VBR bitrate. Everything else (signal type, bandwidth,
-    /// SILK/CELT/hybrid mode) stays on the opusenc/libopus defaults: see
-    /// `transcode_audio_to_opus` and docs/COMPRESSION.md (2026-09-14).
-    pub(super) fn bitrate_kbps(self) -> u32 {
+    /// Target opusenc VBR bitrate in tenths of kbit/s. Everything else (signal
+    /// type, bandwidth, SILK/CELT/hybrid mode) stays on the opusenc/libopus
+    /// defaults: see `transcode_audio_to_opus` and docs/COMPRESSION.md
+    /// (2026-09-14).
+    pub(super) fn bitrate_tenths_kbps(self) -> u32 {
         match self {
-            Self::Voice => 24,
-            // 48 -> 40 kbit/s with the libopus 1.6.1 upgrade (2026-09-14).
-            Self::Effect => 40,
+            // opusenc encodes these 22,050 Hz clips at 48 kHz (full band),
+            // so 24 kbit/s cost +9.4% over FFmpeg's 24 kHz encoder; 21.5
+            // matches the FFmpeg-24 kbit/s Demo voice bytes (-1.0%).
+            Self::Voice => 215,
+            // 48 -> 40 kbit/s with libopus 1.6.1; 40 -> 37 matches the
+            // FFmpeg-40 kbit/s Demo effect bytes with opusenc (-0.02%).
+            Self::Effect => 370,
             // 64 -> 48 kbit/s came with the lossless remaster sources (see
-            // `music_lossless_source`); 48 -> 40 with libopus 1.6.1.
-            Self::Music => 40,
+            // `music_lossless_source`); 48 -> 40 with libopus 1.6.1. opusenc
+            // at 40 is within 0.1% of FFmpeg's music bytes.
+            Self::Music => 400,
         }
+    }
+
+    /// The `--bitrate` argument for opusenc (kbit/s, fractional allowed).
+    pub(super) fn opusenc_bitrate_arg(self) -> String {
+        let tenths = self.bitrate_tenths_kbps();
+        format!("{}.{}", tenths / 10, tenths % 10)
     }
 }
 
@@ -708,6 +720,14 @@ mod lossless_music_tests {
     }
 
     #[test]
+    fn opusenc_bitrates_match_the_size_matched_choice() {
+        // docs/COMPRESSION.md 2026-09-14: sized to the FFmpeg libopus build.
+        assert_eq!(AudioKind::Voice.opusenc_bitrate_arg(), "21.5");
+        assert_eq!(AudioKind::Effect.opusenc_bitrate_arg(), "37.0");
+        assert_eq!(AudioKind::Music.opusenc_bitrate_arg(), "40.0");
+    }
+
+    #[test]
     fn remaster_duration_tolerance_is_three_percent_clamped() {
         assert_eq!(remaster_duration_tolerance_ms(7_000), 250);
         assert_eq!(remaster_duration_tolerance_ms(50_000), 1_500);
@@ -1027,7 +1047,7 @@ pub(super) fn transcode_audio_to_opus(source_path: &Path, kind: AudioKind) -> Re
             String::from_utf8_lossy(&decoded.stderr).trim()
         );
     }
-    let bitrate = kind.bitrate_kbps().to_string();
+    let bitrate = kind.opusenc_bitrate_arg();
     let output = run_verified_opusenc(
         toolchain,
         Command::new(&toolchain.opusenc)
