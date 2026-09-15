@@ -46,41 +46,121 @@ All routes live under `/api/v1`.
 | `GET leaderboards` | flat `LeaderboardQueryV2` query → `LeaderboardPageV2` (authenticated cursors) |
 | `GET runs/{id}`, `GET runs/{id}/replay` | `RunDetailV2`; exact compact replay bytes |
 | `GET players/{key}`, `GET players/{key}/runs` | profile; `PlayerRunHistoryPageV2` with personal bests |
-| `POST upload-challenges` | `UploadChallengeRequestV2` → one-use, expiring `UploadChallengeV1` bound to the key |
-| `POST submissions` | multipart `submission` + `replay` → `202 SubmissionAcceptedV1` |
+| `POST submissions` | multipart `submission` (`SignedSubmissionV3`) + `replay` → `202 SubmissionAcceptedV1` |
 | `GET submissions/{id}/public-status` | minimal progress |
-| `POST submission-owner-status-challenges`, `POST submissions/{id}/private-status` | owner-signed lifecycle, including rejection code |
-| `POST username-challenges`, `PUT players/{key}/username` | signed rename |
-| `POST deletion-challenges`, `POST deletion-requests` | owner-signed tombstone of a submission or run |
+| `POST submissions/{id}/private-status` | `SignedSubmissionOwnerStatusRequestV2` → `SubmissionOwnerStatusResponseV2`, including rejection code |
+| `PUT players/{key}/username` | `SignedUsernameUpdateV2` → `PlayerProfileV1` |
+| `POST deletion-requests` | `SignedDeletionRequestV2` → `DeletionReceiptV1` (tombstone of an owned submission or run) |
 | `POST reports` | abuse report (per IP, key and target quotas) |
 | `POST diagnostics`, `operator/*` | crash reports; bearer-token operator routes (absent without a token) |
 | `/healthz`, `/readyz` | liveness; SQLite plus storage-capacity readiness |
 
+There are no challenge routes: `upload-challenges`,
+`submission-owner-status-challenges`, `username-challenges` and
+`deletion-challenges` were removed and answer `404`.
+
+#### Signed player requests
+
+Every player operation is one JSON document:
+
+```json
+{
+  "schema_version": 2,
+  "request": { "...claim...": "...", "signed_at_unix_ms": 1789000000000 },
+  "algorithm": "ed25519",
+  "signature": "<128 hex digits>"
+}
+```
+
+The player signs `DOMAIN || canonical_json(request)` with the Ed25519 key
+named inside the claim. `DOMAIN` is a NUL-terminated per-operation string,
+so a signature made for one operation never verifies for another:
+
+| Claim | Signing key field | Domain |
+| --- | --- | --- |
+| `SubmissionV3` (`schema_version` 3): `uploader_public_key`, `signed_at_unix_ms`, `public_disclosure`, `board_id`, `mission_id`, `replay` (`sha256`, `byte_length`, `media_type`, `replay_schema_version`), `requested_metrics` | `uploader_public_key` | `robinhood/leaderboards/3/submission\0` |
+| `UsernameUpdateV2`: `public_key`, `signed_at_unix_ms`, `username` | `public_key` | `robinhood/leaderboards/2/username-update\0` |
+| `DeletionRequestV2`: `public_key`, `signed_at_unix_ms`, `target` (`{kind: submission, submission_id}` or `{kind: run, run_id}`) | `public_key` | `robinhood/leaderboards/2/deletion-request\0` |
+| `SubmissionOwnerStatusRequestV2`: `public_key`, `signed_at_unix_ms`, `submission_id` | `public_key` | `robinhood/leaderboards/2/submission-owner-status\0` |
+
+The server validates the document, then accepts only
+`now − max_age ≤ signed_at_unix_ms ≤ now + max_future_skew` against its own
+clock (`[signed_requests]`, default 300 s and 60 s), then verifies the
+signature strictly. Failures: malformed → `400 bad_request`; timestamp outside
+the window → `400 signed_request_not_fresh` (the message carries the server
+time so a client can correct its clock); bad signature, wrong key or wrong
+operation → `401 signature_authentication_failed`.
+
+There is no server nonce, so a captured request can be replayed until its
+window closes. Each operation is safe under that replay:
+
+- **Submission**: a replay that is pending or was ever accepted cannot be
+  uploaded again, and the byte-identical signed request is an idempotent
+  retry that returns the same submission.
+- **Username update**: the server stores the `signed_at_unix_ms` of the last
+  accepted update per key and refuses any update signed at or before it
+  (`409 username_update_superseded`), so an older update cannot roll a newer
+  name back.
+- **Deletion**: idempotent per owner and target; repeating the request returns
+  the stored `DeletionReceiptV1` and has no further effect.
+- **Private status**: read-only and key-scoped. A replay within the window
+  returns only what the key owner already sees, over HTTPS, and never reveals
+  anything to a party that does not already hold the owner's signed request.
+  The path ID must equal the signed `submission_id`; a mismatch, an unknown
+  submission and a submission owned by another key are all the same `401`.
+  The response binds `request_sha256`, the canonical digest of the whole
+  signed request it answers.
+
+Username updates must match the path key (`400` otherwise). Deletion checks
+ownership only after authentication, so an unauthenticated caller cannot link
+an anonymous run to a key (`404` for a target the key does not own).
+
+#### Submissions
+
 `POST submissions` takes exactly two multipart fields in this order:
 
-1. `submission`: `application/json` `SignedSubmissionV2`, decoded strictly
-   (duplicate keys and unknown fields rejected), validated, and signature
-   verified against `uploader_public_key` over
-   `robinhood/leaderboards/2/submission\0` + the canonical submission.
+1. `submission`: `application/json` `SignedSubmissionV3`, decoded strictly
+   (duplicate keys and unknown fields rejected). A V2-shaped submission from
+   an old client is `400`.
 2. `replay`: the compact replay with media type
    `application/x-robin-rhrec+compact`.
 
-Before anything is reserved the API checks: the board exists, the mission is
-on the board, the requested metrics are offered by the board, the challenge is
-unexpired, the uploader has a registered username, the replay length and
-SHA-256 equal the signed artifact, and the replay passes the allocation-free
-lexical compact-transport scan (the API never base64/zstd/bitcode-decodes
-hostile bytes). A red storage/capacity check consumes nothing.
+Before anything is reserved the API checks: the signed request (window and
+signature), the board exists, the mission is on the board, the requested
+metrics are offered by the board, the uploader has a registered username, the
+replay length and SHA-256 equal the signed artifact, and the replay passes the
+allocation-free lexical compact-transport scan (the API never
+base64/zstd/bitcode-decodes hostile bytes). A red storage/capacity check
+reserves nothing.
 
-One SQLite transaction then consumes the challenge (which must exist, be
-unconsumed and have been issued to the uploader with the signed nonce and
-expiry) and acquires an upload lease. A replay that is pending or was ever
-accepted cannot be uploaded again by anyone; rejected and infrastructure-failed
-replays may be retried. An exact retry of the same signed upload is idempotent:
-it resumes the lease, reuses a durably stored replay, or returns the existing
-lifecycle. Concurrent exact retries get `upload_in_progress` with
-`Retry-After`. After the replay is stored, one transaction registers the
-object, queues exactly one job and commits the reservation.
+One SQLite transaction then acquires an upload lease for the replay. A replay
+that is pending or was ever accepted cannot be uploaded again by anyone;
+rejected and infrastructure-failed replays may be retried. At most one
+uncommitted upload per replay exists; the same uploader may resume its own
+abandoned or durably uploaded reservation with a freshly signed request, while
+another uploader gets `409`. The identical signed request of a live
+submission returns its lifecycle. Concurrent retries get `upload_in_progress`
+with `Retry-After`. After the replay is stored, one transaction registers the
+object, queues exactly one job and deletes the reservation.
+
+#### Metering
+
+All limits are server configuration with defaults; counters are in-process
+sliding windows unless noted.
+
+| Limit | Key | Default | Applied |
+| --- | --- | --- | --- |
+| Declared `Content-Length` above `max_replay_bytes + max_metadata_bytes + 1 MiB` | request | — | `413` before the body is read, before any concurrency slot or write lease |
+| `submissions_per_hour_per_ip` | effective client address | 120 | `429 rate_limited` before the body is parsed |
+| `submissions_per_hour_per_key` | uploader key | 60 | `429 rate_limited` after signature verification (forgeries never spend a key's budget) |
+| `max_concurrent_uploads_per_key` | uploader key | 2 | `429 concurrent_upload_limit`; live reservation leases in SQLite |
+| `max_concurrent_uploads` | global | 32 | HTTP concurrency limit on uploads; also sizes storage admission |
+| `max_pending_submissions` | global | 10000 | `429 submission_queue_full` (queued + reserved uploads) |
+| storage admission | replay + database volumes | `minimum_storage_free_bytes` | `503` before a reservation |
+| `signed_requests_per_minute_per_ip` | client address, per operation | 120 | `429 rate_limited` on username, deletion and private-status requests |
+| `abuse_reports_per_hour_per_{ip,key,target}` | as named | 10/25/10 | durable counts in SQLite |
+
+`429` responses carry `Retry-After`.
 
 Replay downloads re-hash the stored object. Owner deletion tombstones
 immediately; physical deletion waits for retention and for the digest to have
@@ -97,7 +177,13 @@ Migrations are explicit (`robin-highscores-admin migrate`, run by
 `ops/deploy.sh`); serving processes require the exact checksum-valid chain.
 Migration `0006` replaced all submission/run tables for protocol V2 and dropped
 competitions, campaign chains, full-campaign aggregates, session geneses,
-participant co-signing and campaign objects. Replays are SHA-256-addressed
+participant co-signing and campaign objects. Migration `0007` removed all
+challenge storage (`upload_challenges`, `challenge_generations`,
+`submission_owner_status_challenges` and the challenge columns of
+`submissions`, upload reservations, username history and deletion requests),
+preserving existing rows; it added `identities.username_signed_at_unix_ms`,
+`signed_at_unix_ms` on username history and deletion requests, and one
+deletion request per owner and target. Replays are SHA-256-addressed
 files outside SQLite; startup and hourly maintenance reconcile the tree and
 garbage-collect unreferenced objects after `orphan_replay_retention_hours`.
 Rejected and failed submissions are tombstoned after
@@ -348,8 +434,10 @@ cargo test -p robin_highscores --features test-support     # unit, router_e2e, o
 bash crates/robin_highscores/ops/tests/deploy-rollback.sh
 ```
 
-`router_e2e` drives the real router (challenge → signed upload → queue →
-worker acceptance through the database → boards, history, deletion, reports).
+`router_e2e` drives the real router (signed rename → signed upload → queue →
+worker acceptance through the database → boards, history, deletion, reports),
+including freshness, cross-operation signatures, username rollback, idempotent
+deletion, per-key limits and oversized `Content-Length`.
 `ops/tests/deploy-rollback.sh` exercises `deploy.sh` and `rollback.sh` against
 a temporary HOME with stub `systemctl`, `curl` and binaries.
 
