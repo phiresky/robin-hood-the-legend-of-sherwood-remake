@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use crate::signed_request::{SignedRequestClaim, SignedRequestV2};
 use crate::{ArtifactRefV1, BoardMetricV1, OpaqueId, PublicKey32, Validate, ValidationError};
 
-pub const SUBMISSION_SIGNATURE_DOMAIN_V2: &[u8] = b"robinhood/leaderboards/2/submission\0";
+/// Version 3: the challenge-free, timestamp-signed submission. Version 2
+/// embedded a server-issued upload challenge and is no longer accepted.
+pub const SUBMISSION_SIGNATURE_DOMAIN_V3: &[u8] = b"robinhood/leaderboards/3/submission\0";
 pub const USERNAME_UPDATE_SIGNATURE_DOMAIN_V2: &[u8] =
     b"robinhood/leaderboards/2/username-update\0";
 
@@ -108,7 +110,7 @@ pub enum ParticipantPublicDisclosureV1 {
 /// pending or accepted cannot be submitted again by anyone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SubmissionV2 {
+pub struct SubmissionV3 {
     pub schema_version: u32,
     pub uploader_public_key: PublicKey32,
     pub signed_at_unix_ms: u64,
@@ -119,11 +121,11 @@ pub struct SubmissionV2 {
     pub requested_metrics: Vec<BoardMetricV1>,
 }
 
-impl Validate for SubmissionV2 {
+impl Validate for SubmissionV3 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::schema_exact(
-            "SubmissionV2",
-            crate::SCHEMA_VERSION_V2,
+            "SubmissionV3",
+            crate::SCHEMA_VERSION_V3,
             self.schema_version,
         )?;
         crate::validation::nonzero("submission.uploader_public_key", &self.uploader_public_key)?;
@@ -141,8 +143,8 @@ impl Validate for SubmissionV2 {
     }
 }
 
-impl SignedRequestClaim for SubmissionV2 {
-    const DOMAIN: &'static [u8] = SUBMISSION_SIGNATURE_DOMAIN_V2;
+impl SignedRequestClaim for SubmissionV3 {
+    const DOMAIN: &'static [u8] = SUBMISSION_SIGNATURE_DOMAIN_V3;
 
     fn signer_public_key(&self) -> PublicKey32 {
         self.uploader_public_key
@@ -154,7 +156,7 @@ impl SignedRequestClaim for SubmissionV2 {
 }
 
 /// Multipart `submission` field of `POST /api/v1/submissions`.
-pub type SignedSubmissionV2 = SignedRequestV2<SubmissionV2>;
+pub type SignedSubmissionV3 = SignedRequestV2<SubmissionV3>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -264,9 +266,9 @@ mod tests {
     use super::*;
     use crate::{Digest32, Signature64, SignatureAlgorithmV1};
 
-    pub(crate) fn submission() -> SubmissionV2 {
-        SubmissionV2 {
-            schema_version: crate::SCHEMA_VERSION_V2,
+    pub(crate) fn submission() -> SubmissionV3 {
+        SubmissionV3 {
+            schema_version: crate::SCHEMA_VERSION_V3,
             uploader_public_key: PublicKey32::from_bytes([4; 32]),
             signed_at_unix_ms: 1_800_000_000_000,
             public_disclosure: ParticipantPublicDisclosureV1::NamedProfile,
@@ -314,8 +316,8 @@ mod tests {
         let mut submission = submission();
         submission.uploader_public_key = PublicKey32::from_bytes(key.verifying_key().to_bytes());
         let now = submission.signed_at_unix_ms + 1_000;
-        let signature = key.sign(&SignedSubmissionV2::signing_bytes(&submission).unwrap());
-        let signed = SignedSubmissionV2 {
+        let signature = key.sign(&SignedSubmissionV3::signing_bytes(&submission).unwrap());
+        let signed = SignedSubmissionV3 {
             schema_version: crate::SCHEMA_VERSION_V2,
             request: submission,
             algorithm: SignatureAlgorithmV1::Ed25519,

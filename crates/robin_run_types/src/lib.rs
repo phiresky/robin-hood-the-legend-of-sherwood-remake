@@ -39,3 +39,5 @@ pub use validation::{Validate, ValidationError};
 pub const SCHEMA_VERSION_V1: u32 = 1;
 /// Every explicitly named `V2` document carries this value on the wire.
 pub const SCHEMA_VERSION_V2: u32 = 2;
+/// Every explicitly named `V3` document carries this value on the wire.
+pub const SCHEMA_VERSION_V3: u32 = 3;

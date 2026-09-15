@@ -108,7 +108,7 @@ campaign templates, source-tree manifests, rules/ruleset/policy/build documents.
 | `robin_engine::ranked_resim`, replay rankability/taints, ranked command admission, state-hash coverage | The actual verification. |
 | `RankedSimulationPolicy` install + `validate_config` | Board policy enforcement during resim. |
 | Starting-campaign checks: `decode_and_validate_replay_campaign`, approved Sherwood metadata derivation, fresh mission-start check (`validate_canonical_mission_start_v1`, refactored to take `ProfileManager` loaded from raw content) | Uploaded campaign is hostile: prevents boosted-stat starts. Drops the manifest-digest `approved_identity`. |
-| Upload challenge / offer (one-use nonce, expiry), multipart upload, reservations, storage admission, rate limits, concurrency caps | Abuse limits and replay-of-request protection. |
+| Multipart upload, storage admission, per-IP/per-key rate limits, concurrency caps, Content-Length pre-check (upload challenges were later removed, see "Signed player requests") | Abuse limits. |
 | Content-addressed replay/campaign stores, GC, backups, ops scripts, migrations runner | Storage. |
 | Boards, leaderboard queries, cursors, player profiles/history, run detail, replay download | Product. |
 | Usernames, deletion, abuse reports, moderation, diagnostics | Product/abuse. |
@@ -187,19 +187,45 @@ stay under `/api/v1`.
 
 ### Submission (`robin_run_protocol::submission`)
 
-- `UploadChallengeRequestV2 { schema_version, public_key }` →
-  `UploadChallengeV1` (unchanged shape; issued for that key, one use, expiring).
-- `SubmissionV2 { schema_version, upload_challenge: UploadChallengeV1,
-  uploader_public_key, public_disclosure: ParticipantPublicDisclosureV1,
-  board_id: OpaqueId, mission_id, replay: ReplayArtifactV1,
-  requested_metrics: Vec<BoardMetricV1> }`.
-- `SignedSubmissionV2 { schema_version, submission, algorithm, signature }`,
-  signature = Ed25519 over `domain_separated_bytes(
-  "robinhood/leaderboards/2/submission\0", submission)` by the uploader key.
-- Kept as is: `ReplayArtifactV1`, `RANKED_REPLAY_MEDIA_TYPE_V1`,
-  username challenge/update, deletion, abuse reports, owner-status challenge
-  and envelope, diagnostics, `SubmissionAcceptedV1`, `PublicSubmissionStatusV1`.
+- `SubmissionV3 { schema_version: 3, uploader_public_key, signed_at_unix_ms,
+  public_disclosure: ParticipantPublicDisclosureV1, board_id: OpaqueId,
+  mission_id, replay: ReplayArtifactV1, requested_metrics: Vec<BoardMetricV1> }`,
+  sent as `SignedSubmissionV3 = SignedRequestV2<SubmissionV3>` (see below).
+  The deployed challenge-bearing `SubmissionV2` is retired.
+- Kept as is: `ReplayArtifactV1`, `RANKED_REPLAY_MEDIA_TYPE_V1`, abuse
+  reports, diagnostics, `SubmissionAcceptedV1`, `PublicSubmissionStatusV1`.
   `SubmissionLifecycleV1::Accepted { run_id }` loses the campaign receipt.
+
+### Signed player requests (decided 2026-09-15: no challenges)
+
+Upload, username, deletion and owner-status challenges and their tables are
+removed. A re-sent captured upload is already rejected as a duplicate replay
+hash (the signature covers `replay.sha256`), and abuse metering belongs on the
+submission endpoint itself.
+
+- `SignedRequestV2<T> { schema_version: 2, request: T, algorithm: "ed25519",
+  signature }`; signature = Ed25519 by the claim's own key over
+  `T::DOMAIN || canonical_json(request)`.
+- Claims, each carrying the player key and `signed_at_unix_ms`:
+  `SubmissionV3` (`robinhood/leaderboards/3/submission\0`),
+  `UsernameUpdateV2 { public_key, signed_at_unix_ms, username }`
+  (`…/2/username-update\0`), `DeletionRequestV2 { public_key,
+  signed_at_unix_ms, target }` (`…/2/deletion-request\0`),
+  `SubmissionOwnerStatusRequestV2 { public_key, signed_at_unix_ms,
+  submission_id }` (`…/2/submission-owner-status\0`), answered by
+  `SubmissionOwnerStatusResponseV2 { submission_id, public_key,
+  request_sha256, state }`.
+- The server accepts `now − max_age ≤ signed_at ≤ now + max_future_skew`
+  (defaults 300 s and 60 s, configurable). Replays inside the window are
+  harmless: duplicate replay hashes are rejected, deletion is idempotent,
+  a username update must be newer than the key's last accepted update, and an
+  owner-status read only returns what the key owner already sees.
+- `POST /api/v1/submissions` rejects an oversized `Content-Length` before
+  reading the body and applies per-IP and per-key rate limits, concurrent
+  upload caps and storage admission.
+- Migration 0006 shipped with challenges, so migration 0007 drops the
+  challenge tables and columns (DB schema 7). Network protocol and replay
+  schema are unaffected.
 - Removed: offers and offer requests, session genesis, ranked session config,
   participant claims/signatures, join attestations, co-sign, preflight and
   competition grants, campaign continuation/authorization/chain receipts,
@@ -253,9 +279,11 @@ stay under `/api/v1`.
 
 Kept: `leaderboard-metadata`, `leaderboards`, `runs/{id}`, `runs/{id}/replay`,
 `players/*`, username, deletion, reports, submission public/private status,
-diagnostics, operator, health. New: `POST /api/v1/upload-challenges`.
+diagnostics, operator, health.
 `POST /api/v1/submissions` multipart has two fields: `submission`
-(`SignedSubmissionV2`) and `replay`. Removed: `submission-offers`, all
+(`SignedSubmissionV2`) and `replay`. Removed: `submission-offers`,
+`upload-challenges`, `username-challenges`, `deletion-challenges`,
+`submission-owner-status-challenges`, all
 preflight/competition grant routes, all immutable manifest routes
 (`builds`, `content-manifests`, `campaign-content-manifests`, `rules-configs`,
 `ruleset-manifests`, `published-rulesets`, `competitions`, `policies`),

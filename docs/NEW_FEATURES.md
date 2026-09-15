@@ -17,8 +17,9 @@ A list of which additional features we have added, which ones we might still wan
   lists the mission and whose simulation policy admits the recorded gameplay
   configuration (an exact preset board wins over an any-configuration board;
   no match or an ambiguous match shows the leaderboard as unavailable),
-  requests a one-use upload challenge for the player's identity key, signs a
-  `SubmissionV2` and posts it with the canonical compact replay. The server
+  signs a timestamped `SubmissionV2` (board, mission, replay SHA-256 and
+  length) with the player's identity key and posts it with the canonical
+  compact replay in one request; there is no server-issued challenge. The server
   re-simulates the replay against its raw game content, checks the recorded
   state hashes and outcome, and scores it. No pre-game grant, content or
   ruleset manifest, or multiplayer co-signing is involved: the uploader signs
@@ -233,7 +234,7 @@ A list of which additional features we have added, which ones we might still wan
 - **Non-blocking mission-end leaderboards and verified-run consent.** The
   mission-end overlay opens verified score/time boards after wins, losses, and
   interrupted attempts, with a score and a time tab for the run's board.
-  Board fetches, replay preparation, upload challenge, signing and upload are
+  Board fetches, replay preparation, signing and upload are
   frame-polled tasks on native and browser builds; none waits inside
   rendering or pauses multiplayer. Submission is offered only for won
   missions, defaults to per-run consent, and has an explicit default-off
