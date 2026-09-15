@@ -138,21 +138,7 @@ pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
         | NetMsg::ModalDecision { .. }
         | NetMsg::ReconnectRequired { .. }
         | NetMsg::SnapshotTransitionReady { .. }
-        | NetMsg::CommitSnapshotTransition { .. }
-        | NetMsg::RankedJoinChallenge(_)
-        | NetMsg::RankedJoinResponse(_)
-        | NetMsg::RankedJoinAccepted(_)
-        | NetMsg::RankedParticipantRoster(_)
-        | NetMsg::RankedBrowseOnly { .. }
-        | NetMsg::RankedCoSignContext(_)
-        | NetMsg::RankedSubmissionAccepted(_)
-        | NetMsg::RankedOfficialSessionSetup(_)
-        | NetMsg::RankedContinuationReceiptSelectionRequest(_)
-        | NetMsg::RankedContinuationReceiptSelection(_)
-        | NetMsg::RankedContinuationPreflightClaim(_)
-        | NetMsg::RankedContinuationPreflightSignature(_)
-        | NetMsg::LeaderboardCoSignRequest(_)
-        | NetMsg::LeaderboardCoSignResponse(_) => NetFrameClass::Control,
+        | NetMsg::CommitSnapshotTransition { .. } => NetFrameClass::Control,
     }
 }
 

@@ -20,7 +20,6 @@ pub struct ServerHandle {
     pub(super) endpoint_addr: EndpointAddr,
     pub(super) host_key: SecretKey,
     pub(super) mission_id: String,
-    pub(super) ranked_lifecycle: SharedRankedSessionLifecycle,
     pub(super) context: Arc<ServerContext>,
     pub(super) preserve_on_shutdown: bool,
     pub(super) cancellation: Arc<AtomicBool>,
@@ -32,91 +31,6 @@ pub struct ServerHandle {
 impl ServerHandle {
     pub fn session_id(&self) -> MultiplayerSessionId {
         self.session_id
-    }
-
-    pub(crate) fn ranked_lifecycle(&self) -> SharedRankedSessionLifecycle {
-        Arc::clone(&self.ranked_lifecycle)
-    }
-
-    pub(crate) fn ranked_local_seat(&self) -> Result<PlayerId, MultiplayerError> {
-        Ok(self.local_seat)
-    }
-
-    pub(crate) fn ranked_host_public_key(&self) -> PublicKey32 {
-        PublicKey32::from_bytes(*self.host_key.public().as_bytes())
-    }
-
-    pub(crate) fn ranked_authenticated_seats(&self) -> Vec<(PlayerId, PublicKey32)> {
-        self.context
-            .peers
-            .lock()
-            .sessions
-            .ranked_identities()
-            .filter_map(|(seat, identity)| {
-                identity
-                    .durable_public_key
-                    .map(|key| (PlayerId(*seat), PublicKey32::from_bytes(key)))
-            })
-            .chain(std::iter::once((
-                PlayerId::HOST,
-                PublicKey32::from_bytes(*self.host_key.public().as_bytes()),
-            )))
-            .collect()
-    }
-
-    pub(crate) fn ranked_preflight_lobby(
-        &self,
-    ) -> Option<crate::leaderboard_ranked_session::RankedPreflightLobbyV1> {
-        let peers = self.context.peers.lock();
-        let max_concurrent_players = u16::try_from(peers.sessions.expected_players()).ok()?;
-        let mut participant_public_keys = peers
-            .sessions
-            .ranked_identities()
-            .map(|(_, identity)| identity)
-            .map(|identity| identity.durable_public_key.map(PublicKey32::from_bytes))
-            .collect::<Option<Vec<_>>>()?;
-        participant_public_keys.push(PublicKey32::from_bytes(*self.host_key.public().as_bytes()));
-        participant_public_keys.sort_unstable();
-        participant_public_keys.dedup();
-        if participant_public_keys.len() != usize::from(max_concurrent_players) {
-            return None;
-        }
-        Some(crate::leaderboard_ranked_session::RankedPreflightLobbyV1 {
-            host_public_key: PublicKey32::from_bytes(*self.host_key.public().as_bytes()),
-            max_concurrent_players,
-            participant_public_keys,
-        })
-    }
-
-    pub(crate) fn install_ranked_session_setup(
-        &self,
-        setup: Option<crate::leaderboard_ranked_session::OfficialRankedSessionSetupV1>,
-    ) -> Result<(), MultiplayerError> {
-        let _authority = self.context.session_dispatch.lock();
-        let Some(setup) = setup else {
-            downgrade_ranked_session(
-                &self.context,
-                RankedBrowseOnlyReason::HostRankedSessionUnavailable,
-                "host prepared inputs explicitly selected browse-only multiplayer",
-            );
-            return Ok(());
-        };
-        let ranked_host_key = ed25519_dalek::SigningKey::from_bytes(&self.host_key.to_bytes());
-        let session = crate::leaderboard_ranked_session::RankedSessionHost::new_official(
-            &ranked_host_key,
-            NET_PROTOCOL_VERSION,
-            setup,
-        )
-        .map_err(|error| {
-            MultiplayerError::ranked_document("construct official ranked host session", error)
-        })?;
-        ranked_lifecycle_lock(&self.ranked_lifecycle)
-            .install_ranked(session)
-            .map_err(|error| {
-                MultiplayerError::ranked_document("install ranked host session", error)
-            })?;
-        progress_ranked_admission(&self.context);
-        Ok(())
     }
 
     /// The stable public id peers dial to reach this server.
@@ -205,8 +119,6 @@ pub(super) struct ServerPeers {
     pub(super) sessions: PeerSessions,
     pub(super) readiness: ReadyBarrier,
     pub(super) transitions: SnapshotTransitions,
-    pub(super) cosigns: CoSignTracker,
-    pub(super) admission: RankedAdmissionTracker,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -221,30 +133,6 @@ pub(super) struct SeatClaim {
     pub(super) seat: u8,
     pub(super) generation: u64,
     pub(super) kind: SeatClaimKind,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub(super) struct RankedPeerIdentity {
-    pub(super) durable_public_key: Option<[u8; 32]>,
-    pub(super) transport_endpoint_id: [u8; 32],
-    pub(super) public_disclosure: ParticipantPublicDisclosureV1,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub(super) struct PendingRankedAdmission {
-    pub(super) seat: u8,
-    pub(super) generation: u64,
-    pub(super) kind: RankedAdmissionKind,
-    pub(super) challenge: RankedJoinChallenge,
-    // Restored diagnostics expire immediately; no serialized transport authority.
-    #[serde(skip, default = "Instant::now")]
-    pub(super) deadline: Instant,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub(super) enum RankedAdmissionKind {
-    Fresh,
-    Reconnect,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -318,8 +206,6 @@ impl ServerPeers {
             sessions: PeerSessions::new(expected_players),
             readiness: ReadyBarrier::default(),
             transitions: SnapshotTransitions::default(),
-            cosigns: CoSignTracker::default(),
-            admission: RankedAdmissionTracker::default(),
         }
     }
 
@@ -328,44 +214,7 @@ impl ServerPeers {
             sessions: PeerSessions::from_continuation(continuation),
             readiness: ReadyBarrier::default(),
             transitions: SnapshotTransitions::default(),
-            cosigns: CoSignTracker::default(),
-            admission: RankedAdmissionTracker::default(),
         }
-    }
-
-    /// Atomically retain the exact request before returning its one target's
-    /// queue. This ordering ensures even an immediate peer response always
-    /// finds pending authenticated server state.
-    pub(super) fn begin_leaderboard_cosign(
-        &mut self,
-        target: PlayerId,
-        request: LeaderboardCoSignRequestV1,
-    ) -> Result<UnboundedSender<NetMsg>, MultiplayerError> {
-        let sender = self.sessions.sender(&target.0).cloned().ok_or_else(|| {
-            MultiplayerError::Ranked(
-                format!(
-                    "leaderboard co-sign target {target:?} is not an authenticated active peer"
-                )
-                .into(),
-            )
-        })?;
-        self.cosigns.begin(target, request)?;
-        Ok(sender)
-    }
-
-    /// Verify and consume exactly one targeted request. The caller-supplied
-    /// seat is stamped by the authenticated stream and never read from the
-    /// response payload.
-    pub(super) fn complete_leaderboard_cosign(
-        &mut self,
-        from: PlayerId,
-        response: &LeaderboardCoSignResponse,
-    ) -> Result<(), MultiplayerError> {
-        let expected_signer = self
-            .sessions
-            .ranked_identity(&from.0)
-            .and_then(|identity| identity.durable_public_key);
-        self.cosigns.complete(from, expected_signer, response)
     }
 }
 
@@ -457,8 +306,6 @@ pub(super) struct ServerContext {
     pub(super) sim_config: robin_engine::engine::SimConfig,
     pub(super) host_endpoint_id: EndpointId,
     pub(super) session_id: MultiplayerSessionId,
-    pub(super) ranked_lifecycle: SharedRankedSessionLifecycle,
-    pub(super) ranked_browse_reason: Mutex<Option<RankedBrowseOnlyReason>>,
     pub(super) continued_session: bool,
     pub(super) relay_url: Mutex<Option<iroh::RelayUrl>>,
     pub(super) speech_timing_locale: Option<String>,
@@ -636,10 +483,6 @@ pub(super) fn start_server_inner(
         sim_config,
         host_endpoint_id,
         session_id,
-        ranked_lifecycle: Arc::new(std::sync::Mutex::new(
-            RankedSessionLifecycle::awaiting_prepared_inputs(),
-        )),
-        ranked_browse_reason: Mutex::new(None),
         continued_session: continuation.is_some(),
         relay_url: Mutex::new(
             continuation
@@ -730,7 +573,6 @@ pub(super) fn start_server_inner(
         endpoint_addr,
         host_key: handle_key,
         mission_id: handle_mission_id,
-        ranked_lifecycle: Arc::clone(&context.ranked_lifecycle),
         context,
         preserve_on_shutdown: false,
         cancellation,
@@ -832,27 +674,6 @@ pub(super) async fn run_server(
     tracing::info!("multiplayer server runtime stopped");
 }
 
-pub(super) fn validate_official_ranked_session(
-    context: &ServerContext,
-    session: &crate::leaderboard_ranked_session::RankedSessionHost,
-) -> Result<(), MultiplayerError> {
-    let genesis = session.genesis();
-    let ranked = &genesis.claim.ranked_session;
-    if genesis.claim.network_protocol_version != NET_PROTOCOL_VERSION
-        || *genesis.claim.host_public_key.as_bytes() != *context.host_endpoint_id.as_bytes()
-        || ranked.mission_id != context.mission_id
-        || ranked.simulation_seed.get() != context.mission_seed
-        || ranked.spellforge_content_sha256.is_some()
-        || !robin_run_protocol::official_content_subjects_v1(ranked.content_edition)
-            .contains(&ranked.content_subject)
-    {
-        return Err(MultiplayerError::Ranked(
-            "ranked genesis is not the exact accepted official mission/content policy".into(),
-        ));
-    }
-    Ok(())
-}
-
 pub(super) fn publish_connect_seats(context: &ServerContext, seats: Vec<(u8, String)>) {
     for (seat, nickname) in seats {
         let now = context.frame_cursor.load(Ordering::Relaxed);
@@ -873,7 +694,7 @@ pub(super) fn publish_connect_seats(context: &ServerContext, seats: Vec<(u8, Str
     }
 }
 
-pub(super) fn retry_begin_sim_after_ranked_resolution(context: &ServerContext) {
+pub(super) fn retry_begin_sim(context: &ServerContext) {
     let begin = {
         let mut peers = context.peers.lock();
         maybe_begin_sim_locked(&mut peers)
@@ -887,7 +708,9 @@ pub(super) fn retry_begin_sim_after_ranked_resolution(context: &ServerContext) {
     }
 }
 
-pub(super) fn finish_ranked_seat_connections(context: &ServerContext, seats: &[u8]) {
+/// Release newly connected seats into simulation: replay the cached start
+/// barrier to them, or try to release the barrier if it has not begun yet.
+pub(super) fn finish_seat_connections(context: &ServerContext, seats: &[u8]) {
     let cached_begin = {
         let peers = context.peers.lock();
         peers.readiness.begun.map(|(frame, start_epoch_ms)| {
@@ -899,7 +722,7 @@ pub(super) fn finish_ranked_seat_connections(context: &ServerContext, seats: &[u
         })
     };
     let Some((frame, start_epoch_ms, senders)) = cached_begin else {
-        retry_begin_sim_after_ranked_resolution(context);
+        retry_begin_sim(context);
         return;
     };
     let snapshot_frame = context
@@ -915,13 +738,13 @@ pub(super) fn finish_ranked_seat_connections(context: &ServerContext, seats: &[u
             .and_then(|now| {
                 now.checked_add(100).ok_or_else(|| {
                     MultiplayerError::LocalState(
-                        "multiplayer ranked preflight timestamp exceeds the u64 Unix range".into(),
+                        "multiplayer seat connection timestamp exceeds the u64 Unix range".into(),
                     )
                 })
             }) {
             Ok(start_epoch_ms) => start_epoch_ms,
             Err(error) => {
-                tracing::error!(%error, "ranked preflight could not produce a start time");
+                tracing::error!(%error, "seat connection could not produce a start time");
                 fail_server(context, error);
                 return;
             }
@@ -938,436 +761,7 @@ pub(super) fn connect_all_provisional_seats(context: &ServerContext) {
     let seats = context.peers.lock().sessions.admit_provisional_sessions();
     let connected_seats = seats.iter().map(|(seat, _)| *seat).collect::<Vec<_>>();
     publish_connect_seats(context, seats);
-    finish_ranked_seat_connections(context, &connected_seats);
-}
-
-pub(super) fn downgrade_ranked_session(
-    context: &ServerContext,
-    wire_reason: RankedBrowseOnlyReason,
-    detail: impl Into<String>,
-) {
-    let detail = detail.into();
-    let transitioned = {
-        let mut lifecycle = ranked_lifecycle_lock(&context.ranked_lifecycle);
-        let transitioned = lifecycle.browse_only_reason().is_none();
-        if let Some(session) = lifecycle.ranked_mut() {
-            session.cancel_pending_join();
-        }
-        lifecycle.downgrade(detail.clone());
-        transitioned
-    };
-    context.peers.lock().admission.clear();
-    if transitioned {
-        *context.ranked_browse_reason.lock() = Some(wire_reason);
-        tracing::warn!(reason = ?wire_reason, %detail, "ranked multiplayer downgraded; gameplay remains available");
-        server_dispatch::broadcast_recoverable(
-            context,
-            NetMsg::RankedBrowseOnly {
-                reason: wire_reason,
-            },
-        );
-        if context
-            .incoming_tx
-            .send(NetEvent::RankedBrowseOnly {
-                reason: wire_reason,
-            })
-            .is_err()
-        {
-            // The authoritative game loop is gone. Do not release provisional
-            // peers into simulation after losing its admission notification.
-            fail_server(
-                context,
-                MultiplayerError::ChannelClosed(
-                    "host event receiver closed during ranked downgrade".into(),
-                ),
-            );
-            return;
-        }
-    }
-    connect_all_provisional_seats(context);
-}
-
-pub(super) enum RankedAdmissionProgress {
-    Idle,
-    BrowseOnly,
-    Challenge {
-        sender: UnboundedSender<NetMsg>,
-        challenge: RankedJoinChallenge,
-    },
-    Downgrade {
-        reason: RankedBrowseOnlyReason,
-        detail: String,
-    },
-}
-
-pub(super) fn progress_ranked_admission(context: &ServerContext) {
-    let progress = {
-        let mut lifecycle = ranked_lifecycle_lock(&context.ranked_lifecycle);
-        if lifecycle.is_awaiting_prepared_inputs() {
-            RankedAdmissionProgress::Idle
-        } else if lifecycle.browse_only_reason().is_some() {
-            RankedAdmissionProgress::BrowseOnly
-        } else {
-            let session = lifecycle
-                .ranked_mut()
-                .expect("resolved non-browse ranked lifecycle has host state");
-            if let Err(error) = validate_official_ranked_session(context, session) {
-                RankedAdmissionProgress::Downgrade {
-                    reason: RankedBrowseOnlyReason::HostRankedSessionUnavailable,
-                    detail: error.to_string(),
-                }
-            } else {
-                let mut peers = context.peers.lock();
-                if let Some(pending) = peers.admission.pending()
-                    && (peers.sessions.generation(&pending.seat) != Some(&pending.generation)
-                        || peers.sessions.sender(&pending.seat).is_none())
-                {
-                    session.cancel_pending_join();
-                    peers.admission.clear();
-                }
-                if peers.admission.pending().is_some() {
-                    RankedAdmissionProgress::Idle
-                } else {
-                    let next_seat = peers
-                        .sessions
-                        .senders()
-                        .map(|(seat, _)| seat)
-                        .copied()
-                        .filter(|seat| !peers.sessions.is_sim_connected(seat))
-                        .min();
-                    let Some(seat) = next_seat else {
-                        return;
-                    };
-                    let identity = *peers.sessions.ranked_identity(&seat).unwrap_or_else(|| {
-                        panic!("authenticated provisional seat {seat} has no ranked identity")
-                    });
-                    if let Some(durable_public_key) = identity.durable_public_key {
-                        let participant_exists = session
-                            .participant_claims()
-                            .iter()
-                            .any(|participant| participant.seat == u16::from(seat));
-                        let kind = if participant_exists {
-                            RankedAdmissionKind::Reconnect
-                        } else {
-                            RankedAdmissionKind::Fresh
-                        };
-                        let challenge_claim = match kind {
-                            RankedAdmissionKind::Fresh => session.prepare_join(
-                                u16::from(seat),
-                                PublicKey32::from_bytes(durable_public_key),
-                                PublicKey32::from_bytes(identity.transport_endpoint_id),
-                                PublicKey32::from_bytes(*context.host_endpoint_id.as_bytes()),
-                            ),
-                            RankedAdmissionKind::Reconnect => session.prepare_reconnect(
-                                u16::from(seat),
-                                PublicKey32::from_bytes(durable_public_key),
-                                PublicKey32::from_bytes(identity.transport_endpoint_id),
-                                PublicKey32::from_bytes(*context.host_endpoint_id.as_bytes()),
-                            ),
-                        };
-                        match challenge_claim {
-                            Ok(claim) => {
-                                let documents = encode_ranked_wire_document(session.genesis())
-                                    .map_err(|error| error.to_string())
-                                    .and_then(|bytes| {
-                                        RankedSessionGenesisDocument::new(bytes)
-                                            .map_err(str::to_string)
-                                    })
-                                    .and_then(|genesis| {
-                                        encode_ranked_wire_document(&claim)
-                                            .map_err(|error| error.to_string())
-                                            .and_then(|bytes| {
-                                                RankedJoinClaimDocument::new(bytes)
-                                                    .map_err(str::to_string)
-                                            })
-                                            .map(|join_claim| RankedJoinChallenge {
-                                                session_genesis: genesis,
-                                                join_claim,
-                                            })
-                                    });
-                                match documents {
-                                    Ok(challenge) => {
-                                        let generation = *peers
-                                            .sessions
-                                            .generation(&seat)
-                                            .expect("provisional seat has a session generation");
-                                        let sender = peers
-                                            .sessions
-                                            .sender(&seat)
-                                            .cloned()
-                                            .expect("provisional seat has a sender");
-                                        peers.admission.begin(PendingRankedAdmission {
-                                            seat,
-                                            generation,
-                                            kind,
-                                            challenge: challenge.clone(),
-                                            deadline: Instant::now() + RANKED_ADMISSION_TIMEOUT,
-                                        });
-                                        RankedAdmissionProgress::Challenge { sender, challenge }
-                                    }
-                                    Err(detail) => {
-                                        session.cancel_pending_join();
-                                        RankedAdmissionProgress::Downgrade {
-                                            reason: RankedBrowseOnlyReason::RankedProtocolViolation,
-                                            detail: format!(
-                                                "could not encode ranked admission challenge: {detail}"
-                                            ),
-                                        }
-                                    }
-                                }
-                            }
-                            Err(error) => RankedAdmissionProgress::Downgrade {
-                                reason: RankedBrowseOnlyReason::PeerAttestationRejected,
-                                detail: format!(
-                                    "could not prepare ranked admission for seat {seat}: {error}"
-                                ),
-                            },
-                        }
-                    } else {
-                        RankedAdmissionProgress::Downgrade {
-                            reason: RankedBrowseOnlyReason::PeerIdentityUnavailable,
-                            detail: format!("seat {seat} has no durable ranked identity"),
-                        }
-                    }
-                }
-            }
-        }
-    };
-    match progress {
-        RankedAdmissionProgress::Idle => (),
-        RankedAdmissionProgress::BrowseOnly => {
-            connect_all_provisional_seats(context);
-        }
-        RankedAdmissionProgress::Challenge { sender, challenge } => {
-            if sender.send(NetMsg::RankedJoinChallenge(challenge)).is_err() {
-                downgrade_ranked_session(
-                    context,
-                    RankedBrowseOnlyReason::RankedTransportInterrupted,
-                    "ranked admission target disconnected before challenge delivery",
-                );
-            }
-        }
-        RankedAdmissionProgress::Downgrade { reason, detail } => {
-            downgrade_ranked_session(context, reason, detail);
-        }
-    }
-}
-
-pub(super) fn resolve_ranked_before_ready(context: &ServerContext) {
-    let awaiting = ranked_lifecycle_lock(&context.ranked_lifecycle).is_awaiting_prepared_inputs();
-    if awaiting {
-        downgrade_ranked_session(
-            context,
-            RankedBrowseOnlyReason::HostRankedSessionUnavailable,
-            "authoritative simulation became ready before ranked prepared inputs were installed",
-        );
-    } else {
-        progress_ranked_admission(context);
-    }
-}
-
-pub(super) fn ranked_unavailable_browse_reason(
-    reason: crate::multiplayer::RankedJoinUnavailableReason,
-) -> RankedBrowseOnlyReason {
-    match reason {
-        crate::multiplayer::RankedJoinUnavailableReason::DurableIdentityUnavailable => {
-            RankedBrowseOnlyReason::PeerIdentityUnavailable
-        }
-        crate::multiplayer::RankedJoinUnavailableReason::LocalRankedSessionUnavailable
-        | crate::multiplayer::RankedJoinUnavailableReason::LocalRankedSessionMismatch => {
-            RankedBrowseOnlyReason::PeerRankedSessionMismatch
-        }
-        crate::multiplayer::RankedJoinUnavailableReason::AttestationSigningFailed => {
-            RankedBrowseOnlyReason::PeerAttestationRejected
-        }
-    }
-}
-
-pub(super) fn handle_ranked_join_response(
-    context: &ServerContext,
-    seat: PlayerId,
-    generation: u64,
-    identity: RankedPeerIdentity,
-    response: RankedJoinResponse,
-) {
-    if context.peers.lock().sessions.generation(&seat.0) != Some(&generation) {
-        tracing::debug!(
-            ?seat,
-            generation,
-            "ignoring ranked response from superseded stream"
-        );
-        return;
-    }
-    let RankedJoinResponse::Attestation(attestation_document) = response else {
-        let RankedJoinResponse::Unavailable(reason) = response else {
-            unreachable!("ranked join response has only closed variants")
-        };
-        downgrade_ranked_session(
-            context,
-            ranked_unavailable_browse_reason(reason),
-            format!(
-                "seat {} reported ranked admission unavailable: {reason:?}",
-                seat.0
-            ),
-        );
-        return;
-    };
-    let attestation = match decode_ranked_wire_document(attestation_document.as_bytes()) {
-        Ok(attestation) => attestation,
-        Err(error) => {
-            downgrade_ranked_session(
-                context,
-                RankedBrowseOnlyReason::PeerAttestationRejected,
-                format!(
-                    "seat {} sent an invalid ranked attestation: {error}",
-                    seat.0
-                ),
-            );
-            return;
-        }
-    };
-
-    let admitted = {
-        let mut lifecycle = ranked_lifecycle_lock(&context.ranked_lifecycle);
-        if lifecycle.browse_only_reason().is_some() {
-            return;
-        }
-        let Some(session) = lifecycle.ranked_mut() else {
-            drop(lifecycle);
-            downgrade_ranked_session(
-                context,
-                RankedBrowseOnlyReason::RankedProtocolViolation,
-                "ranked attestation arrived before host prepared inputs were installed",
-            );
-            return;
-        };
-        let mut peers = context.peers.lock();
-        let Some(pending) = peers.admission.pending().cloned() else {
-            drop(peers);
-            drop(lifecycle);
-            downgrade_ranked_session(
-                context,
-                RankedBrowseOnlyReason::RankedProtocolViolation,
-                format!(
-                    "seat {} sent a ranked attestation without a pending challenge",
-                    seat.0
-                ),
-            );
-            return;
-        };
-        if pending.seat != seat.0 || pending.generation != generation {
-            drop(peers);
-            drop(lifecycle);
-            downgrade_ranked_session(
-                context,
-                RankedBrowseOnlyReason::RankedProtocolViolation,
-                format!("seat {} answered another seat's ranked challenge", seat.0),
-            );
-            return;
-        }
-        let result = match pending.kind {
-            RankedAdmissionKind::Fresh => session.admit_join(
-                attestation,
-                identity.transport_endpoint_id,
-                identity.public_disclosure,
-            ),
-            RankedAdmissionKind::Reconnect => {
-                session.admit_reconnect(attestation, identity.transport_endpoint_id)
-            }
-        };
-        match result {
-            Ok(()) => {
-                let roster = session.participant_claims();
-                let roster_document = encode_ranked_wire_document(&roster)
-                    .map_err(|error| format!("encode ranked participant roster: {error}"))
-                    .and_then(|bytes| {
-                        RankedParticipantRosterDocument::new(bytes)
-                            .map_err(|error| format!("encode ranked participant roster: {error}"))
-                    });
-                match roster_document {
-                    Err(error) => Err(error),
-                    Ok(roster_document) => {
-                        let roster_targets = if pending.kind == RankedAdmissionKind::Fresh {
-                            peers
-                                .sessions
-                                .sim_connected_seats()
-                                .filter_map(|existing_seat| {
-                                    peers.sessions.sender(existing_seat).cloned()
-                                })
-                                .collect::<Vec<_>>()
-                        } else {
-                            Vec::new()
-                        };
-                        peers.admission.clear();
-                        assert!(
-                            peers
-                                .sessions
-                                .admit_session(seat.0, generation)
-                                .expect("ranked response retains authenticated dispatch authority"),
-                            "ranked admission connected a seat already present in the simulation"
-                        );
-                        let nickname =
-                            peers
-                                .sessions
-                                .nickname(&seat.0)
-                                .cloned()
-                                .unwrap_or_else(|| {
-                                    panic!("admitted ranked seat {} has no nickname", seat.0)
-                                });
-                        let sender = peers.sessions.sender(&seat.0).cloned().unwrap_or_else(|| {
-                            panic!("admitted ranked seat {} has no sender", seat.0)
-                        });
-                        Ok((pending, nickname, sender, roster_document, roster_targets))
-                    }
-                }
-            }
-            Err(error) => Err(error.to_string()),
-        }
-    };
-
-    let (pending, nickname, sender, roster_document, roster_targets) = match admitted {
-        Ok(admitted) => admitted,
-        Err(error) => {
-            downgrade_ranked_session(
-                context,
-                RankedBrowseOnlyReason::PeerAttestationRejected,
-                format!("seat {} ranked attestation was rejected: {error}", seat.0),
-            );
-            return;
-        }
-    };
-    let accepted = RankedJoinAccepted {
-        session_genesis: pending.challenge.session_genesis,
-        join_attestation: attestation_document,
-        participant_roster: roster_document.clone(),
-    };
-    if sender.send(NetMsg::RankedJoinAccepted(accepted)).is_err() {
-        downgrade_ranked_session(
-            context,
-            RankedBrowseOnlyReason::RankedTransportInterrupted,
-            format!(
-                "seat {} disconnected before ranked acknowledgement delivery",
-                seat.0
-            ),
-        );
-        return;
-    }
-    for roster_target in roster_targets {
-        if roster_target
-            .send(NetMsg::RankedParticipantRoster(roster_document.clone()))
-            .is_err()
-        {
-            downgrade_ranked_session(
-                context,
-                RankedBrowseOnlyReason::RankedTransportInterrupted,
-                "an admitted participant disconnected before ranked roster update delivery",
-            );
-            return;
-        }
-    }
-    publish_connect_seats(context, vec![(seat.0, nickname)]);
-    finish_ranked_seat_connections(context, &[seat.0]);
-    progress_ranked_admission(context);
+    finish_seat_connections(context, &connected_seats);
 }
 
 pub(super) async fn run_server_accept_loop(context: Arc<ServerContext>, endpoint: Endpoint) {
@@ -1408,7 +802,7 @@ pub(super) async fn handle_incoming_peer(
         .map_err(|e| MultiplayerError::transport("accept peer stream", e))?;
 
     // Receive Hello.  Reject anything else.
-    let (nickname, browser_auth, ranked_public_key) = match read_frame_bounded_with_timeout(
+    let (nickname, browser_auth) = match read_frame_bounded_with_timeout(
         &mut recv,
         InboundFramePolicy::ClientHello,
         HANDSHAKE_FRAME_TIMEOUT,
@@ -1420,7 +814,6 @@ pub(super) async fn handle_incoming_peer(
             protocol_version,
             nickname,
             browser_auth,
-            ranked_public_key,
         }) => {
             if protocol_version != NET_PROTOCOL_VERSION {
                 let reason = format!(
@@ -1429,7 +822,7 @@ pub(super) async fn handle_incoming_peer(
                 reject_opening(&mut send, &reason).await;
                 return Err(MultiplayerError::Handshake(reason.into()));
             }
-            (nickname, browser_auth, ranked_public_key)
+            (nickname, browser_auth)
         }
         Some(other) => {
             let reason = format!("expected Hello, got {other:?}");
@@ -1451,18 +844,6 @@ pub(super) async fn handle_incoming_peer(
             return Err(error);
         }
     };
-    let durable_public_key = match (owner, ranked_public_key) {
-        (PeerOwner::Browser(owner_key), Some(ranked_key)) if owner_key != ranked_key => {
-            tracing::warn!(peer = %peer_id, "browser gameplay owner and ranked durable key differ");
-            None
-        }
-        (_, ranked_public_key) => ranked_public_key,
-    };
-    let ranked_identity = RankedPeerIdentity {
-        durable_public_key,
-        transport_endpoint_id: *remote_id.as_bytes(),
-        public_disclosure: ParticipantPublicDisclosureV1::NamedProfile,
-    };
     if let Some(content) = &context.content {
         let joining = admit_distributed_mod(
             &mut send,
@@ -1477,22 +858,15 @@ pub(super) async fn handle_incoming_peer(
         }
     }
 
-    let (seat_claim, mut write_rx) =
-        match prepare_peer_session(&context, owner, &nickname, ranked_identity) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                reject_opening(&mut send, &error.to_string()).await;
-                return Err(error);
-            }
-        };
-    let assigned_seat_u8 = seat_claim.seat;
+    let (seat_claim, mut write_rx) = match prepare_peer_session(&context, owner, &nickname) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            reject_opening(&mut send, &error.to_string()).await;
+            return Err(error);
+        }
+    };
     let session_generation = seat_claim.generation;
-    let assigned_seat = PlayerId(assigned_seat_u8);
-    let admission_monitor = tokio::spawn(monitor_ranked_admission(
-        Arc::clone(&context),
-        assigned_seat_u8,
-        session_generation,
-    ));
+    let assigned_seat = PlayerId(seat_claim.seat);
 
     // Writer half: drain the peer's queue onto the stream.  Reader
     // half: every Input received gets stamped with the peer's
@@ -1509,19 +883,12 @@ pub(super) async fn handle_incoming_peer(
             // Queue closed: seat was dropped (shutdown or cleanup).
             Ok::<(), MultiplayerError>(())
         };
-        let reader = run_server_peer_reader(
-            &context,
-            assigned_seat,
-            session_generation,
-            ranked_identity,
-            &mut recv,
-        );
+        let reader = run_server_peer_reader(&context, assigned_seat, session_generation, &mut recv);
         drive_server_peer_io(reader, writer, TERMINAL_WRITER_DRAIN_TIMEOUT).await
     };
 
     release_peer_session(&context, assigned_seat, owner, session_generation);
     conn.close(CLOSE_GRACEFUL.into(), b"session over");
-    admission_monitor.abort();
 
     result
 }
@@ -1532,7 +899,6 @@ pub(super) fn prepare_peer_session(
     context: &ServerContext,
     owner: PeerOwner,
     nickname: &str,
-    ranked_identity: RankedPeerIdentity,
 ) -> Result<(SeatClaim, UnboundedReceiver<NetMsg>), MultiplayerError> {
     let _authority = context.session_dispatch.lock();
     // Claim/reclaim a seat by authenticated owner, never by editable nickname.
@@ -1548,16 +914,19 @@ pub(super) fn prepare_peer_session(
         }
         let (write_tx, write_rx) = unbounded_channel::<NetMsg>();
         p.sessions
-            .claim_seat(owner, nickname, ranked_identity, write_tx)
+            .claim_seat(owner, nickname, write_tx)
             .map(|claim| (claim, write_rx))
     };
     let (seat_claim, write_rx) = seat_claim?;
     let assigned_seat_u8 = seat_claim.seat;
     let session_generation = seat_claim.generation;
     let assigned_seat = PlayerId(assigned_seat_u8);
-    let ranked_admission_required = ranked_lifecycle_lock(&context.ranked_lifecycle)
-        .ranked_session()
-        .is_some();
+    tracing::debug!(
+        seat = assigned_seat_u8,
+        generation = session_generation,
+        kind = ?seat_claim.kind,
+        "multiplayer peer claimed seat"
+    );
 
     // Queue Welcome for this peer.  Goes through the writer queue so
     // the writer task is the only thing that touches the outbound
@@ -1618,17 +987,11 @@ pub(super) fn prepare_peer_session(
                     })
                     .map_err(|_| writer_closed("writer queue closed before transition Prepare"))?;
             }
-            if let Some(reason) = *context.ranked_browse_reason.lock() {
-                sender
-                    .send(NetMsg::RankedBrowseOnly { reason })
-                    .map_err(|_| {
-                        writer_closed("writer queue closed before ranked browse-only status")
-                    })?;
-            }
-            // An admitted ranked participant must re-attest this replacement
-            // transport before a cached gameplay release is replayed. The
-            // ranked acceptance path sends the cached BeginSim afterward.
-            if !ranked_admission_required && let Some((frame, start_epoch_ms)) = p.readiness.begun {
+            // TODO(mp-duplicate-cached-begin): a reconnecting (non-sim-connected)
+            // seat also receives the cached BeginSim from
+            // `connect_all_provisional_seats` below, so it sees it twice. Clients
+            // tolerate the repeat; consider sending it from one place only.
+            if let Some((frame, start_epoch_ms)) = p.readiness.begun {
                 let begin_frame =
                     snapshot_frame.map_or(frame, |snapshot_frame| snapshot_frame.max(frame));
                 let begin_start_epoch_ms = if begin_frame != frame {
@@ -1657,35 +1020,9 @@ pub(super) fn prepare_peer_session(
         return Err(error);
     }
 
-    if seat_claim.kind == SeatClaimKind::ActiveReplacement {
-        let changes_ranked_transport = ranked_lifecycle_lock(&context.ranked_lifecycle)
-            .ranked_session()
-            .and_then(|session| {
-                session
-                    .participant_claims()
-                    .into_iter()
-                    .find(|participant| participant.seat == u16::from(assigned_seat_u8))
-            })
-            .and_then(|participant| participant.join_attestation)
-            .is_some_and(|join| {
-                *join.claim.transport_endpoint_id.as_bytes()
-                    != ranked_identity.transport_endpoint_id
-            });
-        if changes_ranked_transport {
-            downgrade_ranked_session(
-                context,
-                RankedBrowseOnlyReason::RankedTransportInterrupted,
-                format!(
-                    "active replacement for seat {assigned_seat_u8} changed its authenticated ranked transport"
-                ),
-            );
-        }
-    }
-
-    // The stream is gameplay-compatible after Welcome, but the deterministic
-    // seat does not enter the replay until ranked admission succeeds or the
-    // whole session irreversibly downgrades to browse-only.
-    progress_ranked_admission(context);
+    // The stream is gameplay-compatible after Welcome: connect the new seat
+    // into the deterministic simulation right away.
+    connect_all_provisional_seats(context);
     Ok((seat_claim, write_rx))
 }
 
@@ -1709,24 +1046,11 @@ pub(super) fn release_peer_session(
         }
         release
     };
-    // An obsolete reader's teardown must not progress/downgrade a successor.
-    let Some(release) = release else {
+    // An obsolete reader's teardown must not affect a successor.
+    let Some(was_sim_connected) = release else {
         return;
     };
-    if release && !context.cancellation.load(Ordering::Acquire) {
-        let observation = {
-            let mut lifecycle = ranked_lifecycle_lock(&context.ranked_lifecycle);
-            lifecycle
-                .ranked_mut()
-                .map(|session| session.observe_disconnect(u16::from(assigned_seat_u8)))
-        };
-        if let Some(Err(error)) = observation {
-            downgrade_ranked_session(
-                context,
-                RankedBrowseOnlyReason::RankedProtocolViolation,
-                format!("could not record ranked disconnect for seat {assigned_seat_u8}: {error}"),
-            );
-        }
+    if was_sim_connected && !context.cancellation.load(Ordering::Acquire) {
         let now = context.frame_cursor.load(Ordering::Relaxed);
         let target = now.saturating_add(INPUT_DELAY_FRAMES);
         let inp = PlayerInput::new(
@@ -1736,55 +1060,6 @@ pub(super) fn release_peer_session(
             },
         );
         broadcast_input(context, now, now, target, inp);
-    } else if !release {
-        let cancelled_pending = {
-            let mut peers = context.peers.lock();
-            peers
-                .admission
-                .cancel_for(assigned_seat_u8, session_generation)
-        };
-        if cancelled_pending
-            && let Some(session) = ranked_lifecycle_lock(&context.ranked_lifecycle).ranked_mut()
-        {
-            session.cancel_pending_join();
-        }
-    }
-    progress_ranked_admission(context);
-}
-
-pub(super) async fn monitor_ranked_admission(
-    context: Arc<ServerContext>,
-    seat: u8,
-    generation: u64,
-) {
-    loop {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        let _authority = context.session_dispatch.lock();
-        let status = {
-            let peers = context.peers.lock();
-            peers.admission.deadline(
-                seat,
-                generation,
-                peers
-                    .sessions
-                    .sender(&seat)
-                    .and_then(|_| peers.sessions.generation(&seat).copied()),
-                peers.sessions.is_sim_connected(&seat),
-                Instant::now(),
-            )
-        };
-        match status {
-            AdmissionDeadline::Finished => return,
-            AdmissionDeadline::Waiting => {}
-            AdmissionDeadline::Expired => {
-                downgrade_ranked_session(
-                    &context,
-                    RankedBrowseOnlyReason::RankedTransportInterrupted,
-                    format!("seat {seat} timed out during ranked admission"),
-                );
-                return;
-            }
-        }
     }
 }
 
@@ -2007,7 +1282,6 @@ pub(super) async fn run_server_peer_reader(
     context: &ServerContext,
     seat: PlayerId,
     session_generation: u64,
-    ranked_identity: RankedPeerIdentity,
     recv: &mut RecvStream,
 ) -> Result<PeerReaderExit, MultiplayerError> {
     loop {
@@ -2033,7 +1307,6 @@ pub(super) async fn run_server_peer_reader(
             context,
             seat,
             session_generation,
-            ranked_identity,
             message,
         ))? {
             return Ok(exit);
@@ -2048,7 +1321,6 @@ pub(super) fn dispatch_server_peer_message(
     context: &ServerContext,
     seat: PlayerId,
     session_generation: u64,
-    ranked_identity: RankedPeerIdentity,
     message: NetMsg,
 ) -> Result<(), PeerDispatchFailure> {
     let _authority = context.session_dispatch.lock();
@@ -2057,7 +1329,7 @@ pub(super) fn dispatch_server_peer_message(
         .lock()
         .sessions
         .authorize_session(seat, session_generation)?;
-    apply_authenticated_peer_message(context, seat, session_generation, ranked_identity, message)
+    apply_authenticated_peer_message(context, seat, session_generation, message)
         .map_err(PeerDispatchFailure::Protocol)
 }
 
@@ -2066,7 +1338,6 @@ pub(super) fn apply_authenticated_peer_message(
     context: &ServerContext,
     seat: PlayerId,
     session_generation: u64,
-    ranked_identity: RankedPeerIdentity,
     message: NetMsg,
 ) -> Result<(), MultiplayerError> {
     let remote = |message: String| MultiplayerError::RemoteProtocol(message.into());
@@ -2106,7 +1377,6 @@ pub(super) fn apply_authenticated_peer_message(
             )));
         }
         NetMsg::ReadyToSim { frame } => {
-            resolve_ranked_before_ready(context);
             let begin = {
                 let mut p = context.peers.lock();
                 p.sessions.record_ready(seat.0, session_generation, frame)?;
@@ -2134,127 +1404,6 @@ pub(super) fn apply_authenticated_peer_message(
             };
             commit_snapshot_transition(context, committed);
         }
-        NetMsg::LeaderboardCoSignResponse(response) => {
-            if ranked_lifecycle_lock(&context.ranked_lifecycle)
-                .ranked_session()
-                .is_none()
-            {
-                tracing::warn!(
-                    ?seat,
-                    "ignored leaderboard co-sign response after ranked eligibility ended"
-                );
-                return Ok(());
-            }
-            {
-                let mut peers = context.peers.lock();
-                peers.complete_leaderboard_cosign(seat, &response)?;
-            }
-            context
-                .incoming_tx
-                .send(NetEvent::LeaderboardCoSignResponse {
-                    from: seat,
-                    response,
-                })
-                .map_err(|_| closed("host leaderboard co-sign response channel is closed"))?;
-        }
-        NetMsg::RankedContinuationReceiptSelection(selection) => {
-            let decoded = decode_ranked_wire_document::<
-                CampaignContinuationReceiptSelectionResponseV1,
-            >(selection.as_bytes())
-            .map_err(|error| {
-                MultiplayerError::ranked_document("invalid continuation receipt selection", error)
-            })?;
-            let expected_key = context
-                    .peers
-                    .lock()
-                    .sessions.ranked_identity(&seat.0)
-                    .and_then(|identity| identity.durable_public_key)
-                    .map(PublicKey32::from_bytes)
-                    .ok_or_else(|| {
-                        MultiplayerError::Identity(format!(
-                            "peer {seat:?} has no authenticated durable identity for continuation receipt selection"
-                        ).into())
-                    })?;
-            if decoded.responder_public_key() != expected_key {
-                return Err(MultiplayerError::Identity(format!(
-                    "peer {seat:?} selected a campaign receipt controlled by another durable identity"
-                ).into()));
-            }
-            context
-                .incoming_tx
-                .send(NetEvent::RankedContinuationReceiptSelection {
-                    from: seat,
-                    selection,
-                })
-                .map_err(|_| closed("host continuation receipt selection channel is closed"))?;
-        }
-        NetMsg::RankedContinuationPreflightSignature(signature) => {
-            let signature_document =
-                crate::leaderboard_ranked_session::decode_canonical_ranked_wire_document::<
-                    ParticipantSignatureV1,
-                >(signature.as_bytes())
-                .map_err(|error| {
-                    MultiplayerError::ranked_document(
-                        "invalid continuation preflight signature",
-                        error,
-                    )
-                })?;
-            if signature_document.public_key.is_zero() || signature_document.signature.is_zero() {
-                return Err(MultiplayerError::Identity(
-                    "continuation preflight signature contains zero key material".into(),
-                ));
-            }
-            let expected_key = context
-                    .peers
-                    .lock()
-                    .sessions.ranked_identity(&seat.0)
-                    .and_then(|identity| identity.durable_public_key)
-                    .map(PublicKey32::from_bytes)
-                    .ok_or_else(|| {
-                        MultiplayerError::Identity(format!(
-                            "peer {seat:?} has no authenticated durable identity for continuation preflight"
-                        ).into())
-                    })?;
-            if signature_document.public_key != expected_key {
-                return Err(MultiplayerError::Identity(format!(
-                    "peer {seat:?} signed continuation preflight with a key other than its authenticated durable identity"
-                ).into()));
-            }
-            context
-                .incoming_tx
-                .send(NetEvent::RankedContinuationPreflightSignature {
-                    from: seat,
-                    signature,
-                })
-                .map_err(|_| closed("host continuation preflight signature channel is closed"))?;
-        }
-        NetMsg::RankedJoinResponse(response) => {
-            handle_ranked_join_response(
-                context,
-                seat,
-                session_generation,
-                ranked_identity,
-                response,
-            );
-        }
-        NetMsg::RankedJoinChallenge(_)
-        | NetMsg::RankedJoinAccepted(_)
-        | NetMsg::RankedParticipantRoster(_)
-        | NetMsg::RankedBrowseOnly { .. }
-        | NetMsg::RankedCoSignContext(_)
-        | NetMsg::RankedSubmissionAccepted(_)
-        | NetMsg::RankedOfficialSessionSetup(_)
-        | NetMsg::RankedContinuationReceiptSelectionRequest(_)
-        | NetMsg::RankedContinuationPreflightClaim(_) => {
-            return Err(remote(format!(
-                "peer {seat:?} attempted a server-only ranked control message"
-            )));
-        }
-        NetMsg::LeaderboardCoSignRequest(_) => {
-            return Err(remote(format!(
-                "peer {seat:?} attempted a server-only leaderboard co-sign request"
-            )));
-        }
         NetMsg::PrepareSnapshotTransition { .. } | NetMsg::CommitSnapshotTransition { .. } => {
             return Err(remote(format!(
                 "peer {seat:?} attempted a host-only snapshot transition message"
@@ -2271,11 +1420,7 @@ pub(super) fn validate_server_gameplay_wire_msg(message: &NetMsg) -> Result<(), 
         | NetMsg::Note(_)
         | NetMsg::ModalProposal { .. }
         | NetMsg::ReadyToSim { .. }
-        | NetMsg::SnapshotTransitionReady { .. }
-        | NetMsg::LeaderboardCoSignResponse(_)
-        | NetMsg::RankedContinuationReceiptSelection(_)
-        | NetMsg::RankedContinuationPreflightSignature(_)
-        | NetMsg::RankedJoinResponse(_) => Ok(()),
+        | NetMsg::SnapshotTransitionReady { .. } => Ok(()),
         NetMsg::ContentRequest { .. }
         | NetMsg::ContentReject { .. }
         | NetMsg::ContentReady { .. }

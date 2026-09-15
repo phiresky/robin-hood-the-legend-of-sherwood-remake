@@ -21,10 +21,7 @@ mod server_dispatch;
 use server_dispatch::validate_server_gameplay_outbound;
 use server_dispatch::{announce_begin_sim, broadcast_input, run_server_outgoing_pump};
 mod server_protocol;
-use server_protocol::{
-    AdmissionDeadline, CoSignTracker, PendingSnapshotTransition, RankedAdmissionTracker,
-    ReadyBarrier, SnapshotTransitions,
-};
+use server_protocol::{PendingSnapshotTransition, ReadyBarrier, SnapshotTransitions};
 
 #[cfg(test)]
 use super::encode_msg;
@@ -32,23 +29,12 @@ use super::framing::{read_frame, write_frame};
 use super::identity::{
     GAME_ALPN, bind_endpoint, bind_endpoint_with_relay, game_secret_key, parse_connect_addr,
 };
-use super::ranked_client::ranked_lifecycle_lock;
 use super::{
-    FrameCursor, INPUT_DELAY_FRAMES, InboundFramePolicy, InitialSnapshot,
-    MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION, MultiplayerError, MultiplayerSessionId,
-    NET_PROTOCOL_VERSION, NetEvent, NetMsg, NetOutbound, RankedBrowseOnlyReason,
-    RankedJoinAccepted, RankedJoinAttestationDocument, RankedJoinChallenge,
-    RankedJoinClaimDocument, RankedJoinResponse, RankedParticipantRosterDocument,
-    RankedSessionGenesisDocument, SharedClientRankedJoinState, verify_leaderboard_cosign_response,
+    FrameCursor, INPUT_DELAY_FRAMES, InboundFramePolicy, InitialSnapshot, MultiplayerError,
+    MultiplayerSessionId, NET_PROTOCOL_VERSION, NetEvent, NetMsg, NetOutbound,
 };
 use crate::distributed_mod::{
     DistributedModPackage, ValidatedDistributedMod, make_distributed_mod_offer,
-};
-use crate::leaderboard_ranked_session::{
-    CampaignContinuationReceiptSelectionRequestV1, CampaignContinuationReceiptSelectionResponseV1,
-    OfficialRankedSessionWireSetupV1, RankedSessionClientAdmissionV1, RankedSessionLifecycle,
-    SharedRankedSessionLifecycle, decode_ranked_wire_document, encode_ranked_wire_document,
-    sign_named_seat_join,
 };
 use iroh::endpoint::{RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
@@ -58,27 +44,17 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 use super::clock::checked_epoch_ms;
 use super::clock::try_current_epoch_ms;
 use parking_lot::Mutex;
-use robin_engine::multiplayer::{
-    BrowserPeerAuth, LeaderboardCoSignResponse, NetFatal, browser_seat_proof_message,
-};
+use robin_engine::multiplayer::{BrowserPeerAuth, NetFatal, browser_seat_proof_message};
 use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
-use robin_run_protocol::{
-    CampaignContinuationPreflightRequestClaimV1, LeaderboardCoSignInstanceV1,
-    LeaderboardCoSignRequestV1, ParticipantPublicDisclosureV1, ParticipantSignatureV1, PublicKey32,
-};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
-const RANKED_ADMISSION_TIMEOUT: Duration = Duration::from_secs(30);
-const RANKED_SETUP_AWAITING: u8 = 0;
-const RANKED_SETUP_AVAILABLE: u8 = 1;
-const RANKED_SETUP_UNAVAILABLE: u8 = 2;
 
 const HANDSHAKE_FRAME_TIMEOUT: Duration = Duration::from_secs(15);
 /// Finish queued reconnect/commit frames after reader authority is detached.
@@ -124,7 +100,7 @@ impl HostedModContent {
 
 /// Explicit campaign lifetime, independent of each mission's QUIC endpoint.
 /// Transport credentials are deliberately neither persisted nor reconstructed
-/// by deserialization. Durable ranked identity remains install-owned.
+/// by deserialization.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct MultiplayerCampaignSession {
     #[serde(skip)]
@@ -304,7 +280,5 @@ pub use server::*;
 mod client;
 pub use client::*;
 
-#[cfg(test)]
-mod test_support;
 #[cfg(test)]
 mod tests;

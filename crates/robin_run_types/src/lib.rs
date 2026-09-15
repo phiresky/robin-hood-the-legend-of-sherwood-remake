@@ -10,8 +10,6 @@
 
 pub mod artifact;
 pub mod canonical;
-// TODO: remove together with multiplayer ranked co-signing in robin_engine/robin_rs.
-pub mod co_sign;
 pub mod content;
 pub mod digest;
 pub mod ruleset;
@@ -22,10 +20,6 @@ pub use artifact::ArtifactRefV1;
 pub use canonical::{
     CanonicalDocument, CanonicalDocumentError, CanonicalError, CanonicalValue, DomainSignedClaim,
     canonical_json_bytes,
-};
-pub use co_sign::{
-    LEADERBOARD_CO_SIGN_PAYLOAD_DOMAIN_V1, LEADERBOARD_CO_SIGN_PAYLOAD_LENGTH_V1,
-    LeaderboardCoSignInstanceV1, LeaderboardCoSignPurposeV1, LeaderboardCoSignRequestV1,
 };
 pub use content::OfficialContentEditionV1;
 pub use digest::{

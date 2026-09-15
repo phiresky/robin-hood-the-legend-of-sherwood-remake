@@ -5,9 +5,7 @@
 //! events or acknowledges content before the adapter has prepared it.
 //!
 //! Ordinary gameplay delivery is shared in `client_gameplay`; the in-session
-//! state machine (including the single browse-only policy for a BeginSim or
-//! co-sign request released before ranked admission) lives in
-//! `client_session`, with ranked trust decisions behind its adapter traits.
+//! state machine lives in `client_session`.
 
 use super::{
     FramingError, InboundFramePolicy, MultiplayerError, MultiplayerSessionId, NetFrameClass,
