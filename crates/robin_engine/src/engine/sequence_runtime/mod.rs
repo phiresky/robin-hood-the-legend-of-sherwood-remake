@@ -3746,7 +3746,7 @@ mod sequence_phase_context_tests {
     #[test]
     fn raise_shield_from_sword_state_preserves_lowering_transition() {
         use crate::element::ActionState;
-        use crate::order::{Order, OrderType};
+        use crate::order::OrderType;
         use crate::sequence::{SequenceElement, SequenceState};
 
         let mut engine = EngineInner::new();
@@ -3757,23 +3757,6 @@ mod sequence_phase_context_tests {
             .sequence_manager
             .insert_element(SequenceElement::new(1, Command::RaiseShield, Some(owner)));
         engine.orders.sequence_manager.start_sequence_level(seq_id);
-
-        let lowering = Order::new(
-            OrderType::TransitionLoweringSword,
-            0.0,
-            0.0,
-            engine.orders.allocate_order_id(),
-        );
-        engine
-            .orders
-            .sequence_manager
-            .push_order_on(seq_id, 0, lowering);
-        engine
-            .orders
-            .sequence_manager
-            .get_element_mut(seq_id, 0)
-            .expect("raise-shield element exists")
-            .initialize_transition_orders();
 
         engine.select_sequence_element(owner, None);
         let handled = engine.instruct_owner(

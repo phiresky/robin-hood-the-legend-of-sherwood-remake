@@ -522,6 +522,14 @@ fn redundant_swordfight_entry_releases_selected_wait_before_fresh_idle() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let opponent = engine.add_test_entity(make_test_soldier(Posture::Upright));
+    let sector = crate::engine::test_support::ensure_ordinary_sector(&mut engine, 0, 0);
+    for actor in [owner, opponent] {
+        engine
+            .get_entity_mut(actor)
+            .unwrap()
+            .element_data_mut()
+            .set_sector(sector);
+    }
     let assets = engine.test_runtime_assets();
     engine
         .get_entity_mut(owner)
