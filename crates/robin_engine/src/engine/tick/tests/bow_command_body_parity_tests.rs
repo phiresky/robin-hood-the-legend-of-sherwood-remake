@@ -265,17 +265,16 @@ fn turn_context_sets_goal_without_snapping_and_books_turning() {
     turn.set_property(Field::Direction, FieldValue::Integer(5));
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, turn);
 
-    let barrier = engine.dispatch_turn_command(
+    let handled = engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::Turn,
         seq_id,
         0,
     );
 
-    assert_eq!(barrier, OwnerActionBarrier::Reach);
+    assert!(handled);
     let entity = engine.world.entities.get(owner).unwrap();
     assert_eq!(entity.element_data().direction(), 0);
     assert_eq!(
@@ -316,17 +315,16 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
     wait.set_property(Field::Timer, FieldValue::Integer(7));
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
 
-    let barrier = engine.dispatch_wait_command(
+    let handled = engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::WaitTimer,
         seq_id,
         0,
     );
 
-    assert_eq!(barrier, OwnerActionBarrier::Reach);
+    assert!(handled);
     assert_eq!(
         engine
             .world
@@ -500,13 +498,12 @@ fn frozen_all_wait_timer_still_completes_in_owner_slot() {
     let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
     wait.set_property(Field::Timer, FieldValue::Integer(0));
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
-    engine.select_sequence_element(owner, Some((seq_id, 0)));
-    engine.dispatch_wait_command(
+    engine.select_sequence_element(owner, None);
+    engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::WaitTimer,
         seq_id,
         0,
     );
@@ -857,7 +854,7 @@ fn fresh_waypoint_start_advancing_to_older_stop_transition_is_in_progress() {
 }
 
 #[test]
-fn npc_state_context_preserves_menace_order_and_reaches_splice_barrier() {
+fn menace_instruction_accepts_transition_orders() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
@@ -867,16 +864,16 @@ fn npc_state_context_preserves_menace_order_and_reaches_splice_barrier() {
         SequenceElement::new(1, Command::StartMenace, Some(owner)),
     );
 
-    let barrier = engine.dispatch_npc_state_command(
+    let handled = engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
-        Command::StartMenace,
+        owner,
         seq_id,
         0,
     );
 
-    assert_eq!(barrier, OwnerActionBarrier::Reach);
+    assert!(handled);
     let element = engine
         .orders
         .sequence_manager
@@ -898,7 +895,7 @@ fn npc_state_context_preserves_menace_order_and_reaches_splice_barrier() {
 }
 
 #[test]
-fn npc_attention_context_uses_alerted_look_and_reaches_splice_barrier() {
+fn attention_instruction_accepts_alerted_look() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let mut soldier_entity = make_bow_soldier(Posture::Upright, ActionState::Waiting);
@@ -920,17 +917,16 @@ fn npc_attention_context_uses_alerted_look_and_reaches_splice_barrier() {
         SequenceElement::new(1, Command::LookLeft, Some(owner)),
     );
 
-    let barrier = engine.dispatch_npc_attention_command(
+    let handled = engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::LookLeft,
         seq_id,
         0,
     );
 
-    assert_eq!(barrier, OwnerActionBarrier::Reach);
+    assert!(handled);
     let element = engine
         .orders
         .sequence_manager
@@ -955,17 +951,16 @@ fn stealth_context_crouches_and_preserves_terminated_order() {
         SequenceElement::new(1, Command::CrouchDown, Some(owner)),
     );
 
-    let barrier = engine.dispatch_stealth_command(
+    let handled = engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::CrouchDown,
         seq_id,
         0,
     );
 
-    assert_eq!(barrier, OwnerActionBarrier::Reach);
+    assert!(handled);
     // Translation only appends the crouch transition order; the posture
     // and action-state snap happen when the transition animation reaches
     // DONE, so the element stays selected/in-progress and the actor is
@@ -998,12 +993,11 @@ fn wait_timer_context_rejects_missing_timer_contextually() {
     let wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
 
-    engine.dispatch_wait_command(
+    engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::WaitTimer,
         seq_id,
         0,
     );
@@ -1071,7 +1065,7 @@ fn stealth_termination_splices_timer_successor_before_same_tick_scan() {
 }
 
 #[test]
-fn direct_ability_context_starts_whistle_and_reaches_splice_barrier() {
+fn whistle_instruction_accepts_whistling_order() {
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
@@ -1081,18 +1075,16 @@ fn direct_ability_context_starts_whistle_and_reaches_splice_barrier() {
         SequenceElement::new(1, Command::WhistleCmd, Some(owner)),
     );
 
-    let barrier = engine.dispatch_direct_ability_command(
+    let handled = engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::WhistleCmd,
-        true,
         seq_id,
         0,
     );
 
-    assert_eq!(barrier, OwnerActionBarrier::Reach);
+    assert!(handled);
     let element = engine
         .orders
         .sequence_manager
@@ -1117,7 +1109,7 @@ fn direct_ability_context_starts_whistle_and_reaches_splice_barrier() {
 }
 
 #[test]
-fn direct_ability_context_preserves_eat_no_ammo_skip_barrier() {
+fn eat_instruction_terminates_without_ammo() {
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
@@ -1127,18 +1119,16 @@ fn direct_ability_context_preserves_eat_no_ammo_skip_barrier() {
         SequenceElement::new(1, Command::EatCmd, Some(owner)),
     );
 
-    let barrier = engine.dispatch_direct_ability_command(
+    let handled = engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::EatCmd,
-        false,
         seq_id,
         0,
     );
 
-    assert_eq!(barrier, OwnerActionBarrier::Skip);
+    assert!(handled);
     let element = engine
         .orders
         .sequence_manager
@@ -1149,7 +1139,7 @@ fn direct_ability_context_preserves_eat_no_ammo_skip_barrier() {
 }
 
 #[test]
-fn direct_ability_context_preserves_missing_throw_target_skip_barrier() {
+fn throw_instruction_rejects_missing_target() {
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
@@ -1159,18 +1149,16 @@ fn direct_ability_context_preserves_missing_throw_target_skip_barrier() {
         SequenceElement::new(1, Command::ThrowApple, Some(owner)),
     );
 
-    let barrier = engine.dispatch_direct_ability_command(
+    let handled = engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::ThrowApple,
-        true,
         seq_id,
         0,
     );
 
-    assert_eq!(barrier, OwnerActionBarrier::Skip);
+    assert!(handled);
     assert_eq!(
         engine
             .orders
@@ -1204,7 +1192,7 @@ fn position_assertion_context_interrupts_at_tolerance_boundary() {
     }
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, assertion);
 
-    let barrier = engine.dispatch_position_assertion(
+    let handled = engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
@@ -1213,7 +1201,7 @@ fn position_assertion_context_interrupts_at_tolerance_boundary() {
         0,
     );
 
-    assert_eq!(barrier, OwnerActionBarrier::Skip);
+    assert!(handled);
     assert_eq!(
         engine
             .orders
@@ -1255,7 +1243,7 @@ fn position_assertion_context_accepts_nan_distance_like_original() {
     }
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, assertion);
 
-    let barrier = engine.dispatch_position_assertion(
+    let handled = engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
@@ -1264,7 +1252,7 @@ fn position_assertion_context_accepts_nan_distance_like_original() {
         0,
     );
 
-    assert_eq!(barrier, OwnerActionBarrier::Skip);
+    assert!(handled);
     assert_eq!(
         engine
             .orders
@@ -1306,12 +1294,11 @@ fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
     }
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
 
-    engine.dispatch_wait_command(
+    engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::WaitFreeLift,
         seq_id,
         0,
     );
@@ -1370,12 +1357,11 @@ fn lift_wait_context_rejects_crenel_lift_type_contextually() {
         *sector = crate::position_interface::SectorHandle::new(42);
     }
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
-    engine.dispatch_wait_command(
+    engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::WaitFreeLift,
         seq_id,
         0,
     );
@@ -1411,12 +1397,11 @@ fn lift_wait_context_reserves_direction_before_terminating() {
     }
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
 
-    engine.dispatch_wait_command(
+    engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::WaitFreeLift,
         seq_id,
         0,
     );
@@ -1505,12 +1490,11 @@ fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
         *sector = crate::position_interface::SectorHandle::new(42);
     }
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
-    engine.dispatch_wait_command(
+    engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::WaitFreeLift,
         seq_id,
         0,
     );
@@ -1586,16 +1570,14 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         *sector = crate::position_interface::SectorHandle::new(42);
     }
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
-    engine.dispatch_wait_command(
+    engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         owner,
-        Command::WaitFreeLift,
         seq_id,
         0,
     );
-    engine.select_sequence_element(owner, Some((seq_id, 0)));
     engine.set_actors_frozen(true);
     let sim = crate::sim_rng::test_context();
 

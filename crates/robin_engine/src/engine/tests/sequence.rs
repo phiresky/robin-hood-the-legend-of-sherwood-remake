@@ -513,65 +513,18 @@ fn manager_instruct_rejects_transition_terminated_element_before_priority_and_ar
 }
 
 #[test]
-fn retained_waiting_sword_handoff_preserves_running_sprite_identity() {
-    use crate::element::{Command, InstalledActorOrder, Posture};
-    use crate::order::{Order, OrderType};
-    use crate::sequence::SequenceElement;
-
-    let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
-    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
-    let old_order_id = engine.orders.allocate_order_id();
-    let new_order_id = engine.orders.allocate_order_id();
-    {
-        let entity = engine.get_entity_mut(soldier).unwrap();
-        let actor = entity.actor_data_mut().unwrap();
-        actor.installed_order = Some(InstalledActorOrder {
-            order_id: old_order_id,
-            order_type: OrderType::WaitingSword,
-        });
-        actor.retained_waiting_sword_order_id = Some(old_order_id);
-        entity.sprite_mut().last_processed_order_id = old_order_id.get();
-        entity.sprite_mut().frame_count = 5;
-    }
-
-    let mut wait = SequenceElement::new_generic(1, Command::Wait, Some(soldier));
-    wait.orders
-        .push_back(Order::new(OrderType::WaitingSword, 0.0, 0.0, new_order_id));
-    let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
-    engine.select_sequence_element(soldier, Some((sequence, 0)));
-
-    engine.publish_selected_order_as_installed(soldier);
-
-    let entity = engine.get_entity(soldier).unwrap();
-    let actor = entity.actor_data().unwrap();
-    assert_eq!(actor.installed_order.unwrap().order_id, new_order_id);
-    assert_eq!(actor.retained_waiting_sword_order_id, None);
-    assert_eq!(actor.last_execute_order_id, Some(new_order_id));
-    assert_eq!(entity.sprite().last_processed_order_id, new_order_id.get());
-    assert_eq!(entity.sprite().frame_count, 5);
-}
-
-#[test]
-fn sequence_phase_clears_unconsumed_waiting_sword_retention() {
+fn redundant_swordfight_entry_releases_selected_wait_before_fresh_idle() {
     use crate::element::{ActionState, Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::{Field, FieldValue, SequenceElement, SequencePriority, SequenceState};
 
+    let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
-    engine.control.frame_counter = 1;
-    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
+    let assets = LevelAssets::new();
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let opponent = engine.add_test_entity(make_test_soldier(Posture::Upright));
     engine
-        .get_entity_mut(soldier)
+        .get_entity_mut(owner)
         .unwrap()
         .human_data_mut()
         .unwrap()
@@ -583,55 +536,103 @@ fn sequence_phase_clears_unconsumed_waiting_sword_retention() {
         .human_data_mut()
         .unwrap()
         .opponents
-        .push(soldier);
+        .push(owner);
     engine
-        .get_entity_mut(soldier)
+        .get_entity_mut(owner)
         .unwrap()
         .actor_data_mut()
         .unwrap()
         .action_state = ActionState::WaitingSword;
 
-    let wait_order_id = engine.orders.allocate_order_id();
-    let mut wait = SequenceElement::new_generic(1, Command::Wait, Some(soldier));
+    let old_order_id = engine.orders.allocate_order_id();
+    let mut wait = SequenceElement::new_generic(1, Command::Wait, Some(owner));
     wait.priority = SequencePriority::Wait;
-    wait.posture_after_transition = Posture::Upright;
     wait.orders
-        .push_back(Order::new(OrderType::WaitingSword, 0.0, 0.0, wait_order_id));
-    let wait_sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        wait_sequence,
-        0,
-    );
-    engine.publish_selected_order_as_installed(soldier);
+        .push_back(Order::new(OrderType::WaitingSword, 0.0, 0.0, old_order_id));
+    let old_wait = engine.orders.sequence_manager.insert_element(wait);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(old_wait);
+    engine.select_sequence_element(owner, Some((old_wait, 0)));
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), old_wait, 0);
+    engine.publish_selected_order_as_installed(owner);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.sprite_mut().last_processed_order_id = old_order_id.get();
+        entity.sprite_mut().frame_count = 5;
+    }
 
-    let mut enter = SequenceElement::new_generic(1, Command::EnterSwordfight, Some(soldier));
+    let mut enter = SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
     enter.priority = SequencePriority::PostponeEverythingButInjuries;
-    enter.posture_after_transition = Posture::Upright;
     enter.set_property(Field::Opponent, FieldValue::Element(opponent));
-    let enter_sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, enter);
-
-    let mut display = HostDisplayState::default();
-    engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
-        &mut display,
-        &LevelAssets::default(),
-    );
+    let incoming = engine.orders.sequence_manager.insert_element(enter);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(incoming);
+    assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, incoming, 0));
 
     assert_eq!(
         engine
             .orders
             .sequence_manager
-            .get_element(enter_sequence, 0)
+            .get_element(incoming, 0)
             .unwrap()
             .state,
         SequenceState::Terminated
     );
-    let actor = engine.get_entity(soldier).unwrap().actor_data().unwrap();
-    assert_eq!(actor.installed_order, None);
-    assert_eq!(actor.retained_waiting_sword_order_id, None);
+    assert_eq!(engine.current_sequence_element_for_actor(owner), None);
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .installed_order,
+        None
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .sprite()
+            .last_processed_order_id,
+        old_order_id.get()
+    );
+
+    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+
+    let (fresh_sequence, fresh_index) = engine
+        .current_sequence_element_for_actor(owner)
+        .expect("idle owner receives a fresh wait");
+    assert_ne!((fresh_sequence, fresh_index), (old_wait, 0));
+    let fresh_wait = engine
+        .orders
+        .sequence_manager
+        .get_element(fresh_sequence, fresh_index)
+        .unwrap();
+    assert_eq!(fresh_wait.command, Command::Wait);
+    assert_eq!(fresh_wait.state, SequenceState::InProgress);
+    let fresh_order = fresh_wait
+        .current_order()
+        .expect("fresh wait has an idle order");
+    assert_eq!(fresh_order.order_type, OrderType::WaitingSword);
+    assert_ne!(fresh_order.order_id, old_order_id);
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(
+        entity
+            .actor_data()
+            .unwrap()
+            .installed_order
+            .unwrap()
+            .order_id,
+        fresh_order.order_id
+    );
+    assert_eq!(
+        entity.sprite().last_processed_order_id,
+        fresh_order.order_id.get()
+    );
 }
 
 #[test]

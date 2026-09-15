@@ -3616,12 +3616,11 @@ fn enter_swordfight_instruct_queues_transition_without_execute_side_effects() {
     let seq_id = engine.orders.sequence_manager.insert_sequence(sequence);
     engine.orders.sequence_manager.start_sequence_level(seq_id);
 
-    engine.dispatch_enter_swordfight(
+    engine.instruct_owner(
         sim,
         &LevelAssets::default(),
         &mut Vec::new(),
         owner,
-        Some(opponent),
         seq_id,
         0,
     );
@@ -3705,12 +3704,11 @@ fn failed_enter_swordfight_retires_matching_postponed_thrust_a() {
     };
     opponent_entity.pc.life_points = 0;
 
-    engine.dispatch_enter_swordfight(
+    engine.instruct_owner(
         &sim,
         &LevelAssets::default(),
         &mut Vec::new(),
         owner,
-        Some(opponent),
         admission,
         0,
     );
@@ -3781,12 +3779,11 @@ fn failed_enter_swordfight_leaves_mismatched_postponed_work_untouched() {
     };
     opponent_entity.pc.life_points = 0;
 
-    engine.dispatch_enter_swordfight(
+    engine.instruct_owner(
         &sim,
         &LevelAssets::default(),
         &mut Vec::new(),
         owner,
-        Some(opponent),
         admission,
         0,
     );
@@ -3852,12 +3849,11 @@ fn successful_enter_swordfight_retains_postponed_thrust_a() {
         .sequence_manager
         .set_cross_postponed_link((admission, 0), Some((postponed, 0)));
 
-    engine.dispatch_enter_swordfight(
+    engine.instruct_owner(
         &sim,
         &LevelAssets::default(),
         &mut Vec::new(),
         owner,
-        Some(opponent),
         admission,
         0,
     );
@@ -3973,12 +3969,11 @@ fn enter_swordfight_instruct_preserves_live_sprite_destination() {
     ));
     let seq_id = engine.orders.sequence_manager.insert_sequence(sequence);
     engine.orders.sequence_manager.start_sequence_level(seq_id);
-    engine.dispatch_enter_swordfight(
+    engine.instruct_owner(
         &sim,
         &LevelAssets::default(),
         &mut Vec::new(),
         owner,
-        None,
         seq_id,
         0,
     );
@@ -4021,21 +4016,16 @@ fn satisfied_enter_swordfight_skips_outer_instruct_epilogue() {
     let seq_id = engine.orders.sequence_manager.insert_sequence(sequence);
     engine.orders.sequence_manager.start_sequence_level(seq_id);
 
-    let barrier = engine.dispatch_enter_swordfight(
+    let handled = engine.instruct_owner(
         &sim,
         &LevelAssets::default(),
         &mut Vec::new(),
         owner,
-        Some(opponent),
         seq_id,
         0,
     );
 
-    assert_eq!(
-        barrier,
-        crate::engine::sequence_runtime::OwnerActionBarrier::Skip,
-        "terminal translation changes the selected element before the actor instruction's epilogue"
-    );
+    assert!(handled);
     assert_eq!(
         engine
             .orders
