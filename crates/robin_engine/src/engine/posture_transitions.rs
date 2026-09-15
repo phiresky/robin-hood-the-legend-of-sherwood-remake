@@ -405,34 +405,6 @@ impl EngineInner {
         }
     }
 
-    fn translate_lift_posture_movement_action(
-        &self,
-        sector: crate::position_interface::SectorHandle,
-        posture: Posture,
-        position: crate::coordinates::MapPoint,
-        elem: &SequenceElement,
-    ) -> Option<OrderType> {
-        let sector =
-            super::movement::grid_sector_for_position_handle(&self.world.fast_grid.level, sector)?;
-        let lift_type = sector.lift_type?;
-        if !matches!(
-            (posture, lift_type),
-            (Posture::OnWall, crate::sector::LiftType::Wall)
-                | (Posture::OnLadder, crate::sector::LiftType::Ladder)
-        ) {
-            return None;
-        }
-
-        let destination = elem.orders.back()?;
-        let (pt_low, pt_high) = super::movement::lift_endpoint_points_for_sector(sector);
-        let ladder_dx = pt_low.x - pt_high.x;
-        let ladder_dy = pt_low.y - pt_high.y;
-        let move_dx = destination.target_x - position.x;
-        let move_dy = destination.target_y - position.y;
-        let going_down = ladder_dx * move_dx + ladder_dy * move_dy >= 0.0;
-        Some(lift_type.translate_climb_action(destination.order_type, going_down))
-    }
-
     /// Insert start-posture / start-action-state / end transition
     /// orders on the movement element at `(seq_id, elem_idx)` based on
     /// the owner's current (or post-transition) posture + action
@@ -462,7 +434,7 @@ impl EngineInner {
         if command != Command::Move && command != Command::MoveOk && command != Command::PassDoor {
             return false;
         }
-        let (mut animation_movement, flags, owner) = match &elem.data {
+        let (animation_movement, flags, owner) = match &elem.data {
             SequenceElementData::Movement { action, flags, .. } => (*action, *flags, elem.owner),
             _ => return false,
         };
@@ -486,7 +458,7 @@ impl EngineInner {
         let state = elem.state;
         let elem_posture_after = elem.posture_after_transition;
         let elem_action_state_after = elem.action_state_after_transition;
-        let (current_posture, current_action_state, position, current_sector) = {
+        let (current_posture, current_action_state, position) = {
             let Some(entity) = self.get_entity(owner) else {
                 return false;
             };
@@ -507,12 +479,7 @@ impl EngineInner {
             } else {
                 (elem_posture_after, elem_action_state_after)
             };
-            (
-                cur_posture,
-                cur_action_state,
-                ed.position_map(),
-                ed.sector(),
-            )
+            (cur_posture, cur_action_state, ed.position_map())
         };
         tracing::trace!(
             target: "parity_post_process_path",
@@ -532,14 +499,6 @@ impl EngineInner {
         );
 
         // ── Decide which transitions to insert ──────────────────
-        if matches!(current_posture, Posture::OnWall | Posture::OnLadder)
-            && let Some(sector) = current_sector
-            && let Some(translated) =
-                self.translate_lift_posture_movement_action(sector, current_posture, position, elem)
-        {
-            animation_movement = translated;
-        }
-
         let (animation_start_posture, animation_start_action_state, animation_end) =
             decide_transitions(
                 animation_movement,
@@ -568,27 +527,6 @@ impl EngineInner {
         else {
             return false;
         };
-        if matches!(
-            animation_movement,
-            OrderType::ClimbingWallUp
-                | OrderType::ClimbingWallDown
-                | OrderType::ClimbingWallUpFast
-                | OrderType::ClimbingWallDownFast
-                | OrderType::ClimbingLadderUp
-                | OrderType::ClimbingLadderDown
-                | OrderType::ClimbingLadderUpFast
-                | OrderType::ClimbingLadderDownFast
-        ) {
-            for order in &mut elem.orders {
-                if matches!(
-                    order.order_type,
-                    OrderType::WalkingUpright | OrderType::RunningUpright
-                ) {
-                    order.order_type = animation_movement;
-                    order.compute_direction = false;
-                }
-            }
-        }
         if tracing::enabled!(tracing::Level::TRACE) {
             let pre: Vec<(std::num::NonZeroU32, crate::order::OrderType, f32, f32)> = elem
                 .orders
@@ -951,15 +889,6 @@ fn decide_transitions(
     let mut animation_start_action_state: Option<OrderType> = None;
     let mut animation_end: Option<OrderType> = None;
 
-    if matches!(current_posture, Posture::OnWall | Posture::OnLadder)
-        && matches!(
-            animation_movement,
-            OrderType::WalkingUpright | OrderType::RunningUpright
-        )
-    {
-        return (None, None, None);
-    }
-
     match animation_movement {
         OrderType::WalkingUpright => {
             // Posture transition
@@ -1155,6 +1084,87 @@ mod tests {
             Some((sequence, 0)),
         );
         (engine, owner, sequence, order_id)
+    }
+
+    #[test]
+    fn speed_change_during_ladder_exit_inserts_running_transition_in_outside_tail() {
+        let (mut engine, owner, sequence, _) = selected_running_pc();
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.set_posture(Posture::OnLadder);
+        entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
+        let transition = OrderType::TransitionWalkingUprightRunningUpright;
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
+        conversion[transition as usize] = 0;
+        entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![
+                crate::sprite_script::SpriteScript {
+                    action_id: transition as u16,
+                    action_done: 0,
+                    average_speed: 0.0,
+                    hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+                    sum_distance: 6,
+                    frame_ids: vec![1],
+                    delays: vec![0],
+                    distances: vec![6],
+                    offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+                    sound_ids: vec![0],
+                };
+                16
+            ]),
+            std::sync::Arc::new(conversion),
+        );
+        let actions = [
+            (OrderType::TransitionClimbingLadderDownWaitingUpright, 10.0),
+            (OrderType::PassingDoor, 0.0),
+            (OrderType::RunningUpright, 30.0),
+            (OrderType::PassingDoor, 0.0),
+        ];
+        let orders: Vec<_> = actions
+            .into_iter()
+            .map(|(action, x)| Order::new(action, x, 0.0, engine.orders.allocate_order_id()))
+            .collect();
+        let old_ids: Vec<_> = orders.iter().map(|order| order.order_id).collect();
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence, 0)
+            .unwrap();
+        element.command = Command::PassDoor;
+        if let SequenceElementData::Movement { flags, .. } = &mut element.data {
+            *flags = MoveFlags::FAST | MoveFlags::NO_TRANSITIONS;
+        }
+        element.orders = orders.into();
+        engine.post_process_path(sequence, 0);
+        let orders = &engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .orders;
+        assert_eq!(
+            orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            [
+                OrderType::TransitionClimbingLadderDownWaitingUpright,
+                OrderType::PassingDoor,
+                transition,
+                OrderType::RunningUpright,
+                OrderType::PassingDoor,
+            ]
+        );
+        assert_eq!(orders[2].target_x, 16.0);
+        assert_eq!(orders[3].target_x, 30.0);
+        assert_eq!(
+            [
+                orders[0].order_id,
+                orders[1].order_id,
+                orders[3].order_id,
+                orders[4].order_id
+            ],
+            old_ids.as_slice()
+        );
     }
 
     #[test]
