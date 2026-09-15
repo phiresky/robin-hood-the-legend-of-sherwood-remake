@@ -769,9 +769,8 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
         );
     }
 
-    let mut display = CameraDisplayState::default();
     let assets = LevelAssets::new();
-    engine.tick_ability_for(sim, &mut display, &assets, first);
+    engine.tick_selected_ability(sim, &assets, first, engine.actors_frozen());
 
     assert_ne!(
         engine
@@ -1292,10 +1291,9 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         seq,
         0,
     );
-    let mut display = CameraDisplayState::default();
 
     for _ in 0..10 {
-        engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+        engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
         if (engine
             .get_entity(attacker)
             .unwrap()
@@ -1335,8 +1333,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         "victim virgin increment must occur during initial attacker Done setup"
     );
     // Once DONE has latched, a fast-turn short-circuit still executes the
-    // original game's strangling tail exactly once. `tick_ability` performs that
-    // increment itself; the engine wrapper must not add a second one.
+    // strangling tail exactly once without also executing the normal action tail.
     {
         let attacker_entity = engine.get_entity_mut(attacker).unwrap();
         attacker_entity
@@ -1351,7 +1348,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         victim_sprite.current_frame = 0;
         victim_sprite.frame_count = 0;
     }
-    engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+    engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
     let victim_sprite = &engine.get_entity(victim).unwrap().element_data().sprite;
     assert_eq!(
         (victim_sprite.current_frame, victim_sprite.frame_count),
@@ -1362,7 +1359,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
     let (_, condolation_order) =
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
             for _ in 0..10 {
-                engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+                engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
                 if !crate::abilities::selected_ability(
                     &engine.world.entities,
                     &engine.orders.sequence_manager,
@@ -1438,7 +1435,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         "the direct retaliation and condolation EventGotHit handlers must both execute synchronously"
     );
     let sequence_count = engine.orders.sequence_manager.sequences_iter().count();
-    engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+    engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
     assert_eq!(
         engine.orders.sequence_manager.sequences_iter().count(),
         sequence_count,
@@ -1596,14 +1593,27 @@ fn selected_ability_catalog_order_executes_without_separate_binding() {
 }
 
 #[test]
-fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
+fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
 
     let sim = crate::sim_rng::test_context();
-    let mut engine = EngineInner::new();
+    let mut description = crate::campaign::PcDescription {
+        character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+        ..Default::default()
+    };
+    description.status.num_rations = 2;
+    let mut campaign = crate::campaign::Campaign::default();
+    campaign.characters.push(description);
+    let mut engine = EngineInner::new_with_campaign(campaign);
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .pc_data_mut()
+        .unwrap()
+        .life_points = 20;
     bind_test_action_point(
         &mut engine,
         owner,
@@ -1673,36 +1683,17 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
         owner,
     )
     .map(|ability| ability.order_id);
-    let assets = engine.test_runtime_assets();
+    let mut assets = engine.test_runtime_assets();
+    std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].actions[0] =
+        crate::profiles::Action::Eat;
 
     let mut done_count = 0;
-    loop {
-        let results = crate::abilities::tick_ability(
-            &sim,
-            &mut engine.world.entities,
-            &engine.orders.sequence_manager,
-            owner,
-            false,
+    for _ in 0..10 {
+        engine.tick_actor_owner_envelopes(&sim, &assets);
+        done_count += usize::from(
+            engine.get_entity(owner).unwrap().sprite().last_motion_state
+                == Some(crate::sprite::MotionState::Done),
         );
-        done_count += results
-            .iter()
-            .filter(|result| matches!(result, crate::abilities::AbilityTickResult::EatDone { .. }))
-            .count();
-        if results
-            .iter()
-            .any(|result| matches!(result, crate::abilities::AbilityTickResult::EatDone { .. }))
-        {
-            // A consumed Done result marks the selected order before its tail advances.
-            engine
-                .orders
-                .sequence_manager
-                .get_element_mut(seq, 0)
-                .unwrap()
-                .orders
-                .front_mut()
-                .unwrap()
-                .done = true;
-        }
         if crate::abilities::selected_ability(
             &engine.world.entities,
             &engine.orders.sequence_manager,
@@ -1733,9 +1724,8 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
         order_id.unwrap()
     );
 
-    let mut display = CameraDisplayState::default();
     for _ in 0..10 {
-        engine.tick_ability_for(&sim, &mut display, &assets, owner);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
         if !crate::abilities::selected_ability(
             &engine.world.entities,
             &engine.orders.sequence_manager,
@@ -1764,6 +1754,16 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
             .order_type,
         OrderType::WaitingUpright
     );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .life_points,
+        60
+    );
+    assert_eq!(engine.campaign().characters[0].status.num_rations, 1);
 }
 
 #[test]

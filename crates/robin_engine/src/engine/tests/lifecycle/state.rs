@@ -1018,7 +1018,7 @@ fn assert_invalid_first_pay_execute_aborts_before_facing(
         .actor_data_mut()
         .unwrap()
         .execute_order_initialising = true;
-    invalid.tick_ability_for(sim, &mut CameraDisplayState::default(), assets, pc);
+    invalid.tick_selected_ability(sim, assets, pc, invalid.actors_frozen());
     assert_eq!(
         invalid
             .get_entity(pc)
@@ -1055,7 +1055,7 @@ fn first_valid_pay_execute_samples_facing_once(
         .actor_data_mut()
         .unwrap()
         .execute_order_initialising = true;
-    engine.tick_ability_for(sim, &mut CameraDisplayState::default(), assets, pc);
+    engine.tick_selected_ability(sim, assets, pc, engine.actors_frozen());
     assert_eq!(
         engine
             .get_entity(pc)
@@ -1202,7 +1202,7 @@ fn later_pay_execute_frames_do_not_resample(
         .unwrap()
         .element_data_mut()
         .set_direction_instantly(8);
-    engine.tick_ability_for(sim, &mut CameraDisplayState::default(), assets, pc);
+    engine.tick_selected_ability(sim, assets, pc, engine.actors_frozen());
     assert_eq!(
         engine
             .get_entity(pc)
@@ -1248,11 +1248,11 @@ fn assert_invalid_pay_completion_aborts(
         .set_value(CampaignValue::Ransom, 0);
     let ((), invalid_cards) = crate::engine::soldier_helpers::capture_condolation_cards(|| {
         for _ in 0..128 {
-            invalid_completion.tick_ability_for(
+            invalid_completion.tick_selected_ability(
                 invalid_completion_sim,
-                &mut CameraDisplayState::default(),
                 assets,
                 pc,
+                invalid_completion.actors_frozen(),
             );
             if invalid_completion
                 .orders
@@ -1334,11 +1334,11 @@ fn assert_valid_pay_completion_launches_response(
     // Valid completion still applies the salary exactly once and launches
     // the civilian response.
     for _ in 0..128 {
-        valid_completion.tick_ability_for(
+        valid_completion.tick_selected_ability(
             valid_completion_sim,
-            &mut CameraDisplayState::default(),
             assets,
             pc,
+            valid_completion.actors_frozen(),
         );
         if valid_completion
             .orders

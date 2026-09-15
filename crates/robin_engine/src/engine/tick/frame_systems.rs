@@ -265,7 +265,6 @@ impl EngineInner {
     pub(super) fn hourglass_phase_entity_systems(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) {
         // ── Per-frame movement tick ─────────────────────────────
@@ -306,7 +305,7 @@ impl EngineInner {
         // Every supported nonactor update now runs below at its
         // live legacy slot: mobile boundary first, then static owners, then
         // projectile/net dispatch.
-        self.tick_actor_owner_envelopes_with_display(sim, display, assets);
+        self.tick_actor_owner_envelopes(sim, assets);
         // ── Corpse-intersection repulsion hook ────────────────────
         // Scan for lying↔non-lying posture transitions and fire
         // `update_intersecting_corpses` so stacked corpses get the
@@ -418,14 +417,6 @@ impl EngineInner {
         // cleared at their owning actor slots above and are skipped here.
         self.tick_melee_combat(sim, assets);
 
-        // Preserve only the terminal shoulder-climb sprite synchronization
-        // before the motion latch is consumed. Carried transforms remain in
-        // their established post-propagation phase below.
-        abilities::sync_terminal_shoulder_animations(
-            &mut self.world.entities,
-            &self.world.original_creation_order_by_entity,
-        );
-
         // ── Per-actor `Order::done` propagation ────────────────
         // Runs after every per-system sprite-advance tick this frame
         // (movement, jumps, animations, bow shots, melee, abilities),
@@ -439,10 +430,6 @@ impl EngineInner {
             &mut self.world.entities,
             &mut self.orders.sequence_manager,
         );
-
-        // Keep bodies carried by Little John positioned on the carrier and
-        // drive their sprite animation synchronized with the carrier.
-        abilities::sync_carried_positions(&mut self.world.entities, &assets.profile_manager);
 
         // TODO(original-parity): move further gameplay maintenance into the
         // ordered pass only when a concrete observable discrepancy is proven.

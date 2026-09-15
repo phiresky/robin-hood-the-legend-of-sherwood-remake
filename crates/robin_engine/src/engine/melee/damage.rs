@@ -1723,11 +1723,8 @@ impl EngineInner {
                 return;
             };
             let elem = carrier.element_data();
-            // `sync_carried_positions` runs every tick while the body is
-            // held and copies the carrier's plane Z onto the carried;
-            // reading it from the carrier's already-resolved
-            // `PositionInterface` here mirrors that path and avoids
-            // re-resolving from `assets.environment.static_sight_obstacles`.
+            // The drop adopts the carrier's resolved surface together with
+            // its layer, sector and obstacle.
             let plane = carrier.position_iface().get_plane().copied();
             (
                 elem.position_map(),

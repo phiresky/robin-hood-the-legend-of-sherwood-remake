@@ -2492,7 +2492,6 @@ fn dispatch_arm_completion(
 pub(super) struct ShoulderHelperDismount {
     pub helper_id: EntityId,
     pub carried_id: EntityId,
-    pub initialising: bool,
     pub motion: MotionState,
     pub helper_frame: u16,
     pub helper_frame_count: u16,
@@ -2550,7 +2549,6 @@ impl ActorMotionPhase {
                         ShoulderHelperDismount {
                             helper_id: entity_id,
                             carried_id,
-                            initialising: order_is_initialising,
                             motion: motion_state,
                             helper_frame: sprite.current_frame,
                             helper_frame_count: sprite.frame_count,

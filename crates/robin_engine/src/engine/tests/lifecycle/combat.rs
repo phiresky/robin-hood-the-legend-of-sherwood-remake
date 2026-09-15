@@ -328,9 +328,8 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
             .map(|pc| pc.life_points);
         let assets = assets_with_test_pc_profile();
         let sim = crate::sim_rng::test_context();
-        let mut display = CameraDisplayState::default();
         for _ in 0..4 {
-            engine.tick_ability_for(&sim, &mut display, &assets, healer);
+            engine.tick_selected_ability(&sim, &assets, healer, engine.actors_frozen());
             let ammo = engine.mission_domain.campaign.characters[healer_description]
                 .status
                 .get_ammo(crate::profiles::Action::Heal);
@@ -557,7 +556,7 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
         .unwrap()
         .element_data_mut()
         .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
-    invalid.tick_ability_for(&sim, &mut CameraDisplayState::default(), &assets, attacker);
+    invalid.tick_selected_ability(&sim, &assets, attacker, invalid.actors_frozen());
     assert_eq!(
         invalid
             .orders
@@ -592,8 +591,7 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
         .element_data_mut()
         .set_position_map(crate::coordinates::MapPoint::new(0.0, 20.0));
     let live_facing = crate::position_interface::vector_to_sector_0_to_15_iso(0.0, 20.0);
-    let mut camera_display = CameraDisplayState::default();
-    engine.tick_ability_for(&sim, &mut camera_display, &assets, attacker);
+    engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
 
     let victim_ai = engine.get_entity(victim).unwrap().ai_controller().unwrap();
     assert!(
@@ -794,8 +792,7 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
         .unwrap()
         .execute_order_initialising = true;
 
-    let mut display = CameraDisplayState::default();
-    engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+    engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
     assert!(
         !(engine
             .get_entity(attacker)
@@ -827,7 +824,7 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
 
     for branch in [&mut in_range, &mut out_of_range] {
         for _ in 0..10 {
-            branch.tick_ability_for(&sim, &mut CameraDisplayState::default(), &assets, attacker);
+            branch.tick_selected_ability(&sim, &assets, attacker, branch.actors_frozen());
             if (branch
                 .get_entity(attacker)
                 .unwrap()
@@ -974,12 +971,11 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
     let mut engine = EngineInner::new();
     let (attacker, victim, assets, hotspot) = add_strangle_placement_failure_scene(&mut engine);
     let launch = launch_initialized_strangle(&mut engine, attacker, victim, hotspot);
-    let mut display = CameraDisplayState::default();
 
     let (_, condolation_order) =
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
             for _ in 0..10 {
-                engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+                engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
                 if !crate::abilities::selected_ability(
                     &engine.world.entities,
                     &engine.orders.sequence_manager,
@@ -997,14 +993,7 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
     );
 
     assert_failed_strangle_cleanup(&engine, attacker, victim, launch);
-    assert_failed_strangle_setup_is_not_repeated(
-        &mut engine,
-        &sim,
-        &mut display,
-        &assets,
-        attacker,
-        victim,
-    );
+    assert_failed_strangle_setup_is_not_repeated(&mut engine, &sim, &assets, attacker, victim);
 }
 
 fn add_strangle_placement_failure_scene(
@@ -1325,7 +1314,6 @@ fn assert_failed_strangle_cleanup(
 fn assert_failed_strangle_setup_is_not_repeated(
     engine: &mut EngineInner,
     sim: &crate::sim_rng::SimulationContext,
-    display: &mut CameraDisplayState,
     assets: &LevelAssets,
     attacker: EntityId,
     victim: EntityId,
@@ -1336,7 +1324,7 @@ fn assert_failed_strangle_setup_is_not_repeated(
         victim_entity.element_data().sprite.current_frame,
         engine.orders.sequence_manager.sequences_iter().count(),
     );
-    engine.tick_ability_for(sim, display, assets, attacker);
+    engine.tick_selected_ability(sim, assets, attacker, engine.actors_frozen());
     let victim_entity = engine.get_entity(victim).unwrap();
     assert_eq!(
         (

@@ -121,11 +121,6 @@ impl EngineInner {
             crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
             "corpse-drop side effect must run before order advancement exposes a successor"
         );
-        crate::abilities::sync_terminal_corpse_drop_animation(
-            &mut self.world.entities,
-            &assets.profile_manager,
-            carrier_id,
-        );
         let (target_id, drop_posture, carrier_pos, carrier_direction) = {
             let carrier = self.expect_entity(carrier_id, "corpse-drop transition owner");
             let pc = carrier.pc_data().unwrap_or_else(|| {
