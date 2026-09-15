@@ -50,9 +50,15 @@ use super::*;
 // bytes are: mission parts carry the VQ chunks and the boot datadir carries
 // the sprite bank they materialize into, and a datadir must never be paired
 // with mission parts of the other codec generation, so both magics advance.
-pub(super) const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA17";
+// Datadir v18: web images are AVIF. `EncodedPictureCodec` gains
+// `AvifRgba565Keyed` and `Rgb565Raw`, which changes the datadir bitcode
+// layout (resource pictures live in the boot datadir). Mission payloads
+// remain v9: their layout is unchanged (no ResourceManager values); their
+// RLE image atlases and raw maps carry AVIF bytes, which only a v18 datadir
+// references.
+pub(super) const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA18";
 pub(super) const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN09";
-pub const SHIPPING_DATADIR_VERSION: u32 = 17;
+pub const SHIPPING_DATADIR_VERSION: u32 = 18;
 pub const SHIPPING_MISSION_VERSION: u32 = 9;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.

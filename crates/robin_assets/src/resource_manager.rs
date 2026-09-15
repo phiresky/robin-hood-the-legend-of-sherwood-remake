@@ -97,13 +97,23 @@ pub struct EncodedPicture {
     pub bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub enum EncodedPictureCodec {
-    /// JPEG XL, RGB-only, decoded back to RGB565.
+    /// JPEG XL, RGB-only, decoded back to RGB565 (native builds only).
     JxlRgb565,
     /// JPEG XL with alpha. RGB565 transparent-key pixels are encoded as
-    /// alpha=0 and restored to the key color after decode.
+    /// alpha=0 and restored to the key color after decode (native only).
     JxlRgba565Keyed,
+    /// AVIF whose losslessly coded alpha channel carries the pixel class
+    /// (transparent / shadow / opaque); colour is lossy. Decoded by the
+    /// browser — see [`crate::browser_images`].
+    AvifRgba565Keyed,
+    /// Exact RGB565 pixels: `[u16 width][u16 height]` little-endian, then
+    /// row-major little-endian words. For pictures so small that a lossy
+    /// container would be larger than the pixels themselves.
+    Rgb565Raw,
 }
 
 impl EncodedPicture {
@@ -114,19 +124,101 @@ impl EncodedPicture {
         }
     }
 
+    pub fn avif_rgba565_keyed(bytes: Vec<u8>) -> Self {
+        Self {
+            codec: EncodedPictureCodec::AvifRgba565Keyed,
+            bytes,
+        }
+    }
+
+    /// Exact RGB565 form of a tightly packed `Rgb16` picture.
+    pub fn rgb565_raw(picture: &Picture) -> Result<Self> {
+        if picture.pixel_format != crate::picture::PixelFormat::Rgb16 {
+            bail!("raw RGB565 picture requires an Rgb16 picture");
+        }
+        let pixels = usize::from(picture.width) * usize::from(picture.height);
+        if picture.width == 0 || picture.height == 0 || picture.data.len() != pixels * 2 {
+            bail!(
+                "raw RGB565 picture {}x{} carries {} bytes (pitch {})",
+                picture.width,
+                picture.height,
+                picture.data.len(),
+                picture.pitch
+            );
+        }
+        let mut bytes = Vec::with_capacity(4 + picture.data.len());
+        bytes.extend_from_slice(&picture.width.to_le_bytes());
+        bytes.extend_from_slice(&picture.height.to_le_bytes());
+        bytes.extend_from_slice(&picture.data);
+        Ok(Self {
+            codec: EncodedPictureCodec::Rgb565Raw,
+            bytes,
+        })
+    }
+
+    /// Bytes the browser must decode before [`Self::decode`] can run.
+    pub fn browser_image_bytes(&self) -> Option<&[u8]> {
+        (self.codec == EncodedPictureCodec::AvifRgba565Keyed).then_some(self.bytes.as_slice())
+    }
+
+    fn raw_rgb565_dimensions(bytes: &[u8]) -> Result<(u16, u16)> {
+        let [w0, w1, h0, h1, ..] = *bytes else {
+            bail!("raw RGB565 picture is shorter than its header");
+        };
+        Ok((u16::from_le_bytes([w0, w1]), u16::from_le_bytes([h0, h1])))
+    }
+
     /// Inspect the image header without allocating or decoding frame pixels.
     pub fn dimensions(&self) -> Result<(u16, u16)> {
         match self.codec {
             EncodedPictureCodec::JxlRgb565 | EncodedPictureCodec::JxlRgba565Keyed => {
-                Picture::jxl_dimensions(&self.bytes)
+                #[cfg(not(target_arch = "wasm32"))]
+                return Picture::jxl_dimensions(&self.bytes);
+                #[cfg(target_arch = "wasm32")]
+                bail!("JPEG XL interface pictures are not supported by the web build");
             }
+            EncodedPictureCodec::AvifRgba565Keyed => {
+                let info = crate::browser_images::avif_info(&self.bytes)?;
+                Ok((info.width, info.height))
+            }
+            EncodedPictureCodec::Rgb565Raw => Self::raw_rgb565_dimensions(&self.bytes),
         }
     }
 
     pub fn decode(&self) -> Result<Picture> {
         match self.codec {
+            #[cfg(not(target_arch = "wasm32"))]
             EncodedPictureCodec::JxlRgb565 => Picture::load_jxl_rgb565(&self.bytes),
+            #[cfg(not(target_arch = "wasm32"))]
             EncodedPictureCodec::JxlRgba565Keyed => Picture::load_jxl_rgba565_keyed(&self.bytes),
+            #[cfg(target_arch = "wasm32")]
+            EncodedPictureCodec::JxlRgb565 | EncodedPictureCodec::JxlRgba565Keyed => {
+                bail!("JPEG XL interface pictures are not supported by the web build")
+            }
+            EncodedPictureCodec::AvifRgba565Keyed => {
+                crate::browser_images::load_avif_rgb565_keyed(&self.bytes)
+            }
+            EncodedPictureCodec::Rgb565Raw => {
+                let (width, height) = Self::raw_rgb565_dimensions(&self.bytes)?;
+                let pixels = usize::from(width) * usize::from(height);
+                let data = &self.bytes[4..];
+                if width == 0 || height == 0 || data.len() != pixels * 2 {
+                    bail!(
+                        "raw RGB565 picture {width}x{height} carries {} pixel bytes",
+                        data.len()
+                    );
+                }
+                Ok(Picture {
+                    width,
+                    height,
+                    pitch: width
+                        .checked_mul(2)
+                        .context("raw RGB565 picture row exceeds u16 pitch")?,
+                    pixel_format: crate::picture::PixelFormat::Rgb16,
+                    data: data.to_vec(),
+                    palette: None,
+                })
+            }
         }
     }
 }
@@ -592,9 +684,9 @@ impl ResourceManager {
             .map(|(sub_id, slot)| {
                 slot.as_ref()
                     .map(|picture| {
-                        picture
-                            .decode()
-                            .with_context(|| format!("resource {id}/{sub_id}: decode JXL"))
+                        picture.decode().with_context(|| {
+                            format!("resource {id}/{sub_id}: decode {:?} picture", picture.codec)
+                        })
                     })
                     .transpose()
             })
@@ -671,6 +763,27 @@ impl ResourceManager {
             count += 1;
         }
         count
+    }
+
+    /// Every shipped encoded picture slot of this manager (any codec), for
+    /// size accounting tools. Decoded state does not matter here.
+    pub fn encoded_picture_slots(&self) -> impl Iterator<Item = &EncodedPicture> {
+        self.data
+            .encoded_pictures
+            .values()
+            .flat_map(|slots| slots.iter().flatten())
+    }
+
+    /// Encoded bytes of every still-encoded picture that the browser must
+    /// decode (AVIF slots) before [`Self::ensure_pictures_loaded`] can run —
+    /// input to the web runtime's async predecode step.
+    pub fn browser_image_blobs(&self) -> impl Iterator<Item = &[u8]> {
+        self.data
+            .encoded_pictures
+            .iter()
+            .filter(|(id, _)| !self.data.pictures.contains_key(id))
+            .flat_map(|(_, slots)| slots.iter().flatten())
+            .filter_map(EncodedPicture::browser_image_bytes)
     }
 
     /// True when no resources of any type are attached — e.g. every attach

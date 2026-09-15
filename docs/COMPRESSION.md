@@ -135,7 +135,7 @@ saved vs v2 q80                                                 7,229,849 B
 ```
 
 The canonical browser converter path for the published web Demo artifact
-(currently `datadirs/demo-leicester/v17r2/v17r2-web-opus-q80.rhdata.zst`; see the
+(currently `datadirs/demo-leicester/v18/v18-web-opus-q80.rhdata.zst`; see the
 README deployment section) is the checked-in wrapper:
 
 ```sh
@@ -143,9 +143,11 @@ scripts/build_web_shipping_datadir.sh \
   datadirs/demo_leicester_ecoste /tmp/robin-web-shipping
 ```
 
-The wrapper invokes `convert_datadir --format shipping --map-format jxl-q80
---audio-format opus --zstd-window-log 30` explicitly. This matters because the
-converter's native-oriented defaults retain raw maps and source audio.
+The wrapper invokes `convert_datadir --format shipping --map-format avif-q60
+--interface-image-format avif-q60 --rle-sprite-format avif-q60 --audio-format
+opus --zstd-window-log 30` explicitly (datadir format 18; format 17 shipped the
+same images as JPEG XL q80). This matters because the converter's
+native-oriented defaults retain raw maps and source audio.
 
 Only map quality is lossy. Interface pictures are left in the raw RGB565
 shipping representation so transparent/keyed UI art remains exact. The
@@ -4475,3 +4477,53 @@ libopus 1.6.1 at 24/40/40 gave 6,944,920 B; opusenc at 24/40/40 gave
 old file-name mapping gave 6,549,473 B, because the 47 s `Menü-Soundtrack`
 (241,774 B) stood in for the 114 s menu piece and the 36.9 s `Castles_red` for
 the 49.8 s castle fight.
+
+## AVIF web images: shipping datadir v18 (2026-09-14)
+
+Every web image (terrain maps, keyed minimaps, interface pictures, RLE
+patch/ambient sprite atlases) is AVIF q60 and decoded by the browser
+(`createImageBitmap` + OffscreenCanvas readback) instead of the wasm JPEG XL
+decoder; the `jxl` crate is no longer linked into the wasm runtime. Recipe:
+4:4:4, `tune=iq` colour, lossless alpha (`--qalpha 100`), fixed thread count
+per asset kind (avifenc output depends on `-j`). Keyed pictures that are no
+larger raw, or score below 20 dB RGB565 PSNR, ship as exact `Rgb565Raw`.
+Encoder: static avifenc/avifdec, libavif 1.4.2 on libaom 3.15.0, built by
+`scripts/install_pinned_avif_tools.sh` and version-checked by `release.sh`.
+Native builds decode the same files with rav1d 1.1.0 (pure Rust, no asm);
+AV1 decoding is normative, and the YUV→RGB step matches libyuv's full-range
+BT.601 constants, so native pixels equal `avifdec`'s (fixture tests).
+
+Magics: `RHDDNA18` (the `EncodedPictureCodec` enum gained `AvifRgba565Keyed`
+and `Rgb565Raw`) / `RHMISN09` (mission layout unchanged).
+
+### Demo conversion, JPEG XL q80 (v17 recipe) vs AVIF q60
+
+Same source, converter builds before the libopus 1.6.1 audio merge (audio
+bytes identical between the two), `Dem_Lei_MP` for the digests.
+
+| category | JXL images | JXL bytes | AVIF images | AVIF bytes | change |
+|---|---:|---:|---:|---:|---:|
+| interface pictures | 1,141 | 2,445,858 | 910 AVIF + 231 raw | 2,181,763 | −10.8% |
+| RLE sprite atlases | 76 | 838,363 | 23 | 653,848 | −22.0% |
+| terrain map | 1 | 1,865,683 | 1 | 1,717,437 | −7.9% |
+| minimap | 1 | 12,065 | 1 | 11,088 | −8.1% |
+
+Whole converter output 31,460,579 → 30,530,625 B (−929,954 B, −3.0%);
+`datadir.bin` 3,698,383 → 3,104,505 B. Conversion wall time 438 s → 1,531 s
+(AVIF encode is slow; decode time is what matters). Sprite opacity inputs are
+exact: the RLE opacity-class digest (`5b7f9091…2ea`) and the VQ grid digest
+(`16137e45…7a2`) are identical for both builds
+(`robin_assets/examples/mission_opacity_digest`); the ranked content identity
+(`native_content_sha256`, from the source game files) is unchanged.
+
+Threaded wasm (`robin_bg.wasm`): 20,963,939 → 19,844,777 B raw, gzip −9
+7,658,898 → 7,260,895 B, brotli −q 11 5,409,150 → 5,123,562 B (−285,588 B).
+
+Browser decode (headless Chrome, boot of the Demo): 716 boot images predecode
+in ~1.2 s concurrently, mission parts in 5–340 ms each.
+
+A first web run found that mission install evicted the installed mission's
+decoded terrain/minimap (the keep list read `payload.raw` after `seal` had
+moved it into the raw bundle), so the minimap never loaded;
+`ShippingMission::installed_browser_image_blobs` fixes it, with a regression
+test.

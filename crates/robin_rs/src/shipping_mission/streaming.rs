@@ -372,6 +372,16 @@ where
                 let (file, bytes, payload) = part?;
                 fetched_bytes += bytes;
                 tracing::debug!(mission, file, bytes, "shipping mission dependency fetched");
+                // AVIF atlases/terrain of this part get browser-decoded
+                // pixels before early terrain or the worker pool can see
+                // them (workers cannot await the browser decoder).
+                crate::browser_image_decode::predecode(
+                    &payload.browser_image_blobs(),
+                    robin_assets::browser_images::ImageScope::Mission,
+                    |_, _| {},
+                )
+                .await
+                .with_context(|| format!("decode AVIF images of shipping file {file}"))?;
                 let apply_start = tracing::enabled!(tracing::Level::DEBUG).then(js_sys::Date::now);
                 merged
                     .merge_part(payload)

@@ -1,21 +1,33 @@
 //! Encode all custom sprite directories in an existing mod, retaining its
-//! other authored assets and converting terrain PNGs to JXL quality 80.
+//! other authored assets and converting terrain PNGs to AVIF quality 60 —
+//! the web datadir recipe's terrain settings, so the map loads everywhere
+//! (browser decoder on the web, rav1d natively).
 //! Usage: encode_mod_sprites SOURCE DESTINATION
 use anyhow::{Context, Result, ensure};
 use std::path::Path;
+
+/// avifenc flags for opaque terrain: the web recipe's `--map-format avif-q60`
+/// (4:4:4, libavif's still-image tuning, explicit full-range BT.601
+/// signalling). `-j all` is fine here: each map is encoded once.
+const TERRAIN_AVIFENC_ARGS: [&str; 11] = [
+    "-j", "all", "-y", "444", "-q", "60", "-s", "2", "--cicp", "1/13/6", "--range",
+];
 
 fn encode_map(source: &Path, destination: &Path) -> Result<()> {
     ensure!(!destination.exists(), "map destination exists");
     let input =
         png::Decoder::new(std::io::BufReader::new(std::fs::File::open(source)?)).read_info()?;
     let dimensions = (input.info().width, input.info().height);
-    let status = std::process::Command::new("cjxl")
+    let status = std::process::Command::new("avifenc")
+        .args(TERRAIN_AVIFENC_ARGS)
+        .arg("full")
         .arg(source)
         .arg(destination)
-        .args(["-q", "80", "-e", "7", "--num_threads=4"])
         .status()
-        .context("run cjxl")?;
-    ensure!(status.success(), "cjxl failed for {}", source.display());
+        .context("run avifenc (pinned libavif 1.4.2 / libaom 3.15.0; see scripts/install_pinned_avif_tools.sh)")?;
+    ensure!(status.success(), "avifenc failed for {}", source.display());
+    // Full native decode, not just a header read: proves every platform's
+    // loader accepts the file.
     let picture =
         robin_assets::picture::Picture::load_terrain_from_bytes(&std::fs::read(destination)?)?;
     ensure!(
@@ -23,7 +35,7 @@ fn encode_map(source: &Path, destination: &Path) -> Result<()> {
         "map dimensions changed"
     );
     println!(
-        "Verified JXL map: {} ({} bytes)",
+        "Verified AVIF map: {} ({} bytes)",
         destination.display(),
         std::fs::metadata(destination)?.len()
     );

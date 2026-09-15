@@ -16,6 +16,7 @@ mod original_data {
 }
 
 pub use robin_asset_codecs::{binary_reader, packed_sprite, sprite_codec};
+pub mod browser_images;
 #[cfg(feature = "engine-adapters")]
 pub mod custom_sprites;
 pub mod frame_holder;

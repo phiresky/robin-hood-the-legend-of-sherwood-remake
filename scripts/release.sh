@@ -185,7 +185,12 @@ release_web() {
     binding=$prior/datadir-deployment.json
     if ((rebuild)); then
         step "web: build and deploy a new datadir generation"
-        command -v cjxl >/dev/null || die "cjxl not on PATH (put the static cjxl binary in $toolchain/bin)"
+        # Web images are AVIF, encoded by the pinned static avifenc/avifdec.
+        for avif_tool in avifenc avifdec; do
+            command -v $avif_tool >/dev/null || die "$avif_tool not on PATH (scripts/install_pinned_avif_tools.sh, then copy bin/$avif_tool into $toolchain/bin)"
+            [[ $($avif_tool --version | head -n 1) == 'Version: 1.4.2 (aom [enc/dec]:3.15.0)' ]] ||
+                die "$avif_tool is not the pinned libavif 1.4.2 / libaom 3.15.0 build (scripts/install_pinned_avif_tools.sh)"
+        done
         # Opus is encoded by opusenc on libopus 1.6.1; the converter itself
         # verifies the loaded library (docs/COMPRESSION.md, 2026-09-14).
         export ROBIN_OPUS_TOOLS_DIR=$toolchain/opus-tools-0.2

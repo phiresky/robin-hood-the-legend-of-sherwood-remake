@@ -578,16 +578,45 @@ impl ShippingSpriteBank {
     ) -> Result<(usize, usize, Arc<Vec<u16>>)> {
         use crate::rle_jxl;
         let blob = &chunk.jxl_blobs[index];
-        let (width, height, rgba) = if parallel {
-            rle_jxl::decode_jxl_rgba8_parallel(blob)
-        } else {
-            rle_jxl::decode_jxl_rgba8(blob)
+        let invalid_classes =
+            || format!("RLE-JXL blob {index} of {} has invalid classes", chunk.rhs);
+        if crate::browser_images::is_avif(blob) {
+            // Web recipe: the browser decoded this atlas during the async
+            // predecode step; only class reconstruction remains.
+            let decoded = crate::browser_images::decoded_rgba(blob)
+                .with_context(|| format!("RLE-JXL blob {index} of {}", chunk.rhs))?;
+            let canvas = rle_jxl::canvas_from_rgba(&decoded.rgba).with_context(invalid_classes)?;
+            return Ok((
+                decoded.width as usize,
+                decoded.height as usize,
+                Arc::new(canvas),
+            ));
         }
-        .with_context(|| format!("RLE-JXL blob {index} of {}", chunk.rhs))?;
-        let canvas = rle_jxl::canvas_from_rgba(&rgba).with_context(|| {
-            format!("RLE-JXL blob {index} of {} has invalid classes", chunk.rhs)
-        })?;
+        let (width, height, rgba) = Self::decode_rle_jxl_atlas_native(blob, parallel)
+            .with_context(|| format!("RLE-JXL blob {index} of {}", chunk.rhs))?;
+        let canvas = rle_jxl::canvas_from_rgba(&rgba).with_context(invalid_classes)?;
         Ok((width, height, Arc::new(canvas)))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn decode_rle_jxl_atlas_native(blob: &[u8], parallel: bool) -> Result<(usize, usize, Vec<u8>)> {
+        if parallel {
+            crate::rle_jxl::decode_jxl_rgba8_parallel(blob)
+        } else {
+            crate::rle_jxl::decode_jxl_rgba8(blob)
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn decode_rle_jxl_atlas_native(
+        blob: &[u8],
+        _parallel: bool,
+    ) -> Result<(usize, usize, Vec<u8>)> {
+        Err(anyhow!(
+            "JPEG XL sprite atlas ({} bytes) is not supported by the web build: the web datadir \
+             recipe ships AVIF atlases decoded by the browser",
+            blob.len()
+        ))
     }
 
     /// Window every sprite of one chunk into its decoded atlases.

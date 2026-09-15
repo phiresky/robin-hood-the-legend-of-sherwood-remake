@@ -28,6 +28,11 @@ CPF and resource JSON go to stdout when no output file is supplied; diagnostics
 go to stderr. See [JSON Patch mods](JSON_PATCH_MODS.md) for profile patch authoring.
 
 The sprite encoder also supports `--family OUTPUT INPUT_RHS_DIR...` and
-`--map INPUT_PNG OUTPUT_MAP`. Terrain PNG conversion requires the external
-JPEG XL `cjxl` executable on PATH; it is not bundled. Sprite encoding itself
-does not require it. Use a new destination directory when encoding a mod.
+`--map INPUT_PNG OUTPUT_MAP`. Terrain PNG conversion encodes AVIF with the web
+datadir recipe's terrain settings and requires the external `avifenc` on PATH
+(the pinned libavif 1.4.2 / libaom 3.15.0 build from
+`scripts/install_pinned_avif_tools.sh`); it is not bundled. AVIF terrain loads
+on every platform — the web build decodes it with the browser, native builds
+with rav1d. Legacy JPEG XL terrain still loads natively, but the web build
+rejects mods that contain JPEG XL assets at admission. Sprite encoding itself
+does not require `avifenc`. Use a new destination directory when encoding a mod.

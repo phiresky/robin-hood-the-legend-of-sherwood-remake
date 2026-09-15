@@ -209,24 +209,25 @@ datadir deployment receipt is metadata, not game bytes:
 The dedicated datadir Worker stores only the separately authorized Demo
 closures. Its objects are served `immutable`, so every native datadir format
 is a separate generation directory, and so is any rebuild that changes bytes.
-The current generation (format 17) is:
+The current generation (format 18, AVIF web images) is:
 
-    /datadirs/demo-leicester/v17r2/v17r2-web-opus-q80.rhdata.zst
-    /datadirs/demo-leicester/v17r2/robinhood-web-content.json
-    /datadirs/demo-leicester/v17r2/missions/*.rhmission.zst
-    /datadirs/demo-leicester/v17r2/rhs/*.rhmission.zst
-    /datadirs/demo-leicester/v17r2/terrain/*.rhmission.zst
-    /datadirs/demo-leicester/v17r2/audio/*.rhmission.zst
-    /datadirs/demo-leicester/v17r2/audio/assets/*.opus
-    /datadirs/demo-leicester/v17r2/audio/bundles/*.bin
+    /datadirs/demo-leicester/v18/v18-web-opus-q80.rhdata.zst
+    /datadirs/demo-leicester/v18/robinhood-web-content.json
+    /datadirs/demo-leicester/v18/missions/*.rhmission.zst
+    /datadirs/demo-leicester/v18/rhs/*.rhmission.zst
+    /datadirs/demo-leicester/v18/terrain/*.rhmission.zst
+    /datadirs/demo-leicester/v18/audio/*.rhmission.zst
+    /datadirs/demo-leicester/v18/audio/assets/*.opus
+    /datadirs/demo-leicester/v18/audio/bundles/*.bin
 
 Earlier generations stay published byte-for-byte because older wasm builds and
 replay links pin them. They are listed with their digests in
 `RETAINED_DEMO_GENERATIONS` (`wasm-www/scripts/verify-datadir-corpus.mjs`);
 format 15 is the `/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst` closure
-directly under `/datadirs/demo-leicester/`, the first format-16 build is
-`/datadirs/demo-leicester/v16/`, and the second is
-`/datadirs/demo-leicester/v16r2/`.
+directly under `/datadirs/demo-leicester/`, the format-16 builds are
+`/datadirs/demo-leicester/v16/` and `/datadirs/demo-leicester/v16r2/`, and the
+format-17 (JPEG XL) builds are `/datadirs/demo-leicester/v17/` and
+`/datadirs/demo-leicester/v17r2/`.
 
 The shell fetches `/wasm/latest.json` when no query parameter is present. It
 loads the exact static JavaScript import closure declared by that manifest.
@@ -254,14 +255,15 @@ divergence.
 
 The game data is not rebuilt by CI because the source game
 data cannot be stored in this repository. Build the production web artifact
-with the canonical wrapper (which always selects JXL q80 maps, Opus audio, and
-the wasm-safe zstd window):
+with the canonical wrapper (which always selects AVIF q60 maps, minimaps,
+interface pictures and RLE sprite atlases, Opus audio, and the wasm-safe zstd
+window):
 
     scripts/build_web_shipping_datadir.sh \
         datadirs/demo_leicester_ecoste /tmp/robin-web-shipping
 
 Publish the generated `Data/datadir.bin` as
-`/datadirs/demo-leicester/v17r2/v17r2-web-opus-q80.rhdata.zst`, preserving its generated
+`/datadirs/demo-leicester/v18/v18-web-opus-q80.rhdata.zst`, preserving its generated
 `Data/robinhood-web-content.json`, `Data/missions/`, `Data/rhs/`,
 `Data/terrain/`, and `Data/audio/` closure beside it
 (`node wasm-www/scripts/assemble-datadir-corpus.mjs --update PRIOR_CORPUS
@@ -371,11 +373,13 @@ datadir only when the live datadir's format header differs from
 `SHIPPING_DATADIR_VERSION` (or with `--rebuild-datadir`); a format bump must
 already have moved `DEMO_ROOT` to a new generation directory. Credentials come
 from the main checkout's `.env`, tools from
-`~/.local/share/robin_hood/deployment-toolchain` (static `cjxl` in its `bin/`;
-libopus 1.6.1 in `libopus-1.6.1/`, and opus-tools 0.2 / libopusenc 0.3 built
-against it in `opus-tools-0.2/`, whose `opusenc` encodes all web Opus audio —
-voice 21.5, effects 37, music 40 kbit/s, signal auto — and which the converter
-verifies before any encode, see `docs/COMPRESSION.md`, 2026-09-14).
+`~/.local/share/robin_hood/deployment-toolchain` (static `avifenc`/`avifdec`
+from `scripts/install_pinned_avif_tools.sh` — libavif 1.4.2 on libaom 3.15.0,
+version-checked by the release — in its `bin/`; libopus 1.6.1 in
+`libopus-1.6.1/`, and opus-tools 0.2 / libopusenc 0.3 built against it in
+`opus-tools-0.2/`, whose `opusenc` encodes all web Opus audio — voice 21.5,
+effects 37, music 40 kbit/s, signal auto — and which the converter verifies
+before any encode, see `docs/COMPRESSION.md`, 2026-09-14).
 `--dry-run` prints every command without running it. On failure the script
 prints the rollback for the failed stage. Logs go to
 `~/.local/share/robin_hood/release-logs/`. Stub test: `bash scripts/test_release.sh`.

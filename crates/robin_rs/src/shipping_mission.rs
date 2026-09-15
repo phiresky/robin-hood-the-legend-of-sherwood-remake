@@ -435,6 +435,19 @@ where
         &mut downloads_finished,
     )
     .await?;
+    // AVIF sprite atlases, terrain maps and minimaps need browser-decoded
+    // pixels before the synchronous install / level-load decoders use them.
+    // The streaming build already decoded each part as it merged, so this is
+    // a cheap no-op there. No progress callback: install_with_progress
+    // restarts the Sprites phase, and the bar must never move backwards.
+    #[cfg(target_arch = "wasm32")]
+    crate::browser_image_decode::predecode(
+        &merged.browser_image_blobs(),
+        robin_assets::browser_images::ImageScope::Mission,
+        |_, _| {},
+    )
+    .await
+    .with_context(|| format!("decode AVIF images of shipping mission {mission}"))?;
     let install_start = web_time::Instant::now();
     install_with_progress(datadir, mission, merged, &mut progress).await?;
     tracing::info!(

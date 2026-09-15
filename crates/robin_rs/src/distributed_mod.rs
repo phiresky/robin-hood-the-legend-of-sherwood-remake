@@ -686,6 +686,12 @@ fn validate_zip(
                 ),
             });
         }
+        reject_unsupported_image_codec(
+            archive_label,
+            &path,
+            &content,
+            cfg!(target_arch = "wasm32"),
+        )?;
         match entries.entry(path) {
             Entry::Vacant(entry) => {
                 entry.insert(content);
@@ -699,6 +705,28 @@ fn validate_zip(
         }
     }
     Ok(entries)
+}
+
+/// The web build has no JPEG XL decoder (it decodes AVIF with the browser),
+/// so a mod carrying a JPEG XL asset (e.g. legacy `cjxl` terrain) is refused
+/// at admission with an actionable message instead of failing at level load.
+/// Native builds keep a legacy JPEG XL decoder and accept such mods.
+fn reject_unsupported_image_codec(
+    archive_label: &'static str,
+    path: &str,
+    content: &[u8],
+    web_build: bool,
+) -> Result<(), DistributedModError> {
+    if web_build && robin_assets::picture::is_jxl_signature(content) {
+        return Err(DistributedModError::Archive {
+            archive: archive_label,
+            message: format!(
+                "entry `{path}` is a JPEG XL image, which the web build cannot decode; \
+                 re-encode mod terrain as AVIF (encode_mod_sprites) and redistribute the mod"
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn canonical_archive_path(raw: &str) -> Result<String, DistributedModError> {
@@ -992,6 +1020,42 @@ mod tests {
             wrong_map.validate(),
             Err(DistributedModError::Manifest(_))
         ));
+    }
+
+    #[test]
+    fn web_admission_rejects_jpeg_xl_assets_but_native_keeps_them() {
+        let jxl_codestream = b"\xff\x0a\x00\x00legacy cjxl terrain".to_vec();
+        let jxl_container = b"\x00\x00\x00\x0cJXL \r\n\x87\n rest".to_vec();
+        let mut avif = Vec::new();
+        avif.extend_from_slice(&20u32.to_be_bytes());
+        avif.extend_from_slice(b"ftypavif\0\0\0\0mif1");
+        for jxl in [&jxl_codestream, &jxl_container] {
+            let error = reject_unsupported_image_codec(
+                "mission",
+                "data/levels/day/openbattlefield.map",
+                jxl,
+                true,
+            )
+            .unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains("JPEG XL"), "{message}");
+            assert!(message.contains("openbattlefield.map"), "{message}");
+            reject_unsupported_image_codec("mission", "map", jxl, false).unwrap();
+        }
+        reject_unsupported_image_codec("mission", "map", &avif, true).unwrap();
+        reject_unsupported_image_codec("mission", "mission.rhm", &rhm("Map"), true).unwrap();
+        // Native admission of a whole archive still accepts legacy JXL maps.
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(
+            validate_zip(
+                "test",
+                &archive(&[
+                    ("Data/Levels/Mission.rhm", rhm("Map")),
+                    ("Data/Levels/Day/Map.map", jxl_codestream.clone()),
+                ])
+            )
+            .is_ok()
+        );
     }
 
     #[test]
