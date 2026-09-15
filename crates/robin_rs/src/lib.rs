@@ -255,7 +255,6 @@ pub mod input_translator;
 pub mod key_config;
 pub mod key_config_store;
 pub(crate) mod leaderboard;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod leaderboard_registration;
 pub(crate) use leaderboard::http as leaderboard_http;
 pub(crate) use leaderboard::mission_end as leaderboard_mission_end;

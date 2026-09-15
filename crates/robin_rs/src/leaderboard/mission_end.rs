@@ -210,6 +210,7 @@ pub struct QueuedSubmission {
 }
 
 pub trait MissionEndLeaderboardBackend {
+    fn registration(&mut self) -> Result<crate::leaderboard_registration::Registration, String>;
     fn board(
         &mut self,
         query: LeaderboardQueryV2,
@@ -320,6 +321,7 @@ pub struct MissionEndLeaderboardController {
     selected_tab: LeaderboardTab,
     board_task: BoardTask,
     submission_task: SubmissionTask,
+    registration: crate::leaderboard_registration::RegistrationHandle,
     backend: Box<dyn MissionEndLeaderboardBackend>,
     closed: bool,
 }
@@ -443,6 +445,7 @@ impl MissionEndLeaderboardController {
             selected_tab,
             board_task: BoardTask::Unrequested,
             submission_task: SubmissionTask::Dormant(submission_state),
+            registration: Default::default(),
             backend,
             closed: false,
         };
@@ -460,7 +463,28 @@ impl MissionEndLeaderboardController {
     }
 
     pub fn is_visible(&self) -> bool {
-        self.preferences.show_mission_end_boards && !self.closed
+        (self.preferences.show_mission_end_boards || self.needs_registration()) && !self.closed
+    }
+
+    pub(crate) fn registration_handle(
+        &self,
+    ) -> crate::leaderboard_registration::RegistrationHandle {
+        self.registration.clone()
+    }
+
+    pub(crate) fn set_registration_handle(
+        &mut self,
+        handle: crate::leaderboard_registration::RegistrationHandle,
+    ) {
+        assert!(
+            !self.needs_registration(),
+            "cannot replace active registration"
+        );
+        self.registration = handle;
+    }
+
+    pub(crate) fn needs_registration(&self) -> bool {
+        robin_util::sync::lock(&self.registration).is_some()
     }
 
     pub fn is_multiplayer(&self) -> bool {
@@ -502,7 +526,7 @@ impl MissionEndLeaderboardController {
     /// Whether a consented upload is still in flight. A presentation owner
     /// may dismiss the overlay and keep polling this controller until false.
     pub fn has_pending_submission(&self) -> bool {
-        matches!(self.submission_task, SubmissionTask::Submitting(_))
+        self.needs_registration() || matches!(self.submission_task, SubmissionTask::Submitting(_))
     }
 
     pub fn can_retire_after_close(&self) -> bool {
@@ -575,6 +599,7 @@ impl MissionEndLeaderboardController {
     /// Advance each active task by one non-blocking poll.
     pub fn poll(&mut self) {
         self.poll_board();
+        self.poll_registration();
         self.poll_submission();
     }
 
@@ -644,6 +669,10 @@ impl MissionEndLeaderboardController {
                 Ok(MissionEndLeaderboardEvent::PreferencesChanged)
             }
             MissionEndLeaderboardAction::Close => {
+                if robin_util::sync::lock(&self.registration).take().is_some() {
+                    self.submission_task =
+                        SubmissionTask::Dormant(MissionSubmissionState::AwaitingConsent);
+                }
                 self.closed = true;
                 Ok(MissionEndLeaderboardEvent::Closed)
             }
@@ -684,6 +713,48 @@ impl MissionEndLeaderboardController {
     }
 
     fn start_submission(&mut self) {
+        if self.run.eligible_submission.is_none() {
+            self.upload_submission();
+            return;
+        }
+        match self.backend.registration() {
+            Ok(registration) => {
+                *robin_util::sync::lock(&self.registration) = Some(registration);
+                self.submission_task = SubmissionTask::Dormant(MissionSubmissionState::Submitting);
+                self.poll_registration();
+            }
+            Err(error) => {
+                self.submission_task =
+                    SubmissionTask::Dormant(MissionSubmissionState::Failed(error))
+            }
+        }
+    }
+
+    fn poll_registration(&mut self) {
+        let ready = {
+            let mut slot = robin_util::sync::lock(&self.registration);
+            let Some(registration) = slot.as_mut() else {
+                return;
+            };
+            if registration.cancelled {
+                *slot = None;
+                self.submission_task = SubmissionTask::Dormant(MissionSubmissionState::Failed(
+                    "Replay submission cancelled.".into(),
+                ));
+                return;
+            }
+            let ready = registration.poll();
+            if ready {
+                *slot = None;
+            }
+            ready
+        };
+        if ready {
+            self.upload_submission();
+        }
+    }
+
+    fn upload_submission(&mut self) {
         let Some(input) = self.run.eligible_submission.clone() else {
             self.submission_task = SubmissionTask::Dormant(MissionSubmissionState::Unavailable(
                 self.run
@@ -776,6 +847,9 @@ impl HttpMissionEndLeaderboardBackend {
 }
 
 impl MissionEndLeaderboardBackend for HttpMissionEndLeaderboardBackend {
+    fn registration(&mut self) -> Result<crate::leaderboard_registration::Registration, String> {
+        crate::leaderboard_registration::Registration::new(self.api.clone())
+    }
     fn board(
         &mut self,
         query: LeaderboardQueryV2,
@@ -930,6 +1004,9 @@ mod tests {
     struct BackendCalls {
         boards: usize,
         uploads: usize,
+        registration_checks: usize,
+        registration_required: bool,
+        registration_error: Option<String>,
     }
 
     struct TestBackend {
@@ -947,6 +1024,18 @@ mod tests {
     }
 
     impl MissionEndLeaderboardBackend for TestBackend {
+        fn registration(
+            &mut self,
+        ) -> Result<crate::leaderboard_registration::Registration, String> {
+            let mut calls = self.calls.lock().unwrap();
+            calls.registration_checks += 1;
+            Ok(crate::leaderboard_registration::Registration::test_result(
+                calls
+                    .registration_error
+                    .clone()
+                    .map_or(Ok(!calls.registration_required), Err),
+            ))
+        }
         fn board(
             &mut self,
             _query: LeaderboardQueryV2,
@@ -1076,6 +1165,117 @@ mod tests {
         calls: Arc<Mutex<BackendCalls>>,
     ) -> MissionEndLeaderboardController {
         controller_with(fixture, preferences, calls, 0)
+    }
+
+    #[test]
+    fn manual_and_automatic_uploads_share_registration_even_with_hidden_boards() {
+        for automatic in [false, true] {
+            let calls = Arc::new(Mutex::new(BackendCalls {
+                registration_required: true,
+                ..Default::default()
+            }));
+            let preferences = LeaderboardPreferences {
+                show_mission_end_boards: !automatic,
+                always_submit_eligible_runs: automatic,
+                ..Default::default()
+            };
+            let mut controller =
+                controller(fixture(MissionEndOutcome::Won), preferences, calls.clone());
+            if !automatic {
+                assert_eq!(calls.lock().unwrap().registration_checks, 0);
+                controller
+                    .apply_action(MissionEndLeaderboardAction::SubmitThisRun)
+                    .unwrap();
+            }
+            assert!(
+                controller.is_visible(),
+                "hidden automatic uploads must keep the prompt visible"
+            );
+            assert!(controller.needs_registration());
+            assert!(controller.has_pending_submission());
+            assert_eq!(calls.lock().unwrap().uploads, 0);
+            controller.poll();
+            assert_eq!(calls.lock().unwrap().uploads, 0, "wait for a chosen name");
+            *robin_util::sync::lock(&controller.registration_handle()) = Some(
+                crate::leaderboard_registration::Registration::test_result(Ok(true)),
+            );
+            controller.poll();
+            controller.poll();
+            assert_eq!(calls.lock().unwrap().uploads, 1);
+            assert!(!controller.needs_registration());
+            assert_eq!(controller.is_visible(), !automatic);
+            assert!(matches!(
+                controller.submission_state(),
+                MissionSubmissionState::Queued(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn shared_archive_prompt_cancels_and_retry_checks_registration_again() {
+        let calls = Arc::new(Mutex::new(BackendCalls {
+            registration_required: true,
+            ..Default::default()
+        }));
+        let mut controller = controller(
+            fixture(MissionEndOutcome::Won),
+            LeaderboardPreferences::default(),
+            calls.clone(),
+        );
+        let handle = Default::default();
+        controller.set_registration_handle(Arc::clone(&handle));
+        controller
+            .apply_action(MissionEndLeaderboardAction::SubmitThisRun)
+            .unwrap();
+        robin_util::sync::lock(&handle).as_mut().unwrap().cancel();
+        controller.poll();
+        assert!(matches!(
+            controller.submission_state(),
+            MissionSubmissionState::Failed(_)
+        ));
+        assert_eq!(calls.lock().unwrap().uploads, 0);
+        controller
+            .apply_action(MissionEndLeaderboardAction::RetrySubmission)
+            .unwrap();
+        assert!(robin_util::sync::lock(&handle).as_ref().unwrap().needs_name);
+        assert_eq!(calls.lock().unwrap().registration_checks, 2);
+        controller
+            .apply_action(MissionEndLeaderboardAction::Close)
+            .unwrap();
+        controller.poll();
+        assert!(!controller.requires_background_work());
+        assert_eq!(calls.lock().unwrap().uploads, 0);
+    }
+
+    #[test]
+    fn automatic_registration_failure_stays_visible_and_never_uploads() {
+        let calls = Arc::new(Mutex::new(BackendCalls {
+            registration_error: Some("offline".into()),
+            ..Default::default()
+        }));
+        let mut controller = controller(
+            fixture(MissionEndOutcome::Won),
+            LeaderboardPreferences {
+                show_mission_end_boards: false,
+                always_submit_eligible_runs: true,
+                ..Default::default()
+            },
+            calls.clone(),
+        );
+        controller.poll();
+        assert!(controller.is_visible());
+        assert_eq!(
+            robin_util::sync::lock(&controller.registration_handle())
+                .as_ref()
+                .unwrap()
+                .message,
+            "offline"
+        );
+        assert_eq!(calls.lock().unwrap().uploads, 0);
+        controller
+            .apply_action(MissionEndLeaderboardAction::Close)
+            .unwrap();
+        assert!(controller.can_retire_after_close());
     }
 
     #[test]

@@ -11,14 +11,6 @@ use robin_run_protocol::{
 
 pub struct NativeSigner;
 
-impl NativeSigner {
-    pub(crate) fn sign_username_update(
-        request: robin_run_protocol::UsernameUpdateV2,
-    ) -> Result<robin_run_protocol::SignedUsernameUpdateV2, LeaderboardSigningError> {
-        sign_with_key(request, &native_key()?)
-    }
-}
-
 fn native_key() -> Result<SigningKey, LeaderboardSigningError> {
     let seed = crate::native_game_identity::durable_game_identity_seed()
         .map_err(LeaderboardSigningError::Identity)?;
@@ -48,6 +40,11 @@ fn sign_with_key<T: SignedRequestClaim>(
 }
 
 impl GameIdentitySigner for NativeSigner {
+    async fn sign_username_update(
+        request: robin_run_protocol::UsernameUpdateV2,
+    ) -> Result<robin_run_protocol::SignedUsernameUpdateV2, LeaderboardSigningError> {
+        sign_with_key(request, &native_key()?)
+    }
     async fn public_key() -> Result<PublicKey32, LeaderboardSigningError> {
         Ok(public_key(&native_key()?))
     }

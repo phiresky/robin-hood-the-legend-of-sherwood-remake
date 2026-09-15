@@ -59,7 +59,6 @@ pub struct LeaderboardApi {
 }
 
 impl LeaderboardApi {
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn player_profile(
         &self,
         key: robin_run_protocol::PublicKey32,
@@ -69,7 +68,6 @@ impl LeaderboardApi {
         ))
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn update_username(
         &self,
         request: &robin_run_protocol::SignedUsernameUpdateV2,

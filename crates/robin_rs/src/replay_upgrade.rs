@@ -336,7 +336,8 @@ fn run_pass(
 /// Upgrade a local replay into a new standalone JSONL artifact. Never replaces
 /// the source or an existing destination. Both passes run the normal headless
 /// mission loop, including host controls, save/load boundaries and finalization.
-/// Every frame is compared, including the terminal frame; all receive hashes.
+/// Every frame is compared, including the terminal frame. Published hashes
+/// use the normal recorder checkpoint interval required by ranked playback.
 /// Existing taints are retained exactly, with no migration-only taint added.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn upgrade_replay(
@@ -367,18 +368,15 @@ pub fn upgrade_replay(
     let input = work_path.join("input.rhrec.jsonl");
     write_replay(&input, &file)?;
     let hashes = run_pass(options, &input, &work_path, "capture", frames)?;
-    for (ordinal, &(before, after)) in hashes.iter().enumerate() {
-        let ordinal = ordinal as u32;
-        file.hashes.insert(ordinal, after);
-        if let Some(marker) = file.save_markers.get_mut(&ordinal) {
-            marker.state_hash = before;
-        }
-    }
+    apply_captured_hashes(&mut file, &hashes);
     let upgraded = work_path.join("upgraded.rhrec.jsonl");
     write_replay(&upgraded, &file)?;
     let decoded = ReplayData::from_reader(std::io::BufReader::new(std::fs::File::open(&upgraded)?))
         .map_err(anyhow::Error::msg)?;
     crate::replay_format::validate_replay_data(&decoded)?;
+    decoded
+        .validate_ranked_hash_coverage()
+        .map_err(anyhow::Error::msg)?;
     let verified = run_pass(options, &upgraded, &work_path, "verify", frames)?;
     verify_hashes(&hashes, &verified)?;
     let mut publication = tempfile::NamedTempFile::new_in(parent)?;
@@ -397,6 +395,19 @@ pub fn upgrade_replay(
         save_markers: file.save_markers.len(),
         output: destination.to_owned(),
     })
+}
+
+fn apply_captured_hashes(file: &mut ReplayFile, hashes: &[(u64, u64)]) {
+    file.hashes.clear();
+    for (ordinal, &(before, after)) in hashes.iter().enumerate() {
+        let ordinal = ordinal as u32;
+        if ordinal.is_multiple_of(robin_engine::multiplayer::STATE_HASH_INTERVAL) {
+            file.hashes.insert(ordinal, after);
+        }
+        if let Some(marker) = file.save_markers.get_mut(&ordinal) {
+            marker.state_hash = before;
+        }
+    }
 }
 
 fn verify_hashes(captured: &[(u64, u64)], verified: &[(u64, u64)]) -> Result<()> {
@@ -460,6 +471,31 @@ mod tests {
         assert_eq!(
             REPLAY_SCHEMA_VERSION,
             robin_run_protocol::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1
+        );
+    }
+
+    #[test]
+    fn upgraded_checkpoints_satisfy_ranked_coverage_without_per_frame_metadata() {
+        let data = crate::leaderboard::test_fixtures::single_frame_replay(bitcode::encode(
+            &robin_engine::campaign::Campaign::default(),
+        ));
+        let mut file = ReplayFile::from(&data);
+        let frame = file.frames[&0].clone();
+        file.header.total_frames = 4444;
+        file.frames = (0..4444).map(|ordinal| (ordinal, frame.clone())).collect();
+        let hashes = (0..4444u64)
+            .map(|ordinal| (ordinal, ordinal + 1))
+            .collect::<Vec<_>>();
+        apply_captured_hashes(&mut file, &hashes);
+        assert_eq!(file.hashes.len(), 178);
+        assert_eq!(file.hashes[&25], 26);
+        let data = ReplayData::try_from(file).unwrap();
+        data.validate_ranked_hash_coverage().unwrap();
+        let mut changed = hashes.clone();
+        changed[4443].1 += 1;
+        assert!(
+            verify_hashes(&hashes, &changed).is_err(),
+            "non-checkpoint terminal frames must still be verified"
         );
     }
 
