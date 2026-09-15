@@ -98,6 +98,30 @@ fn run_test_bow_owner(
 fn test_bow_done_pulse(entities: &Entities, owner: EntityId) -> bool {
     entities.get(owner).unwrap().sprite().last_motion_state == Some(SpriteMotionState::Done)
 }
+
+fn bow_owner_engine(
+    entities: Entities,
+    owner: EntityId,
+) -> (crate::engine::EngineInner, crate::engine::LevelAssets) {
+    let (mut engine, mut assets) = projectile_engine(entities);
+    let pc = engine.world.entities.get(owner).unwrap().pc_data().unwrap();
+    let profile_index = usize::from(pc.profile_index);
+    let description_index = pc.campaign_description_index.unwrap() as usize;
+    engine.mission_domain.campaign.characters[description_index]
+        .status
+        .num_arrows = 10;
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    profiles.characters[profile_index].shooting_weapon_id = 1;
+    profiles.characters[profile_index].shooting = 100;
+    profiles.bows.push(crate::profiles::BowProfile {
+        normal_shoot: crate::profiles::BowShootMode {
+            range: 2000,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    (engine, assets)
+}
 fn test_selected_bow(entities: &Entities, sequences: &SequenceManager, owner: EntityId) -> bool {
     let Some(selected) = entities
         .get(owner)
@@ -475,9 +499,16 @@ fn bow_done_pulse_fires_once_and_stays_consumed_after_state_clone() {
     let owner = EntityId::Pc(crate::entity_id::PcId(0));
     let target = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let mut shooter = make_pc(0.0, 0.0);
+    shooter
+        .element_data_mut()
+        .publish_order_posture(Posture::Upright);
     shooter.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
     bind_test_bow_release_rows(&mut shooter, OrderType::ShootingWithBow);
-    let mut entities = entity_table(vec![Some(shooter), Some(make_soldier(50.0, 0.0))]);
+    let target_actor = TestActor::soldier(Posture::Upright)
+        .map_position(MapPoint::new(50.0, 0.0))
+        .life_points(100)
+        .build();
+    let mut entities = entity_table(vec![Some(shooter), Some(target_actor)]);
     let (mut sequences, sequence, element) = launch_test_shoot_element(owner, target);
     begin_test_bow_shot(
         &mut entities,
@@ -500,8 +531,12 @@ fn bow_done_pulse_fires_once_and_stays_consumed_after_state_clone() {
         std::num::NonZeroU32::new(999).unwrap(),
     ));
 
-    let (mut engine, assets) = projectile_engine(entities);
+    let (mut engine, assets) = bow_owner_engine(entities, owner);
     engine.orders.sequence_manager = sequences;
+    assert_eq!(
+        engine.can_shoot_with_bow_at(&assets, owner, target).0,
+        crate::engine::input::BowTarget::Valid
+    );
     let mut pulse_count = 0;
     let mut restored = None;
     for _ in 0..12 {
@@ -789,7 +824,19 @@ fn tick_bow_shots_waits_behind_pre_shoot_setup_order() {
 fn tick_bow_shots_detaches_before_trailing_non_bow_order() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
-    let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+    let mut entities = entity_table(vec![
+        Some(
+            TestActor::pc(Posture::Upright)
+                .map_position(MapPoint::new(0.0, 0.0))
+                .build(),
+        ),
+        Some(
+            TestActor::soldier(Posture::Upright)
+                .map_position(MapPoint::new(50.0, 0.0))
+                .life_points(100)
+                .build(),
+        ),
+    ]);
     entities
         .get_mut(EntityId::Pc(crate::entity_id::PcId(0)))
         .unwrap()
@@ -836,8 +883,13 @@ fn tick_bow_shots_detaches_before_trailing_non_bow_order() {
         crate::order::alloc_order_id(&mut next_order_id),
     ));
 
-    let (mut engine, assets) = projectile_engine(entities);
+    let owner = EntityId::Pc(crate::entity_id::PcId(0));
+    let (mut engine, assets) = bow_owner_engine(entities, owner);
     engine.orders.sequence_manager = sm;
+    assert_eq!(
+        engine.can_shoot_with_bow_at(&assets, owner, target_id).0,
+        crate::engine::input::BowTarget::Valid
+    );
     let mut released = false;
     for _ in 0..64 {
         engine.tick_one_actor_animation_action_change_slot(
@@ -4599,16 +4651,14 @@ fn non_shield_arrow_ricochet_advances_immediately() {
 
 #[test]
 fn shield_ricochet_with_empty_trajectory_finishes_nested_hourglass() {
-    // Savegame_linux2/Profile_002/Savegame_017/replay-016, frame 566:
-    // the arrow reaches a ground endpoint a fraction below zero.  Its
-    // shield-deflection trajectory is empty, but Original's nested
-    // The update still handles obstacle impact and publishes the ground snap.
+    // A shield catches a segment crossing just below ground. The deflection
+    // has no flight left, so its nested update must still finish the impact.
     let endpoint = WorldPoint3D::new(98.988_8, 861.410_2, -0.000_000_953_674_3);
-    let Entity::Projectile(mut arrow) = spawn_arrow(SpawnArrowParams {
+    let Entity::Projectile(arrow) = spawn_arrow(SpawnArrowParams {
         shooter: EntityId::Pc(crate::entity_id::PcId(0)),
         bow_point: endpoint,
         trajectory_origin: endpoint.to_map(),
-        target: EntityId::Pc(crate::entity_id::PcId(1)),
+        target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
         target_pos: endpoint.to_map(),
         trajectory: vec![],
         damage: 30,
@@ -4618,18 +4668,48 @@ fn shield_ricochet_with_empty_trajectory_finishes_nested_hourglass() {
     }) else {
         panic!("spawn_arrow returned a non-projectile entity");
     };
+    let mut holder = make_soldier(140.006_48, 588.663_45);
+    holder.element_data_mut().set_direction_instantly(15);
+    let actor = holder.actor_data_mut().unwrap();
+    actor.action_state = ActionState::HoldingShield;
+    actor.shield_obstacle = Some(compute_shield_obstacle(
+        MapPoint::new(140.006_48, 588.663_45),
+        0.0,
+        15,
+        &shield_params_for_soldier(40, 50),
+    ));
+    let (mut engine, assets) = projectile_engine(entity_table(vec![
+        Some(make_pc(100.0, 800.0)),
+        Some(holder),
+        Some(Entity::Projectile(arrow)),
+    ]));
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+    let Entity::Projectile(arrow) = engine.world.entities.get_mut(arrow_id).unwrap() else {
+        unreachable!();
+    };
     arrow.element.set_position(endpoint);
     arrow
         .element
         .set_position_map_preserving_3d(endpoint.to_map());
     arrow.element.set_direction_instantly(10);
     arrow.projectile.trajectory.clear();
+    arrow.projectile.trajectory_runtime.clear();
     arrow.projectile.trajectory_frame_count = 0;
-    arrow.projectile.launch_segment_start = None;
+    arrow.projectile.launch_segment_start =
+        Some(WorldPoint3D::new(146.383_45, 814.959_1, 7.129_663_5));
+    arrow.projectile.velocity_increment = WorldVec3D::new(-47.394_653, 46.451_09, -7.129_664);
     arrow.projectile.flying = true;
 
-    make_arrow_falling_down(&mut arrow, true, None);
-
+    assert!(engine.tick_new_projectile_once(&crate::sim_rng::test_context(), &assets, arrow_id,));
+    assert!(projectile_activation_seen(
+        &engine,
+        EntityId::Soldier(crate::entity_id::SoldierId(1)),
+        Command::ParryShield,
+    ));
+    let Entity::Projectile(arrow) = engine.world.entities.get(arrow_id).unwrap() else {
+        unreachable!();
+    };
+    assert!(arrow.projectile.falling);
     let position = arrow.element.position();
     assert_eq!(position.x.to_bits(), endpoint.x.to_bits());
     assert_eq!(position.y.to_bits(), endpoint.y.to_bits());

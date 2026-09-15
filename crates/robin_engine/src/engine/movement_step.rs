@@ -1512,29 +1512,14 @@ impl EngineInner {
             && point_seek_post_sector
                 .map(|seek_sector| elem.sector() == Some(seek_sector))
                 .unwrap_or(false);
-        // FROZEN stand-still wait.  When the seek arrival
-        // predicate fires at an intermediate waypoint and there
-        // is no `post_seek_sequence` to consume the arrival, the
-        // actor freezes its sprite frame in place near the target
-        // until either the target moves out of tolerance
-        // (next-tick `tick_refresh_seeks` detects drift and
-        // rebuilds the path) or a post-seek is later attached.
-        // We honour this by simply skipping the per-tick movement
-        // step (no order pop, no position update, no sprite
-        // advance) so the actor's position + orders persist for
-        // the next tick to re-evaluate.
-        //
-        // This branch only fires for entity-target seeks without
-        // a queued post-seek interaction (e.g. AI follow seeks
-        // built outside `apply_interaction_with_seek`).  The
-        // common PC interaction path always carries a post-seek
-        // and routes through the `start_post_seek` branch below
-        // instead.
-        let frozen_seek_wait = tolerance_arrival && !is_final_waypoint && !ft.has_post_seek;
+        // An in-range seek without a follow-up waits at any waypoint.
+        // Keep the aged refresh timer: only an actual terminal motion
+        // arrival resets it and allows an immediate path refresh.
+        let frozen_seek_wait = tolerance_arrival && !ft.has_post_seek;
         if frozen_seek_wait {
             tracing::trace!(
                 entity = ?entity_id,
-                "tick_move: FROZEN seek wait (target in range, no post-seek, mid-path)",
+                "tick_move: FROZEN seek wait (target in range, no post-seek)",
             );
             refresh_pc_walking_shield_after_execute(
                 entity,

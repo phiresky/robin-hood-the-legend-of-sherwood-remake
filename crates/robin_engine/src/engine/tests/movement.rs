@@ -3284,12 +3284,12 @@ fn arrival_crossing_script_replacement_keeps_its_live_in_progress_motion() {
                     class_name: "Crossing".into(),
                     size_of_member_variables: 0,
                     member_variables: vec![],
-                    functions: vec![function("Initialize", 0, 0), function("Enter", 2, 1)],
+                    functions: vec![function("Initialize", 0, 0), function("EnterZone", 2, 1)],
                     quads: vec![
                         q_begin_function(0, 8),
                         q_return(),
                         q_begin_function(0, 8),
-                        q_aff1_get_param(0xc000, -4),
+                        q_aff1_get_param(0xc000, 0),
                         q_aff0_iconstant(0xc004, crate::element::ActionState::Waiting as i32),
                         q_native_param(0xc000),
                         q_native_param(0xc004),
@@ -3352,6 +3352,11 @@ fn arrival_crossing_script_replacement_keeps_its_live_in_progress_motion() {
 
     tick_production_owner_coordinator(&mut engine, &sim, &assets);
 
+    assert_eq!(
+        engine.script_domains.zones.scripts[0].num_occupants(),
+        1,
+        "the terminal movement crosses the active script boundary"
+    );
     assert_eq!(
         engine
             .get_entity(owner)
@@ -4299,9 +4304,8 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             .expect("seeker movement remains after crossing tolerance")
             .state;
 
-        // Entity-target seeking does not re-sample tolerance after its
-        // committed step. The next actor tick observes the now-in-range
-        // position and terminates without another movement commit.
+        // Entity-target seeking samples tolerance before motion. The next
+        // actor tick waits if the target is now in range and no follow-up exists.
         engine.tick_actor_owner_envelopes(sim, &assets);
 
         Observation {
