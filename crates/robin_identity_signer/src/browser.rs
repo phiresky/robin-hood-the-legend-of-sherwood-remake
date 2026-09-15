@@ -2,7 +2,7 @@
 use crate::{LeaderboardSigningError, authorize_context, decode_json};
 use robin_run_protocol::{
     PublicKey32, SCHEMA_VERSION_V2, Signature64, SignatureAlgorithmV1, SignedDeletionRequestV2,
-    SignedRequestClaim, SignedRequestV2, SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV2,
+    SignedRequestClaim, SignedRequestV2, SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV3,
     SignedUsernameUpdateV2, Validate,
 };
 
@@ -11,7 +11,7 @@ const MAX_DELETION_BYTES: usize = 8 * 1024;
 const MAX_OWNER_STATUS_BYTES: usize = 8 * 1024;
 const MAX_SUBMISSION_BYTES: usize = 128 * 1024;
 
-/// Uploader signature over `SignedSubmissionV2::signing_bytes`. The JSON
+/// Uploader signature over `SignedSubmissionV3::signing_bytes`. The JSON
 /// shape is `{ "public_key": hex, "signature": hex }`.
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -211,14 +211,14 @@ pub async fn browser_sign_username_update(
     encode_json(&signed)
 }
 
-/// Sign one exact `SubmissionV2` as its uploader. Returns
-/// `{ "public_key", "signature" }` over `SignedSubmissionV2::signing_bytes`;
-/// the game assembles and locally verifies the `SignedSubmissionV2`.
+/// Sign one exact `SubmissionV3` as its uploader. Returns
+/// `{ "public_key", "signature" }` over `SignedSubmissionV3::signing_bytes`;
+/// the game assembles and locally verifies the `SignedSubmissionV3`.
 pub async fn browser_sign_submission_claim(
     parent_origin: String,
     json: String,
 ) -> Result<String, wasm_bindgen::JsValue> {
-    let signed: SignedSubmissionV2 =
+    let signed: SignedSubmissionV3 =
         sign_claim(&parent_origin, &json, MAX_SUBMISSION_BYTES, "submission")
             .await
             .map_err(wasm_error)?;

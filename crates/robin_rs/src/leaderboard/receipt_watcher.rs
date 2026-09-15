@@ -1203,7 +1203,7 @@ mod tests {
         let watch_key = key("submission-1", 4);
         let signed = signed(&watch_key);
         let mut status = response(
-            &envelope,
+            &signed,
             SubmissionLifecycleV1::Accepted {
                 run_id: OpaqueId::new("run-1").unwrap(),
             },

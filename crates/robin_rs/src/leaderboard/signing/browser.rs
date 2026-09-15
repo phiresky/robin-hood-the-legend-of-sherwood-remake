@@ -7,8 +7,8 @@ use super::{
     verify_signed_request,
 };
 use robin_run_protocol::{
-    PublicKey32, Signature64, SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV2,
-    SubmissionOwnerStatusRequestV2, SubmissionV2, Validate,
+    PublicKey32, Signature64, SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV3,
+    SubmissionOwnerStatusRequestV2, SubmissionV3, Validate,
 };
 
 const MAX_SIGNER_DOCUMENT_BYTES: usize = 128 * 1024;
@@ -139,8 +139,8 @@ impl GameIdentitySigner for BrowserSigner {
     }
 
     async fn sign_submission(
-        submission: SubmissionV2,
-    ) -> Result<SignedSubmissionV2, LeaderboardSigningError> {
+        submission: SubmissionV3,
+    ) -> Result<SignedSubmissionV3, LeaderboardSigningError> {
         submission.validate().map_err(invalid_claim)?;
         const OPERATION: &str = "sign_submission";
         let response =

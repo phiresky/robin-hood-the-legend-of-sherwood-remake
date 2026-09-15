@@ -15,7 +15,7 @@ use crate::leaderboard_preferences::{
 use robin_run_protocol::ReplayArtifactV1;
 use robin_run_protocol::{
     Digest32, LeaderboardMetadataV2, LeaderboardPageV2, LeaderboardQueryV2,
-    RANKED_REPLAY_MEDIA_TYPE_V1, SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV2,
+    RANKED_REPLAY_MEDIA_TYPE_V1, SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV3,
     SubmissionAcceptedV1, SubmissionOwnerStatusResponseV2, Validate,
 };
 use serde::de::DeserializeOwned;
@@ -91,7 +91,7 @@ impl LeaderboardApi {
     /// server only accepts recent `signed_at_unix_ms` values.
     pub fn submit(
         &self,
-        submission: &SignedSubmissionV2,
+        submission: &SignedSubmissionV3,
         exact_replay_bytes: Arc<[u8]>,
     ) -> Result<HttpTask, LeaderboardServiceError> {
         submission.validate().map_err(invalid_protocol)?;

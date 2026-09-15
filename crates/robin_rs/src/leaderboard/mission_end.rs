@@ -7,7 +7,7 @@
 //! attempts; a submission is offered only for a prepared eligible recording.
 //!
 //! One upload is one replay signed by the uploader's durable identity: the
-//! backend signs the exact [`SubmissionV2`] with the current wall-clock time
+//! backend signs the exact [`SubmissionV3`] with the current wall-clock time
 //! and posts it together with the canonical compact replay in one request.
 //! Every attempt (including a user retry) signs afresh, so a retry never
 //! reuses a signature that may have aged out of the server's window.
@@ -20,7 +20,7 @@ use crate::leaderboard_signing::{GameIdentitySigner as _, PlatformSigner};
 use robin_run_protocol::{
     ArtifactRefV1, BoardMetricV1, Digest32, LeaderboardPageV2, LeaderboardQueryV2, OpaqueId,
     ParticipantPublicDisclosureV1, PublicKey32, RANKED_REPLAY_MEDIA_TYPE_V1, ReplayArtifactV1,
-    SCHEMA_VERSION_V2, SubmissionAcceptedV1, SubmissionV2, TickDurationV1, Validate as _,
+    SCHEMA_VERSION_V3, SubmissionAcceptedV1, SubmissionV3, TickDurationV1, Validate as _,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -132,9 +132,9 @@ impl MissionEndSubmissionInput {
         &self,
         uploader_public_key: PublicKey32,
         signed_at_unix_ms: u64,
-    ) -> SubmissionV2 {
-        SubmissionV2 {
-            schema_version: SCHEMA_VERSION_V2,
+    ) -> SubmissionV3 {
+        SubmissionV3 {
+            schema_version: SCHEMA_VERSION_V3,
             uploader_public_key,
             signed_at_unix_ms,
             public_disclosure: self.public_disclosure,
@@ -888,8 +888,8 @@ mod tests {
     use super::*;
     use crate::leaderboard::test_fixtures::{MISSION_ID, compact_replay_bytes};
     use ed25519_dalek::Signer as _;
+    use robin_run_protocol::{SCHEMA_VERSION_V2, SignatureAlgorithmV1, SignedSubmissionV3};
     use robin_run_protocol::{Signature64, SubmissionLifecycleV1};
-    use robin_run_protocol::{SignatureAlgorithmV1, SignedSubmissionV2};
     use std::sync::Mutex;
 
     const SIGNED_AT_UNIX_MS: u64 = 1_800_000_000_000;
@@ -966,8 +966,8 @@ mod tests {
             );
             let submission = input.submission(uploader_public_key(), SIGNED_AT_UNIX_MS);
             let signature =
-                uploader().sign(&SignedSubmissionV2::signing_bytes(&submission).unwrap());
-            let signed = SignedSubmissionV2 {
+                uploader().sign(&SignedSubmissionV3::signing_bytes(&submission).unwrap());
+            let signed = SignedSubmissionV3 {
                 schema_version: SCHEMA_VERSION_V2,
                 request: submission,
                 algorithm: SignatureAlgorithmV1::Ed25519,

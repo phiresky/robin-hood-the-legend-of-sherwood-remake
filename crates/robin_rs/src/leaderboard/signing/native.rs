@@ -5,8 +5,8 @@ use super::{GameIdentitySigner, LeaderboardSigningError, assemble_signed_request
 use ed25519_dalek::{Signer as _, SigningKey};
 use robin_run_protocol::{
     PublicKey32, Signature64, SignedRequestClaim, SignedRequestV2,
-    SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV2, SubmissionOwnerStatusRequestV2,
-    SubmissionV2,
+    SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV3, SubmissionOwnerStatusRequestV2,
+    SubmissionV3,
 };
 
 pub struct NativeSigner;
@@ -45,8 +45,8 @@ impl GameIdentitySigner for NativeSigner {
     }
 
     async fn sign_submission(
-        submission: SubmissionV2,
-    ) -> Result<SignedSubmissionV2, LeaderboardSigningError> {
+        submission: SubmissionV3,
+    ) -> Result<SignedSubmissionV3, LeaderboardSigningError> {
         sign_with_key(submission, &native_key()?)
     }
 
