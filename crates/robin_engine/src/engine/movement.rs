@@ -12,7 +12,6 @@ use crate::coordinates::{MapBBox, MapPoint, MapVec};
 #[cfg(test)]
 use crate::element::ActiveDoorPass;
 use crate::element::EntityId;
-use crate::movement::ActiveMovement;
 use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
 use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionState};
@@ -1803,9 +1802,8 @@ fn retained_cancelled_path_result(retained_cancelled_head: bool) -> Option<Vec<M
 /// dispatch.
 #[derive(Debug)]
 pub(crate) enum MovePathOutcome {
-    /// Path found, orders populated, actor's `active_movement` + action
-    /// state set, element transitioned to `InProgress`.  Caller has
-    /// nothing left to do.
+    /// Path found and movement orders populated. The instruction boundary
+    /// accepts the translated element; execution changes the actor's state.
     Success,
     /// The move requires A* and has entered the legacy one-completion-per-
     /// frame request queue.
@@ -2981,42 +2979,6 @@ impl EngineInner {
         );
     }
 
-    /// Rebuild Rust's derived active-movement latch after loading an Original
-    /// save. The original game keeps the executing movement selected;
-    /// Rust additionally caches its sequence identity for owner-local
-    /// movement and anti-collision work.
-    pub(crate) fn restore_loaded_active_movements(&mut self) {
-        let active =
-            self.orders
-                .sequence_manager
-                .sequences_iter()
-                .flat_map(|sequence| {
-                    sequence.elements.iter().enumerate().filter_map(
-                        move |(element_index, element)| {
-                            (element.state == crate::sequence::SequenceState::InProgress
-                                && element.data.is_movement())
-                            .then_some((element.owner?, sequence.id, element_index))
-                        },
-                    )
-                })
-                .collect::<Vec<_>>();
-        let mut owners = std::collections::BTreeSet::new();
-        for (owner, sequence_id, element_index) in active {
-            assert!(
-                owners.insert(owner),
-                "loaded actor {owner:?} owns multiple in-progress movement elements"
-            );
-            self.world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .unwrap_or_else(|| {
-                    panic!("loaded movement owner {owner:?} is missing required actor state")
-                })
-                .active_movement = ActiveMovement::new(sequence_id, element_index);
-        }
-    }
-
     /// Consume one queued element-position update at the beginning of
     /// this actor's update, before order selection.
     ///
@@ -4077,16 +4039,11 @@ impl EngineInner {
         let action_state = actor.action_state;
         let door_pass_anim: Option<OrderType> =
             actor.active_door_pass.as_ref().map(|dp| dp.current_action);
-        let Some(seq_id) = actor.active_movement.sequence_id else {
-            return;
-        };
-        let elem_idx = actor.active_movement.element_index;
         let Some(order_action) = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .and_then(|element| element.orders.front())
-            .map(|order| order.order_type)
+            .current_order_for_actor(&self.world.entities, owner)
+            .map(|(_, _, order)| order.order_type)
         else {
             return;
         };
@@ -4425,7 +4382,6 @@ impl EngineInner {
             .ai_brain
             .base()
             .is_some_and(|brain| brain.blood_alcohol > 0)
-            && soldier.actor.active_movement.sequence_id.is_some()
         {
             turn_drunken(&mut soldier.element.sprite.position_iface);
         }
@@ -4850,7 +4806,6 @@ impl EngineInner {
                         .actor_data_mut()
                         .expect("RiderCharging owner must remain an actor");
                     actor.clear_path();
-                    actor.active_movement.clear();
                     entity.position_iface_mut().reset_box_blocked();
                 }
             }
@@ -5128,7 +5083,6 @@ impl EngineInner {
                 // In particular a walking actor remains Moving;
                 // RunningUpright's unconditional Execute effect is
                 // applied below and still publishes MovingFast.
-                actor.active_movement.clear();
                 restore_anti_collision
             };
             if restore_anti_collision {
@@ -5449,7 +5403,6 @@ impl EngineInner {
             // and launches the interaction without rewriting the
             // actor state. The interaction's generated transition
             // owns any later Moving→Waiting change.
-            actor.active_movement.clear();
             actor.active_door_pass = None;
             if is_sword_motion && let Some(human) = entity.human_data_mut() {
                 human.last_motion_was_step_back_in_combat =
@@ -5562,7 +5515,6 @@ impl EngineInner {
                     ) {
                         actor.action_state = crate::element::ActionState::Waiting;
                     }
-                    actor.active_movement.clear();
                     actor.active_door_pass = None;
                     if is_sword_motion && let Some(human) = entity.human_data_mut() {
                         human.last_motion_was_step_back_in_combat = active_move_flags
@@ -5647,7 +5599,6 @@ impl EngineInner {
                 } else {
                     crate::element::ActionState::Waiting
                 };
-                actor.active_movement.clear();
                 restore_anti_collision
             };
             if restore_anti_collision {
@@ -6611,24 +6562,6 @@ impl EngineInner {
                     );
                 }
             }
-        }
-
-        // Install the derived Rust movement latch, but do not change the
-        // actor's action state here. The original game's translation and path post-processing only
-        // builds the order queue; the later actor Execute slot changes state
-        // when motion processing returns its initial state (for every movement family, not
-        // only sword movement). This distinction is observable when the
-        // sequence manager instructs a Move after the actor loop: that frame
-        // must retain the pre-movement action state.
-        if let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.active_movement = ActiveMovement::new(seq_id, elem_idx);
-            // The outer SEEK translation or seek refresh owns the target
-            // snapshot and TIME_SEEK_REFRESH assignment. Movement construction
-            // creates one or more concrete MOVE|SEEK elements without
-            // resampling either value, so a route through a door retains the
-            // original target reference and accumulated countdown.
         }
     }
 }
